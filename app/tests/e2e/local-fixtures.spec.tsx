@@ -404,11 +404,30 @@ async function serveAdministratorApi(route: Route): Promise<void> {
     });
     return;
   }
+  if (pathname === '/api/admin/scheduled-tasks') {
+    await fulfillJson(route, [
+      {
+        id: 8,
+        name: 'Weekly index',
+        job: { kind: 'index', notify: false, push: false },
+        legacy_command: null,
+        cron: '0 8 * * *',
+        timezone: 'UTC',
+        timeout_seconds: 3600,
+        coalesce: true,
+        enabled: true,
+        last_run_at: null,
+        last_status: 'idle',
+        created_at: 1,
+        updated_at: 2,
+      },
+    ]);
+    return;
+  }
   if (
     pathname === '/api/admin/users' ||
     pathname === '/api/admin/invite-codes' ||
     pathname === '/api/admin/runtime-settings' ||
-    pathname === '/api/admin/scheduled-tasks' ||
     pathname === '/api/admin/announcements'
   ) {
     await fulfillJson(route, []);
@@ -419,7 +438,30 @@ async function serveAdministratorApi(route: Route): Promise<void> {
     return;
   }
   if (pathname === '/api/admin/scheduler/status') {
-    await fulfillJson(route, { last_checked_at: null, recent_runs: [], workers: [] });
+    await fulfillJson(route, {
+      last_checked_at: 1_700_000_000,
+      recent_runs: [
+        {
+          id: 12,
+          task_id: 8,
+          task_name: 'Weekly index',
+          scheduled_for: 1_699_999_800,
+          status: 'success',
+          worker_id: 'worker-fixture',
+          claimed_at: 1_699_999_801,
+          started_at: 1_699_999_802,
+          finished_at: 1_699_999_803,
+        },
+      ],
+      workers: [
+        {
+          worker_id: 'worker-fixture',
+          started_at: 1_699_999_000,
+          heartbeat_at: 1_700_000_000,
+          is_healthy: true,
+        },
+      ],
+    });
     return;
   }
   await serveTrackingApi(route);
@@ -527,7 +569,9 @@ async function completesFixtureTrackingPush(page: Page): Promise<void> {
     page.getByLabel('通知与推送设置内容').getByRole('heading', { name: '通知与推送', exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: '推送到追踪文件夹' }).click();
-  await expect(page.getByRole('status')).toContainText('本地 fixture 推送完成');
+  await expect(page.locator('[data-motion-feedback="manual-push"]')).toContainText(
+    '本地 fixture 推送完成',
+  );
 }
 
 /**
@@ -606,6 +650,62 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
 }
 
 /**
+ * Verify reduced-motion delivery toggles remain immediate, non-focusable, and state preserving.
+ *
+ * @param page - Playwright browser page.
+ */
+async function verifiesReducedMotionDynamicSettings(page: Page): Promise<void> {
+  await page.route('**/api/**', serveTrackingApi);
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/?view=favorites&folder=4&settings=notifications');
+  await hideDevelopmentIndicator(page);
+
+  const settingsDialog = page.getByRole('dialog', { name: '设置中心' });
+  const deliverySelect = settingsDialog.getByRole('combobox', { name: '推送方式' });
+  const deliveryPanel = settingsDialog.locator('[data-motion-delivery-panel="pushplus"]');
+  await expect(deliveryPanel).toHaveAttribute('inert', '');
+  await expect(deliveryPanel).toHaveAttribute('aria-hidden', 'true');
+
+  await deliverySelect.click();
+  await page.getByRole('option', { name: 'PushPlus 外部推送' }).click();
+  await expect(deliveryPanel).not.toHaveAttribute('inert');
+  const pushplusToken = settingsDialog.getByLabel('PushPlus 令牌');
+  await pushplusToken.fill('browser-pushplus-token');
+
+  await deliverySelect.click();
+  await page.getByRole('option', { name: '追踪文件夹推送' }).click();
+  await expect(deliveryPanel).toHaveAttribute('inert', '');
+  await pushplusToken.evaluate((element) => (element as HTMLInputElement).focus());
+  await expect(pushplusToken).not.toBeFocused();
+  await expect(pushplusToken).toHaveValue('browser-pushplus-token');
+
+  await deliverySelect.click();
+  await page.getByRole('option', { name: 'PushPlus 外部推送' }).click();
+  await expect(deliveryPanel).not.toHaveAttribute('inert');
+  await expect(pushplusToken).toHaveValue('browser-pushplus-token');
+  const animationDurations = await deliveryPanel.evaluate((element) =>
+    element.getAnimations({ subtree: true }).flatMap((animation) => {
+      const duration = animation.effect?.getTiming().duration;
+      return typeof duration === 'number' ? [duration] : [];
+    }),
+  );
+  expect(Math.max(0, ...animationDurations)).toBeLessThanOrEqual(1);
+  expect(
+    await settingsDialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.screenshot({ path: '../output/ui/settings-dynamic-dark-desktop.png', fullPage: true });
+
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(settingsDialog).toHaveCSS('width', '390px');
+  expect(
+    await settingsDialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.screenshot({ path: '../output/ui/settings-dynamic-light-mobile.png', fullPage: true });
+}
+
+/**
  * Verify administrator menu entry, responsive center, query preservation, and focus return.
  *
  * @param page - Playwright browser page.
@@ -639,6 +739,32 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await desktopCategories.getByRole('button', { name: '用户' }).click();
   await expect(page).toHaveURL('/?q=graph&admin=users');
   await expect(page.getByRole('heading', { name: '用户', exact: true })).toBeVisible();
+
+  await desktopCategories.getByRole('button', { name: '计划任务' }).click();
+  await expect(page).toHaveURL('/?q=graph&admin=scheduled-tasks');
+  await expect(adminDialog.locator('[data-motion-scheduled-task-key="8"]')).toBeVisible();
+  await expect(adminDialog.locator('[data-motion-scheduler-state="workers-1-1"]')).toBeVisible();
+  await adminDialog.getByRole('button', { name: '新建任务' }).click();
+  const taskDialog = page.getByRole('dialog', { name: '新建定时任务' });
+  const indexFields = taskDialog.locator('[data-motion-scheduled-fields="index"]');
+  const deliveryFields = taskDialog.locator('[data-motion-scheduled-fields="delivery"]');
+  await expect(indexFields).not.toHaveAttribute('inert');
+  await expect(deliveryFields).toHaveAttribute('inert', '');
+  await taskDialog.getByLabel('元数据 CSV 文件名（可选）').fill('journals.csv');
+  const presetSelect = taskDialog.getByRole('combobox', { name: '任务预设' });
+  await presetSelect.click();
+  await page.getByRole('option', { name: '仅文件夹推送' }).click();
+  await expect(indexFields).toHaveAttribute('inert', '');
+  await expect(deliveryFields).not.toHaveAttribute('inert');
+  await taskDialog.getByLabel('索引数据库（可选）').fill('journals.sqlite');
+  await presetSelect.click();
+  await page.getByRole('option', { name: '索引更新', exact: true }).click();
+  await expect(deliveryFields).toHaveAttribute('inert', '');
+  await expect(taskDialog.getByLabel('索引数据库（可选）')).toHaveValue('journals.sqlite');
+  await expect(taskDialog.getByLabel('元数据 CSV 文件名（可选）')).toHaveValue('journals.csv');
+  await taskDialog.getByRole('button', { name: '取消' }).click();
+  await expect(taskDialog).toHaveCount(0);
+  await page.screenshot({ path: '../output/ui/admin-scheduled-desktop.png', fullPage: true });
   await adminDialog.getByRole('button', { name: '关闭' }).click();
   await expect(page).toHaveURL('/?q=graph');
   await expect(adminDialog).toHaveCount(0);
@@ -663,6 +789,14 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
     await mobileCategories.evaluate((element) => element.scrollWidth > element.clientWidth),
   ).toBe(true);
   await page.screenshot({ path: '../output/ui/admin-center-mobile.png', fullPage: true });
+  const mobileScheduledButton = mobileCategories.getByRole('button', { name: '计划任务' });
+  await mobileScheduledButton.scrollIntoViewIfNeeded();
+  await mobileScheduledButton.click();
+  await expect(mobileDialog.locator('[data-motion-scheduled-task-key="8"]')).toBeVisible();
+  expect(await mobileDialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: '../output/ui/admin-scheduled-mobile.png', fullPage: true });
 }
 
 /**
@@ -988,6 +1122,15 @@ async function aggregatedSettingsCenterTest({ page }: { page: Page }): Promise<v
 }
 
 /**
+ * Run the reduced-motion dynamic settings browser test.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function reducedMotionDynamicSettingsTest({ page }: { page: Page }): Promise<void> {
+  await verifiesReducedMotionDynamicSettings(page);
+}
+
+/**
  * Run the administrator-center browser test.
  *
  * @param fixtures - Playwright page fixture.
@@ -1025,6 +1168,7 @@ test(
   'supports the aggregated settings center across desktop and mobile',
   aggregatedSettingsCenterTest,
 );
+test('preserves dynamic settings under reduced motion', reducedMotionDynamicSettingsTest);
 test('supports the administrator center across desktop and mobile', administratorCenterTest);
 test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);

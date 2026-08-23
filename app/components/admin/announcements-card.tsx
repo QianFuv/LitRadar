@@ -31,6 +31,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import {
+  COLLAPSE_VARIANTS,
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionParagraph,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
 
 type AnnouncementFormState = {
@@ -69,6 +78,8 @@ export function AnnouncementsCard() {
   const [editingAnnouncement, setEditingAnnouncement] = useState<AnnouncementInfo | null>(null);
   const [announcementToDelete, setAnnouncementToDelete] = useState<AnnouncementInfo | null>(null);
   const [form, setForm] = useState<AnnouncementFormState>(DEFAULT_FORM);
+  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
+  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   const {
     data: announcements = [],
@@ -231,11 +242,23 @@ export function AnnouncementsCard() {
                   }
                 />
               </div>
-              {mutationError && (
-                <p role="alert" className="text-sm text-destructive">
-                  {mutationError}
-                </p>
-              )}
+              <MotionPresence>
+                {mutationError && (
+                  <MotionParagraph
+                    key="announcement-error"
+                    data-motion-feedback="announcement"
+                    role="alert"
+                    className="text-sm text-destructive"
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    variants={FADE_UP_VARIANTS}
+                    transition={feedbackTransition}
+                  >
+                    {mutationError}
+                  </MotionParagraph>
+                )}
+              </MotionPresence>
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <Button
                   variant="outline"
@@ -266,60 +289,86 @@ export function AnnouncementsCard() {
           <p role="status" className="text-sm text-muted-foreground">
             加载中…
           </p>
-        ) : announcements.length === 0 ? (
-          <p className="text-sm text-muted-foreground">暂无公告</p>
         ) : (
           <div className="space-y-3">
-            {announcements.map((announcement) => (
-              <div key={announcement.id} className="rounded-lg border p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="font-medium break-all">{announcement.title}</div>
-                      <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                        {PRIORITY_LABELS[announcement.priority]}
-                      </span>
+            <MotionPresence>
+              {announcements.length === 0 ? (
+                <MotionParagraph
+                  key="empty-announcements"
+                  className="text-sm text-muted-foreground"
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                  variants={FADE_UP_VARIANTS}
+                  transition={feedbackTransition}
+                >
+                  暂无公告
+                </MotionParagraph>
+              ) : (
+                announcements.map((announcement) => (
+                  <MotionDiv
+                    key={announcement.id}
+                    data-motion-announcement-key={announcement.id}
+                    className="overflow-hidden rounded-lg border p-4"
+                    initial="hidden"
+                    animate="visible"
+                    exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+                    variants={COLLAPSE_VARIANTS}
+                    transition={rowTransition}
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="font-medium break-all">{announcement.title}</div>
+                          <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                            {PRIORITY_LABELS[announcement.priority]}
+                          </span>
+                        </div>
+                        <p className="text-sm text-muted-foreground break-words whitespace-pre-wrap">
+                          {announcement.message}
+                        </p>
+                        <div className="text-xs text-muted-foreground">
+                          更新于 {formatDateTime(announcement.updated_at)}
+                        </div>
+                      </div>
+                      <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
+                        <Switch
+                          checked={announcement.enabled}
+                          aria-label={`${announcement.enabled ? '停用' : '启用'}公告 ${announcement.title}`}
+                          onCheckedChange={(checked: boolean) =>
+                            toggleMutation.mutate({
+                              announcementId: announcement.id,
+                              enabled: checked,
+                            })
+                          }
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`编辑公告 ${announcement.title}`}
+                          onClick={() => openEditDialog(announcement)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive hover:text-destructive"
+                          aria-label={`删除公告 ${announcement.title}`}
+                          disabled={deleteMutation.isPending}
+                          onClick={() => {
+                            deleteMutation.reset();
+                            setAnnouncementToDelete(announcement);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                    <p className="text-sm text-muted-foreground break-words whitespace-pre-wrap">
-                      {announcement.message}
-                    </p>
-                    <div className="text-xs text-muted-foreground">
-                      更新于 {formatDateTime(announcement.updated_at)}
-                    </div>
-                  </div>
-                  <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
-                    <Switch
-                      checked={announcement.enabled}
-                      aria-label={`${announcement.enabled ? '停用' : '启用'}公告 ${announcement.title}`}
-                      onCheckedChange={(checked: boolean) =>
-                        toggleMutation.mutate({ announcementId: announcement.id, enabled: checked })
-                      }
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`编辑公告 ${announcement.title}`}
-                      onClick={() => openEditDialog(announcement)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-destructive hover:text-destructive"
-                      aria-label={`删除公告 ${announcement.title}`}
-                      disabled={deleteMutation.isPending}
-                      onClick={() => {
-                        deleteMutation.reset();
-                        setAnnouncementToDelete(announcement);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ))}
+                  </MotionDiv>
+                ))
+              )}
+            </MotionPresence>
           </div>
         )}
         <ConfirmDialog

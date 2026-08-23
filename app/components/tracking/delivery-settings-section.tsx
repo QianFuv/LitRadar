@@ -16,6 +16,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  COLLAPSE_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  useMotionTransition,
+} from '@/components/ui/motion';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -36,6 +42,8 @@ type DeliverySettingsSectionProps = {
  */
 export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps) {
   const pushplus = model.delivery.pushplus;
+  const isPushplus = model.delivery.method === 'pushplus';
+  const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   return (
     <SettingsSection>
@@ -68,7 +76,17 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
           </Select>
         </div>
 
-        {model.delivery.method === 'pushplus' && (
+        <MotionDiv
+          data-motion-delivery-panel="pushplus"
+          aria-hidden={!isPushplus}
+          inert={!isPushplus ? true : undefined}
+          initial={false}
+          animate={isPushplus ? 'visible' : 'hidden'}
+          variants={COLLAPSE_VARIANTS}
+          transition={panelTransition}
+          className="overflow-hidden"
+          style={{ pointerEvents: isPushplus ? 'auto' : 'none' }}
+        >
           <div className="space-y-3 rounded-md border p-3">
             <div className="space-y-1">
               <Label htmlFor="pp-token">PushPlus 令牌</Label>
@@ -189,7 +207,7 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
               />
             </div>
           </div>
-        )}
+        </MotionDiv>
       </SettingsSectionContent>
     </SettingsSection>
   );

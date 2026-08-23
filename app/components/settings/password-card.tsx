@@ -14,6 +14,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionParagraph,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
 
 /**
  * Render and manage the active user's password change form.
@@ -25,6 +32,7 @@ export function PasswordCard() {
   const [oldPwd, setOldPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
   const [pwdMsg, setPwdMsg] = useState<string | null>(null);
+  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
   const changePwdMut = useMutation({
     mutationFn: () => changePassword(oldPwd, newPwd),
     onSuccess: () => {
@@ -76,14 +84,23 @@ export function PasswordCard() {
               required
             />
           </div>
-          {pwdMsg && (
-            <p
-              role={changePwdMut.isError ? 'alert' : 'status'}
-              className="text-sm text-muted-foreground"
-            >
-              {pwdMsg}
-            </p>
-          )}
+          <MotionPresence>
+            {pwdMsg && (
+              <MotionParagraph
+                key="password-feedback"
+                data-motion-feedback="password"
+                role={changePwdMut.isError ? 'alert' : 'status'}
+                className="text-sm text-muted-foreground"
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                variants={FADE_UP_VARIANTS}
+                transition={feedbackTransition}
+              >
+                {pwdMsg}
+              </MotionParagraph>
+            )}
+          </MotionPresence>
           <Button type="submit" disabled={changePwdMut.isPending}>
             修改密码
           </Button>

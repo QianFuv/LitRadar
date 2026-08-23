@@ -133,10 +133,15 @@ async function resumesPersistedJobAfterMount(): Promise<void> {
 
   renderWithQuery(<TrackingSettingsContent userId={31} section="notifications" />);
 
-  expect(await screen.findByText('任务执行中')).toBeInTheDocument();
-  expect(
-    await screen.findByText('推送完成（已推送 2 篇）', {}, { timeout: 5_000 }),
-  ).toBeInTheDocument();
+  const runningMessage = await screen.findByText('任务执行中');
+  const feedbackNode = runningMessage.closest('[data-motion-feedback="manual-push"]');
+  expect(feedbackNode).not.toBeNull();
+  const completedMessage = await screen.findByText(
+    '推送完成（已推送 2 篇）',
+    {},
+    { timeout: 5_000 },
+  );
+  expect(completedMessage.closest('[data-motion-feedback="manual-push"]')).toBe(feedbackNode);
   expect(statusRequestCount).toBe(2);
   expect(screen.getByRole('button', { name: '推送到追踪文件夹' })).toBeEnabled();
 }

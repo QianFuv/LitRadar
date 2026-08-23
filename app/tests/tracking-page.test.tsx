@@ -278,7 +278,29 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
   const user = userEvent.setup();
   const { rerender } = renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
 
-  await user.type(await screen.findByLabelText('关键词'), 'distributed');
+  await screen.findByLabelText('关键词');
+  const existingKeywordChip = document.querySelector(
+    '[data-motion-preference-chip="keyword-systems"]',
+  );
+  expect(existingKeywordChip).not.toBeNull();
+  await user.type(screen.getByLabelText('关键词'), 'distributed');
+  await user.click(screen.getByRole('button', { name: '添加关键词' }));
+  expect(document.querySelector('[data-motion-preference-chip="keyword-systems"]')).toBe(
+    existingKeywordChip,
+  );
+  expect(
+    document.querySelector('[data-motion-preference-chip="keyword-distributed"]'),
+  ).not.toBeNull();
+  await user.click(screen.getByRole('button', { name: '移除关键词 distributed' }));
+  await waitFor(() =>
+    expect(
+      document.querySelector('[data-motion-preference-chip="keyword-distributed"]'),
+    ).toBeNull(),
+  );
+  expect(document.querySelector('[data-motion-preference-chip="keyword-systems"]')).toBe(
+    existingKeywordChip,
+  );
+  await user.type(screen.getByLabelText('关键词'), 'distributed');
   await user.click(screen.getByRole('button', { name: '添加关键词' }));
   await user.type(screen.getByLabelText('研究方向'), 'security');
   await user.click(screen.getByRole('button', { name: '添加研究方向' }));
@@ -316,10 +338,15 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
 
   rerender(<TrackingSettingsContent userId={51} section="notifications" />);
   const deliverySelect = screen.getByRole('combobox', { name: '推送方式' });
+  const deliveryPanel = document.querySelector('[data-motion-delivery-panel="pushplus"]');
+  expect(deliveryPanel).toHaveAttribute('inert');
+  expect(deliveryPanel).toHaveAttribute('aria-hidden', 'true');
   deliverySelect.focus();
   await user.keyboard('{ArrowDown}');
   expect(await screen.findByRole('option', { name: 'PushPlus 外部推送' })).toBeInTheDocument();
   await user.keyboard('{ArrowDown}{Enter}');
+  await waitFor(() => expect(deliveryPanel).not.toHaveAttribute('inert'));
+  expect(deliveryPanel).toHaveAttribute('aria-hidden', 'false');
 
   const deliveryUpdates: Array<[string, string]> = [
     ['PushPlus 令牌', 'pushplus-secret'],
@@ -332,6 +359,16 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
     await user.clear(field);
     await user.type(field, value);
   }
+  const pushplusToken = screen.getByLabelText('PushPlus 令牌');
+  deliverySelect.focus();
+  await user.keyboard('{Enter}{Home}{Enter}');
+  await waitFor(() => expect(deliveryPanel).toHaveAttribute('inert'));
+  expect(pushplusToken).toHaveValue('pushplus-secret');
+  expect(pushplusToken).not.toHaveFocus();
+  deliverySelect.focus();
+  await user.keyboard('{Enter}{End}{Enter}');
+  await waitFor(() => expect(deliveryPanel).not.toHaveAttribute('inert'));
+  expect(screen.getByLabelText('PushPlus 令牌')).toHaveValue('pushplus-secret');
   await user.click(screen.getByRole('switch', { name: '同步写入追踪文件夹' }));
   await user.click(screen.getByRole('button', { name: '保存更改' }));
 

@@ -35,6 +35,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import {
+  COLLAPSE_VARIANTS,
+  FADE_UP_VARIANTS,
+  FADE_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionParagraph,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
 
 type TaskFormState = {
@@ -318,6 +328,8 @@ export function ScheduledTasksCard() {
   const [taskToDelete, setTaskToDelete] = useState<ScheduledTaskInfo | null>(null);
   const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
   const [jobPreset, setJobPreset] = useState<JobPresetId>(DEFAULT_PRESET);
+  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
+  const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   const {
     data: tasks = [],
@@ -434,6 +446,12 @@ export function ScheduledTasksCard() {
     isJobFormValid(form, jobPreset);
   const healthyWorkerCount =
     schedulerStatus?.workers.filter((worker) => worker.is_healthy).length ?? 0;
+  const isIndexJobPreset = isIndexPreset(jobPreset);
+  const schedulerStatusKey = isSchedulerStatusLoading
+    ? 'loading'
+    : schedulerStatusError instanceof Error
+      ? 'error'
+      : `workers-${healthyWorkerCount}-${schedulerStatus?.workers.length ?? 0}`;
 
   return (
     <Card>
@@ -565,65 +583,88 @@ export function ScheduledTasksCard() {
                   </SelectContent>
                 </Select>
               </div>
-              {isIndexPreset(jobPreset) ? (
-                <div className="space-y-2">
-                  <Label htmlFor="scheduled-task-metadata">元数据 CSV 文件名（可选）</Label>
-                  <Input
-                    id="scheduled-task-metadata"
-                    name="scheduled_task_metadata_file"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={form.metadataFile}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, metadataFile: event.target.value }))
-                    }
-                    placeholder="journals.csv"
-                  />
-                  {!isSafeBasename(form.metadataFile, '.csv') && (
-                    <p role="alert" className="text-sm text-destructive">
-                      请输入不含路径或特殊符号的 .csv 文件名。
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <MotionDiv
+                  data-motion-scheduled-fields="index"
+                  aria-hidden={!isIndexJobPreset}
+                  inert={!isIndexJobPreset ? true : undefined}
+                  initial={false}
+                  animate={isIndexJobPreset ? 'visible' : 'hidden'}
+                  variants={COLLAPSE_VARIANTS}
+                  transition={panelTransition}
+                  className="overflow-hidden"
+                  style={{ pointerEvents: isIndexJobPreset ? 'auto' : 'none' }}
+                >
                   <div className="space-y-2">
-                    <Label htmlFor="scheduled-task-database">索引数据库（可选）</Label>
+                    <Label htmlFor="scheduled-task-metadata">元数据 CSV 文件名（可选）</Label>
                     <Input
-                      id="scheduled-task-database"
-                      name="scheduled_task_database"
+                      id="scheduled-task-metadata"
+                      name="scheduled_task_metadata_file"
                       autoComplete="off"
                       spellCheck={false}
-                      value={form.database}
+                      value={form.metadataFile}
                       onChange={(event) =>
-                        setForm((current) => ({ ...current, database: event.target.value }))
+                        setForm((current) => ({ ...current, metadataFile: event.target.value }))
                       }
-                      placeholder="journals.sqlite"
+                      placeholder="journals.csv"
                     />
-                    {!isSafeBasename(form.database, '.sqlite') && (
+                    {!isSafeBasename(form.metadataFile, '.csv') && (
                       <p role="alert" className="text-sm text-destructive">
-                        请输入不含路径或特殊符号的 .sqlite 文件名。
+                        请输入不含路径或特殊符号的 .csv 文件名。
                       </p>
                     )}
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="scheduled-task-candidates">候选上限（可选）</Label>
-                    <Input
-                      id="scheduled-task-candidates"
-                      name="scheduled_task_max_candidates"
-                      type="number"
-                      min={1}
-                      max={1000}
-                      step={1}
-                      value={form.maxCandidates}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, maxCandidates: event.target.value }))
-                      }
-                      placeholder="100"
-                    />
+                </MotionDiv>
+                <MotionDiv
+                  data-motion-scheduled-fields="delivery"
+                  aria-hidden={isIndexJobPreset}
+                  inert={isIndexJobPreset ? true : undefined}
+                  initial={false}
+                  animate={isIndexJobPreset ? 'hidden' : 'visible'}
+                  variants={COLLAPSE_VARIANTS}
+                  transition={panelTransition}
+                  className="overflow-hidden"
+                  style={{ pointerEvents: isIndexJobPreset ? 'none' : 'auto' }}
+                >
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="scheduled-task-database">索引数据库（可选）</Label>
+                      <Input
+                        id="scheduled-task-database"
+                        name="scheduled_task_database"
+                        autoComplete="off"
+                        spellCheck={false}
+                        value={form.database}
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, database: event.target.value }))
+                        }
+                        placeholder="journals.sqlite"
+                      />
+                      {!isSafeBasename(form.database, '.sqlite') && (
+                        <p role="alert" className="text-sm text-destructive">
+                          请输入不含路径或特殊符号的 .sqlite 文件名。
+                        </p>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="scheduled-task-candidates">候选上限（可选）</Label>
+                      <Input
+                        id="scheduled-task-candidates"
+                        name="scheduled_task_max_candidates"
+                        type="number"
+                        min={1}
+                        max={1000}
+                        step={1}
+                        value={form.maxCandidates}
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, maxCandidates: event.target.value }))
+                        }
+                        placeholder="100"
+                      />
+                    </div>
                   </div>
-                </div>
-              )}
+                </MotionDiv>
+              </div>
               <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                 将执行：{describeJob(buildScheduledJob(form, jobPreset))}
               </div>
@@ -656,11 +697,23 @@ export function ScheduledTasksCard() {
                   }
                 />
               </div>
-              {mutationError && (
-                <p role="alert" className="text-sm text-destructive">
-                  {mutationError}
-                </p>
-              )}
+              <MotionPresence>
+                {mutationError && (
+                  <MotionParagraph
+                    key="scheduled-task-error"
+                    data-motion-feedback="scheduled-task"
+                    role="alert"
+                    className="text-sm text-destructive"
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    variants={FADE_UP_VARIANTS}
+                    transition={feedbackTransition}
+                  >
+                    {mutationError}
+                  </MotionParagraph>
+                )}
+              </MotionPresence>
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <Button
                   variant="outline"
@@ -682,22 +735,34 @@ export function ScheduledTasksCard() {
         </Dialog>
 
         <div aria-label="调度器状态" className="rounded-lg border bg-muted/30 p-3 text-sm">
-          {isSchedulerStatusLoading ? (
-            <span className="text-muted-foreground">正在读取调度器状态…</span>
-          ) : schedulerStatusError instanceof Error ? (
-            <span role="alert" className="text-destructive">
-              {schedulerStatusError.message}
-            </span>
-          ) : (
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-              <span>
-                健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
-              </span>
-            </div>
-          )}
+          <MotionPresence mode="wait">
+            <MotionDiv
+              key={schedulerStatusKey}
+              data-motion-scheduler-state={schedulerStatusKey}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={FADE_VARIANTS}
+              transition={feedbackTransition}
+            >
+              {isSchedulerStatusLoading ? (
+                <span className="text-muted-foreground">正在读取调度器状态…</span>
+              ) : schedulerStatusError instanceof Error ? (
+                <span role="alert" className="text-destructive">
+                  {schedulerStatusError.message}
+                </span>
+              ) : (
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <span>
+                    健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
+                  </span>
+                </div>
+              )}
+            </MotionDiv>
+          </MotionPresence>
         </div>
 
         {error instanceof Error && (
@@ -710,73 +775,96 @@ export function ScheduledTasksCard() {
           <p role="status" className="text-sm text-muted-foreground">
             加载中…
           </p>
-        ) : tasks.length === 0 ? (
-          <p className="text-sm text-muted-foreground">暂无定时任务</p>
         ) : (
           <div className="space-y-3">
-            {tasks.map((task) => (
-              <div key={task.id} className="rounded-lg border p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="font-medium">{task.name}</div>
-                    <div className="font-mono text-xs text-muted-foreground">{task.cron}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {task.timezone} · 超时 {task.timeout_seconds} 秒 ·
-                      {task.coalesce ? ' 合并补跑' : ' 逐次补跑'}
-                    </div>
-                    <div className="text-sm text-muted-foreground break-all">
-                      {describeJob(task.job)}
-                    </div>
-                    {task.legacy_command && (
-                      <div className="rounded border border-amber-500/40 px-2 py-1 text-xs text-muted-foreground break-all">
-                        旧命令（只读）：{task.legacy_command}
+            <MotionPresence>
+              {tasks.length === 0 ? (
+                <MotionParagraph
+                  key="empty-scheduled-tasks"
+                  className="text-sm text-muted-foreground"
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                  variants={FADE_UP_VARIANTS}
+                  transition={feedbackTransition}
+                >
+                  暂无定时任务
+                </MotionParagraph>
+              ) : (
+                tasks.map((task) => (
+                  <MotionDiv
+                    key={task.id}
+                    data-motion-scheduled-task-key={task.id}
+                    className="overflow-hidden rounded-lg border p-4"
+                    initial="hidden"
+                    animate="visible"
+                    exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+                    variants={COLLAPSE_VARIANTS}
+                    transition={panelTransition}
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="font-medium">{task.name}</div>
+                        <div className="font-mono text-xs text-muted-foreground">{task.cron}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {task.timezone} · 超时 {task.timeout_seconds} 秒 ·
+                          {task.coalesce ? ' 合并补跑' : ' 逐次补跑'}
+                        </div>
+                        <div className="text-sm text-muted-foreground break-all">
+                          {describeJob(task.job)}
+                        </div>
+                        {task.legacy_command && (
+                          <div className="rounded border border-amber-500/40 px-2 py-1 text-xs text-muted-foreground break-all">
+                            旧命令（只读）：{task.legacy_command}
+                          </div>
+                        )}
+                        <div className="text-xs text-muted-foreground">
+                          最近执行: {formatDateTime(task.last_run_at)}
+                          {` · ${formatSchedulerState(task.last_status)}`}
+                        </div>
                       </div>
-                    )}
-                    <div className="text-xs text-muted-foreground">
-                      最近执行: {formatDateTime(task.last_run_at)}
-                      {` · ${formatSchedulerState(task.last_status)}`}
+                      <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
+                        <Switch
+                          checked={task.enabled}
+                          disabled={task.job === null}
+                          aria-label={
+                            task.job
+                              ? `${task.enabled ? '停用' : '启用'}定时任务 ${task.name}`
+                              : `旧定时任务 ${task.name} 需替换`
+                          }
+                          onCheckedChange={(checked: boolean) => {
+                            if (task.job) {
+                              toggleMutation.mutate({ enabled: checked, taskId: task.id });
+                            }
+                          }}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`编辑定时任务 ${task.name}`}
+                          onClick={() => openEditDialog(task)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive hover:text-destructive"
+                          aria-label={`删除定时任务 ${task.name}`}
+                          disabled={deleteMutation.isPending}
+                          onClick={() => {
+                            deleteMutation.reset();
+                            setTaskToDelete(task);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
-                    <Switch
-                      checked={task.enabled}
-                      disabled={task.job === null}
-                      aria-label={
-                        task.job
-                          ? `${task.enabled ? '停用' : '启用'}定时任务 ${task.name}`
-                          : `旧定时任务 ${task.name} 需替换`
-                      }
-                      onCheckedChange={(checked: boolean) => {
-                        if (task.job) {
-                          toggleMutation.mutate({ enabled: checked, taskId: task.id });
-                        }
-                      }}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`编辑定时任务 ${task.name}`}
-                      onClick={() => openEditDialog(task)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-destructive hover:text-destructive"
-                      aria-label={`删除定时任务 ${task.name}`}
-                      disabled={deleteMutation.isPending}
-                      onClick={() => {
-                        deleteMutation.reset();
-                        setTaskToDelete(task);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ))}
+                  </MotionDiv>
+                ))
+              )}
+            </MotionPresence>
           </div>
         )}
 

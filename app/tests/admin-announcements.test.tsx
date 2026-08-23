@@ -87,6 +87,7 @@ async function managesAnnouncementLifecycle(): Promise<void> {
   await user.click(within(createDialog).getByRole('button', { name: '创建' }));
 
   expect(await screen.findByText('New release')).toBeInTheDocument();
+  expect(document.querySelector('[data-motion-announcement-key="52"]')).not.toBeNull();
   expect(screen.getByText('高优先级')).toBeInTheDocument();
   expect(createPayloads).toEqual([
     {
@@ -202,6 +203,9 @@ async function retriesFailedAnnouncementDeletion(): Promise<void> {
   await user.click(within(dialog).getByRole('button', { name: '确认删除' }));
 
   expect(await screen.findByText('暂无公告')).toBeInTheDocument();
+  await waitFor(() =>
+    expect(document.querySelector('[data-motion-announcement-key="51"]')).toBeNull(),
+  );
   expect(deleteRequestCount).toBe(2);
 }
 

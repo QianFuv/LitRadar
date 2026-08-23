@@ -23,6 +23,17 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  COLLAPSE_VARIANTS,
+  FADE_UP_VARIANTS,
+  FADE_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionParagraph,
+  MotionPresence,
+  MotionSpan,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import type {
   SettingsCopyFeedback,
   SettingsCopyScope,
@@ -185,6 +196,8 @@ export function CnkiSettingsCard({
   const [cnkiLogin, setCnkiLogin] = useState<CnkiLoginStartResponse | null>(null);
   const [cnkiMessage, setCnkiMessage] = useState<CnkiMessageState | null>(null);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
+  const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const cnkiSessionQueryKey = ['cnki-session', userId] as const;
   const currentCnkiSessionQueryKey = ['cnki-session', 'current'] as const;
   const {
@@ -253,8 +266,23 @@ export function CnkiSettingsCard({
             </SettingsSectionTitle>
             <SettingsSectionDescription>用于中文数据库文章全文获取</SettingsSectionDescription>
           </div>
-          <Badge variant={getCnkiStatusVariant(cnkiSession)}>
-            {isCnkiSessionLoading ? '检查中' : getCnkiStatusLabel(cnkiSession)}
+          <Badge
+            variant={getCnkiStatusVariant(cnkiSession)}
+            aria-label={isCnkiSessionLoading ? '检查中' : getCnkiStatusLabel(cnkiSession)}
+          >
+            <MotionPresence mode="wait">
+              <MotionSpan
+                key={isCnkiSessionLoading ? 'loading' : (cnkiSession?.status ?? 'empty')}
+                aria-hidden="true"
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                variants={FADE_VARIANTS}
+                transition={feedbackTransition}
+              >
+                {isCnkiSessionLoading ? '检查中' : getCnkiStatusLabel(cnkiSession)}
+              </MotionSpan>
+            </MotionPresence>
           </Badge>
         </div>
       </SettingsSectionHeader>
@@ -282,79 +310,108 @@ export function CnkiSettingsCard({
           </p>
         )}
 
-        {cnkiMessage && (
-          <p
-            role={cnkiMessage.tone === 'error' ? 'alert' : 'status'}
-            className={getCnkiMessageClassName(cnkiMessage.tone)}
-          >
-            {cnkiMessage.text}
-          </p>
-        )}
+        <MotionPresence>
+          {cnkiMessage && (
+            <MotionParagraph
+              key="cnki-message"
+              data-motion-feedback="cnki"
+              role={cnkiMessage.tone === 'error' ? 'alert' : 'status'}
+              className={getCnkiMessageClassName(cnkiMessage.tone)}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={FADE_UP_VARIANTS}
+              transition={feedbackTransition}
+            >
+              {cnkiMessage.text}
+            </MotionParagraph>
+          )}
+        </MotionPresence>
 
-        {cnkiLogin && (
-          <div className="rounded-md border p-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              {isQrImageSource(cnkiLogin.qr_code) ? (
-                <div
-                  role="img"
-                  aria-label="浙江图书馆 CNKI 二维码"
-                  className="h-40 w-40 rounded-md border bg-white bg-contain bg-center bg-no-repeat p-2"
-                  style={{ backgroundImage: `url(${JSON.stringify(cnkiLogin.qr_code)})` }}
-                />
-              ) : (
-                <code className="max-h-40 flex-1 overflow-auto rounded bg-muted p-3 text-xs break-all">
-                  {cnkiLogin.qr_code}
-                </code>
-              )}
-              <div className="min-w-0 flex-1 space-y-3">
-                <div className="space-y-1 text-sm">
-                  <div className="font-medium">扫码登录</div>
-                  <div className="text-muted-foreground">
-                    状态：{cnkiLogin.status || '等待扫码'}
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => pollCnkiLoginMut.mutate()}
-                    disabled={pollCnkiLoginMut.isPending}
-                  >
-                    {pollCnkiLoginMut.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="h-4 w-4" />
-                    )}
-                    {pollCnkiLoginMut.isPending ? '确认并预热…' : '完成登录'}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label="复制 CNKI 登录二维码内容"
-                    onClick={() =>
-                      void handleCopy(cnkiLogin.qr_code, 'CNKI 登录二维码内容已复制。', 'cnkiQr')
-                    }
-                  >
-                    <Copy className="h-4 w-4" />
-                    复制
-                  </Button>
-                </div>
-                {copyFeedback?.scope === 'cnkiQr' && (
-                  <p
-                    role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-                    className={
-                      copyFeedback.tone === 'error'
-                        ? 'text-sm text-destructive'
-                        : 'text-sm text-muted-foreground'
-                    }
-                  >
-                    {copyFeedback.message}
-                  </p>
+        <MotionPresence>
+          {cnkiLogin && (
+            <MotionDiv
+              key="cnki-login"
+              data-motion-cnki-login="qr"
+              className="overflow-hidden rounded-md border p-3"
+              initial="hidden"
+              animate="visible"
+              exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+              variants={COLLAPSE_VARIANTS}
+              transition={panelTransition}
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                {isQrImageSource(cnkiLogin.qr_code) ? (
+                  <div
+                    role="img"
+                    aria-label="浙江图书馆 CNKI 二维码"
+                    className="h-40 w-40 rounded-md border bg-white bg-contain bg-center bg-no-repeat p-2"
+                    style={{ backgroundImage: `url(${JSON.stringify(cnkiLogin.qr_code)})` }}
+                  />
+                ) : (
+                  <code className="max-h-40 flex-1 overflow-auto rounded bg-muted p-3 text-xs break-all">
+                    {cnkiLogin.qr_code}
+                  </code>
                 )}
+                <div className="min-w-0 flex-1 space-y-3">
+                  <div className="space-y-1 text-sm">
+                    <div className="font-medium">扫码登录</div>
+                    <div className="text-muted-foreground">
+                      状态：{cnkiLogin.status || '等待扫码'}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => pollCnkiLoginMut.mutate()}
+                      disabled={pollCnkiLoginMut.isPending}
+                    >
+                      {pollCnkiLoginMut.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                      )}
+                      {pollCnkiLoginMut.isPending ? '确认并预热…' : '完成登录'}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label="复制 CNKI 登录二维码内容"
+                      onClick={() =>
+                        void handleCopy(cnkiLogin.qr_code, 'CNKI 登录二维码内容已复制。', 'cnkiQr')
+                      }
+                    >
+                      <Copy className="h-4 w-4" />
+                      复制
+                    </Button>
+                  </div>
+                  <MotionPresence>
+                    {copyFeedback?.scope === 'cnkiQr' && (
+                      <MotionParagraph
+                        key="cnki-copy-feedback"
+                        data-motion-feedback="cnki-copy"
+                        role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+                        className={
+                          copyFeedback.tone === 'error'
+                            ? 'text-sm text-destructive'
+                            : 'text-sm text-muted-foreground'
+                        }
+                        initial="hidden"
+                        animate="visible"
+                        exit="exit"
+                        variants={FADE_UP_VARIANTS}
+                        transition={feedbackTransition}
+                      >
+                        {copyFeedback.message}
+                      </MotionParagraph>
+                    )}
+                  </MotionPresence>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+            </MotionDiv>
+          )}
+        </MotionPresence>
 
         <div className="flex flex-wrap gap-2">
           <Button

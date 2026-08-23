@@ -17,6 +17,15 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
+import {
+  COLLAPSE_VARIANTS,
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionParagraph,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
   active: '可用',
@@ -59,6 +68,8 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
     tone: 'error' | 'success';
   } | null>(null);
   const [inviteCodeToRevoke, setInviteCodeToRevoke] = useState<AdminInviteCode | null>(null);
+  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
+  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const {
     data: inviteCodes = [],
     error: inviteCodesError,
@@ -153,89 +164,131 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
             {inviteCodesError.message}
           </p>
         )}
-        {createCodeMut.error instanceof Error && (
-          <p role="alert" className="text-sm text-destructive">
-            {createCodeMut.error.message}
-          </p>
-        )}
-        {copyFeedback && (
-          <p
-            role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-            className={
-              copyFeedback.tone === 'error'
-                ? 'text-sm text-destructive'
-                : 'text-sm text-muted-foreground'
-            }
-          >
-            {copyFeedback.message}
-          </p>
-        )}
-        <div className="space-y-3 md:hidden">
-          {inviteCodes.length === 0 ? (
-            <div className="rounded-lg border p-4 text-sm text-muted-foreground">暂无邀请码</div>
-          ) : (
-            inviteCodes.map((inviteCode) => (
-              <div key={inviteCode.id} className="content-visibility-card rounded-lg border p-4">
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 space-y-1">
-                      <div className="text-xs text-muted-foreground">邀请码</div>
-                      <code className="block break-all rounded bg-muted px-2 py-1 text-xs">
-                        {inviteCode.code}
-                      </code>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="shrink-0"
-                      disabled={inviteCode.status !== 'active'}
-                      onClick={() => void handleCopyInviteCode(inviteCode.code)}
-                    >
-                      <Copy className="h-4 w-4" />
-                      复制
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={inviteCode.status === 'active' ? 'default' : 'secondary'}>
-                      {INVITE_STATUS_LABELS[inviteCode.status]}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      已使用 {inviteCode.use_count}/{inviteCode.max_uses} 次
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 gap-2 text-sm">
-                    <div className="rounded-md bg-muted/40 px-3 py-2">
-                      <div className="text-xs text-muted-foreground">创建者</div>
-                      <div className="mt-1 break-all">{inviteCode.created_by_name ?? '系统'}</div>
-                    </div>
-                    <div className="rounded-md bg-muted/40 px-3 py-2">
-                      <div className="text-xs text-muted-foreground">首位使用者</div>
-                      <div className="mt-1 break-all">{inviteCode.used_by_name ?? '—'}</div>
-                    </div>
-                    <div className="rounded-md bg-muted/40 px-3 py-2">
-                      <div className="text-xs text-muted-foreground">有效期</div>
-                      <div className="mt-1">{formatDate(inviteCode.expires_at)}</div>
-                    </div>
-                  </div>
-                  {inviteCode.revoked_at === null && (
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      className="w-full"
-                      disabled={revokeCodeMut.isPending}
-                      onClick={() => {
-                        revokeCodeMut.reset();
-                        setInviteCodeToRevoke(inviteCode);
-                      }}
-                    >
-                      <Ban className="h-4 w-4" />
-                      撤销邀请码
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ))
+        <MotionPresence>
+          {createCodeMut.error instanceof Error && (
+            <MotionParagraph
+              key="invite-create-error"
+              data-motion-feedback="invite-create"
+              role="alert"
+              className="text-sm text-destructive"
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={FADE_UP_VARIANTS}
+              transition={feedbackTransition}
+            >
+              {createCodeMut.error.message}
+            </MotionParagraph>
           )}
+        </MotionPresence>
+        <MotionPresence>
+          {copyFeedback && (
+            <MotionParagraph
+              key="invite-copy-feedback"
+              data-motion-feedback="invite-copy"
+              role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+              className={
+                copyFeedback.tone === 'error'
+                  ? 'text-sm text-destructive'
+                  : 'text-sm text-muted-foreground'
+              }
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={FADE_UP_VARIANTS}
+              transition={feedbackTransition}
+            >
+              {copyFeedback.message}
+            </MotionParagraph>
+          )}
+        </MotionPresence>
+        <div className="space-y-3 md:hidden">
+          <MotionPresence>
+            {inviteCodes.length === 0 ? (
+              <MotionDiv
+                key="empty-invite-codes"
+                className="rounded-lg border p-4 text-sm text-muted-foreground"
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                variants={FADE_UP_VARIANTS}
+                transition={feedbackTransition}
+              >
+                暂无邀请码
+              </MotionDiv>
+            ) : (
+              inviteCodes.map((inviteCode) => (
+                <MotionDiv
+                  key={inviteCode.id}
+                  data-motion-invite-key={inviteCode.id}
+                  className="content-visibility-card overflow-hidden rounded-lg border p-4"
+                  initial="hidden"
+                  animate="visible"
+                  exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+                  variants={COLLAPSE_VARIANTS}
+                  transition={rowTransition}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-1">
+                        <div className="text-xs text-muted-foreground">邀请码</div>
+                        <code className="block break-all rounded bg-muted px-2 py-1 text-xs">
+                          {inviteCode.code}
+                        </code>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        disabled={inviteCode.status !== 'active'}
+                        onClick={() => void handleCopyInviteCode(inviteCode.code)}
+                      >
+                        <Copy className="h-4 w-4" />
+                        复制
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={inviteCode.status === 'active' ? 'default' : 'secondary'}>
+                        {INVITE_STATUS_LABELS[inviteCode.status]}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        已使用 {inviteCode.use_count}/{inviteCode.max_uses} 次
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 text-sm">
+                      <div className="rounded-md bg-muted/40 px-3 py-2">
+                        <div className="text-xs text-muted-foreground">创建者</div>
+                        <div className="mt-1 break-all">{inviteCode.created_by_name ?? '系统'}</div>
+                      </div>
+                      <div className="rounded-md bg-muted/40 px-3 py-2">
+                        <div className="text-xs text-muted-foreground">首位使用者</div>
+                        <div className="mt-1 break-all">{inviteCode.used_by_name ?? '—'}</div>
+                      </div>
+                      <div className="rounded-md bg-muted/40 px-3 py-2">
+                        <div className="text-xs text-muted-foreground">有效期</div>
+                        <div className="mt-1">{formatDate(inviteCode.expires_at)}</div>
+                      </div>
+                    </div>
+                    {inviteCode.revoked_at === null && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="w-full"
+                        disabled={revokeCodeMut.isPending}
+                        onClick={() => {
+                          revokeCodeMut.reset();
+                          setInviteCodeToRevoke(inviteCode);
+                        }}
+                      >
+                        <Ban className="h-4 w-4" />
+                        撤销邀请码
+                      </Button>
+                    )}
+                  </div>
+                </MotionDiv>
+              ))
+            )}
+          </MotionPresence>
         </div>
         <div className="hidden overflow-x-auto rounded-md border md:block">
           <table className="min-w-[64rem] w-full text-sm">

@@ -20,6 +20,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  MOTION_DURATION_SECONDS,
+  MotionPresence,
+  MotionSpan,
+  useMotionTransition,
+} from '@/components/ui/motion';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -45,6 +51,7 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
   const { backup, endpoints, primary, retryAttempts } = model.ai;
   const { directions, keywords } = model.preferences;
   const databaseSelection = model.databaseSelection;
+  const chipTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
 
   return (
     <SettingsSection>
@@ -73,24 +80,36 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
         <div className="space-y-2">
           <Label htmlFor="keyword-input">关键词</Label>
           <div className="flex min-h-[2rem] flex-wrap gap-1.5">
-            {keywords.items.map((keyword) => (
-              <Badge key={keyword} variant="secondary" className="gap-1 pr-1">
-                {keyword}
-                <button
-                  type="button"
-                  aria-label={`移除关键词 ${keyword}`}
-                  onClick={() =>
-                    model.updateSettings((current) => ({
-                      ...current,
-                      keywords: current.keywords.filter((item) => item !== keyword),
-                    }))
-                  }
-                  className="rounded-full p-0.5 hover:bg-muted"
+            <MotionPresence>
+              {keywords.items.map((keyword) => (
+                <MotionSpan
+                  key={keyword}
+                  className="inline-flex"
+                  data-motion-preference-chip={`keyword-${keyword}`}
+                  initial={{ opacity: 0, scale: 0.96 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, pointerEvents: 'none', scale: 0.96 }}
+                  transition={chipTransition}
                 >
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
-            ))}
+                  <Badge variant="secondary" className="gap-1 pr-1">
+                    {keyword}
+                    <button
+                      type="button"
+                      aria-label={`移除关键词 ${keyword}`}
+                      onClick={() =>
+                        model.updateSettings((current) => ({
+                          ...current,
+                          keywords: current.keywords.filter((item) => item !== keyword),
+                        }))
+                      }
+                      className="rounded-full p-0.5 hover:bg-muted"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                </MotionSpan>
+              ))}
+            </MotionPresence>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
@@ -126,24 +145,36 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
         <div className="space-y-2">
           <Label htmlFor="direction-input">研究方向</Label>
           <div className="flex min-h-[2rem] flex-wrap gap-1.5">
-            {directions.items.map((direction) => (
-              <Badge key={direction} variant="secondary" className="gap-1 pr-1">
-                {direction}
-                <button
-                  type="button"
-                  aria-label={`移除研究方向 ${direction}`}
-                  onClick={() =>
-                    model.updateSettings((current) => ({
-                      ...current,
-                      directions: current.directions.filter((item) => item !== direction),
-                    }))
-                  }
-                  className="rounded-full p-0.5 hover:bg-muted"
+            <MotionPresence>
+              {directions.items.map((direction) => (
+                <MotionSpan
+                  key={direction}
+                  className="inline-flex"
+                  data-motion-preference-chip={`direction-${direction}`}
+                  initial={{ opacity: 0, scale: 0.96 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, pointerEvents: 'none', scale: 0.96 }}
+                  transition={chipTransition}
                 >
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
-            ))}
+                  <Badge variant="secondary" className="gap-1 pr-1">
+                    {direction}
+                    <button
+                      type="button"
+                      aria-label={`移除研究方向 ${direction}`}
+                      onClick={() =>
+                        model.updateSettings((current) => ({
+                          ...current,
+                          directions: current.directions.filter((item) => item !== direction),
+                        }))
+                      }
+                      className="rounded-full p-0.5 hover:bg-muted"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                </MotionSpan>
+              ))}
+            </MotionPresence>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input

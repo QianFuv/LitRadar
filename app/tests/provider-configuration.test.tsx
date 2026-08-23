@@ -471,6 +471,33 @@ async function rendersRuntimeDescriptorParityAndCatalogMatrix(): Promise<void> {
 }
 
 /**
+ * Verify local pool rows retain stable identities while values and positions change.
+ */
+async function preservesRuntimePoolRowIdentity(): Promise<void> {
+  renderProviderConfiguration(allRuntimeSettingsFixture());
+  const user = userEvent.setup();
+
+  const firstInput = await screen.findByLabelText('MCP allowed hosts 1');
+  const secondInput = screen.getByLabelText('MCP allowed hosts 2');
+  const firstRow = firstInput.closest('[data-motion-runtime-input-row]');
+  const secondRow = secondInput.closest('[data-motion-runtime-input-row]');
+  expect(firstRow).not.toBeNull();
+  expect(secondRow).not.toBeNull();
+
+  fireEvent.change(firstInput, { target: { value: 'gateway.internal' } });
+  expect(
+    screen.getByLabelText('MCP allowed hosts 1').closest('[data-motion-runtime-input-row]'),
+  ).toBe(firstRow);
+
+  await user.click(screen.getByRole('button', { name: '删除MCP allowed hosts第 1 行' }));
+  await waitFor(() => expect(firstRow).not.toBeInTheDocument());
+  expect(screen.getByLabelText('MCP allowed hosts 1')).toHaveValue('127.0.0.1');
+  expect(
+    screen.getByLabelText('MCP allowed hosts 1').closest('[data-motion-runtime-input-row]'),
+  ).toBe(secondRow);
+}
+
+/**
  * Verify scalar secret metadata rejects unsafe shapes before reaching the component.
  */
 function rejectsInvalidScalarSecretMetadata(): void {
@@ -788,6 +815,7 @@ describe('Provider configuration', () => {
     rendersRuntimeDescriptorParityAndCatalogMatrix,
     20_000,
   );
+  test('preserves stable runtime pool row identities', preservesRuntimePoolRowIdentity, 10_000);
   test(
     'filters every Provider selector by declared capability',
     filtersProviderCandidatesByCapability,

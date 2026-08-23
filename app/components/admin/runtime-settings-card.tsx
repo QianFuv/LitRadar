@@ -20,6 +20,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  COLLAPSE_VARIANTS,
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionParagraph,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -211,6 +220,43 @@ type RuntimePoolEditorProps = {
   onChange: (value: string) => void;
 };
 
+type RuntimePoolRow = {
+  id: number;
+  value: string;
+};
+
+type RuntimePoolEditorState = {
+  nextRowId: number;
+  rows: RuntimePoolRow[];
+  sourceValue: string;
+};
+
+/**
+ * Build editable pool rows with stable local identities.
+ *
+ * @param value - Serialized external pool value.
+ * @param firstRowId - First identity available for the rebuilt rows.
+ * @returns Local row state synchronized to the external value.
+ */
+function buildRuntimePoolEditorState(value: string, firstRowId = 0): RuntimePoolEditorState {
+  const values = splitPoolValue(value);
+  return {
+    nextRowId: firstRowId + values.length,
+    rows: values.map((rowValue, index) => ({ id: firstRowId + index, value: rowValue })),
+    sourceValue: value,
+  };
+}
+
+/**
+ * Serialize editable pool rows for the runtime settings API.
+ *
+ * @param rows - Stable editable pool rows.
+ * @returns Newline-delimited pool value.
+ */
+function serializeRuntimePoolRows(rows: RuntimePoolRow[]): string {
+  return rows.map((row) => row.value).join('\n');
+}
+
 /**
  * Render a line-based editor for runtime pool values.
  *
@@ -226,54 +272,97 @@ function RuntimePoolEditor({
   disabled = false,
   onChange,
 }: RuntimePoolEditorProps) {
-  const rows = splitPoolValue(value);
+  const [editorState, setEditorState] = useState<RuntimePoolEditorState>(() =>
+    buildRuntimePoolEditorState(value),
+  );
+  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const poolInputType = getPoolInputType(inputType);
   const shouldDisableSpellCheck = shouldDisableRuntimeSpellCheck(field, inputType);
 
+  if (value !== editorState.sourceValue) {
+    const localValue = serializeRuntimePoolRows(editorState.rows);
+    setEditorState(
+      value === localValue
+        ? { ...editorState, sourceValue: value }
+        : buildRuntimePoolEditorState(value, editorState.nextRowId),
+    );
+  }
+
   const updateRow = (index: number, nextValue: string) => {
-    const nextRows = [...rows];
-    nextRows[index] = nextValue;
-    onChange(nextRows.join('\n'));
+    const nextRows = editorState.rows.map((row, rowIndex) =>
+      rowIndex === index ? { ...row, value: nextValue } : row,
+    );
+    const serializedValue = serializeRuntimePoolRows(nextRows);
+    setEditorState({ ...editorState, rows: nextRows, sourceValue: serializedValue });
+    onChange(serializedValue);
   };
 
   const addRow = () => {
-    onChange([...rows, ''].join('\n'));
+    const nextRows = [...editorState.rows, { id: editorState.nextRowId, value: '' }];
+    const serializedValue = serializeRuntimePoolRows(nextRows);
+    setEditorState({
+      nextRowId: editorState.nextRowId + 1,
+      rows: nextRows,
+      sourceValue: serializedValue,
+    });
+    onChange(serializedValue);
   };
 
   const deleteRow = (index: number) => {
-    const nextRows = rows.filter((_, rowIndex) => rowIndex !== index);
-    onChange(nextRows.length > 0 ? nextRows.join('\n') : '');
+    const retainedRows = editorState.rows.filter((_, rowIndex) => rowIndex !== index);
+    const nextRows =
+      retainedRows.length > 0
+        ? retainedRows
+        : [{ id: editorState.nextRowId, value: '' } satisfies RuntimePoolRow];
+    const serializedValue = serializeRuntimePoolRows(nextRows);
+    setEditorState({
+      nextRowId: retainedRows.length > 0 ? editorState.nextRowId : editorState.nextRowId + 1,
+      rows: nextRows,
+      sourceValue: serializedValue,
+    });
+    onChange(serializedValue);
   };
 
   return (
     <div className="space-y-2">
-      {rows.map((row, index) => (
-        <div key={`${index}-${rows.length}`} className="flex items-center gap-2">
-          <Input
-            id={index === 0 ? id : undefined}
-            name={`runtime_${field}_${index + 1}`}
-            type={poolInputType}
-            autoComplete="off"
-            inputMode={isUrlSetting(field) ? 'url' : undefined}
-            spellCheck={shouldDisableSpellCheck ? false : undefined}
-            value={row}
-            disabled={disabled}
-            onChange={(event) => updateRow(index, event.target.value)}
-            aria-label={`${label} ${index + 1}`}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 text-destructive hover:text-destructive"
-            disabled={disabled}
-            aria-label={`删除${label}第 ${index + 1} 行`}
-            onClick={() => deleteRow(index)}
+      <MotionPresence>
+        {editorState.rows.map((row, index) => (
+          <MotionDiv
+            key={`${field}-${row.id}`}
+            data-motion-runtime-input-row={`${field}-${row.id}`}
+            className="flex items-center gap-2 overflow-hidden"
+            initial="hidden"
+            animate="visible"
+            exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+            variants={COLLAPSE_VARIANTS}
+            transition={rowTransition}
           >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      ))}
+            <Input
+              id={index === 0 ? id : undefined}
+              name={`runtime_${field}_${index + 1}`}
+              type={poolInputType}
+              autoComplete="off"
+              inputMode={isUrlSetting(field) ? 'url' : undefined}
+              spellCheck={shouldDisableSpellCheck ? false : undefined}
+              value={row.value}
+              disabled={disabled}
+              onChange={(event) => updateRow(index, event.target.value)}
+              aria-label={`${label} ${index + 1}`}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 text-destructive hover:text-destructive"
+              disabled={disabled}
+              aria-label={`删除${label}第 ${index + 1} 行`}
+              onClick={() => deleteRow(index)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </MotionDiv>
+        ))}
+      </MotionPresence>
       <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={addRow}>
         <Plus className="mr-2 h-4 w-4" />
         添加
@@ -305,54 +394,74 @@ function RuntimeSecretPoolEditor({
   onChange,
   onToggleRemoval,
 }: RuntimeSecretPoolEditorProps) {
+  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
+
   return (
     <div className="space-y-3">
       <div className="space-y-2">
-        {setting.secret_items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">尚未保存密钥</p>
-        ) : (
-          setting.secret_items.map((item, index) => {
-            const isPendingRemoval = isCleared || removedReferences.has(item.reference);
-            return (
-              <div
-                key={item.reference}
-                className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2 ${
-                  isPendingRemoval ? 'bg-muted/50 text-muted-foreground' : ''
-                }`}
-              >
-                <span
-                  className={
-                    isPendingRemoval ? 'font-mono text-sm line-through' : 'font-mono text-sm'
-                  }
+        <MotionPresence>
+          {setting.secret_items.length === 0 ? (
+            <MotionParagraph
+              key="empty-secret-pool"
+              className="text-sm text-muted-foreground"
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={FADE_UP_VARIANTS}
+              transition={rowTransition}
+            >
+              尚未保存密钥
+            </MotionParagraph>
+          ) : (
+            setting.secret_items.map((item, index) => {
+              const isPendingRemoval = isCleared || removedReferences.has(item.reference);
+              return (
+                <MotionDiv
+                  key={item.reference}
+                  data-motion-runtime-secret-row={item.reference}
+                  className={`flex items-center justify-between gap-3 overflow-hidden rounded-md border px-3 py-2 ${
+                    isPendingRemoval ? 'bg-muted/50 text-muted-foreground' : ''
+                  }`}
+                  initial="hidden"
+                  animate="visible"
+                  exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+                  variants={COLLAPSE_VARIANTS}
+                  transition={rowTransition}
                 >
-                  {item.masked_value}
-                </span>
-                <div className="flex items-center gap-2">
-                  {isPendingRemoval && <Badge variant="outline">保存后删除</Badge>}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={isCleared}
-                    className="text-destructive hover:text-destructive"
-                    aria-label={
-                      removedReferences.has(item.reference)
-                        ? `撤销删除${setting.label}第 ${index + 1} 个密钥`
-                        : `删除${setting.label}第 ${index + 1} 个密钥`
+                  <span
+                    className={
+                      isPendingRemoval ? 'font-mono text-sm line-through' : 'font-mono text-sm'
                     }
-                    onClick={() => onToggleRemoval(item.reference)}
                   >
-                    {removedReferences.has(item.reference) ? (
-                      '撤销删除'
-                    ) : (
-                      <Trash2 className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-            );
-          })
-        )}
+                    {item.masked_value}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {isPendingRemoval && <Badge variant="outline">保存后删除</Badge>}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={isCleared}
+                      className="text-destructive hover:text-destructive"
+                      aria-label={
+                        removedReferences.has(item.reference)
+                          ? `撤销删除${setting.label}第 ${index + 1} 个密钥`
+                          : `删除${setting.label}第 ${index + 1} 个密钥`
+                      }
+                      onClick={() => onToggleRemoval(item.reference)}
+                    >
+                      {removedReferences.has(item.reference) ? (
+                        '撤销删除'
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </MotionDiv>
+              );
+            })
+          )}
+        </MotionPresence>
       </div>
       <div className="space-y-2">
         <span className="text-xs text-muted-foreground">添加新密钥</span>
@@ -383,6 +492,7 @@ export function RuntimeSettingsCard() {
   const [secretPoolAdditions, setSecretPoolAdditions] = useState<RuntimeSettingsForm>({});
   const [secretPoolRemovals, setSecretPoolRemovals] = useState<RuntimeSecretPoolRemovals>({});
   const [saveFeedback, setSaveFeedback] = useState('');
+  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
 
   const {
     data: settings = EMPTY_RUNTIME_SETTINGS,
@@ -696,16 +806,23 @@ export function RuntimeSettingsCard() {
               ) : null)}
           </div>
         )}
-        {mutationError && (
-          <p role="alert" className="text-sm text-destructive">
-            {mutationError}
-          </p>
-        )}
-        {saveFeedback && (
-          <p role="status" className="text-sm text-foreground">
-            {saveFeedback}
-          </p>
-        )}
+        <MotionPresence>
+          {(mutationError || saveFeedback) && (
+            <MotionParagraph
+              key="runtime-feedback"
+              data-motion-feedback="runtime-settings"
+              role={mutationError ? 'alert' : 'status'}
+              className={mutationError ? 'text-sm text-destructive' : 'text-sm text-foreground'}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={FADE_UP_VARIANTS}
+              transition={feedbackTransition}
+            >
+              {mutationError || saveFeedback}
+            </MotionParagraph>
+          )}
+        </MotionPresence>
         <div className="flex justify-end">
           <Button
             disabled={

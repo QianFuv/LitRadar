@@ -46,6 +46,39 @@ async function rendersAdministratorCards(): Promise<void> {
 }
 
 /**
+ * Verify only compact mobile invite cards receive list presence markers.
+ */
+async function marksOnlyMobileInviteCardsForPresence(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/admin/invite-codes', () =>
+      HttpResponse.json([
+        {
+          id: 41,
+          code: 'INVITE-41',
+          created_by: 1,
+          created_by_name: 'admin',
+          used_by: null,
+          used_by_name: null,
+          used_at: null,
+          status: 'active',
+          expires_at: 2_200_000_000,
+          revoked_at: null,
+          max_uses: 1,
+          use_count: 0,
+          created_at: 1,
+        },
+      ]),
+    ),
+  );
+
+  renderWithQuery(<AdminInviteCodesCard isEnabled />);
+
+  expect(await screen.findByText('INVITE-41')).toBeInTheDocument();
+  expect(document.querySelector('[data-motion-invite-key="41"]')).not.toBeNull();
+  expect(document.querySelector('table [data-motion-invite-key]')).toBeNull();
+}
+
+/**
  * Verify aggregated settings sections retain independent query boundaries and flat containers.
  */
 async function rendersSettingsCards(): Promise<void> {
@@ -116,6 +149,8 @@ async function confirmsAccessTokenRevocation(): Promise<void> {
   const revokeButton = await screen.findByRole('button', {
     name: '撤销访问令牌 automation',
   });
+  const tokenRow = revokeButton.closest('[data-motion-token-key="9"]');
+  expect(tokenRow).not.toBeNull();
   await user.click(revokeButton);
   expect(revokeRequestCount).toBe(0);
   expect(screen.getByRole('alertdialog', { name: '撤销访问令牌？' })).toHaveTextContent(
@@ -125,6 +160,7 @@ async function confirmsAccessTokenRevocation(): Promise<void> {
   await user.click(screen.getByRole('button', { name: '确认撤销' }));
   await waitFor(() => expect(revokeRequestCount).toBe(1));
   expect(await screen.findByText('暂无访问令牌')).toBeInTheDocument();
+  await waitFor(() => expect(document.querySelector('[data-motion-token-key="9"]')).toBeNull());
 }
 
 /**
@@ -170,7 +206,7 @@ async function confirmsCnkiSessionClear(): Promise<void> {
 
   await user.click(screen.getByRole('button', { name: '确认清除' }));
   await waitFor(() => expect(clearRequestCount).toBe(1));
-  expect(await screen.findByText('登录状态已清除')).toBeInTheDocument();
+  expect(await screen.findByText('登录状态已清除')).toHaveAttribute('data-motion-feedback', 'cnki');
 }
 
 /**
@@ -320,6 +356,7 @@ async function rendersPasswordCard(): Promise<void> {
 
 describe('settings and administrator feature boundaries', () => {
   test('renders administrator user and invite cards', rendersAdministratorCards);
+  test('limits invite presence to compact mobile cards', marksOnlyMobileInviteCardsForPresence);
   test('renders flat account, CNKI, invite, and token sections', rendersSettingsCards);
   test('confirms access-token revocation before mutation', confirmsAccessTokenRevocation);
   test('confirms CNKI session clearing before mutation', confirmsCnkiSessionClear);
