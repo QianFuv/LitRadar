@@ -5,7 +5,7 @@
 
 use std::error::Error;
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
@@ -15,6 +15,7 @@ use reqwest::redirect::Policy;
 use serde_json::Value;
 
 use crate::provider_proxy::ProviderProxy;
+use crate::request_deadline;
 use crate::response_body::{bounded_response_json, ResponseBodyError};
 
 /// Official jfbym dual-image slider type used for CNKI `blockPuzzle`.
@@ -139,6 +140,8 @@ impl JfbymSolver for FixtureJfbymSolver {
 pub struct LiveJfbymSolver {
     token: String,
     client: Client,
+    request_timeout: Duration,
+    deadline: Option<Instant>,
     api_url: String,
     type_code: String,
 }
@@ -186,16 +189,38 @@ impl LiveJfbymSolver {
         timeout_seconds: u64,
         provider_proxy: ProviderProxy,
     ) -> Result<Self, JfbymError> {
+        Self::new_with_proxy_and_deadline(token, timeout_seconds, provider_proxy, None)
+    }
+
+    /// Build a live jfbym solver with a managed proxy and shared request deadline.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - jfbym API token.
+    /// * `timeout_seconds` - HTTP timeout.
+    /// * `provider_proxy` - Direct or explicit domestic CNKI proxy decision.
+    /// * `deadline` - Optional monotonic article-access deadline.
+    ///
+    /// # Returns
+    ///
+    /// Live solver, or a configuration error when the token is empty.
+    pub fn new_with_proxy_and_deadline(
+        token: impl Into<String>,
+        timeout_seconds: u64,
+        provider_proxy: ProviderProxy,
+        deadline: Option<Instant>,
+    ) -> Result<Self, JfbymError> {
         let token = token.into();
         if token.trim().is_empty() {
             return Err(JfbymError::Configuration(
                 "jfbym token is required".to_string(),
             ));
         }
+        let request_timeout = Duration::from_secs(timeout_seconds.max(1));
         let client = provider_proxy
             .apply(
                 Client::builder()
-                    .timeout(Duration::from_secs(timeout_seconds.max(1)))
+                    .timeout(request_timeout)
                     .redirect(Policy::none()),
             )
             .map_err(|error| JfbymError::Request(error.to_string()))?
@@ -204,6 +229,8 @@ impl LiveJfbymSolver {
         Ok(Self {
             token,
             client,
+            request_timeout,
+            deadline,
             api_url: JFBYM_API_URL.to_string(),
             type_code: JFBYM_DUAL_SLIDER_TYPE.to_string(),
         })
@@ -217,6 +244,7 @@ impl JfbymSolver for LiveJfbymSolver {
         slide_image_b64: &str,
         background_image_b64: &str,
     ) -> Result<f64, JfbymError> {
+        request_deadline::ensure_deadline(self.deadline).map_err(deadline_jfbym_error)?;
         let slide_image = strip_data_url_base64(slide_image_b64);
         let background_image = strip_data_url_base64(background_image_b64);
         if slide_image.is_empty() || background_image.is_empty() {
@@ -230,9 +258,12 @@ impl JfbymSolver for LiveJfbymSolver {
             "slide_image": slide_image,
             "background_image": background_image,
         });
+        let timeout = request_deadline::request_timeout(self.request_timeout, self.deadline)
+            .map_err(deadline_jfbym_error)?;
         let response = self
             .client
             .post(&self.api_url)
+            .timeout(timeout)
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
@@ -270,6 +301,10 @@ impl JfbymSolver for LiveJfbymSolver {
         }
         parse_slider_distance(&body)
     }
+}
+
+fn deadline_jfbym_error(error: request_deadline::RequestDeadlineError) -> JfbymError {
+    JfbymError::Request(error.to_string())
 }
 
 /// Strip an optional `data:` URL prefix from a base64 image payload.
@@ -507,6 +542,26 @@ mod tests {
         let debug = format!("{solver:?}");
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("super-secret-token"));
+    }
+
+    #[test]
+    fn live_solver_rejects_expired_deadline_before_requesting() {
+        let deadline = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("test deadline should subtract");
+        let mut solver = LiveJfbymSolver::new_with_proxy_and_deadline(
+            "super-secret-token",
+            10,
+            ProviderProxy::direct(),
+            Some(deadline),
+        )
+        .expect("deadline-aware solver should build");
+
+        let error = solver
+            .solve_dual_image("slide", "background")
+            .expect_err("expired deadline should reject the solve");
+
+        assert!(error.to_string().contains("deadline expired"));
     }
 
     #[test]

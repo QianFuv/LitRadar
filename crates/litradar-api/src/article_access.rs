@@ -3,7 +3,7 @@
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
 use litradar_domain::{
@@ -34,6 +34,7 @@ use serde_json::json;
 use crate::response::ApiError;
 use crate::state::{ApiState, BlockingTaskError};
 
+const ARTICLE_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
 const ARTICLE_ACTION_QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
 const ARTICLE_TRANSPORT_TIMEOUT_SECONDS: u64 = 30;
 #[cfg(test)]
@@ -73,6 +74,11 @@ impl ProviderChainFailures {
     fn record_invalid_response(&mut self, provider: &str, action: &str) {
         self.record(ProviderChainFailureKind::BadGateway);
         log_fallback(provider, action, "invalid_response");
+    }
+
+    fn record_deadline_expired(&mut self, provider: &str, action: &str) {
+        self.record(ProviderChainFailureKind::Retryable);
+        log_fallback(provider, action, "deadline_expired");
     }
 
     fn record_blocking_error(
@@ -244,10 +250,28 @@ pub(crate) async fn resolve_article_abstract(
     user_id: UserId,
     catalog_stem: &str,
 ) -> Result<ArticleRedirect, ApiError> {
+    resolve_article_abstract_until(
+        state,
+        article,
+        user_id,
+        catalog_stem,
+        Instant::now() + ARTICLE_ACTION_TIMEOUT,
+    )
+    .await
+}
+
+async fn resolve_article_abstract_until(
+    state: &ApiState,
+    article: ArticleLocator,
+    user_id: UserId,
+    catalog_stem: &str,
+    deadline: Instant,
+) -> Result<ArticleRedirect, ApiError> {
     validate_article_locator(&article).map_err(|_| ApiError::internal_server_error())?;
     let orders = load_provider_orders(state).await?;
     let context = ArticleAccessContext {
         user_id: Some(user_id),
+        deadline: Some(deadline),
     };
     let mut failures = ProviderChainFailures::default();
     for name in provider_order_for_catalog(&orders.abstract_page, catalog_stem) {
@@ -269,21 +293,35 @@ pub(crate) async fn resolve_article_abstract(
             continue;
         }
         let provider_name = name.to_string();
+        let Some(queue_timeout) = article_action_remaining(deadline) else {
+            failures.record_deadline_expired(&provider_name, "abstract");
+            break;
+        };
         let request_article = article.clone();
         let result = state
-            .run_blocking_with_queue_timeout(ARTICLE_ACTION_QUEUE_TIMEOUT, move || {
-                provider.resolve_abstract(&request_article, context)
-            })
+            .run_blocking_with_queue_timeout(
+                ARTICLE_ACTION_QUEUE_TIMEOUT.min(queue_timeout),
+                move || provider.resolve_abstract(&request_article, context),
+            )
             .await;
         let result = match result {
             Ok(result) => result,
             Err(error) => {
-                if failures.record_blocking_error(&provider_name, "abstract", error) {
+                if failures.record_blocking_error(&provider_name, "abstract", error)
+                    && article_action_remaining(deadline).is_some()
+                {
                     continue;
                 }
                 break;
             }
         };
+        if article_action_remaining(deadline).is_none() {
+            if let Err(error) = &result {
+                failures.record_provider_error(&provider_name, "abstract", error.kind());
+            }
+            failures.record_deadline_expired(&provider_name, "abstract");
+            break;
+        }
         match result {
             Ok(redirect)
                 if validate_article_redirect(&redirect).is_ok()
@@ -318,10 +356,28 @@ pub(crate) async fn resolve_article_full_text(
     user_id: UserId,
     catalog_stem: &str,
 ) -> Result<ArticleFullTextResolution, ApiError> {
+    resolve_article_full_text_until(
+        state,
+        article,
+        user_id,
+        catalog_stem,
+        Instant::now() + ARTICLE_ACTION_TIMEOUT,
+    )
+    .await
+}
+
+async fn resolve_article_full_text_until(
+    state: &ApiState,
+    article: ArticleLocator,
+    user_id: UserId,
+    catalog_stem: &str,
+    deadline: Instant,
+) -> Result<ArticleFullTextResolution, ApiError> {
     validate_article_locator(&article).map_err(|_| ApiError::internal_server_error())?;
     let orders = load_provider_orders(state).await?;
     let context = ArticleAccessContext {
         user_id: Some(user_id),
+        deadline: Some(deadline),
     };
     let mut failures = ProviderChainFailures::default();
     for name in provider_order_for_catalog(&orders.full_text, catalog_stem) {
@@ -343,21 +399,35 @@ pub(crate) async fn resolve_article_full_text(
             continue;
         }
         let provider_name = name.to_string();
+        let Some(queue_timeout) = article_action_remaining(deadline) else {
+            failures.record_deadline_expired(&provider_name, "fulltext");
+            break;
+        };
         let request_article = article.clone();
         let result = state
-            .run_blocking_with_queue_timeout(ARTICLE_ACTION_QUEUE_TIMEOUT, move || {
-                provider.resolve_full_text(&request_article, context)
-            })
+            .run_blocking_with_queue_timeout(
+                ARTICLE_ACTION_QUEUE_TIMEOUT.min(queue_timeout),
+                move || provider.resolve_full_text(&request_article, context),
+            )
             .await;
         let result = match result {
             Ok(result) => result,
             Err(error) => {
-                if failures.record_blocking_error(&provider_name, "fulltext", error) {
+                if failures.record_blocking_error(&provider_name, "fulltext", error)
+                    && article_action_remaining(deadline).is_some()
+                {
                     continue;
                 }
                 break;
             }
         };
+        if article_action_remaining(deadline).is_none() {
+            if let Err(error) = &result {
+                failures.record_provider_error(&provider_name, "fulltext", error.kind());
+            }
+            failures.record_deadline_expired(&provider_name, "fulltext");
+            break;
+        }
         match result {
             Ok(resolution)
                 if validate_full_text_resolution(&resolution, DEFAULT_FULL_TEXT_MAXIMUM_BYTES)
@@ -373,6 +443,12 @@ pub(crate) async fn resolve_article_full_text(
         }
     }
     Err(failures.into_api_error("fulltext", "Article full text is unavailable"))
+}
+
+fn article_action_remaining(deadline: Instant) -> Option<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
 }
 
 #[derive(Debug, Clone, Default)]
@@ -545,14 +621,17 @@ impl LiveCnkiAccessProvider {
         article: &ArticleLocator,
         context: ArticleAccessContext,
     ) -> Result<ArticleRedirect, ProviderError> {
-        let transport =
-            LiveCnkiTransport::new_with_proxy(self.config.clone(), self.provider_proxy.clone())
-                .map_err(|_| {
-                    ProviderError::new(
-                        ProviderErrorKind::TemporarilyUnavailable,
-                        "CNKI transport is unavailable",
-                    )
-                })?;
+        let transport = LiveCnkiTransport::new_with_proxy_and_deadline(
+            self.config.clone(),
+            self.provider_proxy.clone(),
+            context.deadline,
+        )
+        .map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::TemporarilyUnavailable,
+                "CNKI transport is unavailable",
+            )
+        })?;
         CnkiArticleAccessProvider::new(transport).resolve_abstract(article, context)
     }
 }
@@ -610,9 +689,10 @@ impl LiveDomesticCnkiAccessProvider {
         article: &ArticleLocator,
         context: ArticleAccessContext,
     ) -> Result<ArticleRedirect, ProviderError> {
-        let transport = LiveDomesticCnkiTransport::new_with_proxy(
+        let transport = LiveDomesticCnkiTransport::new_with_proxy_and_deadline(
             self.config.clone(),
             self.provider_proxy.clone(),
+            context.deadline,
         )
         .map_err(|_| {
             ProviderError::new(
@@ -722,9 +802,13 @@ impl ArticleFullTextProvider for ZjlibCnkiFullTextProvider {
             authors: article.authors.join("; "),
             journal_title: article.journal_title.clone(),
         };
-        let downloaded =
-            download_zjlib_full_text(expected, session.session_data, self.provider_proxy.clone())
-                .map_err(map_zjlib_provider_error)?;
+        let downloaded = download_zjlib_full_text(
+            expected,
+            session.session_data,
+            self.provider_proxy.clone(),
+            context.deadline,
+        )
+        .map_err(map_zjlib_provider_error)?;
         Ok(ArticleFullTextResolution::Document(
             ArticleFullTextDocument {
                 content_type: downloaded.content_type.to_ascii_lowercase(),
@@ -739,6 +823,7 @@ fn download_zjlib_full_text(
     expected: ZjlibCnkiArticleIdentity,
     session_data: serde_json::Value,
     provider_proxy: ProviderProxy,
+    deadline: Option<Instant>,
 ) -> Result<ZjlibCnkiDownloadedPdf, ZjlibCnkiError> {
     #[cfg(test)]
     if let Some(mode) = full_text_fixture_mode()
@@ -746,23 +831,36 @@ fn download_zjlib_full_text(
         .expect("full-text fixture mode lock should not be poisoned")
         .clone()
     {
+        ensure_zjlib_deadline(deadline)?;
         let mut client = ZhejiangLibraryCnkiClient::from_state_data(
             FixtureZjlibCnkiTransport::new(mode),
             &session_data,
         );
         client.warm_up_fulltext_session()?;
+        ensure_zjlib_deadline(deadline)?;
         return client.download_matching_pdf(&expected, 10);
     }
-    let transport = LiveZjlibCnkiTransport::new_with_proxy(
+    let transport = LiveZjlibCnkiTransport::new_with_proxy_and_deadline(
         LiveZjlibCnkiConfig {
             timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
             ..LiveZjlibCnkiConfig::default()
         },
         provider_proxy,
+        deadline,
     )?;
     let mut client = ZhejiangLibraryCnkiClient::from_state_data(transport, &session_data);
     client.warm_up_fulltext_session()?;
     client.download_matching_pdf(&expected, 10)
+}
+
+#[cfg(test)]
+fn ensure_zjlib_deadline(deadline: Option<Instant>) -> Result<(), ZjlibCnkiError> {
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        return Err(ZjlibCnkiError::Request(
+            "article access deadline expired".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn map_zjlib_provider_error(error: ZjlibCnkiError) -> ProviderError {
@@ -862,6 +960,7 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use axum::http::header::RETRY_AFTER;
     use axum::response::IntoResponse;
@@ -945,6 +1044,46 @@ mod tests {
                     bytes: b"%PDF-fixture".to_vec(),
                 },
             ))
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum DeadlineFixtureOutcome {
+        Error(ProviderErrorKind),
+        Redirect(&'static str),
+    }
+
+    struct DeadlineFixtureProvider {
+        delay: Duration,
+        call_count: Arc<AtomicUsize>,
+        observed_deadlines: Arc<Mutex<Vec<Option<Instant>>>>,
+        outcome: DeadlineFixtureOutcome,
+    }
+
+    impl ArticleAbstractProvider for DeadlineFixtureProvider {
+        fn supports_abstract(&self, _article: &ArticleLocator) -> bool {
+            true
+        }
+
+        fn resolve_abstract(
+            &self,
+            _article: &ArticleLocator,
+            context: ArticleAccessContext,
+        ) -> Result<ArticleRedirect, ProviderError> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            self.observed_deadlines
+                .lock()
+                .expect("deadline observations should lock")
+                .push(context.deadline);
+            std::thread::sleep(self.delay);
+            match self.outcome {
+                DeadlineFixtureOutcome::Error(kind) => {
+                    Err(ProviderError::new(kind, "deadline fixture failure"))
+                }
+                DeadlineFixtureOutcome::Redirect(location) => Ok(ArticleRedirect {
+                    location: location.to_string(),
+                }),
+            }
         }
     }
 
@@ -1083,6 +1222,27 @@ mod tests {
             },
         )
         .expect("full-text fixture registration should be valid")
+    }
+
+    fn deadline_abstract_registration(
+        name: &str,
+        provider: DeadlineFixtureProvider,
+    ) -> ProviderRegistration {
+        ProviderRegistration::try_new(
+            ProviderDescriptor {
+                name: name.to_string(),
+                capabilities: ProviderCapabilities {
+                    article_abstract: true,
+                    ..ProviderCapabilities::default()
+                },
+                allowed_redirect_hosts: vec!["doi.org".to_string()],
+            },
+            ProviderImplementations {
+                article_abstract: Some(Arc::new(provider)),
+                ..ProviderImplementations::default()
+            },
+        )
+        .expect("deadline abstract fixture registration should be valid")
     }
 
     fn test_state(
@@ -1263,6 +1423,133 @@ mod tests {
                 .into_response();
             assert_eq!(response.status(), expected_status);
         }
+    }
+
+    #[tokio::test]
+    async fn fallback_providers_observe_one_shared_deadline() {
+        let observed_deadlines = Arc::new(Mutex::new(Vec::new()));
+        let first_calls = Arc::new(AtomicUsize::new(0));
+        let second_calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = ProviderRegistry::default();
+        registry
+            .register(deadline_abstract_registration(
+                "first",
+                DeadlineFixtureProvider {
+                    delay: Duration::ZERO,
+                    call_count: Arc::clone(&first_calls),
+                    observed_deadlines: Arc::clone(&observed_deadlines),
+                    outcome: DeadlineFixtureOutcome::Error(ProviderErrorKind::NotFound),
+                },
+            ))
+            .expect("first deadline fixture should register");
+        registry
+            .register(deadline_abstract_registration(
+                "second",
+                DeadlineFixtureProvider {
+                    delay: Duration::ZERO,
+                    call_count: Arc::clone(&second_calls),
+                    observed_deadlines: Arc::clone(&observed_deadlines),
+                    outcome: DeadlineFixtureOutcome::Redirect(
+                        "https://doi.org/10.1000/deadline-fallback",
+                    ),
+                },
+            ))
+            .expect("second deadline fixture should register");
+        let (_directory, state) = test_state(registry, None);
+        set_abstract_order(&state, &["first", "second"]);
+        let deadline = Instant::now() + Duration::from_secs(1);
+
+        let redirect = resolve_article_abstract_until(
+            &state,
+            article_locator(),
+            UserId(1),
+            "fixture",
+            deadline,
+        )
+        .await
+        .expect("fallback should resolve inside the shared deadline");
+
+        assert_eq!(
+            redirect.location,
+            "https://doi.org/10.1000/deadline-fallback"
+        );
+        assert_eq!(first_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *observed_deadlines
+                .lock()
+                .expect("deadline observations should lock"),
+            [Some(deadline), Some(deadline)]
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_deadline_waits_for_started_work_and_skips_later_provider() {
+        let observed_deadlines = Arc::new(Mutex::new(Vec::new()));
+        let first_calls = Arc::new(AtomicUsize::new(0));
+        let second_calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = ProviderRegistry::default();
+        registry
+            .register(deadline_abstract_registration(
+                "slow",
+                DeadlineFixtureProvider {
+                    delay: Duration::from_millis(350),
+                    call_count: Arc::clone(&first_calls),
+                    observed_deadlines: Arc::clone(&observed_deadlines),
+                    outcome: DeadlineFixtureOutcome::Error(
+                        ProviderErrorKind::TemporarilyUnavailable,
+                    ),
+                },
+            ))
+            .expect("slow deadline fixture should register");
+        registry
+            .register(deadline_abstract_registration(
+                "later",
+                DeadlineFixtureProvider {
+                    delay: Duration::ZERO,
+                    call_count: Arc::clone(&second_calls),
+                    observed_deadlines: Arc::clone(&observed_deadlines),
+                    outcome: DeadlineFixtureOutcome::Redirect(
+                        "https://doi.org/10.1000/must-not-run",
+                    ),
+                },
+            ))
+            .expect("later deadline fixture should register");
+        let (_directory, state) = test_state(registry, None);
+        set_abstract_order(&state, &["slow", "later"]);
+        let started_at = Instant::now();
+        let deadline = started_at + Duration::from_millis(250);
+
+        let error = resolve_article_abstract_until(
+            &state,
+            article_locator(),
+            UserId(1),
+            "fixture",
+            deadline,
+        )
+        .await
+        .expect_err("expired chain should return a retryable failure");
+        let elapsed = started_at.elapsed();
+        let response = error.into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response
+                .headers()
+                .get(RETRY_AFTER)
+                .expect("deadline failure should include Retry-After"),
+            "5"
+        );
+        assert_eq!(first_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second_calls.load(Ordering::SeqCst), 0);
+        assert!(elapsed >= Duration::from_millis(300));
+        assert!(elapsed < Duration::from_secs(2));
+        assert_eq!(
+            *observed_deadlines
+                .lock()
+                .expect("deadline observations should lock"),
+            [Some(deadline)]
+        );
     }
 
     #[tokio::test]

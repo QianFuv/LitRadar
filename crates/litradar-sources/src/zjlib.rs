@@ -5,7 +5,6 @@ use std::error::Error;
 use std::fmt;
 use std::io::Read;
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::{Client, Response};
@@ -19,6 +18,7 @@ use reqwest::Url;
 use serde_json::{json, Value};
 
 use crate::provider_proxy::ProviderProxy;
+use crate::request_deadline;
 use crate::response_body::{bounded_response_json, bounded_response_text, ResponseBodyError};
 
 const WWW_BASE_URL: &str = "https://www.zjlib.cn";
@@ -943,7 +943,7 @@ fn retry_zyproxy_login<Attempt, Pause>(
 ) -> Result<String, ZjlibCnkiError>
 where
     Attempt: FnMut() -> Result<ZyproxyEntryOutcome, ZjlibCnkiError>,
-    Pause: FnMut(Duration),
+    Pause: FnMut(Duration) -> Result<(), ZjlibCnkiError>,
 {
     for attempt_index in 0..ZYPROXY_LOGIN_ATTEMPTS {
         let attempt_number = attempt_index + 1;
@@ -967,7 +967,7 @@ where
                     retry_delay_ms = delay_ms,
                     duration_ms = elapsed_millis(started_at),
                 );
-                pause(Duration::from_millis(delay_ms));
+                pause(Duration::from_millis(delay_ms))?;
             }
             Ok(ZyproxyEntryOutcome::Retry) => {
                 tracing::warn!(
@@ -1175,6 +1175,8 @@ pub struct LiveZjlibCnkiTransport {
     no_redirect_client: Client,
     cookie_jar: Arc<Jar>,
     endpoints: LiveZjlibCnkiEndpoints,
+    request_timeout: Duration,
+    deadline: Option<Instant>,
     maximum_document_bytes: usize,
     last_brief_url: Option<String>,
 }
@@ -1217,13 +1219,38 @@ impl LiveZjlibCnkiTransport {
         config: LiveZjlibCnkiConfig,
         provider_proxy: ProviderProxy,
     ) -> Result<Self, ZjlibCnkiError> {
-        Self::new_with_endpoints(config, LiveZjlibCnkiEndpoints::default(), provider_proxy)
+        Self::new_with_proxy_and_deadline(config, provider_proxy, None)
+    }
+
+    /// Build a live transport with a managed proxy and shared request deadline.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live transport configuration.
+    /// * `provider_proxy` - Direct or explicit ZJLib proxy decision.
+    /// * `deadline` - Optional monotonic article-access deadline.
+    ///
+    /// # Returns
+    ///
+    /// Live transport.
+    pub fn new_with_proxy_and_deadline(
+        config: LiveZjlibCnkiConfig,
+        provider_proxy: ProviderProxy,
+        deadline: Option<Instant>,
+    ) -> Result<Self, ZjlibCnkiError> {
+        Self::new_with_endpoints(
+            config,
+            LiveZjlibCnkiEndpoints::default(),
+            provider_proxy,
+            deadline,
+        )
     }
 
     fn new_with_endpoints(
         config: LiveZjlibCnkiConfig,
         endpoints: LiveZjlibCnkiEndpoints,
         provider_proxy: ProviderProxy,
+        deadline: Option<Instant>,
     ) -> Result<Self, ZjlibCnkiError> {
         let cookie_jar = Arc::new(Jar::default());
         let timeout = Duration::from_secs(config.timeout_seconds.max(1));
@@ -1253,6 +1280,8 @@ impl LiveZjlibCnkiTransport {
             no_redirect_client,
             cookie_jar,
             endpoints,
+            request_timeout: timeout,
+            deadline,
             maximum_document_bytes: config.maximum_document_bytes.max(1),
             last_brief_url: None,
         })
@@ -1267,7 +1296,18 @@ impl LiveZjlibCnkiTransport {
             config,
             LiveZjlibCnkiEndpoints::loopback(base_url)?,
             ProviderProxy::direct(),
+            None,
         )
+    }
+
+    fn send_request(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> Result<Response, ZjlibCnkiError> {
+        let timeout = request_deadline::request_timeout(self.request_timeout, self.deadline)
+            .map_err(deadline_zjlib_error)?;
+        request_deadline::ensure_deadline(self.deadline).map_err(deadline_zjlib_error)?;
+        request.timeout(timeout).send().map_err(request_error)
     }
 
     fn endpoint_url(
@@ -1286,13 +1326,12 @@ impl LiveZjlibCnkiTransport {
             ),
             ZjlibEndpointFamily::Www,
         )?;
-        let response = self
-            .no_redirect_client
-            .get(request_url)
-            .query(&[("referURL", self.endpoints.entry_url.as_str())])
-            .headers(www_headers(&self.endpoints.www_base_url, Some(token)))
-            .send()
-            .map_err(request_error)?;
+        let response = self.send_request(
+            self.no_redirect_client
+                .get(request_url)
+                .query(&[("referURL", self.endpoints.entry_url.as_str())])
+                .headers(www_headers(&self.endpoints.www_base_url, Some(token))),
+        )?;
         let payload = json_payload(response, "build Share SSO URL")?;
         let sso_url = payload
             .get("data")
@@ -1305,39 +1344,36 @@ impl LiveZjlibCnkiTransport {
 
     fn enter_share(&mut self, sso_url: &str) -> Result<(), ZjlibCnkiError> {
         let sso_url = self.endpoint_url(sso_url, ZjlibEndpointFamily::Share)?;
-        let response = self
-            .no_redirect_client
-            .get(sso_url.clone())
-            .headers(html_headers(Some(self.endpoints.www_base_url.as_str())))
-            .send()
-            .map_err(request_error)?;
+        let response = self.send_request(
+            self.no_redirect_client
+                .get(sso_url.clone())
+                .headers(html_headers(Some(self.endpoints.www_base_url.as_str()))),
+        )?;
         let response = raise_for_status(response, "enter Share protocolAuth")?;
         let response_url = response.url().to_string();
         let text = zjlib_response_text(response)?;
         if let Some(sync) = extract_share_cookie_sync(&text, &self.endpoints)? {
-            let response = self
-                .redirect_client
-                .post(sync.url)
-                .form(&sync.fields)
-                .headers(html_headers(Some(&response_url)))
-                .header(
-                    ORIGIN,
-                    LiveZjlibCnkiEndpoints::origin(&self.endpoints.share_base_url),
-                )
-                .send()
-                .map_err(request_error)?;
+            let response = self.send_request(
+                self.redirect_client
+                    .post(sync.url)
+                    .form(&sync.fields)
+                    .headers(html_headers(Some(&response_url)))
+                    .header(
+                        ORIGIN,
+                        LiveZjlibCnkiEndpoints::origin(&self.endpoints.share_base_url),
+                    ),
+            )?;
             raise_for_status(response, "sync Share login cookies")?;
         }
         let entry_url = self.endpoint_url(
             self.endpoints.entry_url.as_str(),
             ZjlibEndpointFamily::Share,
         )?;
-        let response = self
-            .redirect_client
-            .get(entry_url)
-            .headers(html_headers(Some(sso_url.as_str())))
-            .send()
-            .map_err(request_error)?;
+        let response = self.send_request(
+            self.redirect_client
+                .get(entry_url)
+                .headers(html_headers(Some(sso_url.as_str()))),
+        )?;
         raise_for_status(response, "open Share entry")?;
         let user_info_url = self.endpoint_url(
             &LiveZjlibCnkiEndpoints::append(
@@ -1346,13 +1382,12 @@ impl LiveZjlibCnkiTransport {
             ),
             ZjlibEndpointFamily::Share,
         )?;
-        let response = self
-            .redirect_client
-            .get(user_info_url)
-            .query(&[("t", current_millis().to_string())])
-            .headers(ajax_headers(Some(self.endpoints.entry_url.as_str())))
-            .send()
-            .map_err(request_error)?;
+        let response = self.send_request(
+            self.redirect_client
+                .get(user_info_url)
+                .query(&[("t", current_millis().to_string())])
+                .headers(ajax_headers(Some(self.endpoints.entry_url.as_str()))),
+        )?;
         raise_for_status(response, "load Share user info")?;
         Ok(())
     }
@@ -1365,16 +1400,15 @@ impl LiveZjlibCnkiTransport {
             ),
             ZjlibEndpointFamily::Share,
         )?;
-        let response = self
-            .no_redirect_client
-            .get(request_url)
-            .query(&[
-                ("wfwfid", WFWFID),
-                ("refer", self.endpoints.library_refer.as_str()),
-            ])
-            .headers(html_headers(Some(self.endpoints.entry_url.as_str())))
-            .send()
-            .map_err(request_error)?;
+        let response = self.send_request(
+            self.no_redirect_client
+                .get(request_url)
+                .query(&[
+                    ("wfwfid", WFWFID),
+                    ("refer", self.endpoints.library_refer.as_str()),
+                ])
+                .headers(html_headers(Some(self.endpoints.entry_url.as_str()))),
+        )?;
         let response = raise_for_status(response, "get zyproxy login URL")?;
         let response_url = response.url().to_string();
         let login_url = if let Some(location) = response
@@ -1404,12 +1438,11 @@ impl LiveZjlibCnkiTransport {
         let mut redirect_hops = 0;
         let mut referer = self.endpoints.share_base_url.to_string();
         loop {
-            let response = self
-                .no_redirect_client
-                .get(current_url)
-                .headers(html_headers(Some(&referer)))
-                .send()
-                .map_err(request_error)?;
+            let response = self.send_request(
+                self.no_redirect_client
+                    .get(current_url)
+                    .headers(html_headers(Some(&referer))),
+            )?;
             let response_url = response.url().clone();
             if response.status().is_success() {
                 let has_session_cookie =
@@ -1461,13 +1494,8 @@ impl LiveZjlibCnkiTransport {
         action: &str,
     ) -> Result<String, ZjlibCnkiError> {
         let url = self.endpoint_url(url, ZjlibEndpointFamily::Zyproxy)?;
-        let response = self
-            .redirect_client
-            .post(url)
-            .headers(headers)
-            .form(form)
-            .send()
-            .map_err(request_error)?;
+        let response =
+            self.send_request(self.redirect_client.post(url).headers(headers).form(form))?;
         let response = raise_for_status(response, action)?;
         zjlib_response_text(response)
     }
@@ -1495,12 +1523,11 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
             ),
             ZjlibEndpointFamily::Www,
         )?;
-        let response = self
-            .no_redirect_client
-            .get(request_url)
-            .headers(www_headers(&self.endpoints.www_base_url, None))
-            .send()
-            .map_err(request_error)?;
+        let response = self.send_request(
+            self.no_redirect_client
+                .get(request_url)
+                .headers(www_headers(&self.endpoints.www_base_url, None)),
+        )?;
         let payload = json_payload(response, "start QR login")?;
         let data = payload_data(&payload, "start QR login")?;
         let uuid = data
@@ -1548,13 +1575,12 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
             ZjlibEndpointFamily::Www,
         )?;
         while Instant::now() < deadline {
-            let response = self
-                .no_redirect_client
-                .get(request_url.clone())
-                .query(&[("uuid", uuid)])
-                .headers(www_headers(&self.endpoints.www_base_url, None))
-                .send()
-                .map_err(request_error)?;
+            let response = self.send_request(
+                self.no_redirect_client
+                    .get(request_url.clone())
+                    .query(&[("uuid", uuid)])
+                    .headers(www_headers(&self.endpoints.www_base_url, None)),
+            )?;
             let payload = json_payload(response, "poll QR login")?;
             let data = payload_data(&payload, "poll QR login")?;
             let status = data
@@ -1582,7 +1608,11 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
                     "QR login ended with status {status}."
                 )));
             }
-            thread::sleep(interval);
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            request_deadline::sleep(interval.min(remaining), self.deadline)
+                .map_err(deadline_zjlib_error)?;
         }
         Err(ZjlibCnkiError::Timeout(format!(
             "Timed out waiting for QR scan after {timeout_seconds} seconds."
@@ -1602,12 +1632,13 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
     fn warm_up_fulltext_session(&mut self, token: &str) -> Result<String, ZjlibCnkiError> {
         let sso_url = self.build_share_sso_url(token)?;
         self.enter_share(&sso_url)?;
+        let deadline = self.deadline;
         retry_zyproxy_login(
             || {
                 let login_url = self.get_zyproxy_login_url()?;
                 self.enter_zyproxy(&login_url)
             },
-            thread::sleep,
+            |delay| request_deadline::sleep(delay, deadline).map_err(deadline_zjlib_error),
         )
     }
 
@@ -1707,13 +1738,12 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
             ("t", current_millis().to_string()),
         ];
         let brief_request_url = self.endpoint_url(&brief_url, ZjlibEndpointFamily::Zyproxy)?;
-        let response = self
-            .redirect_client
-            .get(brief_request_url)
-            .query(&brief_query)
-            .headers(html_headers(Some(&result_url)))
-            .send()
-            .map_err(request_error)?;
+        let response = self.send_request(
+            self.redirect_client
+                .get(brief_request_url)
+                .query(&brief_query)
+                .headers(html_headers(Some(&result_url))),
+        )?;
         let response = raise_for_status(response, "get CNKI brief results")?;
         let final_url = response.url().to_string();
         let text = zjlib_response_text(response)?;
@@ -1734,12 +1764,11 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
         });
         let detail_request_url =
             self.endpoint_url(&result.detail_url, ZjlibEndpointFamily::Zyproxy)?;
-        let response = self
-            .redirect_client
-            .get(detail_request_url)
-            .headers(html_headers(Some(&referer)))
-            .send()
-            .map_err(request_error)?;
+        let response = self.send_request(
+            self.redirect_client
+                .get(detail_request_url)
+                .headers(html_headers(Some(&referer))),
+        )?;
         let response = raise_for_status(response, "open CNKI detail")?;
         let detail_url = response.url().to_string();
         let text = zjlib_response_text(response)?;
@@ -1763,12 +1792,11 @@ impl ZjlibCnkiTransport for LiveZjlibCnkiTransport {
         let default_referer =
             LiveZjlibCnkiEndpoints::append(&self.endpoints.zyproxy_base_url, "/kns55/");
         let pdf_request_url = self.endpoint_url(pdf_url, ZjlibEndpointFamily::Zyproxy)?;
-        let response = self
-            .redirect_client
-            .get(pdf_request_url)
-            .headers(html_headers(Some(referer.unwrap_or(&default_referer))))
-            .send()
-            .map_err(request_error)?;
+        let response = self.send_request(
+            self.redirect_client
+                .get(pdf_request_url)
+                .headers(html_headers(Some(referer.unwrap_or(&default_referer)))),
+        )?;
         let response = raise_for_status(response, "download PDF")?;
         let final_url = response.url().to_string();
         let content_type = response
@@ -2173,6 +2201,10 @@ fn reqwest_error_message(error: reqwest::Error) -> String {
 
 fn request_error(error: reqwest::Error) -> ZjlibCnkiError {
     ZjlibCnkiError::Request(reqwest_error_message(error))
+}
+
+fn deadline_zjlib_error(error: request_deadline::RequestDeadlineError) -> ZjlibCnkiError {
+    ZjlibCnkiError::Request(error.to_string())
 }
 
 fn zjlib_response_text(response: Response) -> Result<String, ZjlibCnkiError> {
@@ -3067,7 +3099,7 @@ mod tests {
 
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use reqwest::blocking::Client;
     use reqwest::redirect::Policy;
@@ -3080,8 +3112,9 @@ mod tests {
         extract_share_cookie_sync, extract_window_location, parse_endpoint_url_for, request_error,
         retry_zyproxy_login, search_handler_form_fields, search_result_form_fields,
         validate_zyproxy_success, zyproxy_endpoint, zyproxy_redirect_action, FixtureZjlibCnkiMode,
-        FixtureZjlibCnkiTransport, LiveZjlibCnkiEndpoints, ZhejiangLibraryCnkiClient,
-        ZjlibCnkiArticleIdentity, ZjlibCnkiCookie, ZjlibCnkiError, ZjlibEndpointFamily,
+        FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiEndpoints,
+        LiveZjlibCnkiTransport, ZhejiangLibraryCnkiClient, ZjlibCnkiArticleIdentity,
+        ZjlibCnkiCookie, ZjlibCnkiError, ZjlibCnkiTransport, ZjlibEndpointFamily,
         ZyproxyEntryOutcome, ZyproxyRedirectAction, ZYPROXY_REDIRECT_HOPS,
     };
 
@@ -3147,6 +3180,25 @@ mod tests {
         ] {
             assert!(parse_endpoint_url_for(url, ZjlibEndpointFamily::Share, &loopback).is_err());
         }
+    }
+
+    #[test]
+    fn live_zjlib_deadline_rejects_request_before_network_work() {
+        let deadline = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("test deadline should subtract");
+        let mut transport = LiveZjlibCnkiTransport::new_with_proxy_and_deadline(
+            LiveZjlibCnkiConfig::default(),
+            crate::provider_proxy::ProviderProxy::direct(),
+            Some(deadline),
+        )
+        .expect("deadline-aware ZJLib transport should build");
+
+        let error = transport
+            .start_qr_login()
+            .expect_err("expired deadline should reject the request");
+
+        assert!(error.to_string().contains("deadline expired"));
     }
 
     #[test]
@@ -3280,7 +3332,10 @@ mod tests {
                     Ok(ZyproxyEntryOutcome::Ready(final_url.clone()))
                 }
             },
-            |delay| transient_delays.push(delay),
+            |delay| {
+                transient_delays.push(delay);
+                Ok(())
+            },
         )
         .expect("one transient loop should recover");
 
@@ -3295,7 +3350,10 @@ mod tests {
                 persistent_attempts += 1;
                 Ok(ZyproxyEntryOutcome::Retry)
             },
-            |delay| persistent_delays.push(delay),
+            |delay| {
+                persistent_delays.push(delay);
+                Ok(())
+            },
         )
         .expect_err("persistent loops should exhaust the retry budget");
 

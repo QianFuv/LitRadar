@@ -4,20 +4,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::{Client, Response};
 use reqwest::redirect::Policy;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::thread;
-use std::time::Duration;
 
 use crate::jfbym::{
     encrypt_point_json, point_x_candidates, strip_data_url_base64, JfbymError, JfbymSolver,
 };
 use crate::provider_proxy::ProviderProxy;
+use crate::request_deadline;
 use crate::response_body::{bounded_response_json, bounded_response_text, ResponseBodyError};
 use crate::scholarly::{SourceAttempt, SourceError};
 use litradar_domain::{
@@ -2335,6 +2334,8 @@ impl fmt::Debug for LiveDomesticCnkiConfig {
 pub struct LiveDomesticCnkiTransport {
     client: Client,
     timeout_seconds: u64,
+    request_timeout: Duration,
+    deadline: Option<Instant>,
     provider_proxy: ProviderProxy,
     captcha_token: Option<String>,
     captcha_session: SharedDomesticCaptchaSession,
@@ -2487,11 +2488,33 @@ impl LiveDomesticCnkiTransport {
         config: LiveDomesticCnkiConfig,
         provider_proxy: ProviderProxy,
     ) -> Result<Self, DomesticCnkiSourceError> {
+        Self::new_with_proxy_and_deadline(config, provider_proxy, None)
+    }
+
+    /// Build a live domestic CNKI transport with a managed proxy and shared deadline.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live source configuration.
+    /// * `provider_proxy` - Direct or explicit domestic CNKI proxy decision.
+    /// * `deadline` - Optional monotonic article-access deadline.
+    ///
+    /// # Returns
+    ///
+    /// Live domestic transport.
+    pub fn new_with_proxy_and_deadline(
+        config: LiveDomesticCnkiConfig,
+        provider_proxy: ProviderProxy,
+        deadline: Option<Instant>,
+    ) -> Result<Self, DomesticCnkiSourceError> {
         let timeout_seconds = config.timeout_seconds.max(1);
+        let request_timeout = Duration::from_secs(timeout_seconds);
         let client = build_live_domestic_http_client(timeout_seconds, &provider_proxy)?;
         Ok(Self {
             client,
             timeout_seconds,
+            request_timeout,
+            deadline,
             provider_proxy,
             captcha_token: config
                 .captcha_token
@@ -2564,11 +2587,14 @@ impl LiveDomesticCnkiTransport {
             self.captcha_session.request_url(&base_url)?;
         let mut budget = DomesticRequestBudget::default();
         while budget.next_attempt().is_some() {
+            let timeout = request_deadline::request_timeout(self.request_timeout, self.deadline)
+                .map_err(deadline_domestic_error)?;
             let did_retry = budget.did_retry();
             let mut builder = match method {
                 "POST" => self.client.post(&request_url).form(data),
                 _ => self.client.get(&request_url),
             };
+            builder = builder.timeout(timeout);
             builder = builder.header(
                 "User-Agent",
                 "Mozilla/5.0 (compatible; LitRadar/0.1; +https://github.com/QianFuv/LitRadar)",
@@ -2576,6 +2602,7 @@ impl LiveDomesticCnkiTransport {
             if let Some(referer) = referer.as_deref() {
                 builder = builder.header("Referer", referer);
             }
+            request_deadline::ensure_deadline(self.deadline).map_err(deadline_domestic_error)?;
             let response = builder.send();
             let response = match response {
                 Ok(response) => response,
@@ -2590,7 +2617,8 @@ impl LiveDomesticCnkiTransport {
                         error: Some("request failed"),
                     });
                     if budget.schedule_transport_retry() {
-                        thread::sleep(budget.transport_retry_delay());
+                        request_deadline::sleep(budget.transport_retry_delay(), self.deadline)
+                            .map_err(deadline_domestic_error)?;
                         continue;
                     }
                     return Err(DomesticCnkiSourceError::Request(
@@ -2676,7 +2704,8 @@ impl LiveDomesticCnkiTransport {
                 });
                 if !matches!(status.as_u16(), 404 | 410) {
                     if let Some(delay) = budget.ordinary_retry_delay() {
-                        thread::sleep(delay);
+                        request_deadline::sleep(delay, self.deadline)
+                            .map_err(deadline_domestic_error)?;
                         continue;
                     }
                 }
@@ -2693,7 +2722,8 @@ impl LiveDomesticCnkiTransport {
                     error: Some("invalid response"),
                 });
                 if let Some(delay) = invalid_response_retry_delay(&error, &budget) {
-                    thread::sleep(delay);
+                    request_deadline::sleep(delay, self.deadline)
+                        .map_err(deadline_domestic_error)?;
                     continue;
                 }
                 return Err(error);
@@ -2733,22 +2763,32 @@ impl LiveDomesticCnkiTransport {
         response_url: &str,
         observed_generation: u64,
     ) -> Result<(), DomesticCnkiSourceError> {
+        request_deadline::ensure_deadline(self.deadline).map_err(deadline_domestic_error)?;
         let token = self.captcha_token.clone().ok_or_else(|| {
             DomesticCnkiSourceError::Request("domestic CNKI captcha token is required".to_string())
         })?;
         let client = self.client.clone();
         let provider_proxy = self.provider_proxy.clone();
+        let request_timeout = self.request_timeout;
+        let deadline = self.deadline;
         self.captcha_session.refresh(observed_generation, |session| {
-            let mut solver =
-                crate::jfbym::LiveJfbymSolver::new_with_proxy(token, 30, provider_proxy)
-                    .map_err(map_jfbym_error)?;
+            let mut solver = crate::jfbym::LiveJfbymSolver::new_with_proxy_and_deadline(
+                token,
+                30,
+                provider_proxy,
+                deadline,
+            )
+            .map_err(map_jfbym_error)?;
             session.ensure_access(
                 response_text,
                 response_url,
                 &mut solver,
                 |challenge_url| {
+                    let timeout = request_deadline::request_timeout(request_timeout, deadline)
+                        .map_err(deadline_domestic_error)?;
                     let response = client
                         .get(challenge_url)
+                        .timeout(timeout)
                         .header(
                             "User-Agent",
                             "Mozilla/5.0 (compatible; LitRadar/0.1; +https://github.com/QianFuv/LitRadar)",
@@ -2761,8 +2801,11 @@ impl LiveDomesticCnkiTransport {
                         })?;
                     validate_domestic_http_response(&response)?;
                     let body = captcha_get_request_body(challenge_url)?;
+                    let timeout = request_deadline::request_timeout(request_timeout, deadline)
+                        .map_err(deadline_domestic_error)?;
                     let response = client
                         .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/get"))
+                        .timeout(timeout)
                         .header("Content-Type", "application/json;charset=UTF-8")
                         .header("Origin", DOMESTIC_KNS_BASE_URL)
                         .header("Referer", challenge_url)
@@ -2779,8 +2822,11 @@ impl LiveDomesticCnkiTransport {
                 },
                 |puzzle, point_json| {
                     let body = captcha_check_request_body(puzzle, point_json);
+                    let timeout = request_deadline::request_timeout(request_timeout, deadline)
+                        .map_err(deadline_domestic_error)?;
                     let response = client
                         .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/web/check"))
+                        .timeout(timeout)
                         .header("Content-Type", "application/json;charset=UTF-8")
                         .header("Origin", DOMESTIC_KNS_BASE_URL)
                         .header("Referer", &puzzle.challenge_url)
@@ -2799,6 +2845,12 @@ impl LiveDomesticCnkiTransport {
         })?;
         Ok(())
     }
+}
+
+fn deadline_domestic_error(
+    error: request_deadline::RequestDeadlineError,
+) -> DomesticCnkiSourceError {
+    DomesticCnkiSourceError::Request(error.to_string())
 }
 
 impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
@@ -2928,6 +2980,8 @@ impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+
     use super::*;
 
     const SEARCH_HTML: &str = r#"
@@ -3383,6 +3437,33 @@ mod tests {
             DomesticCnkiSourceError::Request("request failed".to_string()).http_status(),
             None
         );
+    }
+
+    #[test]
+    fn live_domestic_deadline_rejects_request_before_network_work() {
+        let deadline = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("test deadline should subtract");
+        let mut transport = LiveDomesticCnkiTransport::new_with_proxy_and_deadline(
+            LiveDomesticCnkiConfig {
+                timeout_seconds: 5,
+                captcha_token: None,
+            },
+            ProviderProxy::direct(),
+            Some(deadline),
+        )
+        .expect("deadline-aware domestic transport should build");
+
+        let error = transport
+            .get_text(
+                &format!("{DOMESTIC_NAVI_BASE_URL}/knavi/detail?pykm=TEST"),
+                None,
+                "deadline_test",
+            )
+            .expect_err("expired deadline should reject the request");
+
+        assert!(error.to_string().contains("deadline expired"));
+        assert!(transport.attempts.is_empty());
     }
 
     #[test]

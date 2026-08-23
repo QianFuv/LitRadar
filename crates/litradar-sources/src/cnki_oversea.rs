@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
-use std::thread;
 use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
@@ -13,6 +12,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::provider_proxy::ProviderProxy;
+use crate::request_deadline;
 use crate::response_body::{bounded_response_text, ResponseBodyError};
 use crate::scholarly::{SourceAttempt, SourceError};
 
@@ -311,6 +311,8 @@ pub struct LiveCnkiConfig {
 #[derive(Debug, Clone)]
 pub struct LiveCnkiTransport {
     client: Client,
+    request_timeout: Duration,
+    deadline: Option<Instant>,
     attempts: Vec<SourceAttempt>,
     #[cfg(test)]
     allow_test_urls: bool,
@@ -358,10 +360,30 @@ impl LiveCnkiTransport {
         config: LiveCnkiConfig,
         provider_proxy: ProviderProxy,
     ) -> Result<Self, CnkiSourceError> {
+        Self::new_with_proxy_and_deadline(config, provider_proxy, None)
+    }
+
+    /// Build a live CNKI transport with a managed proxy and shared request deadline.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Live source configuration.
+    /// * `provider_proxy` - Direct or explicit CNKI Overseas proxy decision.
+    /// * `deadline` - Optional monotonic article-access deadline.
+    ///
+    /// # Returns
+    ///
+    /// Live CNKI transport.
+    pub fn new_with_proxy_and_deadline(
+        config: LiveCnkiConfig,
+        provider_proxy: ProviderProxy,
+        deadline: Option<Instant>,
+    ) -> Result<Self, CnkiSourceError> {
+        let request_timeout = Duration::from_secs(config.timeout_seconds.max(1));
         let client = provider_proxy
             .apply(
                 Client::builder()
-                    .timeout(Duration::from_secs(config.timeout_seconds.max(1)))
+                    .timeout(request_timeout)
                     .redirect(Policy::none()),
             )
             .map_err(|error| CnkiSourceError::Request(error.to_string()))?
@@ -369,6 +391,8 @@ impl LiveCnkiTransport {
             .map_err(|error| CnkiSourceError::Request(error.to_string()))?;
         Ok(Self {
             client,
+            request_timeout,
+            deadline,
             attempts: Vec::new(),
             #[cfg(test)]
             allow_test_urls: false,
@@ -467,6 +491,8 @@ impl LiveCnkiTransport {
         let mut response_failure_count = 0;
         let mut transport_failure_count = 0;
         loop {
+            let timeout = request_deadline::request_timeout(self.request_timeout, self.deadline)
+                .map_err(deadline_source_error)?;
             let did_retry = response_failure_count + transport_failure_count > 0;
             let attempt = response_failure_count + transport_failure_count + 1;
             let started_at = Instant::now();
@@ -475,6 +501,7 @@ impl LiveCnkiTransport {
                 _ => self.client.get(url),
             }
             .query(query)
+            .timeout(timeout)
             .header("User-Agent", DEFAULT_USER_AGENT)
             .header("Accept-Language", DEFAULT_ACCEPT_LANGUAGE);
             if let Some(referer) = referer {
@@ -484,6 +511,7 @@ impl LiveCnkiTransport {
                 .build()
                 .map_err(|error| CnkiSourceError::Request(error.to_string()))?;
             let request_url = request.url().to_string();
+            request_deadline::ensure_deadline(self.deadline).map_err(deadline_source_error)?;
             match self.client.execute(request) {
                 Ok(response) => {
                     let status_code = response.status().as_u16();
@@ -505,7 +533,11 @@ impl LiveCnkiTransport {
                             error: Some(message.clone()),
                         });
                         if will_retry {
-                            thread::sleep(Duration::from_secs(response_failure_count as u64));
+                            request_deadline::sleep(
+                                Duration::from_secs(response_failure_count as u64),
+                                self.deadline,
+                            )
+                            .map_err(deadline_source_error)?;
                             continue;
                         }
                         return Err(CnkiSourceError::Request(message));
@@ -543,7 +575,11 @@ impl LiveCnkiTransport {
                                 error: Some(message.clone()),
                             });
                             if will_retry {
-                                thread::sleep(Duration::from_secs(response_failure_count as u64));
+                                request_deadline::sleep(
+                                    Duration::from_secs(response_failure_count as u64),
+                                    self.deadline,
+                                )
+                                .map_err(deadline_source_error)?;
                                 continue;
                             }
                             return Err(CnkiSourceError::Request(message));
@@ -583,7 +619,11 @@ impl LiveCnkiTransport {
                                 error: Some(error.to_string()),
                             });
                             if will_retry {
-                                thread::sleep(Duration::from_secs(response_failure_count as u64));
+                                request_deadline::sleep(
+                                    Duration::from_secs(response_failure_count as u64),
+                                    self.deadline,
+                                )
+                                .map_err(deadline_source_error)?;
                                 continue;
                             }
                             return Err(error);
@@ -607,7 +647,11 @@ impl LiveCnkiTransport {
                         error: Some(error.to_string()),
                     });
                     if will_retry {
-                        thread::sleep(Duration::from_secs(transport_failure_count as u64));
+                        request_deadline::sleep(
+                            Duration::from_secs(transport_failure_count as u64),
+                            self.deadline,
+                        )
+                        .map_err(deadline_source_error)?;
                         continue;
                     }
                     return Err(CnkiSourceError::Request(error.to_string()));
@@ -645,6 +689,10 @@ impl LiveCnkiTransport {
             error: attempt.error,
         });
     }
+}
+
+fn deadline_source_error(error: request_deadline::RequestDeadlineError) -> CnkiSourceError {
+    CnkiSourceError::Request(error.to_string())
 }
 
 impl CnkiTransport for LiveCnkiTransport {
@@ -1975,6 +2023,34 @@ mod tests {
             .attempts
             .last()
             .is_some_and(|attempt| attempt.did_succeed));
+    }
+
+    #[test]
+    fn live_cnki_deadline_stops_before_a_retry_request() {
+        let server = TestHttpServer::start(vec![
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_string(),
+        ]);
+        let started_at = Instant::now();
+        let deadline = started_at + Duration::from_millis(75);
+        let mut transport = LiveCnkiTransport::new_with_proxy_and_deadline(
+            LiveCnkiConfig { timeout_seconds: 5 },
+            crate::provider_proxy::ProviderProxy::direct(),
+            Some(deadline),
+        )
+        .expect("deadline-aware live CNKI transport should build")
+        .with_test_urls();
+
+        let error = transport
+            .get_text(server.url(), None, "deadline_test")
+            .expect_err("retry should stop at the shared deadline");
+        let elapsed = started_at.elapsed();
+        let served_count = server.finish();
+
+        assert_eq!(served_count, 1);
+        assert!(error.to_string().contains("deadline expired"));
+        assert!(elapsed >= Duration::from_millis(40));
+        assert!(elapsed < Duration::from_millis(500));
     }
 
     #[test]

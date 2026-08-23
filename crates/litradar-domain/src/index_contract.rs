@@ -1,5 +1,7 @@
 //! Provider-neutral indexing and live article access contracts.
 
+use std::time::Instant;
+
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
@@ -457,6 +459,8 @@ pub enum ProviderCapabilityKind {
 pub struct ArticleAccessContext {
     /// Authenticated LitRadar user when present.
     pub user_id: Option<UserId>,
+    /// Optional monotonic deadline shared by one request-time Provider chain.
+    pub deadline: Option<Instant>,
 }
 
 /// Ephemeral redirect returned by a live provider capability.
@@ -488,9 +492,11 @@ pub enum ArticleFullTextResolution {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::{
-        date_precision, normalize_contract_date, ArticleDraft, DatePrecision, IndexFetchContext,
-        IndexSyncMode, JournalCatalogEntry, JournalRankings, ProviderProgress,
+        date_precision, normalize_contract_date, ArticleAccessContext, ArticleDraft, DatePrecision,
+        IndexFetchContext, IndexSyncMode, JournalCatalogEntry, JournalRankings, ProviderProgress,
         INDEX_CONTRACT_VERSION,
     };
 
@@ -519,6 +525,19 @@ mod tests {
             assert_eq!(normalize_contract_date(invalid), None, "accepted {invalid}");
             assert_eq!(date_precision(invalid), None, "classified {invalid}");
         }
+    }
+
+    #[test]
+    fn article_access_context_defaults_to_no_deadline() {
+        let default_context = ArticleAccessContext::default();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let request_context = ArticleAccessContext {
+            user_id: None,
+            deadline: Some(deadline),
+        };
+
+        assert_eq!(default_context.deadline, None);
+        assert_eq!(request_context.deadline, Some(deadline));
     }
 
     #[test]
