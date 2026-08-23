@@ -1981,10 +1981,9 @@ mod tests {
     #[test]
     fn live_cnki_rejects_oversized_decoded_body_without_retry() {
         const EXPECTED_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
-        let body = "a".repeat(EXPECTED_RESPONSE_LIMIT + 1);
         let server = TestHttpServer::start(vec![format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            EXPECTED_RESPONSE_LIMIT + 1
         )]);
         let mut transport = live_cnki_transport();
 
