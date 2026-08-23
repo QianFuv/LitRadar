@@ -323,6 +323,21 @@ function acceptsMaskedNotificationContract(): void {
 }
 
 /**
+ * Verify generic errors retain string detail while requiring recovery metadata.
+ */
+function acceptsGenericErrorRecoveryContract(): void {
+  const payload = createErrorScenario();
+
+  expect(payload).toEqual({
+    detail: 'Authentication required',
+    code: 'unauthorized',
+    retryable: false,
+  });
+  const legacyConsumerDetail: string = payload.detail;
+  expect(legacyConsumerDetail).toBe('Authentication required');
+}
+
+/**
  * Verify domain bundles serve all shared scenarios only after explicit installation.
  */
 async function servesExplicitSharedScenarioHandlers(): Promise<void> {
@@ -359,6 +374,7 @@ describe('generated API runtime contracts', () => {
   );
   test('validates Provider proxy policy metadata and JSON', validatesProviderProxyPolicyContract);
   test('accepts only the masked notification response contract', acceptsMaskedNotificationContract);
+  test('accepts compatible generic error recovery metadata', acceptsGenericErrorRecoveryContract);
   test('rejects malformed control-plane responses', rejectsMalformedControlPlaneContracts);
   test(
     'serves explicitly installed shared scenario handlers',

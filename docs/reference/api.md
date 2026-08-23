@@ -63,22 +63,26 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 
 ```json
 {
-  "detail": "Readable error message"
+  "detail": "Readable error message",
+  "code": "bad_request",
+  "retryable": false
 }
 ```
 
+`detail` 继续保持字符串，旧客户端可以忽略新增字段；`code` 是稳定的机器分类，常见值包括 `bad_request`、`unauthorized`、`forbidden`、`not_found`、`conflict`、`payload_too_large`、`rate_limited`、`bad_gateway`、`service_unavailable` 和 `internal_server_error`。`retryable=true` 表示不修改请求也可能在稍后成功，并同时提供浏览器可读取的 `Retry-After`；第一方客户端将其解析为非负秒数。结构化 CNKI/Provider 工作流错误仍保留原有的嵌套 `detail.code`、`detail.phase` 和 `detail.message` 形状。
+
 常见状态码：
 
-| 状态码 | 含义                                           |
-| ------ | ---------------------------------------------- |
-| `400`  | 参数、数据库选择或业务输入无效                 |
-| `401`  | 缺少凭据、会话失效或 Bearer 格式错误           |
-| `403`  | 当前用户没有管理员权限                         |
-| `404`  | 数据库或记录不存在                             |
-| `409`  | 用户名、文件夹名等唯一约束冲突                 |
-| `428`  | 所有可用在线 Provider 都要求先完成认证         |
-| `429`  | 认证请求触发进程内限流；响应包含 `Retry-After` |
-| `503`  | 内嵌调度尚未 ready 或服务暂时不可用            |
+| 状态码 | 含义                                                            |
+| ------ | --------------------------------------------------------------- |
+| `400`  | 参数、数据库选择或业务输入无效                                  |
+| `401`  | 缺少凭据、会话失效或 Bearer 格式错误                            |
+| `403`  | 当前用户没有管理员权限                                          |
+| `404`  | 数据库或记录不存在                                              |
+| `409`  | 用户名、文件夹名等唯一约束冲突                                  |
+| `428`  | 所有可用在线 Provider 都要求先完成认证                          |
+| `429`  | 认证请求触发进程内限流；可重试并包含 `Retry-After`              |
+| `503`  | 内嵌调度尚未 ready 或服务暂时不可用；可重试并包含 `Retry-After` |
 
 服务端不会在通用 `500` / `503` 响应中暴露内部错误细节。
 

@@ -1954,8 +1954,12 @@ export interface components {
     DatePrecision: 'year' | 'month' | 'day';
     /** @description FastAPI-compatible error envelope. */
     ErrorEnvelope: {
+      /** @description Stable machine-readable error category. */
+      code: string;
       /** @description Error detail payload. */
       detail: string;
+      /** @description Whether retrying the request may succeed without user correction. */
+      retryable: boolean;
     };
     /** @description Favorite creation request payload. */
     FavoriteAdd: {

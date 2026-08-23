@@ -15,6 +15,7 @@ const MAX_ERROR_SUMMARY_CHARACTERS: usize = 512;
 const ARTICLE_PROVIDER_BAD_GATEWAY_DETAIL: &str = "Article provider request failed";
 const ARTICLE_PROVIDER_RETRYABLE_DETAIL: &str = "Article provider temporarily unavailable";
 const ARTICLE_PROVIDER_RETRY_AFTER_SECONDS: u64 = 5;
+const SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS: u64 = 5;
 
 /// API handler error mapped into FastAPI-compatible envelopes where possible.
 #[derive(Debug)]
@@ -40,9 +41,7 @@ pub(crate) enum ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         match self {
-            Self::Http { status, detail } => {
-                (status, Json(ErrorEnvelope::new(detail))).into_response()
-            }
+            Self::Http { status, detail } => generic_error_response(status, detail, None),
             Self::JsonDetail { status, detail } => {
                 (status, Json(serde_json::json!({ "detail": detail }))).into_response()
             }
@@ -50,19 +49,14 @@ impl IntoResponse for ApiError {
                 status,
                 detail,
                 retry_after_seconds,
-            } => (
-                status,
-                [(RETRY_AFTER, retry_after_seconds.to_string())],
-                Json(ErrorEnvelope::new(detail)),
-            )
-                .into_response(),
+            } => generic_error_response(status, detail, Some(retry_after_seconds)),
             Self::Unexpected { cause } => {
                 cause.log();
-                (
+                generic_error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorEnvelope::new("Internal Server Error")),
+                    "Internal Server Error".to_string(),
+                    None,
                 )
-                    .into_response()
             }
         }
     }
@@ -130,9 +124,10 @@ impl ApiError {
 
     /// Build a service-unavailable error without exposing executor details.
     pub(crate) fn service_unavailable() -> Self {
-        Self::Http {
+        Self::TooManyRequests {
             status: StatusCode::SERVICE_UNAVAILABLE,
             detail: "Service temporarily unavailable".to_string(),
+            retry_after_seconds: SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
         }
     }
 
@@ -166,6 +161,37 @@ impl ApiError {
         Self::Unexpected {
             cause: InternalErrorCause::new(error_kind, error_summary, location),
         }
+    }
+}
+
+fn generic_error_response(
+    status: StatusCode,
+    detail: String,
+    retry_after_seconds: Option<u64>,
+) -> Response {
+    let retryable = retry_after_seconds.is_some();
+    let envelope = ErrorEnvelope::new(detail, generic_error_code(status), retryable);
+    match retry_after_seconds {
+        Some(seconds) => {
+            (status, [(RETRY_AFTER, seconds.to_string())], Json(envelope)).into_response()
+        }
+        None => (status, Json(envelope)).into_response(),
+    }
+}
+
+fn generic_error_code(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::BAD_REQUEST => "bad_request",
+        StatusCode::UNAUTHORIZED => "unauthorized",
+        StatusCode::FORBIDDEN => "forbidden",
+        StatusCode::NOT_FOUND => "not_found",
+        StatusCode::CONFLICT => "conflict",
+        StatusCode::PAYLOAD_TOO_LARGE => "payload_too_large",
+        StatusCode::TOO_MANY_REQUESTS => "rate_limited",
+        StatusCode::BAD_GATEWAY => "bad_gateway",
+        StatusCode::SERVICE_UNAVAILABLE => "service_unavailable",
+        StatusCode::INTERNAL_SERVER_ERROR => "internal_server_error",
+        _ => "request_failed",
     }
 }
 
@@ -276,6 +302,8 @@ mod tests {
             bad_gateway_payload["detail"],
             ARTICLE_PROVIDER_BAD_GATEWAY_DETAIL
         );
+        assert_eq!(bad_gateway_payload["code"], "bad_gateway");
+        assert_eq!(bad_gateway_payload["retryable"], false);
 
         let unavailable = ApiError::article_provider_service_unavailable().into_response();
         assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -294,6 +322,107 @@ mod tests {
         assert_eq!(
             unavailable_payload["detail"],
             ARTICLE_PROVIDER_RETRYABLE_DETAIL
+        );
+        assert_eq!(unavailable_payload["code"], "service_unavailable");
+        assert_eq!(unavailable_payload["retryable"], true);
+    }
+
+    #[tokio::test]
+    async fn generic_errors_expose_stable_recovery_categories() {
+        for (error, status, code) in [
+            (
+                ApiError::bad_request("Invalid request"),
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+            ),
+            (
+                ApiError::unauthorized("Authentication required"),
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+            ),
+            (
+                ApiError::forbidden("Admin access required"),
+                StatusCode::FORBIDDEN,
+                "forbidden",
+            ),
+            (
+                ApiError::not_found("Article not found"),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                ApiError::conflict("State changed"),
+                StatusCode::CONFLICT,
+                "conflict",
+            ),
+        ] {
+            let response = error.into_response();
+            assert_eq!(response.status(), status);
+            assert!(response.headers().get(RETRY_AFTER).is_none());
+            let body = to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("generic response body should read");
+            let payload: serde_json::Value =
+                serde_json::from_slice(&body).expect("generic response should be JSON");
+            assert_eq!(payload["code"], code);
+            assert_eq!(payload["retryable"], false);
+            assert!(payload["detail"].is_string());
+        }
+
+        let unavailable = ApiError::service_unavailable().into_response();
+        assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            unavailable
+                .headers()
+                .get(RETRY_AFTER)
+                .expect("service-unavailable response should include Retry-After")
+                .to_str()
+                .expect("service-unavailable Retry-After should be text"),
+            "5"
+        );
+        let body = to_bytes(unavailable.into_body(), usize::MAX)
+            .await
+            .expect("service-unavailable body should read");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("service-unavailable response should be JSON");
+        assert_eq!(payload["code"], "service_unavailable");
+        assert_eq!(payload["retryable"], true);
+
+        let limited = ApiError::too_many_requests("Slow down", 12).into_response();
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            limited
+                .headers()
+                .get(RETRY_AFTER)
+                .expect("rate-limit response should include Retry-After"),
+            "12"
+        );
+        let body = to_bytes(limited.into_body(), usize::MAX)
+            .await
+            .expect("rate-limit body should read");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("rate-limit response should be JSON");
+        assert_eq!(payload["code"], "rate_limited");
+        assert_eq!(payload["retryable"], true);
+    }
+
+    #[tokio::test]
+    async fn unexpected_errors_expose_only_safe_nonretryable_metadata() {
+        let response = ApiError::internal_server_error().into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(response.headers().get(RETRY_AFTER).is_none());
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("internal response body should read");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("internal response should be JSON");
+        assert_eq!(
+            payload,
+            serde_json::json!({
+                "detail": "Internal Server Error",
+                "code": "internal_server_error",
+                "retryable": false
+            })
         );
     }
 }

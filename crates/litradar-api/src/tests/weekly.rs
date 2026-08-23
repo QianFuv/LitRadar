@@ -677,7 +677,14 @@ async fn weekly_updates_reject_malformed_databases() {
     .await;
 
     assert_eq!(response.status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(response.payload, json!({"detail": "Internal Server Error"}));
+    assert_eq!(
+        response.payload,
+        json!({
+            "detail": "Internal Server Error",
+            "code": "internal_server_error",
+            "retryable": false
+        })
+    );
 }
 
 #[tokio::test]
@@ -703,7 +710,14 @@ async fn weekly_updates_do_not_return_partial_payloads_for_malformed_manifests()
     .await;
 
     assert_eq!(response.status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(response.payload, json!({"detail": "Internal Server Error"}));
+    assert_eq!(
+        response.payload,
+        json!({
+            "detail": "Internal Server Error",
+            "code": "internal_server_error",
+            "retryable": false
+        })
+    );
     assert!(response.payload.get("databases").is_none());
 }
 

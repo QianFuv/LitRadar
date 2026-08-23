@@ -281,7 +281,11 @@ mod tests {
         .expect("server response should remain JSON");
         assert_eq!(
             server_payload,
-            serde_json::json!({"detail": "Internal Server Error"})
+            serde_json::json!({
+                "detail": "Internal Server Error",
+                "code": "internal_server_error",
+                "retryable": false
+            })
         );
 
         let raw_logs = logs.text();
@@ -379,7 +383,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cors_exposes_only_the_generated_request_id_header() {
+    async fn cors_exposes_request_id_and_retry_headers() {
         let mut config = ApiConfig::new(
             PathBuf::from("cors-observability-root"),
             "127.0.0.1".to_string(),
@@ -413,7 +417,7 @@ mod tests {
                 .headers()
                 .get(ACCESS_CONTROL_EXPOSE_HEADERS)
                 .and_then(|value| value.to_str().ok()),
-            Some("x-request-id")
+            Some("x-request-id,retry-after")
         );
     }
 

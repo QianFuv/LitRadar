@@ -4237,11 +4237,19 @@
       "ErrorEnvelope": {
         "type": "object",
         "description": "FastAPI-compatible error envelope.",
-        "required": ["detail"],
+        "required": ["detail", "code", "retryable"],
         "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable machine-readable error category."
+          },
           "detail": {
             "type": "string",
             "description": "Error detail payload."
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether retrying the request may succeed without user correction."
           }
         }
       },

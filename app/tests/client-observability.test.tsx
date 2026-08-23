@@ -10,7 +10,7 @@ import RouteError from '@/app/error';
 import GlobalError from '@/app/global-error';
 import Providers from '@/app/providers';
 import { reportClientError, type ClientErrorEvent } from '@/lib/client-logger';
-import { ApiError, requestJson } from '@/lib/api/client';
+import { ApiError, requestDownload, requestJson } from '@/lib/api/client';
 
 vi.mock('@/lib/auth-context', () => {
   /**
@@ -143,28 +143,67 @@ function emitsAllowlistedLocalEvents(): void {
 }
 
 /**
- * Verify failed API responses preserve only the exposed request identifier for correlation.
+ * Verify failed API responses preserve safe correlation and recovery metadata.
  */
-async function capturesFailedResponseRequestIds(): Promise<void> {
+async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
   const bodySentinel = 'request-body-secret-never-log';
   const detailSentinel = 'response-detail-secret-never-log';
   const querySentinel = 'request-query-secret-never-log';
   const requestId = 'request-correlation-456';
   vi.spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(
-      new Response(JSON.stringify({ detail: detailSentinel }), {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Request-Id': requestId,
+      new Response(
+        JSON.stringify({
+          detail: detailSentinel,
+          code: 'service_unavailable',
+          retryable: true,
+        }),
+        {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '7',
+            'X-Request-Id': requestId,
+          },
         },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          detail: {
+            code: 'cnki_login_timeout',
+            message: 'second failure',
+            phase: 'login',
+          },
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'legacy failure' }), {
+        status: 502,
+        headers: { 'Content-Type': 'application/json' },
       }),
     )
     .mockResolvedValueOnce(
-      new Response(JSON.stringify({ detail: 'second failure' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          detail: 'download temporarily unavailable',
+          code: 'service_unavailable',
+          retryable: true,
+        }),
+        {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '11',
+          },
+        },
+      ),
     );
 
   let correlatedError: unknown;
@@ -182,6 +221,9 @@ async function capturesFailedResponseRequestIds(): Promise<void> {
     throw new TypeError('expected ApiError fixture');
   }
   expect(correlatedError.requestId).toBe(requestId);
+  expect(correlatedError.code).toBe('service_unavailable');
+  expect(correlatedError.retryable).toBe(true);
+  expect(correlatedError.retryAfterSeconds).toBe(7);
 
   const consoleReport = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   reportClientError('window_error', correlatedError);
@@ -208,6 +250,38 @@ async function capturesFailedResponseRequestIds(): Promise<void> {
     throw new TypeError('expected ApiError fixture without request id');
   }
   expect(uncorrelatedError.requestId).toBeNull();
+  expect(uncorrelatedError.code).toBe('cnki_login_timeout');
+  expect(uncorrelatedError.phase).toBe('login');
+  expect(uncorrelatedError.retryable).toBe(false);
+  expect(uncorrelatedError.retryAfterSeconds).toBeNull();
+
+  let legacyError: unknown;
+  try {
+    await requestJson('http://remote.example/legacy-failure');
+  } catch (error) {
+    legacyError = error;
+  }
+  expect(legacyError).toBeInstanceOf(ApiError);
+  if (!(legacyError instanceof ApiError)) {
+    throw new TypeError('expected legacy ApiError fixture');
+  }
+  expect(legacyError.code).toBeNull();
+  expect(legacyError.retryable).toBe(false);
+  expect(legacyError.retryAfterSeconds).toBeNull();
+
+  let downloadError: unknown;
+  try {
+    await requestDownload('http://remote.example/download-failure');
+  } catch (error) {
+    downloadError = error;
+  }
+  expect(downloadError).toBeInstanceOf(ApiError);
+  if (!(downloadError instanceof ApiError)) {
+    throw new TypeError('expected download ApiError fixture');
+  }
+  expect(downloadError.code).toBe('service_unavailable');
+  expect(downloadError.retryable).toBe(true);
+  expect(downloadError.retryAfterSeconds).toBe(11);
 }
 
 /**
@@ -312,7 +386,7 @@ function reportsGlobalBoundaryEffects(): void {
 
 afterEach(resetBrowserLocation);
 test('emits allowlisted deduplicated local events', emitsAllowlistedLocalEvents);
-test('captures exposed failed-response request IDs', capturesFailedResponseRequestIds);
+test('captures failed-response recovery metadata', capturesFailedResponseRecoveryMetadata);
 test('manages Strict Mode listener lifecycle', managesGlobalListenerLifecycle);
 test('deduplicates Strict Mode route boundary effects', deduplicatesRouteBoundaryEffects);
 test('reports global boundary effects safely', reportsGlobalBoundaryEffects);

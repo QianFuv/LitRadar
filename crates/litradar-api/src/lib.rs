@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, COOKIE, LOCATION, PRAGMA};
+use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, COOKIE, LOCATION, PRAGMA, RETRY_AFTER};
 use axum::http::uri::PathAndQuery;
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::middleware::{from_fn, from_fn_with_state, Next};
@@ -351,7 +351,7 @@ pub fn cors_layer(config: &ApiConfig) -> CorsLayer {
         .allow_credentials(true)
         .allow_headers(AllowHeaders::mirror_request())
         .allow_methods(AllowMethods::mirror_request())
-        .expose_headers([http_observability::X_REQUEST_ID]);
+        .expose_headers([http_observability::X_REQUEST_ID, RETRY_AFTER]);
 
     if config.cors_allowed_origins.is_empty() {
         layer
@@ -1108,7 +1108,11 @@ mod tests {
             assert_eq!(response.status, StatusCode::UNAUTHORIZED);
             assert_eq!(
                 response.payload,
-                serde_json::json!({"detail": "Authentication required"})
+                serde_json::json!({
+                    "detail": "Authentication required",
+                    "code": "unauthorized",
+                    "retryable": false
+                })
             );
         }
         assert_eq!(

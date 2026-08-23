@@ -13,6 +13,7 @@ export interface ApiErrorInfo {
   code: string | null;
   message: string;
   phase: string | null;
+  retryable: boolean;
 }
 
 /** Completed browser download response. */
@@ -30,6 +31,8 @@ export class ApiError extends Error {
   readonly code: string | null;
   readonly phase: string | null;
   readonly requestId: string | null;
+  readonly retryable: boolean;
+  readonly retryAfterSeconds: number | null;
   readonly status: number;
 
   /**
@@ -40,6 +43,8 @@ export class ApiError extends Error {
    * @param code - Stable backend error code.
    * @param phase - Backend workflow phase that failed.
    * @param requestId - Server-generated request identifier exposed by CORS.
+   * @param retryable - Whether retrying may succeed without user correction.
+   * @param retryAfterSeconds - Server-provided retry delay in seconds.
    */
   constructor(
     message: string,
@@ -47,6 +52,8 @@ export class ApiError extends Error {
     code: string | null,
     phase: string | null,
     requestId: string | null = null,
+    retryable = false,
+    retryAfterSeconds: number | null = null,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -54,6 +61,8 @@ export class ApiError extends Error {
     this.code = code;
     this.phase = phase;
     this.requestId = requestId;
+    this.retryable = retryable;
+    this.retryAfterSeconds = retryAfterSeconds;
     Object.setPrototypeOf(this, ApiError.prototype);
   }
 }
@@ -160,18 +169,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function extractErrorInfo(payload: unknown, fallback: string): ApiErrorInfo {
   if (isRecord(payload) && 'detail' in payload) {
+    const topLevelCode = typeof payload.code === 'string' ? payload.code : null;
+    const retryable = payload.retryable === true;
     const detail = payload.detail;
     if (typeof detail === 'string') {
-      return { code: null, message: detail, phase: null };
+      return { code: topLevelCode, message: detail, phase: null, retryable };
     }
     if (isRecord(detail)) {
-      const code = typeof detail.code === 'string' ? detail.code : null;
+      const code = typeof detail.code === 'string' ? detail.code : topLevelCode;
       const message = typeof detail.message === 'string' ? detail.message : fallback;
       const phase = typeof detail.phase === 'string' ? detail.phase : null;
-      return { code, message, phase };
+      return { code, message, phase, retryable };
     }
   }
-  return { code: null, message: fallback, phase: null };
+  return { code: null, message: fallback, phase: null, retryable: false };
+}
+
+/**
+ * Parse a Retry-After delay expressed as seconds or an HTTP date.
+ *
+ * @param value - Retry-After response header.
+ * @returns Non-negative whole seconds or null when invalid.
+ */
+function parseRetryAfterSeconds(value: string | null): number | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+  if (/^\d+$/.test(normalized)) {
+    const seconds = Number(normalized);
+    return Number.isSafeInteger(seconds) ? seconds : null;
+  }
+  const retryAt = Date.parse(normalized);
+  if (Number.isNaN(retryAt)) {
+    return null;
+  }
+  return Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
 }
 
 /**
@@ -184,12 +217,15 @@ function extractErrorInfo(payload: unknown, fallback: string): ApiErrorInfo {
 async function createApiError(response: Response, fallback: string): Promise<ApiError> {
   const payload = await response.json().catch(() => null);
   const errorInfo = extractErrorInfo(payload, fallback);
+  const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('Retry-After'));
   return new ApiError(
     errorInfo.message,
     response.status,
     errorInfo.code,
     errorInfo.phase,
     response.headers.get(REQUEST_ID_HEADER),
+    errorInfo.retryable || retryAfterSeconds !== null,
+    retryAfterSeconds,
   );
 }
 

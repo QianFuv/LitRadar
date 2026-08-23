@@ -1,3 +1,5 @@
 {
-  "detail": "Authentication required"
+  "detail": "Authentication required",
+  "code": "unauthorized",
+  "retryable": false
 }
