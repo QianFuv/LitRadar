@@ -114,28 +114,19 @@ async function expectThemeChromeTokensToBeGrayscale(page: Page): Promise<void> {
 }
 
 /**
- * Verify the filtered-result heading order and sticky summary behavior.
+ * Verify exact totals stay omitted while the filtered summary remains sticky.
  *
  * @param page - Playwright browser page.
  */
 async function expectActiveFilterSummaryToStick(page: Page): Promise<void> {
-  const resultCount = page.getByText('共找到 30 条结果');
+  const resultCount = page.getByText(/共找到 \d+ 条结果/);
   const filterSummary = page.getByRole('region', { name: '已应用筛选' });
   const filterSummarySlot = page.getByTestId('filter-summary-slot');
   const scrollContainer = page.locator('#results-scroll-container');
 
-  await expect(resultCount).toBeVisible();
+  await expect(resultCount).toHaveCount(0);
   await expect(filterSummary).toBeVisible();
   await expect(filterSummarySlot).toHaveCSS('position', 'sticky');
-  expect(
-    await resultCount.evaluate((element) => {
-      const summary = document.querySelector('[aria-label="已应用筛选"]');
-      return Boolean(
-        summary &&
-        (element.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
-      );
-    }),
-  ).toBe(true);
 
   await scrollContainer.evaluate((element) => {
     element.scrollTop = 400;
@@ -149,7 +140,7 @@ async function expectActiveFilterSummaryToStick(page: Page): Promise<void> {
   await expect
     .poll(async () => Math.round((await filterSummarySlot.boundingBox())?.y ?? -1))
     .toBe(pinnedTop);
-  await expect(resultCount).not.toBeInViewport();
+  await expect(resultCount).toHaveCount(0);
   await page.screenshot({ path: '../output/ui/active-filter-sticky.png', fullPage: true });
 
   await scrollContainer.evaluate((element) => {
