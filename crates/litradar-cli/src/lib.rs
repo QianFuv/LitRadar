@@ -15,8 +15,8 @@ use litradar_index::{
     LiveScholarlyConfig,
 };
 use litradar_storage::{
-    create_backup, migrate_auth_database, migrate_database_secrets,
-    migrate_existing_index_databases, migrate_index_database, migrate_storage, restore_backup,
+    create_backup, migrate_auth_database, migrate_database_secrets, migrate_index_database,
+    migrate_storage, preflight_existing_index_databases, preflight_index_database, restore_backup,
     rotate_database_secrets, verify_backup, verify_database_secrets, BackupCreateOptions,
     BackupRestoreOptions, ManagedMetaAction, ManagedMetaPreparationReport, SecretCodec,
     StorageConfig,
@@ -341,7 +341,7 @@ fn run_index_command_with_bundled_meta_dir(
     }
     let secret_key_file = required_secret_key_file(secret_key_file)?;
     migrate_auth_database(&auth_db_path)?;
-    migrate_index_command_databases(&project_root, options.file.as_deref())?;
+    preflight_index_command_databases(&project_root, options.file.as_deref())?;
     let storage_config =
         StorageConfig::from_project_root(&project_root).with_auth_db_path(auth_db_path.clone());
     prepare_index_managed_meta(&storage_config, bundled_meta_dir.as_deref())?;
@@ -377,7 +377,6 @@ fn run_index_command_with_bundled_meta_dir(
         provider_proxy_selection,
         index_provider_routes: index_provider_routes.clone(),
     })?;
-    migrate_index_command_databases(&project_root, options.file.as_deref())?;
     let effective_concurrency =
         index_concurrency_payload(&options, concurrency, &index_provider_routes, &outcome);
     print_result(&serialize_index_outcome(&outcome, effective_concurrency)?);
@@ -881,13 +880,13 @@ fn migrate_command_databases(
     Ok(())
 }
 
-fn migrate_index_command_databases(
+fn preflight_index_command_databases(
     project_root: &Path,
     selected_file: Option<&str>,
 ) -> Result<(), Box<dyn Error>> {
     let storage_config = StorageConfig::from_project_root(project_root);
     let Some(selected_file) = selected_file else {
-        migrate_existing_index_databases(&storage_config)?;
+        preflight_existing_index_databases(&storage_config)?;
         return Ok(());
     };
     let file_path = Path::new(selected_file);
@@ -905,7 +904,7 @@ fn migrate_index_command_databases(
         .join(format!("{catalog_name}.sqlite"));
     if index_path.exists() {
         let tokenizer_path = storage_config.simple_tokenizer_path();
-        migrate_index_database(&index_path, tokenizer_path.as_deref())?;
+        preflight_index_database(&index_path, tokenizer_path.as_deref())?;
     }
     Ok(())
 }
@@ -1274,8 +1273,8 @@ mod tests {
         admin_usage, aggregate_delivery_status, delivery_usage, ensure_delivery_command_success,
         extract_auth_db_path, extract_bool_pair, extract_string_option, extract_usize_option,
         index_concurrency_payload, index_usage, live_index_runtime_config,
-        migrate_command_databases, migrate_index_command_databases, normalize_db_name,
-        parse_index_options, prepare_index_managed_meta, resolve_delivery_targets,
+        migrate_command_databases, normalize_db_name, parse_index_options,
+        preflight_index_command_databases, prepare_index_managed_meta, resolve_delivery_targets,
         resolve_project_path, run_admin_command_with_reader, run_index_command,
         run_index_command_with_bundled_meta_dir, run_notify_command, run_push_command,
         run_scheduler_command, scheduler_usage, serialize_index_outcome, IndexOptions,
@@ -2204,8 +2203,8 @@ mod tests {
         drop(ccf_connection);
         let ccf_before = fs::read(&ccf_path).expect("sibling bytes should read");
 
-        migrate_index_command_databases(&project_root, Some("english_journals.csv"))
-            .expect("selected index migration should succeed without inspecting its sibling");
+        preflight_index_command_databases(&project_root, Some("english_journals.csv"))
+            .expect("selected index preflight should succeed without inspecting its sibling");
 
         assert_eq!(
             content_database_version(&english_path),
@@ -2228,8 +2227,8 @@ mod tests {
         create_version_four_content_database(&english_path);
         create_version_four_content_database(&ccf_path);
 
-        migrate_index_command_databases(&project_root, None)
-            .expect("default index migration should include every database");
+        preflight_index_command_databases(&project_root, None)
+            .expect("default index preflight should include every database");
 
         assert_eq!(
             content_database_version(&english_path),

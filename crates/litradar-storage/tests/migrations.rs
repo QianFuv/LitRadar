@@ -5,7 +5,8 @@ use std::path::Path;
 
 use litradar_storage::{
     count_users, get_journal, migrate_auth_database, migrate_index_database, migrate_storage,
-    MigrationError, StorageConfig, AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
+    preflight_index_database, MigrationError, StorageConfig, AUTH_SCHEMA_VERSION,
+    INDEX_SCHEMA_VERSION,
 };
 use rusqlite::{Connection, OptionalExtension};
 use tempfile::tempdir;
@@ -1731,7 +1732,7 @@ fn pre_v4_index_versions_require_rebuild_without_modifying_files() {
 }
 
 #[test]
-fn malformed_current_index_schema_is_rejected_without_modifying_files() {
+fn malformed_current_index_schema_is_rejected_by_preflight_without_modifying_files() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("malformed-current.sqlite");
     migrate_index_database(&path, None).expect("current index database should initialize");
@@ -1742,12 +1743,77 @@ fn malformed_current_index_schema_is_rejected_without_modifying_files() {
     drop(connection);
     let before = fs::read(&path).expect("malformed current bytes should read");
 
-    migrate_index_database(&path, None).expect_err("malformed current schema should be rejected");
+    preflight_index_database(&path, None)
+        .expect_err("malformed current schema should be rejected by preflight");
 
     assert_eq!(
         fs::read(&path).expect("malformed current bytes should remain readable"),
         before
     );
+}
+
+#[test]
+fn current_index_preflight_defers_foreign_key_validation() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("current-with-orphan.sqlite");
+    migrate_index_database(&path, None).expect("current index database should initialize");
+    let connection = Connection::open(&path).expect("current index database should open");
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .expect("foreign key enforcement should be disabled for the corruption fixture");
+    connection
+        .execute(
+            "INSERT INTO article_retraction_dois (article_id, retraction_doi)
+             VALUES (999, '10.1000/orphan')",
+            [],
+        )
+        .expect("foreign key violation should be installed with enforcement disabled");
+    drop(connection);
+
+    preflight_index_database(&path, None)
+        .expect("schema-only preflight should defer foreign key validation");
+    let error = migrate_index_database(&path, None)
+        .expect_err("explicit migration validation should reject the foreign key violation");
+
+    assert!(matches!(
+        error,
+        MigrationError::Sqlite(rusqlite::Error::InvalidQuery)
+    ));
+    assert_eq!(foreign_key_violation_count(&path), 1);
+}
+
+#[test]
+fn index_preflight_runs_full_validation_after_a_real_migration() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("version-five-with-orphan.sqlite");
+    create_version_five_index_database(&path);
+    let connection = Connection::open(&path).expect("version five index database should open");
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .expect("foreign key enforcement should be disabled for the corruption fixture");
+    connection
+        .execute(
+            "INSERT INTO article_listing (
+                 article_id, journal_id, issue_id, publication_year, date,
+                 open_access, in_press, doi, pmid, area
+             ) VALUES (
+                 999, 1, 10, 2026, '2026-01-01', 1, 0,
+                 '10.1000/orphan', NULL, 'Area One'
+             )",
+            [],
+        )
+        .expect("foreign key violation should be installed with enforcement disabled");
+    drop(connection);
+
+    let error = preflight_index_database(&path, None)
+        .expect_err("real migration should run full foreign key validation");
+
+    assert!(matches!(
+        error,
+        MigrationError::Sqlite(rusqlite::Error::InvalidQuery)
+    ));
+    assert_eq!(user_version(&path), 5);
+    assert_eq!(foreign_key_violation_count(&path), 1);
 }
 
 #[test]

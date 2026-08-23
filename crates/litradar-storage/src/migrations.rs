@@ -32,6 +32,21 @@ struct MigrationSummary {
     to_version: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexPreflightValidation {
+    SchemaOnly,
+    FullIntegrity,
+}
+
+impl IndexPreflightValidation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SchemaOnly => "schema_only",
+            Self::FullIntegrity => "full_integrity",
+        }
+    }
+}
+
 /// Errors returned while discovering or migrating SQLite databases.
 #[derive(Debug)]
 pub enum MigrationError {
@@ -243,6 +258,74 @@ pub fn migrate_existing_index_databases(config: &StorageConfig) -> Result<(), Mi
     Ok(())
 }
 
+/// Prepare every existing index database for an index command.
+///
+/// Current-version databases receive schema-only validation. Older supported databases are
+/// migrated and receive the full integrity validation performed by the migration path.
+///
+/// # Arguments
+///
+/// * `config` - Storage paths used to discover index databases and the optional tokenizer.
+///
+/// # Returns
+///
+/// Empty result after all discovered index databases are ready for indexing.
+pub fn preflight_existing_index_databases(config: &StorageConfig) -> Result<(), MigrationError> {
+    let started_at = Instant::now();
+    tracing::info!(
+        event = "storage.index_preflight.batch.started",
+        component = "storage",
+        database_kind = INDEX_DATABASE,
+        target_version = INDEX_SCHEMA_VERSION,
+    );
+    let tokenizer_path = config.simple_tokenizer_path();
+    let paths = match config.list_index_databases() {
+        Ok(paths) => paths,
+        Err(error) => {
+            let error = MigrationError::from(error);
+            tracing::warn!(
+                event = "storage.index_preflight.batch.failed",
+                component = "storage",
+                database_kind = INDEX_DATABASE,
+                target_version = INDEX_SCHEMA_VERSION,
+                discovered_count = 0,
+                completed_count = 0,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                error_kind = migration_error_kind(&error),
+            );
+            return Err(error);
+        }
+    };
+    let discovered_count = paths.len();
+    let mut completed_count = 0_usize;
+    for path in paths {
+        if let Err(error) = preflight_index_database(path, tokenizer_path.as_deref()) {
+            tracing::warn!(
+                event = "storage.index_preflight.batch.failed",
+                component = "storage",
+                database_kind = INDEX_DATABASE,
+                target_version = INDEX_SCHEMA_VERSION,
+                discovered_count,
+                completed_count,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                error_kind = migration_error_kind(&error),
+            );
+            return Err(error);
+        }
+        completed_count += 1;
+    }
+    tracing::info!(
+        event = "storage.index_preflight.batch.completed",
+        component = "storage",
+        database_kind = INDEX_DATABASE,
+        target_version = INDEX_SCHEMA_VERSION,
+        discovered_count,
+        completed_count,
+        duration_ms = started_at.elapsed().as_millis() as u64,
+    );
+    Ok(())
+}
+
 /// Migrate one auth and business database to the current schema version.
 ///
 /// # Arguments
@@ -319,6 +402,70 @@ pub fn migrate_index_database(
     run_database_migration(INDEX_DATABASE, INDEX_SCHEMA_VERSION, || {
         migrate_index_database_inner(path.as_ref(), simple_tokenizer_path)
     })
+}
+
+/// Prepare one index database for an index command without scanning current-version data rows.
+///
+/// # Arguments
+///
+/// * `path` - Index SQLite database path.
+/// * `simple_tokenizer_path` - Optional SQLite `simple` tokenizer extension path.
+///
+/// # Returns
+///
+/// Empty result after schema-only validation or a required fully validated migration completes.
+pub fn preflight_index_database(
+    path: impl AsRef<Path>,
+    simple_tokenizer_path: Option<&Path>,
+) -> Result<(), MigrationError> {
+    let started_at = Instant::now();
+    tracing::info!(
+        event = "storage.index_preflight.started",
+        component = "storage",
+        database_kind = INDEX_DATABASE,
+        target_version = INDEX_SCHEMA_VERSION,
+    );
+    match preflight_index_database_inner(path.as_ref(), simple_tokenizer_path) {
+        Ok(validation) => {
+            tracing::info!(
+                event = "storage.index_preflight.completed",
+                component = "storage",
+                database_kind = INDEX_DATABASE,
+                target_version = INDEX_SCHEMA_VERSION,
+                validation_scope = validation.as_str(),
+                duration_ms = started_at.elapsed().as_millis() as u64,
+            );
+            Ok(())
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "storage.index_preflight.failed",
+                component = "storage",
+                database_kind = INDEX_DATABASE,
+                target_version = INDEX_SCHEMA_VERSION,
+                database_version = migration_error_database_version(&error),
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                error_kind = migration_error_kind(&error),
+            );
+            Err(error)
+        }
+    }
+}
+
+fn preflight_index_database_inner(
+    path: &Path,
+    simple_tokenizer_path: Option<&Path>,
+) -> Result<IndexPreflightValidation, MigrationError> {
+    if let Some((version, _)) = inspect_existing_index_database(path)? {
+        reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
+        if version == INDEX_SCHEMA_VERSION {
+            let connection = open_read_only_index_connection(path)?;
+            validate_index_v6_schema_structure(&connection)?;
+            return Ok(IndexPreflightValidation::SchemaOnly);
+        }
+    }
+    migrate_index_database(path, simple_tokenizer_path)?;
+    Ok(IndexPreflightValidation::FullIntegrity)
 }
 
 fn migrate_index_database_inner(
@@ -501,7 +648,23 @@ fn validate_index_v5_schema(connection: &Connection) -> Result<(), MigrationErro
 }
 
 fn validate_index_v6_schema(connection: &Connection) -> Result<(), MigrationError> {
+    validate_index_v6_schema_structure(connection)?;
+    validate_index_foreign_keys(connection)
+}
+
+fn validate_index_v6_schema_structure(connection: &Connection) -> Result<(), MigrationError> {
     validate_index_schema(connection, true, true)
+}
+
+fn validate_index_foreign_keys(connection: &Connection) -> Result<(), MigrationError> {
+    let foreign_key_violation_count =
+        connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+    if foreign_key_violation_count != 0 {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    Ok(())
 }
 
 fn validate_index_schema(
@@ -710,15 +873,6 @@ fn validate_index_schema(
         .collect::<rusqlite::Result<BTreeSet<_>>>()?;
     if actual_indexes != expected_indexes {
         return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
-    }
-    if has_retraction_dois {
-        let foreign_key_violation_count =
-            connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-                row.get::<_, i64>(0)
-            })?;
-        if foreign_key_violation_count != 0 {
-            return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
-        }
     }
     Ok(())
 }
@@ -2341,7 +2495,46 @@ mod tests {
     use tempfile::tempdir;
 
     use super::test_support::CapturedLogs;
-    use super::{migrate_auth_database, MigrationError, AUTH_SCHEMA_VERSION};
+    use super::{
+        migrate_auth_database, migrate_index_database, preflight_index_database, MigrationError,
+        AUTH_SCHEMA_VERSION,
+    };
+
+    #[test]
+    fn index_preflight_events_report_validation_scope_without_database_paths() {
+        const PATH_SENTINEL: &str = "preflight-path-sentinel-never-log";
+
+        let root = tempdir().expect("temporary root should be created");
+        let current_path = root.path().join(PATH_SENTINEL).join("current.sqlite");
+        migrate_index_database(&current_path, None)
+            .expect("current index fixture should initialize");
+        let schema_logs = CapturedLogs::default();
+        schema_logs
+            .capture(|| preflight_index_database(&current_path, None))
+            .expect("current index preflight should complete");
+
+        let schema_events = schema_logs.events();
+        let schema_completed = schema_events
+            .iter()
+            .find(|event| event["event"] == "storage.index_preflight.completed")
+            .expect("schema preflight completion event should be captured");
+        assert_eq!(schema_completed["validation_scope"], "schema_only");
+        assert!(!schema_logs.text().contains(PATH_SENTINEL));
+
+        let new_path = root.path().join(PATH_SENTINEL).join("new.sqlite");
+        let migration_logs = CapturedLogs::default();
+        migration_logs
+            .capture(|| preflight_index_database(&new_path, None))
+            .expect("new index preflight should migrate the database");
+
+        let migration_events = migration_logs.events();
+        let migration_completed = migration_events
+            .iter()
+            .find(|event| event["event"] == "storage.index_preflight.completed")
+            .expect("migration preflight completion event should be captured");
+        assert_eq!(migration_completed["validation_scope"], "full_integrity");
+        assert!(!migration_logs.text().contains(PATH_SENTINEL));
+    }
 
     #[test]
     fn migration_events_report_versions_without_database_paths() {
