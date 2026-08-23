@@ -141,6 +141,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         litradar_domain::FavoriteBulkRemove,
         litradar_domain::FavoriteBulkResult,
         litradar_domain::FavoriteCheckResponse,
+        litradar_domain::FavoriteMetadataStatus,
         litradar_domain::FavoriteResponse,
         litradar_domain::FavoriteTrackingResponse,
         litradar_domain::FolderCreate,

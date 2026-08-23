@@ -4135,7 +4135,15 @@
       "FavoriteArticleResponse": {
         "type": "object",
         "description": "Favorite row enriched with optional article metadata.",
-        "required": ["id", "folder_id", "article_id", "db_name", "note", "created_at"],
+        "required": [
+          "id",
+          "folder_id",
+          "article_id",
+          "db_name",
+          "note",
+          "created_at",
+          "metadata_status"
+        ],
         "properties": {
           "abstract": {
             "type": ["string", "null"],
@@ -4210,6 +4218,10 @@
           "journal_title": {
             "type": ["string", "null"],
             "description": "Journal title."
+          },
+          "metadata_status": {
+            "$ref": "#/components/schemas/FavoriteMetadataStatus",
+            "description": "Availability of the referenced index article metadata."
           },
           "note": {
             "type": "string",
@@ -4365,6 +4377,11 @@
             "description": "Folder display name."
           }
         }
+      },
+      "FavoriteMetadataStatus": {
+        "type": "string",
+        "description": "Availability of index metadata for a stored favorite reference.",
+        "enum": ["available", "missing", "unavailable"]
       },
       "FavoriteResponse": {
         "type": "object",

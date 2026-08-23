@@ -1961,6 +1961,8 @@ export interface components {
       journal_id?: null | components['schemas']['JournalId'];
       /** @description Journal title. */
       journal_title?: string | null;
+      /** @description Availability of the referenced index article metadata. */
+      metadata_status: components['schemas']['FavoriteMetadataStatus'];
       /** @description User note text. */
       note: string;
       /** @description Issue number. */
@@ -2037,6 +2039,11 @@ export interface components {
       /** @description Folder display name. */
       folder_name: string;
     };
+    /**
+     * @description Availability of index metadata for a stored favorite reference.
+     * @enum {string}
+     */
+    FavoriteMetadataStatus: 'available' | 'missing' | 'unavailable';
     /** @description Favorite row response payload. */
     FavoriteResponse: {
       /** @description Article identifier. */

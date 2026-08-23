@@ -202,6 +202,8 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 
 收藏文件夹名称按 Unicode scalar value 计数，最多 100 个字符；note 最多 2,000 个字符，`db_name` 最多 255 个字符。批量添加、删除、移动和检查每次最多提交 500 个 article item/ID；501 个及以上在构造 SQL 前返回 `400`。动态 `IN` 查询固定按 500 个 ID 分块，HTTP JSON body 超过框架的 2 MiB 上限仍返回 `413`。
 
+收藏文章列表的每一行都包含必填的 `metadata_status`：`available` 表示索引元数据已读取，`missing` 表示来源数据库或文章已不存在，`unavailable` 表示文件系统、SQLite 或作者 JSON 等操作性读取失败。后两种状态都保留收藏行及其移动、删除能力；`missing` 条目导出为空元数据引文，`unavailable` 条目按下述原子导出规则返回明确失败。服务端只以安全数据库标识和错误类别记录 unavailable 事件，不记录 note、abstract、绝对路径或原始数据库错误。
+
 引文导出通过 `format=bibtex|ris|endnote` 选择格式，文件扩展名和响应 Content-Type 保持为 `.bib`/`application/x-bibtex`、`.ris`/`application/x-research-info-systems` 和 `.xml`/`application/xml`。服务端使用格式专用 serializer：BibTeX 保留字符和结构性换行被编码为字段值，RIS 值被规范为单行，EndNote 只写入合法且已转义的 XML 1.0 文本；文章元数据不能注入额外字段或记录。
 
 服务端在认证后先校验格式，再以固定的 `created_at DESC, id DESC` 顺序读取最多 10,000 条收藏，并按每批 250 条只加载标题、作者、期刊、日期和 DOI。最终 UTF-8 内容最多 8 MiB；第 10,001 条收藏或下一个会超过限制的字节都会使整个请求返回 `413`，且不会返回 attachment header 或部分文件。缺失的数据库或文章保留一条空元数据引文；文件系统、SQLite 或作者 JSON 等操作错误返回完整失败，不会伪装成成功导出。

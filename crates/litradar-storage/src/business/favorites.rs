@@ -5,7 +5,8 @@ use super::*;
 use litradar_domain::{
     validate_characters, validate_favorite_add, validate_favorite_article_ref,
     validate_folder_name, validate_item_count, validate_positive_id, ArticleId,
-    MAX_BATCH_ARTICLE_IDS, MAX_DATABASE_NAME_CHARS, SQLITE_IN_QUERY_CHUNK_SIZE,
+    FavoriteMetadataStatus, MAX_BATCH_ARTICLE_IDS, MAX_DATABASE_NAME_CHARS,
+    SQLITE_IN_QUERY_CHUNK_SIZE,
 };
 
 use crate::DatabaseResolutionError;
@@ -526,13 +527,17 @@ pub fn list_favorite_articles(
     offset: i64,
 ) -> Result<Vec<FavoriteArticleResponse>, BusinessRepositoryError> {
     let favorites = list_favorites(config.auth_db_path(), user_id, folder_id, limit, offset)?;
-    let metadata = load_favorite_metadata(config, &favorites);
+    let (metadata, unavailable_databases) = load_favorite_metadata(config, &favorites);
     Ok(favorites
         .into_iter()
         .map(|favorite| {
             let key = (favorite.db_name.clone(), favorite.article_id.value());
             let mut response = FavoriteArticleResponse::from(favorite);
+            if unavailable_databases.contains(&response.db_name) {
+                response.metadata_status = FavoriteMetadataStatus::Unavailable;
+            }
             if let Some(article_metadata) = metadata.get(&key) {
+                response.metadata_status = FavoriteMetadataStatus::Available;
                 response.journal_id = article_metadata.journal_id;
                 response.issue_id = article_metadata.issue_id;
                 response.title = article_metadata.title.clone();
@@ -925,7 +930,10 @@ pub fn bulk_move_favorites(
 fn load_favorite_metadata(
     config: &StorageConfig,
     favorites: &[FavoriteResponse],
-) -> HashMap<(String, i64), FavoriteArticleResponse> {
+) -> (
+    HashMap<(String, i64), FavoriteArticleResponse>,
+    HashSet<String>,
+) {
     let mut by_db: HashMap<String, Vec<i64>> = HashMap::new();
     for favorite in favorites {
         by_db
@@ -934,17 +942,84 @@ fn load_favorite_metadata(
             .push(favorite.article_id.value());
     }
     let mut result = HashMap::new();
+    let mut unavailable_databases = HashSet::new();
     for (db_name, article_ids) in by_db {
-        let Ok(db_path) = config.resolve_index_db_path((!db_name.is_empty()).then_some(&db_name))
-        else {
-            continue;
-        };
-        let Ok(items) = load_metadata_from_index(&db_path, &db_name, &article_ids) else {
-            continue;
-        };
-        result.extend(items);
+        let db_path =
+            match config.resolve_index_db_path((!db_name.is_empty()).then_some(db_name.as_str())) {
+                Ok(db_path) => db_path,
+                Err(
+                    DatabaseResolutionError::NoSqliteDatabasesFound
+                    | DatabaseResolutionError::DatabaseNotFound
+                    | DatabaseResolutionError::InvalidDatabaseName,
+                ) => continue,
+                Err(DatabaseResolutionError::MultipleDatabasesFound) => {
+                    log_favorite_metadata_unavailable(&db_name, "ambiguous_database");
+                    unavailable_databases.insert(db_name);
+                    continue;
+                }
+                Err(DatabaseResolutionError::Io(_)) => {
+                    log_favorite_metadata_unavailable(&db_name, "filesystem");
+                    unavailable_databases.insert(db_name);
+                    continue;
+                }
+            };
+        match load_metadata_from_index(&db_path, &db_name, &article_ids) {
+            Ok(items) => result.extend(items),
+            Err(error) => {
+                log_favorite_metadata_unavailable(
+                    &db_name,
+                    favorite_metadata_error_category(&error),
+                );
+                unavailable_databases.insert(db_name);
+            }
+        }
     }
-    result
+    (result, unavailable_databases)
+}
+
+fn favorite_metadata_error_category(error: &BusinessRepositoryError) -> &'static str {
+    match error {
+        BusinessRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(
+            _,
+            _,
+            source,
+        )) if source.is::<serde_json::Error>() => "json",
+        BusinessRepositoryError::Sqlite(_) => "sqlite",
+        BusinessRepositoryError::Io(_) => "filesystem",
+        BusinessRepositoryError::Json(_) => "json",
+        _ => "storage",
+    }
+}
+
+fn log_favorite_metadata_unavailable(db_name: &str, error_category: &'static str) {
+    tracing::warn!(
+        event = "favorites.metadata_unavailable",
+        database = safe_favorite_database_identifier(db_name),
+        error_category,
+        "Favorite metadata lookup is unavailable"
+    );
+}
+
+fn safe_favorite_database_identifier(db_name: &str) -> &str {
+    let candidate = db_name.trim();
+    if candidate.is_empty() {
+        return "default";
+    }
+    let is_safe = candidate.len() <= MAX_DATABASE_NAME_CHARS
+        && candidate.is_ascii()
+        && candidate
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| match byte {
+                b'a'..=b'z' | b'0'..=b'9' => true,
+                b'.' | b'_' | b'-' => index > 0,
+                _ => false,
+            });
+    if is_safe {
+        candidate
+    } else {
+        "invalid"
+    }
 }
 
 fn load_metadata_from_index(
@@ -984,6 +1059,7 @@ fn load_metadata_from_index(
                     db_name: db_name.to_string(),
                     note: String::new(),
                     created_at: 0.0,
+                    metadata_status: FavoriteMetadataStatus::Available,
                     journal_id: row
                         .get::<_, Option<i64>>(1)?
                         .map(litradar_domain::JournalId),
@@ -1148,12 +1224,13 @@ fn is_constraint_error(error: &rusqlite::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
-    use litradar_domain::{ArticleId, NotificationSettingsUpdate};
+    use litradar_domain::{ArticleId, FavoriteMetadataStatus, NotificationSettingsUpdate};
     use tempfile::{tempdir, TempDir};
 
     use super::*;
+    use crate::migrations::test_support::CapturedLogs;
     use crate::{migrate_auth_database, SecretCodec};
 
     #[test]
@@ -1524,6 +1601,135 @@ mod tests {
             .expect("chunked metadata query should load");
 
         assert_eq!(metadata.len(), SQLITE_IN_QUERY_CHUNK_SIZE + 1);
+        assert!(metadata
+            .values()
+            .all(|item| item.metadata_status == FavoriteMetadataStatus::Available));
+    }
+
+    #[test]
+    fn favorite_metadata_status_distinguishes_missing_and_operational_failures_safely() {
+        const NOTE_SENTINEL: &str = "note-sentinel-never-log";
+        const DATABASE_SENTINEL: &str = "credential-sentinel-never-log";
+
+        let (temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let config = StorageConfig::from_project_root(temp_dir.path())
+            .with_auth_db_path(auth_db_path.clone());
+        fs::create_dir_all(config.index_dir()).expect("index directory should be created");
+        create_metadata_index(
+            &config.index_dir().join("available.sqlite"),
+            "Available Article",
+            r#"[{"display_name":"Ada Lovelace"}]"#,
+        );
+        create_metadata_index(
+            &config.index_dir().join("json.sqlite"),
+            "Invalid Authors",
+            "{broken-json",
+        );
+        drop(
+            Connection::open(config.index_dir().join("broken.sqlite"))
+                .expect("broken index database should be created"),
+        );
+        let folder = create_folder(&auth_db_path, user_id, "Metadata Status", false)
+            .expect("metadata status folder should be created");
+        let unavailable_db_name = format!("{DATABASE_SENTINEL}/broken.sqlite");
+        bulk_add_favorites(
+            &auth_db_path,
+            user_id,
+            folder.id,
+            &[
+                FavoriteAdd {
+                    article_id: ArticleId(1),
+                    db_name: "available.sqlite".to_string(),
+                    note: NOTE_SENTINEL.to_string(),
+                },
+                FavoriteAdd {
+                    article_id: ArticleId(999),
+                    db_name: "available.sqlite".to_string(),
+                    note: String::new(),
+                },
+                FavoriteAdd {
+                    article_id: ArticleId(1),
+                    db_name: "missing.sqlite".to_string(),
+                    note: String::new(),
+                },
+                FavoriteAdd {
+                    article_id: ArticleId(1),
+                    db_name: "json.sqlite".to_string(),
+                    note: String::new(),
+                },
+                FavoriteAdd {
+                    article_id: ArticleId(1),
+                    db_name: unavailable_db_name.clone(),
+                    note: String::new(),
+                },
+            ],
+        )
+        .expect("metadata status favorites should be inserted");
+        let captured_logs = CapturedLogs::default();
+
+        let favorites = captured_logs
+            .capture(|| list_favorite_articles(&config, user_id, Some(folder.id), 50, 0))
+            .expect("favorite rows should remain available");
+
+        assert_eq!(favorites.len(), 5);
+        let find_status = |article_id: i64, db_name: &str| {
+            favorites
+                .iter()
+                .find(|favorite| {
+                    favorite.article_id == ArticleId(article_id) && favorite.db_name == db_name
+                })
+                .expect("favorite status fixture should exist")
+                .metadata_status
+        };
+        assert_eq!(
+            find_status(1, "available.sqlite"),
+            FavoriteMetadataStatus::Available
+        );
+        assert_eq!(
+            find_status(999, "available.sqlite"),
+            FavoriteMetadataStatus::Missing
+        );
+        assert_eq!(
+            find_status(1, "missing.sqlite"),
+            FavoriteMetadataStatus::Missing
+        );
+        assert_eq!(
+            find_status(1, "json.sqlite"),
+            FavoriteMetadataStatus::Unavailable
+        );
+        assert_eq!(
+            find_status(1, &unavailable_db_name),
+            FavoriteMetadataStatus::Unavailable
+        );
+        let available = favorites
+            .iter()
+            .find(|favorite| favorite.metadata_status == FavoriteMetadataStatus::Available)
+            .expect("available metadata should be retained");
+        assert_eq!(available.title.as_deref(), Some("Available Article"));
+
+        let events = captured_logs
+            .events()
+            .into_iter()
+            .filter(|event| event["event"] == "favorites.metadata_unavailable")
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().any(|event| {
+            event["database"] == "json.sqlite" && event["error_category"] == "json"
+        }));
+        assert!(events.iter().any(|event| {
+            event["database"] == "invalid" && event["error_category"] == "sqlite"
+        }));
+        let log_text = captured_logs.text();
+        assert!(!log_text.contains(NOTE_SENTINEL));
+        assert!(!log_text.contains(DATABASE_SENTINEL));
+        assert!(!log_text.contains("no such table"));
+        assert!(!log_text.contains("broken-json"));
+        assert!(!log_text.contains(
+            temp_dir
+                .path()
+                .to_str()
+                .expect("temporary directory path should be UTF-8")
+        ));
     }
 
     #[test]
@@ -1658,6 +1864,47 @@ mod tests {
                 rusqlite::Error::FromSqlConversionFailure(..)
             ))
         ));
+    }
+
+    fn create_metadata_index(path: &Path, title: &str, authors_json: &str) {
+        let connection = Connection::open(path).expect("metadata index database should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE journals (
+                     journal_id INTEGER PRIMARY KEY,
+                     title TEXT NOT NULL,
+                     issn TEXT,
+                     eissn TEXT
+                 );
+                 CREATE TABLE issues (
+                     issue_id INTEGER PRIMARY KEY,
+                     volume TEXT,
+                     number TEXT
+                 );
+                 CREATE TABLE articles (
+                     article_id INTEGER PRIMARY KEY,
+                     journal_id INTEGER NOT NULL,
+                     issue_id INTEGER,
+                     title TEXT,
+                     publication_year INTEGER,
+                     date TEXT,
+                     authors_json TEXT NOT NULL,
+                     abstract_text TEXT,
+                     doi TEXT,
+                     open_access INTEGER,
+                     in_press INTEGER
+                 );
+                 INSERT INTO journals (journal_id, title) VALUES (1, 'Fixture Journal');",
+            )
+            .expect("metadata index schema should be created");
+        connection
+            .execute(
+                "INSERT INTO articles
+                 (article_id, journal_id, title, publication_year, authors_json)
+                 VALUES (1, 1, ?1, 2026, ?2)",
+                params![title, authors_json],
+            )
+            .expect("metadata article should insert");
     }
 
     fn favorite_test_database() -> (TempDir, PathBuf, UserId) {

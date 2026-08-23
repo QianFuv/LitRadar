@@ -86,6 +86,18 @@ pub struct FavoriteResponse {
     pub created_at: f64,
 }
 
+/// Availability of index metadata for a stored favorite reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FavoriteMetadataStatus {
+    /// The referenced article metadata was loaded successfully.
+    Available,
+    /// The referenced database or article no longer exists.
+    Missing,
+    /// Metadata could not be read because an operational lookup failed.
+    Unavailable,
+}
+
 /// Favorite row enriched with optional article metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteArticleResponse {
@@ -101,6 +113,8 @@ pub struct FavoriteArticleResponse {
     pub note: String,
     /// Favorite creation timestamp.
     pub created_at: f64,
+    /// Availability of the referenced index article metadata.
+    pub metadata_status: FavoriteMetadataStatus,
     /// Journal identifier from the index database.
     pub journal_id: Option<JournalId>,
     /// Issue identifier from the index database.
@@ -144,6 +158,7 @@ impl From<FavoriteResponse> for FavoriteArticleResponse {
             db_name: favorite.db_name,
             note: favorite.note,
             created_at: favorite.created_at,
+            metadata_status: FavoriteMetadataStatus::Missing,
             journal_id: None,
             issue_id: None,
             title: None,
@@ -1434,10 +1449,29 @@ pub fn default_announcement_priority() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_scheduled_task_timing, AdminInviteCodeInfo, NotificationSettingsResponse,
-        NotificationSettingsUpdate, PushStatsState, ScheduledDeliveryJob, ScheduledIndexJob,
-        ScheduledJobSpec, SchedulerRunState,
+        validate_scheduled_task_timing, AdminInviteCodeInfo, FavoriteMetadataStatus,
+        NotificationSettingsResponse, NotificationSettingsUpdate, PushStatsState,
+        ScheduledDeliveryJob, ScheduledIndexJob, ScheduledJobSpec, SchedulerRunState,
     };
+
+    #[test]
+    fn favorite_metadata_status_serializes_as_stable_snake_case_values() {
+        assert_eq!(
+            serde_json::to_string(&FavoriteMetadataStatus::Available)
+                .expect("available status should serialize"),
+            r#""available""#
+        );
+        assert_eq!(
+            serde_json::to_string(&FavoriteMetadataStatus::Missing)
+                .expect("missing status should serialize"),
+            r#""missing""#
+        );
+        assert_eq!(
+            serde_json::to_string(&FavoriteMetadataStatus::Unavailable)
+                .expect("unavailable status should serialize"),
+            r#""unavailable""#
+        );
+    }
 
     #[test]
     fn scheduler_status_serialization_and_legacy_mapping_are_explicit() {

@@ -437,6 +437,17 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
                         dbName={fav.db_name}
                         initialFolderIds={[fav.folder_id]}
                         className="content-visibility-card"
+                        preview={
+                          fav.metadata_status === 'missing' ? (
+                            <span className="text-amber-700">
+                              来源数据库或文章已不存在。收藏仍保留；可移动、移除，导出时会保留空元数据条目。
+                            </span>
+                          ) : fav.metadata_status === 'unavailable' ? (
+                            <span className="text-destructive">
+                              文章元数据暂时无法读取，请稍后重试。收藏仍保留，可移动或移除；当前导出会明确报错。
+                            </span>
+                          ) : undefined
+                        }
                         leading={
                           <Checkbox
                             checked={isSelected}

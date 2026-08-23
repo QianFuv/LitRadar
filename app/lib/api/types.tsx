@@ -125,6 +125,7 @@ export interface FavoriteItem {
 }
 
 export interface FavoriteArticleItem extends FavoriteItem {
+  metadata_status: 'available' | 'missing' | 'unavailable';
   journal_id?: JournalId | null;
   issue_id?: number | null;
   title?: string | null;

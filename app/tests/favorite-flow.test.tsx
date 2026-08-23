@@ -33,14 +33,17 @@ vi.mock('@/components/feature/article-dialog-card', () => ({
     article,
     extraActions,
     leading,
+    preview,
   }: {
     article: FavoriteArticleItem;
     extraActions?: ReactNode;
     leading?: ReactNode;
+    preview?: ReactNode;
   }) => (
     <div>
       {leading}
       <span>{article.title}</span>
+      {preview}
       {extraActions}
     </div>
   ),
@@ -114,6 +117,7 @@ function favoriteArticleFixture(id: number): FavoriteArticleItem {
     db_name: 'fixture.sqlite',
     note: '',
     created_at: 2,
+    metadata_status: 'available',
     title: `Article ${id}`,
     authors: ['Researcher'],
     abstract: `Abstract ${id}`,
@@ -379,6 +383,51 @@ async function confirmsBulkFavoriteRemoval(): Promise<void> {
 }
 
 /**
+ * Verify missing and unavailable metadata stay actionable with distinct explanations.
+ */
+async function rendersFavoriteMetadataAvailability(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/favorites/folders', () =>
+      HttpResponse.json([
+        { id: 3, name: 'Reading', is_tracking: false, article_count: 2, created_at: 1 },
+        { id: 4, name: 'Archive', is_tracking: false, article_count: 0, created_at: 2 },
+      ]),
+    ),
+    http.get('http://localhost/api/favorites/folders/3/articles', () =>
+      HttpResponse.json([
+        {
+          ...favoriteArticleFixture(1),
+          metadata_status: 'missing',
+          title: null,
+          abstract: null,
+        },
+        {
+          ...favoriteArticleFixture(2),
+          metadata_status: 'unavailable',
+          title: null,
+          abstract: null,
+        },
+      ]),
+    ),
+  );
+  const user = userEvent.setup();
+  renderFavoritesPage();
+
+  expect(await screen.findByText(/来源数据库或文章已不存在。收藏仍保留/)).toBeInTheDocument();
+  expect(screen.getByText(/文章元数据暂时无法读取，请稍后重试/)).toBeInTheDocument();
+  const missingCheckbox = screen.getByRole('checkbox', { name: '选择文章 article-1' });
+  expect(missingCheckbox).toBeEnabled();
+  expect(screen.getAllByRole('button', { name: '移除收藏' })).toHaveLength(2);
+  expect(screen.getByRole('button', { name: '导出引用' })).toBeEnabled();
+
+  await user.click(missingCheckbox);
+  const targetFolderSelect = screen.getByRole('combobox', { name: '选择目标收藏夹' });
+  targetFolderSelect.focus();
+  await user.keyboard('{ArrowDown}{Enter}');
+  expect(screen.getByRole('button', { name: '移动所选' })).toBeEnabled();
+}
+
+/**
  * Verify folder creation, rename, tracking selection, and export format controls.
  */
 async function managesFoldersAndExportFormats(): Promise<void> {
@@ -543,6 +592,10 @@ describe('favorite mutation flow', () => {
   test('confirms folder deletion before mutation', confirmsFolderDeletion);
   test('confirms one favorite removal before mutation', confirmsSingleFavoriteRemoval);
   test('confirms bulk favorite removal with a target snapshot', confirmsBulkFavoriteRemoval);
+  test(
+    'keeps missing and unavailable favorite metadata actionable',
+    rendersFavoriteMetadataAvailability,
+  );
   test('manages folders and export formats', managesFoldersAndExportFormats, 15_000);
   test('retries a failed bulk move', retriesFailedBulkMove);
 });
