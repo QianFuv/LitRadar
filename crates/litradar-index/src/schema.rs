@@ -6,7 +6,10 @@ use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{
+    params, CachedStatement, Connection, OptionalExtension, Statement, Transaction,
+    TransactionBehavior,
+};
 
 use litradar_domain::{
     ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, ProviderBatch,
@@ -435,28 +438,31 @@ pub fn write_content_batch(
         ));
     }
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-    claim_catalog_identity_keys(&transaction, catalog)?;
-    let (journal_id, projection_refresh) = upsert_canonical_journal(&transaction, catalog)?;
-    for issue in &batch.issues {
-        upsert_canonical_issue(&transaction, journal_id, issue)?;
-    }
+    let outcome = {
+        let mut writer = CanonicalContentWriter::prepare(&transaction)?;
+        writer.claim_catalog_identity_keys(catalog)?;
+        let (journal_id, projection_refresh) = writer.upsert_journal(catalog)?;
+        for issue in &batch.issues {
+            writer.upsert_issue(journal_id, issue)?;
+        }
 
-    let mut outcome = ContentWriteOutcome {
-        articles_seen: batch.articles.len(),
-        ..ContentWriteOutcome::default()
+        let mut outcome = ContentWriteOutcome {
+            articles_seen: batch.articles.len(),
+            ..ContentWriteOutcome::default()
+        };
+        for article in &batch.articles {
+            writer.write_article(
+                catalog,
+                journal_id,
+                article,
+                content_revision,
+                created_at,
+                &mut outcome,
+            )?;
+        }
+        writer.refresh_journal_projections(journal_id, catalog, projection_refresh)?;
+        outcome
     };
-    for article in &batch.articles {
-        write_canonical_article(
-            &transaction,
-            catalog,
-            journal_id,
-            article,
-            content_revision,
-            created_at,
-            &mut outcome,
-        )?;
-    }
-    refresh_journal_projections(&transaction, journal_id, catalog, projection_refresh)?;
     transaction.commit()?;
     Ok(outcome)
 }
@@ -877,17 +883,56 @@ fn legacy_journal_not_empty() -> ContentDatabaseError {
     ContentDatabaseError::Contract(ContractViolation::new(LEGACY_JOURNAL_NOT_EMPTY_MESSAGE))
 }
 
+const JOURNAL_PROJECTION_SQL: &str = "SELECT title, area FROM journals WHERE journal_id = ?1";
+
+const JOURNAL_UPSERT_SQL: &str = "
+    INSERT INTO journals (
+        journal_id, catalog_id, title, title_aliases_json, issns_json, issn, eissn, area,
+        utd_rank, utd_rating, abs_rank, abs_rating, fms_rank, fms_rating,
+        fmscn_rank, fmscn_rating
+    ) VALUES (
+        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+    )
+    ON CONFLICT(journal_id) DO UPDATE SET
+        catalog_id = excluded.catalog_id,
+        title = excluded.title,
+        title_aliases_json = excluded.title_aliases_json,
+        issns_json = excluded.issns_json,
+        issn = excluded.issn,
+        eissn = excluded.eissn,
+        area = excluded.area,
+        utd_rank = excluded.utd_rank,
+        utd_rating = excluded.utd_rating,
+        abs_rank = excluded.abs_rank,
+        abs_rating = excluded.abs_rating,
+        fms_rank = excluded.fms_rank,
+        fms_rating = excluded.fms_rating,
+        fmscn_rank = excluded.fmscn_rank,
+        fmscn_rating = excluded.fmscn_rating";
+
 fn upsert_canonical_journal(
     connection: &Connection,
     catalog: &JournalCatalogEntry,
 ) -> Result<(i64, JournalProjectionRefresh), ContentDatabaseError> {
+    let mut projection_statement = connection.prepare_cached(JOURNAL_PROJECTION_SQL)?;
+    let mut upsert_statement = connection.prepare_cached(JOURNAL_UPSERT_SQL)?;
+    upsert_canonical_journal_with_statements(
+        &mut projection_statement,
+        &mut upsert_statement,
+        catalog,
+    )
+}
+
+fn upsert_canonical_journal_with_statements(
+    projection_statement: &mut Statement<'_>,
+    upsert_statement: &mut Statement<'_>,
+    catalog: &JournalCatalogEntry,
+) -> Result<(i64, JournalProjectionRefresh), ContentDatabaseError> {
     let journal_id = journal_id_from_catalog_id(&catalog.catalog_id);
-    let previous_projection = connection
-        .query_row(
-            "SELECT title, area FROM journals WHERE journal_id = ?1",
-            [journal_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
-        )
+    let previous_projection = projection_statement
+        .query_row([journal_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
         .optional()?;
     let projection_refresh = previous_projection
         .map(|(title, area)| JournalProjectionRefresh {
@@ -897,95 +942,216 @@ fn upsert_canonical_journal(
         .unwrap_or_default();
     let title_aliases_json = serde_json::to_string(&catalog.title_aliases)?;
     let issns_json = serde_json::to_string(&catalog.all_issns)?;
-    connection.execute(
-        "INSERT INTO journals (
-             journal_id, catalog_id, title, title_aliases_json, issns_json, issn, eissn, area,
-             utd_rank, utd_rating, abs_rank, abs_rating, fms_rank, fms_rating,
-             fmscn_rank, fmscn_rating
-         ) VALUES (
-             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
-         )
-         ON CONFLICT(journal_id) DO UPDATE SET
-             catalog_id = excluded.catalog_id,
-             title = excluded.title,
-             title_aliases_json = excluded.title_aliases_json,
-             issns_json = excluded.issns_json,
-             issn = excluded.issn,
-             eissn = excluded.eissn,
-             area = excluded.area,
-             utd_rank = excluded.utd_rank,
-             utd_rating = excluded.utd_rating,
-             abs_rank = excluded.abs_rank,
-             abs_rating = excluded.abs_rating,
-             fms_rank = excluded.fms_rank,
-             fms_rating = excluded.fms_rating,
-             fmscn_rank = excluded.fmscn_rank,
-             fmscn_rating = excluded.fmscn_rating",
-        params![
-            journal_id,
-            catalog.catalog_id,
-            catalog.title,
-            title_aliases_json,
-            issns_json,
-            catalog.issn,
-            catalog.eissn,
-            catalog.area,
-            catalog.rankings.utd_rank,
-            catalog.rankings.utd_rating,
-            catalog.rankings.abs_rank,
-            catalog.rankings.abs_rating,
-            catalog.rankings.fms_rank,
-            catalog.rankings.fms_rating,
-            catalog.rankings.fmscn_rank,
-            catalog.rankings.fmscn_rating,
-        ],
-    )?;
+    upsert_statement.execute(params![
+        journal_id,
+        catalog.catalog_id,
+        catalog.title,
+        title_aliases_json,
+        issns_json,
+        catalog.issn,
+        catalog.eissn,
+        catalog.area,
+        catalog.rankings.utd_rank,
+        catalog.rankings.utd_rating,
+        catalog.rankings.abs_rank,
+        catalog.rankings.abs_rating,
+        catalog.rankings.fms_rank,
+        catalog.rankings.fms_rating,
+        catalog.rankings.fmscn_rank,
+        catalog.rankings.fmscn_rating,
+    ])?;
     Ok((journal_id, projection_refresh))
 }
 
-fn upsert_canonical_issue(
-    connection: &Connection,
-    journal_id: i64,
-    issue: &IssueDraft,
-) -> Result<Option<i64>, ContentDatabaseError> {
-    let Some(issue_id) = issue_id_from_draft(journal_id, issue) else {
-        return Ok(None);
-    };
-    connection.execute(
-        "INSERT INTO issues (
-             issue_id, journal_id, publication_year, title, volume, number, date
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(issue_id) DO UPDATE SET
-             publication_year = CASE
-                 WHEN issues.publication_year IS NULL THEN excluded.publication_year
-                 WHEN excluded.publication_year IS NULL THEN issues.publication_year
-                 ELSE MIN(issues.publication_year, excluded.publication_year)
-             END,
-             title = CASE
-                 WHEN issues.title IS NULL THEN excluded.title
-                 WHEN excluded.title IS NULL THEN issues.title
-                 WHEN length(excluded.title) > length(issues.title) THEN excluded.title
-                 WHEN length(excluded.title) < length(issues.title) THEN issues.title
-                 ELSE MIN(issues.title, excluded.title)
-             END,
-             volume = CASE
-                 WHEN issues.volume IS NULL THEN excluded.volume
-                 WHEN excluded.volume IS NULL THEN issues.volume
-                 ELSE MIN(issues.volume, excluded.volume)
-             END,
-             number = CASE
-                 WHEN issues.number IS NULL THEN excluded.number
-                 WHEN excluded.number IS NULL THEN issues.number
-                 ELSE MIN(issues.number, excluded.number)
-             END,
-             date = CASE
-                 WHEN issues.date IS NULL THEN excluded.date
-                 WHEN excluded.date IS NULL THEN issues.date
-                 WHEN length(excluded.date) > length(issues.date) THEN excluded.date
-                 WHEN length(excluded.date) < length(issues.date) THEN issues.date
-                 ELSE MIN(issues.date, excluded.date)
-             END",
-        params![
+struct CanonicalContentWriter<'connection> {
+    connection: &'connection Connection,
+    journal_projection: CachedStatement<'connection>,
+    journal_upsert: CachedStatement<'connection>,
+    issue_upsert: CachedStatement<'connection>,
+    identity_lookup: CachedStatement<'connection>,
+    article_lookup: CachedStatement<'connection>,
+    retraction_lookup: CachedStatement<'connection>,
+    article_upsert: CachedStatement<'connection>,
+    retraction_delete: CachedStatement<'connection>,
+    retraction_insert: CachedStatement<'connection>,
+    listing_upsert: CachedStatement<'connection>,
+    search_delete: CachedStatement<'connection>,
+    search_insert: CachedStatement<'connection>,
+    identity_claim: CachedStatement<'connection>,
+    change_event_insert: CachedStatement<'connection>,
+}
+
+impl<'connection> CanonicalContentWriter<'connection> {
+    fn prepare(connection: &'connection Connection) -> Result<Self, ContentDatabaseError> {
+        Ok(Self {
+            connection,
+            journal_projection: connection.prepare_cached(JOURNAL_PROJECTION_SQL)?,
+            journal_upsert: connection.prepare_cached(JOURNAL_UPSERT_SQL)?,
+            issue_upsert: connection.prepare_cached(
+                "INSERT INTO issues (
+                     issue_id, journal_id, publication_year, title, volume, number, date
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(issue_id) DO UPDATE SET
+                     publication_year = CASE
+                         WHEN issues.publication_year IS NULL THEN excluded.publication_year
+                         WHEN excluded.publication_year IS NULL THEN issues.publication_year
+                         ELSE MIN(issues.publication_year, excluded.publication_year)
+                     END,
+                     title = CASE
+                         WHEN issues.title IS NULL THEN excluded.title
+                         WHEN excluded.title IS NULL THEN issues.title
+                         WHEN length(excluded.title) > length(issues.title) THEN excluded.title
+                         WHEN length(excluded.title) < length(issues.title) THEN issues.title
+                         ELSE MIN(issues.title, excluded.title)
+                     END,
+                     volume = CASE
+                         WHEN issues.volume IS NULL THEN excluded.volume
+                         WHEN excluded.volume IS NULL THEN issues.volume
+                         ELSE MIN(issues.volume, excluded.volume)
+                     END,
+                     number = CASE
+                         WHEN issues.number IS NULL THEN excluded.number
+                         WHEN excluded.number IS NULL THEN issues.number
+                         ELSE MIN(issues.number, excluded.number)
+                     END,
+                     date = CASE
+                         WHEN issues.date IS NULL THEN excluded.date
+                         WHEN excluded.date IS NULL THEN issues.date
+                         WHEN length(excluded.date) > length(issues.date) THEN excluded.date
+                         WHEN length(excluded.date) < length(issues.date) THEN issues.date
+                         ELSE MIN(issues.date, excluded.date)
+                     END",
+            )?,
+            identity_lookup: connection.prepare_cached(
+                "SELECT article_id FROM article_identity_keys
+                 WHERE identity_kind = ?1 AND identity_value = ?2",
+            )?,
+            article_lookup: connection.prepare_cached(
+                "SELECT
+                     j.catalog_id, a.title, a.publication_year, a.date, i.title, i.volume, i.number,
+                     a.authors_json, a.start_page, a.end_page, a.abstract_text, a.doi, a.pmid,
+                     a.open_access, a.in_press, a.issue_id
+                 FROM articles AS a
+                 JOIN journals AS j ON j.journal_id = a.journal_id
+                 LEFT JOIN issues AS i ON i.issue_id = a.issue_id
+                 WHERE a.article_id = ?1",
+            )?,
+            retraction_lookup: connection.prepare_cached(
+                "SELECT retraction_doi FROM article_retraction_dois
+                 WHERE article_id = ?1 ORDER BY retraction_doi",
+            )?,
+            article_upsert: connection.prepare_cached(
+                "INSERT INTO articles (
+                     article_id, journal_id, issue_id, title, publication_year, date, authors_json,
+                     start_page, end_page, abstract_text, doi, pmid, open_access, in_press
+                 ) VALUES (
+                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+                 )
+                 ON CONFLICT(article_id) DO UPDATE SET
+                     journal_id = excluded.journal_id,
+                     issue_id = excluded.issue_id,
+                     title = excluded.title,
+                     publication_year = excluded.publication_year,
+                     date = excluded.date,
+                     authors_json = excluded.authors_json,
+                     start_page = excluded.start_page,
+                     end_page = excluded.end_page,
+                     abstract_text = excluded.abstract_text,
+                     doi = excluded.doi,
+                     pmid = excluded.pmid,
+                     open_access = excluded.open_access,
+                     in_press = excluded.in_press",
+            )?,
+            retraction_delete: connection
+                .prepare_cached("DELETE FROM article_retraction_dois WHERE article_id = ?1")?,
+            retraction_insert: connection.prepare_cached(
+                "INSERT INTO article_retraction_dois (article_id, retraction_doi)
+                 VALUES (?1, ?2)",
+            )?,
+            listing_upsert: connection.prepare_cached(
+                "INSERT INTO article_listing (
+                     article_id, journal_id, issue_id, publication_year, date, open_access,
+                     in_press, doi, pmid, area
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(article_id) DO UPDATE SET
+                     journal_id = excluded.journal_id,
+                     issue_id = excluded.issue_id,
+                     publication_year = excluded.publication_year,
+                     date = excluded.date,
+                     open_access = excluded.open_access,
+                     in_press = excluded.in_press,
+                     doi = excluded.doi,
+                     pmid = excluded.pmid,
+                     area = excluded.area",
+            )?,
+            search_delete: connection
+                .prepare_cached("DELETE FROM article_search WHERE rowid = ?1")?,
+            search_insert: connection.prepare_cached(
+                "INSERT INTO article_search (
+                     rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
+                 ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?,
+            identity_claim: connection.prepare_cached(
+                "WITH prior(owner) AS MATERIALIZED (
+                     SELECT (
+                         SELECT article_id
+                         FROM article_identity_keys
+                         WHERE identity_kind = ?1 AND identity_value = ?2
+                     )
+                 )
+                 INSERT INTO article_identity_keys (identity_kind, identity_value, article_id)
+                 SELECT ?1, ?2, ?3
+                 FROM prior
+                 WHERE TRUE
+                 ON CONFLICT(identity_kind, identity_value) DO UPDATE SET
+                     article_id = article_identity_keys.article_id
+                 RETURNING article_id, (SELECT owner IS NULL FROM prior)",
+            )?,
+            change_event_insert: connection.prepare_cached(
+                "INSERT OR IGNORE INTO article_change_events (
+                     content_revision, article_id, change_kind, journal_id, issue_id, in_press,
+                     created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?,
+        })
+    }
+
+    fn claim_catalog_identity_keys(
+        &self,
+        catalog: &JournalCatalogEntry,
+    ) -> Result<(), ContentDatabaseError> {
+        claim_catalog_identity_keys(self.connection, catalog)
+    }
+
+    fn upsert_journal(
+        &mut self,
+        catalog: &JournalCatalogEntry,
+    ) -> Result<(i64, JournalProjectionRefresh), ContentDatabaseError> {
+        upsert_canonical_journal_with_statements(
+            &mut self.journal_projection,
+            &mut self.journal_upsert,
+            catalog,
+        )
+    }
+
+    fn refresh_journal_projections(
+        &self,
+        journal_id: i64,
+        catalog: &JournalCatalogEntry,
+        refresh: JournalProjectionRefresh,
+    ) -> Result<(), ContentDatabaseError> {
+        refresh_journal_projections(self.connection, journal_id, catalog, refresh)
+    }
+
+    fn upsert_issue(
+        &mut self,
+        journal_id: i64,
+        issue: &IssueDraft,
+    ) -> Result<Option<i64>, ContentDatabaseError> {
+        let Some(issue_id) = issue_id_from_draft(journal_id, issue) else {
+            return Ok(None);
+        };
+        self.issue_upsert.execute(params![
             issue_id,
             journal_id,
             issue.publication_year,
@@ -993,164 +1159,136 @@ fn upsert_canonical_issue(
             issue.volume,
             issue.number,
             issue.date,
-        ],
-    )?;
-    Ok(Some(issue_id))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn write_canonical_article(
-    connection: &Connection,
-    catalog: &JournalCatalogEntry,
-    journal_id: i64,
-    article: &ArticleDraft,
-    content_revision: &str,
-    created_at: &str,
-    outcome: &mut ContentWriteOutcome,
-) -> Result<(), ContentDatabaseError> {
-    let incoming_keys = article_identity_keys(article);
-    let existing_aliases = load_existing_identity_aliases(connection, &incoming_keys)?;
-    let resolution = resolve_article_identity(article, &existing_aliases)?;
-    let existing = load_canonical_article(connection, resolution.article_id)?;
-    if !resolution.is_existing && existing.is_some() {
-        return Err(ContentDatabaseError::ArticleIdCollision {
-            article_id: resolution.article_id,
-        });
+        ])?;
+        Ok(Some(issue_id))
     }
-    let merged = if let Some((existing, _)) = &existing {
-        merge_resolved_article_drafts(existing, article)?
-    } else {
-        article.clone()
-    };
-    let issue = IssueDraft {
-        catalog_id: merged.catalog_id.clone(),
-        publication_year: merged.publication_year,
-        title: merged.issue_title.clone(),
-        volume: merged.volume.clone(),
-        number: merged.issue_number.clone(),
-        date: merged.date.clone(),
-    };
-    let issue_id = upsert_canonical_issue(connection, journal_id, &issue)?;
-    let previous_issue_id = existing.as_ref().and_then(|(_, issue_id)| *issue_id);
-    let has_changed = existing
-        .as_ref()
-        .map(|(value, previous_issue_id)| value != &merged || *previous_issue_id != issue_id)
-        .unwrap_or(true);
 
-    if has_changed {
-        upsert_canonical_article(
-            connection,
-            resolution.article_id,
-            journal_id,
-            issue_id,
-            &merged,
-        )?;
-        refresh_article_projection(
-            connection,
-            resolution.article_id,
-            journal_id,
-            issue_id,
-            catalog,
-            &merged,
-        )?;
-        if existing.is_some()
-            && (previous_issue_id != issue_id
-                || existing
-                    .as_ref()
-                    .is_some_and(|(value, _)| value.in_press != merged.in_press))
-        {
-            outcome.change_events_emitted += record_content_change_event(
-                connection,
+    #[allow(clippy::too_many_arguments)]
+    fn write_article(
+        &mut self,
+        catalog: &JournalCatalogEntry,
+        journal_id: i64,
+        article: &ArticleDraft,
+        content_revision: &str,
+        created_at: &str,
+        outcome: &mut ContentWriteOutcome,
+    ) -> Result<(), ContentDatabaseError> {
+        let incoming_keys = article_identity_keys(article);
+        let existing_aliases = self.load_existing_identity_aliases(&incoming_keys)?;
+        let resolution = resolve_article_identity(article, &existing_aliases)?;
+        let existing = self.load_canonical_article(resolution.article_id)?;
+        if !resolution.is_existing && existing.is_some() {
+            return Err(ContentDatabaseError::ArticleIdCollision {
+                article_id: resolution.article_id,
+            });
+        }
+        let merged = if let Some((existing, _)) = &existing {
+            merge_resolved_article_drafts(existing, article)?
+        } else {
+            article.clone()
+        };
+        let issue = IssueDraft {
+            catalog_id: merged.catalog_id.clone(),
+            publication_year: merged.publication_year,
+            title: merged.issue_title.clone(),
+            volume: merged.volume.clone(),
+            number: merged.issue_number.clone(),
+            date: merged.date.clone(),
+        };
+        let issue_id = self.upsert_issue(journal_id, &issue)?;
+        let previous_issue_id = existing.as_ref().and_then(|(_, issue_id)| *issue_id);
+        let has_changed = existing
+            .as_ref()
+            .map(|(value, previous_issue_id)| value != &merged || *previous_issue_id != issue_id)
+            .unwrap_or(true);
+
+        if has_changed {
+            self.upsert_article(resolution.article_id, journal_id, issue_id, &merged)?;
+            self.refresh_article_projection(
+                resolution.article_id,
+                journal_id,
+                issue_id,
+                catalog,
+                &merged,
+            )?;
+            if existing.is_some()
+                && (previous_issue_id != issue_id
+                    || existing
+                        .as_ref()
+                        .is_some_and(|(value, _)| value.in_press != merged.in_press))
+            {
+                outcome.change_events_emitted += self.record_content_change_event(
+                    content_revision,
+                    resolution.article_id,
+                    "remove",
+                    journal_id,
+                    previous_issue_id,
+                    existing
+                        .as_ref()
+                        .and_then(|(value, _)| value.in_press)
+                        .unwrap_or(false),
+                    created_at,
+                )?;
+            }
+            outcome.change_events_emitted += self.record_content_change_event(
                 content_revision,
                 resolution.article_id,
-                "remove",
+                "upsert",
                 journal_id,
-                previous_issue_id,
-                existing
-                    .as_ref()
-                    .and_then(|(value, _)| value.in_press)
-                    .unwrap_or(false),
+                issue_id,
+                merged.in_press.unwrap_or(false),
                 created_at,
             )?;
+            outcome.articles_changed += 1;
         }
-        outcome.change_events_emitted += record_content_change_event(
-            connection,
-            content_revision,
-            resolution.article_id,
-            "upsert",
-            journal_id,
-            issue_id,
-            merged.in_press.unwrap_or(false),
-            created_at,
-        )?;
-        outcome.articles_changed += 1;
+
+        let identity_keys = incoming_keys
+            .into_iter()
+            .chain(article_identity_keys(&merged))
+            .collect::<BTreeSet<_>>();
+        for key in identity_keys {
+            let (owner, was_inserted) = self.identity_claim.query_row(
+                params![key.kind.as_str(), key.value, resolution.article_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?)),
+            )?;
+            outcome.identity_aliases_added += usize::from(was_inserted);
+            if owner != resolution.article_id {
+                return Err(ContentDatabaseError::Identity(
+                    ArticleIdentityError::ConflictingAliases {
+                        article_ids: vec![owner, resolution.article_id],
+                    },
+                ));
+            }
+        }
+        Ok(())
     }
 
-    let identity_keys = incoming_keys
-        .into_iter()
-        .chain(article_identity_keys(&merged))
-        .collect::<BTreeSet<_>>();
-    for key in identity_keys {
-        outcome.identity_aliases_added += connection.execute(
-            "INSERT INTO article_identity_keys (identity_kind, identity_value, article_id)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(identity_kind, identity_value) DO NOTHING",
-            params![key.kind.as_str(), key.value, resolution.article_id],
-        )?;
-        let owner = connection.query_row(
-            "SELECT article_id FROM article_identity_keys
-             WHERE identity_kind = ?1 AND identity_value = ?2",
-            params![key.kind.as_str(), key.value],
-            |row| row.get::<_, i64>(0),
-        )?;
-        if owner != resolution.article_id {
-            return Err(ContentDatabaseError::Identity(
-                ArticleIdentityError::ConflictingAliases {
-                    article_ids: vec![owner, resolution.article_id],
-                },
-            ));
+    fn load_existing_identity_aliases(
+        &mut self,
+        keys: &[ArticleIdentityKey],
+    ) -> Result<BTreeMap<ArticleIdentityKey, i64>, ContentDatabaseError> {
+        let mut aliases = BTreeMap::new();
+        for key in keys {
+            let article_id = self
+                .identity_lookup
+                .query_row(params![key.kind.as_str(), key.value], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .optional()?;
+            if let Some(article_id) = article_id {
+                aliases.insert(key.clone(), article_id);
+            }
         }
+        Ok(aliases)
     }
-    Ok(())
-}
 
-fn load_existing_identity_aliases(
-    connection: &Connection,
-    keys: &[ArticleIdentityKey],
-) -> Result<BTreeMap<ArticleIdentityKey, i64>, ContentDatabaseError> {
-    let mut aliases = BTreeMap::new();
-    for key in keys {
-        let article_id = connection
-            .query_row(
-                "SELECT article_id FROM article_identity_keys
-                 WHERE identity_kind = ?1 AND identity_value = ?2",
-                params![key.kind.as_str(), key.value],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?;
-        if let Some(article_id) = article_id {
-            aliases.insert(key.clone(), article_id);
-        }
-    }
-    Ok(aliases)
-}
-
-fn load_canonical_article(
-    connection: &Connection,
-    article_id: i64,
-) -> Result<Option<(ArticleDraft, Option<i64>)>, ContentDatabaseError> {
-    let row = connection
-        .query_row(
-            "SELECT
-                 j.catalog_id, a.title, a.publication_year, a.date, i.title, i.volume, i.number,
-                 a.authors_json, a.start_page, a.end_page, a.abstract_text, a.doi, a.pmid,
-                 a.open_access, a.in_press, a.issue_id
-             FROM articles AS a
-             JOIN journals AS j ON j.journal_id = a.journal_id
-             LEFT JOIN issues AS i ON i.issue_id = a.issue_id
-             WHERE a.article_id = ?1",
-            [article_id],
-            |row| {
+    fn load_canonical_article(
+        &mut self,
+        article_id: i64,
+    ) -> Result<Option<(ArticleDraft, Option<i64>)>, ContentDatabaseError> {
+        let row = self
+            .article_lookup
+            .query_row([article_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -1169,42 +1307,9 @@ fn load_canonical_article(
                     row.get::<_, Option<i64>>(14)?,
                     row.get::<_, Option<i64>>(15)?,
                 ))
-            },
-        )
-        .optional()?;
-    let Some((
-        catalog_id,
-        title,
-        publication_year,
-        date,
-        issue_title,
-        volume,
-        issue_number,
-        authors_json,
-        start_page,
-        end_page,
-        abstract_text,
-        doi,
-        pmid,
-        open_access,
-        in_press,
-        issue_id,
-    )) = row
-    else {
-        return Ok(None);
-    };
-    let retraction_dois = {
-        let mut statement = connection.prepare(
-            "SELECT retraction_doi FROM article_retraction_dois
-             WHERE article_id = ?1 ORDER BY retraction_doi",
-        )?;
-        let values = statement
-            .query_map([article_id], |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        values
-    };
-    Ok(Some((
-        ArticleDraft {
+            })
+            .optional()?;
+        let Some((
             catalog_id,
             title,
             publication_year,
@@ -1212,50 +1317,58 @@ fn load_canonical_article(
             issue_title,
             volume,
             issue_number,
-            authors: serde_json::from_str::<Vec<ArticleAuthorDraft>>(&authors_json)?,
+            authors_json,
             start_page,
             end_page,
             abstract_text,
             doi,
             pmid,
-            open_access: open_access.map(|value| value != 0),
-            in_press: in_press.map(|value| value != 0),
-            retraction_dois,
-        },
-        issue_id,
-    )))
-}
+            open_access,
+            in_press,
+            issue_id,
+        )) = row
+        else {
+            return Ok(None);
+        };
+        let retraction_dois = {
+            let values = self
+                .retraction_lookup
+                .query_map([article_id], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            values
+        };
+        Ok(Some((
+            ArticleDraft {
+                catalog_id,
+                title,
+                publication_year,
+                date,
+                issue_title,
+                volume,
+                issue_number,
+                authors: serde_json::from_str::<Vec<ArticleAuthorDraft>>(&authors_json)?,
+                start_page,
+                end_page,
+                abstract_text,
+                doi,
+                pmid,
+                open_access: open_access.map(|value| value != 0),
+                in_press: in_press.map(|value| value != 0),
+                retraction_dois,
+            },
+            issue_id,
+        )))
+    }
 
-fn upsert_canonical_article(
-    connection: &Connection,
-    article_id: i64,
-    journal_id: i64,
-    issue_id: Option<i64>,
-    article: &ArticleDraft,
-) -> Result<(), ContentDatabaseError> {
-    let authors_json = serde_json::to_string(&article.authors)?;
-    connection.execute(
-        "INSERT INTO articles (
-             article_id, journal_id, issue_id, title, publication_year, date, authors_json,
-             start_page, end_page, abstract_text, doi, pmid, open_access, in_press
-         ) VALUES (
-             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
-         )
-         ON CONFLICT(article_id) DO UPDATE SET
-             journal_id = excluded.journal_id,
-             issue_id = excluded.issue_id,
-             title = excluded.title,
-             publication_year = excluded.publication_year,
-             date = excluded.date,
-             authors_json = excluded.authors_json,
-             start_page = excluded.start_page,
-             end_page = excluded.end_page,
-             abstract_text = excluded.abstract_text,
-             doi = excluded.doi,
-             pmid = excluded.pmid,
-             open_access = excluded.open_access,
-             in_press = excluded.in_press",
-        params![
+    fn upsert_article(
+        &mut self,
+        article_id: i64,
+        journal_id: i64,
+        issue_id: Option<i64>,
+        article: &ArticleDraft,
+    ) -> Result<(), ContentDatabaseError> {
+        let authors_json = serde_json::to_string(&article.authors)?;
+        self.article_upsert.execute(params![
             article_id,
             journal_id,
             issue_id,
@@ -1270,46 +1383,24 @@ fn upsert_canonical_article(
             article.pmid,
             article.open_access.map(i64::from),
             article.in_press.map(i64::from),
-        ],
-    )?;
-    connection.execute(
-        "DELETE FROM article_retraction_dois WHERE article_id = ?1",
-        [article_id],
-    )?;
-    for retraction_doi in &article.retraction_dois {
-        connection.execute(
-            "INSERT INTO article_retraction_dois (article_id, retraction_doi)
-             VALUES (?1, ?2)",
-            params![article_id, retraction_doi],
-        )?;
+        ])?;
+        self.retraction_delete.execute([article_id])?;
+        for retraction_doi in &article.retraction_dois {
+            self.retraction_insert
+                .execute(params![article_id, retraction_doi])?;
+        }
+        Ok(())
     }
-    Ok(())
-}
 
-fn refresh_article_projection(
-    connection: &Connection,
-    article_id: i64,
-    journal_id: i64,
-    issue_id: Option<i64>,
-    catalog: &JournalCatalogEntry,
-    article: &ArticleDraft,
-) -> Result<(), ContentDatabaseError> {
-    connection.execute(
-        "INSERT INTO article_listing (
-             article_id, journal_id, issue_id, publication_year, date, open_access,
-             in_press, doi, pmid, area
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-         ON CONFLICT(article_id) DO UPDATE SET
-             journal_id = excluded.journal_id,
-             issue_id = excluded.issue_id,
-             publication_year = excluded.publication_year,
-             date = excluded.date,
-             open_access = excluded.open_access,
-             in_press = excluded.in_press,
-             doi = excluded.doi,
-             pmid = excluded.pmid,
-             area = excluded.area",
-        params![
+    fn refresh_article_projection(
+        &mut self,
+        article_id: i64,
+        journal_id: i64,
+        issue_id: Option<i64>,
+        catalog: &JournalCatalogEntry,
+        article: &ArticleDraft,
+    ) -> Result<(), ContentDatabaseError> {
+        self.listing_upsert.execute(params![
             article_id,
             journal_id,
             issue_id,
@@ -1320,20 +1411,15 @@ fn refresh_article_projection(
             article.doi,
             article.pmid,
             catalog.area,
-        ],
-    )?;
-    connection.execute("DELETE FROM article_search WHERE rowid = ?1", [article_id])?;
-    let authors = article
-        .authors
-        .iter()
-        .map(|author| author.display_name.as_str())
-        .collect::<Vec<_>>()
-        .join("; ");
-    connection.execute(
-        "INSERT INTO article_search (
-             rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
-         ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
+        ])?;
+        self.search_delete.execute([article_id])?;
+        let authors = article
+            .authors
+            .iter()
+            .map(|author| author.display_name.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        self.search_insert.execute(params![
             article_id,
             article.title,
             article.abstract_text.as_deref().unwrap_or_default(),
@@ -1341,9 +1427,31 @@ fn refresh_article_projection(
             article.pmid.as_deref().unwrap_or_default(),
             authors,
             catalog.title,
-        ],
-    )?;
-    Ok(())
+        ])?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_content_change_event(
+        &mut self,
+        content_revision: &str,
+        article_id: i64,
+        change_kind: &str,
+        journal_id: i64,
+        issue_id: Option<i64>,
+        in_press: bool,
+        created_at: &str,
+    ) -> Result<usize, ContentDatabaseError> {
+        Ok(self.change_event_insert.execute(params![
+            content_revision,
+            article_id,
+            change_kind,
+            journal_id,
+            issue_id,
+            i64::from(in_press),
+            created_at,
+        ])?)
+    }
 }
 
 fn refresh_journal_projections(
@@ -1367,33 +1475,6 @@ fn refresh_journal_projections(
         )?;
     }
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn record_content_change_event(
-    connection: &Connection,
-    content_revision: &str,
-    article_id: i64,
-    change_kind: &str,
-    journal_id: i64,
-    issue_id: Option<i64>,
-    in_press: bool,
-    created_at: &str,
-) -> Result<usize, ContentDatabaseError> {
-    Ok(connection.execute(
-        "INSERT OR IGNORE INTO article_change_events (
-             content_revision, article_id, change_kind, journal_id, issue_id, in_press, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            content_revision,
-            article_id,
-            change_kind,
-            journal_id,
-            issue_id,
-            i64::from(in_press),
-            created_at,
-        ],
-    )?)
 }
 
 #[cfg(test)]
