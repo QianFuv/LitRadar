@@ -4,9 +4,50 @@ use super::shared::*;
 use super::*;
 use litradar_domain::{
     validate_characters, validate_favorite_add, validate_favorite_article_ref,
-    validate_folder_name, validate_item_count, validate_positive_id, MAX_BATCH_ARTICLE_IDS,
-    MAX_DATABASE_NAME_CHARS, SQLITE_IN_QUERY_CHUNK_SIZE,
+    validate_folder_name, validate_item_count, validate_positive_id, ArticleId,
+    MAX_BATCH_ARTICLE_IDS, MAX_DATABASE_NAME_CHARS, SQLITE_IN_QUERY_CHUNK_SIZE,
 };
+
+use crate::DatabaseResolutionError;
+
+/// Lean favorite reference used by citation exports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FavoriteCitationReference {
+    /// Canonical article identifier in the selected index database.
+    pub article_id: ArticleId,
+    /// Stored index database selection.
+    pub db_name: String,
+}
+
+/// Owned-folder citation snapshot with exact oversize detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FavoriteCitationSnapshot {
+    /// Folder name used to derive the download filename.
+    pub folder_name: String,
+    /// Favorite references in deterministic export order.
+    pub references: Vec<FavoriteCitationReference>,
+    /// Whether one limit-plus-one sentinel row existed.
+    pub has_more: bool,
+}
+
+/// Citation-only article metadata in favorite order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FavoriteCitationRecord {
+    /// Canonical article identifier in the selected index database.
+    pub article_id: ArticleId,
+    /// Stored index database selection.
+    pub db_name: String,
+    /// Article title when the referenced metadata exists.
+    pub title: Option<String>,
+    /// Decoded display author names.
+    pub authors: Vec<String>,
+    /// Journal title when the referenced metadata exists.
+    pub journal_title: Option<String>,
+    /// Canonical article date when present.
+    pub date: Option<String>,
+    /// Digital object identifier when present.
+    pub doi: Option<String>,
+}
 
 /// Create a folder for a user.
 ///
@@ -350,6 +391,118 @@ pub fn remove_favorite(
         params![user_id.value(), folder_id, article_id, db_name],
     )?;
     Ok(count > 0)
+}
+
+/// Load one owned folder and a bounded citation reference snapshot.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `user_id` - Owner user identifier.
+/// * `folder_id` - Folder row identifier.
+/// * `limit` - Maximum references retained in the snapshot.
+///
+/// # Returns
+///
+/// Folder name, deterministic references, and exact limit-plus-one state.
+pub fn load_favorite_citation_snapshot(
+    auth_db_path: impl AsRef<Path>,
+    user_id: UserId,
+    folder_id: i64,
+    limit: usize,
+) -> Result<FavoriteCitationSnapshot, BusinessRepositoryError> {
+    validate_positive_id("folder_id", folder_id)?;
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction()?;
+    let folder_name = transaction
+        .query_row(
+            "SELECT name FROM folders WHERE id = ?1 AND user_id = ?2",
+            params![folder_id, user_id.value()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or(BusinessRepositoryError::FolderNotFound)?;
+    let query_limit = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
+    let mut statement = transaction.prepare(
+        "SELECT article_id, db_name FROM favorites \
+         WHERE user_id = ?1 AND folder_id = ?2 \
+         ORDER BY created_at DESC, id DESC LIMIT ?3",
+    )?;
+    let rows = statement.query_map(params![user_id.value(), folder_id, query_limit], |row| {
+        Ok(FavoriteCitationReference {
+            article_id: ArticleId(row.get(0)?),
+            db_name: row.get(1)?,
+        })
+    })?;
+    let mut references = collect_rows(rows)?;
+    drop(statement);
+    transaction.commit()?;
+    let has_more = references.len() > limit;
+    references.truncate(limit);
+    Ok(FavoriteCitationSnapshot {
+        folder_name,
+        references,
+        has_more,
+    })
+}
+
+/// Resolve citation-only metadata for a caller-bounded reference batch.
+///
+/// # Arguments
+///
+/// * `config` - Storage paths used to resolve index databases.
+/// * `references` - Favorite references in caller-defined batch order.
+///
+/// # Returns
+///
+/// Citation records in the same order, with blank fields for expected missing content.
+pub fn load_favorite_citation_records(
+    config: &StorageConfig,
+    references: &[FavoriteCitationReference],
+) -> Result<Vec<FavoriteCitationRecord>, BusinessRepositoryError> {
+    let mut by_db: HashMap<String, Vec<i64>> = HashMap::new();
+    for reference in references {
+        by_db
+            .entry(reference.db_name.clone())
+            .or_default()
+            .push(reference.article_id.value());
+    }
+    let mut metadata = HashMap::new();
+    for (db_name, article_ids) in by_db {
+        let db_path =
+            match config.resolve_index_db_path((!db_name.is_empty()).then_some(db_name.as_str())) {
+                Ok(db_path) => db_path,
+                Err(
+                    DatabaseResolutionError::NoSqliteDatabasesFound
+                    | DatabaseResolutionError::DatabaseNotFound
+                    | DatabaseResolutionError::MultipleDatabasesFound
+                    | DatabaseResolutionError::InvalidDatabaseName,
+                ) => continue,
+                Err(DatabaseResolutionError::Io(error)) => return Err(error.into()),
+            };
+        metadata.extend(load_citation_metadata_from_index(
+            &db_path,
+            &db_name,
+            &article_ids,
+        )?);
+    }
+    Ok(references
+        .iter()
+        .map(|reference| {
+            metadata
+                .get(&(reference.db_name.clone(), reference.article_id.value()))
+                .cloned()
+                .unwrap_or_else(|| FavoriteCitationRecord {
+                    article_id: reference.article_id,
+                    db_name: reference.db_name.clone(),
+                    title: None,
+                    authors: Vec::new(),
+                    journal_title: None,
+                    date: None,
+                    doi: None,
+                })
+        })
+        .collect())
 }
 
 /// List favorites as enriched article payloads where index metadata is available.
@@ -856,6 +1009,45 @@ fn load_metadata_from_index(
     Ok(result)
 }
 
+fn load_citation_metadata_from_index(
+    db_path: &Path,
+    db_name: &str,
+    article_ids: &[i64],
+) -> Result<HashMap<(String, i64), FavoriteCitationRecord>, BusinessRepositoryError> {
+    let unique_ids = normalize_article_ids(article_ids);
+    if unique_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let connection = Connection::open(db_path)?;
+    let placeholders = repeat_placeholders(unique_ids.len(), 1);
+    let sql = format!(
+        "SELECT a.article_id, a.title, a.authors_json, j.title, a.date, a.doi \
+         FROM articles a JOIN journals j ON j.journal_id = a.journal_id \
+         WHERE a.article_id IN ({placeholders})"
+    );
+    let values = unique_ids
+        .iter()
+        .map(|article_id| article_id as &dyn rusqlite::ToSql)
+        .collect::<Vec<_>>();
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map(values.as_slice(), |row| {
+        let article_id = row.get::<_, i64>(0)?;
+        Ok((
+            (db_name.to_string(), article_id),
+            FavoriteCitationRecord {
+                article_id: ArticleId(article_id),
+                db_name: db_name.to_string(),
+                title: row.get(1)?,
+                authors: json_string_vec_from_business_row(row, 2)?,
+                journal_title: row.get(3)?,
+                date: row.get(4)?,
+                doi: row.get(5)?,
+            },
+        ))
+    })?;
+    Ok(collect_rows(rows)?.into_iter().collect())
+}
+
 fn json_string_vec_from_business_row(
     row: &rusqlite::Row<'_>,
     index: usize,
@@ -955,6 +1147,7 @@ fn is_constraint_error(error: &rusqlite::Error) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
 
     use litradar_domain::{ArticleId, NotificationSettingsUpdate};
@@ -1331,6 +1524,140 @@ mod tests {
             .expect("chunked metadata query should load");
 
         assert_eq!(metadata.len(), SQLITE_IN_QUERY_CHUNK_SIZE + 1);
+    }
+
+    #[test]
+    fn favorite_citation_snapshot_checks_ownership_order_and_sentinel() {
+        let (_temp_dir, auth_db_path, user_id) = favorite_test_database();
+        let folder = create_folder(&auth_db_path, user_id, "Citation Snapshot", false)
+            .expect("citation folder should be created");
+        let additions = (1..=3)
+            .map(|article_id| FavoriteAdd {
+                article_id: ArticleId(article_id),
+                db_name: "fixture.sqlite".to_string(),
+                note: format!("note {article_id} must not enter the snapshot"),
+            })
+            .collect::<Vec<_>>();
+        bulk_add_favorites(&auth_db_path, user_id, folder.id, &additions)
+            .expect("citation favorites should be inserted");
+
+        let snapshot = load_favorite_citation_snapshot(&auth_db_path, user_id, folder.id, 2)
+            .expect("citation snapshot should load");
+
+        assert_eq!(snapshot.folder_name, "Citation Snapshot");
+        assert_eq!(
+            snapshot
+                .references
+                .iter()
+                .map(|reference| reference.article_id.value())
+                .collect::<Vec<_>>(),
+            [3, 2]
+        );
+        assert!(snapshot.has_more);
+        let complete = load_favorite_citation_snapshot(&auth_db_path, user_id, folder.id, 3)
+            .expect("complete citation snapshot should load");
+        assert_eq!(complete.references.len(), 3);
+        assert!(!complete.has_more);
+
+        let connection = Connection::open(&auth_db_path).expect("auth database should open");
+        connection
+            .execute(
+                "INSERT INTO users
+                 (username, password_hash, salt, is_admin, created_at, updated_at)
+                 VALUES ('other-citation-user', 'hash', 'salt', 0, 1.0, 1.0)",
+                [],
+            )
+            .expect("second user should insert");
+        let other_user_id = UserId(connection.last_insert_rowid());
+        assert!(matches!(
+            load_favorite_citation_snapshot(&auth_db_path, other_user_id, folder.id, 2),
+            Err(BusinessRepositoryError::FolderNotFound)
+        ));
+    }
+
+    #[test]
+    fn favorite_citation_metadata_preserves_batches_missing_rows_and_unicode_authors() {
+        let temp_dir = tempdir().expect("temp directory should be created");
+        let config = StorageConfig::from_project_root(temp_dir.path());
+        fs::create_dir_all(config.index_dir()).expect("index directory should be created");
+        let index_db_path = config.index_dir().join("fixture.sqlite");
+        let connection = Connection::open(&index_db_path).expect("index database should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE journals (
+                     journal_id INTEGER PRIMARY KEY,
+                     title TEXT NOT NULL
+                 );
+                 CREATE TABLE articles (
+                     article_id INTEGER PRIMARY KEY,
+                     journal_id INTEGER NOT NULL,
+                     title TEXT,
+                     authors_json TEXT NOT NULL,
+                     date TEXT,
+                     doi TEXT
+                 );
+                 INSERT INTO journals (journal_id, title) VALUES (1, 'Citation Journal');",
+            )
+            .expect("minimal citation schema should be created");
+        connection
+            .execute(
+                "INSERT INTO articles
+                 (article_id, journal_id, title, authors_json, date, doi)
+                 VALUES (1, 1, 'Unicode Citation', ?1, '2026-08-23', '10.1000/unicode')",
+                [r#"[{"display_name":"张三"},{"display_name":"Ada Lovelace"}]"#],
+            )
+            .expect("citation article should insert");
+        let mut references = vec![
+            FavoriteCitationReference {
+                article_id: ArticleId(1),
+                db_name: "fixture.sqlite".to_string(),
+            },
+            FavoriteCitationReference {
+                article_id: ArticleId(999),
+                db_name: "fixture.sqlite".to_string(),
+            },
+            FavoriteCitationReference {
+                article_id: ArticleId(1),
+                db_name: "missing.sqlite".to_string(),
+            },
+        ];
+        references.extend((references.len()..250).map(|_| FavoriteCitationReference {
+            article_id: ArticleId(1),
+            db_name: "fixture.sqlite".to_string(),
+        }));
+
+        let records = load_favorite_citation_records(&config, &references)
+            .expect("caller-bounded citation batch should load");
+
+        assert_eq!(records.len(), 250);
+        assert_eq!(records[0].title.as_deref(), Some("Unicode Citation"));
+        assert_eq!(records[0].authors, ["张三", "Ada Lovelace"]);
+        assert_eq!(
+            records[0].journal_title.as_deref(),
+            Some("Citation Journal")
+        );
+        assert_eq!(records[0].date.as_deref(), Some("2026-08-23"));
+        assert_eq!(records[0].doi.as_deref(), Some("10.1000/unicode"));
+        assert!(records[1].title.is_none());
+        assert!(records[1].authors.is_empty());
+        assert!(records[2].title.is_none());
+        assert!(records[2].authors.is_empty());
+        assert_eq!(records[249].article_id, ArticleId(1));
+        assert_eq!(records[249].title.as_deref(), Some("Unicode Citation"));
+        assert!(!config.index_dir().join("missing.sqlite").exists());
+
+        connection
+            .execute(
+                "UPDATE articles SET authors_json = '{broken-json' WHERE article_id = 1",
+                [],
+            )
+            .expect("invalid author fixture should update");
+        assert!(matches!(
+            load_favorite_citation_records(&config, &references[..1]),
+            Err(BusinessRepositoryError::Sqlite(
+                rusqlite::Error::FromSqlConversionFailure(..)
+            ))
+        ));
     }
 
     fn favorite_test_database() -> (TempDir, PathBuf, UserId) {

@@ -71,8 +71,10 @@ pub use delivery::{
 pub use favorites::{
     add_favorite, batch_is_favorited, bulk_add_favorites, bulk_move_favorites,
     bulk_remove_favorites, count_favorites, create_folder, delete_folder, get_tracking_folder,
-    is_favorited, list_favorite_articles, list_favorites, list_folders, remove_favorite,
-    rename_folder, set_tracking_folder,
+    is_favorited, list_favorite_articles, list_favorites, list_folders,
+    load_favorite_citation_records, load_favorite_citation_snapshot, remove_favorite,
+    rename_folder, set_tracking_folder, FavoriteCitationRecord, FavoriteCitationReference,
+    FavoriteCitationSnapshot,
 };
 pub use notifications::{
     get_notification_settings, get_notification_subscriber, list_notification_subscribers,
