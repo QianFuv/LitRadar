@@ -148,7 +148,7 @@ docker compose run --rm litradar index \
 1. 确认旧容器、计划任务子进程和 `litradar-memory-*` 画像容器已经停止；不要通过删除 `index_batch_lease` 或 catalog `provider_leases` 绕过所有权检查。
 2. 停止常驻服务并完成离线、已验证的当前数据备份。部署密钥必须继续留在 Compose secret 中，不得复制到备份或日志。
 3. 普通失败可立即重跑同一命令；硬终止必须等到旧租约过期。未过期时的明确所有者错误表示旧运行仍受保护，不是可忽略的重试提示。
-4. 需要恢复 changes JSON 时必须用兼容的目录选择、sync mode、issue batch 和 notify flags 重跑 `--update`，让默认 resume 继续同一 active batch。存在已发布或可能已发布 manifest 时不要用 `--no-resume` 丢弃 handoff。
+4. 需要恢复 changes JSON 时必须用兼容的目录选择、sync mode、ledger 中保存的遗留 issue-batch 恢复值和 notify flags 重跑 `--update`，让默认 resume 继续同一 active batch。issue-batch 只用于匹配旧 active batch；若非默认值要求显式传入，CLI 会发出兼容性警告。存在已发布或可能已发布 manifest 时不要用 `--no-resume` 丢弃 handoff。
 5. 成功后确认命令退出 0、changes JSON 可解析、batch 历史进入 `completed`、`index_batch_lease` 与 catalog `provider_leases` 都没有活动所有者，再启动服务并检查 `/health/live`、`/health/ready` 和 `/`。
 
 scholarly 更新使用上次可信完成时间向前 30 天的重叠窗口，Crossref/OpenAlex 分别使用 `from-update-date` 和 `from_created_date`；缺失或不可信水位执行完整扫描。空窗口保留已有数据。CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
@@ -270,7 +270,7 @@ docker compose config --quiet
 | `warm-idle`                          | 20 MiB  | 24 MiB   |
 | `index`、`update`、`scheduled-child` | 100 MiB | 120 MiB  |
 
-所有场景还要求 swap、OOM 和 `memory.events.max` 为 0、业务命令退出 0。`-P95LimitMiB` 和 `-PeakLimitMiB` 可显式覆盖阈值；这用于独立预算或门禁自测，不改变生产目标。`-ExpectedMemoryLimitMiB 160` 会同时校验实际容器限制。任何并发覆盖，尤其是提高 `--processes`、`--workers` 或 `--issue-batch`，都必须使用相同数据和场景重新画像。
+所有场景还要求 swap、OOM 和 `memory.events.max` 为 0、业务命令退出 0。`-P95LimitMiB` 和 `-PeakLimitMiB` 可显式覆盖阈值；这用于独立预算或门禁自测，不改变生产目标。`-ExpectedMemoryLimitMiB 160` 会同时校验实际容器限制。任何并发覆盖，尤其是提高 `--processes` 或 `--workers`，都必须使用相同数据和场景重新画像；遗留 `--issue-batch` 不改变当前运行时并发或内存，因此不是画像调优参数。
 
 ### 场景命令
 

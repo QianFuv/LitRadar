@@ -161,7 +161,7 @@ litradar index --secret-key-file PATH
 | `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件                             |
 | `--workers N`、`-w N`                      | `6`      | 每个期刊子进程内的 CNKI 详情请求和 OpenAlex DOI 增强并发上限 |
 | `--processes N`                            | `1`      | 单个 CSV 的独立期刊子进程数                                  |
-| `--issue-batch N`                          | `8`      | 每轮合并的 CNKI issue 数                                     |
+| `--issue-batch N`                          | `8`      | 旧 active batch 的恢复兼容值；当前 Provider 不读取该值       |
 | `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                                           |
 | `--resume` / `--no-resume`                 | 开启     | 续跑兼容 active batch，或显式放弃它并从 committed anchor 新建 batch |
 | `--update` / `--no-update`                 | 关闭     | 是否执行成功期次边界增量并生成变更清单                       |
@@ -172,7 +172,7 @@ litradar index --secret-key-file PATH
 
 约束：
 
-- `workers` 与 `processes` 的通用范围均为 `1..=32`，并且 `workers × processes` 不得超过 32；`issue-batch` 必须至少为 1。通用参数在认证库迁移、Provider 构造和子进程创建前校验。
+- `workers` 与 `processes` 的通用范围均为 `1..=32`，并且 `workers × processes` 不得超过 32。遗留的 `issue-batch` 仍必须至少为 1，以保持既有 batch fingerprint 和 ledger 校验；显式传入会在数据库或 Provider 访问前发出一次固定字段警告。
 - 只要选中的目录路由到 Scholarly，`workers` 进一步限制为最多 6、`processes` 最多为 3；超限会在上游请求前失败。国内 CNKI 使用通用 `workers <= 32` 和聚合 32 上限。
 - 国内 CNKI 中，`processes` 并行不同期刊，`workers` 是每个期刊子进程在 Provider 构造时创建一次的固定详情线程池；所有 papers 页复用该池，Provider 释放时关闭并等待全部线程。期刊定位、刊期树、papers 页、checkpoint 和 SQLite 提交仍保持有序。实际详情在途量不超过 `workers × min(processes, 期刊数)`、聚合上限 32 和各当前 papers 页的文章数。
 - 只要选中的目录路由到 Scholarly，OpenAlex key、Semantic Scholar key 和 Crossref mailto 都必须存在；缺少任一类会在创建内容库、控制库或其他索引状态前失败。
@@ -185,11 +185,11 @@ litradar index --secret-key-file PATH
 - Semantic Scholar 不使用 `--workers`。每个合法 key 各有一个跨进程 1,100-ms 相位序列，约 `0.909 req/s/key`；不同 key 在周期内均匀错开，所以两个或三个 key 可线性增加建模容量。增加 `--processes` 只分配每 key 的相位所有权，不突破 `1 req/s/key`。401/403 只禁用对应 slot，429/Retry-After 只冷却对应 slot，重试同样必须取得未来相位。
 - 这些共同 epoch 只协调同一条 `litradar index` 命令的父进程树，不协调其他命令、主机或应用。实际吞吐受 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)` 约束；低 worker、慢响应或工作不足时不会达到理论 RPS。上游临时降额或其他客户端共享 key 时仍可能返回 429，CLI 不承诺精确 100% 利用率或普遍零限流。
 - 多个 CSV 仍逐个处理。
-- `6/1/8` 是约 100 MiB 索引内存目标下的默认并发。在上述 Provider 约束内显式提高并发仍受支持，但可能超过该预算。
+- `workers=6`、`processes=1` 是约 100 MiB 索引内存目标下的默认并发。在上述 Provider 约束内显式提高这两个值仍受支持，但可能超过该预算；`issue-batch` 不参与当前运行时并发或内存控制。
 
 索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。每个 worker 都在独立的 Unix process group 或 Windows Job Object 中启动，父进程错误、协议失败和清理路径会终止并等待整个进程树。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。手动投递 dispatcher 还会启动私有 `delivery-run --run-id ... --owner-id ...`，child 只从认证 SQLite 和部署密钥加载权威配置。私有命令必须同时携带内部 parent marker，不出现在 `--help`，也不是用户可配置的 CLI。同步公共 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
 
-命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段；不含密钥的 `effective_concurrency` 保留 `workers`、`processes` 和 `issue_batch`，并明确给出 configured/effective workers、processes、aggregate capacity 以及固定 aggregate limit。国内 CNKI 每批还记录 `index.provider.concurrency` 结构化事件，其中包含实际创建线程数和本次运行观测到的详情请求峰值。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
+命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段；不含密钥的 `effective_concurrency` 为 JSON 兼容继续保留 `workers`、`processes` 和遗留 `issue_batch`，并明确给出 configured/effective workers、processes、aggregate capacity 以及固定 aggregate limit。只有 workers/processes 字段描述当前并发；`issue_batch` 是恢复兼容元数据。国内 CNKI 每批还记录 `index.provider.concurrency` 结构化事件，其中包含实际创建线程数和本次运行观测到的详情请求峰值。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
 
 发布镜像把 bundle 固定放在 `/usr/share/litradar/meta`。普通 `index` 仅在精确的 `bundle-manifest.json` 存在时，于认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。该路径不接受环境变量或 CLI 覆盖；本地构建通常发现不到 manifest，因此执行 no-op。运行目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
 
@@ -217,9 +217,9 @@ CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_alias
 
 - `--file` 或全部 CSV 的选择方式、按文件名排序后的 catalog 顺序，以及每个 CSV 的精确字节；
 - 每个 stem 的 `index_provider_routes` 结果；
-- Bootstrap / Incremental / FullRescan 模式、`--issue-batch`、notify 和 notify dry-run 选择。
+- Bootstrap / Incremental / FullRescan 模式、遗留 `--issue-batch` 恢复值、notify 和 notify dry-run 选择。
 
-`workers`、`processes`、timeout、代理和凭据不影响 correctness fingerprint。兼容 active batch 会按持久顺序跳过已经 completed 的 catalog 和同 batch 已完成的 journal，从第一个未完成 traversal checkpoint 继续；CSV、顺序、selection、route、模式或上述正确性选项变化会在 Provider 访问前 fail closed，并只报告差异类别。一个 batch 全部成功后进入 completed；下一次命令总会创建新 batch 并重新检查全部选中 journal，旧成功行只作为增量 anchor，不是永久 skip 标记。
+`issue-batch` 只因旧 ledger 的恢复兼容而继续进入 correctness fingerprint；当前 Provider 不使用它决定请求、分页、并发、吞吐或内存。显式传入该参数会产生一次不含数值、路径、凭据或 cursor 的结构化警告。`workers`、`processes`、timeout、代理和凭据不影响 correctness fingerprint。兼容 active batch 会按持久顺序跳过已经 completed 的 catalog 和同 batch 已完成的 journal，从第一个未完成 traversal checkpoint 继续；CSV、顺序、selection、route、模式或上述正确性选项变化会在 Provider 访问前 fail closed，并只报告差异类别。一个 batch 全部成功后进入 completed；下一次命令总会创建新 batch 并重新检查全部选中 journal，旧成功行只作为增量 anchor，不是永久 skip 标记。
 
 `--no-resume` 明确放弃当前 active batch，并在清理该 batch 自有的 `provider_run_checkpoints` 后创建新 batch。它保留 committed anchors、内容库、outbox 和已经发布的 manifest；新 traversal 从所选模式和现有 committed anchor 开始。若 ledger 已记录一个待完成的已发布 notify manifest，命令会拒绝放弃，必须先用原 correctness inputs 恢复，并在必要时显式确认 Unknown；因此 `--no-resume` 不能静默跳过该 handoff。它不是“忽略一个 CSV 错误继续”，也不会合并不兼容的冻结输入。
 
@@ -243,7 +243,7 @@ notify phase 使用 disposable batch schema v2 的独立 typed handoff state，�
 
 ### 升级后恢复旧 English traversal
 
-从 control v3 升级留下的 batchless traversal 只允许由显式单 CSV、默认 `--resume` 接管；隐式全部 CSV 会拒绝，以免把不同旧 epoch 混入一个 batch。对已有 English 失败状态，先确认没有旧索引进程，再沿用原命令的 mode、`--issue-batch` 和 notify 选项，并增加：
+从 control v3 升级留下的 batchless traversal 只允许由显式单 CSV、默认 `--resume` 接管；隐式全部 CSV 会拒绝，以免把不同旧 epoch 混入一个 batch。对已有 English 失败状态，先确认没有旧索引进程，再沿用原命令的 mode、ledger 中保存的遗留 issue-batch 恢复值和 notify 选项，并增加下列参数。只有原值不是默认 `8` 时才需要显式传入 `--issue-batch`；此时预期会看到兼容性警告：
 
 ```bash
 litradar index \

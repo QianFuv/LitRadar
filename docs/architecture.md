@@ -152,7 +152,7 @@ acquire provider-scoped lease
 -> release lease
 ```
 
-batch compatibility 包含 CSV 的选择方式、顺序和精确内容、Provider route、同步模式、issue batch 以及 notify 选项；worker/process 数、timeout、代理和凭据不参与。任一 correctness input 改变都会在 Provider 访问前 fail closed。`--no-resume` 是显式放弃 active batch：只清理该 batch 自有的运行 checkpoint，再从既有 committed anchor 创建新 batch；不会删除内容、anchor、outbox 或已经发布的 manifest。
+batch compatibility 包含 CSV 的选择方式、顺序和精确内容、Provider route、同步模式、遗留 issue-batch 恢复值以及 notify 选项；worker/process 数、timeout、代理和凭据不参与。issue-batch 继续存在只是为了匹配旧 active batch 和既有 fingerprint，当前 Provider 不读取它来决定请求、分批、并发或内存。任一 correctness input 改变都会在 Provider 访问前 fail closed。`--no-resume` 是显式放弃 active batch：只清理该 batch 自有的运行 checkpoint，再从既有 committed anchor 创建新 batch；不会删除内容、anchor、outbox 或已经发布的 manifest。
 
 崩溃恢复按 durable phase 前进：`indexing` 先跳过同 batch 已提交 anchor，再接管匹配 checkpoint；`manifest_prepared` 重发持久化的精确字节并重做 through-cursor acknowledgement；`manifest_published` 只进入 notify 或完成；`notifying` 由 schema v2 的 attempt ID、typed status、exit code 和 Unknown acknowledgement 驱动。结果尚未持久化或状态为 Running 时复用同一 attempt；Failed/Cancelled/TimedOut 在下一次 invocation 建立新 attempt；Unknown 与任何不可信 child protocol 结果都要求显式 `--acknowledge-unknown-notify`。父进程严格解析最多保留 64 KiB 的 compact JSON 并交叉检查退出类别，每个 invocation 每个 catalog 最多启动一个 child。若 journal anchor 已提交但 catalog phase 尚未推进，same-batch marker 会阻止 Provider 重放；若文件 rename 或 outbox acknowledgement 已完成但 phase 尚未推进，重放仍使用同一 manifest intent。待完成的已发布 notify handoff 不能通过 `--no-resume` 放弃。
 

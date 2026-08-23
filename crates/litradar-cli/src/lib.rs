@@ -339,6 +339,7 @@ fn run_index_command_with_bundled_meta_dir(
     if !args.is_empty() {
         return Err(format!("unexpected index arguments: {}", args.join(" ")).into());
     }
+    emit_legacy_issue_batch_warning(&options);
     let secret_key_file = required_secret_key_file(secret_key_file)?;
     migrate_auth_database(&auth_db_path)?;
     preflight_index_command_databases(&project_root, options.file.as_deref())?;
@@ -437,6 +438,7 @@ struct IndexOptions {
     worker_count: usize,
     process_count: usize,
     issue_batch_size: usize,
+    is_issue_batch_explicit: bool,
     timeout_seconds: u64,
     resume: bool,
     update: bool,
@@ -453,11 +455,10 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
         extract_usize_option_any(args, &["--workers", "-w"])?,
     )?
     .unwrap_or(DEFAULT_INDEX_WORKER_COUNT);
-    let issue_batch_size = positive_usize(
-        "--issue-batch",
-        extract_usize_option(args, "--issue-batch")?,
-    )?
-    .unwrap_or(DEFAULT_INDEX_ISSUE_BATCH_SIZE);
+    let issue_batch_size = extract_usize_option(args, "--issue-batch")?;
+    let is_issue_batch_explicit = issue_batch_size.is_some();
+    let issue_batch_size = positive_usize("--issue-batch", issue_batch_size)?
+        .unwrap_or(DEFAULT_INDEX_ISSUE_BATCH_SIZE);
     let timeout_seconds = extract_u64_option(args, "--timeout")?.unwrap_or(20);
     let process_count = positive_usize("--processes", extract_usize_option(args, "--processes")?)?
         .unwrap_or(DEFAULT_INDEX_PROCESS_COUNT);
@@ -485,6 +486,7 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
         worker_count,
         process_count,
         issue_batch_size,
+        is_issue_batch_explicit,
         timeout_seconds,
         resume,
         update,
@@ -493,6 +495,18 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
         notify_dry_run,
         acknowledge_unknown_notify,
     })
+}
+
+fn emit_legacy_issue_batch_warning(options: &IndexOptions) {
+    if options.is_issue_batch_explicit {
+        tracing::warn!(
+            event = "cli.index.legacy_issue_batch",
+            component = "cli",
+            option = "issue_batch",
+            behavior = "resume_compatibility_only",
+            "explicit --issue-batch is legacy resume metadata and does not control current Provider concurrency or memory"
+        );
+    }
 }
 
 fn index_concurrency_payload(
@@ -1208,6 +1222,7 @@ fn index_usage() -> String {
             "resume": "continue only a compatible active project batch; completed batches always start a new independent update",
             "no_resume": "abandon the active batch and its owned traversal checkpoints, then start a new batch from committed anchors",
             "file": "select and freeze exactly one CSV; it cannot adopt an active all-CSV batch",
+            "issue_batch": "legacy active-batch resume metadata; explicit use warns and does not control current Provider concurrency or memory",
             "acknowledge_unknown_notify": "after review, acknowledge an ambiguous notify attempt and resume with a new delivery attempt",
         },
         "limits": {
@@ -1266,8 +1281,12 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::process::Command;
+    use std::sync::{Arc, Mutex};
 
     use tempfile::{Builder, TempDir};
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Metadata, Subscriber};
 
     use super::{
         admin_usage, aggregate_delivery_status, delivery_usage, ensure_delivery_command_success,
@@ -1283,6 +1302,67 @@ mod tests {
     use litradar_worker::delivery::{
         DeliveryMode, DeliveryOutcomeState, DeliveryWorkflow, RecommendationRunOutcome,
     };
+
+    #[derive(Clone, Default)]
+    struct CapturedEvents {
+        events: Arc<Mutex<Vec<BTreeMap<String, String>>>>,
+    }
+
+    impl CapturedEvents {
+        fn snapshot(&self) -> Vec<BTreeMap<String, String>> {
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct CapturedEventFields {
+        fields: BTreeMap<String, String>,
+    }
+
+    impl Visit for CapturedEventFields {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.fields
+                .insert(field.name().to_string(), format!("{value:?}"));
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.fields
+                .insert(field.name().to_string(), value.to_string());
+        }
+    }
+
+    impl Subscriber for CapturedEvents {
+        fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _span: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &Id, _values: &Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+        fn event(&self, event: &Event<'_>) {
+            let mut captured = CapturedEventFields::default();
+            event.record(&mut captured);
+            captured
+                .fields
+                .insert("level".to_string(), event.metadata().level().to_string());
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(captured.fields);
+        }
+
+        fn enter(&self, _span: &Id) {}
+
+        fn exit(&self, _span: &Id) {}
+    }
 
     #[test]
     fn unified_usage_lists_only_supported_commands() {
@@ -1318,6 +1398,9 @@ mod tests {
         assert!(index_payload["modes"]["file"]
             .as_str()
             .is_some_and(|value| value.contains("exactly one CSV")));
+        assert!(index_payload["modes"]["issue_batch"]
+            .as_str()
+            .is_some_and(|value| value.contains("does not control current Provider concurrency")));
         assert!(index_payload["modes"]["acknowledge_unknown_notify"]
             .as_str()
             .is_some_and(|value| value.contains("ambiguous notify attempt")));
@@ -1743,6 +1826,7 @@ mod tests {
         assert_eq!(options.worker_count, 4);
         assert_eq!(options.process_count, 3);
         assert_eq!(options.issue_batch_size, 2);
+        assert!(options.is_issue_batch_explicit);
         assert_eq!(options.timeout_seconds, 7);
         assert!(!options.resume);
         assert!(options.update);
@@ -1750,6 +1834,62 @@ mod tests {
         assert!(options.notify);
         assert!(options.notify_dry_run);
         assert!(!options.acknowledge_unknown_notify);
+    }
+
+    #[test]
+    fn index_issue_batch_warns_once_only_when_explicit() {
+        let root = temp_root("litradar-cli-legacy-issue-batch-warning");
+        let arguments = |issue_batch: Option<&str>| {
+            let mut arguments = vec![
+                "--project-root".to_string(),
+                root.path().to_string_lossy().into_owned(),
+            ];
+            if let Some(issue_batch) = issue_batch {
+                arguments.extend(["--issue-batch".to_string(), issue_batch.to_string()]);
+            }
+            arguments
+        };
+        let captured = CapturedEvents::default();
+
+        tracing::subscriber::with_default(captured.clone(), || {
+            let default_error = run_index_command_with_bundled_meta_dir(
+                arguments(None),
+                Path::new("litradar"),
+                None,
+            )
+            .expect_err("missing deployment key should stop the default command");
+            let explicit_error = run_index_command_with_bundled_meta_dir(
+                arguments(Some("5")),
+                Path::new("litradar"),
+                None,
+            )
+            .expect_err("missing deployment key should stop the explicit command");
+            assert_eq!(default_error.to_string(), "--secret-key-file is required");
+            assert_eq!(explicit_error.to_string(), "--secret-key-file is required");
+        });
+
+        let events = captured.snapshot();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(
+            event.get("event").map(String::as_str),
+            Some("cli.index.legacy_issue_batch")
+        );
+        assert_eq!(event.get("component").map(String::as_str), Some("cli"));
+        assert_eq!(event.get("option").map(String::as_str), Some("issue_batch"));
+        assert_eq!(
+            event.get("behavior").map(String::as_str),
+            Some("resume_compatibility_only")
+        );
+        assert_eq!(event.get("level").map(String::as_str), Some("WARN"));
+        assert!(event.get("message").is_some_and(|message| {
+            message.contains("does not control current Provider concurrency or memory")
+        }));
+        let serialized = serde_json::to_string(&events).expect("captured warning should serialize");
+        assert!(!serialized.contains(&root.path().to_string_lossy().into_owned()));
+        for prohibited in ["secret", "credential", "cursor"] {
+            assert!(!serialized.contains(prohibited));
+        }
     }
 
     #[test]
@@ -1806,7 +1946,7 @@ mod tests {
     }
 
     #[test]
-    fn index_options_keep_memory_defaults_independent() {
+    fn index_issue_batch_keeps_legacy_default_independent_from_concurrency() {
         let mut args = vec!["--workers".to_string(), "5".to_string()];
 
         let options = parse_index_options(&mut args).expect("index options should parse");
@@ -1814,6 +1954,7 @@ mod tests {
         assert_eq!(options.worker_count, 5);
         assert_eq!(options.process_count, 1);
         assert_eq!(options.issue_batch_size, 8);
+        assert!(!options.is_issue_batch_explicit);
 
         let mut default_args = Vec::new();
         let defaults =
@@ -1821,6 +1962,7 @@ mod tests {
         assert_eq!(defaults.worker_count, 6);
         assert_eq!(defaults.process_count, 1);
         assert_eq!(defaults.issue_batch_size, 8);
+        assert!(!defaults.is_issue_batch_explicit);
     }
 
     #[test]
@@ -1872,6 +2014,7 @@ mod tests {
             worker_count: 4,
             process_count: 2,
             issue_batch_size: 3,
+            is_issue_batch_explicit: true,
             timeout_seconds: 20,
             resume: true,
             update: false,

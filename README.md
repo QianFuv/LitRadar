@@ -96,7 +96,7 @@ docker compose run --rm litradar index \
 
 `--update` 与 `--full-rescan` 互斥。两种模式默认都恢复同一模式下的冻结运行窗口；`--no-resume` 只清除本次 traversal checkpoint，保留上一次完整成功 anchor。删除可丢弃的 `data/index-control` 会失去 anchor 和恢复进度，下一次运行安全退回完整扫描，但不会改变内容 ID。
 
-索引默认使用 `--processes 1 --workers 6 --issue-batch 8`，以控制容器峰值内存。`--workers` 限制每个期刊子进程的 CNKI 文章详情工作和 OpenAlex DOI 增强并发；Scholarly 索引最多接受 6 个 worker。`--processes` 启动相互独立的期刊子进程；Scholarly 索引最多接受 3 个进程，并让 Crossref 和 Semantic Scholar 的每次请求尝试（包括重试）按共同调度 epoch 错峰。可以在 Provider 约束内显式覆盖这些参数，但这不保证上游吞吐提升，也不再保证约 100 MiB 的索引内存目标。`admin`、`index`、`notify`、`push`、`scheduler` 和 `openapi` 是同步短生命周期命令，不会创建 Tokio 工作线程池；只有常驻的 `serve` 使用小型异步运行时。
+索引并发默认使用 `--processes 1 --workers 6`，以控制容器峰值内存。`--workers` 限制每个期刊子进程的 CNKI 文章详情工作和 OpenAlex DOI 增强并发；Scholarly 索引最多接受 6 个 worker。`--processes` 启动相互独立的期刊子进程；Scholarly 索引最多接受 3 个进程，并让 Crossref 和 Semantic Scholar 的每次请求尝试（包括重试）按共同调度 epoch 错峰。可以在 Provider 约束内显式覆盖这两个参数，但这不保证上游吞吐提升，也不再保证约 100 MiB 的索引内存目标。`--issue-batch` 的兼容默认值仍为 `8`，但当前 Provider 不读取它来控制分批、并发或内存；它只保留在旧 active batch 的恢复指纹中，显式传入时 CLI 会发出一次结构化警告。`admin`、`index`、`notify`、`push`、`scheduler` 和 `openapi` 是同步短生命周期命令，不会创建 Tokio 工作线程池；只有常驻的 `serve` 使用小型异步运行时。
 
 索引 `english_journals.csv` 或 `ccf_computer_journals.csv` 前，先登录管理后台，在“运行配置”中填写 OpenAlex 和 Semantic Scholar API key。所有命令和参数见 [CLI 参考](docs/reference/cli.md)，配置来源与默认值见[运行配置参考](docs/reference/configuration.md)。
 

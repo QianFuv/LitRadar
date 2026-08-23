@@ -160,7 +160,7 @@ FTS5 使用内置 `unicode61 remove_diacritics 2`，字段为：
 
 `data/index-control/index-batches.sqlite` 每个项目只有一个，负责跨 CSV 的恢复顺序和唯一 active invocation。它包含：
 
-- `index_batches`：batch ID、`active/abandoning/completed/abandoned` 状态、兼容性 fingerprint、selection、sync mode、issue batch、notify flags 和时间；部分唯一索引保证最多一个 active/abandoning batch。
+- `index_batches`：batch ID、`active/abandoning/completed/abandoned` 状态、兼容性 fingerprint、selection、sync mode、遗留 issue-batch 恢复值、notify flags 和时间；部分唯一索引保证最多一个 active/abandoning batch。
 - `index_batch_catalogs`：稳定 ordinal、CSV basename/stem/摘要、Provider route、journal count、phase、安全 outcome 计数、精确 manifest intent，以及可空的 notify attempt ID、typed status、exit code、最近确认的 Unknown attempt ID/时间。
 - `index_batch_lease`：固定单行全局 lease，保存 batch、owner、heartbeat 和 expiry。
 
@@ -172,7 +172,7 @@ pending -> indexing -> completed
                                                            \-> notifying -> completed
 ```
 
-fingerprint 包含 CSV selection、顺序和精确内容、Provider route、sync mode、issue batch 与 notify flags；不包含 workers/processes、timeout、代理或凭据。默认 resume 只重新打开兼容 active batch。成功 batch 保持 completed 历史且下一条命令创建新 batch，所以历史 completed row 不会使下一次 update 永久跳过 journal。
+fingerprint 包含 CSV selection、顺序和精确内容、Provider route、sync mode、遗留 issue-batch 恢复值与 notify flags；不包含 workers/processes、timeout、代理或凭据。`issue_batch_size` 列和对应 fingerprint 字段保留 v1/v2 ledger 的 active-batch 匹配语义，但当前 Provider 不读取它来控制运行时分批、并发或内存。默认 resume 只重新打开兼容 active batch。成功 batch 保持 completed 历史且下一条命令创建新 batch，所以历史 completed row 不会使下一次 update 永久跳过 journal。
 
 notify status 只允许 `running/idle/completed/skipped/failed/cancelled/timed_out/unknown`。父进程在 child 启动前把 attempt 写为 Running，结果以当前 attempt ID 做 CAS；只有 `idle/completed/skipped` 且 exit code 为 0 时 `notifying` catalog 才能进入 completed。Unknown acknowledgement 的 ID 与时间必须成对出现，并与新 Running attempt 在同一 immediate transaction 中写入。v1 ledger 原位迁移；active Notifying 无论旧 exit code 为何都转为带 legacy attempt ID 的 Unknown，防止未经 typed protocol 证明就自动重发。
 
