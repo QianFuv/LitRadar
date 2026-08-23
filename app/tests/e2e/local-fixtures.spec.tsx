@@ -200,7 +200,7 @@ async function serveTrackingApi(route: Route): Promise<void> {
     await fulfillJson(route, []);
     return;
   }
-  if (pathname === '/api/weekly-updates') {
+  if (pathname === '/api/weekly-updates/summary') {
     await fulfillJson(route, {
       generated_at: '2026-07-17T09:00:00Z',
       window_start: '2026-07-10T00:00:00Z',
@@ -208,6 +208,7 @@ async function serveTrackingApi(route: Route): Promise<void> {
       databases: [
         {
           db_name: 'fixture.sqlite',
+          run_id: 'weekly-fixture-run',
           generated_at: '2026-07-17T09:00:00Z',
           new_article_count: 2,
           journals: [
@@ -215,32 +216,44 @@ async function serveTrackingApi(route: Route): Promise<void> {
               journal_id: 'fixture-journal',
               journal_title: 'Journal of Reproducible Literature',
               new_article_count: 2,
-              articles: [
-                {
-                  article_id: 'weekly-fixture-1',
-                  journal_id: 'fixture-journal',
-                  journal_title: 'Journal of Reproducible Literature',
-                  title: 'Reliable Evidence Synthesis for Living Reviews',
-                  authors: ['Lin Chen', 'Maya Patel'],
-                  date: '2026-07-16',
-                  abstract:
-                    'A fixture article demonstrating the shared weekly workspace and article detail surface.',
-                },
-                {
-                  article_id: 'weekly-fixture-2',
-                  journal_id: 'fixture-journal',
-                  journal_title: 'Journal of Reproducible Literature',
-                  title: 'Transparent Search Strategies in Rapid Reviews',
-                  authors: ['Noah Williams', 'Rui Zhang'],
-                  date: '2026-07-14',
-                  abstract:
-                    'A second fixture article used to verify stable ordering and responsive layout.',
-                },
-              ],
             },
           ],
         },
       ],
+    });
+    return;
+  }
+  if (pathname === '/api/weekly-updates/articles') {
+    await fulfillJson(route, {
+      items: [
+        {
+          article_id: 'weekly-fixture-1',
+          journal_id: 'fixture-journal',
+          journal_title: 'Journal of Reproducible Literature',
+          title: 'Reliable Evidence Synthesis for Living Reviews',
+          authors: ['Lin Chen', 'Maya Patel'],
+          date: '2026-07-16',
+          abstract:
+            'A fixture article demonstrating the shared weekly workspace and article detail surface.',
+        },
+        {
+          article_id: 'weekly-fixture-2',
+          journal_id: 'fixture-journal',
+          journal_title: 'Journal of Reproducible Literature',
+          title: 'Transparent Search Strategies in Rapid Reviews',
+          authors: ['Noah Williams', 'Rui Zhang'],
+          date: '2026-07-14',
+          abstract:
+            'A second fixture article used to verify stable ordering and responsive layout.',
+        },
+      ],
+      page: {
+        total: null,
+        limit: 50,
+        offset: 0,
+        next_cursor: null,
+        has_more: false,
+      },
     });
     return;
   }
