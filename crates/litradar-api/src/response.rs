@@ -12,6 +12,9 @@ use litradar_domain::ErrorEnvelope;
 use crate::state::BlockingTaskError;
 
 const MAX_ERROR_SUMMARY_CHARACTERS: usize = 512;
+const ARTICLE_PROVIDER_BAD_GATEWAY_DETAIL: &str = "Article provider request failed";
+const ARTICLE_PROVIDER_RETRYABLE_DETAIL: &str = "Article provider temporarily unavailable";
+const ARTICLE_PROVIDER_RETRY_AFTER_SECONDS: u64 = 5;
 
 /// API handler error mapped into FastAPI-compatible envelopes where possible.
 #[derive(Debug)]
@@ -25,6 +28,7 @@ pub(crate) enum ApiError {
         detail: serde_json::Value,
     },
     TooManyRequests {
+        status: StatusCode,
         detail: String,
         retry_after_seconds: u64,
     },
@@ -43,10 +47,11 @@ impl IntoResponse for ApiError {
                 (status, Json(serde_json::json!({ "detail": detail }))).into_response()
             }
             Self::TooManyRequests {
+                status,
                 detail,
                 retry_after_seconds,
             } => (
-                StatusCode::TOO_MANY_REQUESTS,
+                status,
                 [(RETRY_AFTER, retry_after_seconds.to_string())],
                 Json(ErrorEnvelope::new(detail)),
             )
@@ -107,6 +112,7 @@ impl ApiError {
     /// Build a rate-limit error with a Retry-After header.
     pub(crate) fn too_many_requests(detail: impl Into<String>, retry_after_seconds: u64) -> Self {
         Self::TooManyRequests {
+            status: StatusCode::TOO_MANY_REQUESTS,
             detail: detail.into(),
             retry_after_seconds,
         }
@@ -127,6 +133,23 @@ impl ApiError {
         Self::Http {
             status: StatusCode::SERVICE_UNAVAILABLE,
             detail: "Service temporarily unavailable".to_string(),
+        }
+    }
+
+    /// Build a safe bad-gateway error for a failed article Provider request.
+    pub(crate) fn article_provider_bad_gateway() -> Self {
+        Self::Http {
+            status: StatusCode::BAD_GATEWAY,
+            detail: ARTICLE_PROVIDER_BAD_GATEWAY_DETAIL.to_string(),
+        }
+    }
+
+    /// Build a retryable article Provider error with a fixed Retry-After header.
+    pub(crate) fn article_provider_service_unavailable() -> Self {
+        Self::TooManyRequests {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            detail: ARTICLE_PROVIDER_RETRYABLE_DETAIL.to_string(),
+            retry_after_seconds: ARTICLE_PROVIDER_RETRY_AFTER_SECONDS,
         }
     }
 
@@ -219,7 +242,15 @@ fn sanitize_error_summary(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_error_summary, MAX_ERROR_SUMMARY_CHARACTERS};
+    use axum::body::to_bytes;
+    use axum::http::header::RETRY_AFTER;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    use super::{
+        sanitize_error_summary, ApiError, ARTICLE_PROVIDER_BAD_GATEWAY_DETAIL,
+        ARTICLE_PROVIDER_RETRYABLE_DETAIL, MAX_ERROR_SUMMARY_CHARACTERS,
+    };
 
     #[test]
     fn internal_error_summary_is_single_line_and_bounded() {
@@ -229,5 +260,40 @@ mod tests {
         assert!(!sanitized.contains('\n'));
         assert!(sanitized.chars().count() <= MAX_ERROR_SUMMARY_CHARACTERS);
         assert!(sanitized.starts_with("safe summary"));
+    }
+
+    #[tokio::test]
+    async fn article_provider_errors_use_safe_stable_responses() {
+        let bad_gateway = ApiError::article_provider_bad_gateway().into_response();
+        assert_eq!(bad_gateway.status(), StatusCode::BAD_GATEWAY);
+        assert!(bad_gateway.headers().get(RETRY_AFTER).is_none());
+        let bad_gateway_body = to_bytes(bad_gateway.into_body(), usize::MAX)
+            .await
+            .expect("bad-gateway body should read");
+        let bad_gateway_payload: serde_json::Value =
+            serde_json::from_slice(&bad_gateway_body).expect("bad-gateway body should be JSON");
+        assert_eq!(
+            bad_gateway_payload["detail"],
+            ARTICLE_PROVIDER_BAD_GATEWAY_DETAIL
+        );
+
+        let unavailable = ApiError::article_provider_service_unavailable().into_response();
+        assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            unavailable
+                .headers()
+                .get(RETRY_AFTER)
+                .expect("retryable response should include Retry-After"),
+            "5"
+        );
+        let unavailable_body = to_bytes(unavailable.into_body(), usize::MAX)
+            .await
+            .expect("service-unavailable body should read");
+        let unavailable_payload: serde_json::Value = serde_json::from_slice(&unavailable_body)
+            .expect("service-unavailable body should be JSON");
+        assert_eq!(
+            unavailable_payload["detail"],
+            ARTICLE_PROVIDER_RETRYABLE_DETAIL
+        );
     }
 }

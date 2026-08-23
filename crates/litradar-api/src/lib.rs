@@ -522,6 +522,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use axum::body::{to_bytes, Body};
@@ -540,6 +541,11 @@ mod tests {
         ACCESS_TOKEN_NAME_LENGTH_DETAIL, ACCESS_TOKEN_RESERVED_NAME_DETAIL,
         ACCESS_TOKEN_TTL_DETAIL, ACCESS_TOKEN_TTL_MAX_SECONDS, ACCESS_TOKEN_TTL_MIN_SECONDS,
         SESSION_COOKIE_NAME,
+    };
+    use litradar_domain::{ArticleAccessContext, ArticleLocator, ArticleRedirect};
+    use litradar_provider::{
+        ArticleAbstractProvider, ProviderCapabilities, ProviderDescriptor, ProviderError,
+        ProviderErrorKind, ProviderImplementations, ProviderRegistration, ProviderRegistry,
     };
     use litradar_sources::FixtureZjlibCnkiMode;
     use rusqlite::Connection;
@@ -576,6 +582,59 @@ mod tests {
         0xcf, 0x49, 0xd5, 0xcb, 0xc9, 0x4f, 0xd7, 0x50, 0x4f, 0x2c, 0x2e, 0x4e, 0x2d, 0x51, 0xd7,
         0xb4, 0x06, 0x00, 0xd0, 0xc5, 0x38, 0xb6, 0x15, 0x00, 0x00, 0x00,
     ];
+    const ARTICLE_PROVIDER_RAW_SENTINEL: &str = "raw-provider-route-sentinel-must-stay-private";
+
+    #[derive(Clone, Copy)]
+    enum ArticleFailureRouteOutcome {
+        Error(ProviderErrorKind),
+        Redirect(&'static str),
+    }
+
+    struct ArticleFailureRouteProvider {
+        outcome: ArticleFailureRouteOutcome,
+    }
+
+    impl ArticleAbstractProvider for ArticleFailureRouteProvider {
+        fn supports_abstract(&self, _article: &ArticleLocator) -> bool {
+            true
+        }
+
+        fn resolve_abstract(
+            &self,
+            _article: &ArticleLocator,
+            _context: ArticleAccessContext,
+        ) -> Result<ArticleRedirect, ProviderError> {
+            match self.outcome {
+                ArticleFailureRouteOutcome::Error(kind) => {
+                    Err(ProviderError::new(kind, ARTICLE_PROVIDER_RAW_SENTINEL))
+                }
+                ArticleFailureRouteOutcome::Redirect(location) => Ok(ArticleRedirect {
+                    location: location.to_string(),
+                }),
+            }
+        }
+    }
+
+    fn article_failure_route_registration(
+        name: &str,
+        outcome: ArticleFailureRouteOutcome,
+    ) -> ProviderRegistration {
+        ProviderRegistration::try_new(
+            ProviderDescriptor {
+                name: name.to_string(),
+                capabilities: ProviderCapabilities {
+                    article_abstract: true,
+                    ..ProviderCapabilities::default()
+                },
+                allowed_redirect_hosts: vec!["doi.org".to_string()],
+            },
+            ProviderImplementations {
+                article_abstract: Some(Arc::new(ArticleFailureRouteProvider { outcome })),
+                ..ProviderImplementations::default()
+            },
+        )
+        .expect("article failure route fixture should be valid")
+    }
 
     struct StaticFrontendFixture {
         backend: TestBackend,
@@ -5386,6 +5445,171 @@ mod tests {
         );
         assert_eq!(abstract_page.status, StatusCode::NOT_FOUND);
         assert_eq!(fulltext.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn article_access_routes_preserve_provider_failure_semantics() {
+        let cases = vec![
+            (
+                "miss",
+                vec![ArticleFailureRouteOutcome::Error(
+                    ProviderErrorKind::NotFound,
+                )],
+                StatusCode::NOT_FOUND,
+                Some(serde_json::json!("Article abstract action is unavailable")),
+                false,
+            ),
+            (
+                "authentication",
+                vec![
+                    ArticleFailureRouteOutcome::Error(ProviderErrorKind::Internal),
+                    ArticleFailureRouteOutcome::Error(ProviderErrorKind::AuthenticationRequired),
+                ],
+                StatusCode::PRECONDITION_REQUIRED,
+                Some(serde_json::json!({
+                    "code": "article_access_authentication_required",
+                    "action": "abstract",
+                    "message": "Complete the configured provider login before retrying this action."
+                })),
+                false,
+            ),
+            (
+                "temporary",
+                vec![
+                    ArticleFailureRouteOutcome::Error(ProviderErrorKind::Internal),
+                    ArticleFailureRouteOutcome::Error(ProviderErrorKind::TemporarilyUnavailable),
+                ],
+                StatusCode::SERVICE_UNAVAILABLE,
+                Some(serde_json::json!(
+                    "Article provider temporarily unavailable"
+                )),
+                true,
+            ),
+            (
+                "invalid",
+                vec![ArticleFailureRouteOutcome::Redirect(
+                    "https://unapproved.example/article",
+                )],
+                StatusCode::BAD_GATEWAY,
+                Some(serde_json::json!("Article provider request failed")),
+                false,
+            ),
+            (
+                "internal",
+                vec![ArticleFailureRouteOutcome::Error(
+                    ProviderErrorKind::Internal,
+                )],
+                StatusCode::BAD_GATEWAY,
+                Some(serde_json::json!("Article provider request failed")),
+                false,
+            ),
+            (
+                "fallback_success",
+                vec![
+                    ArticleFailureRouteOutcome::Error(ProviderErrorKind::TemporarilyUnavailable),
+                    ArticleFailureRouteOutcome::Redirect(
+                        "https://doi.org/10.1234/fallback-success",
+                    ),
+                ],
+                StatusCode::TEMPORARY_REDIRECT,
+                None,
+                false,
+            ),
+        ];
+
+        for (case_name, outcomes, expected_status, expected_detail, has_retry_after) in cases {
+            let backend = TestBackend::new();
+            let user = backend.authenticated_user(&format!("failure_{case_name}"), false);
+            let index_database = backend.create_index_database("fixture.sqlite");
+            let mut registry = ProviderRegistry::default();
+            let mut provider_names = Vec::new();
+            for (index, outcome) in outcomes.into_iter().enumerate() {
+                let provider_name = format!("fixture_{index}");
+                registry
+                    .register(article_failure_route_registration(&provider_name, outcome))
+                    .expect("route fixture Provider should register");
+                provider_names.push(provider_name);
+            }
+            litradar_storage::upsert_runtime_settings(
+                backend.auth_db_path(),
+                backend.secret_codec(),
+                &HashMap::from([(
+                    "article_abstract_provider_orders".to_string(),
+                    Some(
+                        serde_json::json!({"default": provider_names, "catalogs": {}}).to_string(),
+                    ),
+                )]),
+                &HashMap::new(),
+            )
+            .expect("route fixture Provider order should persist");
+            let state = ApiState::new(
+                backend.storage_config().clone(),
+                backend.secret_codec().clone(),
+                false,
+            )
+            .with_article_providers(registry);
+            let app = Router::new()
+                .nest("/api", crate::routes::public_routes())
+                .with_state(state);
+            let logs = CapturedLogs::default();
+            let response = logs
+                .capture_async(
+                    app.clone().oneshot(
+                        Request::builder()
+                            .uri(format!(
+                                "/api/articles/{}/abstract?db=fixture",
+                                index_database.article_id
+                            ))
+                            .header(AUTHORIZATION, user.authorization_header())
+                            .body(Body::empty())
+                            .expect("failure-semantics request should build"),
+                    ),
+                )
+                .await
+                .expect("failure-semantics response should be returned");
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("failure-semantics body should read");
+            let body_text =
+                String::from_utf8(body.to_vec()).expect("failure-semantics body should be UTF-8");
+
+            assert_eq!(status, expected_status, "case: {case_name}");
+            assert_eq!(
+                headers.contains_key(RETRY_AFTER),
+                has_retry_after,
+                "case: {case_name}"
+            );
+            if has_retry_after {
+                assert_eq!(
+                    headers
+                        .get(RETRY_AFTER)
+                        .expect("retryable response should include Retry-After"),
+                    "5",
+                    "case: {case_name}"
+                );
+            }
+            if let Some(expected_detail) = expected_detail {
+                let payload: Value = serde_json::from_str(&body_text)
+                    .expect("failure-semantics response should be JSON");
+                assert_eq!(payload["detail"], expected_detail, "case: {case_name}");
+            }
+            if case_name == "fallback_success" {
+                assert_eq!(
+                    headers
+                        .get(LOCATION)
+                        .expect("successful fallback should include Location"),
+                    "https://doi.org/10.1234/fallback-success"
+                );
+            }
+            assert!(!body_text.contains(ARTICLE_PROVIDER_RAW_SENTINEL));
+            assert!(!logs.text().contains(ARTICLE_PROVIDER_RAW_SENTINEL));
+        }
     }
 
     #[tokio::test]

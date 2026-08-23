@@ -39,6 +39,96 @@ const ARTICLE_TRANSPORT_TIMEOUT_SECONDS: u64 = 30;
 #[cfg(test)]
 static FULL_TEXT_FIXTURE_MODE: OnceLock<Mutex<Option<FixtureZjlibCnkiMode>>> = OnceLock::new();
 
+#[derive(Debug, Clone, Copy)]
+enum ProviderChainFailureKind {
+    Miss,
+    AuthenticationRequired,
+    Retryable,
+    BadGateway,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ProviderChainFailures {
+    has_authentication_requirement: bool,
+    has_retryable_failure: bool,
+    has_bad_gateway_failure: bool,
+}
+
+impl ProviderChainFailures {
+    fn record_provider_error(&mut self, provider: &str, action: &str, kind: ProviderErrorKind) {
+        let failure_kind = match kind {
+            ProviderErrorKind::NotFound => ProviderChainFailureKind::Miss,
+            ProviderErrorKind::AuthenticationRequired => {
+                ProviderChainFailureKind::AuthenticationRequired
+            }
+            ProviderErrorKind::TemporarilyUnavailable => ProviderChainFailureKind::Retryable,
+            ProviderErrorKind::InvalidResponse | ProviderErrorKind::Internal => {
+                ProviderChainFailureKind::BadGateway
+            }
+        };
+        self.record(failure_kind);
+        log_fallback(provider, action, error_kind_label(kind));
+    }
+
+    fn record_invalid_response(&mut self, provider: &str, action: &str) {
+        self.record(ProviderChainFailureKind::BadGateway);
+        log_fallback(provider, action, "invalid_response");
+    }
+
+    fn record_blocking_error(
+        &mut self,
+        provider: &str,
+        action: &str,
+        error: BlockingTaskError,
+    ) -> bool {
+        let (failure_kind, reason, should_continue) = match error {
+            BlockingTaskError::Closed => (
+                ProviderChainFailureKind::Retryable,
+                "executor_closed",
+                false,
+            ),
+            BlockingTaskError::QueueTimedOut => {
+                (ProviderChainFailureKind::Retryable, "queue_timeout", true)
+            }
+            BlockingTaskError::Join => (
+                ProviderChainFailureKind::BadGateway,
+                "executor_join_failed",
+                true,
+            ),
+        };
+        self.record(failure_kind);
+        log_fallback(provider, action, reason);
+        should_continue
+    }
+
+    fn into_api_error(self, action: &str, not_found_detail: &'static str) -> ApiError {
+        if self.has_authentication_requirement {
+            authentication_required(action)
+        } else if self.has_retryable_failure {
+            ApiError::article_provider_service_unavailable()
+        } else if self.has_bad_gateway_failure {
+            ApiError::article_provider_bad_gateway()
+        } else {
+            ApiError::not_found(not_found_detail)
+        }
+    }
+
+    fn record(&mut self, kind: ProviderChainFailureKind) {
+        match kind {
+            ProviderChainFailureKind::Miss => {}
+            ProviderChainFailureKind::AuthenticationRequired => {
+                self.has_authentication_requirement = true;
+            }
+            ProviderChainFailureKind::Retryable => {
+                self.has_retryable_failure = true;
+            }
+            ProviderChainFailureKind::BadGateway => {
+                self.has_bad_gateway_failure = true;
+            }
+        }
+    }
+}
+
 /// Build all request-time providers available to the API process.
 ///
 /// # Arguments
@@ -159,7 +249,7 @@ pub(crate) async fn resolve_article_abstract(
     let context = ArticleAccessContext {
         user_id: Some(user_id),
     };
-    let mut did_require_authentication = false;
+    let mut failures = ProviderChainFailures::default();
     for name in provider_order_for_catalog(&orders.abstract_page, catalog_stem) {
         let Some((provider, allowed_redirect_hosts)) = state
             .article_providers()
@@ -187,11 +277,12 @@ pub(crate) async fn resolve_article_abstract(
             .await;
         let result = match result {
             Ok(result) => result,
-            Err(BlockingTaskError::QueueTimedOut) => {
-                log_fallback(&provider_name, "abstract", "queue_timeout");
-                continue;
+            Err(error) => {
+                if failures.record_blocking_error(&provider_name, "abstract", error) {
+                    continue;
+                }
+                break;
             }
-            Err(error) => return Err(error.into()),
         };
         match result {
             Ok(redirect)
@@ -200,20 +291,13 @@ pub(crate) async fn resolve_article_abstract(
             {
                 return Ok(redirect);
             }
-            Ok(_) => log_fallback(&provider_name, "abstract", "invalid_response"),
-            Err(error) if error.kind() == ProviderErrorKind::AuthenticationRequired => {
-                did_require_authentication = true;
-                log_fallback(&provider_name, "abstract", "authentication_required");
+            Ok(_) => failures.record_invalid_response(&provider_name, "abstract"),
+            Err(error) => {
+                failures.record_provider_error(&provider_name, "abstract", error.kind());
             }
-            Err(error) => log_fallback(&provider_name, "abstract", error_kind_label(error.kind())),
         }
     }
-    if did_require_authentication {
-        return Err(authentication_required("abstract"));
-    }
-    Err(ApiError::not_found(
-        "Article abstract action is unavailable",
-    ))
+    Err(failures.into_api_error("abstract", "Article abstract action is unavailable"))
 }
 
 /// Resolve full text through the configured provider chain.
@@ -239,7 +323,7 @@ pub(crate) async fn resolve_article_full_text(
     let context = ArticleAccessContext {
         user_id: Some(user_id),
     };
-    let mut did_require_authentication = false;
+    let mut failures = ProviderChainFailures::default();
     for name in provider_order_for_catalog(&orders.full_text, catalog_stem) {
         let Some((provider, allowed_redirect_hosts)) = state
             .article_providers()
@@ -267,11 +351,12 @@ pub(crate) async fn resolve_article_full_text(
             .await;
         let result = match result {
             Ok(result) => result,
-            Err(BlockingTaskError::QueueTimedOut) => {
-                log_fallback(&provider_name, "fulltext", "queue_timeout");
-                continue;
+            Err(error) => {
+                if failures.record_blocking_error(&provider_name, "fulltext", error) {
+                    continue;
+                }
+                break;
             }
-            Err(error) => return Err(error.into()),
         };
         match result {
             Ok(resolution)
@@ -281,18 +366,13 @@ pub(crate) async fn resolve_article_full_text(
             {
                 return Ok(resolution);
             }
-            Ok(_) => log_fallback(&provider_name, "fulltext", "invalid_response"),
-            Err(error) if error.kind() == ProviderErrorKind::AuthenticationRequired => {
-                did_require_authentication = true;
-                log_fallback(&provider_name, "fulltext", "authentication_required");
+            Ok(_) => failures.record_invalid_response(&provider_name, "fulltext"),
+            Err(error) => {
+                failures.record_provider_error(&provider_name, "fulltext", error.kind());
             }
-            Err(error) => log_fallback(&provider_name, "fulltext", error_kind_label(error.kind())),
         }
     }
-    if did_require_authentication {
-        return Err(authentication_required("fulltext"));
-    }
-    Err(ApiError::not_found("Article full text is unavailable"))
+    Err(failures.into_api_error("fulltext", "Article full text is unavailable"))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -783,10 +863,14 @@ mod tests {
     use std::fs;
     use std::process::Command;
 
+    use axum::http::header::RETRY_AFTER;
+    use axum::response::IntoResponse;
     use litradar_domain::ArticleId;
     use tempfile::{tempdir, TempDir};
 
     use super::*;
+
+    const RAW_PROVIDER_SENTINEL: &str = "raw-provider-sentinel-must-stay-private";
 
     enum RedirectFixtureOutcome {
         Error(ProviderErrorKind),
@@ -811,7 +895,7 @@ mod tests {
             assert!(self.is_supported, "unsupported provider must be skipped");
             match self.outcome {
                 RedirectFixtureOutcome::Error(kind) => {
-                    Err(ProviderError::new(kind, "fixture provider failure"))
+                    Err(ProviderError::new(kind, RAW_PROVIDER_SENTINEL))
                 }
                 RedirectFixtureOutcome::Redirect(location) => Ok(ArticleRedirect {
                     location: location.to_string(),
@@ -1093,6 +1177,94 @@ mod tests {
         assert!(provider_order_for_catalog(&configuration, "disabled").is_empty());
     }
 
+    #[test]
+    fn provider_failure_summary_preserves_terminal_precedence() {
+        let cases = [
+            (Vec::new(), StatusCode::NOT_FOUND, false),
+            (
+                vec![ProviderErrorKind::NotFound],
+                StatusCode::NOT_FOUND,
+                false,
+            ),
+            (
+                vec![ProviderErrorKind::Internal],
+                StatusCode::BAD_GATEWAY,
+                false,
+            ),
+            (
+                vec![ProviderErrorKind::InvalidResponse],
+                StatusCode::BAD_GATEWAY,
+                false,
+            ),
+            (
+                vec![
+                    ProviderErrorKind::Internal,
+                    ProviderErrorKind::TemporarilyUnavailable,
+                ],
+                StatusCode::SERVICE_UNAVAILABLE,
+                true,
+            ),
+            (
+                vec![
+                    ProviderErrorKind::Internal,
+                    ProviderErrorKind::TemporarilyUnavailable,
+                    ProviderErrorKind::AuthenticationRequired,
+                ],
+                StatusCode::PRECONDITION_REQUIRED,
+                false,
+            ),
+        ];
+
+        for (kinds, expected_status, has_retry_after) in cases {
+            let mut failures = ProviderChainFailures::default();
+            for kind in kinds {
+                failures.record_provider_error("fixture", "abstract", kind);
+            }
+            let response = failures
+                .into_api_error("abstract", "Article abstract action is unavailable")
+                .into_response();
+
+            assert_eq!(response.status(), expected_status);
+            assert_eq!(
+                response.headers().contains_key(RETRY_AFTER),
+                has_retry_after
+            );
+            if has_retry_after {
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(RETRY_AFTER)
+                        .expect("retryable failure should include Retry-After"),
+                    "5"
+                );
+            }
+        }
+
+        for (error, expected_status, should_continue) in [
+            (
+                BlockingTaskError::QueueTimedOut,
+                StatusCode::SERVICE_UNAVAILABLE,
+                true,
+            ),
+            (
+                BlockingTaskError::Closed,
+                StatusCode::SERVICE_UNAVAILABLE,
+                false,
+            ),
+            (BlockingTaskError::Join, StatusCode::BAD_GATEWAY, true),
+        ] {
+            let mut failures = ProviderChainFailures::default();
+            assert_eq!(
+                failures.record_blocking_error("fixture", "abstract", error),
+                should_continue
+            );
+            let response = failures
+                .into_api_error("abstract", "Article abstract action is unavailable")
+                .into_response();
+            assert_eq!(response.status(), expected_status);
+        }
+    }
+
     #[tokio::test]
     async fn abstract_resolution_uses_catalog_override_and_explicit_disable() {
         let mut registry = ProviderRegistry::default();
@@ -1148,7 +1320,11 @@ mod tests {
     #[tokio::test]
     async fn redirect_resolution_falls_back_after_authentication_and_invalid_results() {
         for first_outcome in [
+            RedirectFixtureOutcome::Error(ProviderErrorKind::NotFound),
             RedirectFixtureOutcome::Error(ProviderErrorKind::AuthenticationRequired),
+            RedirectFixtureOutcome::Error(ProviderErrorKind::TemporarilyUnavailable),
+            RedirectFixtureOutcome::Error(ProviderErrorKind::InvalidResponse),
+            RedirectFixtureOutcome::Error(ProviderErrorKind::Internal),
             RedirectFixtureOutcome::Redirect("https://example.test/unsafe"),
         ] {
             let mut registry = ProviderRegistry::default();
