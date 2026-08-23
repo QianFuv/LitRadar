@@ -80,6 +80,21 @@
   --scrollbar-thumb: #c7c7c7;
   --scrollbar-thumb-hover: #8f8f8f;
 
+  --motion-duration-fast: 120ms;
+  --motion-duration-base: 180ms;
+  --motion-duration-slow: 220ms;
+  --motion-duration-exit: 140ms;
+  --motion-duration-overlay-enter: 160ms;
+  --motion-duration-overlay-exit: 120ms;
+  --motion-duration-dialog-enter: 200ms;
+  --motion-duration-dialog-exit: 140ms;
+  --motion-duration-drawer-enter: 220ms;
+  --motion-duration-drawer-exit: 160ms;
+  --motion-duration-popover-enter: 140ms;
+  --motion-duration-popover-exit: 110ms;
+  --motion-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
   --shadow-vercel-ring: rgba(0, 0, 0, 0.08) 0px 0px 0px 1px;
   --shadow-vercel-card:
     rgba(0, 0, 0, 0.08) 0px 0px 0px 1px, rgba(0, 0, 0, 0.04) 0px 2px 2px,
@@ -201,13 +216,173 @@
   appearance: none;
 }
 
+.motion-control {
+  transition-duration: var(--motion-duration-fast);
+  transition-timing-function: var(--motion-ease-enter);
+}
+
+.motion-toggle,
+.motion-chevron {
+  transition-duration: var(--motion-duration-base);
+  transition-timing-function: var(--motion-ease-enter);
+}
+
+.motion-overlay[data-state='open'] {
+  animation: motion-overlay-enter var(--motion-duration-overlay-enter) var(--motion-ease-enter) both;
+}
+
+.motion-overlay[data-state='closed'] {
+  animation: motion-overlay-exit var(--motion-duration-overlay-exit) var(--motion-ease-exit) both;
+}
+
+.motion-dialog {
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+}
+
+.motion-dialog[data-state='open'] {
+  animation: motion-dialog-enter var(--motion-duration-dialog-enter) var(--motion-ease-enter) both;
+}
+
+.motion-dialog[data-state='closed'] {
+  animation: motion-dialog-exit var(--motion-duration-dialog-exit) var(--motion-ease-exit) both;
+}
+
+.motion-drawer {
+  transform: translateX(0);
+}
+
+.motion-drawer[data-state='open'] {
+  animation: motion-drawer-enter var(--motion-duration-drawer-enter) var(--motion-ease-enter) both;
+}
+
+.motion-drawer[data-state='closed'] {
+  animation: motion-drawer-exit var(--motion-duration-drawer-exit) var(--motion-ease-exit) both;
+}
+
+.motion-popover {
+  --motion-popover-x: 0px;
+  --motion-popover-y: 0px;
+}
+
+.motion-popover[data-side='bottom'] {
+  --motion-popover-y: -4px;
+}
+
+.motion-popover[data-side='left'] {
+  --motion-popover-x: 4px;
+}
+
+.motion-popover[data-side='right'] {
+  --motion-popover-x: -4px;
+}
+
+.motion-popover[data-side='top'] {
+  --motion-popover-y: 4px;
+}
+
+.motion-popover[data-state='open'] {
+  animation: motion-popover-enter var(--motion-duration-popover-enter) var(--motion-ease-enter) both;
+}
+
+.motion-popover[data-state='closed'] {
+  animation: motion-popover-exit var(--motion-duration-popover-exit) var(--motion-ease-exit) both;
+}
+
+@keyframes motion-overlay-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes motion-overlay-exit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes motion-dialog-enter {
+  from {
+    opacity: 0;
+    scale: 0.98;
+    translate: -50% calc(-50% + 6px);
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+    translate: -50% -50%;
+  }
+}
+
+@keyframes motion-dialog-exit {
+  from {
+    opacity: 1;
+    scale: 1;
+    translate: -50% -50%;
+  }
+  to {
+    opacity: 0;
+    scale: 0.98;
+    translate: -50% calc(-50% + 4px);
+  }
+}
+
+@keyframes motion-drawer-enter {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes motion-drawer-exit {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes motion-popover-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--motion-popover-x), var(--motion-popover-y), 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes motion-popover-exit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(var(--motion-popover-x), var(--motion-popover-y), 0) scale(0.98);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
+    animation-delay: 0ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
+    transition-delay: 0ms !important;
     transition-duration: 0.01ms !important;
   }
 }

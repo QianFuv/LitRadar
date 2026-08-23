@@ -1,10 +1,12 @@
 /**
- * React Query render utilities with deterministic retry and garbage-collection settings.
+ * React Query and motion render utilities with deterministic test settings.
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, type RenderOptions, type RenderResult } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
+
+import { MotionProvider } from '@/components/ui/motion';
 
 export interface QueryRenderResult extends RenderResult {
   queryClient: QueryClient;
@@ -44,7 +46,11 @@ export function renderWithQuery(
    * @returns Query provider tree.
    */
   function Wrapper({ children }: { children: ReactNode }) {
-    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    return (
+      <MotionProvider reducedMotion="always">
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      </MotionProvider>
+    );
   }
 
   return { ...render(element, { ...options, wrapper: Wrapper }), queryClient };

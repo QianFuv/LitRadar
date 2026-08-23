@@ -46,10 +46,10 @@ const THEME_ITEMS: readonly ThemeItem[] = [
 ];
 
 const MENU_ITEM_CLASS =
-  "focus:bg-accent focus:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+  "motion-control focus:bg-accent focus:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-[background-color,color] outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
 
 const MENU_CONTENT_CLASS =
-  'bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 z-50 origin-(--radix-dropdown-menu-content-transform-origin) rounded-md border p-1 shadow-md outline-hidden';
+  'motion-popover bg-popover text-popover-foreground z-50 origin-(--radix-dropdown-menu-content-transform-origin) rounded-md border p-1 shadow-md outline-hidden';
 
 const USER_MENU_POSITION_STYLE: CSSProperties = {
   bottom: 'calc(1rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
@@ -107,7 +107,7 @@ function LogoutRevocationNotice({ warning }: { warning: LogoutRevocationWarning 
           )}
           <Link
             href="/login?logout_recovery=1"
-            className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+            className="motion-control inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-[background-color,color] hover:bg-accent hover:text-accent-foreground"
           >
             重新认证并撤销全部会话
           </Link>
@@ -194,7 +194,7 @@ export function UserMenu() {
             ref={accountTriggerRef}
             type="button"
             variant="outline"
-            className="h-12 max-w-[min(15rem,calc(100vw-2rem))] gap-2 rounded-full bg-popover px-2.5 text-popover-foreground shadow-lg hover:bg-accent hover:text-accent-foreground"
+            className="group/account-menu h-12 max-w-[min(15rem,calc(100vw-2rem))] gap-2 rounded-full bg-popover px-2.5 text-popover-foreground shadow-lg hover:bg-accent hover:text-accent-foreground"
             aria-label={`打开账号菜单：${user.username}`}
           >
             <Image
@@ -205,7 +205,10 @@ export function UserMenu() {
               className="size-8 shrink-0 rounded-full object-cover"
             />
             <span className="min-w-0 truncate text-sm font-medium">{user.username}</span>
-            <ChevronUp className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <ChevronUp
+              className="motion-chevron size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]/account-menu:rotate-180"
+              aria-hidden="true"
+            />
           </Button>
         </DropdownMenuPrimitive.Trigger>
 
@@ -249,12 +252,12 @@ export function UserMenu() {
             <DropdownMenuPrimitive.Sub>
               <DropdownMenuPrimitive.SubTrigger
                 aria-label="外观主题"
-                className={cn(MENU_ITEM_CLASS, 'data-[state=open]:bg-accent')}
+                className={cn(MENU_ITEM_CLASS, 'group/theme-menu data-[state=open]:bg-accent')}
               >
                 <Monitor />
                 <span>外观主题</span>
                 <span className="ml-auto text-xs text-muted-foreground">{selectedThemeLabel}</span>
-                <ChevronRight className="size-4" />
+                <ChevronRight className="motion-chevron size-4 transition-transform group-data-[state=open]/theme-menu:rotate-90" />
               </DropdownMenuPrimitive.SubTrigger>
               <DropdownMenuPrimitive.Portal>
                 <DropdownMenuPrimitive.SubContent

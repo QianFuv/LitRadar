@@ -62,7 +62,10 @@ export function WorkspaceShell({
                   <Menu className="h-5 w-5" />
                 </Button>
               </DialogTrigger>
-              <DialogContent className="left-0 top-0 h-dvh w-80 max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none border-r p-0 shadow-lg md:hidden">
+              <DialogContent
+                placement="left"
+                className="gap-0 overflow-hidden p-0 shadow-lg md:hidden"
+              >
                 <DialogHeader className="sr-only">
                   <DialogTitle>{sidebarDialogTitle}</DialogTitle>
                   <DialogDescription>{sidebarDialogDescription}</DialogDescription>

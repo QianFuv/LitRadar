@@ -136,7 +136,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 | Input             | 36px 高、shadow ring、移动端 16px 字号、`md` 后 14px、3px focus ring        |
 | Checkbox / Switch | Radix 状态属性驱动颜色、焦点和禁用态                                        |
 | Select / Popover  | Radix portal，使用 popover token 与 shadow；内容限制在 viewport 内          |
-| Dialog            | `bg-black/50` overlay，内容默认距视口 1rem、`md:max-w-4xl`、border + shadow |
+| Dialog            | `bg-black/50` overlay；默认居中，移动工作区侧栏使用 `placement="left"` 抽屉 |
 | ScrollArea        | Radix viewport 与 10px 自定义 scrollbar                                     |
 | Skeleton          | muted pulse，用于加载占位                                                   |
 | Label             | 与原生表单关联；禁用状态随 peer/group 传播                                  |
@@ -199,9 +199,27 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 - 加载、成功与错误反馈使用 `role="status"` / `role="alert"`。
 - 展开、选中和当前状态使用 Radix data attributes 或对应 ARIA 属性。
 - Dialog、DropdownMenu、Select、Popover、Checkbox 和 Switch 复用 Radix 的键盘与焦点行为。
-- Dialog 动画和普通 transition 受全局 reduced-motion 规则约束。
+- Dialog 动画和普通 transition 受全局 reduced-motion 规则约束；关闭动画期间仍由 Radix 保持 portal 与焦点归还生命周期。
 
 颜色不能作为唯一状态信号；状态文本、图标或 ARIA 语义应与颜色同时存在。
+
+### 动效约定
+
+根 `Providers` 在主题 Provider 内提供 `MotionProvider`。它使用 Motion 的 `LazyMotion`、`domAnimation` 和 strict 模式；业务组件只能从 `components/ui/motion.tsx` 使用本地 presence、variant、transition 和 `m` 元素封装，不直接导入 Motion 包。页面级 presence 默认 `initial={false}`，避免首次服务端渲染与 hydration 产生无意义入场。
+
+动效保持快速、克制且可预测：
+
+| 场景             | 进入                              | 退出                              |
+| ---------------- | --------------------------------- | --------------------------------- |
+| Overlay          | opacity，160ms                    | opacity，120ms                    |
+| 居中 Dialog      | opacity + 6px + scale 0.98，200ms | opacity + 4px + scale 0.98，140ms |
+| 左侧移动抽屉     | `translateX(-100%)`，220ms        | `translateX(-100%)`，160ms        |
+| Popover / Select | opacity + 4px + scale 0.98，140ms | opacity + 4px + scale 0.98，110ms |
+| 普通状态切换     | 120–180ms，进入曲线               | 120–140ms，退出曲线               |
+
+进入使用 `cubic-bezier(0.16, 1, 0.3, 1)`，退出使用 `cubic-bezier(0.4, 0, 1, 1)`。只对会被 React 条件卸载且需要退出生命周期的状态使用 JS presence；Radix portal 使用共享 CSS animation，继续由 Radix 管理键盘、Escape、点击外部与焦点。长结果列表不逐项错峰，key 必须来自稳定业务标识，控件只声明需要过渡的属性，不使用 `transition-all`。
+
+系统不使用 bounce、spring、parallax、drag、layout animation 或 `domMax`。`prefers-reduced-motion: reduce` 和测试 override 会移除空间位移、延迟与 JS presence 时长；CSS animation/transition 保持 0.01ms，以便状态完成而不制造可感知运动。
 
 ## 修改准则
 

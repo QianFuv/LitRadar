@@ -79,6 +79,9 @@ async function opensAccessibleSidebarDialog(): Promise<void> {
 
   await user.click(trigger);
   const dialog = screen.getByRole('dialog', { name: '测试侧栏' });
+  expect(dialog).toHaveAttribute('data-motion-placement', 'left');
+  expect(dialog).toHaveClass('motion-drawer');
+  expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass('motion-overlay');
   expect(within(dialog).getByText('测试移动侧栏内容。')).toBeInTheDocument();
   expect(within(dialog).getByRole('button', { name: '侧栏操作' })).toBeInTheDocument();
 

@@ -9,6 +9,7 @@ import { NuqsAdapter } from 'nuqs/adapters/next/app';
 import { ThemeProvider } from 'next-themes';
 import { useEffect, useState } from 'react';
 
+import { MotionProvider } from '@/components/ui/motion';
 import { AuthProvider } from '@/lib/auth-context';
 import { reportClientError } from '@/lib/client-logger';
 
@@ -72,11 +73,13 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-      <NuqsAdapter>
-        <QueryClientProvider client={queryClient}>
-          <AuthProvider>{children}</AuthProvider>
-        </QueryClientProvider>
-      </NuqsAdapter>
+      <MotionProvider>
+        <NuqsAdapter>
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider>{children}</AuthProvider>
+          </QueryClientProvider>
+        </NuqsAdapter>
+      </MotionProvider>
     </ThemeProvider>
   );
 }

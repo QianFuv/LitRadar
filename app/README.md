@@ -19,11 +19,12 @@ CI 与前端构建阶段使用：
 | pnpm              | 10.32.0                           |
 | Next.js           | 16.2.4                            |
 | React / React DOM | 19.2.3                            |
+| Motion for React  | 13.1.1                            |
 | TypeScript        | 5.x                               |
 | Tailwind CSS      | 4.x                               |
 | Rust              | 1.96；只在生成 OpenAPI 契约时需要 |
 
-依赖由 `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Query、nuqs、next-themes、Radix UI、class-variance-authority 和 lucide-react。
+依赖由 `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Query、nuqs、next-themes、Radix UI、Motion、class-variance-authority 和 lucide-react。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡仍由共享 CSS motion token 驱动。
 
 ## 本地运行
 
@@ -102,7 +103,7 @@ app/
 │   ├── global-error.tsx   根布局失败时的独立错误文档
 │   ├── not-found.tsx      静态导出的自定义 404 页面
 │   ├── layout.tsx         元数据、全局样式、skip link 和根 Provider
-│   └── providers.tsx      Theme、nuqs、React Query 与认证上下文
+│   └── providers.tsx      Theme、Motion、nuqs、React Query 与认证上下文
 ├── assets/                 本地字体 CSS 与 Unicode-range WOFF2 分片
 ├── components/
 │   ├── admin/             全局管理面板 Dialog 与管理功能卡片
@@ -122,7 +123,7 @@ app/
 │   └── client-logger.tsx  浏览器本地、隐私受限的错误事件
 └── tests/
     ├── *.test.tsx         Vitest/jsdom 与显式 MSW 场景
-    ├── browser-components/ 选择性的 Vitest Chromium 原生语义
+    ├── browser-components/ 选择性的 Vitest Chromium 原生语义与动效生命周期
     ├── mocks/             按领域组织的 typed scenario handlers
     └── e2e/
         ├── local-fixtures.spec.tsx  8 条 fixture UI smoke
@@ -199,7 +200,7 @@ pnpm build
 测试边界：
 
 - `unit-jsdom` 通过 `tests/setup.tsx` 注册 handler-free MSW server；每个套件显式安装所需领域场景，未声明请求直接失败。
-- `component-browser` 只运行 3 个 Chromium 原生语义套件；普通组件行为仍留在 jsdom。
+- `component-browser` 只运行 4 个 Chromium 原生语义套件；普通组件行为仍留在 jsdom。动效套件验证真实退出生命周期、reduced-motion override 与抽屉焦点归还。
 - `fixture-chromium` 在 `127.0.0.1:3100` 启动隔离 Next.js server 并使用页面路由 fixture；`full-stack-chromium` 构建静态导出并启动实际 Rust 服务和临时 SQLite，目录内禁止请求拦截。
 - Playwright 本地零重试；CI 最多一次重试以保留 trace/video，并通过 `failOnFlakyTests` 让 retry-pass 仍失败。
 - 覆盖率排除生成代码和 `components/ui/`，只作独立诊断，不设置完成阈值。
