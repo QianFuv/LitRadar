@@ -290,6 +290,8 @@ mod tests {
         ("/api/issues", "get"),
         ("/api/issues/{issue_id}", "get"),
         ("/api/weekly-updates", "get"),
+        ("/api/weekly-updates/summary", "get"),
+        ("/api/weekly-updates/articles", "get"),
         ("/api/articles", "get"),
         ("/api/articles/{article_id}", "get"),
         ("/api/articles/{article_id}/access", "get"),
