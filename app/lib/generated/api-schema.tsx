@@ -4534,12 +4534,48 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Citation export download. */
+      /** @description Complete citation export download. */
       200: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      /** @description The export format is invalid. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description The favorite folder does not exist for the user. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description The item or final UTF-8 byte limit was exceeded; no partial export is returned. */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Citation metadata could not be read safely. */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
       };
     };
   };

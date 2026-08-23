@@ -2,7 +2,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
-use axum::http::{HeaderMap, HeaderValue};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use litradar_domain::{
@@ -10,16 +10,24 @@ use litradar_domain::{
     FavoriteBulkAdd, FavoriteBulkAddResult, FavoriteBulkMove, FavoriteBulkRemove,
     FavoriteBulkResult, FavoriteCheckResponse, FavoriteResponse, FavoriteTrackingResponse,
     FolderCreate, FolderRename, FolderResponse, InputValidationError, OkResponse,
-    TrackingSetRequest, MAX_BATCH_ARTICLE_IDS, MAX_DATABASE_NAME_CHARS,
+    TrackingSetRequest, UserId, MAX_BATCH_ARTICLE_IDS, MAX_DATABASE_NAME_CHARS,
 };
 use litradar_storage::{BusinessRepositoryError, StorageConfig};
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use crate::citation::{serialize_bibtex, serialize_endnote_xml, serialize_ris};
+use crate::citation::{
+    serialize_bibtex, serialize_endnote_xml, serialize_ris, CitationOutputLimitExceeded,
+};
 use crate::response::ApiError;
 use crate::routes::auth::require_current_user;
 use crate::state::ApiState;
+
+pub(crate) const FAVORITE_EXPORT_MAXIMUM_ITEMS: usize = 10_000;
+pub(crate) const FAVORITE_EXPORT_METADATA_BATCH_SIZE: usize = 250;
+pub(crate) const FAVORITE_EXPORT_MAXIMUM_BYTES: usize = 8 * 1024 * 1024;
+const FAVORITE_EXPORT_ITEM_LIMIT_DETAIL: &str = "Favorite export supports at most 10000 items";
+const FAVORITE_EXPORT_OUTPUT_LIMIT_DETAIL: &str = "Favorite export exceeds the 8 MiB output limit";
 
 /// Query parameters for listing favorite articles.
 #[derive(Debug, Deserialize, IntoParams)]
@@ -55,6 +63,68 @@ pub(crate) struct FavoriteCheckQuery {
 pub(crate) struct ExportQuery {
     /// Export format.
     format: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CitationFormat {
+    Bibtex,
+    Ris,
+    Endnote,
+}
+
+impl CitationFormat {
+    fn parse(value: Option<&str>) -> Result<Self, ApiError> {
+        match value.unwrap_or("bibtex") {
+            "bibtex" => Ok(Self::Bibtex),
+            "ris" => Ok(Self::Ris),
+            "endnote" => Ok(Self::Endnote),
+            _ => Err(ApiError::bad_request("Invalid export format")),
+        }
+    }
+
+    fn serialize(
+        self,
+        records: &[litradar_storage::business::FavoriteCitationRecord],
+    ) -> Result<String, CitationOutputLimitExceeded> {
+        match self {
+            Self::Bibtex => serialize_bibtex(records, FAVORITE_EXPORT_MAXIMUM_BYTES),
+            Self::Ris => serialize_ris(records, FAVORITE_EXPORT_MAXIMUM_BYTES),
+            Self::Endnote => serialize_endnote_xml(records, FAVORITE_EXPORT_MAXIMUM_BYTES),
+        }
+    }
+
+    fn media_type(self) -> &'static str {
+        match self {
+            Self::Bibtex => "application/x-bibtex",
+            Self::Ris => "application/x-research-info-systems",
+            Self::Endnote => "application/xml",
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Bibtex => "bib",
+            Self::Ris => "ris",
+            Self::Endnote => "xml",
+        }
+    }
+}
+
+struct FavoriteExport {
+    folder_name: String,
+    content: String,
+}
+
+enum FavoriteExportError {
+    Repository(BusinessRepositoryError),
+    TooManyItems,
+    OutputTooLarge,
+}
+
+impl From<BusinessRepositoryError> for FavoriteExportError {
+    fn from(error: BusinessRepositoryError) -> Self {
+        Self::Repository(error)
+    }
 }
 
 /// List all folders for the authenticated user.
@@ -277,7 +347,13 @@ pub(crate) async fn folder_count(
         ("folder_id" = i64, Path, description = "Folder row identifier."),
         ExportQuery
     ),
-    responses((status = 200, description = "Citation export download.")),
+    responses(
+        (status = 200, description = "Complete citation export download."),
+        (status = 400, description = "The export format is invalid.", body = ErrorEnvelope),
+        (status = 404, description = "The favorite folder does not exist for the user.", body = ErrorEnvelope),
+        (status = 413, description = "The item or final UTF-8 byte limit was exceeded; no partial export is returned.", body = ErrorEnvelope),
+        (status = 500, description = "Citation metadata could not be read safely.", body = ErrorEnvelope)
+    ),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
 pub(crate) async fn export_folder(
@@ -287,43 +363,56 @@ pub(crate) async fn export_folder(
     Query(query): Query<ExportQuery>,
 ) -> Result<Response, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
-    let (folders, articles) = run_business(&state, move |storage| {
-        let folders = litradar_storage::list_folders(storage.auth_db_path(), user.id)?;
-        let articles = litradar_storage::list_favorite_articles(
-            &storage,
-            user.id,
-            Some(folder_id),
-            100_000,
-            0,
-        )?;
-        Ok((folders, articles))
-    })
-    .await?;
-    let Some(folder) = folders.into_iter().find(|item| item.id == folder_id) else {
-        return Err(ApiError::not_found("Folder not found"));
-    };
-    let format = query.format.unwrap_or_else(|| "bibtex".to_string());
-    let (content, media_type, extension) = match format.as_str() {
-        "bibtex" => (serialize_bibtex(&articles), "application/x-bibtex", "bib"),
-        "ris" => (
-            serialize_ris(&articles),
-            "application/x-research-info-systems",
-            "ris",
-        ),
-        "endnote" => (serialize_endnote_xml(&articles), "application/xml", "xml"),
-        _ => return Err(ApiError::bad_request("Invalid export format")),
-    };
-    let filename = export_filename(&folder.name, extension);
-    let mut response = content.into_response();
+    let format = CitationFormat::parse(query.format.as_deref())?;
+    let storage = state.storage_config().clone();
+    let export = state
+        .run_blocking(move || generate_favorite_export(&storage, user.id, folder_id, format))
+        .await?
+        .map_err(map_favorite_export_error)?;
+    let filename = export_filename(&export.folder_name, format.extension());
+    let mut response = export.content.into_response();
     response
         .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static(media_type));
+        .insert(CONTENT_TYPE, HeaderValue::from_static(format.media_type()));
     response.headers_mut().insert(
         CONTENT_DISPOSITION,
         HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
             .map_err(|_| ApiError::internal_server_error())?,
     );
     Ok(response)
+}
+
+fn generate_favorite_export(
+    storage: &StorageConfig,
+    user_id: UserId,
+    folder_id: i64,
+    format: CitationFormat,
+) -> Result<FavoriteExport, FavoriteExportError> {
+    let snapshot = litradar_storage::business::load_favorite_citation_snapshot(
+        storage.auth_db_path(),
+        user_id,
+        folder_id,
+        FAVORITE_EXPORT_MAXIMUM_ITEMS,
+    )?;
+    if snapshot.has_more {
+        return Err(FavoriteExportError::TooManyItems);
+    }
+    let mut records = Vec::with_capacity(snapshot.references.len());
+    for references in snapshot
+        .references
+        .chunks(FAVORITE_EXPORT_METADATA_BATCH_SIZE)
+    {
+        records.extend(litradar_storage::business::load_favorite_citation_records(
+            storage, references,
+        )?);
+    }
+    let content = format
+        .serialize(&records)
+        .map_err(|_| FavoriteExportError::OutputTooLarge)?;
+    Ok(FavoriteExport {
+        folder_name: snapshot.folder_name,
+        content,
+    })
 }
 
 /// Add one favorite to a folder.
@@ -595,6 +684,20 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         }
         BusinessRepositoryError::InvalidInput(_) => ApiError::bad_request(error.to_string()),
         _ => ApiError::internal_server_error(),
+    }
+}
+
+fn map_favorite_export_error(error: FavoriteExportError) -> ApiError {
+    match error {
+        FavoriteExportError::Repository(error) => map_business_error(error),
+        FavoriteExportError::TooManyItems => ApiError::Http {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            detail: FAVORITE_EXPORT_ITEM_LIMIT_DETAIL.to_string(),
+        },
+        FavoriteExportError::OutputTooLarge => ApiError::Http {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            detail: FAVORITE_EXPORT_OUTPUT_LIMIT_DETAIL.to_string(),
+        },
     }
 }
 

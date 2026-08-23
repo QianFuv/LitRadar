@@ -548,7 +548,7 @@ mod tests {
         ProviderErrorKind, ProviderImplementations, ProviderRegistration, ProviderRegistry,
     };
     use litradar_sources::FixtureZjlibCnkiMode;
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
     use serde_json::Value;
     use tower::ServiceExt;
 
@@ -4410,6 +4410,196 @@ mod tests {
         assert_eq!(removed.status, StatusCode::OK);
         assert_eq!(missing_favorite.status, StatusCode::NOT_FOUND);
         assert_eq!(deleted_folder.status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn favorite_export_enforces_atomic_item_and_byte_limits() {
+        use crate::routes::favorites::{
+            FAVORITE_EXPORT_MAXIMUM_BYTES, FAVORITE_EXPORT_MAXIMUM_ITEMS,
+        };
+
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("bounded_export_reader", false);
+        let other_user = backend.authenticated_user("bounded_export_other", false);
+        let folder = litradar_storage::create_folder(
+            backend.auth_db_path(),
+            user.user_id(),
+            "Bounded Export",
+            false,
+        )
+        .expect("bounded export folder should be created");
+        let mut auth_connection =
+            Connection::open(backend.auth_db_path()).expect("auth database should open");
+        let transaction = auth_connection
+            .transaction()
+            .expect("favorite fixture transaction should start");
+        {
+            let mut insert = transaction
+                .prepare(
+                    "INSERT INTO favorites
+                     (user_id, folder_id, article_id, db_name, note, created_at)
+                     VALUES (?1, ?2, ?3, 'missing.sqlite', '', 1.0)",
+                )
+                .expect("favorite fixture insert should prepare");
+            for article_id in 1..=FAVORITE_EXPORT_MAXIMUM_ITEMS as i64 + 1 {
+                insert
+                    .execute(params![user.user_id().value(), folder.id, article_id])
+                    .expect("favorite fixture should insert");
+            }
+        }
+        transaction
+            .commit()
+            .expect("favorite fixtures should commit");
+        let app = backend.router();
+        let authorization = user.authorization_header();
+
+        let invalid_format = json_request(
+            &app,
+            Method::GET,
+            "/api/favorites/folders/999999/export?format=csv",
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        let foreign_folder = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/favorites/folders/{}/export", folder.id),
+            Some(&other_user.authorization_header()),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(invalid_format.status, StatusCode::BAD_REQUEST);
+        assert_eq!(invalid_format.payload["detail"], "Invalid export format");
+        assert_eq!(foreign_folder.status, StatusCode::NOT_FOUND);
+
+        let oversized_response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/favorites/folders/{}/export?format=bibtex",
+                    folder.id
+                ))
+                .header(AUTHORIZATION, &authorization)
+                .body(Body::empty())
+                .expect("oversized export request should build"),
+            )
+            .await
+            .expect("oversized export response should return");
+        let oversized_status = oversized_response.status();
+        let oversized_headers = oversized_response.headers().clone();
+        let oversized_payload: serde_json::Value = serde_json::from_slice(
+            &to_bytes(oversized_response.into_body(), 4_096)
+                .await
+                .expect("oversized export error should load"),
+        )
+        .expect("oversized export error should be JSON");
+        assert_eq!(oversized_status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(!oversized_headers.contains_key(CONTENT_DISPOSITION));
+        assert_eq!(
+            oversized_payload["detail"],
+            "Favorite export supports at most 10000 items"
+        );
+
+        auth_connection
+            .execute(
+                "DELETE FROM favorites
+                 WHERE user_id = ?1 AND folder_id = ?2 AND article_id = ?3",
+                params![
+                    user.user_id().value(),
+                    folder.id,
+                    FAVORITE_EXPORT_MAXIMUM_ITEMS as i64 + 1
+                ],
+            )
+            .expect("sentinel favorite should delete");
+        let exact_item_response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/favorites/folders/{}/export?format=bibtex",
+                    folder.id
+                ))
+                .header(AUTHORIZATION, &authorization)
+                .body(Body::empty())
+                .expect("exact-item export request should build"),
+            )
+            .await
+            .expect("exact-item export response should return");
+        assert_eq!(exact_item_response.status(), StatusCode::OK);
+        assert!(exact_item_response
+            .headers()
+            .contains_key(CONTENT_DISPOSITION));
+        let exact_item_body = to_bytes(
+            exact_item_response.into_body(),
+            FAVORITE_EXPORT_MAXIMUM_BYTES + 1,
+        )
+        .await
+        .expect("exact-item export body should load");
+        let exact_item_text =
+            String::from_utf8(exact_item_body.to_vec()).expect("export should be UTF-8");
+        assert_eq!(exact_item_text.matches("@article{").count(), 10_000);
+
+        let index_database = backend.create_index_database("large-export.sqlite");
+        let large_title = "x".repeat(FAVORITE_EXPORT_MAXIMUM_BYTES);
+        Connection::open(&index_database.path)
+            .expect("index database should open")
+            .execute(
+                "UPDATE articles SET title = ?1 WHERE article_id = ?2",
+                params![large_title, index_database.article_id],
+            )
+            .expect("oversized title should update");
+        let byte_folder = litradar_storage::create_folder(
+            backend.auth_db_path(),
+            user.user_id(),
+            "Byte Export",
+            false,
+        )
+        .expect("byte export folder should be created");
+        auth_connection
+            .execute(
+                "INSERT INTO favorites
+                 (user_id, folder_id, article_id, db_name, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4, '', 2.0)",
+                params![
+                    user.user_id().value(),
+                    byte_folder.id,
+                    index_database.article_id,
+                    index_database.db_name
+                ],
+            )
+            .expect("byte-limit favorite should insert");
+        let byte_response = app
+            .oneshot(
+                Request::get(format!(
+                    "/api/favorites/folders/{}/export?format=bibtex",
+                    byte_folder.id
+                ))
+                .header(AUTHORIZATION, authorization)
+                .body(Body::empty())
+                .expect("byte-limit export request should build"),
+            )
+            .await
+            .expect("byte-limit export response should return");
+        let byte_status = byte_response.status();
+        let byte_headers = byte_response.headers().clone();
+        let byte_payload: serde_json::Value = serde_json::from_slice(
+            &to_bytes(byte_response.into_body(), 4_096)
+                .await
+                .expect("byte-limit export error should load"),
+        )
+        .expect("byte-limit export error should be JSON");
+        assert_eq!(byte_status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(!byte_headers.contains_key(CONTENT_DISPOSITION));
+        assert_eq!(
+            byte_payload["detail"],
+            "Favorite export exceeds the 8 MiB output limit"
+        );
     }
 
     #[tokio::test]

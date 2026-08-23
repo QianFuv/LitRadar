@@ -1,280 +1,333 @@
 //! Format-specific serializers for favorite citation exports.
 
-use litradar_domain::FavoriteArticleResponse;
+use litradar_storage::business::FavoriteCitationRecord;
+
+/// Citation output exceeded its caller-supplied UTF-8 byte limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CitationOutputLimitExceeded;
 
 /// Serialize favorite articles as structurally safe BibTeX records.
 ///
 /// # Arguments
 ///
-/// * `articles` - Favorite article records in export order.
+/// * `articles` - Favorite citation records in export order.
+/// * `maximum_bytes` - Inclusive final UTF-8 byte limit.
 ///
 /// # Returns
 ///
-/// BibTeX text with one `article` entry per input record.
-pub(crate) fn serialize_bibtex(articles: &[FavoriteArticleResponse]) -> String {
-    let mut serializer = BibtexSerializer::new();
+/// BibTeX text with one `article` entry per input record, or a size-limit failure.
+pub(crate) fn serialize_bibtex(
+    articles: &[FavoriteCitationRecord],
+    maximum_bytes: usize,
+) -> Result<String, CitationOutputLimitExceeded> {
+    let mut serializer = BibtexSerializer::new(maximum_bytes);
     for (index, article) in articles.iter().enumerate() {
-        let key = citation_key(article.doi.as_deref().unwrap_or(""), index + 1);
-        serializer.start_entry(&key);
-        serializer.field("title", article.title.as_deref().unwrap_or(""));
-        serializer.authors(article.authors.as_deref().unwrap_or(&[]));
-        serializer.field("journal", article.journal_title.as_deref().unwrap_or(""));
-        serializer.field("year", article.date.as_deref().unwrap_or(""));
-        serializer.field("doi", article.doi.as_deref().unwrap_or(""));
-        serializer.finish_entry();
+        serializer.start_entry(article.doi.as_deref().unwrap_or(""), index + 1)?;
+        serializer.field("title", article.title.as_deref().unwrap_or(""), true)?;
+        serializer.authors(&article.authors)?;
+        serializer.field(
+            "journal",
+            article.journal_title.as_deref().unwrap_or(""),
+            true,
+        )?;
+        serializer.field("year", article.date.as_deref().unwrap_or(""), true)?;
+        serializer.field("doi", article.doi.as_deref().unwrap_or(""), false)?;
+        serializer.finish_entry()?;
     }
-    serializer.finish()
+    Ok(serializer.finish())
 }
 
 /// Serialize favorite articles as structurally safe RIS records.
 ///
 /// # Arguments
 ///
-/// * `articles` - Favorite article records in export order.
+/// * `articles` - Favorite citation records in export order.
+/// * `maximum_bytes` - Inclusive final UTF-8 byte limit.
 ///
 /// # Returns
 ///
-/// RIS text with one `TY`/`ER` record per input article.
-pub(crate) fn serialize_ris(articles: &[FavoriteArticleResponse]) -> String {
-    let mut serializer = RisSerializer::new();
+/// RIS text with one `TY`/`ER` record per input article, or a size-limit failure.
+pub(crate) fn serialize_ris(
+    articles: &[FavoriteCitationRecord],
+    maximum_bytes: usize,
+) -> Result<String, CitationOutputLimitExceeded> {
+    let mut serializer = RisSerializer::new(maximum_bytes);
     for article in articles {
-        serializer.start_record();
-        serializer.field("TI", article.title.as_deref().unwrap_or(""));
-        serializer.authors(article.authors.as_deref().unwrap_or(&[]));
-        serializer.field("JO", article.journal_title.as_deref().unwrap_or(""));
-        serializer.field("PY", article.date.as_deref().unwrap_or(""));
-        serializer.field("DO", article.doi.as_deref().unwrap_or(""));
-        serializer.finish_record();
+        serializer.start_record()?;
+        serializer.field("TI", article.title.as_deref().unwrap_or(""))?;
+        serializer.authors(&article.authors)?;
+        serializer.field("JO", article.journal_title.as_deref().unwrap_or(""))?;
+        serializer.field("PY", article.date.as_deref().unwrap_or(""))?;
+        serializer.field("DO", article.doi.as_deref().unwrap_or(""))?;
+        serializer.finish_record()?;
     }
-    serializer.finish()
+    Ok(serializer.finish())
 }
 
 /// Serialize favorite articles as structurally safe EndNote XML records.
 ///
 /// # Arguments
 ///
-/// * `articles` - Favorite article records in export order.
+/// * `articles` - Favorite citation records in export order.
+/// * `maximum_bytes` - Inclusive final UTF-8 byte limit.
 ///
 /// # Returns
 ///
-/// UTF-8 EndNote XML text with escaped XML 1.0 character data.
-pub(crate) fn serialize_endnote_xml(articles: &[FavoriteArticleResponse]) -> String {
-    let mut serializer = EndnoteXmlSerializer::new();
+/// UTF-8 EndNote XML text with escaped XML 1.0 text, or a size-limit failure.
+pub(crate) fn serialize_endnote_xml(
+    articles: &[FavoriteCitationRecord],
+    maximum_bytes: usize,
+) -> Result<String, CitationOutputLimitExceeded> {
+    let mut serializer = EndnoteXmlSerializer::new(maximum_bytes)?;
     for article in articles {
-        serializer.record(article);
+        serializer.record(article)?;
     }
     serializer.finish()
 }
 
 struct BibtexSerializer {
-    output: String,
+    output: BoundedString,
     entry_count: usize,
 }
 
 impl BibtexSerializer {
-    fn new() -> Self {
+    fn new(maximum_bytes: usize) -> Self {
         Self {
-            output: String::new(),
+            output: BoundedString::new(maximum_bytes),
             entry_count: 0,
         }
     }
 
-    fn start_entry(&mut self, key: &str) {
+    fn start_entry(
+        &mut self,
+        doi: &str,
+        sequence: usize,
+    ) -> Result<(), CitationOutputLimitExceeded> {
         if self.entry_count > 0 {
-            self.output.push_str("\n\n");
+            self.output.push_str("\n\n")?;
         }
-        self.output.push_str("@article{");
-        self.output.push_str(key);
-        self.output.push_str(",\n");
+        self.output.push_str("@article{")?;
+        let mut has_key_character = false;
+        for character in doi
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric())
+        {
+            self.output.push(character)?;
+            has_key_character = true;
+        }
+        if !has_key_character {
+            self.output.push_str("favorite")?;
+        }
+        self.output.push_str(&sequence.to_string())?;
+        self.output.push_str(",\n")?;
         self.entry_count += 1;
+        Ok(())
     }
 
-    fn authors(&mut self, authors: &[String]) {
-        let value = authors
-            .iter()
-            .map(|author| escape_bibtex_value(author))
-            .collect::<Vec<_>>()
-            .join(" and ");
-        self.escaped_field("author", &value);
+    fn authors(&mut self, authors: &[String]) -> Result<(), CitationOutputLimitExceeded> {
+        self.output.push_str("  author = {")?;
+        for (index, author) in authors.iter().enumerate() {
+            if index > 0 {
+                self.output.push_str(" and ")?;
+            }
+            push_bibtex_value(&mut self.output, author)?;
+        }
+        self.output.push_str("},\n")
     }
 
-    fn field(&mut self, name: &str, value: &str) {
-        self.escaped_field(name, &escape_bibtex_value(value));
-    }
-
-    fn escaped_field(&mut self, name: &str, value: &str) {
-        self.output.push_str("  ");
-        self.output.push_str(name);
-        self.output.push_str(" = {");
-        self.output.push_str(value);
-        self.output.push_str("},\n");
-    }
-
-    fn finish_entry(&mut self) {
-        let trailing_separator = self
-            .output
-            .rfind(",\n")
-            .expect("a BibTeX entry always contains fields");
+    fn field(
+        &mut self,
+        name: &str,
+        value: &str,
+        has_trailing_comma: bool,
+    ) -> Result<(), CitationOutputLimitExceeded> {
+        self.output.push_str("  ")?;
+        self.output.push_str(name)?;
+        self.output.push_str(" = {")?;
+        push_bibtex_value(&mut self.output, value)?;
         self.output
-            .replace_range(trailing_separator..trailing_separator + 1, "");
-        self.output.push('}');
+            .push_str(if has_trailing_comma { "},\n" } else { "}\n" })
+    }
+
+    fn finish_entry(&mut self) -> Result<(), CitationOutputLimitExceeded> {
+        self.output.push('}')
     }
 
     fn finish(self) -> String {
-        self.output
+        self.output.finish()
     }
 }
 
 struct RisSerializer {
-    output: String,
+    output: BoundedString,
     record_count: usize,
 }
 
 impl RisSerializer {
-    fn new() -> Self {
+    fn new(maximum_bytes: usize) -> Self {
         Self {
-            output: String::new(),
+            output: BoundedString::new(maximum_bytes),
             record_count: 0,
         }
     }
 
-    fn start_record(&mut self) {
+    fn start_record(&mut self) -> Result<(), CitationOutputLimitExceeded> {
         if self.record_count > 0 {
-            self.output.push_str("\n\n");
+            self.output.push_str("\n\n")?;
         }
-        self.field("TY", "JOUR");
+        self.field("TY", "JOUR")?;
         self.record_count += 1;
+        Ok(())
     }
 
-    fn authors(&mut self, authors: &[String]) {
+    fn authors(&mut self, authors: &[String]) -> Result<(), CitationOutputLimitExceeded> {
         if authors.is_empty() {
-            self.field("AU", "");
-            return;
+            return self.field("AU", "");
         }
         for author in authors {
-            self.field("AU", author);
+            self.field("AU", author)?;
         }
+        Ok(())
     }
 
-    fn field(&mut self, tag: &str, value: &str) {
-        self.output.push_str(tag);
-        self.output.push_str("  - ");
-        self.output.push_str(&normalize_line_value(value));
-        self.output.push('\n');
+    fn field(&mut self, tag: &str, value: &str) -> Result<(), CitationOutputLimitExceeded> {
+        self.output.push_str(tag)?;
+        self.output.push_str("  - ")?;
+        for character in value.chars() {
+            self.output.push(if is_structural_line_break(character) {
+                ' '
+            } else {
+                character
+            })?;
+        }
+        self.output.push('\n')
     }
 
-    fn finish_record(&mut self) {
-        self.output.push_str("ER  -");
+    fn finish_record(&mut self) -> Result<(), CitationOutputLimitExceeded> {
+        self.output.push_str("ER  -")
     }
 
     fn finish(self) -> String {
-        self.output
+        self.output.finish()
     }
 }
 
 struct EndnoteXmlSerializer {
-    output: String,
+    output: BoundedString,
 }
 
 impl EndnoteXmlSerializer {
-    fn new() -> Self {
-        Self {
-            output: String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records>"),
-        }
+    fn new(maximum_bytes: usize) -> Result<Self, CitationOutputLimitExceeded> {
+        let mut output = BoundedString::new(maximum_bytes);
+        output.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records>")?;
+        Ok(Self { output })
     }
 
-    fn record(&mut self, article: &FavoriteArticleResponse) {
-        self.output.push_str("<record><titles><title>");
-        push_xml_text(&mut self.output, article.title.as_deref().unwrap_or(""));
+    fn record(
+        &mut self,
+        article: &FavoriteCitationRecord,
+    ) -> Result<(), CitationOutputLimitExceeded> {
+        self.output.push_str("<record><titles><title>")?;
+        push_xml_text(&mut self.output, article.title.as_deref().unwrap_or(""))?;
         self.output
-            .push_str("</title></titles><contributors><authors>");
-        let authors = article.authors.as_deref().unwrap_or(&[]);
-        if authors.is_empty() {
-            self.output.push_str("<author></author>");
+            .push_str("</title></titles><contributors><authors>")?;
+        if article.authors.is_empty() {
+            self.output.push_str("<author></author>")?;
         } else {
-            for author in authors {
-                self.output.push_str("<author>");
-                push_xml_text(&mut self.output, author);
-                self.output.push_str("</author>");
+            for author in &article.authors {
+                self.output.push_str("<author>")?;
+                push_xml_text(&mut self.output, author)?;
+                self.output.push_str("</author>")?;
             }
         }
         self.output
-            .push_str("</authors></contributors><dates><year>");
-        push_xml_text(&mut self.output, article.date.as_deref().unwrap_or(""));
+            .push_str("</authors></contributors><dates><year>")?;
+        push_xml_text(&mut self.output, article.date.as_deref().unwrap_or(""))?;
         self.output
-            .push_str("</year></dates><electronic-resource-num>");
-        push_xml_text(&mut self.output, article.doi.as_deref().unwrap_or(""));
-        self.output.push_str("</electronic-resource-num></record>");
+            .push_str("</year></dates><electronic-resource-num>")?;
+        push_xml_text(&mut self.output, article.doi.as_deref().unwrap_or(""))?;
+        self.output.push_str("</electronic-resource-num></record>")
     }
 
-    fn finish(mut self) -> String {
-        self.output.push_str("</records></xml>");
-        self.output
+    fn finish(mut self) -> Result<String, CitationOutputLimitExceeded> {
+        self.output.push_str("</records></xml>")?;
+        Ok(self.output.finish())
     }
 }
 
-fn citation_key(value: &str, sequence: usize) -> String {
-    let sanitized = value
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .collect::<String>();
-    let base = if sanitized.is_empty() {
-        "favorite"
-    } else {
-        sanitized.as_str()
-    };
-    format!("{base}{sequence}")
-}
-
-fn escape_bibtex_value(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
+fn push_bibtex_value(
+    output: &mut BoundedString,
+    value: &str,
+) -> Result<(), CitationOutputLimitExceeded> {
     for character in value.chars() {
         match character {
-            '{' => escaped.push_str("\\char123{}"),
-            '}' => escaped.push_str("\\char125{}"),
-            '\\' => escaped.push_str("\\char92{}"),
-            '%' => escaped.push_str("\\%"),
-            '#' => escaped.push_str("\\#"),
-            '_' => escaped.push_str("\\_"),
-            '&' => escaped.push_str("\\&"),
-            '$' => escaped.push_str("\\$"),
-            '~' => escaped.push_str("\\char126{}"),
-            '^' => escaped.push_str("\\char94{}"),
-            character if is_structural_line_break(character) => escaped.push(' '),
-            character => escaped.push(character),
+            '{' => output.push_str("\\char123{}")?,
+            '}' => output.push_str("\\char125{}")?,
+            '\\' => output.push_str("\\char92{}")?,
+            '%' => output.push_str("\\%")?,
+            '#' => output.push_str("\\#")?,
+            '_' => output.push_str("\\_")?,
+            '&' => output.push_str("\\&")?,
+            '$' => output.push_str("\\$")?,
+            '~' => output.push_str("\\char126{}")?,
+            '^' => output.push_str("\\char94{}")?,
+            character if is_structural_line_break(character) => output.push(' ')?,
+            character => output.push(character)?,
         }
     }
-    escaped
-}
-
-fn normalize_line_value(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if is_structural_line_break(character) {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect()
+    Ok(())
 }
 
 fn is_structural_line_break(character: char) -> bool {
     character.is_control() || character.is_whitespace() && character != ' '
 }
 
-fn push_xml_text(output: &mut String, value: &str) {
+fn push_xml_text(
+    output: &mut BoundedString,
+    value: &str,
+) -> Result<(), CitationOutputLimitExceeded> {
     for character in value.chars() {
         match character {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            '"' => output.push_str("&quot;"),
-            '\'' => output.push_str("&apos;"),
-            character if is_xml_1_0_character(character) => output.push(character),
-            _ => output.push(' '),
+            '&' => output.push_str("&amp;")?,
+            '<' => output.push_str("&lt;")?,
+            '>' => output.push_str("&gt;")?,
+            '"' => output.push_str("&quot;")?,
+            '\'' => output.push_str("&apos;")?,
+            character if is_xml_1_0_character(character) => output.push(character)?,
+            _ => output.push(' ')?,
         }
+    }
+    Ok(())
+}
+
+struct BoundedString {
+    output: String,
+    maximum_bytes: usize,
+}
+
+impl BoundedString {
+    fn new(maximum_bytes: usize) -> Self {
+        Self {
+            output: String::new(),
+            maximum_bytes,
+        }
+    }
+
+    fn push_str(&mut self, value: &str) -> Result<(), CitationOutputLimitExceeded> {
+        if value.len() > self.maximum_bytes.saturating_sub(self.output.len()) {
+            return Err(CitationOutputLimitExceeded);
+        }
+        self.output.push_str(value);
+        Ok(())
+    }
+
+    fn push(&mut self, character: char) -> Result<(), CitationOutputLimitExceeded> {
+        let mut buffer = [0_u8; 4];
+        self.push_str(character.encode_utf8(&mut buffer))
+    }
+
+    fn finish(self) -> String {
+        self.output
     }
 }
 
@@ -287,9 +340,14 @@ fn is_xml_1_0_character(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use litradar_domain::{ArticleId, FavoriteArticleResponse, JournalId};
+    use litradar_domain::ArticleId;
+    use litradar_storage::business::FavoriteCitationRecord;
 
-    use super::{serialize_bibtex, serialize_endnote_xml, serialize_ris};
+    use super::{
+        serialize_bibtex as serialize_bibtex_bounded,
+        serialize_endnote_xml as serialize_endnote_xml_bounded,
+        serialize_ris as serialize_ris_bounded, CitationOutputLimitExceeded,
+    };
 
     #[test]
     fn bibtex_normal_records_keep_existing_fields_and_semantics() {
@@ -408,6 +466,51 @@ mod tests {
         assert!(output.ends_with("</records></xml>"));
     }
 
+    #[test]
+    fn citation_output_accepts_exact_byte_limit_and_rejects_the_next_byte() {
+        const MAXIMUM_BYTES: usize = 8 * 1024 * 1024;
+
+        let empty = serialize_bibtex(&[favorite_article(1, Some(""), &[], None, None, None)]);
+        let title = "x".repeat(MAXIMUM_BYTES - empty.len());
+        let exact_record = favorite_article(1, Some(&title), &[], None, None, None);
+
+        let exact = serialize_bibtex_bounded(std::slice::from_ref(&exact_record), MAXIMUM_BYTES)
+            .expect("exact byte boundary should serialize");
+
+        assert_eq!(exact.len(), MAXIMUM_BYTES);
+        assert_eq!(
+            serialize_bibtex_bounded(&[exact_record], MAXIMUM_BYTES - 1),
+            Err(CitationOutputLimitExceeded)
+        );
+
+        let unicode_record = favorite_article(2, Some("研究"), &[], None, None, None);
+        let unicode = serialize_bibtex(std::slice::from_ref(&unicode_record));
+        assert_eq!(
+            serialize_bibtex_bounded(std::slice::from_ref(&unicode_record), unicode.len())
+                .expect("exact Unicode byte boundary should serialize"),
+            unicode
+        );
+        assert_eq!(
+            serialize_bibtex_bounded(&[unicode_record], unicode.len() - 1),
+            Err(CitationOutputLimitExceeded)
+        );
+    }
+
+    fn serialize_bibtex(articles: &[FavoriteCitationRecord]) -> String {
+        serialize_bibtex_bounded(articles, usize::MAX)
+            .expect("unbounded BibTeX test serialization should succeed")
+    }
+
+    fn serialize_ris(articles: &[FavoriteCitationRecord]) -> String {
+        serialize_ris_bounded(articles, usize::MAX)
+            .expect("unbounded RIS test serialization should succeed")
+    }
+
+    fn serialize_endnote_xml(articles: &[FavoriteCitationRecord]) -> String {
+        serialize_endnote_xml_bounded(articles, usize::MAX)
+            .expect("unbounded EndNote test serialization should succeed")
+    }
+
     fn favorite_article(
         id: i64,
         title: Option<&str>,
@@ -415,29 +518,15 @@ mod tests {
         journal_title: Option<&str>,
         date: Option<&str>,
         doi: Option<&str>,
-    ) -> FavoriteArticleResponse {
-        FavoriteArticleResponse {
-            id,
-            folder_id: 10,
+    ) -> FavoriteCitationRecord {
+        FavoriteCitationRecord {
             article_id: ArticleId(1_000 + id),
             db_name: "fixture.sqlite".to_string(),
-            note: String::new(),
-            created_at: 1.0,
-            journal_id: Some(JournalId(1)),
-            issue_id: Some(20),
             title: title.map(str::to_string),
-            publication_year: Some(2026),
             date: date.map(str::to_string),
-            authors: Some(authors.iter().map(|author| (*author).to_string()).collect()),
-            abstract_text: None,
+            authors: authors.iter().map(|author| (*author).to_string()).collect(),
             doi: doi.map(str::to_string),
             journal_title: journal_title.map(str::to_string),
-            open_access: None,
-            in_press: None,
-            volume: None,
-            number: None,
-            issn: None,
-            eissn: None,
         }
     }
 
