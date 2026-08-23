@@ -1,0 +1,20 @@
+{
+  "generated_at": "2024-01-22T00:00:00Z",
+  "window_start": "2024-01-15T00:00:00Z",
+  "window_end": "2024-01-22T00:00:00Z",
+  "databases": [
+    {
+      "db_name": "scenario.sqlite",
+      "run_id": "scenario-run",
+      "generated_at": "2024-01-22T00:00:00Z",
+      "new_article_count": 1,
+      "journals": [
+        {
+          "journal_id": "101",
+          "journal_title": "Fixture Journal",
+          "new_article_count": 1
+        }
+      ]
+    }
+  ]
+}

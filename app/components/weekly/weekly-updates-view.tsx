@@ -5,17 +5,18 @@
  */
 
 import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
 import { CalendarDays, Database, FileText } from 'lucide-react';
 import { parseAsString, useQueryState } from 'nuqs';
 
 import {
-  getArticles,
   getDatabases,
-  getWeeklyUpdates,
+  getWeeklyUpdateArticles,
+  getWeeklyUpdatesSummary,
   type WeeklyArticle,
-  type WeeklyDatabaseUpdate,
-  type WeeklyJournalUpdate,
+  type WeeklyArticlePage,
+  type WeeklyDatabaseSummary,
+  type WeeklyJournalSummary,
   type JournalId,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -42,17 +43,8 @@ const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   day: '2-digit',
   timeZone: 'UTC',
 });
-const WEEKLY_VISIBLE_PAGE_SIZE = 25;
+const WEEKLY_ARTICLE_PAGE_SIZE = 50;
 const WEEKLY_PREFETCH_THRESHOLD = 25;
-const WEEKLY_SEARCH_PAGE_SIZE = 200;
-
-type WeeklySearchOptions = {
-  database: string;
-  journalId: JournalId;
-  query: string;
-  windowEnd: string;
-  windowStart: string;
-};
 
 /**
  * Format a weekly-window timestamp for the Chinese interface.
@@ -104,7 +96,7 @@ function selectDefaultDatabase(
  * @returns Effective journal identifier or null.
  */
 function selectDefaultJournal(
-  journals: WeeklyJournalUpdate[],
+  journals: WeeklyJournalSummary[],
   currentJournalId: JournalId | null,
 ): JournalId | null {
   if (journals.length === 0) {
@@ -125,7 +117,7 @@ function selectDefaultJournal(
  * @param journal - Weekly journal payload.
  * @returns Journal title or identifier fallback.
  */
-function getJournalLabel(journal: WeeklyJournalUpdate): string {
+function getJournalLabel(journal: WeeklyJournalSummary): string {
   if (journal.journal_title && journal.journal_title.trim()) {
     return journal.journal_title;
   }
@@ -133,92 +125,58 @@ function getJournalLabel(journal: WeeklyJournalUpdate): string {
 }
 
 /**
- * Split weekly articles into progressively visible client-side pages.
+ * Resolve the next weekly article cursor without revisiting an existing page.
  *
- * @param articles - Ordered weekly articles.
- * @param size - Maximum items per visible page.
- * @returns Ordered article page chunks.
+ * @param lastPage - Most recently loaded weekly page.
+ * @param pageParams - Cursors already used by the pagination chain.
+ * @returns Next cursor or undefined when pagination is complete.
  */
-function chunkArticles(articles: WeeklyArticle[], size: number): WeeklyArticle[][] {
-  const pages: WeeklyArticle[][] = [];
-  for (let index = 0; index < articles.length; index += size) {
-    pages.push(articles.slice(index, index + size));
+function getNextWeeklyArticlePageParam(
+  lastPage: WeeklyArticlePage,
+  pageParams: readonly (string | null)[],
+): string | undefined {
+  if (!lastPage.page.has_more) {
+    return undefined;
   }
-  return pages;
+  const nextCursor = lastPage.page.next_cursor?.trim();
+  if (!nextCursor) {
+    throw new Error('每周更新分页缺少下一页游标');
+  }
+  if (pageParams.includes(nextCursor)) {
+    throw new Error('每周更新分页游标重复');
+  }
+  return nextCursor;
 }
 
 /**
- * Convert a weekly ISO timestamp into an inclusive article date filter.
+ * Flatten visible server pages while protecting the list from duplicate boundary rows.
  *
- * @param value - Weekly window timestamp.
- * @returns UTC calendar date.
+ * @param pages - Loaded weekly article pages.
+ * @param visiblePageCount - Number of loaded pages currently visible.
+ * @returns Ordered unique weekly articles.
  */
-function normalizeWeeklyWindowDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    throw new Error('每周更新时间窗口无效');
-  }
-  return date.toISOString().slice(0, 10);
-}
-
-/**
- * Fetch every article-search cursor page for one weekly journal window.
- *
- * @param options - Database, journal, query, and weekly window filters.
- * @returns All search result articles after complete pagination.
- */
-async function searchWeeklyArticles(options: WeeklySearchOptions): Promise<WeeklyArticle[]> {
-  const params = new URLSearchParams();
-  params.append('journal_id', String(options.journalId));
-  params.set('q', options.query);
-  params.set('limit', String(WEEKLY_SEARCH_PAGE_SIZE));
-  params.set('date_from', normalizeWeeklyWindowDate(options.windowStart));
-  params.set('date_to', normalizeWeeklyWindowDate(options.windowEnd));
-
-  const articles: WeeklyArticle[] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | null = null;
-
-  while (true) {
-    const page = await getArticles(params, cursor, false, options.database);
-    articles.push(...page.items);
-    const nextCursor = page.page.next_cursor?.trim() || null;
-    if (!nextCursor) {
-      if (page.page.has_more) {
-        throw new Error('全文检索分页缺少下一页游标');
-      }
-      return articles;
-    }
-    if (seenCursors.has(nextCursor)) {
-      throw new Error('全文检索分页游标重复');
-    }
-    seenCursors.add(nextCursor);
-    cursor = nextCursor;
-  }
-}
-
-/**
- * Intersect search results with weekly articles while retaining weekly payload order.
- *
- * @param weeklyArticles - Ordered weekly payload articles.
- * @param searchedArticles - Fully paginated article search results.
- * @returns Matching weekly articles in weekly payload order.
- */
-function filterWeeklyArticlesBySearchMatches(
-  weeklyArticles: WeeklyArticle[],
-  searchedArticles: WeeklyArticle[],
+function flattenWeeklyArticlePages(
+  pages: WeeklyArticlePage[],
+  visiblePageCount: number,
 ): WeeklyArticle[] {
-  const matchedArticleIds = new Set<string>();
-  for (const article of searchedArticles) {
-    matchedArticleIds.add(article.article_id);
+  const articles: WeeklyArticle[] = [];
+  const seenArticleIds = new Set<string>();
+  for (const page of pages.slice(0, visiblePageCount)) {
+    for (const article of page.items) {
+      if (seenArticleIds.has(article.article_id)) {
+        continue;
+      }
+      seenArticleIds.add(article.article_id);
+      articles.push(article);
+    }
   }
-  return weeklyArticles.filter((article) => matchedArticleIds.has(article.article_id));
+  return articles;
 }
 
 type WeeklySidebarProps = {
   availableDatabases: string[];
   effectiveSelectedDb: string;
-  journals: WeeklyJournalUpdate[];
+  journals: WeeklyJournalSummary[];
   effectiveSelectedJournalId: JournalId | null;
   onDatabaseChange: (value: string) => void;
   onSelectJournal: (journalId: JournalId) => void;
@@ -314,13 +272,13 @@ export function WeeklyUpdatesView() {
   const [selectedJournalId, setSelectedJournalId] = useQueryState('journal', parseAsString);
 
   const {
-    data: weeklyData,
+    data: weeklySummary,
     isLoading: loadingWeekly,
     isError: weeklyError,
     error: weeklyErrorData,
   } = useQuery({
-    queryKey: ['weekly-updates'],
-    queryFn: () => getWeeklyUpdates(),
+    queryKey: ['weekly-updates-summary'],
+    queryFn: () => getWeeklyUpdatesSummary(),
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
   });
@@ -333,12 +291,12 @@ export function WeeklyUpdatesView() {
   });
 
   const dbMap = useMemo(() => {
-    const map = new Map<string, WeeklyDatabaseUpdate>();
-    for (const item of weeklyData?.databases ?? []) {
+    const map = new Map<string, WeeklyDatabaseSummary>();
+    for (const item of weeklySummary?.databases ?? []) {
       map.set(item.db_name, item);
     }
     return map;
-  }, [weeklyData]);
+  }, [weeklySummary]);
 
   const availableDatabases = useMemo(() => {
     if (!databaseOptions || databaseOptions.length === 0) {
@@ -355,8 +313,13 @@ export function WeeklyUpdatesView() {
   }, [databaseOptions, dbMap]);
 
   const effectiveSelectedDb = useMemo(
-    () => selectDefaultDatabase(availableDatabases, selectedDb, ''),
-    [availableDatabases, selectedDb],
+    () =>
+      selectDefaultDatabase(
+        availableDatabases,
+        selectedDb,
+        weeklySummary?.databases[0]?.db_name ?? '',
+      ),
+    [availableDatabases, selectedDb, weeklySummary],
   );
 
   const selectedDbData = useMemo(() => {
@@ -380,68 +343,70 @@ export function WeeklyUpdatesView() {
     return journals.find((item) => item.journal_id === effectiveSelectedJournalId) ?? null;
   }, [journals, effectiveSelectedJournalId]);
 
+  const weeklyArticleQueryKey: string[] = [
+    'weekly-update-articles',
+    effectiveSelectedDb,
+    effectiveSelectedJournalId ?? '',
+    searchQuery,
+    weeklySummary?.window_end ?? '',
+  ];
   const {
-    data: searchedArticles,
-    isLoading: loadingSearch,
-    isError: searchError,
-    error: searchErrorData,
-  } = useQuery({
-    queryKey: [
-      'weekly-search',
-      effectiveSelectedDb,
-      effectiveSelectedJournalId,
-      searchQuery,
-      weeklyData?.window_start ?? '',
-      weeklyData?.window_end ?? '',
-    ],
-    queryFn: async () => {
-      if (
-        !searchQuery ||
-        !effectiveSelectedDb ||
-        effectiveSelectedJournalId === null ||
-        !weeklyData
-      ) {
-        return [];
+    data: weeklyArticleData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isPending: loadingArticles,
+    isError: articleError,
+    error: articleErrorData,
+  } = useInfiniteQuery<
+    WeeklyArticlePage,
+    Error,
+    InfiniteData<WeeklyArticlePage, string | null>,
+    string[],
+    string | null
+  >({
+    queryKey: weeklyArticleQueryKey,
+    queryFn: ({ pageParam }) => {
+      if (!effectiveSelectedDb || effectiveSelectedJournalId === null || !weeklySummary) {
+        throw new Error('每周更新文章请求缺少必要筛选条件');
       }
-      return searchWeeklyArticles({
-        database: effectiveSelectedDb,
-        journalId: effectiveSelectedJournalId,
-        query: searchQuery,
-        windowEnd: weeklyData.window_end,
-        windowStart: weeklyData.window_start,
-      });
+      return getWeeklyUpdateArticles(
+        {
+          dbName: effectiveSelectedDb,
+          journalId: effectiveSelectedJournalId,
+          windowEnd: weeklySummary.window_end,
+          query: searchQuery || undefined,
+          limit: WEEKLY_ARTICLE_PAGE_SIZE,
+        },
+        pageParam,
+      );
     },
+    initialPageParam: null,
+    getNextPageParam: (lastPage, _pages, _lastPageParam, pageParams) =>
+      getNextWeeklyArticlePageParam(lastPage, pageParams),
     enabled: Boolean(
-      searchQuery && effectiveSelectedDb && effectiveSelectedJournalId !== null && weeklyData,
+      user && effectiveSelectedDb && effectiveSelectedJournalId !== null && weeklySummary,
     ),
     staleTime: 60 * 1000,
   });
 
-  const filteredArticles = useMemo(() => {
-    const weeklyArticles = selectedJournal?.articles ?? [];
-    if (!searchQuery) {
-      return weeklyArticles;
-    }
-    if (!searchedArticles) {
-      return [];
-    }
-
-    return filterWeeklyArticlesBySearchMatches(weeklyArticles, searchedArticles);
-  }, [searchedArticles, searchQuery, selectedJournal]);
-
-  const articlePages = useMemo(
-    () => chunkArticles(filteredArticles, WEEKLY_VISIBLE_PAGE_SIZE),
-    [filteredArticles],
-  );
-  const articleListKey = `${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}:${searchQuery}`;
+  const articlePages = useMemo(() => weeklyArticleData?.pages ?? [], [weeklyArticleData]);
+  const articleListKey = `${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}:${searchQuery}:${weeklySummary?.window_end ?? ''}`;
   const { visiblePages, prefetchRef, loadMoreRef } = useVisiblePageList({
     listKey: articleListKey,
     loadedPages: articlePages.length,
+    hasNextPage,
+    isFetchingNextPage,
+    onFetchNextPage: () => {
+      if (hasNextPage && !isFetchingNextPage) {
+        void fetchNextPage();
+      }
+    },
     scrollContainerId: 'results-scroll-container',
   });
   const visiblePageCount = Math.min(visiblePages, articlePages.length);
   const renderedArticles = useMemo(
-    () => articlePages.slice(0, visiblePageCount).flat(),
+    () => flattenWeeklyArticlePages(articlePages, visiblePageCount),
     [articlePages, visiblePageCount],
   );
   const renderedArticleIds = renderedArticles.map((article) => article.article_id);
@@ -452,13 +417,13 @@ export function WeeklyUpdatesView() {
     user?.id,
   );
 
-  const totalDatabases = weeklyData?.databases.length ?? 0;
+  const totalDatabases = weeklySummary?.databases.length ?? 0;
   const totalArticles = useMemo(() => {
-    if (!weeklyData) {
+    if (!weeklySummary) {
       return 0;
     }
-    return weeklyData.databases.reduce((sum, db) => sum + db.new_article_count, 0);
-  }, [weeklyData]);
+    return weeklySummary.databases.reduce((sum, db) => sum + db.new_article_count, 0);
+  }, [weeklySummary]);
 
   const handleDatabaseChange = (value: string) => {
     void setSelectedDb(value);
@@ -487,8 +452,8 @@ export function WeeklyUpdatesView() {
             <p className="text-xs text-muted-foreground">每周新文章</p>
             <h1 className="truncate text-xl font-semibold tracking-tight">
               期刊每周更新
-              {weeklyData
-                ? ` (${formatDate(weeklyData.window_start)} - ${formatDate(weeklyData.window_end)})`
+              {weeklySummary
+                ? ` (${formatDate(weeklySummary.window_start)} - ${formatDate(weeklySummary.window_end)})`
                 : ''}
             </h1>
           </div>
@@ -513,7 +478,7 @@ export function WeeklyUpdatesView() {
         </Card>
       )}
 
-      {!loadingWeekly && !weeklyError && weeklyData && (
+      {!loadingWeekly && !weeklyError && weeklySummary && (
         <>
           <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 sm:flex-row sm:items-center">
             <div className="flex flex-wrap gap-2">
@@ -537,11 +502,11 @@ export function WeeklyUpdatesView() {
               <CardDescription>
                 {selectedJournal
                   ? searchQuery
-                    ? loadingSearch
+                    ? loadingArticles
                       ? '正在检索本周文章…'
-                      : searchError
+                      : articleError
                         ? '全文检索失败'
-                        : `匹配到 ${filteredArticles.length} 篇本周文章`
+                        : `已加载 ${renderedArticles.length} 篇匹配文章${hasNextPage ? '，继续滚动加载' : ''}`
                     : `本周新增 ${selectedJournal.new_article_count} 篇文章`
                   : '请选择左侧期刊'}
               </CardDescription>
@@ -553,26 +518,28 @@ export function WeeklyUpdatesView() {
                 </div>
               )}
 
-              {searchQuery && loadingSearch && (
+              {selectedJournal && loadingArticles && (
                 <div className="space-y-2">
                   <Skeleton className="h-16 w-full" />
                   <Skeleton className="h-16 w-full" />
                 </div>
               )}
 
-              {searchQuery && searchError && (
+              {selectedJournal && articleError && (
                 <div
                   role="alert"
                   className="rounded-md border border-dashed p-4 text-sm text-destructive"
                 >
-                  {searchErrorData instanceof Error ? searchErrorData.message : '全文检索失败'}
+                  {articleErrorData instanceof Error
+                    ? articleErrorData.message
+                    : '加载本周文章失败'}
                 </div>
               )}
 
               {selectedJournal &&
-                !loadingSearch &&
-                !searchError &&
-                filteredArticles.length === 0 && (
+                !loadingArticles &&
+                !articleError &&
+                renderedArticles.length === 0 && (
                   <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                     {searchQuery ? '该期刊中没有匹配全文检索条件的本周文章。' : '该期刊暂无文章。'}
                   </div>
@@ -591,7 +558,18 @@ export function WeeklyUpdatesView() {
                 />
               ))}
 
-              {visiblePageCount < articlePages.length && <div ref={loadMoreRef} className="h-1" />}
+              {isFetchingNextPage && (
+                <div role="status" className="py-2 text-center text-sm text-muted-foreground">
+                  正在加载更多文章…
+                </div>
+              )}
+
+              {selectedJournal &&
+                !loadingArticles &&
+                !articleError &&
+                (visiblePageCount < articlePages.length || hasNextPage) && (
+                  <div ref={loadMoreRef} className="h-1" />
+                )}
             </CardContent>
           </Card>
         </>

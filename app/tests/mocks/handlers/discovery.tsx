@@ -6,8 +6,12 @@ import { http, HttpResponse, type RequestHandler } from 'msw';
 
 import {
   createArticlePageScenario,
+  createWeeklyArticlePageScenario,
+  createWeeklyUpdateSummaryScenario,
   createWeeklyUpdatesScenario,
   type ArticlePageScenario,
+  type WeeklyArticlePageScenario,
+  type WeeklyUpdateSummaryScenario,
   type WeeklyUpdatesScenario,
 } from '@/tests/mocks/scenarios';
 
@@ -16,6 +20,8 @@ const API_URL = 'http://localhost/api';
 /** Overrides supported by discovery scenario handlers. */
 export type DiscoveryScenarioOverrides = {
   articles?: Partial<ArticlePageScenario>;
+  weeklyArticles?: Partial<WeeklyArticlePageScenario>;
+  weeklySummary?: Partial<WeeklyUpdateSummaryScenario>;
   weeklyUpdates?: Partial<WeeklyUpdatesScenario>;
 };
 
@@ -34,6 +40,12 @@ export function createDiscoveryScenarioHandlers(
     ),
     http.get(`${API_URL}/weekly-updates`, () =>
       HttpResponse.json(createWeeklyUpdatesScenario(overrides.weeklyUpdates)),
+    ),
+    http.get(`${API_URL}/weekly-updates/summary`, () =>
+      HttpResponse.json(createWeeklyUpdateSummaryScenario(overrides.weeklySummary)),
+    ),
+    http.get(`${API_URL}/weekly-updates/articles`, () =>
+      HttpResponse.json(createWeeklyArticlePageScenario(overrides.weeklyArticles)),
     ),
   ];
 }

@@ -8,6 +8,8 @@ import articlePageJson from '../../../testdata/scenarios/api/article-page.json';
 import errorJson from '../../../testdata/scenarios/api/error.json';
 import loginJson from '../../../testdata/scenarios/api/login.json';
 import maskedNotificationSettingsJson from '../../../testdata/scenarios/api/masked-notification-settings.json';
+import weeklyArticlePageJson from '../../../testdata/scenarios/api/weekly-article-page.json';
+import weeklyUpdateSummaryJson from '../../../testdata/scenarios/api/weekly-update-summary.json';
 import weeklyUpdatesJson from '../../../testdata/scenarios/api/weekly-updates.json';
 
 type ApiSchemas = components['schemas'];
@@ -16,6 +18,8 @@ type DatePrecision = ApiSchemas['DatePrecision'];
 export type LoginScenario = ApiSchemas['LoginResponse'];
 export type ArticlePageScenario = ApiSchemas['ArticlePage'];
 export type WeeklyUpdatesScenario = ApiSchemas['WeeklyUpdatesResponse'];
+export type WeeklyUpdateSummaryScenario = ApiSchemas['WeeklyUpdatesSummaryResponse'];
+export type WeeklyArticlePageScenario = ApiSchemas['WeeklyArticlePage'];
 export type MaskedNotificationSettingsScenario = ApiSchemas['NotificationSettingsResponse'];
 export type ErrorScenario = ApiSchemas['ErrorEnvelope'];
 
@@ -57,6 +61,15 @@ const WEEKLY_UPDATES_SCENARIO: WeeklyUpdatesScenario = {
     })),
   })),
 } satisfies WeeklyUpdatesScenario;
+const WEEKLY_UPDATE_SUMMARY_SCENARIO: WeeklyUpdateSummaryScenario =
+  weeklyUpdateSummaryJson satisfies WeeklyUpdateSummaryScenario;
+const WEEKLY_ARTICLE_PAGE_SCENARIO: WeeklyArticlePageScenario = {
+  ...weeklyArticlePageJson,
+  items: weeklyArticlePageJson.items.map((article) => ({
+    ...article,
+    date_precision: parseDatePrecision(article.date_precision),
+  })),
+} satisfies WeeklyArticlePageScenario;
 const MASKED_NOTIFICATION_SETTINGS_SCENARIO: MaskedNotificationSettingsScenario =
   maskedNotificationSettingsJson satisfies MaskedNotificationSettingsScenario;
 const ERROR_SCENARIO: ErrorScenario = errorJson satisfies ErrorScenario;
@@ -106,6 +119,30 @@ export function createWeeklyUpdatesScenario(
   overrides: Partial<WeeklyUpdatesScenario> = {},
 ): WeeklyUpdatesScenario {
   return buildScenario(WEEKLY_UPDATES_SCENARIO, overrides);
+}
+
+/**
+ * Build the stable weekly update summary scenario.
+ *
+ * @param overrides - Optional top-level response overrides.
+ * @returns Independent weekly summary data.
+ */
+export function createWeeklyUpdateSummaryScenario(
+  overrides: Partial<WeeklyUpdateSummaryScenario> = {},
+): WeeklyUpdateSummaryScenario {
+  return buildScenario(WEEKLY_UPDATE_SUMMARY_SCENARIO, overrides);
+}
+
+/**
+ * Build the stable weekly article page scenario.
+ *
+ * @param overrides - Optional top-level response overrides.
+ * @returns Independent weekly article page data.
+ */
+export function createWeeklyArticlePageScenario(
+  overrides: Partial<WeeklyArticlePageScenario> = {},
+): WeeklyArticlePageScenario {
+  return buildScenario(WEEKLY_ARTICLE_PAGE_SCENARIO, overrides);
 }
 
 /**

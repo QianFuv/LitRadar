@@ -97,6 +97,32 @@ export interface WeeklyUpdatesResponse {
   databases: WeeklyDatabaseUpdate[];
 }
 
+export interface WeeklyJournalSummary {
+  journal_id: JournalId;
+  journal_title?: string | null;
+  new_article_count: number;
+}
+
+export interface WeeklyDatabaseSummary {
+  db_name: string;
+  run_id?: string | null;
+  generated_at: string;
+  new_article_count: number;
+  journals: WeeklyJournalSummary[];
+}
+
+export interface WeeklyUpdatesSummaryResponse {
+  generated_at: string;
+  window_start: string;
+  window_end: string;
+  databases: WeeklyDatabaseSummary[];
+}
+
+export interface WeeklyArticlePage {
+  items: WeeklyArticle[];
+  page: PageMeta;
+}
+
 export interface AnnouncementInfo {
   id: number;
   title: string;

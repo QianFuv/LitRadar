@@ -16,9 +16,12 @@ import type {
   ArticleId,
   ArticlePage,
   ArticleSearchMode,
+  JournalId,
   JournalOption,
   ValueCount,
+  WeeklyArticlePage,
   WeeklyUpdatesResponse,
+  WeeklyUpdatesSummaryResponse,
   YearSummary,
 } from '@/lib/api/types';
 
@@ -129,6 +132,59 @@ export function getWeeklyUpdates(): Promise<WeeklyUpdatesResponse> {
     null,
     undefined,
     '获取每周更新失败',
+  );
+}
+
+/** Parameters for one bounded weekly article page. */
+export type WeeklyArticlePageRequest = {
+  dbName: string;
+  journalId: JournalId;
+  windowEnd: string;
+  query?: string;
+  limit?: number;
+};
+
+/**
+ * Fetch weekly update counts without article bodies.
+ *
+ * @returns Weekly update summary and fixed pagination window.
+ */
+export function getWeeklyUpdatesSummary(): Promise<WeeklyUpdatesSummaryResponse> {
+  return requestJson<WeeklyUpdatesSummaryResponse>(
+    buildApiUrl('/api/weekly-updates/summary'),
+    null,
+    undefined,
+    '获取每周更新摘要失败',
+  );
+}
+
+/**
+ * Fetch one cursor-bounded weekly article page.
+ *
+ * @param request - Database, journal, fixed window, search, and limit parameters.
+ * @param cursor - Optional descending page cursor.
+ * @returns Weekly article page.
+ */
+export function getWeeklyUpdateArticles(
+  request: WeeklyArticlePageRequest,
+  cursor: string | null = null,
+): Promise<WeeklyArticlePage> {
+  const params = new URLSearchParams();
+  params.set('db', request.dbName);
+  params.set('journal_id', request.journalId);
+  params.set('window_end', request.windowEnd);
+  params.set('limit', String(request.limit ?? 50));
+  if (request.query) {
+    params.set('q', request.query);
+  }
+  if (cursor) {
+    params.set('cursor', cursor);
+  }
+  return requestJson<WeeklyArticlePage>(
+    buildApiUrl('/api/weekly-updates/articles', params),
+    null,
+    undefined,
+    '获取每周更新文章失败',
   );
 }
 
