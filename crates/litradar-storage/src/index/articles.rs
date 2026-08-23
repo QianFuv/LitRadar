@@ -412,10 +412,10 @@ fn article_id_rows(
     };
     let order_direction = direction.sql();
     let mut statement = connection
-        .prepare(&format!(
-            "SELECT l.article_id, l.date FROM article_listing l {where_sql} \
-         ORDER BY COALESCE(l.date, '') {order_direction}, \
-         l.article_id {order_direction} {pagination_sql}"
+        .prepare(&article_id_query_sql(
+            where_sql,
+            order_direction,
+            pagination_sql,
         ))
         .map_err(IndexRepositoryError::from)
         .map_err(|error| classify_article_query_error(error, params))?;
@@ -426,6 +426,13 @@ fn article_id_rows(
         .map_err(IndexRepositoryError::from)
         .map_err(|error| classify_article_query_error(error, params))?;
     collect_rows(rows).map_err(|error| classify_article_query_error(error, params))
+}
+
+fn article_id_query_sql(where_sql: &str, order_direction: &str, pagination_sql: &str) -> String {
+    format!(
+        "SELECT l.article_id, l.date FROM article_listing l {where_sql} \
+         ORDER BY l.date {order_direction}, l.article_id {order_direction} {pagination_sql}"
+    )
 }
 
 fn article_page_from_ids(
@@ -909,30 +916,85 @@ mod tests {
     }
 
     #[test]
-    fn article_cursor_pages_are_non_repeating() {
+    fn article_cursor_pages_cover_null_dates_in_both_directions() {
         let fixture = IndexFixture::new(true);
-        let mut cursor = None;
-        let mut collected_ids = Vec::new();
-        loop {
-            let page = list_articles(
-                &fixture.config,
-                Some(&fixture.db_name),
-                &ArticleListParams {
-                    cursor,
-                    limit: 2,
-                    ..article_filter_params()
-                },
+        let connection = open_sqlite_connection(fixture_db_path(&fixture))
+            .expect("fixture database should open");
+        connection
+            .execute_batch(
+                "UPDATE articles SET date = NULL WHERE article_id IN (1005, 1008);
+                 UPDATE article_listing SET date = NULL WHERE article_id IN (1005, 1008);",
             )
-            .expect("each cursor page should query");
-            collected_ids.extend(article_ids(&page));
-            if page.page.has_more != Some(true) {
-                break;
+            .expect("NULL date fixtures should update");
+        drop(connection);
+
+        for (sort, expected_ids) in [
+            ("date:desc", vec![1003, 1004, 1001, 1002, 1008, 1005]),
+            ("date:asc", vec![1005, 1008, 1002, 1001, 1004, 1003]),
+        ] {
+            let mut cursor = None;
+            let mut collected_ids = Vec::new();
+            for _ in 0..10 {
+                let page = list_articles(
+                    &fixture.config,
+                    Some(&fixture.db_name),
+                    &ArticleListParams {
+                        cursor,
+                        include_total: Some(false),
+                        limit: 1,
+                        sort: Some(sort.to_string()),
+                        ..article_filter_params()
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{sort} cursor page should query: {error}"));
+                collected_ids.extend(article_ids(&page));
+                if page.page.has_more != Some(true) {
+                    break;
+                }
+                cursor = page.page.next_cursor;
             }
-            cursor = page.page.next_cursor;
+            assert_eq!(collected_ids, expected_ids, "{sort}");
+            let unique_ids = collected_ids.iter().copied().collect::<HashSet<_>>();
+            assert_eq!(unique_ids.len(), collected_ids.len(), "{sort}");
         }
-        assert_eq!(collected_ids, [1003, 1004, 1001, 1002, 1005, 1008]);
-        let unique_ids = collected_ids.iter().copied().collect::<HashSet<_>>();
-        assert_eq!(unique_ids.len(), collected_ids.len());
+    }
+
+    #[test]
+    fn article_cursor_first_page_uses_sorting_indexes() {
+        let fixture = IndexFixture::new(true);
+        let connection = open_sqlite_connection(fixture_db_path(&fixture))
+            .expect("fixture database should open");
+
+        for (where_sql, expected_index) in [
+            ("", "idx_article_listing_date_id"),
+            (
+                "WHERE l.journal_id = 1",
+                "idx_article_listing_journal_date_id",
+            ),
+        ] {
+            for direction in [SortDirection::Asc, SortDirection::Desc] {
+                let query = article_id_query_sql(where_sql, direction.sql(), "LIMIT 21 OFFSET 0");
+                let mut statement = connection
+                    .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
+                    .expect("article query plan should prepare");
+                let details = statement
+                    .query_map([], |row| row.get::<_, String>(3))
+                    .expect("article query plan should run")
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .expect("article query plan should collect");
+
+                assert!(
+                    details.iter().any(|detail| detail.contains(expected_index)),
+                    "expected {expected_index} in {details:?}"
+                );
+                assert!(
+                    details
+                        .iter()
+                        .all(|detail| !detail.contains("USE TEMP B-TREE FOR ORDER BY")),
+                    "unexpected temporary sort in {details:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -90,18 +90,35 @@ pub(super) fn push_cursor_filter(
         return Ok(());
     };
     let (date, article_id) = parse_article_cursor(cursor)?;
-    let operator = if direction == SortDirection::Desc {
-        "<"
-    } else {
-        ">"
-    };
-    let date_column = format!("COALESCE({alias}.date, '')");
-    clauses.push(format!(
-        "({date_column} {operator} ? OR ({date_column} = ? AND {alias}.article_id {operator} ?))"
-    ));
-    values.push(SqlValue::Text(date.clone()));
-    values.push(SqlValue::Text(date));
-    values.push(SqlValue::Integer(article_id));
+    match (direction, date.is_empty()) {
+        (SortDirection::Asc, true) => {
+            clauses.push(format!(
+                "(({alias}.date IS NULL AND {alias}.article_id > ?) OR {alias}.date IS NOT NULL)"
+            ));
+            values.push(SqlValue::Integer(article_id));
+        }
+        (SortDirection::Desc, true) => {
+            clauses.push(format!("({alias}.date IS NULL AND {alias}.article_id < ?)"));
+            values.push(SqlValue::Integer(article_id));
+        }
+        (SortDirection::Asc, false) => {
+            clauses.push(format!(
+                "({alias}.date > ? OR ({alias}.date = ? AND {alias}.article_id > ?))"
+            ));
+            values.push(SqlValue::Text(date.clone()));
+            values.push(SqlValue::Text(date));
+            values.push(SqlValue::Integer(article_id));
+        }
+        (SortDirection::Desc, false) => {
+            clauses.push(format!(
+                "({alias}.date IS NULL OR {alias}.date < ? OR \
+                 ({alias}.date = ? AND {alias}.article_id < ?))"
+            ));
+            values.push(SqlValue::Text(date.clone()));
+            values.push(SqlValue::Text(date));
+            values.push(SqlValue::Integer(article_id));
+        }
+    }
     Ok(())
 }
 

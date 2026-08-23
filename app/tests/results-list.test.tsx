@@ -104,7 +104,7 @@ function createArticlePage(
   return {
     items,
     page: {
-      total: options.total ?? items.length,
+      total: options.total === undefined ? items.length : options.total,
       limit: 20,
       offset: 0,
       next_cursor: options.nextCursor ?? null,
@@ -132,7 +132,7 @@ function renderResultsList(
 }
 
 /**
- * Verify loading resolves into typed content, totals, highlights, filters, and favorite state.
+ * Verify loading resolves into typed content, highlights, filters, and favorite state.
  */
 async function rendersTypedResultContent(): Promise<void> {
   let resolveRequest: (() => void) | undefined;
@@ -154,11 +154,7 @@ async function rendersTypedResultContent(): Promise<void> {
   resolveRequest?.();
 
   const article = await screen.findByTestId('result-9001');
-  const totalSummary = screen.getByText('共找到 12 条结果');
   const filterSummary = screen.getByRole('region', { name: '已应用筛选' });
-  expect(
-    totalSummary.compareDocumentPosition(filterSummary) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   expect(filterSummary.parentElement).toHaveClass(
     'sticky',
     'top-0',
@@ -179,7 +175,8 @@ async function rendersTypedResultContent(): Promise<void> {
   expect(requestUrl?.searchParams.getAll('journal_id')).toEqual(['101']);
   expect(requestUrl?.searchParams.get('date_from')).toBe('2024-01-01');
   expect(requestUrl?.searchParams.get('date_to')).toBe('2024-02-29');
-  expect(requestUrl?.searchParams.get('include_total')).toBe('1');
+  expect(requestUrl?.searchParams.get('include_total')).toBe('0');
+  expect(screen.queryByText(/共找到 .* 条结果/)).not.toBeInTheDocument();
 }
 
 /**
@@ -202,11 +199,7 @@ async function recoversFirstPageFailureToEmptyState(): Promise<void> {
   await queryClient.invalidateQueries({ queryKey: ['articles'] });
 
   expect(await screen.findByText('未找到文章。')).toBeInTheDocument();
-  const totalSummary = screen.getByText('共找到 0 条结果');
-  const filterSummary = screen.getByRole('region', { name: '已应用筛选' });
-  expect(
-    totalSummary.compareDocumentPosition(filterSummary) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(screen.queryByText(/共找到 .* 条结果/)).not.toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 }
 
@@ -267,15 +260,16 @@ async function appendsPagesAndClearsStaleDatabaseResults(): Promise<void> {
   });
   expect(await screen.findByTestId('result-9002')).toBeInTheDocument();
   expect(requestUrls).toHaveLength(2);
-  expect(requestUrls[0].searchParams.get('include_total')).toBe('1');
+  expect(requestUrls[0].searchParams.get('include_total')).toBe('0');
   expect(requestUrls[1].searchParams.get('cursor')).toBe('page-two');
   expect(requestUrls[1].searchParams.get('include_total')).toBe('0');
-  expect(screen.getByText('共找到 2 条结果')).toBeInTheDocument();
+  expect(screen.queryByText(/共找到 .* 条结果/)).not.toBeInTheDocument();
 
   act(() => setSelectedDatabase('other.sqlite'));
   expect(await screen.findByTestId('result-other-1')).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument());
   expect(screen.queryByTestId('result-9002')).not.toBeInTheDocument();
+  expect(requestUrls[2].searchParams.get('include_total')).toBe('0');
 }
 
 /**

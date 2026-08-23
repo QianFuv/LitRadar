@@ -62,8 +62,8 @@ function validateArticlePageCursor(
 /**
  * Fetch and render the filtered, progressively visible article result list.
  *
- * @param props - Optional content rendered beneath the known result total.
- * @returns Search result summary, article cards, and pagination sentinels.
+ * @param props - Optional filter content rendered above the result cards.
+ * @returns Article cards, filter content, and pagination sentinels.
  */
 export function ResultsList({ filterSummary }: ResultsListProps) {
   const { user } = useAuth();
@@ -105,7 +105,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
     >({
       queryKey,
       queryFn: async ({ pageParam }) => {
-        const page = await getArticles(params, pageParam, pageParam === null, currentDb);
+        const page = await getArticles(params, pageParam, false, currentDb);
         const cachedData =
           queryClient.getQueryData<InfiniteData<ArticlePage, string | null>>(queryKey);
         return validateArticlePageCursor(page, pageParam, cachedData?.pageParams ?? []);
@@ -169,7 +169,6 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
 
   const prefetchThreshold = 25;
   const prefetchIndex = Math.max(0, visibleArticles.length - prefetchThreshold);
-  const total = data?.pages[0]?.page.total ?? null;
   let resultContent: ReactNode;
 
   if (isError) {
@@ -227,9 +226,6 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
 
   return (
     <div className="space-y-4">
-      {typeof total === 'number' && (
-        <div className="text-sm text-muted-foreground">共找到 {total} 条结果</div>
-      )}
       {filterSummary && (
         <div
           data-testid="filter-summary-slot"
