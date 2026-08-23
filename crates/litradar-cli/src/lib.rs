@@ -15,11 +15,11 @@ use litradar_index::{
     LiveScholarlyConfig,
 };
 use litradar_storage::{
-    create_backup, migrate_auth_database, migrate_database_secrets, migrate_index_database,
-    migrate_storage, preflight_existing_index_databases, preflight_index_database, restore_backup,
-    rotate_database_secrets, verify_backup, verify_database_secrets, BackupCreateOptions,
-    BackupRestoreOptions, ManagedMetaAction, ManagedMetaPreparationReport, SecretCodec,
-    StorageConfig,
+    create_backup, migrate_auth_database, migrate_database_secrets,
+    preflight_existing_index_databases, preflight_index_database, preflight_storage,
+    restore_backup, rotate_database_secrets, verify_backup, verify_database_secrets,
+    BackupCreateOptions, BackupRestoreOptions, ManagedMetaAction, ManagedMetaPreparationReport,
+    SecretCodec, StorageConfig,
 };
 use litradar_worker::delivery::{
     run_manual_delivery_job, run_recommendation_delivery, DeliveryMode, DeliveryOutcomeState,
@@ -681,7 +681,7 @@ fn run_scheduler_command_inner(
         _ => return Err(scheduler_usage().into()),
     };
     let secret_key_file = required_secret_key_file(secret_key_file)?;
-    migrate_command_databases(&project_root, &auth_db_path)?;
+    preflight_command_storage(&project_root, &auth_db_path)?;
     let secret_codec = SecretCodec::load(&secret_key_file)?;
     verify_database_secrets(&auth_db_path, &secret_codec)?;
     match action {
@@ -780,13 +780,13 @@ fn run_delivery_command_inner(
     if is_internal_handoff && targets.len() != 1 {
         return Err("internal delivery handoff requires exactly one database".into());
     }
-    migrate_command_databases(&project_root, &auth_db_path)?;
+    preflight_command_storage(&project_root, &auth_db_path)?;
     let secret_codec = SecretCodec::load(&secret_key_file)?;
     verify_database_secrets(&auth_db_path, &secret_codec)?;
     let storage_config = StorageConfig::from_project_root(&project_root);
     let tokenizer_path = storage_config.simple_tokenizer_path();
     for target in &targets {
-        migrate_index_database(&target.index_db_path, tokenizer_path.as_deref())?;
+        preflight_index_database(&target.index_db_path, tokenizer_path.as_deref())?;
     }
     let mut outcomes = Vec::new();
     for target in targets {
@@ -884,11 +884,11 @@ fn print_scheduler_load(auth_db_path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn migrate_command_databases(
+fn preflight_command_storage(
     project_root: &Path,
     auth_db_path: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    migrate_storage(
+    preflight_storage(
         &StorageConfig::from_project_root(project_root).with_auth_db_path(auth_db_path),
     )?;
     Ok(())
@@ -1291,12 +1291,12 @@ mod tests {
     use super::{
         admin_usage, aggregate_delivery_status, delivery_usage, ensure_delivery_command_success,
         extract_auth_db_path, extract_bool_pair, extract_string_option, extract_usize_option,
-        index_concurrency_payload, index_usage, live_index_runtime_config,
-        migrate_command_databases, normalize_db_name, parse_index_options,
-        preflight_index_command_databases, prepare_index_managed_meta, resolve_delivery_targets,
-        resolve_project_path, run_admin_command_with_reader, run_index_command,
-        run_index_command_with_bundled_meta_dir, run_notify_command, run_push_command,
-        run_scheduler_command, scheduler_usage, serialize_index_outcome, IndexOptions,
+        index_concurrency_payload, index_usage, live_index_runtime_config, normalize_db_name,
+        parse_index_options, preflight_command_storage, preflight_index_command_databases,
+        prepare_index_managed_meta, resolve_delivery_targets, resolve_project_path,
+        run_admin_command_with_reader, run_index_command, run_index_command_with_bundled_meta_dir,
+        run_notify_command, run_push_command, run_scheduler_command, scheduler_usage,
+        serialize_index_outcome, IndexOptions,
     };
     use litradar_index::{LiveCsvIndexOutcome, LiveIndexOutcome};
     use litradar_worker::delivery::{
@@ -2260,8 +2260,8 @@ mod tests {
         let project_root = root.path().join("project");
         let auth_db_path = root.path().join("state/custom-auth.sqlite");
         let bundle_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/meta");
-        migrate_command_databases(&project_root, &auth_db_path)
-            .expect("command databases should migrate");
+        preflight_command_storage(&project_root, &auth_db_path)
+            .expect("command storage should be prepared");
         let storage_config = litradar_storage::StorageConfig::from_project_root(&project_root)
             .with_auth_db_path(&auth_db_path);
 
@@ -2285,7 +2285,7 @@ mod tests {
     }
 
     #[test]
-    fn command_database_migration_imports_legacy_delivery_state() {
+    fn command_storage_preflight_imports_legacy_delivery_state() {
         let root = temp_root("litradar-cli-delivery-import");
         let project_root = root.path().join("project");
         let auth_db_path = root.path().join("state/custom-auth.sqlite");
@@ -2298,7 +2298,7 @@ mod tests {
         )
         .expect("legacy state should be written");
 
-        migrate_command_databases(&project_root, &auth_db_path)
+        preflight_command_storage(&project_root, &auth_db_path)
             .expect("command startup should import legacy state");
 
         let checkpoint = litradar_storage::load_delivery_checkpoint(
@@ -2858,9 +2858,27 @@ mod tests {
         let auth_db_path = root.path().join("auth.sqlite");
         let secret_key_file = root.path().join("secret.key");
         fs::write(&secret_key_file, [5_u8; 32]).expect("secret key should write");
+        let index_path = root.path().join("data/index/current-with-orphan.sqlite");
+        litradar_storage::migrate_index_database(&index_path, None)
+            .expect("current index database should initialize");
+        let connection = litradar_storage::open_sqlite_connection(&index_path)
+            .expect("current index database should open");
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .expect("foreign key enforcement should be disabled for the corruption fixture");
+        connection
+            .execute(
+                "INSERT INTO article_retraction_dois (article_id, retraction_doi)
+                 VALUES (999, '10.1000/orphan')",
+                [],
+            )
+            .expect("foreign key violation should be installed with enforcement disabled");
+        drop(connection);
 
         run_scheduler_command(
             vec![
+                "--project-root".to_string(),
+                root.path().to_string_lossy().into_owned(),
                 "--auth-db".to_string(),
                 auth_db_path.to_string_lossy().into_owned(),
                 "--secret-key-file".to_string(),
@@ -2874,6 +2892,13 @@ mod tests {
             litradar_storage::count_users(&auth_db_path).expect("migrated users table should load"),
             0
         );
+        let violation_count: i64 = litradar_storage::open_sqlite_connection(&index_path)
+            .expect("current index database should reopen")
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign key violation count should load");
+        assert_eq!(violation_count, 1);
     }
 
     #[test]

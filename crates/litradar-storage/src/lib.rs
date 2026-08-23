@@ -111,8 +111,8 @@ pub use meta::{
 };
 pub use migrations::{
     migrate_auth_database, migrate_existing_index_databases, migrate_index_database,
-    migrate_storage, preflight_existing_index_databases, preflight_index_database, MigrationError,
-    AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
+    migrate_storage, preflight_existing_index_databases, preflight_index_database,
+    preflight_storage, MigrationError, AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
 };
 pub use secrets::{
     migrate_database_secrets, rotate_database_secrets, verify_database_secrets, SecretCodec,

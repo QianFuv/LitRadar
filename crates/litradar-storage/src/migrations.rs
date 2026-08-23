@@ -184,13 +184,36 @@ impl From<DeliveryRepositoryError> for MigrationError {
 ///
 /// Empty result after every configured database reaches its current version.
 pub fn migrate_storage(config: &StorageConfig) -> Result<(), MigrationError> {
+    prepare_shared_storage(config)?;
+    migrate_existing_index_databases(config)
+}
+
+/// Prepare configured storage for normal runtime use without scanning current index rows.
+///
+/// The auth database and legacy delivery state are migrated normally. Current-version index
+/// databases receive schema-only validation, while older supported indexes are fully migrated and
+/// validated.
+///
+/// # Arguments
+///
+/// * `config` - Storage paths rooted at the active project directory.
+///
+/// # Returns
+///
+/// Empty result after every configured database is ready for runtime use.
+pub fn preflight_storage(config: &StorageConfig) -> Result<(), MigrationError> {
+    prepare_shared_storage(config)?;
+    preflight_existing_index_databases(config)
+}
+
+fn prepare_shared_storage(config: &StorageConfig) -> Result<(), MigrationError> {
     migrate_auth_database(config.auth_db_path())?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64();
     import_legacy_delivery_state_files(config, now)?;
-    migrate_existing_index_databases(config)
+    Ok(())
 }
 
 /// Migrate every existing index database discovered by a storage configuration.
@@ -258,7 +281,7 @@ pub fn migrate_existing_index_databases(config: &StorageConfig) -> Result<(), Mi
     Ok(())
 }
 
-/// Prepare every existing index database for an index command.
+/// Prepare every existing index database for normal runtime use.
 ///
 /// Current-version databases receive schema-only validation. Older supported databases are
 /// migrated and receive the full integrity validation performed by the migration path.
@@ -269,7 +292,7 @@ pub fn migrate_existing_index_databases(config: &StorageConfig) -> Result<(), Mi
 ///
 /// # Returns
 ///
-/// Empty result after all discovered index databases are ready for indexing.
+/// Empty result after all discovered index databases are ready for runtime use.
 pub fn preflight_existing_index_databases(config: &StorageConfig) -> Result<(), MigrationError> {
     let started_at = Instant::now();
     tracing::info!(
@@ -404,7 +427,7 @@ pub fn migrate_index_database(
     })
 }
 
-/// Prepare one index database for an index command without scanning current-version data rows.
+/// Prepare one index database for runtime use without scanning current-version data rows.
 ///
 /// # Arguments
 ///

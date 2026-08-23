@@ -208,7 +208,7 @@ fn try_build_router_with_state(
 ) -> Result<(Router, ApiState), Box<dyn Error>> {
     let web_root = config.project_root.join("web");
     let storage_config = StorageConfig::from_project_root(config.project_root.clone());
-    litradar_storage::migrate_storage(&storage_config)?;
+    litradar_storage::preflight_storage(&storage_config)?;
     if let Some(bundle_dir) = config.bundled_meta_dir.as_deref() {
         let report = litradar_storage::prepare_managed_meta(&storage_config, bundle_dir)?;
         emit_managed_meta_diagnostic("api_startup", &report);
@@ -1336,6 +1336,49 @@ mod tests {
         assert_eq!(auth_version, litradar_storage::AUTH_SCHEMA_VERSION);
         assert_eq!(index_version, litradar_storage::INDEX_SCHEMA_VERSION);
         assert!(!storage_config.meta_dir().exists());
+    }
+
+    #[test]
+    fn router_startup_preflight_does_not_scan_current_index_rows() {
+        let temp_dir = tempfile::tempdir().expect("temporary project should be created");
+        let storage_config = litradar_storage::StorageConfig::from_project_root(temp_dir.path());
+        let secret_key_file = temp_dir.path().join("secret.key");
+        fs::write(&secret_key_file, [6_u8; 32]).expect("secret key should write");
+        write_test_web_root(temp_dir.path());
+        let index_path = storage_config
+            .index_dir()
+            .join("current-with-orphan.sqlite");
+        litradar_storage::migrate_index_database(&index_path, None)
+            .expect("current index database should initialize");
+        let connection = Connection::open(&index_path).expect("current index database should open");
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .expect("foreign key enforcement should be disabled for the corruption fixture");
+        connection
+            .execute(
+                "INSERT INTO article_retraction_dois (article_id, retraction_doi)
+                 VALUES (999, '10.1000/orphan')",
+                [],
+            )
+            .expect("foreign key violation should be installed with enforcement disabled");
+        drop(connection);
+        let config = ApiConfig::new(
+            temp_dir.path().to_path_buf(),
+            "127.0.0.1".to_string(),
+            0,
+            secret_key_file,
+        );
+
+        let _router = try_build_router(config)
+            .expect("router startup should use the schema-only current-index preflight");
+
+        let violation_count: i64 = Connection::open(index_path)
+            .expect("current index database should reopen")
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign key violation count should load");
+        assert_eq!(violation_count, 1);
     }
 
     #[test]

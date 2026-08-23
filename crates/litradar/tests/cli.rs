@@ -502,17 +502,28 @@ fn index_command_resumes_a_local_catalog_without_network_access() {
 }
 
 #[test]
-fn notify_and_push_commands_complete_with_local_idle_state() {
+fn notify_and_push_commands_preflight_current_indexes_without_full_integrity_scans() {
     let root = tempdir().expect("temporary project root should be created");
     let storage_config = litradar_storage::StorageConfig::from_project_root(root.path());
     let secret_key_file = root.path().join("secret.key");
     fs::write(&secret_key_file, [24_u8; 32]).expect("secret key should write");
     litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
-    litradar_storage::migrate_index_database(
-        storage_config.index_dir().join("fixture.sqlite"),
-        None,
-    )
-    .expect("fixture index should migrate");
+    let index_path = storage_config.index_dir().join("fixture.sqlite");
+    litradar_storage::migrate_index_database(&index_path, None)
+        .expect("fixture index should migrate");
+    let connection =
+        litradar_storage::open_sqlite_connection(&index_path).expect("fixture index should open");
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .expect("foreign key enforcement should be disabled for the corruption fixture");
+    connection
+        .execute(
+            "INSERT INTO article_retraction_dois (article_id, retraction_doi)
+             VALUES (999, '10.1000/orphan')",
+            [],
+        )
+        .expect("foreign key violation should be installed with enforcement disabled");
+    drop(connection);
 
     for command in ["notify", "push"] {
         let output = run_litradar_in(
@@ -544,6 +555,10 @@ fn notify_and_push_commands_complete_with_local_idle_state() {
         assert!(log_events(&output)
             .iter()
             .any(|event| event["event"] == "delivery.workflow.completed"));
+        assert!(log_events(&output).iter().any(|event| {
+            event["event"] == "storage.index_preflight.completed"
+                && event["validation_scope"] == "schema_only"
+        }));
     }
     assert!(!root.path().join("data/push_state").exists());
     assert!(!root.path().join("data/folder_push_state").exists());

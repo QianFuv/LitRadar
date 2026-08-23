@@ -5,8 +5,8 @@ use std::path::Path;
 
 use litradar_storage::{
     count_users, get_journal, migrate_auth_database, migrate_index_database, migrate_storage,
-    preflight_index_database, MigrationError, StorageConfig, AUTH_SCHEMA_VERSION,
-    INDEX_SCHEMA_VERSION,
+    preflight_index_database, preflight_storage, MigrationError, StorageConfig,
+    AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
 };
 use rusqlite::{Connection, OptionalExtension};
 use tempfile::tempdir;
@@ -1958,6 +1958,32 @@ fn storage_migration_discovers_existing_index_databases() {
 
     assert_eq!(user_version(config.auth_db_path()), AUTH_SCHEMA_VERSION);
     assert_eq!(user_version(&index_path), INDEX_SCHEMA_VERSION);
+}
+
+#[test]
+fn storage_preflight_defers_current_index_foreign_key_validation() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let config = StorageConfig::from_project_root(temp_dir.path());
+    let index_path = config.index_dir().join("current-with-orphan.sqlite");
+    migrate_index_database(&index_path, None).expect("current index database should initialize");
+    let connection = Connection::open(&index_path).expect("current index database should open");
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .expect("foreign key enforcement should be disabled for the corruption fixture");
+    connection
+        .execute(
+            "INSERT INTO article_retraction_dois (article_id, retraction_doi)
+             VALUES (999, '10.1000/orphan')",
+            [],
+        )
+        .expect("foreign key violation should be installed with enforcement disabled");
+    drop(connection);
+
+    preflight_storage(&config).expect("storage preflight should avoid a full integrity scan");
+
+    assert_eq!(user_version(config.auth_db_path()), AUTH_SCHEMA_VERSION);
+    assert_eq!(user_version(&index_path), INDEX_SCHEMA_VERSION);
+    assert_eq!(foreign_key_violation_count(&index_path), 1);
 }
 
 #[test]
