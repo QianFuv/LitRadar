@@ -160,7 +160,7 @@ pub(crate) async fn start_login(
                 .provider_proxy_selection()
                 .for_provider(ZJLIB_PROVIDER_NAME);
             let login_result = state
-                .run_blocking_with_queue_timeout(CNKI_NETWORK_QUEUE_TIMEOUT, move || {
+                .run_upstream_blocking_with_queue_timeout(CNKI_NETWORK_QUEUE_TIMEOUT, move || {
                     start_zjlib_login(fixture_mode, provider_proxy)
                 })
                 .await?;
@@ -306,7 +306,7 @@ pub(crate) async fn poll_login(
             let timeout_seconds = body.timeout_seconds;
             let interval_seconds = body.interval_seconds;
             let poll_result = state
-                .run_blocking_with_queue_timeout(CNKI_NETWORK_QUEUE_TIMEOUT, move || {
+                .run_upstream_blocking_with_queue_timeout(CNKI_NETWORK_QUEUE_TIMEOUT, move || {
                     poll_zjlib_login(
                         fixture_mode,
                         &session_data,

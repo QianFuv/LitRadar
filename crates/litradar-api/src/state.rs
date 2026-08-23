@@ -14,7 +14,8 @@ use litradar_storage::{
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-const DEFAULT_BLOCKING_CONCURRENCY: usize = 8;
+const DEFAULT_STORAGE_BLOCKING_CONCURRENCY: usize = 8;
+const DEFAULT_UPSTREAM_BLOCKING_CONCURRENCY: usize = 4;
 const DEFAULT_BLOCKING_QUEUE_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_KDF_CONCURRENCY: usize = 2;
 const AUTH_RATE_LIMIT_AUDIT_INTERVAL_SECONDS: u64 = 60;
@@ -27,7 +28,8 @@ pub struct ApiState {
     are_session_cookies_secure: bool,
     auth_rate_limiter: Arc<Mutex<AuthRateLimiter>>,
     trusted_proxy_cidrs: Arc<[TrustedProxyCidr]>,
-    blocking_executor: BlockingExecutor,
+    storage_executor: BlockingExecutor,
+    upstream_executor: BlockingExecutor,
     kdf_executor: BlockingExecutor,
     article_providers: Arc<ProviderRegistry>,
     provider_proxy_selection: ProviderProxySelection,
@@ -57,7 +59,8 @@ impl ApiState {
             Vec::new(),
             AuthRateLimitPolicy::default(),
             ProviderProxySelection::default(),
-            DEFAULT_BLOCKING_CONCURRENCY,
+            DEFAULT_STORAGE_BLOCKING_CONCURRENCY,
+            DEFAULT_UPSTREAM_BLOCKING_CONCURRENCY,
             DEFAULT_BLOCKING_QUEUE_TIMEOUT,
         )
     }
@@ -91,7 +94,8 @@ impl ApiState {
             trusted_proxy_cidrs,
             auth_rate_limit_policy,
             provider_proxy_selection,
-            DEFAULT_BLOCKING_CONCURRENCY,
+            DEFAULT_STORAGE_BLOCKING_CONCURRENCY,
+            DEFAULT_UPSTREAM_BLOCKING_CONCURRENCY,
             DEFAULT_BLOCKING_QUEUE_TIMEOUT,
         )
     }
@@ -104,7 +108,8 @@ impl ApiState {
         trusted_proxy_cidrs: Vec<TrustedProxyCidr>,
         auth_rate_limit_policy: AuthRateLimitPolicy,
         provider_proxy_selection: ProviderProxySelection,
-        blocking_concurrency: usize,
+        storage_blocking_concurrency: usize,
+        upstream_blocking_concurrency: usize,
         blocking_queue_timeout: Duration,
     ) -> Self {
         let article_providers = crate::article_access::build_article_provider_registry(
@@ -119,7 +124,14 @@ impl ApiState {
             are_session_cookies_secure,
             auth_rate_limiter: Arc::new(Mutex::new(AuthRateLimiter::new(auth_rate_limit_policy))),
             trusted_proxy_cidrs: trusted_proxy_cidrs.into(),
-            blocking_executor: BlockingExecutor::new(blocking_concurrency, blocking_queue_timeout),
+            storage_executor: BlockingExecutor::new(
+                storage_blocking_concurrency,
+                blocking_queue_timeout,
+            ),
+            upstream_executor: BlockingExecutor::new(
+                upstream_blocking_concurrency,
+                blocking_queue_timeout,
+            ),
             kdf_executor: BlockingExecutor::new(DEFAULT_KDF_CONCURRENCY, blocking_queue_timeout),
             article_providers: Arc::new(article_providers),
             provider_proxy_selection,
@@ -133,7 +145,8 @@ impl ApiState {
     /// * `storage_config` - Data path configuration.
     /// * `secret_codec` - Deployment secret codec.
     /// * `are_session_cookies_secure` - Whether session cookies include Secure.
-    /// * `concurrency` - Maximum simultaneously running blocking jobs.
+    /// * `storage_concurrency` - Maximum simultaneously running storage jobs.
+    /// * `upstream_concurrency` - Maximum simultaneously running upstream jobs.
     /// * `queue_timeout` - Default permit acquisition deadline.
     ///
     /// # Returns
@@ -144,7 +157,8 @@ impl ApiState {
         storage_config: StorageConfig,
         secret_codec: SecretCodec,
         are_session_cookies_secure: bool,
-        concurrency: usize,
+        storage_concurrency: usize,
+        upstream_concurrency: usize,
         queue_timeout: Duration,
     ) -> Self {
         Self::build(
@@ -154,7 +168,8 @@ impl ApiState {
             Vec::new(),
             AuthRateLimitPolicy::default(),
             ProviderProxySelection::default(),
-            concurrency,
+            storage_concurrency,
+            upstream_concurrency,
             queue_timeout,
         )
     }
@@ -210,11 +225,11 @@ impl ApiState {
         &self.provider_proxy_selection
     }
 
-    /// Run synchronous work on Tokio's blocking pool behind the shared concurrency limit.
+    /// Run synchronous storage work behind the storage concurrency limit.
     ///
     /// # Arguments
     ///
-    /// * `work` - Owned synchronous operation to execute.
+    /// * `work` - Owned synchronous storage operation to execute.
     ///
     /// # Returns
     ///
@@ -229,7 +244,7 @@ impl ApiState {
     {
         let span = tracing::Span::current();
         let subscriber = tracing::dispatcher::get_default(Clone::clone);
-        self.blocking_executor
+        self.storage_executor
             .run(move || tracing::dispatcher::with_default(&subscriber, || span.in_scope(work)))
             .await
     }
@@ -258,12 +273,12 @@ impl ApiState {
             .await
     }
 
-    /// Run synchronous work with an operation-specific queue deadline.
+    /// Run synchronous storage work with an operation-specific queue deadline.
     ///
     /// # Arguments
     ///
-    /// * `queue_timeout` - Maximum time spent waiting for an executor permit.
-    /// * `work` - Owned synchronous operation to execute.
+    /// * `queue_timeout` - Maximum time spent waiting for a storage executor permit.
+    /// * `work` - Owned synchronous storage operation to execute.
     ///
     /// # Returns
     ///
@@ -279,18 +294,46 @@ impl ApiState {
     {
         let span = tracing::Span::current();
         let subscriber = tracing::dispatcher::get_default(Clone::clone);
-        self.blocking_executor
+        self.storage_executor
             .run_with_queue_timeout(queue_timeout, move || {
                 tracing::dispatcher::with_default(&subscriber, || span.in_scope(work))
             })
             .await
     }
 
-    /// Run detached background work behind the concurrency limit without a request deadline.
+    /// Run synchronous upstream work with an operation-specific queue deadline.
     ///
     /// # Arguments
     ///
-    /// * `work` - Owned synchronous background operation to execute.
+    /// * `queue_timeout` - Maximum time spent waiting for an upstream executor permit.
+    /// * `work` - Owned synchronous upstream operation to execute.
+    ///
+    /// # Returns
+    ///
+    /// Completed output or a bounded-executor failure.
+    pub(crate) async fn run_upstream_blocking_with_queue_timeout<Work, Output>(
+        &self,
+        queue_timeout: Duration,
+        work: Work,
+    ) -> Result<Output, BlockingTaskError>
+    where
+        Work: FnOnce() -> Output + Send + 'static,
+        Output: Send + 'static,
+    {
+        let span = tracing::Span::current();
+        let subscriber = tracing::dispatcher::get_default(Clone::clone);
+        self.upstream_executor
+            .run_with_queue_timeout(queue_timeout, move || {
+                tracing::dispatcher::with_default(&subscriber, || span.in_scope(work))
+            })
+            .await
+    }
+
+    /// Run detached storage work behind its concurrency limit without a request deadline.
+    ///
+    /// # Arguments
+    ///
+    /// * `work` - Owned synchronous storage operation to execute.
     ///
     /// # Returns
     ///
@@ -306,16 +349,17 @@ impl ApiState {
     {
         let span = tracing::Span::current();
         let subscriber = tracing::dispatcher::get_default(Clone::clone);
-        self.blocking_executor
+        self.storage_executor
             .run_without_queue_timeout(move || {
                 tracing::dispatcher::with_default(&subscriber, || span.in_scope(work))
             })
             .await
     }
 
-    /// Stop accepting queued blocking work during server shutdown.
+    /// Stop accepting queued storage, upstream, and KDF work during server shutdown.
     pub(crate) fn close_blocking_executor(&self) {
-        self.blocking_executor.close();
+        self.storage_executor.close();
+        self.upstream_executor.close();
         self.kdf_executor.close();
     }
 
@@ -1482,6 +1526,7 @@ mod tests {
             SecretCodec::from_key([1_u8; 32]),
             false,
             1,
+            1,
             Duration::from_millis(50),
         );
         let should_release = Arc::new(AtomicBool::new(false));
@@ -1567,12 +1612,140 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn storage_and_upstream_executor_saturation_are_isolated() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let state = ApiState::new_with_blocking_limits(
+            StorageConfig::from_project_root(temp_dir.path()),
+            SecretCodec::from_key([1_u8; 32]),
+            false,
+            1,
+            1,
+            Duration::from_millis(40),
+        );
+        let upstream_release = Arc::new(AtomicBool::new(false));
+        let upstream_worker_release = Arc::clone(&upstream_release);
+        let (upstream_started_sender, upstream_started_receiver) = tokio::sync::oneshot::channel();
+        let upstream_state = state.clone();
+        let upstream = tokio::spawn(async move {
+            upstream_state
+                .run_upstream_blocking_with_queue_timeout(Duration::from_secs(2), move || {
+                    let _ = upstream_started_sender.send(());
+                    while !upstream_worker_release.load(Ordering::Acquire) {
+                        std::thread::yield_now();
+                    }
+                })
+                .await
+        });
+        upstream_started_receiver
+            .await
+            .expect("upstream job should start");
+
+        assert_eq!(state.run_blocking(|| "storage").await, Ok("storage"));
+        assert_eq!(
+            state
+                .run_upstream_blocking_with_queue_timeout(Duration::from_millis(40), || "queued")
+                .await,
+            Err(BlockingTaskError::QueueTimedOut)
+        );
+        upstream_release.store(true, Ordering::Release);
+        assert_eq!(upstream.await.expect("upstream task should join"), Ok(()));
+
+        let storage_release = Arc::new(AtomicBool::new(false));
+        let storage_worker_release = Arc::clone(&storage_release);
+        let (storage_started_sender, storage_started_receiver) = tokio::sync::oneshot::channel();
+        let storage_state = state.clone();
+        let storage = tokio::spawn(async move {
+            storage_state
+                .run_blocking_with_queue_timeout(Duration::from_secs(2), move || {
+                    let _ = storage_started_sender.send(());
+                    while !storage_worker_release.load(Ordering::Acquire) {
+                        std::thread::yield_now();
+                    }
+                })
+                .await
+        });
+        storage_started_receiver
+            .await
+            .expect("storage job should start");
+
+        assert_eq!(
+            state
+                .run_upstream_blocking_with_queue_timeout(Duration::from_millis(40), || "upstream")
+                .await,
+            Ok("upstream")
+        );
+        assert_eq!(
+            state.run_blocking(|| "queued").await,
+            Err(BlockingTaskError::QueueTimedOut)
+        );
+        storage_release.store(true, Ordering::Release);
+        assert_eq!(storage.await.expect("storage task should join"), Ok(()));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn upstream_executor_holds_permit_until_cancelled_waiter_work_finishes() {
+        let temp_dir = tempdir().expect("temporary directory should be created");
+        let state = ApiState::new_with_blocking_limits(
+            StorageConfig::from_project_root(temp_dir.path()),
+            SecretCodec::from_key([1_u8; 32]),
+            false,
+            1,
+            1,
+            Duration::from_millis(25),
+        );
+        let should_release = Arc::new(AtomicBool::new(false));
+        let worker_release = Arc::clone(&should_release);
+        let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
+        let (finished_sender, finished_receiver) = tokio::sync::oneshot::channel();
+        let cancelled_state = state.clone();
+        let task = tokio::spawn(async move {
+            cancelled_state
+                .run_upstream_blocking_with_queue_timeout(Duration::from_secs(1), move || {
+                    let _ = started_sender.send(());
+                    while !worker_release.load(Ordering::Acquire) {
+                        std::thread::yield_now();
+                    }
+                    let _ = finished_sender.send(());
+                })
+                .await
+        });
+        started_receiver
+            .await
+            .expect("upstream work should acquire a permit and start");
+
+        task.abort();
+        assert!(task
+            .await
+            .expect_err("waiter should be cancelled")
+            .is_cancelled());
+        assert_eq!(
+            state
+                .run_upstream_blocking_with_queue_timeout(Duration::from_millis(25), || "queued")
+                .await,
+            Err(BlockingTaskError::QueueTimedOut)
+        );
+        assert_eq!(state.run_blocking(|| "storage").await, Ok("storage"));
+
+        should_release.store(true, Ordering::Release);
+        finished_receiver
+            .await
+            .expect("cancelled waiter's upstream work should finish");
+        assert_eq!(
+            state
+                .run_upstream_blocking_with_queue_timeout(Duration::from_secs(1), || "available")
+                .await,
+            Ok("available")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn blocking_executor_does_not_return_timeout_after_http_work_starts() {
         let temp_dir = tempdir().expect("temporary directory should be created");
         let state = ApiState::new_with_blocking_limits(
             StorageConfig::from_project_root(temp_dir.path()),
             SecretCodec::from_key([1_u8; 32]),
             false,
+            1,
             1,
             Duration::from_millis(25),
         );
@@ -1619,7 +1792,7 @@ mod tests {
 
         assert!(!response_task.is_finished());
         assert!(!did_mutate.load(Ordering::Acquire));
-        assert_eq!(state.blocking_executor.semaphore.available_permits(), 0);
+        assert_eq!(state.storage_executor.semaphore.available_permits(), 0);
 
         should_release.store(true, Ordering::Release);
         let response = response_task
@@ -1628,7 +1801,7 @@ mod tests {
             .expect("HTTP route should respond");
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert!(did_mutate.load(Ordering::Acquire));
-        assert_eq!(state.blocking_executor.semaphore.available_permits(), 1);
+        assert_eq!(state.storage_executor.semaphore.available_permits(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1681,6 +1854,7 @@ mod tests {
             SecretCodec::from_key([1_u8; 32]),
             false,
             8,
+            4,
             Duration::from_secs(2),
         );
         let active = Arc::new(AtomicUsize::new(0));
@@ -1736,6 +1910,7 @@ mod tests {
             SecretCodec::from_key([1_u8; 32]),
             false,
             1,
+            1,
             Duration::from_secs(1),
         );
 
@@ -1749,6 +1924,12 @@ mod tests {
             state.run_kdf_blocking(|| "unused").await,
             Err(BlockingTaskError::Closed)
         );
+        assert_eq!(
+            state
+                .run_upstream_blocking_with_queue_timeout(Duration::from_secs(1), || "unused")
+                .await,
+            Err(BlockingTaskError::Closed)
+        );
     }
 
     #[tokio::test]
@@ -1758,6 +1939,7 @@ mod tests {
             StorageConfig::from_project_root(temp_dir.path()),
             SecretCodec::from_key([1_u8; 32]),
             false,
+            1,
             1,
             Duration::from_secs(1),
         );
@@ -1776,22 +1958,33 @@ mod tests {
                     })
                     .await
                     .expect("blocking security work should complete");
+                state
+                    .run_upstream_blocking_with_queue_timeout(Duration::from_secs(1), || {
+                        tracing::info!(
+                            event = "security.upstream_blocking.test",
+                            component = "security",
+                        );
+                    })
+                    .await
+                    .expect("upstream security work should complete");
             }
             .instrument(request_span)
             .await;
         })
         .await;
 
-        let event = logs
-            .events()
-            .into_iter()
-            .find(|event| event["event"] == "security.blocking.test")
-            .expect("blocking security event should be captured");
-        assert!(event["spans"].as_array().is_some_and(|spans| {
-            spans
+        let events = logs.events();
+        for event_name in ["security.blocking.test", "security.upstream_blocking.test"] {
+            let event = events
                 .iter()
-                .any(|span| span["request_id"] == "request-security-blocking")
-        }));
+                .find(|event| event["event"] == event_name)
+                .expect("blocking security event should be captured");
+            assert!(event["spans"].as_array().is_some_and(|spans| {
+                spans
+                    .iter()
+                    .any(|span| span["request_id"] == "request-security-blocking")
+            }));
+        }
     }
 
     #[test]

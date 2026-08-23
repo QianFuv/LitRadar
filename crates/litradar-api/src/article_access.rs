@@ -299,7 +299,7 @@ async fn resolve_article_abstract_until(
         };
         let request_article = article.clone();
         let result = state
-            .run_blocking_with_queue_timeout(
+            .run_upstream_blocking_with_queue_timeout(
                 ARTICLE_ACTION_QUEUE_TIMEOUT.min(queue_timeout),
                 move || provider.resolve_abstract(&request_article, context),
             )
@@ -405,7 +405,7 @@ async fn resolve_article_full_text_until(
         };
         let request_article = article.clone();
         let result = state
-            .run_blocking_with_queue_timeout(
+            .run_upstream_blocking_with_queue_timeout(
                 ARTICLE_ACTION_QUEUE_TIMEOUT.min(queue_timeout),
                 move || provider.resolve_full_text(&request_article, context),
             )
