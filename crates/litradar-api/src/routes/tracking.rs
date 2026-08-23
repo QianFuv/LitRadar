@@ -547,9 +547,17 @@ fn manual_push_status(run: &DeliveryRunRecord) -> ManualWeeklyPushStatus {
     let public_status = public_manual_status(run.status);
     let message = outcome
         .as_ref()
-        .map(|outcome| outcome.message.clone())
+        .filter(|outcome| {
+            matches!(
+                run.status,
+                DeliveryRunStatus::Completed | DeliveryRunStatus::Skipped
+            ) && outcome.status == ManualPushState::Completed
+        })
+        .map(|outcome| outcome.message.as_str())
         .filter(|message| !message.is_empty())
-        .unwrap_or_else(|| manual_status_message(run).to_string());
+        .or_else(|| manual_error_message(run.error_code.as_deref()))
+        .unwrap_or_else(|| manual_status_message(run))
+        .to_string();
     ManualWeeklyPushStatus {
         job_id: Some(run.external_id.clone()),
         status: public_status,
@@ -607,6 +615,41 @@ fn manual_status_message(run: &DeliveryRunRecord) -> &'static str {
     }
 }
 
+fn manual_error_message(error_code: Option<&str>) -> Option<&'static str> {
+    match error_code? {
+        "invalid_job_context" => Some("手动推送任务配置无效，请重新创建任务"),
+        "cancelled" => Some("手动推送已取消，可重新发起"),
+        "deadline_exceeded" => Some("手动推送已超时，请稍后重试"),
+        "ambiguous_delivery" => Some("推送结果不确定，请先检查接收端，再确认未知结果"),
+        "delivery_failed" => Some("手动推送未完成，请检查 AI、PushPlus 或跟踪文件夹设置后重试"),
+        "cancellation_state_unavailable" => Some("无法确认取消状态，请稍后查看任务状态后再重试"),
+        "ai_request_budget_exhausted" => Some("AI 请求次数已用尽，请检查 AI 配置或稍后重试"),
+        "workflow_busy" => Some("已有投递任务占用资源，请稍后重试"),
+        "index_storage_failed" => Some("文章索引暂时无法读取，请稍后重试"),
+        "business_storage_failed" => Some("通知设置暂时无法读取，请稍后重试"),
+        "delivery_storage_failed" => Some("投递状态暂时无法保存，请稍后重试"),
+        "auth_storage_failed" => Some("账户配置暂时无法读取，请稍后重试"),
+        "recommendation_failed" => Some("文章筛选失败，请检查推荐设置后重试"),
+        "ai_failed" => Some("AI 摘要生成失败，请检查 AI 配置后重试"),
+        "pushplus_failed" => Some("PushPlus 推送失败，请检查令牌和网络后重试"),
+        "manual_validation_failed" => Some("手动推送配置无效，请检查通知设置后重试"),
+        "spawn_or_assign_failed" => Some("推送任务暂时无法启动，请稍后重试"),
+        "forced_cancellation_unknown" => {
+            Some("强制取消后推送结果不确定，请先检查接收端，再确认未知结果")
+        }
+        "forced_deadline_unknown" => {
+            Some("强制结束超时任务后结果不确定，请先检查接收端，再确认未知结果")
+        }
+        "forced_shutdown_unknown" => {
+            Some("服务停止时推送结果不确定，请先检查接收端，再确认未知结果")
+        }
+        "forced_termination_unknown" => {
+            Some("任务异常中断后推送结果不确定，请先检查接收端，再确认未知结果")
+        }
+        _ => None,
+    }
+}
+
 async fn load_authorized_manual_run(
     state: &ApiState,
     user_id: i64,
@@ -648,6 +691,8 @@ fn current_epoch_seconds() -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use litradar_domain::{ManualPushState, NotificationSettingsUpdate};
     use litradar_storage::{
         DeliveryRunMode, DeliveryRunRecord, DeliveryRunStatus, DeliveryTriggerKind,
@@ -693,6 +738,191 @@ mod tests {
         assert!(manual_push_status(&fixture_run(DeliveryRunStatus::Failed)).can_retry);
         assert!(manual_push_status(&fixture_run(DeliveryRunStatus::Cancelled)).can_retry);
         assert!(manual_push_status(&fixture_run(DeliveryRunStatus::TimedOut)).can_retry);
+    }
+
+    #[test]
+    fn manual_push_status_maps_error_codes_to_safe_messages() {
+        let cases = [
+            (
+                "invalid_job_context",
+                DeliveryRunStatus::Failed,
+                "手动推送任务配置无效，请重新创建任务",
+            ),
+            (
+                "cancelled",
+                DeliveryRunStatus::Cancelled,
+                "手动推送已取消，可重新发起",
+            ),
+            (
+                "deadline_exceeded",
+                DeliveryRunStatus::TimedOut,
+                "手动推送已超时，请稍后重试",
+            ),
+            (
+                "ambiguous_delivery",
+                DeliveryRunStatus::Unknown,
+                "推送结果不确定，请先检查接收端，再确认未知结果",
+            ),
+            (
+                "delivery_failed",
+                DeliveryRunStatus::Failed,
+                "手动推送未完成，请检查 AI、PushPlus 或跟踪文件夹设置后重试",
+            ),
+            (
+                "cancellation_state_unavailable",
+                DeliveryRunStatus::Failed,
+                "无法确认取消状态，请稍后查看任务状态后再重试",
+            ),
+            (
+                "ai_request_budget_exhausted",
+                DeliveryRunStatus::Failed,
+                "AI 请求次数已用尽，请检查 AI 配置或稍后重试",
+            ),
+            (
+                "workflow_busy",
+                DeliveryRunStatus::Failed,
+                "已有投递任务占用资源，请稍后重试",
+            ),
+            (
+                "index_storage_failed",
+                DeliveryRunStatus::Failed,
+                "文章索引暂时无法读取，请稍后重试",
+            ),
+            (
+                "business_storage_failed",
+                DeliveryRunStatus::Failed,
+                "通知设置暂时无法读取，请稍后重试",
+            ),
+            (
+                "delivery_storage_failed",
+                DeliveryRunStatus::Failed,
+                "投递状态暂时无法保存，请稍后重试",
+            ),
+            (
+                "auth_storage_failed",
+                DeliveryRunStatus::Failed,
+                "账户配置暂时无法读取，请稍后重试",
+            ),
+            (
+                "recommendation_failed",
+                DeliveryRunStatus::Failed,
+                "文章筛选失败，请检查推荐设置后重试",
+            ),
+            (
+                "ai_failed",
+                DeliveryRunStatus::Failed,
+                "AI 摘要生成失败，请检查 AI 配置后重试",
+            ),
+            (
+                "pushplus_failed",
+                DeliveryRunStatus::Failed,
+                "PushPlus 推送失败，请检查令牌和网络后重试",
+            ),
+            (
+                "manual_validation_failed",
+                DeliveryRunStatus::Failed,
+                "手动推送配置无效，请检查通知设置后重试",
+            ),
+            (
+                "spawn_or_assign_failed",
+                DeliveryRunStatus::Failed,
+                "推送任务暂时无法启动，请稍后重试",
+            ),
+            (
+                "forced_cancellation_unknown",
+                DeliveryRunStatus::Unknown,
+                "强制取消后推送结果不确定，请先检查接收端，再确认未知结果",
+            ),
+            (
+                "forced_deadline_unknown",
+                DeliveryRunStatus::Unknown,
+                "强制结束超时任务后结果不确定，请先检查接收端，再确认未知结果",
+            ),
+            (
+                "forced_shutdown_unknown",
+                DeliveryRunStatus::Unknown,
+                "服务停止时推送结果不确定，请先检查接收端，再确认未知结果",
+            ),
+            (
+                "forced_termination_unknown",
+                DeliveryRunStatus::Unknown,
+                "任务异常中断后推送结果不确定，请先检查接收端，再确认未知结果",
+            ),
+        ];
+        let mut messages = HashSet::new();
+        for (error_code, status, expected_message) in cases {
+            let mut run = fixture_run(status);
+            run.error_code = Some(error_code.to_string());
+
+            let public = manual_push_status(&run);
+
+            assert_eq!(public.message, expected_message);
+            assert!(!public.message.contains(error_code));
+            assert!(messages.insert(public.message));
+        }
+
+        for error_code in [None, Some("future_private_diagnostic")] {
+            let mut run = fixture_run(DeliveryRunStatus::Failed);
+            run.error_code = error_code.map(str::to_string);
+
+            let public = manual_push_status(&run);
+
+            assert_eq!(public.message, "Manual push failed");
+            assert!(!public.message.contains("future_private_diagnostic"));
+        }
+    }
+
+    #[test]
+    fn manual_push_status_preserves_only_completed_outcome_messages() {
+        let mut completed = fixture_run(DeliveryRunStatus::Completed);
+        completed.error_code = Some("ai_failed".to_string());
+        completed.result_json = Some(
+            serde_json::json!({
+                "status": "completed",
+                "message": "成功推送 2 篇文章",
+                "pushed": 2,
+                "selected": 3,
+                "total_candidates": 5,
+                "summary": "safe summary",
+                "folder_id": 7,
+                "folder_name": "tracking"
+            })
+            .to_string(),
+        );
+
+        let completed = manual_push_status(&completed);
+
+        assert_eq!(completed.message, "成功推送 2 篇文章");
+        assert_eq!(completed.pushed, 2);
+        assert_eq!(completed.selected, 3);
+        assert_eq!(completed.total_candidates, Some(5));
+        assert_eq!(completed.summary, "safe summary");
+        assert_eq!(completed.folder_id, Some(7));
+        assert_eq!(completed.folder_name.as_deref(), Some("tracking"));
+
+        let mut failed = fixture_run(DeliveryRunStatus::Failed);
+        failed.error_code = Some("ai_failed".to_string());
+        failed.result_json = Some(
+            serde_json::json!({
+                "status": "failed",
+                "message": "raw-provider-diagnostic-sentinel",
+                "pushed": 1,
+                "selected": 2,
+                "total_candidates": 4,
+                "summary": "",
+                "folder_id": null,
+                "folder_name": null
+            })
+            .to_string(),
+        );
+
+        let failed = manual_push_status(&failed);
+
+        assert_eq!(failed.message, "AI 摘要生成失败，请检查 AI 配置后重试");
+        assert!(!failed.message.contains("raw-provider-diagnostic-sentinel"));
+        assert_eq!(failed.pushed, 1);
+        assert_eq!(failed.selected, 2);
+        assert_eq!(failed.total_candidates, Some(4));
     }
 
     fn fixture_run(status: DeliveryRunStatus) -> DeliveryRunRecord {
