@@ -869,6 +869,28 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.screenshot({ path: '../output/ui/navigation-mobile.png', fullPage: true });
   await filterDialog.getByRole('button', { name: '关闭' }).click();
 
+  const firstArticleAction = page.getByRole('button', { name: '查看详情' }).first();
+  const firstArticleCard = page
+    .locator('[data-slot="card"]')
+    .filter({ has: firstArticleAction })
+    .first();
+  const firstArticleTitle = firstArticleCard.locator('[data-slot="card-title"]');
+  await expect(firstArticleCard).toBeVisible();
+  await expect(firstArticleTitle).toBeVisible();
+  await expect(firstArticleAction).toBeVisible();
+  const articleCardBox = await firstArticleCard.boundingBox();
+  const articleTitleBox = await firstArticleTitle.boundingBox();
+  const articleActionBox = await firstArticleAction.boundingBox();
+  expect(articleCardBox).not.toBeNull();
+  expect(articleTitleBox).not.toBeNull();
+  expect(articleActionBox).not.toBeNull();
+  expect(articleCardBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect((articleCardBox?.x ?? 390) + (articleCardBox?.width ?? 1)).toBeLessThanOrEqual(390);
+  expect((articleTitleBox?.y ?? 844) + (articleTitleBox?.height ?? 1)).toBeLessThanOrEqual(
+    articleActionBox?.y ?? 0,
+  );
+  await page.screenshot({ path: '../output/ui/search-results-mobile.png', fullPage: true });
+
   const mobileTrigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
   const resultsPaddingBottom = await page
     .locator('#results-scroll-container')

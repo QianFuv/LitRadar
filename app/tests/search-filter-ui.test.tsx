@@ -177,6 +177,10 @@ async function operatesSearchHistoryFromKeyboard(): Promise<void> {
 
   await user.click(input);
   expect(await screen.findByRole('listbox', { name: '最近搜索' })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: 'first query' }).parentElement).toHaveAttribute(
+    'data-motion-history-key',
+    'first query',
+  );
   await user.keyboard('{ArrowDown}');
   expect(screen.getByRole('option', { name: 'first query' })).toHaveAttribute(
     'aria-selected',
@@ -190,6 +194,14 @@ async function operatesSearchHistoryFromKeyboard(): Promise<void> {
   await user.click(input);
   await user.keyboard('{Escape}');
   expect(screen.queryByRole('listbox', { name: '最近搜索' })).not.toBeInTheDocument();
+  expect(input).toHaveFocus();
+
+  await user.click(input);
+  await user.click(screen.getByRole('button', { name: '清空' }));
+  await waitFor(() =>
+    expect(screen.queryByRole('listbox', { name: '最近搜索' })).not.toBeInTheDocument(),
+  );
+  expect(window.localStorage.getItem('litradar:v1:search_history')).toBeNull();
   expect(input).toHaveFocus();
 }
 
@@ -241,6 +253,10 @@ async function resetsVisibleFilterChips(): Promise<void> {
     expect(screen.getByTestId('active-filter-chips')).toHaveTextContent('Journal One'),
   );
   expect(screen.getByTestId('active-filter-chips')).toHaveTextContent('2024年01月 - 2024年12月');
+  expect(screen.getByRole('button', { name: '移除领域 信息系统' }).parentElement).toHaveAttribute(
+    'data-motion-filter-key',
+    'area-Information Systems',
+  );
 
   await user.click(screen.getByRole('button', { name: '移除领域 信息系统' }));
   await waitFor(() =>
@@ -299,7 +315,10 @@ async function rendersUnavailableYearState(): Promise<void> {
     'href',
     '/?view=weekly-updates',
   );
-  expect(pageNavigation.querySelectorAll('.sr-only')).toHaveLength(3);
+  expect(within(pageNavigation).getByText('检索')).toBeVisible();
+  expect(within(pageNavigation).getByText('收藏')).toBeVisible();
+  expect(within(pageNavigation).getByText('周报')).toBeVisible();
+  expect(pageNavigation.querySelectorAll('.sr-only')).toHaveLength(0);
   expect(screen.queryByRole('button', { name: '重置筛选' })).not.toBeInTheDocument();
   expect(readSelectedDatabase()).toBe('fixture.sqlite');
 }

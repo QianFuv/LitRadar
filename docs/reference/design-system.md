@@ -139,6 +139,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 | Dialog            | `bg-black/50` overlay；默认居中，移动工作区侧栏使用 `placement="left"` 抽屉 |
 | ScrollArea        | Radix viewport 与 10px 自定义 scrollbar                                     |
 | Skeleton          | muted pulse，用于加载占位                                                   |
+| StateMessage      | 紧凑的空态/错误/成功/警告表面；色彩始终配合图标、标题与 live-region role    |
 | Label             | 与原生表单关联；禁用状态随 peer/group 传播                                  |
 
 复杂表单应组合现有 primitive，不要重新实现键盘导航、焦点管理或 portal 行为。
@@ -157,9 +158,15 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 ### 页面导航与账号菜单
 
-首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行三列的图标导航：`Search` 对应文献检索、`Star` 对应我的收藏、`CalendarDays` 对应每周更新。图标入口必须同时提供 `aria-label`、`title`、`sr-only` 文本和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
+首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行三列导航：`Search` /“检索”对应文献检索，`Star` /“收藏”对应我的收藏，`CalendarDays` /“周报”对应每周更新。短标签必须始终可见以便快速辨认，链接同时保留完整 `aria-label`、`title` 和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
 
 所有受保护页面右下角使用带圆形头像、用户名和展开提示的账号 pill。账号菜单只承载四类账号级动作：打开聚合设置中心、在子菜单中选择 system/light/dark 主题、向管理员显示管理面板入口，以及使用 destructive 语义退出登录。页面级导航不应在账号菜单中重复；设置与管理链接必须保留当前 pathname 和现有 query，并用一次性标记让 Dialog 关闭后把焦点归还给账号按钮。菜单复用 Radix Dropdown Menu 的键盘导航、Escape、点击外部关闭与焦点归还行为，并避开设备 safe area。退出登录的红色属于明确的危险操作语义，不受普通 UI chrome 的中性色约束。
+
+### 文章列表层级
+
+文章卡片使用紧凑的单一表面：标题是第一视觉层，期刊/卷期/日期使用较小的中性元数据行，开放获取与预发表 badge 作为次级信号，摘要限制三行，明确的“查看详情”操作位于浅色底栏。卡片正文保持可选择，不把整张卡片改成按钮，也不让 badge、摘要或操作与标题竞争。
+
+搜索的 loading、error、empty 和 results 只在列表级状态边界交叉淡入淡出；错误与空态使用 `StateMessage`。列表边界之外只保留一个即时更新的 live region，分页加载复用该语义状态，避免退出中的视觉表面成为陈旧播报。长文章结果不逐卡应用 presence、layout 或 stagger，继续保留 `content-visibility-card` 与 Intersection Observer sentinel。
 
 ## 布局与响应式
 

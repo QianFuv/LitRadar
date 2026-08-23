@@ -55,7 +55,11 @@ const CHROMATIC_UTILITY_PATTERN =
 const SEMANTIC_COLOR_FIXTURES = [
   {
     path: 'components/feature/results-list.tsx',
-    utilities: ['text-blue-600', 'text-red-500'],
+    utilities: ['text-blue-600'],
+  },
+  {
+    path: 'components/ui/state-message.tsx',
+    utilities: ['text-destructive', 'text-green-700', 'text-amber-700'],
   },
   {
     path: 'components/feature/favorite-button.tsx',

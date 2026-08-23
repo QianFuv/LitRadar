@@ -49,7 +49,7 @@ export function WorkspaceShell({
     <div className="flex h-dvh w-full bg-background text-foreground">
       <div className="hidden h-dvh shrink-0 md:flex">{sidebar}</div>
       <main id="main-content" className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="sticky top-0 z-30 border-b bg-background/95 p-3 backdrop-blur sm:p-6">
+        <div className="sticky top-0 z-30 border-b bg-background/95 px-3 py-2.5 backdrop-blur-md sm:px-5 sm:py-4">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <Dialog open={isSidebarOpen} onOpenChange={setIsSidebarOpen}>
               <DialogTrigger asChild>
@@ -78,13 +78,13 @@ export function WorkspaceShell({
         </div>
         <div
           id="results-scroll-container"
-          className="flex-1 overflow-y-auto p-6"
+          className="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-6"
           style={{
             paddingBottom:
               'calc(6rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
           }}
         >
-          <div className={cn('mx-auto w-full max-w-4xl space-y-4', contentClassName)}>
+          <div className={cn('mx-auto w-full max-w-4xl space-y-3 sm:space-y-4', contentClassName)}>
             {children}
           </div>
         </div>

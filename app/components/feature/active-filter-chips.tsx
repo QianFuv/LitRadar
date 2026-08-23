@@ -10,6 +10,14 @@ import { parseAsArrayOf, parseAsString, useQueryState } from 'nuqs';
 import { X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import {
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionPresence,
+  MotionSection,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import { getAreaDisplayName } from '@/lib/area-labels';
 import { getJournalOptions } from '@/lib/api';
 import { formatMonthRangeLabel } from '@/lib/article-filters';
@@ -19,6 +27,16 @@ type FilterChipProps = {
   label: string;
   onRemove: () => void;
   removeLabel: string;
+};
+
+type AppliedFilterChip = FilterChipProps & {
+  id: string;
+};
+
+const FILTER_CHIP_VARIANTS = {
+  hidden: { opacity: 0, scale: 0.96 },
+  visible: { opacity: 1, scale: 1 },
+  exit: { opacity: 0, scale: 0.96 },
 };
 
 /**
@@ -75,72 +93,97 @@ export function ActiveFilterChips() {
   );
   const appliedQuery = q?.trim() ?? '';
   const monthRangeLabel = formatMonthRangeLabel(monthRange);
-  const activeFilterCount =
-    (appliedQuery ? 1 : 0) + areas.length + journalIds.length + (monthRangeLabel ? 1 : 0);
+  const transition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
+  const appliedFilters: AppliedFilterChip[] = [];
 
-  if (activeFilterCount === 0) {
-    return null;
+  if (appliedQuery) {
+    appliedFilters.push({
+      id: `query-${appliedQuery}`,
+      label: `搜索：${appliedQuery}`,
+      removeLabel: `移除搜索 ${appliedQuery}`,
+      onRemove: () => void setQ(null),
+    });
+  }
+  for (const area of areas) {
+    const label = getAreaDisplayName(area);
+    appliedFilters.push({
+      id: `area-${area}`,
+      label: `领域：${label}`,
+      removeLabel: `移除领域 ${label}`,
+      onRemove: () => void setAreas((current) => current.filter((item) => item !== area)),
+    });
+  }
+  for (const journalId of journalIds) {
+    const label = journalLabels.get(journalId) ?? journalId;
+    appliedFilters.push({
+      id: `journal-${journalId}`,
+      label: `期刊：${label}`,
+      removeLabel: `移除期刊 ${label}`,
+      onRemove: () => void setJournalIds((current) => current.filter((item) => item !== journalId)),
+    });
+  }
+  if (monthRangeLabel) {
+    appliedFilters.push({
+      id: `month-${monthRange}`,
+      label: `时间：${monthRangeLabel}`,
+      removeLabel: `移除时间 ${monthRangeLabel}`,
+      onRemove: () => void setMonthRange(null),
+    });
   }
 
   return (
-    <section
-      data-testid="active-filter-chips"
-      aria-label="已应用筛选"
-      className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2"
-    >
-      <span className="text-xs font-medium text-muted-foreground">已应用</span>
-      {appliedQuery && (
-        <FilterChip
-          label={`搜索：${appliedQuery}`}
-          removeLabel={`移除搜索 ${appliedQuery}`}
-          onRemove={() => void setQ(null)}
-        />
+    <MotionPresence>
+      {appliedFilters.length > 0 && (
+        <MotionSection
+          key="active-filter-summary"
+          data-testid="active-filter-chips"
+          aria-label="已应用筛选"
+          className="flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2.5 py-2 shadow-vercel-ring"
+          variants={FADE_UP_VARIANTS}
+          initial="hidden"
+          animate="visible"
+          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+          transition={transition}
+        >
+          <span className="mr-0.5 text-xs font-medium text-muted-foreground">
+            已应用 {appliedFilters.length}
+          </span>
+          <MotionPresence>
+            {appliedFilters.map((filter) => (
+              <MotionDiv
+                key={filter.id}
+                data-motion-filter-key={filter.id}
+                className="max-w-full"
+                variants={FILTER_CHIP_VARIANTS}
+                initial="hidden"
+                animate="visible"
+                exit={{ opacity: 0, pointerEvents: 'none', scale: 0.96 }}
+                transition={transition}
+              >
+                <FilterChip
+                  label={filter.label}
+                  removeLabel={filter.removeLabel}
+                  onRemove={filter.onRemove}
+                />
+              </MotionDiv>
+            ))}
+          </MotionPresence>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="ml-auto h-7"
+            onClick={() => {
+              void setQ(null);
+              void setAreas([]);
+              void setJournalIds([]);
+              void setMonthRange(null);
+            }}
+          >
+            重置筛选
+          </Button>
+        </MotionSection>
       )}
-      {areas.map((area) => {
-        const label = getAreaDisplayName(area);
-        return (
-          <FilterChip
-            key={`area-${area}`}
-            label={`领域：${label}`}
-            removeLabel={`移除领域 ${label}`}
-            onRemove={() => void setAreas((current) => current.filter((item) => item !== area))}
-          />
-        );
-      })}
-      {journalIds.map((journalId) => {
-        const label = journalLabels.get(journalId) ?? journalId;
-        return (
-          <FilterChip
-            key={`journal-${journalId}`}
-            label={`期刊：${label}`}
-            removeLabel={`移除期刊 ${label}`}
-            onRemove={() =>
-              void setJournalIds((current) => current.filter((item) => item !== journalId))
-            }
-          />
-        );
-      })}
-      {monthRangeLabel && (
-        <FilterChip
-          label={`时间：${monthRangeLabel}`}
-          removeLabel={`移除时间 ${monthRangeLabel}`}
-          onRemove={() => void setMonthRange(null)}
-        />
-      )}
-      <Button
-        type="button"
-        variant="ghost"
-        size="xs"
-        className="ml-auto h-7"
-        onClick={() => {
-          void setQ(null);
-          void setAreas([]);
-          void setJournalIds([]);
-          void setMonthRange(null);
-        }}
-      >
-        重置筛选
-      </Button>
-    </section>
+    </MotionPresence>
   );
 }

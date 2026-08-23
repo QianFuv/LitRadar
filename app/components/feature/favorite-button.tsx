@@ -16,6 +16,13 @@ import {
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  FADE_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionPresence,
+  MotionSpan,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
@@ -41,6 +48,7 @@ export function FavoriteButton({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [folderToRemove, setFolderToRemove] = useState<Folder | null>(null);
   const queryKey = ['fav-check', articleId, db] as const;
+  const stateTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
   const initialFolderIdsValue = Array.from(new Set(initialFolderIds)).sort((a, b) => a - b);
   const [optimisticFolderIds, setOptimisticFolderIds] = useState<number[] | null>(null);
   const cachedFolderIds =
@@ -123,10 +131,32 @@ export function FavoriteButton({
             variant="outline"
             size="sm"
             className={cn(isFav && 'text-yellow-500 border-yellow-500/50')}
+            aria-label={isFav ? '已收藏' : '收藏'}
             onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}
           >
-            <Star className={cn('h-4 w-4 mr-1', isFav && 'fill-yellow-500')} />
-            {isFav ? '已收藏' : '收藏'}
+            <span className="grid" aria-hidden="true">
+              <MotionPresence>
+                <MotionSpan
+                  key={isFav ? 'favorite-active' : 'favorite-inactive'}
+                  data-favorite-state={isFav ? 'active' : 'inactive'}
+                  className="col-start-1 row-start-1 flex items-center gap-1"
+                  variants={FADE_VARIANTS}
+                  initial="hidden"
+                  animate="visible"
+                  exit={{ opacity: 0, pointerEvents: 'none' }}
+                  transition={stateTransition}
+                >
+                  <Star
+                    className={cn(
+                      'motion-control h-4 w-4 transition-[color,fill]',
+                      isFav && 'fill-yellow-500',
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span>{isFav ? '已收藏' : '收藏'}</span>
+                </MotionSpan>
+              </MotionPresence>
+            </span>
           </Button>
         </PopoverTrigger>
         <PopoverContent
@@ -151,7 +181,7 @@ export function FavoriteButton({
                   <button
                     key={folder.id}
                     className={cn(
-                      'w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors',
+                      'motion-control flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-[background-color,color]',
                       isInFolder
                         ? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
                         : 'hover:bg-accent',
@@ -167,7 +197,11 @@ export function FavoriteButton({
                     }}
                   >
                     <Star
-                      className={cn('h-3.5 w-3.5', isInFolder && 'fill-yellow-500 text-yellow-500')}
+                      className={cn(
+                        'motion-control h-3.5 w-3.5 transition-[color,fill]',
+                        isInFolder && 'fill-yellow-500 text-yellow-500',
+                      )}
+                      aria-hidden="true"
                     />
                     <span className="truncate">{folder.name}</span>
                   </button>

@@ -182,6 +182,11 @@ async function copiesArticleValuesAndUsesStableActionRoutes(): Promise<void> {
 
   await user.click(screen.getByRole('button', { name: '复制文章标题' }));
   expect(writeText).toHaveBeenLastCalledWith('Selectable title');
+  expect(
+    screen
+      .getByRole('button', { name: '复制文章标题' })
+      .querySelector('[data-copy-state="copied"]'),
+  ).not.toBeNull();
   expect(screen.queryByText('文章标题已复制。')).not.toBeInTheDocument();
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
 
@@ -197,6 +202,11 @@ async function copiesArticleValuesAndUsesStableActionRoutes(): Promise<void> {
     ].join('\n'),
   );
   expect(screen.getByRole('button', { name: '已复制' })).toBeInTheDocument();
+  expect(
+    screen.getByRole('button', { name: '已复制' }).querySelector('[data-copy-state="copied"]'),
+  ).not.toBeNull();
+  expect(document.querySelector('[data-article-access-state="ready"]')).not.toBeNull();
+  expect(document.querySelector('[data-article-favorite-state="ready"]')).not.toBeNull();
   expect(screen.queryByText('文章信息已复制。')).not.toBeInTheDocument();
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
 }
@@ -277,6 +287,7 @@ async function recoversArticleAccessAfterReopening(): Promise<void> {
   await user.click(screen.getByRole('button', { name: '查看详情' }));
   const failedAccess = await screen.findByRole('button', { name: '访问状态失败' });
   expect(failedAccess).toHaveAttribute('title', 'temporary access failure');
+  expect(document.querySelector('[data-article-access-state="error"]')).not.toBeNull();
   expect(screen.queryByRole('link', { name: '获取全文' })).not.toBeInTheDocument();
 
   await user.click(screen.getByRole('button', { name: '关闭' }));

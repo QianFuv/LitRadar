@@ -150,10 +150,15 @@ async function rendersTypedResultContent(): Promise<void> {
   renderResultsList();
 
   expect(screen.getByRole('status', { name: '正在加载搜索结果' })).toBeInTheDocument();
+  expect(screen.getByTestId('results-state-loading')).toBeInTheDocument();
+  expect(within(screen.getByTestId('results-state-loading')).queryByRole('status')).toBeNull();
   expect(screen.getByRole('region', { name: '已应用筛选' })).toBeInTheDocument();
   resolveRequest?.();
 
   const article = await screen.findByTestId('result-9001');
+  expect(screen.getByTestId('results-state-results')).toBeInTheDocument();
+  expect(screen.getByRole('status', { name: '已加载 1 篇文章' })).toBeInTheDocument();
+  expect(screen.getAllByRole('status')).toHaveLength(1);
   const filterSummary = screen.getByRole('region', { name: '已应用筛选' });
   expect(filterSummary.parentElement).toHaveClass(
     'sticky',
@@ -194,11 +199,16 @@ async function recoversFirstPageFailureToEmptyState(): Promise<void> {
   const { queryClient } = renderResultsList('?q=missing');
 
   expect(await screen.findByRole('alert')).toHaveTextContent('article index unavailable');
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  expect(await screen.findByTestId('results-state-error')).toHaveTextContent('无法加载文章');
   expect(screen.getByRole('region', { name: '已应用筛选' })).toBeInTheDocument();
   shouldFail = false;
   await queryClient.invalidateQueries({ queryKey: ['articles'] });
 
   expect(await screen.findByText('未找到文章。')).toBeInTheDocument();
+  expect(screen.getByTestId('results-state-empty')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('请尝试调整搜索词、数据库或筛选条件。');
+  expect(screen.getAllByRole('status')).toHaveLength(1);
   expect(screen.queryByText(/共找到 .* 条结果/)).not.toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 }
@@ -298,7 +308,7 @@ async function rejectsLaterPageFailure(): Promise<void> {
   });
 
   expect(await screen.findByRole('alert')).toHaveTextContent('second page unavailable');
-  expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument());
 }
 
 /**
@@ -333,7 +343,7 @@ async function rejectsRepeatedCursor(): Promise<void> {
   await waitFor(() => expect(requestCount).toBe(2));
 
   expect(await screen.findByRole('alert')).toHaveTextContent('分页游标重复');
-  expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument());
   expect(screen.queryByTestId('result-9002')).not.toBeInTheDocument();
 }
 

@@ -1,5 +1,9 @@
 'use client';
 
+/**
+ * URL-backed search form with keyboard history and restrained local motion.
+ */
+
 import { useQueryState, parseAsString } from 'nuqs';
 import { Input } from '@/components/ui/input';
 import { Search, X, Clock, HelpCircle } from 'lucide-react';
@@ -12,6 +16,13 @@ import {
   writeLocalStorageValue,
 } from '@/lib/browser-storage';
 import { cn } from '@/lib/utils';
+import {
+  FADE_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
 
 const SEARCH_HISTORY_KEY = 'litradar:v1:search_history';
 const LEGACY_SEARCH_HISTORY_KEY = 'search_history';
@@ -125,6 +136,7 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
   const [showHistory, setShowHistory] = useState(false);
   const [activeHistoryIndex, setActiveHistoryIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
+  const transition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
 
   if (q !== previousQuery) {
     setPreviousQuery(q);
@@ -224,11 +236,14 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
   return (
     <form
       role="search"
-      className={cn('flex w-full min-w-0 items-center gap-2', className)}
+      className={cn('flex w-full min-w-0 items-center gap-1.5 sm:gap-2', className)}
       onSubmit={handleSubmit}
     >
       <div className="relative min-w-0 flex-1">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Search
+          className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground"
+          aria-hidden="true"
+        />
         <Popover
           open={showHistory}
           onOpenChange={(isOpen) => {
@@ -279,9 +294,9 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
               onOpenAutoFocus={(event: Event) => event.preventDefault()}
             >
               <div className="p-2">
-                <div className="flex items-center justify-between px-2 py-1 mb-1">
-                  <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
+                <div className="mb-1 flex items-center justify-between px-2 py-1">
+                  <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                    <Clock className="h-3 w-3" aria-hidden="true" />
                     最近搜索
                   </span>
                   <Button
@@ -300,46 +315,69 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
                   aria-label="最近搜索"
                   className="space-y-1"
                 >
-                  {searchHistory.map((query, index) => (
-                    <button
-                      key={query}
-                      id={`${SEARCH_HISTORY_LISTBOX_ID}-option-${index}`}
-                      type="button"
-                      role="option"
-                      aria-selected={activeHistoryIndex === index}
-                      className={cn(
-                        'group flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent',
-                        activeHistoryIndex === index && 'bg-accent',
-                      )}
-                      onMouseMove={() => setActiveHistoryIndex(index)}
-                      onClick={() => handleHistoryItemClick(query)}
-                    >
-                      <span className="truncate">{query}</span>
-                      <Search className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </button>
-                  ))}
+                  <MotionPresence>
+                    {searchHistory.map((query, index) => (
+                      <MotionDiv
+                        key={query}
+                        data-motion-history-key={query}
+                        variants={FADE_VARIANTS}
+                        initial="hidden"
+                        animate="visible"
+                        exit={{ opacity: 0, pointerEvents: 'none' }}
+                        transition={transition}
+                      >
+                        <button
+                          id={`${SEARCH_HISTORY_LISTBOX_ID}-option-${index}`}
+                          type="button"
+                          role="option"
+                          aria-selected={activeHistoryIndex === index}
+                          className={cn(
+                            'motion-control group flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm transition-[background-color,color] hover:bg-accent',
+                            activeHistoryIndex === index && 'bg-accent',
+                          )}
+                          onMouseMove={() => setActiveHistoryIndex(index)}
+                          onClick={() => handleHistoryItemClick(query)}
+                        >
+                          <span className="truncate">{query}</span>
+                          <Search className="motion-control h-3 w-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                        </button>
+                      </MotionDiv>
+                    ))}
+                  </MotionPresence>
                 </div>
               </div>
             </PopoverContent>
           )}
         </Popover>
-        {inputValue && (
-          <button
-            type="button"
-            aria-label="清空搜索输入"
-            onClick={() => {
-              setInputValue('');
-              setActiveHistoryIndex(-1);
-              inputRef.current?.focus();
-            }}
-            className="absolute right-2.5 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
+        <MotionPresence>
+          {inputValue && (
+            <MotionDiv
+              key="clear-search-draft"
+              className="absolute right-2.5 top-2.5"
+              variants={FADE_VARIANTS}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, pointerEvents: 'none', scale: 0.9 }}
+              transition={transition}
+            >
+              <button
+                type="button"
+                aria-label="清空搜索输入"
+                onClick={() => {
+                  setInputValue('');
+                  setActiveHistoryIndex(-1);
+                  inputRef.current?.focus();
+                }}
+                className="motion-control block text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </MotionDiv>
+          )}
+        </MotionPresence>
       </div>
 
-      <Button type="submit" className="px-3 sm:px-4">
+      <Button type="submit" className="shrink-0 px-3 sm:px-4">
         搜索
       </Button>
       <Popover>

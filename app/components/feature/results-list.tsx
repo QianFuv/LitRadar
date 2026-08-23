@@ -6,7 +6,15 @@ import { getArticles, type ArticlePage } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import {
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StateMessage } from '@/components/ui/state-message';
 import { useCallback, useMemo, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
@@ -68,6 +76,7 @@ function validateArticlePageCursor(
 export function ResultsList({ filterSummary }: ResultsListProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const stateTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   const [q] = useQueryState('q', parseAsString);
   const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
@@ -170,16 +179,27 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
   const prefetchThreshold = 25;
   const prefetchIndex = Math.max(0, visibleArticles.length - prefetchThreshold);
   let resultContent: ReactNode;
+  let resultAnnouncement: string;
+  let resultAnnouncementRole: 'alert' | 'status' = 'status';
+  let resultState: 'empty' | 'error' | 'loading' | 'results';
 
   if (isError) {
+    resultState = 'error';
+    resultAnnouncementRole = 'alert';
+    resultAnnouncement = `无法加载文章：${error instanceof Error ? error.message : '未知错误'}`;
     resultContent = (
-      <div role="alert" className="p-4 text-red-500 bg-red-50 dark:bg-red-900/20 rounded-md">
-        错误：{error instanceof Error ? error.message : '未知错误'}
-      </div>
+      <StateMessage
+        isLive={false}
+        tone="danger"
+        title="无法加载文章"
+        description={error instanceof Error ? error.message : '未知错误'}
+      />
     );
   } else if (isLoading) {
+    resultState = 'loading';
+    resultAnnouncement = '正在加载搜索结果';
     resultContent = (
-      <div className="space-y-4" role="status" aria-label="正在加载搜索结果">
+      <div className="space-y-4" aria-hidden="true">
         {Array.from({ length: 5 }).map((_, i) => (
           <Card key={i}>
             <CardHeader>
@@ -195,8 +215,20 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
       </div>
     );
   } else if (visibleArticles.length === 0) {
-    resultContent = <div className="p-8 text-center text-muted-foreground">未找到文章。</div>;
+    resultState = 'empty';
+    resultAnnouncement = '未找到文章。请尝试调整搜索词、数据库或筛选条件。';
+    resultContent = (
+      <StateMessage
+        isLive={false}
+        title="未找到文章。"
+        description="请尝试调整搜索词、数据库或筛选条件。"
+      />
+    );
   } else {
+    resultState = 'results';
+    resultAnnouncement = isFetchingNextPage
+      ? '正在加载更多文章'
+      : `已加载 ${visibleArticles.length} 篇文章`;
     resultContent = (
       <>
         {visibleArticles.map((article, index) => (
@@ -215,11 +247,22 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
         ))}
 
         <div ref={loadMoreRef} className="h-1" />
-        {isFetchingNextPage && (
-          <div className="py-4 flex justify-center">
-            <Skeleton className="h-8 w-48" />
-          </div>
-        )}
+        <MotionPresence>
+          {isFetchingNextPage && (
+            <MotionDiv
+              key="next-page-loading"
+              aria-hidden="true"
+              className="flex justify-center py-4"
+              variants={FADE_UP_VARIANTS}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
+              transition={stateTransition}
+            >
+              <Skeleton className="h-8 w-48" />
+            </MotionDiv>
+          )}
+        </MotionPresence>
       </>
     );
   }
@@ -234,7 +277,31 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
           {filterSummary}
         </div>
       )}
-      {resultContent}
+      <p
+        key={`${resultState}-${resultAnnouncement}`}
+        data-testid="results-state-announcement"
+        className="sr-only"
+        role={resultAnnouncementRole}
+        aria-label={resultAnnouncement}
+        aria-live={resultAnnouncementRole === 'alert' ? 'assertive' : 'polite'}
+        aria-atomic="true"
+      >
+        {resultAnnouncement}
+      </p>
+      <MotionPresence mode="wait">
+        <MotionDiv
+          key={resultState}
+          data-testid={`results-state-${resultState}`}
+          className="space-y-4"
+          variants={FADE_UP_VARIANTS}
+          initial="hidden"
+          animate="visible"
+          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+          transition={stateTransition}
+        >
+          {resultContent}
+        </MotionDiv>
+      </MotionPresence>
     </div>
   );
 }
