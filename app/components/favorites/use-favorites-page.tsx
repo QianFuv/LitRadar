@@ -9,6 +9,7 @@ import {
   bulkRemoveFavorites,
   createFolder,
   deleteFolder,
+  downloadFavoriteExport,
   getFolderArticles,
   getFolders,
   removeFavorite,
@@ -52,6 +53,27 @@ function toFavoriteArticleRef(favorite: FavoriteArticleItem): FavoriteArticleRef
 }
 
 /**
+ * Trigger one browser download and release its temporary object URL.
+ *
+ * @param blob - Download response body.
+ * @param filename - Safe attachment filename.
+ */
+function saveBrowserDownload(blob: Blob, filename: string): void {
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.hidden = true;
+  document.body.append(anchor);
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    window.URL.revokeObjectURL(objectUrl);
+  }
+}
+
+/**
  * Own favorite-folder URL state, infinite pages, selection, and mutations.
  *
  * @param userId - Authenticated user identifier used by folder query keys.
@@ -69,6 +91,10 @@ export function useFavoritesPage(userId: number) {
   const [bulkRemoveTarget, setBulkRemoveTarget] = useState<FavoriteArticleRef[] | null>(null);
   const [moveTargetFolderId, setMoveTargetFolderId] = useState<string>('');
   const [batchFeedback, setBatchFeedback] = useState<{
+    tone: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [exportFeedback, setExportFeedback] = useState<{
     tone: 'success' | 'error';
     message: string;
   } | null>(null);
@@ -157,6 +183,7 @@ export function useFavoritesPage(userId: number) {
       setSelectedArticleKeys([]);
       setMoveTargetFolderId('');
       setBatchFeedback(null);
+      setExportFeedback(null);
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       if (selectedFolderId === deletedFolderId) {
         void setSelectedFolderId(null);
@@ -183,6 +210,22 @@ export function useFavoritesPage(userId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
+    },
+  });
+
+  const exportMut = useMutation({
+    mutationFn: ({ folderId, format }: { folderId: number; format: CitationFormat }) =>
+      downloadFavoriteExport(folderId, format),
+    onMutate: () => setExportFeedback(null),
+    onSuccess: ({ blob, filename }) => {
+      saveBrowserDownload(blob, filename);
+      setExportFeedback({ tone: 'success', message: `已导出 ${filename}。` });
+    },
+    onError: (error) => {
+      setExportFeedback({
+        tone: 'error',
+        message: error instanceof Error ? error.message : '导出引用失败',
+      });
     },
   });
 
@@ -264,6 +307,7 @@ export function useFavoritesPage(userId: number) {
     setSelectedArticleKeys([]);
     setMoveTargetFolderId('');
     setBatchFeedback(null);
+    setExportFeedback(null);
   };
 
   /**
@@ -317,7 +361,9 @@ export function useFavoritesPage(userId: number) {
     editName,
     editingId,
     effectiveMoveTargetFolderId,
+    exportFeedback,
     exportFormat,
+    exportMut,
     favorites,
     favoritesError,
     folders,

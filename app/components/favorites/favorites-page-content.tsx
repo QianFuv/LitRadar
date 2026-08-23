@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Download, FolderPlus, Pencil, Radar, Star, Trash2 } from 'lucide-react';
 
-import { getExportUrl, type CitationFormat, type FavoriteArticleItem } from '@/lib/api';
+import type { CitationFormat, FavoriteArticleItem } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { WorkspaceSidebar } from '@/components/feature/sidebar';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
@@ -56,7 +56,9 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
     editName,
     editingId,
     effectiveMoveTargetFolderId,
+    exportFeedback,
     exportFormat,
+    exportMut,
     favorites,
     favoritesError,
     folders,
@@ -245,39 +247,60 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="flex flex-col gap-3 rounded-lg border bg-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">
-                    {selectedFolder.name}
-                    <span className="text-sm text-muted-foreground ml-2">
-                      ({selectedFolder.article_count} 篇)
-                    </span>
-                  </h2>
-                  <p className="text-sm text-muted-foreground">
-                    导出当前收藏夹为 BibTeX、RIS 或 EndNote 格式
-                  </p>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Select
-                    value={exportFormat}
-                    onValueChange={(value: string) => setExportFormat(value as CitationFormat)}
-                  >
-                    <SelectTrigger className="w-full sm:w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="bibtex">BibTeX</SelectItem>
-                      <SelectItem value="ris">RIS</SelectItem>
-                      <SelectItem value="endnote">EndNote XML</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button asChild variant="outline">
-                    <a href={getExportUrl(selectedFolder.id, exportFormat)} download>
+              <div className="space-y-3 rounded-lg border bg-card px-4 py-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold">
+                      {selectedFolder.name}
+                      <span className="text-sm text-muted-foreground ml-2">
+                        ({selectedFolder.article_count} 篇)
+                      </span>
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      导出当前收藏夹为 BibTeX、RIS 或 EndNote 格式
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Select
+                      value={exportFormat}
+                      onValueChange={(value: string) => setExportFormat(value as CitationFormat)}
+                      disabled={exportMut.isPending}
+                    >
+                      <SelectTrigger className="w-full sm:w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="bibtex">BibTeX</SelectItem>
+                        <SelectItem value="ris">RIS</SelectItem>
+                        <SelectItem value="endnote">EndNote XML</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={exportMut.isPending}
+                      onClick={() =>
+                        exportMut.mutate({
+                          folderId: selectedFolder.id,
+                          format: exportFormat,
+                        })
+                      }
+                    >
                       <Download className="mr-2 h-4 w-4" />
-                      导出引用
-                    </a>
-                  </Button>
+                      {exportMut.isPending ? '导出中…' : '导出引用'}
+                    </Button>
+                  </div>
                 </div>
+                {exportFeedback && (
+                  <p
+                    role={exportFeedback.tone === 'error' ? 'alert' : 'status'}
+                    className={`text-sm ${
+                      exportFeedback.tone === 'error' ? 'text-destructive' : 'text-emerald-700'
+                    }`}
+                  >
+                    {exportFeedback.message}
+                  </p>
+                )}
               </div>
 
               {isPendingFavorites ? (

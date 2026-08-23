@@ -379,7 +379,7 @@ async function confirmsBulkFavoriteRemoval(): Promise<void> {
 }
 
 /**
- * Verify folder creation, rename, tracking selection, and export format URLs.
+ * Verify folder creation, rename, tracking selection, and export format controls.
  */
 async function managesFoldersAndExportFormats(): Promise<void> {
   const folders = [
@@ -424,29 +424,18 @@ async function managesFoldersAndExportFormats(): Promise<void> {
   const user = userEvent.setup();
   renderFavoritesPage();
 
-  const exportLink = await screen.findByRole('link', { name: '导出引用' });
-  expect(exportLink).toHaveAttribute(
-    'href',
-    'http://localhost/api/favorites/folders/3/export?format=bibtex',
-  );
-  expect(exportLink).toHaveAttribute('download');
+  expect(await screen.findByRole('button', { name: '导出引用' })).toBeEnabled();
   const exportSelect = screen.getAllByRole('combobox')[0];
   exportSelect.focus();
   await user.keyboard('{ArrowDown}');
   expect(await screen.findByRole('option', { name: 'RIS' })).toBeInTheDocument();
   await user.keyboard('{ArrowDown}{Enter}');
-  expect(exportLink).toHaveAttribute(
-    'href',
-    'http://localhost/api/favorites/folders/3/export?format=ris',
-  );
+  expect(exportSelect).toHaveTextContent('RIS');
   exportSelect.focus();
   await user.keyboard('{ArrowDown}');
   expect(await screen.findByRole('option', { name: 'EndNote XML' })).toBeInTheDocument();
   await user.keyboard('{ArrowDown}{Enter}');
-  expect(exportLink).toHaveAttribute(
-    'href',
-    'http://localhost/api/favorites/folders/3/export?format=endnote',
-  );
+  expect(exportSelect).toHaveTextContent('EndNote XML');
 
   await user.click(screen.getByRole('button', { name: '新建收藏夹' }));
   await user.type(screen.getByLabelText('收藏夹名称'), '  New Folder  ');

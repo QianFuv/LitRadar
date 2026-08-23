@@ -15,6 +15,14 @@ export interface ApiErrorInfo {
   phase: string | null;
 }
 
+/** Completed browser download response. */
+export interface ApiDownload {
+  /** Response body retained as a browser Blob. */
+  blob: Blob;
+  /** Safe server-provided filename when available. */
+  filename: string | null;
+}
+
 /**
  * Error raised for non-2xx API responses.
  */
@@ -167,6 +175,58 @@ function extractErrorInfo(payload: unknown, fallback: string): ApiErrorInfo {
 }
 
 /**
+ * Build one typed API error from a failed response.
+ *
+ * @param response - Failed fetch response.
+ * @param fallback - Fallback display message.
+ * @returns Typed API error with request correlation metadata.
+ */
+async function createApiError(response: Response, fallback: string): Promise<ApiError> {
+  const payload = await response.json().catch(() => null);
+  const errorInfo = extractErrorInfo(payload, fallback);
+  return new ApiError(
+    errorInfo.message,
+    response.status,
+    errorInfo.code,
+    errorInfo.phase,
+    response.headers.get(REQUEST_ID_HEADER),
+  );
+}
+
+/**
+ * Fetch one API response with shared credentials and headers.
+ *
+ * @param url - Absolute endpoint URL.
+ * @param token - Optional bearer token.
+ * @param init - Fetch options.
+ * @returns Raw fetch response.
+ */
+async function fetchApiResponse(
+  url: string,
+  token?: string | null,
+  init?: RequestInit,
+): Promise<Response> {
+  const hasBody = typeof init?.body !== 'undefined';
+  const headers: Record<string, string> = {
+    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  return fetch(url, { ...init, credentials: 'include', headers });
+}
+
+/**
+ * Parse a safe quoted attachment filename.
+ *
+ * @param contentDisposition - Content-Disposition header value.
+ * @returns Safe ASCII basename or null.
+ */
+function parseDownloadFilename(contentDisposition: string | null): string | null {
+  const match = contentDisposition?.match(/(?:^|;)\s*filename="([A-Za-z0-9._-]{1,255})"(?:;|$)/i);
+  return match?.[1] ?? null;
+}
+
+/**
  * Parse a fetch response as JSON and raise a typed error on failure.
  *
  * @param response - Fetch response.
@@ -183,15 +243,7 @@ async function parseJson<T>(
     const payload: unknown = await response.json();
     return parser ? parser(payload) : (payload as T);
   }
-  const payload = await response.json().catch(() => null);
-  const errorInfo = extractErrorInfo(payload, fallback);
-  throw new ApiError(
-    errorInfo.message,
-    response.status,
-    errorInfo.code,
-    errorInfo.phase,
-    response.headers.get(REQUEST_ID_HEADER),
-  );
+  throw await createApiError(response, fallback);
 }
 
 /**
@@ -211,12 +263,31 @@ export async function requestJson<T>(
   fallback = '请求失败',
   parser?: ContractParser<T>,
 ): Promise<T> {
-  const hasBody = typeof init?.body !== 'undefined';
-  const headers: Record<string, string> = {
-    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(init?.headers as Record<string, string> | undefined),
-  };
-  const response = await fetch(url, { ...init, credentials: 'include', headers });
+  const response = await fetchApiResponse(url, token, init);
   return parseJson<T>(response, fallback, parser);
+}
+
+/**
+ * Fetch a download while reusing the shared API error parser.
+ *
+ * @param url - Absolute endpoint URL.
+ * @param token - Optional explicit bearer access token.
+ * @param init - Fetch options.
+ * @param fallback - Fallback error message.
+ * @returns Download Blob and optional safe server filename.
+ */
+export async function requestDownload(
+  url: string,
+  token?: string | null,
+  init?: RequestInit,
+  fallback = '下载失败',
+): Promise<ApiDownload> {
+  const response = await fetchApiResponse(url, token, init);
+  if (!response.ok) {
+    throw await createApiError(response, fallback);
+  }
+  return {
+    blob: await response.blob(),
+    filename: parseDownloadFilename(response.headers.get('Content-Disposition')),
+  };
 }

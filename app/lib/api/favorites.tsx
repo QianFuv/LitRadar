@@ -2,7 +2,7 @@
  * Favorite folder, membership, export, and tracking-folder API operations.
  */
 
-import { buildApiUrl, requestJson, resolveApiBase } from '@/lib/api/client';
+import { buildApiUrl, requestDownload, requestJson } from '@/lib/api/client';
 import type {
   ArticleId,
   CitationFormat,
@@ -13,6 +13,20 @@ import type {
   FavoriteItem,
   Folder,
 } from '@/lib/api/types';
+
+const CITATION_EXPORT_EXTENSIONS: Record<CitationFormat, string> = {
+  bibtex: 'bib',
+  endnote: 'xml',
+  ris: 'ris',
+};
+
+/** Completed favorite citation export. */
+export interface FavoriteExportDownload {
+  /** Citation data returned by the backend. */
+  blob: Blob;
+  /** Safe filename for the browser download. */
+  filename: string;
+}
 
 /**
  * Fetch all folders for the current user.
@@ -195,16 +209,27 @@ export async function bulkMoveFavorites(
 }
 
 /**
- * Build a folder export URL.
+ * Download a folder citation export through the authenticated API client.
  *
  * @param folderId - Folder id.
  * @param format - Citation format.
- * @returns Export URL.
+ * @returns Citation blob and safe download filename.
  */
-export function getExportUrl(folderId: number, format: CitationFormat): string {
-  const url = new URL(`/api/favorites/folders/${folderId}/export`, resolveApiBase());
-  url.searchParams.set('format', format);
-  return url.toString();
+export async function downloadFavoriteExport(
+  folderId: number,
+  format: CitationFormat,
+): Promise<FavoriteExportDownload> {
+  const params = new URLSearchParams({ format });
+  const download = await requestDownload(
+    buildApiUrl(`/api/favorites/folders/${folderId}/export`, params),
+    null,
+    undefined,
+    '导出引用失败',
+  );
+  return {
+    blob: download.blob,
+    filename: download.filename ?? `favorites.${CITATION_EXPORT_EXTENSIONS[format]}`,
+  };
 }
 
 /**
