@@ -301,6 +301,14 @@ pub fn open_content_db(path: impl AsRef<Path>) -> Result<Connection, ContentData
     Ok(connection)
 }
 
+fn configure_content_connection(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;",
+    )
+}
+
 /// Run SQLite maintenance after a canonical content index completes.
 ///
 /// # Arguments
@@ -325,6 +333,7 @@ pub fn optimize_content_db(connection: &Connection) -> Result<(), ContentDatabas
 ///
 /// Success only for an empty database or an exact current schema.
 pub fn init_content_db(connection: &Connection) -> Result<(), ContentDatabaseError> {
+    configure_content_connection(connection)?;
     let version = connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
     let object_count = content_schema_object_count(connection)?;
     if version == CONTENT_SCHEMA_VERSION {
@@ -336,11 +345,6 @@ pub fn init_content_db(connection: &Connection) -> Result<(), ContentDatabaseErr
         });
     }
 
-    connection.execute_batch(
-        "PRAGMA foreign_keys = ON;
-         PRAGMA journal_mode = WAL;
-         PRAGMA synchronous = NORMAL;",
-    )?;
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     transaction.execute_batch(CONTENT_TABLES_SQL)?;
     transaction.pragma_update(None, "user_version", CONTENT_SCHEMA_VERSION)?;
@@ -1401,11 +1405,49 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        init_content_db, reconcile_catalog_identities, write_content_batch, ContentDatabaseError,
-        ContentWriteOutcome, CONTENT_SCHEMA_VERSION,
+        init_content_db, open_content_db, reconcile_catalog_identities, write_content_batch,
+        ContentDatabaseError, ContentWriteOutcome, CONTENT_SCHEMA_VERSION,
     };
 
     const TEST_CREATED_AT: &str = "2026-07-18T00:00:00Z";
+
+    fn assert_content_connection_pragmas(connection: &Connection) {
+        let journal_mode = connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+            .expect("journal mode should read");
+        let synchronous = connection
+            .query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
+            .expect("synchronous mode should read");
+        let foreign_keys = connection
+            .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+            .expect("foreign key mode should read");
+        let busy_timeout = connection
+            .query_row("PRAGMA busy_timeout", [], |row| row.get::<_, i64>(0))
+            .expect("busy timeout should read");
+
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+        assert_eq!(synchronous, 1);
+        assert_eq!(foreign_keys, 1);
+        assert_eq!(busy_timeout, 30_000);
+    }
+
+    #[test]
+    fn content_database_connections_configure_new_and_reopened_v6_files() {
+        let directory = tempfile::tempdir().expect("temporary directory should create");
+        let path = directory.path().join("content.sqlite");
+        let connection = open_content_db(&path).expect("new content database should open");
+        assert_content_connection_pragmas(&connection);
+        drop(connection);
+
+        let connection = Connection::open(&path).expect("raw current database should reopen");
+        connection
+            .execute_batch("PRAGMA foreign_keys = OFF; PRAGMA synchronous = FULL;")
+            .expect("raw connection should use non-writer defaults");
+        drop(connection);
+
+        let connection = open_content_db(&path).expect("current content database should reopen");
+        assert_content_connection_pragmas(&connection);
+    }
 
     fn catalog() -> JournalCatalogEntry {
         JournalCatalogEntry {

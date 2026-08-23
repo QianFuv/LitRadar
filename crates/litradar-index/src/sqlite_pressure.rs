@@ -462,6 +462,24 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
             );
         }
     };
+    drop(content);
+    let content = match open_content_db(&content_path) {
+        Ok(content) => content,
+        Err(error) => {
+            return failed_setup_report(
+                config,
+                started_at,
+                classify_content_error("reopen_content", &error),
+            );
+        }
+    };
+    if let Err(error) = validate_content_connection_pragmas(&content) {
+        return failed_setup_report(
+            config,
+            started_at,
+            classify_sqlite_error("validate_content_pragmas", &error),
+        );
+    }
     let control = match open_control_db(&control_path) {
         Ok(control) => control,
         Err(error) => {
@@ -620,6 +638,18 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
         integrity: inspection.integrity,
         lifecycle,
     }
+}
+
+fn validate_content_connection_pragmas(connection: &Connection) -> rusqlite::Result<()> {
+    let journal_mode =
+        connection.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))?;
+    let synchronous = connection.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))?;
+    let foreign_keys =
+        connection.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))?;
+    if !journal_mode.eq_ignore_ascii_case("wal") || synchronous != 1 || foreign_keys != 1 {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
 }
 
 fn pressure_requests(
