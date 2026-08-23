@@ -100,7 +100,7 @@ mod tests {
     use reqwest::blocking::{Client, Response};
     use reqwest::redirect::Policy;
 
-    use super::{bounded_response_json, bounded_response_text, ResponseBodyError};
+    use super::{bounded_response_json, ResponseBodyError};
 
     fn raw_response(headers: &str, body: Vec<u8>) -> Response {
         let listener = TcpListener::bind("127.0.0.1:0").expect("body test listener should bind");
@@ -139,7 +139,7 @@ mod tests {
     fn bounded_reader_rejects_header_chunked_and_decoded_gzip_oversize() {
         let content_length_response = raw_response("Content-Length: 65\r\n", vec![b'a'; 65]);
         assert_eq!(
-            bounded_response_text(content_length_response, 64),
+            bounded_response_json(content_length_response, 64),
             Err(ResponseBodyError::TooLarge)
         );
 
@@ -149,7 +149,7 @@ mod tests {
         chunked_body.extend_from_slice(b"\r\n0\r\n\r\n");
         let chunked_response = raw_response("Transfer-Encoding: chunked\r\n", chunked_body);
         assert_eq!(
-            bounded_response_text(chunked_response, 64),
+            bounded_response_json(chunked_response, 64),
             Err(ResponseBodyError::TooLarge)
         );
 
@@ -164,7 +164,7 @@ mod tests {
             gzip_body,
         );
         assert_eq!(
-            bounded_response_text(gzip_response, 64),
+            bounded_response_json(gzip_response, 64),
             Err(ResponseBodyError::TooLarge)
         );
     }

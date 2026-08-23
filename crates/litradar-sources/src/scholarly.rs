@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::provider_proxy::ProviderProxy;
-use crate::response_body::{bounded_response_text, ResponseBodyError};
+use crate::response_body::{bounded_response_json, ResponseBodyError};
 
 /// Maximum DOI IDs accepted by one Semantic Scholar batch request.
 pub const SEMANTIC_SCHOLAR_BATCH_SIZE: usize = 500;
@@ -1804,50 +1804,52 @@ fn execute_openalex_request(
             Ok(response) => {
                 let status_code = response.status().as_u16();
                 let headers = openalex_rate_headers(response.headers());
-                let text = match bounded_response_text(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
-                    Ok(text) => text,
-                    Err(error) => {
-                        let is_too_large = matches!(error, ResponseBodyError::TooLarge);
-                        let health = if is_too_large {
-                            OpenAlexHealthOutcome::TerminalFailure
-                        } else {
-                            OpenAlexHealthOutcome::TransientFailure
-                        };
-                        let will_retry = !is_too_large && attempt_number < maximum_attempts;
-                        scheduler.finish(&reservation, headers, health, retry_delay);
-                        attempts.push(openalex_attempt_record(
-                            endpoint,
-                            &request_url,
-                            attempt_number,
-                            reservation.slot.slot_index,
-                            Some(status_code),
-                            false,
-                            will_retry,
-                            if is_too_large {
-                                "response_too_large"
-                            } else {
-                                "response_body"
-                            },
-                            elapsed_millis(started_at),
-                        ));
-                        let error = SourceError::Request {
-                            service: OPENALEX_SOURCE.to_string(),
-                            endpoint: endpoint.to_string(),
-                            message: error.to_string(),
-                        };
-                        if will_retry {
-                            add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
-                            last_error = Some(error);
-                            continue;
+                let payload =
+                    match bounded_response_json(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
+                        Ok(payload) => payload,
+                        Err(ResponseBodyError::InvalidJson) => {
+                            json!({ "error": "OpenAlex returned invalid JSON" })
                         }
-                        return OpenAlexExecution {
-                            result: Err(error),
-                            attempts,
-                        };
-                    }
-                };
-                let payload = serde_json::from_str::<Value>(&text)
-                    .unwrap_or_else(|_| json!({ "error": "OpenAlex returned invalid JSON" }));
+                        Err(error) => {
+                            let is_too_large = matches!(error, ResponseBodyError::TooLarge);
+                            let health = if is_too_large {
+                                OpenAlexHealthOutcome::TerminalFailure
+                            } else {
+                                OpenAlexHealthOutcome::TransientFailure
+                            };
+                            let will_retry = !is_too_large && attempt_number < maximum_attempts;
+                            scheduler.finish(&reservation, headers, health, retry_delay);
+                            attempts.push(openalex_attempt_record(
+                                endpoint,
+                                &request_url,
+                                attempt_number,
+                                reservation.slot.slot_index,
+                                Some(status_code),
+                                false,
+                                will_retry,
+                                if is_too_large {
+                                    "response_too_large"
+                                } else {
+                                    "response_body"
+                                },
+                                elapsed_millis(started_at),
+                            ));
+                            let error = SourceError::Request {
+                                service: OPENALEX_SOURCE.to_string(),
+                                endpoint: endpoint.to_string(),
+                                message: error.to_string(),
+                            };
+                            if will_retry {
+                                add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
+                                last_error = Some(error);
+                                continue;
+                            }
+                            return OpenAlexExecution {
+                                result: Err(error),
+                                attempts,
+                            };
+                        }
+                    };
                 if (200..300).contains(&status_code) {
                     scheduler.finish(
                         &reservation,
@@ -2508,9 +2510,47 @@ impl LiveScholarlyTransport {
                     let status_code = response.status().as_u16();
                     let retry_after =
                         header_u64(response.headers(), "retry-after").map(Duration::from_secs);
-                    let text =
-                        match bounded_response_text(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
-                            Ok(text) => text,
+                    let payload =
+                        match bounded_response_json(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
+                            Ok(payload) => payload,
+                            Err(ResponseBodyError::InvalidJson)
+                                if (200..300).contains(&status_code) =>
+                            {
+                                let will_retry = attempt_number < maximum_attempts;
+                                self.semantic_scholar_scheduler.finish(
+                                    &reservation,
+                                    SemanticScholarHealthOutcome::TransientFailure,
+                                    retry_delay,
+                                );
+                                self.record_semantic_scholar_attempt(
+                                    semantic_scholar_attempt_record(
+                                        endpoint,
+                                        &request_url,
+                                        attempt_number,
+                                        reservation.slot.slot_index,
+                                        Some(status_code),
+                                        false,
+                                        will_retry,
+                                        "invalid_json",
+                                        elapsed_millis(started_at),
+                                    ),
+                                );
+                                let error = SourceError::Request {
+                                    service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
+                                    endpoint: endpoint.to_string(),
+                                    message: "Semantic Scholar returned invalid JSON".to_string(),
+                                };
+                                if will_retry {
+                                    add_excluded_slot(
+                                        &mut excluded_slots,
+                                        reservation.slot.slot_index,
+                                    );
+                                    last_error = Some(error);
+                                    continue;
+                                }
+                                return Err(error);
+                            }
+                            Err(ResponseBodyError::InvalidJson) => json!({}),
                             Err(error) => {
                                 let is_too_large = matches!(error, ResponseBodyError::TooLarge);
                                 let health = if is_too_large {
@@ -2577,40 +2617,6 @@ impl LiveScholarlyTransport {
                                 return Err(error);
                             }
                         };
-                    let payload = match serde_json::from_str::<Value>(&text) {
-                        Ok(payload) => payload,
-                        Err(_) if (200..300).contains(&status_code) => {
-                            let will_retry = attempt_number < maximum_attempts;
-                            self.semantic_scholar_scheduler.finish(
-                                &reservation,
-                                SemanticScholarHealthOutcome::TransientFailure,
-                                retry_delay,
-                            );
-                            self.record_semantic_scholar_attempt(semantic_scholar_attempt_record(
-                                endpoint,
-                                &request_url,
-                                attempt_number,
-                                reservation.slot.slot_index,
-                                Some(status_code),
-                                false,
-                                will_retry,
-                                "invalid_json",
-                                elapsed_millis(started_at),
-                            ));
-                            let error = SourceError::Request {
-                                service: SEMANTIC_SCHOLAR_SOURCE.to_string(),
-                                endpoint: endpoint.to_string(),
-                                message: "Semantic Scholar returned invalid JSON".to_string(),
-                            };
-                            if will_retry {
-                                add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
-                                last_error = Some(error);
-                                continue;
-                            }
-                            return Err(error);
-                        }
-                        Err(_) => json!({}),
-                    };
                     if (200..300).contains(&status_code) {
                         self.semantic_scholar_scheduler.finish(
                             &reservation,
@@ -2809,9 +2815,12 @@ impl LiveScholarlyTransport {
             match self.client.execute(request) {
                 Ok(response) => {
                     let status_code = response.status().as_u16();
-                    let text =
-                        match bounded_response_text(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
-                            Ok(text) => text,
+                    let payload =
+                        match bounded_response_json(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
+                            Ok(payload) => payload,
+                            Err(ResponseBodyError::InvalidJson) => json!({
+                                "error": ResponseBodyError::InvalidJson.to_string()
+                            }),
                             Err(error) => {
                                 self.record_attempt(LiveAttempt {
                                     service: live_request.service,
@@ -2838,8 +2847,6 @@ impl LiveScholarlyTransport {
                                 });
                             }
                         };
-                    let payload = serde_json::from_str::<Value>(&text)
-                        .unwrap_or_else(|_| json!({ "error": text }));
                     if !(200..300).contains(&status_code) {
                         let will_retry = RETRY_STATUS_CODES.contains(&status_code)
                             && attempt < DEFAULT_MAX_RETRIES;
@@ -3245,7 +3252,7 @@ where
         cursor: Option<&str>,
     ) -> Result<ScholarlyWorksPage, SourceError> {
         let url = format!("https://api.crossref.org/journals/{issn}/works");
-        let payload = self.transport.request(ScholarlyRequest {
+        let mut payload = self.transport.request(ScholarlyRequest {
             service: CROSSREF_SOURCE.to_string(),
             endpoint: "journal_works".to_string(),
             method: "GET".to_string(),
@@ -3256,16 +3263,15 @@ where
                 cursor: cursor.map(str::to_string),
             },
         })?;
-        let message = payload.get("message");
-        let items = message
-            .and_then(|message| message.get("items"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let next_cursor = message
+        let next_cursor = payload
+            .get("message")
             .and_then(|message| message.get("next-cursor"))
             .and_then(Value::as_str)
             .map(str::to_string);
+        let items = payload
+            .get_mut("message")
+            .map(|message| take_json_array(message, "items"))
+            .unwrap_or_default();
         Ok(ScholarlyWorksPage {
             items,
             next_cursor,
@@ -3287,14 +3293,14 @@ where
         issns: &[String],
     ) -> Result<Option<Value>, SourceError> {
         for issn in issns {
-            let payload = self.transport.request(ScholarlyRequest {
+            let mut payload = self.transport.request(ScholarlyRequest {
                 service: OPENALEX_SOURCE.to_string(),
                 endpoint: "sources".to_string(),
                 method: "GET".to_string(),
                 url: format!("https://api.openalex.org/sources?filter=issn:{issn}&api_key=SECRET"),
                 kind: ScholarlyRequestKind::OpenAlexSourceByIssn { issn: issn.clone() },
             })?;
-            for item in json_array(&payload, "results") {
+            for item in take_json_array(&mut payload, "results") {
                 if openalex_source_matches_issn(&item, issn) {
                     return Ok(Some(item));
                 }
@@ -3320,7 +3326,7 @@ where
         if normalized_title.is_empty() {
             return Ok(None);
         }
-        let payload = self.transport.request(ScholarlyRequest {
+        let mut payload = self.transport.request(ScholarlyRequest {
             service: OPENALEX_SOURCE.to_string(),
             endpoint: "source_search".to_string(),
             method: "GET".to_string(),
@@ -3329,7 +3335,7 @@ where
                 title: title.to_string(),
             },
         })?;
-        for item in json_array(&payload, "results") {
+        for item in take_json_array(&mut payload, "results") {
             if openalex_source_matches_title(&item, &normalized_title) {
                 return Ok(Some(item));
             }
@@ -3364,7 +3370,7 @@ where
         let request =
             openalex_source_works_request(source_id, effective_sync_date, effective_cursor);
         let mut did_fallback_to_unfiltered = did_start_unfiltered;
-        let payload = match self.transport.request(request) {
+        let mut payload = match self.transport.request(request) {
             Err(error)
                 if effective_sync_date.is_some() && is_openalex_created_date_plan_error(&error) =>
             {
@@ -3383,12 +3389,12 @@ where
             }
             result => result?,
         };
-        let items = json_array(&payload, "results");
         let next_cursor = payload
             .get("meta")
             .and_then(|meta| meta.get("next_cursor"))
             .and_then(Value::as_str)
             .map(str::to_string);
+        let items = take_json_array(&mut payload, "results");
         Ok(ScholarlyWorksPage {
             items,
             next_cursor,
@@ -3422,8 +3428,8 @@ where
                 "OpenAlex DOI batch response count does not match the request count.".to_string(),
             ));
         }
-        for payload in payloads {
-            for item in json_array(&payload, "results") {
+        for mut payload in payloads {
+            for item in take_json_array(&mut payload, "results") {
                 if let Some(doi) = normalize_doi(item.get("doi")) {
                     results.insert(doi, item);
                 }
@@ -3537,11 +3543,11 @@ pub fn normalize_doi(value: Option<&Value>) -> Option<String> {
     (!stripped.is_empty()).then_some(stripped)
 }
 
-fn json_array(payload: &Value, key: &str) -> Vec<Value> {
+fn take_json_array(payload: &mut Value, key: &str) -> Vec<Value> {
     payload
-        .get(key)
-        .and_then(Value::as_array)
-        .cloned()
+        .get_mut(key)
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
         .unwrap_or_default()
 }
 
@@ -3806,7 +3812,7 @@ mod tests {
         execute_openalex_batches, normalize_doi, normalize_issn, normalize_source_title,
         openalex_doi_query, openalex_doi_request_url, openalex_rate_headers,
         openalex_short_source_id, openalex_source_work_filter, partition_openalex_doi_batches,
-        redact_url, run_bounded_indexed, unix_time_duration, unix_time_millis,
+        redact_url, run_bounded_indexed, take_json_array, unix_time_duration, unix_time_millis,
         value_pool_from_text, FixtureScholarlyTransport, JsonRequest, LiveScholarlyConfig,
         LiveScholarlyTransport, OpenAlexHealthOutcome, OpenAlexRateHeaders,
         OpenAlexScheduleDecision, OpenAlexScheduler, OpenAlexSchedulerState,
@@ -3825,6 +3831,21 @@ mod tests {
         DropConnection,
         HttpStatus(u16),
         Success,
+    }
+
+    #[test]
+    fn scholarly_response_array_extraction_moves_items_out_of_payload() {
+        let mut payload = json!({
+            "results": [
+                {"id": "first"},
+                {"id": "second"}
+            ]
+        });
+
+        let items = take_json_array(&mut payload, "results");
+
+        assert_eq!(items, vec![json!({"id": "first"}), json!({"id": "second"})]);
+        assert_eq!(payload["results"], json!([]));
     }
 
     fn duration_seconds(durations: &[Duration]) -> Vec<u64> {

@@ -225,7 +225,7 @@ docker compose ps
 
 `160m` 由 Compose 渲染为 167,772,160 字节的 cgroup v2 `memory.max`。该限制同时适用于 `docker compose up` 和 `docker compose run`；内嵌调度启动的子进程与 `serve` 共享同一个限制。它是高于 120 MiB 作业峰值门禁的失控保护，不是可用内存目标。触发硬上限可能直接终止作业，因此不能用它替代画像和低内存默认值。自行使用 `docker run` 时必须显式提供等价的 `--memory 160m`。
 
-上游 source 响应在透明解压后使用 endpoint 级字节上限：CNKI/ZJLib 2 MiB、JFBYM 256 KiB、Scholarly 8 MiB，PDF 另有 32 MiB 上限。Content-Length 只是前置快速拒绝，实际还会对解压后流执行 `limit + 1` 读取；这些应用内上限是 160 MiB cgroup 之前的必要资源边界，不能被容器 OOM 代替。
+上游 source 响应在透明解压后使用 endpoint 级字节上限：CNKI/ZJLib 2 MiB、JFBYM 256 KiB、Scholarly 16 MiB，PDF 另有 32 MiB 上限。Content-Length 只是前置快速拒绝，实际还会对解压后流执行 `limit + 1` 读取；这些应用内上限是 160 MiB cgroup 之前的必要资源边界，不能被容器 OOM 代替。
 
 ## 日志收集与轮转
 
