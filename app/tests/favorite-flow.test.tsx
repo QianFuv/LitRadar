@@ -175,6 +175,9 @@ async function rendersFavoritesWorkspace(): Promise<void> {
   expect(screen.getByRole('complementary')).toBeInTheDocument();
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
   expect(document.getElementById('results-scroll-container')).toBeInTheDocument();
+  await waitFor(() =>
+    expect(document.querySelector('[data-motion-folder-key="3"]')).not.toBeNull(),
+  );
   expect(favoriteFlowMocks.useVisiblePageList).toHaveBeenCalledWith(
     expect.objectContaining({ scrollContainerId: 'results-scroll-container' }),
   );
@@ -264,6 +267,10 @@ async function confirmsFavoriteRemoval(): Promise<void> {
 async function confirmsFolderDeletion(): Promise<void> {
   let isFolderDeleted = false;
   let deleteRequestCount = 0;
+  let releaseDelete = (): void => undefined;
+  const deleteGate = new Promise<void>((resolve) => {
+    releaseDelete = resolve;
+  });
   server.use(
     http.get('http://localhost/api/favorites/folders', () =>
       HttpResponse.json(
@@ -275,8 +282,9 @@ async function confirmsFolderDeletion(): Promise<void> {
     http.get('http://localhost/api/favorites/folders/3/articles', () =>
       HttpResponse.json([favoriteArticleFixture(1)]),
     ),
-    http.delete('http://localhost/api/favorites/folders/3', () => {
+    http.delete('http://localhost/api/favorites/folders/3', async () => {
       deleteRequestCount += 1;
+      await deleteGate;
       isFolderDeleted = true;
       return HttpResponse.json({ ok: true });
     }),
@@ -290,7 +298,12 @@ async function confirmsFolderDeletion(): Promise<void> {
   await user.click(screen.getByRole('button', { name: '确认删除' }));
 
   await waitFor(() => expect(deleteRequestCount).toBe(1));
+  expect(screen.getAllByText('Reading').length).toBeGreaterThan(0);
+  expect(document.querySelector('[data-motion-folder-key="3"]')).not.toBeNull();
+  expect(screen.getByRole('alertdialog', { name: '删除收藏夹？' })).toBeInTheDocument();
+  releaseDelete();
   expect(await screen.findByText('暂无收藏夹，点击 + 创建')).toBeInTheDocument();
+  await waitFor(() => expect(document.querySelector('[data-motion-folder-key="3"]')).toBeNull());
 }
 
 /**
@@ -299,6 +312,10 @@ async function confirmsFolderDeletion(): Promise<void> {
 async function confirmsSingleFavoriteRemoval(): Promise<void> {
   let articles = [favoriteArticleFixture(1)];
   let removeCount = 0;
+  let releaseFailedRemoval = (): void => undefined;
+  const failedRemovalGate = new Promise<void>((resolve) => {
+    releaseFailedRemoval = resolve;
+  });
   server.use(
     http.get('http://localhost/api/favorites/folders', () =>
       HttpResponse.json([
@@ -314,8 +331,12 @@ async function confirmsSingleFavoriteRemoval(): Promise<void> {
     http.get('http://localhost/api/favorites/folders/3/articles', () =>
       HttpResponse.json(articles),
     ),
-    http.delete('http://localhost/api/favorites/folders/3/articles/article-1', () => {
+    http.delete('http://localhost/api/favorites/folders/3/articles/article-1', async () => {
       removeCount += 1;
+      if (removeCount === 1) {
+        await failedRemovalGate;
+        return HttpResponse.json({ detail: 'temporary removal failure' }, { status: 503 });
+      }
       articles = [];
       return HttpResponse.json({ ok: true });
     }),
@@ -323,13 +344,25 @@ async function confirmsSingleFavoriteRemoval(): Promise<void> {
   const user = userEvent.setup();
   renderFavoritesPage();
 
+  expect(await screen.findByText('Article 1')).toBeInTheDocument();
+  expect(document.querySelector('[data-motion-favorite-key="1"]')).not.toBeNull();
   await user.click(await screen.findByRole('button', { name: '移除收藏' }));
   expect(removeCount).toBe(0);
   expect(screen.getByRole('alertdialog', { name: '移除收藏？' })).toHaveTextContent('Article 1');
   await user.click(screen.getByRole('button', { name: '确认移除' }));
 
   await waitFor(() => expect(removeCount).toBe(1));
+  expect(screen.getByText('Article 1')).toBeInTheDocument();
+  expect(document.querySelector('[data-motion-favorite-key="1"]')).not.toBeNull();
+  releaseFailedRemoval();
+  expect(await screen.findByRole('alert')).toHaveTextContent('temporary removal failure');
+  expect(screen.getByText('Article 1')).toBeInTheDocument();
+  expect(document.querySelector('[data-motion-favorite-key="1"]')).not.toBeNull();
+  await user.click(screen.getByRole('button', { name: '确认移除' }));
+
+  await waitFor(() => expect(removeCount).toBe(2));
   expect(await screen.findByText('此收藏夹为空')).toBeInTheDocument();
+  await waitFor(() => expect(document.querySelector('[data-motion-favorite-key="1"]')).toBeNull());
 }
 
 /**
@@ -490,10 +523,12 @@ async function managesFoldersAndExportFormats(): Promise<void> {
   await user.type(screen.getByLabelText('收藏夹名称'), '  New Folder  ');
   await user.click(screen.getByRole('button', { name: '创建' }));
   expect(await screen.findByText('New Folder')).toBeInTheDocument();
+  expect(document.querySelector('[data-motion-folder-key="5"]')).not.toBeNull();
   expect(createPayloads).toEqual([{ name: 'New Folder', is_tracking: false }]);
 
   await user.click(screen.getByRole('button', { name: '重命名收藏夹 Reading' }));
-  const renameInput = screen.getByRole('textbox', { name: '重命名收藏夹 Reading' });
+  const renameInput = await screen.findByRole('textbox', { name: '重命名收藏夹 Reading' });
+  expect(renameInput.closest('[data-motion-folder-mode="edit"]')).not.toBeNull();
   await user.clear(renameInput);
   await user.type(renameInput, 'Reviewed');
   await user.keyboard('{Enter}');
@@ -550,8 +585,12 @@ async function retriesFailedBulkMove(): Promise<void> {
   await user.keyboard('{Enter}');
   await user.click(screen.getByRole('button', { name: '移动所选' }));
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Move target unavailable');
+  const feedback = await screen.findByTestId('batch-feedback-announcement');
+  expect(feedback).toHaveAttribute('role', 'alert');
+  expect(feedback).toHaveTextContent('Move target unavailable');
+  expect(document.querySelector('[data-motion-feedback-key="batch-error"]')).not.toBeNull();
   expect(screen.getByText('已选 2 篇')).toBeInTheDocument();
+  expect(screen.getByRole('group', { name: '批量操作' })).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '移动所选' }));
 
   await waitFor(() => expect(requestBodies).toHaveLength(2));

@@ -87,7 +87,10 @@ async function downloadsWithServerFilename(): Promise<void> {
 
   await user.click(await screen.findByRole('button', { name: '导出引用' }));
 
-  expect(await screen.findByRole('status')).toHaveTextContent('已导出 Reading.bib。');
+  const feedback = await screen.findByTestId('export-feedback-announcement');
+  expect(feedback).toHaveAttribute('role', 'status');
+  expect(feedback).toHaveTextContent('已导出 Reading.bib。');
+  expect(document.querySelector('[data-motion-feedback-key="export-success"]')).not.toBeNull();
   expect(favoriteExportMocks.createObjectUrl).toHaveBeenCalledTimes(1);
   expect(favoriteExportMocks.anchorClick).toHaveBeenCalledWith({
     download: 'Reading.bib',
@@ -113,7 +116,9 @@ async function downloadsWithFallbackFilename(): Promise<void> {
 
   await user.click(await screen.findByRole('button', { name: '导出引用' }));
 
-  expect(await screen.findByRole('status')).toHaveTextContent('已导出 favorites.bib。');
+  const feedback = await screen.findByTestId('export-feedback-announcement');
+  expect(feedback).toHaveAttribute('role', 'status');
+  expect(feedback).toHaveTextContent('已导出 favorites.bib。');
   expect(favoriteExportMocks.anchorClick).toHaveBeenCalledWith({
     download: 'favorites.bib',
     href: 'blob:favorite-export',
@@ -146,7 +151,10 @@ async function surfacesExportFailureInPlace(): Promise<void> {
   expect(await screen.findByRole('button', { name: '导出中…' })).toBeDisabled();
   releaseExport();
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('收藏夹引用数量超过导出上限');
+  const feedback = await screen.findByTestId('export-feedback-announcement');
+  expect(feedback).toHaveAttribute('role', 'alert');
+  expect(feedback).toHaveTextContent('收藏夹引用数量超过导出上限');
+  expect(document.querySelector('[data-motion-feedback-key="export-error"]')).not.toBeNull();
   expect(screen.getByRole('heading', { name: '我的收藏' })).toBeInTheDocument();
   expect(favoriteExportMocks.createObjectUrl).not.toHaveBeenCalled();
   expect(favoriteExportMocks.anchorClick).not.toHaveBeenCalled();

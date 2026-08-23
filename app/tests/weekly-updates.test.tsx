@@ -2,7 +2,7 @@
  * Weekly-update summary, cursor pagination, query reset, and failure coverage.
  */
 
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, type HttpResponseResolver } from 'msw';
 import { parseAsString, useQueryState } from 'nuqs';
@@ -241,6 +241,17 @@ async function loadsOneInitialBoundedPage(): Promise<void> {
   expect(screen.getByRole('complementary')).toBeInTheDocument();
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
   expect(document.getElementById('results-scroll-container')).toBeInTheDocument();
+  expect(document.querySelector('[data-weekly-state="ready"]')).not.toBeNull();
+  expect(document.querySelector('[data-weekly-journal="101"]')).not.toBeNull();
+  const articleState = document.querySelector('[data-weekly-article-state="results"]');
+  expect(articleState).not.toBeNull();
+  expect(screen.getByTestId('weekly-state-announcement')).toHaveAttribute('role', 'status');
+  expect(screen.getAllByTestId('weekly-state-announcement')).toHaveLength(1);
+  expect(within(articleState as HTMLElement).queryByRole('status')).toBeNull();
+  expect(screen.getAllByTestId('weekly-article')[0].parentElement).toHaveAttribute(
+    'data-weekly-article-state',
+    'results',
+  );
   expect(weeklyViewMocks.useVisiblePageList).toHaveBeenLastCalledWith(
     expect.objectContaining({
       loadedPages: 1,
@@ -268,8 +279,9 @@ async function resetsForDatabaseSelection(): Promise<void> {
   expect(await screen.findByRole('option', { name: 'other.sqlite' })).toBeInTheDocument();
   await user.keyboard('{ArrowDown}{Enter}');
 
-  expect(await screen.findByText('Other weekly article')).toBeInTheDocument();
   await waitFor(() => expect(screen.getByTestId('weekly-db')).toHaveTextContent('other.sqlite'));
+  expect(await screen.findByText('Other weekly article')).toBeInTheDocument();
+  expect(document.querySelector('[data-weekly-journal="201"]')).not.toBeNull();
   expect(weeklyArticleRequestUrls).toHaveLength(2);
   const request = weeklyArticleRequestUrls[1];
   expect(request.searchParams.get('db')).toBe('other.sqlite');
@@ -290,6 +302,7 @@ async function resetsForJournalSelection(): Promise<void> {
   await user.click(screen.getByRole('button', { name: /Second Fixture Journal/ }));
 
   expect(await screen.findByText('Second journal article')).toBeInTheDocument();
+  expect(document.querySelector('[data-weekly-journal="102"]')).not.toBeNull();
   expect(weeklyArticleRequestUrls).toHaveLength(2);
   const request = weeklyArticleRequestUrls[1];
   expect(request.searchParams.get('journal_id')).toBe('102');
@@ -311,6 +324,7 @@ async function resetsForSearchQuery(): Promise<void> {
   await user.click(screen.getByRole('button', { name: '搜索' }));
 
   expect(await screen.findByText('Needle result')).toBeInTheDocument();
+  expect(document.querySelector('[data-weekly-article-state="results"]')).not.toBeNull();
   expect(weeklyArticleRequestUrls).toHaveLength(2);
   const request = weeklyArticleRequestUrls[1];
   expect(request.searchParams.get('q')).toBe('needle');
@@ -413,6 +427,8 @@ async function rendersWeeklyFailures(): Promise<void> {
 
   expect(await screen.findByText('加载每周更新失败')).toBeInTheDocument();
   expect(screen.getByText('weekly storage unavailable')).toBeInTheDocument();
+  expect(document.querySelector('[data-weekly-state="error"]')).not.toBeNull();
+  expect(screen.getByTestId('weekly-state-announcement')).toHaveAttribute('role', 'alert');
   summaryRender.unmount();
 
   installWeeklyHandlers(() =>
@@ -421,6 +437,8 @@ async function rendersWeeklyFailures(): Promise<void> {
   renderWeeklyPage('?db=fixture.sqlite&journal=101');
 
   expect(await screen.findByRole('alert')).toHaveTextContent('weekly page unavailable');
+  expect(document.querySelector('[data-weekly-article-state="error"]')).not.toBeNull();
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
 }
 
 /**
@@ -438,6 +456,7 @@ async function rendersEmptyWeeklySummary(): Promise<void> {
   expect(await screen.findByText('0 个数据库')).toBeInTheDocument();
   expect(screen.getByText('0 篇新文章')).toBeInTheDocument();
   expect(screen.getByText('请选择一个期刊以查看新收录文章。')).toBeInTheDocument();
+  expect(document.querySelector('[data-weekly-article-state="no-journal"]')).not.toBeNull();
   expect(weeklyArticleRequestUrls).toHaveLength(0);
 }
 

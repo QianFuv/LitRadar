@@ -26,7 +26,13 @@ import { WorkspaceSidebar } from '@/components/feature/sidebar';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  FADE_UP_VARIANTS,
+  MOTION_DURATION_SECONDS,
+  MotionDiv,
+  MotionPresence,
+  useMotionTransition,
+} from '@/components/ui/motion';
 import {
   Select,
   SelectContent,
@@ -35,7 +41,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StateMessage } from '@/components/ui/state-message';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
+import { cn } from '@/lib/utils';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
@@ -237,9 +245,12 @@ function WeeklySidebar({
                   type="button"
                   aria-pressed={active}
                   onClick={() => onSelectJournal(journal.journal_id)}
-                  className={`w-full rounded-md border p-3 text-left transition-colors ${
-                    active ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/40'
-                  }`}
+                  className={cn(
+                    'motion-control w-full rounded-md border p-3 text-left transition-[background-color,border-color,color,box-shadow]',
+                    active
+                      ? 'border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground shadow-vercel-ring'
+                      : 'border-transparent text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+                  )}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <p className="line-clamp-2 min-w-0 break-words text-sm font-medium">
@@ -270,6 +281,7 @@ export function WeeklyUpdatesView() {
   const searchQuery = weeklyQuery.trim();
   const [selectedDb, setSelectedDb] = useQueryState('db', parseAsString.withDefault(''));
   const [selectedJournalId, setSelectedJournalId] = useQueryState('journal', parseAsString);
+  const stateTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   const {
     data: weeklySummary,
@@ -425,6 +437,39 @@ export function WeeklyUpdatesView() {
     return weeklySummary.databases.reduce((sum, db) => sum + db.new_article_count, 0);
   }, [weeklySummary]);
 
+  const weeklyState = weeklyError ? 'error' : loadingWeekly || !weeklySummary ? 'loading' : 'ready';
+  const articleState = !selectedJournal
+    ? 'no-journal'
+    : loadingArticles
+      ? 'loading'
+      : articleError
+        ? 'error'
+        : renderedArticles.length === 0
+          ? 'empty'
+          : 'results';
+  const announcementRole =
+    weeklyState === 'error' || (weeklyState === 'ready' && articleState === 'error')
+      ? 'alert'
+      : 'status';
+  const announcement =
+    weeklyState === 'loading'
+      ? '正在加载每周更新摘要'
+      : weeklyState === 'error'
+        ? `加载每周更新失败：${weeklyErrorData instanceof Error ? weeklyErrorData.message : '未知错误'}`
+        : articleState === 'no-journal'
+          ? '请选择一个期刊以查看新收录文章'
+          : articleState === 'loading'
+            ? `正在加载“${selectedJournal ? getJournalLabel(selectedJournal) : ''}”的本周文章`
+            : articleState === 'error'
+              ? `加载本周文章失败：${articleErrorData instanceof Error ? articleErrorData.message : '未知错误'}`
+              : articleState === 'empty'
+                ? searchQuery
+                  ? '该期刊中没有匹配全文检索条件的本周文章'
+                  : '该期刊暂无文章'
+                : isFetchingNextPage
+                  ? '正在加载更多本周文章'
+                  : `已加载 ${renderedArticles.length} 篇本周文章`;
+
   const handleDatabaseChange = (value: string) => {
     void setSelectedDb(value);
     void setSelectedJournalId(null);
@@ -460,120 +505,259 @@ export function WeeklyUpdatesView() {
         </div>
       }
     >
-      {loadingWeekly && (
-        <div className="space-y-4">
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-[70vh] w-full" />
-        </div>
-      )}
-
-      {weeklyError && (
-        <Card>
-          <CardHeader>
-            <CardTitle>加载每周更新失败</CardTitle>
-            <CardDescription>
-              {weeklyErrorData instanceof Error ? weeklyErrorData.message : '未知错误'}
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      )}
-
-      {!loadingWeekly && !weeklyError && weeklySummary && (
-        <>
-          <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 sm:flex-row sm:items-center">
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="secondary" className="gap-1">
-                <Database className="h-3.5 w-3.5" />
-                {totalDatabases} 个数据库
-              </Badge>
-              <Badge variant="secondary" className="gap-1">
-                <FileText className="h-3.5 w-3.5" />
-                {totalArticles} 篇新文章
-              </Badge>
-            </div>
-            <SearchBar className="w-full max-w-none sm:min-w-0 sm:flex-1" queryParam="weekly_q" />
-          </div>
-
-          <Card className="min-w-0">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">
-                {selectedJournal ? getJournalLabel(selectedJournal) : '文章'}
-              </CardTitle>
-              <CardDescription>
-                {selectedJournal
-                  ? searchQuery
-                    ? loadingArticles
-                      ? '正在检索本周文章…'
-                      : articleError
-                        ? '全文检索失败'
-                        : `已加载 ${renderedArticles.length} 篇匹配文章${hasNextPage ? '，继续滚动加载' : ''}`
-                    : `本周新增 ${selectedJournal.new_article_count} 篇文章`
-                  : '请选择左侧期刊'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {!selectedJournal && (
-                <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                  请选择一个期刊以查看新收录文章。
-                </div>
-              )}
-
-              {selectedJournal && loadingArticles && (
-                <div className="space-y-2">
-                  <Skeleton className="h-16 w-full" />
-                  <Skeleton className="h-16 w-full" />
-                </div>
-              )}
-
-              {selectedJournal && articleError && (
-                <div
-                  role="alert"
-                  className="rounded-md border border-dashed p-4 text-sm text-destructive"
-                >
-                  {articleErrorData instanceof Error
-                    ? articleErrorData.message
-                    : '加载本周文章失败'}
-                </div>
-              )}
-
-              {selectedJournal &&
-                !loadingArticles &&
-                !articleError &&
-                renderedArticles.length === 0 && (
-                  <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                    {searchQuery ? '该期刊中没有匹配全文检索条件的本周文章。' : '该期刊暂无文章。'}
-                  </div>
-                )}
-
-              {renderedArticles.map((article, index) => (
-                <ArticleDialogCard
-                  key={article.article_id}
-                  triggerRef={index === prefetchIndex ? prefetchRef : undefined}
-                  article={article}
-                  dbName={effectiveSelectedDb}
-                  initialFolderIds={
-                    favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
-                  }
-                  isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
+      <p
+        key={`${weeklyState}-${articleState}-${announcement}`}
+        data-testid="weekly-state-announcement"
+        className="sr-only"
+        role={announcementRole}
+        aria-label={announcement}
+        aria-live={announcementRole === 'alert' ? 'assertive' : 'polite'}
+        aria-atomic="true"
+      >
+        {announcement}
+      </p>
+      <MotionPresence mode="wait">
+        {weeklyState === 'loading' ? (
+          <MotionDiv
+            key="weekly-loading"
+            data-weekly-state="loading"
+            className="space-y-4"
+            aria-hidden="true"
+            variants={FADE_UP_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+            transition={stateTransition}
+          >
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-[70vh] w-full" />
+          </MotionDiv>
+        ) : weeklyState === 'error' ? (
+          <MotionDiv
+            key="weekly-error"
+            data-weekly-state="error"
+            variants={FADE_UP_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+            transition={stateTransition}
+          >
+            <StateMessage
+              isLive={false}
+              tone="danger"
+              title="加载每周更新失败"
+              description={
+                weeklyErrorData instanceof Error ? weeklyErrorData.message : '请稍后重试。'
+              }
+            />
+          </MotionDiv>
+        ) : (
+          weeklySummary && (
+            <MotionDiv
+              key="weekly-ready"
+              data-weekly-state="ready"
+              className="space-y-3"
+              variants={FADE_UP_VARIANTS}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+              transition={stateTransition}
+            >
+              <section className="flex flex-col gap-3 rounded-lg bg-muted/30 p-3 shadow-vercel-ring sm:flex-row sm:items-center">
+                <MotionPresence mode="wait">
+                  <MotionDiv
+                    key={weeklySummary.window_end}
+                    data-weekly-summary-key={weeklySummary.window_end}
+                    className="flex shrink-0 flex-wrap gap-2"
+                    variants={FADE_UP_VARIANTS}
+                    initial="hidden"
+                    animate="visible"
+                    exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
+                    transition={stateTransition}
+                  >
+                    <Badge variant="secondary" className="gap-1">
+                      <Database className="h-3.5 w-3.5" aria-hidden="true" />
+                      {totalDatabases} 个数据库
+                    </Badge>
+                    <Badge variant="secondary" className="gap-1">
+                      <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                      {totalArticles} 篇新文章
+                    </Badge>
+                  </MotionDiv>
+                </MotionPresence>
+                <SearchBar
+                  className="w-full max-w-none sm:min-w-0 sm:flex-1"
+                  queryParam="weekly_q"
                 />
-              ))}
+              </section>
 
-              {isFetchingNextPage && (
-                <div role="status" className="py-2 text-center text-sm text-muted-foreground">
-                  正在加载更多文章…
-                </div>
-              )}
+              <section className="min-w-0 space-y-3" aria-label="每周文章">
+                <MotionPresence mode="wait">
+                  <MotionDiv
+                    key={`${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}`}
+                    data-weekly-journal={effectiveSelectedJournalId ?? 'none'}
+                    className="rounded-lg bg-card px-4 py-3 shadow-vercel-ring"
+                    variants={FADE_UP_VARIANTS}
+                    initial="hidden"
+                    animate="visible"
+                    exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
+                    transition={stateTransition}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h2 className="truncate text-lg font-semibold tracking-tight">
+                          {selectedJournal ? getJournalLabel(selectedJournal) : '选择期刊'}
+                        </h2>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {selectedJournal
+                            ? searchQuery
+                              ? articleState === 'loading'
+                                ? '正在检索本周文章…'
+                                : articleState === 'error'
+                                  ? '全文检索失败'
+                                  : `已加载 ${renderedArticles.length} 篇匹配文章${hasNextPage ? '，继续滚动加载' : ''}`
+                              : `本周新增 ${selectedJournal.new_article_count} 篇文章`
+                            : '从左侧选择期刊后查看本周新收录文章'}
+                        </p>
+                      </div>
+                      {selectedJournal && (
+                        <Badge variant="secondary" className="shrink-0">
+                          {selectedJournal.new_article_count} 篇
+                        </Badge>
+                      )}
+                    </div>
+                  </MotionDiv>
+                </MotionPresence>
 
-              {selectedJournal &&
-                !loadingArticles &&
-                !articleError &&
-                (visiblePageCount < articlePages.length || hasNextPage) && (
-                  <div ref={loadMoreRef} className="h-1" />
-                )}
-            </CardContent>
-          </Card>
-        </>
-      )}
+                <MotionPresence mode="wait">
+                  {articleState === 'no-journal' ? (
+                    <MotionDiv
+                      key="weekly-articles-no-journal"
+                      data-weekly-article-state="no-journal"
+                      variants={FADE_UP_VARIANTS}
+                      initial="hidden"
+                      animate="visible"
+                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+                      transition={stateTransition}
+                    >
+                      <StateMessage
+                        isLive={false}
+                        title="请选择一个期刊以查看新收录文章。"
+                        description="选择后会显示该期刊在当前周窗口内的新文章。"
+                      />
+                    </MotionDiv>
+                  ) : articleState === 'loading' ? (
+                    <MotionDiv
+                      key="weekly-articles-loading"
+                      data-weekly-article-key={articleListKey}
+                      data-weekly-article-state="loading"
+                      className="space-y-2"
+                      aria-hidden="true"
+                      variants={FADE_UP_VARIANTS}
+                      initial="hidden"
+                      animate="visible"
+                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+                      transition={stateTransition}
+                    >
+                      <Skeleton className="h-28 w-full" />
+                      <Skeleton className="h-28 w-full" />
+                    </MotionDiv>
+                  ) : articleState === 'error' ? (
+                    <MotionDiv
+                      key="weekly-articles-error"
+                      data-weekly-article-key={articleListKey}
+                      data-weekly-article-state="error"
+                      variants={FADE_UP_VARIANTS}
+                      initial="hidden"
+                      animate="visible"
+                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+                      transition={stateTransition}
+                    >
+                      <StateMessage
+                        isLive={false}
+                        tone="danger"
+                        title="加载本周文章失败"
+                        description={
+                          articleErrorData instanceof Error
+                            ? articleErrorData.message
+                            : '请稍后重试。'
+                        }
+                      />
+                    </MotionDiv>
+                  ) : articleState === 'empty' ? (
+                    <MotionDiv
+                      key="weekly-articles-empty"
+                      data-weekly-article-key={articleListKey}
+                      data-weekly-article-state="empty"
+                      variants={FADE_UP_VARIANTS}
+                      initial="hidden"
+                      animate="visible"
+                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+                      transition={stateTransition}
+                    >
+                      <StateMessage
+                        isLive={false}
+                        title={searchQuery ? '没有匹配文章' : '该期刊暂无文章'}
+                        description={
+                          searchQuery ? '请尝试调整全文检索词。' : '当前周窗口内没有新收录文章。'
+                        }
+                      />
+                    </MotionDiv>
+                  ) : (
+                    <MotionDiv
+                      key="weekly-articles-results"
+                      data-weekly-article-key={articleListKey}
+                      data-weekly-article-state="results"
+                      className="space-y-3"
+                      variants={FADE_UP_VARIANTS}
+                      initial="hidden"
+                      animate="visible"
+                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+                      transition={stateTransition}
+                    >
+                      {renderedArticles.map((article, index) => (
+                        <ArticleDialogCard
+                          key={article.article_id}
+                          triggerRef={index === prefetchIndex ? prefetchRef : undefined}
+                          article={article}
+                          dbName={effectiveSelectedDb}
+                          initialFolderIds={
+                            favoriteChecksByArticle[article.article_id]?.map(
+                              (item) => item.folder_id,
+                            ) ?? []
+                          }
+                          isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
+                        />
+                      ))}
+
+                      <MotionPresence>
+                        {isFetchingNextPage && (
+                          <MotionDiv
+                            key="weekly-next-page"
+                            aria-hidden="true"
+                            className="py-2 text-center text-sm text-muted-foreground"
+                            variants={FADE_UP_VARIANTS}
+                            initial="hidden"
+                            animate="visible"
+                            exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
+                            transition={stateTransition}
+                          >
+                            正在加载更多文章…
+                          </MotionDiv>
+                        )}
+                      </MotionPresence>
+
+                      {(visiblePageCount < articlePages.length || hasNextPage) && (
+                        <div ref={loadMoreRef} className="h-1" />
+                      )}
+                    </MotionDiv>
+                  )}
+                </MotionPresence>
+              </section>
+            </MotionDiv>
+          )
+        )}
+      </MotionPresence>
     </WorkspaceShell>
   );
 }
