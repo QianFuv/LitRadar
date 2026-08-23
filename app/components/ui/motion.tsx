@@ -142,8 +142,10 @@ export function MotionProvider({ children, reducedMotion = 'user' }: MotionProvi
  * @param props - Motion presence properties and keyed children.
  * @returns Presence boundary with hydration-safe initial behavior.
  */
-export function MotionPresence({ initial = false, ...props }: MotionPresenceProps) {
-  return <AnimatePresence initial={initial} {...props} />;
+export function MotionPresence({ initial = false, mode, ...props }: MotionPresenceProps) {
+  const isMotionReduced = useIsMotionReduced();
+
+  return <AnimatePresence initial={initial} mode={isMotionReduced ? 'sync' : mode} {...props} />;
 }
 
 /**
