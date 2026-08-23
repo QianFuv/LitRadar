@@ -96,7 +96,33 @@ const CROSSREF_CURSOR_REUSE_SECONDS: u64 = 240;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScholarlyArticleAccessProvider;
 
+impl ScholarlyArticleAccessProvider {
+    /// Return whether a locator contains an external Scholarly destination.
+    ///
+    /// # Arguments
+    ///
+    /// * `article` - Provider-neutral article locator.
+    ///
+    /// # Returns
+    ///
+    /// True when a canonical DOI or PubMed identifier is present.
+    pub fn supports_article(article: &ArticleLocator) -> bool {
+        article
+            .doi
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            || article
+                .pmid
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+    }
+}
+
 impl ArticleAbstractProvider for ScholarlyArticleAccessProvider {
+    fn supports_abstract(&self, article: &ArticleLocator) -> bool {
+        Self::supports_article(article)
+    }
+
     fn resolve_abstract(
         &self,
         article: &ArticleLocator,
@@ -130,6 +156,19 @@ where
         }
     }
 
+    /// Return whether a locator contains enough bibliographic metadata for CNKI lookup.
+    ///
+    /// # Arguments
+    ///
+    /// * `article` - Provider-neutral article locator.
+    ///
+    /// # Returns
+    ///
+    /// True when the article and its journal can be searched without guaranteed failure.
+    pub fn supports_article(article: &ArticleLocator) -> bool {
+        has_cnki_article_locator(article)
+    }
+
     fn resolve(&self, article: &ArticleLocator) -> Result<ArticleRedirect, ProviderError> {
         let mut client = self.client.lock().map_err(|_| {
             ProviderError::new(
@@ -147,6 +186,10 @@ impl<T> ArticleAbstractProvider for CnkiArticleAccessProvider<T>
 where
     T: CnkiTransport + Send,
 {
+    fn supports_abstract(&self, article: &ArticleLocator) -> bool {
+        Self::supports_article(article)
+    }
+
     fn resolve_abstract(
         &self,
         article: &ArticleLocator,
@@ -410,6 +453,19 @@ where
         }
     }
 
+    /// Return whether a locator contains enough bibliographic metadata for CNKI lookup.
+    ///
+    /// # Arguments
+    ///
+    /// * `article` - Provider-neutral article locator.
+    ///
+    /// # Returns
+    ///
+    /// True when the article and its journal can be searched without guaranteed failure.
+    pub fn supports_article(article: &ArticleLocator) -> bool {
+        has_cnki_article_locator(article)
+    }
+
     fn resolve(&self, article: &ArticleLocator) -> Result<ArticleRedirect, ProviderError> {
         let mut client = self.client.lock().map_err(|_| {
             ProviderError::new(
@@ -427,6 +483,10 @@ impl<T> ArticleAbstractProvider for DomesticCnkiArticleAccessProvider<T>
 where
     T: DomesticCnkiTransport + Send,
 {
+    fn supports_abstract(&self, article: &ArticleLocator) -> bool {
+        Self::supports_article(article)
+    }
+
     fn resolve_abstract(
         &self,
         article: &ArticleLocator,
@@ -2462,6 +2522,15 @@ fn scholarly_article_redirect(article: &ArticleLocator) -> Result<ArticleRedirec
     ))
 }
 
+fn has_cnki_article_locator(article: &ArticleLocator) -> bool {
+    !normalize_bibliographic_text(&article.title).is_empty()
+        && (!normalize_bibliographic_text(&article.journal_title).is_empty()
+            || article
+                .journal_issns
+                .iter()
+                .any(|value| !value.trim().is_empty()))
+}
+
 fn encode_doi_path(doi: &str) -> String {
     let mut encoded = String::new();
     for byte in doi.bytes() {
@@ -3369,8 +3438,9 @@ mod tests {
         normalize_empty_unbounded_replay_checkpoint_at, openalex_article_draft,
         scholarly_access_registration, scholarly_article_draft, scholarly_index_registration,
         scholarly_issue_anchor, scholarly_window_filter_at, scholarly_window_from_context,
-        CnkiIndexProvider, DomesticCnkiIndexProvider, ScholarlyAnchor, ScholarlyCheckpoint,
-        ScholarlyIndexProvider, ScholarlyIssueFingerprint, ScholarlyScanPhase,
+        CnkiArticleAccessProvider, CnkiIndexProvider, DomesticCnkiArticleAccessProvider,
+        DomesticCnkiIndexProvider, ScholarlyAnchor, ScholarlyArticleAccessProvider,
+        ScholarlyCheckpoint, ScholarlyIndexProvider, ScholarlyIssueFingerprint, ScholarlyScanPhase,
         ScholarlySourceCheckpoint, ScholarlyWindowCheckpoint, CNKI_PROVIDER_NAME,
         CNKI_REDIRECT_HOSTS, CROSSREF_CURSOR_REUSE_SECONDS, DOMESTIC_CNKI_REDIRECT_HOSTS,
         SCHOLARLY_ANCHOR_VERSION, SCHOLARLY_CHECKPOINT_VERSION, SCHOLARLY_REDIRECT_HOSTS,
@@ -4031,6 +4101,31 @@ mod tests {
         assert!(cnki_redirect
             .location
             .starts_with("https://oversea.cnki.net/"));
+    }
+
+    #[test]
+    fn article_access_support_requires_provider_specific_locators() {
+        let mut article = article_locator("Article", "Canonical Journal");
+
+        assert!(!ScholarlyArticleAccessProvider::supports_article(&article));
+        assert!(CnkiArticleAccessProvider::<FixtureCnkiTransport>::supports_article(&article));
+        assert!(DomesticCnkiArticleAccessProvider::<
+            FixtureDomesticCnkiTransport,
+        >::supports_article(&article));
+
+        article.doi = Some("10.1000/article".to_string());
+        assert!(ScholarlyArticleAccessProvider::supports_article(&article));
+        article.doi = None;
+        article.pmid = Some("12345678".to_string());
+        assert!(ScholarlyArticleAccessProvider::supports_article(&article));
+
+        article.title = " ".to_string();
+        article.journal_title = " ".to_string();
+        article.journal_issns = vec![" ".to_string()];
+        assert!(!CnkiArticleAccessProvider::<FixtureCnkiTransport>::supports_article(&article));
+        assert!(!DomesticCnkiArticleAccessProvider::<
+            FixtureDomesticCnkiTransport,
+        >::supports_article(&article));
     }
 
     #[test]

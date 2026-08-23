@@ -92,6 +92,17 @@ pub trait IndexContentProvider: Send + Sync {
 
 /// Optional provider capability for live article abstract-page resolution.
 pub trait ArticleAbstractProvider: Send + Sync {
+    /// Return whether this provider can resolve the supplied article locator.
+    ///
+    /// # Arguments
+    ///
+    /// * `article` - Provider-neutral article locator.
+    ///
+    /// # Returns
+    ///
+    /// True when resolution can be attempted without guaranteed failure.
+    fn supports_abstract(&self, article: &ArticleLocator) -> bool;
+
     /// Resolve an ephemeral article abstract-page destination.
     ///
     /// # Arguments
@@ -111,6 +122,17 @@ pub trait ArticleAbstractProvider: Send + Sync {
 
 /// Optional provider capability for live article full-text resolution.
 pub trait ArticleFullTextProvider: Send + Sync {
+    /// Return whether this provider can resolve the supplied article locator.
+    ///
+    /// # Arguments
+    ///
+    /// * `article` - Provider-neutral article locator.
+    ///
+    /// # Returns
+    ///
+    /// True when resolution can be attempted without guaranteed failure.
+    fn supports_full_text(&self, article: &ArticleLocator) -> bool;
+
     /// Resolve an ephemeral full-text redirect or bounded document.
     ///
     /// # Arguments
@@ -486,6 +508,10 @@ mod tests {
     }
 
     impl ArticleAbstractProvider for FakeProvider {
+        fn supports_abstract(&self, _article: &ArticleLocator) -> bool {
+            true
+        }
+
         fn resolve_abstract(
             &self,
             _article: &ArticleLocator,
@@ -496,6 +522,10 @@ mod tests {
     }
 
     impl ArticleFullTextProvider for FakeProvider {
+        fn supports_full_text(&self, _article: &ArticleLocator) -> bool {
+            true
+        }
+
         fn resolve_full_text(
             &self,
             _article: &ArticleLocator,

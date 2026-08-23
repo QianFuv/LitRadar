@@ -163,6 +163,11 @@ pub fn validate_abstract_provider_fixture(
     context: ArticleAccessContext,
 ) -> Result<ArticleRedirect, ContractViolation> {
     validate_article_locator(article)?;
+    if !provider.supports_abstract(article) {
+        return Err(ContractViolation::new(
+            "abstract provider fixture does not support its locator",
+        ));
+    }
     let redirect = provider
         .resolve_abstract(article, context)
         .map_err(|error| {
@@ -194,6 +199,11 @@ pub fn validate_full_text_provider_fixture(
     maximum_document_bytes: usize,
 ) -> Result<ArticleFullTextResolution, ContractViolation> {
     validate_article_locator(article)?;
+    if !provider.supports_full_text(article) {
+        return Err(ContractViolation::new(
+            "full-text provider fixture does not support its locator",
+        ));
+    }
     let resolution = provider
         .resolve_full_text(article, context)
         .map_err(|error| {
@@ -708,6 +718,10 @@ mod tests {
     }
 
     impl ArticleAbstractProvider for FakeProvider {
+        fn supports_abstract(&self, _article: &ArticleLocator) -> bool {
+            true
+        }
+
         fn resolve_abstract(
             &self,
             _article: &ArticleLocator,
@@ -720,6 +734,10 @@ mod tests {
     }
 
     impl ArticleFullTextProvider for FakeProvider {
+        fn supports_full_text(&self, _article: &ArticleLocator) -> bool {
+            true
+        }
+
         fn resolve_full_text(
             &self,
             _article: &ArticleLocator,

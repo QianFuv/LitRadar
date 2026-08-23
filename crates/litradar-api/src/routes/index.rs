@@ -505,13 +505,13 @@ pub(crate) async fn get_article_access(
 ) -> Result<Json<litradar_domain::ArticleAccessResponse>, ApiError> {
     let (user, _) = require_current_user(&state, &headers).await?;
     let db = query.db.and_then(nonempty_owned);
-    let catalog_stem = run_index(&state, move |storage| {
+    let (article, catalog_stem) = run_index(&state, move |storage| {
         let catalog_stem = storage.resolve_index_catalog_stem(db.as_deref())?;
-        litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)?;
-        Ok(catalog_stem)
+        let article = litradar_storage::get_article_locator(&storage, db.as_deref(), article_id)?;
+        Ok((article, catalog_stem))
     })
     .await?;
-    let payload = article_access_response(&state, user.id, &catalog_stem).await?;
+    let payload = article_access_response(&state, &article, user.id, &catalog_stem).await?;
     Ok(Json(payload))
 }
 

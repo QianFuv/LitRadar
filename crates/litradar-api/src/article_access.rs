@@ -78,6 +78,7 @@ pub(crate) fn build_article_provider_registry(
 /// # Arguments
 ///
 /// * `state` - Shared API state.
+/// * `article` - Canonical article locator.
 /// * `user_id` - Authenticated user identifier.
 /// * `catalog_stem` - Canonical catalog configuration key.
 ///
@@ -86,6 +87,7 @@ pub(crate) fn build_article_provider_registry(
 /// Provider-neutral action flags and labels.
 pub(crate) async fn article_access_response(
     state: &ApiState,
+    article: &ArticleLocator,
     user_id: UserId,
     catalog_stem: &str,
 ) -> Result<ArticleAccessResponse, ApiError> {
@@ -97,23 +99,35 @@ pub(crate) async fn article_access_response(
         state,
         abstract_order,
         ProviderCapabilityKind::ArticleAbstract,
+        article,
         "查看摘要页",
         false,
     );
     let has_full_text_without_cnki_login = full_text_order.iter().any(|name| {
         name != ZJLIB_PROVIDER_NAME
-            && provider_has_capability(state, name, ProviderCapabilityKind::ArticleFullText)
+            && provider_supports_article(
+                state,
+                name,
+                ProviderCapabilityKind::ArticleFullText,
+                article,
+            )
     });
     let full_text_requires_login = !has_cnki_session
         && !has_full_text_without_cnki_login
         && full_text_order.iter().any(|name| {
             name == ZJLIB_PROVIDER_NAME
-                && provider_has_capability(state, name, ProviderCapabilityKind::ArticleFullText)
+                && provider_supports_article(
+                    state,
+                    name,
+                    ProviderCapabilityKind::ArticleFullText,
+                    article,
+                )
         });
     let fulltext = action_status(
         state,
         full_text_order,
         ProviderCapabilityKind::ArticleFullText,
+        article,
         "获取全文",
         full_text_requires_login,
     );
@@ -161,6 +175,9 @@ pub(crate) async fn resolve_article_abstract(
         else {
             continue;
         };
+        if !provider.supports_abstract(&article) {
+            continue;
+        }
         let provider_name = name.to_string();
         let request_article = article.clone();
         let result = state
@@ -238,6 +255,9 @@ pub(crate) async fn resolve_article_full_text(
         else {
             continue;
         };
+        if !provider.supports_full_text(&article) {
+            continue;
+        }
         let provider_name = name.to_string();
         let request_article = article.clone();
         let result = state
@@ -328,25 +348,51 @@ fn action_status(
     state: &ApiState,
     order: &[String],
     capability: ProviderCapabilityKind,
+    article: &ArticleLocator,
     label: &str,
     requires_login: bool,
 ) -> ArticleAccessAction {
-    let has_provider = order
+    let has_configured_provider = order
         .iter()
         .any(|name| provider_has_capability(state, name, capability));
+    let has_provider = order
+        .iter()
+        .any(|name| provider_supports_article(state, name, capability, article));
     let available = has_provider && !requires_login;
     ArticleAccessAction {
         available,
         label: label.to_string(),
         requires_login,
-        message: if !has_provider {
+        message: if !has_configured_provider {
             Some("当前未配置可用的在线能力".to_string())
+        } else if !has_provider {
+            Some("当前文章缺少可用于在线解析的信息".to_string())
         } else if requires_login {
             Some("请先完成浙江图书馆 CNKI 登录".to_string())
         } else {
             None
         },
     }
+}
+
+fn provider_supports_article(
+    state: &ApiState,
+    name: &str,
+    capability: ProviderCapabilityKind,
+    article: &ArticleLocator,
+) -> bool {
+    state
+        .article_providers()
+        .find(name)
+        .is_some_and(|registration| match capability {
+            ProviderCapabilityKind::ArticleAbstract => registration
+                .article_abstract()
+                .is_some_and(|provider| provider.supports_abstract(article)),
+            ProviderCapabilityKind::ArticleFullText => registration
+                .article_full_text()
+                .is_some_and(|provider| provider.supports_full_text(article)),
+            ProviderCapabilityKind::IndexContent => false,
+        })
 }
 
 fn provider_has_capability(
@@ -432,6 +478,10 @@ impl LiveCnkiAccessProvider {
 }
 
 impl ArticleAbstractProvider for LiveCnkiAccessProvider {
+    fn supports_abstract(&self, article: &ArticleLocator) -> bool {
+        CnkiArticleAccessProvider::<LiveCnkiTransport>::supports_article(article)
+    }
+
     fn resolve_abstract(
         &self,
         article: &ArticleLocator,
@@ -495,6 +545,10 @@ impl LiveDomesticCnkiAccessProvider {
 }
 
 impl ArticleAbstractProvider for LiveDomesticCnkiAccessProvider {
+    fn supports_abstract(&self, article: &ArticleLocator) -> bool {
+        DomesticCnkiArticleAccessProvider::<LiveDomesticCnkiTransport>::supports_article(article)
+    }
+
     fn resolve_abstract(
         &self,
         article: &ArticleLocator,
@@ -550,6 +604,15 @@ fn live_cnki_access_registration(
 }
 
 impl ArticleFullTextProvider for ZjlibCnkiFullTextProvider {
+    fn supports_full_text(&self, article: &ArticleLocator) -> bool {
+        !article.title.trim().is_empty()
+            && !article.journal_title.trim().is_empty()
+            && article
+                .authors
+                .iter()
+                .any(|author| !author.trim().is_empty())
+    }
+
     fn resolve_full_text(
         &self,
         article: &ArticleLocator,
@@ -732,14 +795,20 @@ mod tests {
 
     struct RedirectFixtureProvider {
         outcome: RedirectFixtureOutcome,
+        is_supported: bool,
     }
 
     impl ArticleAbstractProvider for RedirectFixtureProvider {
+        fn supports_abstract(&self, _article: &ArticleLocator) -> bool {
+            self.is_supported
+        }
+
         fn resolve_abstract(
             &self,
             _article: &ArticleLocator,
             _context: ArticleAccessContext,
         ) -> Result<ArticleRedirect, ProviderError> {
+            assert!(self.is_supported, "unsupported provider must be skipped");
             match self.outcome {
                 RedirectFixtureOutcome::Error(kind) => {
                     Err(ProviderError::new(kind, "fixture provider failure"))
@@ -751,14 +820,21 @@ mod tests {
         }
     }
 
-    struct AuthenticationRequiredFullTextProvider;
+    struct AuthenticationRequiredFullTextProvider {
+        is_supported: bool,
+    }
 
     impl ArticleFullTextProvider for AuthenticationRequiredFullTextProvider {
+        fn supports_full_text(&self, _article: &ArticleLocator) -> bool {
+            self.is_supported
+        }
+
         fn resolve_full_text(
             &self,
             _article: &ArticleLocator,
             _context: ArticleAccessContext,
         ) -> Result<ArticleFullTextResolution, ProviderError> {
+            assert!(self.is_supported, "unsupported provider must be skipped");
             Err(ProviderError::new(
                 ProviderErrorKind::AuthenticationRequired,
                 "fixture authentication required",
@@ -769,6 +845,10 @@ mod tests {
     struct PdfFullTextProvider;
 
     impl ArticleFullTextProvider for PdfFullTextProvider {
+        fn supports_full_text(&self, _article: &ArticleLocator) -> bool {
+            true
+        }
+
         fn resolve_full_text(
             &self,
             _article: &ArticleLocator,
@@ -867,6 +947,14 @@ mod tests {
     }
 
     fn abstract_registration(name: &str, outcome: RedirectFixtureOutcome) -> ProviderRegistration {
+        abstract_registration_with_support(name, outcome, true)
+    }
+
+    fn abstract_registration_with_support(
+        name: &str,
+        outcome: RedirectFixtureOutcome,
+        is_supported: bool,
+    ) -> ProviderRegistration {
         ProviderRegistration::try_new(
             ProviderDescriptor {
                 name: name.to_string(),
@@ -882,7 +970,10 @@ mod tests {
                 ],
             },
             ProviderImplementations {
-                article_abstract: Some(Arc::new(RedirectFixtureProvider { outcome })),
+                article_abstract: Some(Arc::new(RedirectFixtureProvider {
+                    outcome,
+                    is_supported,
+                })),
                 ..ProviderImplementations::default()
             },
         )
@@ -946,6 +1037,19 @@ mod tests {
         let state =
             ApiState::new(storage_config, secret_codec, false).with_article_providers(registry);
         (directory, state)
+    }
+
+    fn set_abstract_order(state: &ApiState, providers: &[&str]) {
+        litradar_storage::upsert_runtime_settings(
+            state.storage_config().auth_db_path(),
+            state.secret_codec(),
+            &HashMap::from([(
+                "article_abstract_provider_orders".to_string(),
+                Some(json!({"default": providers, "catalogs": {}}).to_string()),
+            )]),
+            &HashMap::new(),
+        )
+        .expect("abstract Provider order should update");
     }
 
     #[test]
@@ -1090,12 +1194,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scholarly_status_requires_an_external_identifier() {
+        let mut registry = ProviderRegistry::default();
+        registry
+            .register(scholarly_access_registration().expect("Scholarly should build"))
+            .expect("Scholarly should register");
+        let (_directory, state) = test_state(registry, None);
+        set_abstract_order(&state, &["scholarly"]);
+        let mut article = article_locator();
+        article.doi = None;
+        article.pmid = None;
+
+        let response = article_access_response(&state, &article, UserId(1), "fixture")
+            .await
+            .expect("local action status should resolve");
+        let error = resolve_article_abstract(&state, article, UserId(1), "fixture")
+            .await
+            .expect_err("unsupported Scholarly article should not resolve");
+
+        assert!(!response.abstract_page.available);
+        assert!(!response.abstract_page.requires_login);
+        assert_eq!(
+            response.abstract_page.message.as_deref(),
+            Some("当前文章缺少可用于在线解析的信息")
+        );
+        match error {
+            ApiError::Http { status, .. } => assert_eq!(status, StatusCode::NOT_FOUND),
+            ApiError::JsonDetail { .. }
+            | ApiError::TooManyRequests { .. }
+            | ApiError::Unexpected { .. } => panic!("expected not-found HTTP error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn locator_filter_skips_an_inapplicable_provider_before_fallback() {
+        let mut registry = ProviderRegistry::default();
+        registry
+            .register(abstract_registration_with_support(
+                "scholarly",
+                RedirectFixtureOutcome::Redirect("https://oversea.cnki.net/unsupported"),
+                false,
+            ))
+            .expect("unsupported fixture should register");
+        registry
+            .register(abstract_registration(
+                "cnki_oversea",
+                RedirectFixtureOutcome::Redirect("https://oversea.cnki.net/supported"),
+            ))
+            .expect("fallback fixture should register");
+        let (_directory, state) = test_state(registry, None);
+        set_abstract_order(&state, &["scholarly", "cnki_oversea"]);
+        let article = article_locator();
+
+        let response = article_access_response(&state, &article, UserId(1), "fixture")
+            .await
+            .expect("local action status should resolve");
+        let redirect = resolve_article_abstract(&state, article, UserId(1), "fixture")
+            .await
+            .expect("supported fallback should resolve");
+
+        assert!(response.abstract_page.available);
+        assert_eq!(redirect.location, "https://oversea.cnki.net/supported");
+    }
+
+    #[tokio::test]
     async fn full_text_resolution_falls_back_after_authentication_requirement() {
         let mut registry = ProviderRegistry::default();
         registry
             .register(full_text_registration(
                 ZJLIB_PROVIDER_NAME,
-                Arc::new(AuthenticationRequiredFullTextProvider),
+                Arc::new(AuthenticationRequiredFullTextProvider { is_supported: true }),
             ))
             .expect("authenticated provider should register");
         registry
@@ -1125,7 +1293,7 @@ mod tests {
         registry
             .register(full_text_registration(
                 ZJLIB_PROVIDER_NAME,
-                Arc::new(AuthenticationRequiredFullTextProvider),
+                Arc::new(AuthenticationRequiredFullTextProvider { is_supported: true }),
             ))
             .expect("authenticated provider should register");
         registry
@@ -1136,12 +1304,48 @@ mod tests {
             .expect("fallback provider should register");
         let (_directory, state) = test_state(registry, Some("zjlib,fixture"));
 
-        let response = article_access_response(&state, UserId(1), "fixture")
+        let article = article_locator();
+        let response = article_access_response(&state, &article, UserId(1), "fixture")
             .await
             .expect("local action status should resolve");
 
         assert!(response.fulltext.available);
         assert!(!response.fulltext.requires_login);
         assert!(response.fulltext.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn access_status_requires_login_only_for_applicable_full_text_providers() {
+        let mut registry = ProviderRegistry::default();
+        registry
+            .register(full_text_registration(
+                ZJLIB_PROVIDER_NAME,
+                Arc::new(AuthenticationRequiredFullTextProvider {
+                    is_supported: false,
+                }),
+            ))
+            .expect("unsupported authenticated provider should register");
+        let (_directory, state) = test_state(registry, Some("zjlib"));
+        let article = article_locator();
+
+        let response = article_access_response(&state, &article, UserId(1), "fixture")
+            .await
+            .expect("local action status should resolve");
+        let error = resolve_article_full_text(&state, article, UserId(1), "fixture")
+            .await
+            .expect_err("unsupported full-text Provider should be skipped");
+
+        assert!(!response.fulltext.available);
+        assert!(!response.fulltext.requires_login);
+        assert_eq!(
+            response.fulltext.message.as_deref(),
+            Some("当前文章缺少可用于在线解析的信息")
+        );
+        match error {
+            ApiError::Http { status, .. } => assert_eq!(status, StatusCode::NOT_FOUND),
+            ApiError::JsonDetail { .. }
+            | ApiError::TooManyRequests { .. }
+            | ApiError::Unexpected { .. } => panic!("expected not-found HTTP error"),
+        }
     }
 }

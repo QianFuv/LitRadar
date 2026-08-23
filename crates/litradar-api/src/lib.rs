@@ -5319,6 +5319,80 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn article_access_routes_hide_inapplicable_providers() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("locator_reader", false);
+        let index_database = backend.create_index_database("fixture.sqlite");
+        let article_id = insert_article_without_online_locator(&index_database.path);
+        litradar_storage::upsert_runtime_settings(
+            backend.auth_db_path(),
+            backend.secret_codec(),
+            &HashMap::from([
+                (
+                    "article_abstract_provider_orders".to_string(),
+                    Some(serde_json::json!({"default": ["scholarly"], "catalogs": {}}).to_string()),
+                ),
+                (
+                    "article_fulltext_provider_orders".to_string(),
+                    Some(serde_json::json!({"default": ["zjlib"], "catalogs": {}}).to_string()),
+                ),
+            ]),
+            &HashMap::new(),
+        )
+        .expect("article Provider orders should persist");
+        let app = backend.router();
+        let auth = user.authorization_header();
+
+        let access = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/articles/{article_id}/access?db=fixture"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let abstract_page = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/articles/{article_id}/abstract?db=fixture"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let fulltext = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/articles/{article_id}/fulltext?db=fixture"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(access.status, StatusCode::OK);
+        assert_eq!(access.payload["abstract_page"]["available"], false);
+        assert_eq!(access.payload["abstract_page"]["requires_login"], false);
+        assert_eq!(
+            access.payload["abstract_page"]["message"],
+            "当前文章缺少可用于在线解析的信息"
+        );
+        assert_eq!(access.payload["fulltext"]["available"], false);
+        assert_eq!(access.payload["fulltext"]["requires_login"], false);
+        assert_eq!(
+            access.payload["fulltext"]["message"],
+            "当前文章缺少可用于在线解析的信息"
+        );
+        assert_eq!(abstract_page.status, StatusCode::NOT_FOUND);
+        assert_eq!(fulltext.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn article_fulltext_downloads_cnki_pdf_with_live_fixture_session() {
         let route_config = TestRouteConfigGuard::new();
         route_config.set_index_fixture_mode(Some(FixtureZjlibCnkiMode::Success));
@@ -5939,6 +6013,28 @@ mod tests {
                 [article_id],
             )
             .expect("CNKI article should insert");
+    }
+
+    fn insert_article_without_online_locator(path: &Path) -> i64 {
+        let article_id = 9101;
+        Connection::open(path)
+            .expect("fixture index database should open")
+            .execute(
+                r#"
+                INSERT INTO articles (
+                    article_id, journal_id, issue_id, title, publication_year, date,
+                    authors_json, start_page, end_page, abstract_text, doi, pmid,
+                    open_access, in_press
+                ) VALUES (
+                    ?1, 101, 202401, 'Fixture Article Without Locator', 2024, '2024-03-01',
+                    '[]', '9', '12', 'Unsupported online access fixture.',
+                    NULL, NULL, 0, 0
+                )
+                "#,
+                [article_id],
+            )
+            .expect("article without an online locator should insert");
+        article_id
     }
 
     struct TestRouteConfigGuard {
