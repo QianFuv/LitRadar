@@ -13,7 +13,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::providers::{crossref_date, crossref_work_issue_anchor, ScholarlyAnchor};
-use crate::scholarly::{CrossrefQuery, CrossrefWorksPage};
+use crate::scholarly::{CrossrefQuery, CrossrefWorksPage, CROSSREF_ROWS};
 
 const APPLICATION_ID: i32 = 0x4c524357;
 const SCHEMA_VERSION: u32 = 1;
@@ -332,7 +332,7 @@ impl CrossrefCheckpoint {
                         Some(value) => {
                             from == until
                                 && !value.is_empty()
-                                && expected.is_some_and(|count| count > 1_000)
+                                && expected.is_some_and(|count| count > CROSSREF_ROWS as u64)
                         }
                         None => *received == 0,
                     }
@@ -763,10 +763,10 @@ impl CrossrefWorkset {
                             params![page.total_results, partition],
                         )
                         .map_err(storage_error)?;
-                    if page.items.len() as u64 != page.total_results.min(1_000) {
+                    if page.items.len() as u64 != page.total_results.min(CROSSREF_ROWS as u64) {
                         return self.retry_leaf(partition, retry, "single response was truncated");
                     }
-                    if page.total_results > 1_000 {
+                    if page.total_results > CROSSREF_ROWS as u64 {
                         if from < until {
                             let depth: u32 = self
                                 .connection
@@ -808,7 +808,7 @@ impl CrossrefWorkset {
                         }
                         return self.next_partition();
                     }
-                } else if page.items.len() > 225 {
+                } else if page.items.len() > CROSSREF_ROWS {
                     return self.retry_leaf(
                         partition,
                         retry,
@@ -821,7 +821,7 @@ impl CrossrefWorkset {
                 if total_received > page.total_results
                     || (page.items.is_empty() && total_received != page.total_results)
                     || (cursor.is_some()
-                        && page.items.len() < 225
+                        && page.items.len() < CROSSREF_ROWS
                         && total_received != page.total_results)
                 {
                     return self.retry_leaf(
@@ -830,7 +830,7 @@ impl CrossrefWorkset {
                         "cursor count is incomplete or exceeds the expected count",
                     );
                 }
-                let is_terminal_page = cursor.is_none() || page.items.len() < 225;
+                let is_terminal_page = cursor.is_none() || page.items.len() < CROSSREF_ROWS;
                 let mut keys = BTreeSet::new();
                 let mut prepared = Vec::with_capacity(page.items.len());
                 for work in page.items {
@@ -1305,7 +1305,6 @@ mod tests {
         let CrossrefPhase::Collect {
             from,
             until,
-            cursor,
             received,
             ..
         } = state.phase.clone()
@@ -1324,10 +1323,9 @@ mod tests {
         };
         let start = start.min(count);
         let end = end.min(count).max(start);
-        let rows = if cursor.is_some() { 225 } else { 1_000 };
         page(
             (start + received..end)
-                .take(rows)
+                .take(CROSSREF_ROWS)
                 .map(|index| work(index, first + if is_distributed { index as i64 } else { 0 }))
                 .collect(),
             end - start,
@@ -1502,8 +1500,8 @@ mod tests {
     }
 
     #[test]
-    fn single_responses_through_one_thousand_never_start_a_cursor() {
-        for count in [0, 1, 999, 1_000] {
+    fn single_responses_within_the_page_budget_never_start_a_cursor() {
+        for count in [0, 1, 224, 225] {
             let directory = tempfile::tempdir().unwrap();
             let mut cache = discovered_cache(directory.path());
             let state = cache
@@ -1518,12 +1516,163 @@ mod tests {
     }
 
     #[test]
+    fn partitions_over_the_page_budget_split_and_resume_dense_seconds() {
+        for count in [226, 1_000, 1_001] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut cache = discovered_cache(directory.path());
+            let before_split = cache.checkpoint();
+            let split = cache
+                .accept(page(
+                    (0..CROSSREF_ROWS as u64)
+                        .map(|index| work(index, 1))
+                        .collect(),
+                    count,
+                ))
+                .unwrap();
+            assert!(matches!(
+                split.phase,
+                CrossrefPhase::Collect {
+                    from: 1,
+                    until: 1,
+                    cursor: None,
+                    ..
+                }
+            ));
+            drop(cache);
+            let (mut cache, replayed) =
+                CrossrefWorkset::open(directory.path(), "catalog", &before_split).unwrap();
+            assert!(replayed);
+            assert_eq!(cache.checkpoint(), split);
+            assert_eq!(
+                cache
+                    .connection
+                    .query_row::<u64, _, _>("SELECT count(*) FROM works", [], |row| row.get(0))
+                    .unwrap(),
+                0
+            );
+            cache
+                .accept(page(
+                    (0..CROSSREF_ROWS as u64)
+                        .map(|index| work(index, 1))
+                        .collect(),
+                    count,
+                ))
+                .unwrap();
+            assert!(
+                matches!(&cache.state.phase, CrossrefPhase::Collect { cursor: Some(cursor), expected: Some(expected), received: 0, .. } if cursor == "*" && *expected == count)
+            );
+            cache
+                .accept(page(
+                    (0..CROSSREF_ROWS as u64)
+                        .map(|index| work(index, 1))
+                        .collect(),
+                    count,
+                ))
+                .unwrap();
+            let checkpoint: CrossrefCheckpoint =
+                serde_json::from_str(&encode(&cache.checkpoint()).unwrap()).unwrap();
+            drop(cache);
+            let (mut cache, replayed) =
+                CrossrefWorkset::open(directory.path(), "catalog", &checkpoint).unwrap();
+            assert!(!replayed);
+            assert_eq!(cache.checkpoint(), checkpoint);
+            while let CrossrefPhase::Collect {
+                from,
+                until,
+                received,
+                ..
+            } = cache.state.phase
+            {
+                let total = if (from..=until).contains(&1) {
+                    count
+                } else {
+                    0
+                };
+                cache
+                    .accept(page(
+                        (received..total)
+                            .take(CROSSREF_ROWS)
+                            .map(|index| work(index, 1))
+                            .collect(),
+                        total,
+                    ))
+                    .unwrap();
+            }
+            assert!(matches!(cache.state.phase, CrossrefPhase::Ready));
+            assert_eq!(cache.state.root_total, Some(count));
+            assert_eq!(cache.state.frozen_at, before_split.frozen_at);
+            assert_eq!(cache.state.updated_from, before_split.updated_from);
+            assert_eq!(cache.state.generation, 0);
+            assert_eq!(
+                cache
+                    .connection
+                    .query_row::<u64, _, _>("SELECT count(*) FROM works", [], |row| row.get(0))
+                    .unwrap(),
+                count
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_completed_single_response_above_new_budget_is_not_recollected() {
+        let directory = tempfile::tempdir().unwrap();
+        let initial = CrossrefCheckpoint::new("1234-5679".to_string(), 1, None).unwrap();
+        let mut cache = CrossrefWorkset::create(directory.path(), "catalog", initial).unwrap();
+        cache.accept(page(vec![work(0, 1)], 500)).unwrap();
+        cache
+            .accept(page(
+                (0..CROSSREF_ROWS as u64)
+                    .map(|index| work(index, 1))
+                    .collect(),
+                500,
+            ))
+            .unwrap();
+        while let CrossrefPhase::Collect { received, .. } = cache.state.phase {
+            cache
+                .accept(page(
+                    (received..500)
+                        .take(CROSSREF_ROWS)
+                        .map(|index| work(index, 1))
+                        .collect(),
+                    500,
+                ))
+                .unwrap();
+        }
+        cache
+            .connection
+            .execute("UPDATE partitions SET cursor=NULL WHERE status='done'", [])
+            .unwrap();
+        let checkpoint = cache.checkpoint();
+        drop(cache);
+        let (cache, replayed) =
+            CrossrefWorkset::open(directory.path(), "catalog", &checkpoint).unwrap();
+        assert!(!replayed);
+        assert_eq!(cache.checkpoint(), checkpoint);
+        assert!(matches!(cache.state.phase, CrossrefPhase::Ready));
+        assert!(cache.state.query().is_err());
+        assert_eq!(cache.connection.query_row::<u64, _, _>("SELECT received FROM partitions WHERE id=1 AND status='done' AND cursor IS NULL", [], |row| row.get(0)).unwrap(), 500);
+        assert_eq!(
+            cache
+                .connection
+                .query_row::<u64, _, _>("SELECT count(*) FROM works", [], |row| row.get(0))
+                .unwrap(),
+            500
+        );
+        assert_eq!(
+            cache.emit("9999-12-31", None, None).unwrap().works.len(),
+            225
+        );
+    }
+
+    #[test]
     fn empty_first_child_does_not_finish_before_a_dense_second_child() {
         let directory = tempfile::tempdir().unwrap();
         let mut cache = discovered_cache(directory.path());
         cache
             .accept(page(
-                (0..1_000).map(|index| work(index, 2)).collect(),
+                (0..CROSSREF_ROWS as u64)
+                    .map(|index| work(index, 2))
+                    .collect(),
                 1_001,
             ))
             .unwrap();
@@ -1534,7 +1683,9 @@ mod tests {
         ));
         cache
             .accept(page(
-                (0..1_000).map(|index| work(index, 2)).collect(),
+                (0..CROSSREF_ROWS as u64)
+                    .map(|index| work(index, 2))
+                    .collect(),
                 1_001,
             ))
             .unwrap();
@@ -1542,7 +1693,7 @@ mod tests {
             cache
                 .accept(page(
                     (received..1_001)
-                        .take(225)
+                        .take(CROSSREF_ROWS)
                         .map(|index| work(index, 2))
                         .collect(),
                     1_001,
@@ -1559,7 +1710,9 @@ mod tests {
         let mut cache = discovered_cache(directory.path());
         cache
             .accept(page(
-                (0..1_000).map(|index| work(index, 2)).collect(),
+                (0..CROSSREF_ROWS as u64)
+                    .map(|index| work(index, 2))
+                    .collect(),
                 1_102,
             ))
             .unwrap();
@@ -1568,7 +1721,9 @@ mod tests {
             .unwrap();
         cache
             .accept(page(
-                (0..1_000).map(|index| work(index, 2)).collect(),
+                (0..CROSSREF_ROWS as u64)
+                    .map(|index| work(index, 2))
+                    .collect(),
                 1_100,
             ))
             .unwrap();
@@ -1711,14 +1866,16 @@ mod tests {
         for generation in 0..=1 {
             cache
                 .accept(page(
-                    (0..1_000).map(|index| work(index, 1)).collect(),
-                    1_001,
+                    (0..CROSSREF_ROWS as u64)
+                        .map(|index| work(index, 1))
+                        .collect(),
+                    449,
                 ))
                 .unwrap();
             cache
-                .accept(page((0..501).map(|index| work(index, 1)).collect(), 501))
+                .accept(page((0..225).map(|index| work(index, 1)).collect(), 225))
                 .unwrap();
-            let response = page((501..1_002).map(|index| work(index, 2)).collect(), 501);
+            let response = page((225..450).map(|index| work(index, 2)).collect(), 225);
             if generation == 0 {
                 let retry = cache.accept(response).unwrap();
                 assert_eq!(retry.generation, 1);

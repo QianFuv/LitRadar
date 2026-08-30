@@ -4301,7 +4301,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut client = ScholarlyClient::new(
             FixtureScholarlyTransport::new(ScholarlyFixtureData {
-                crossref_works: crossref_works(0, 1_001),
+                crossref_works: crossref_works(0, 226),
                 ..Default::default()
             }),
             true,
@@ -4330,7 +4330,11 @@ mod tests {
         };
         assert!(matches!(
             state.phase,
-            super::CrossrefPhase::Collect { received: 225, .. }
+            super::CrossrefPhase::Collect {
+                received: 225,
+                expected: Some(226),
+                ..
+            }
         ));
         for status in [500, 503, 400] {
             let mut failing = ScholarlyClient::new(

@@ -72,10 +72,12 @@ LitRadar 采用官方建议的“小窗口、created 条件、小结果单响应
 | 步骤 | 查询与完成条件 |
 | ---- | -------------- |
 | 创建日期定界 | 无 cursor，`rows=1&sort=created&order=asc`，只加 `until-created-date:T`，不加 update 条件；用最早记录的 `created.timestamp` 毫秒值转换为 UTC 秒下界 `C`。 |
-| 普通分片 | 查询 `[C,T]` 或其子区间，无 cursor、无 sort/order、`rows=1000`。首响应 `message.total-results <= 1000` 时，实际条数和唯一数必须都相等。 |
-| 大于 1000 的分片 | 丢弃探测响应的文章前缀，将 UTC 整秒闭区间 `[a,b]` 二分为 `[a,m]`、`[m+1,b]`；继续单响应探测，最大深度 64。 |
-| 单秒仍大于 1000 | 该片从 `cursor=*&rows=225` 完整重取，无 sort/order；后续只改变 cursor，其他参数固定，不使用 offset。 |
+| 普通分片 | 查询 `[C,T]` 或其子区间，无 cursor、无 sort/order、`rows=225`。响应条数必须等于 `min(message.total-results,225)`；总数不超过 225 时，实际条数和唯一数必须都与总数相等。 |
+| 大于 225 的分片 | 丢弃探测响应的文章前缀，将 UTC 整秒闭区间 `[a,b]` 二分为 `[a,m]`、`[m+1,b]`；继续单响应探测，最大深度 64。 |
+| 单秒仍大于 225 | 该片从 `cursor=*&rows=225` 完整重取，无 sort/order；后续只改变 cursor，其他参数固定，不使用 offset。 |
 | 完整性校验 | 每片累计条数、唯一数和首响应总数一致；每页总数不得漂移，父片等于子片之和，根总数等于全局唯一数。游标最后一页恰好满 225 条时继续确认终止响应，不能仅凭已达到总数提前完成。 |
+
+225 条沿用既有的单次请求规模。[官方允许的最大 rows 为 1000](https://github.com/CrossRef/rest-api-doc#rows)，无需使用最大值才能采用单响应与计数校验方案。较小阈值可能增加分片和请求数，不新增 `rows=0` 探测或超限回退。已验证的旧版完整叶片可以继续复用，已有游标仍以相同的 225 条参数恢复；新产生的 226–1000 条单秒游标状态不能交给仍要求总数大于 1000 的旧二进制恢复。
 
 日期边界采用官方支持的[包含式 UTC 秒精度](https://community.crossref.org/t/query-the-rest-api-with-hour-minute-second-resolution/13821)。有界 Incremental 在每个分片附加相同的 `from-update-date:<anchor 年份的 1 月 1 日>` 和 `until-update-date:T`，创建日期则始终覆盖整刊历史。因此早年创建、最近修改的 DOI 不会因创建年份早于更新下界而被排除。无 anchor、FullRescan 或同源无界重放去掉全部 update 条件，只保留完整 created 范围和同一 `T`；无界重放还保留已经冻结的 candidate。
 
@@ -89,7 +91,7 @@ created 不变只能稳定分片归属，不能冻结文章字段或 update 条�
 
 收集页和分片状态在同一 SQLite 事务内保存，验证完成后结果固定。相同期次先聚合为连续组：按组内最大出版日期降序，再按可用年份、数值卷期降序和 fingerprint 字节序排序；组内按日期降序、记录 key 升序。缺失月/日只在排序键中补 01，不改变内容日期精度，无日期记录排后。这个顺序由本地规则确定，不声称复刻上游旧排序的隐含平局规则。
 
-查询通过持续维护的索引和 keyset 分页，每个输出页最多 225 条、16 MiB payload，不构造整刊 Vec，也不依赖 `/tmp` 大排序文件。工作集使用 4 MiB SQLite page cache、关闭 mmap，主文件上限 4 GiB；page cache 不是进程 RSS 上限，事务日志还需要额外磁盘空间。HTTP 响应仍限 16 MiB，探测的 1000 条记录也不例外。磁盘满、容量或响应超限都会失败并保留正式内容和旧成功 anchor，不截断结果凑数。
+查询通过持续维护的索引和 keyset 分页，每个输出页最多 225 条、16 MiB payload，不构造整刊 Vec，也不依赖 `/tmp` 大排序文件。工作集使用 4 MiB SQLite page cache、关闭 mmap，主文件上限 4 GiB；page cache 不是进程 RSS 上限，事务日志还需要额外磁盘空间。HTTP 响应仍限 16 MiB，225 条探测也受此限制；单条元数据大小不固定，较少条数不保证永不超限。磁盘满、容量或响应超限都会失败并保留正式内容和旧成功 anchor，不截断结果凑数。
 
 core checkpoint 是确认进度的权威。缓存超前一页时先重放该已暂存步骤；内容已提交而控制事务失败时依靠既有 identity/upsert 重放。工作集缺失或可识别的自有文件损坏时，从同一 `C/T`、update 条件和 candidate 重建，不继续缺少前缀的旧 cursor。Provider 准备返回 Complete 时可清理缓存；若随后 core 提交失败，恢复仍按缺失缓存规则重取。路径或身份不匹配直接失败。
 
@@ -169,7 +171,7 @@ Crossref、OpenAlex 和 Semantic Scholar 共用的 HTTP client 禁止自动重�
 
 修改 adapter 时至少覆盖：
 
-- Crossref created/update 组合、UTC 包含式秒分界、0/1000/1001 阈值与空子片、多 ISSN 404 和 OpenAlex fallback；
+- Crossref created/update 组合、UTC 包含式秒分界、0/224/225/226/1000/1001 条与空子片、单次响应大小保护、多 ISSN 404 和 OpenAlex fallback；
 - 10,001/100,001 条分散创建日期或集中单秒的完整收集，去重、父子/根计数和持久重试预算；
 - 本地乱序期次归并、同日平局、整期 base 补查，以及下一次 update 新增的边界文章；
 - Crossref/OpenAlex 规范字段产生相同 issue fingerprint，anchor 不含上游 ID；

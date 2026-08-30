@@ -33,7 +33,8 @@ const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,p
 const DEFAULT_USER_AGENT: &str = "LitRadar/0.1";
 const CROSSREF_ATTEMPT_INTERVAL_MS: u64 = 110;
 const SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS: u64 = 1_100;
-const CROSSREF_ROWS: usize = 225;
+/// Maximum work count per Crossref probe or cursor response.
+pub(crate) const CROSSREF_ROWS: usize = 225;
 const OPENALEX_DOI_FILTER_MAX_VALUES: usize = 100;
 const OPENALEX_DOI_REQUEST_URL_BUDGET: usize = 1_900;
 const OPENALEX_DEFAULT_REMAINING_CREDITS: u64 = 100_000;
@@ -1046,15 +1047,7 @@ fn crossref_journal_query(request: &CrossrefQuery) -> Result<Vec<(String, String
                 filters.push(format!("from-update-date:{from}"));
                 filters.push(format!("until-update-date:{}", crossref_timestamp(*until)?));
             }
-            query.push((
-                "rows".to_string(),
-                if cursor.is_some() {
-                    CROSSREF_ROWS
-                } else {
-                    1_000
-                }
-                .to_string(),
-            ));
+            query.push(("rows".to_string(), CROSSREF_ROWS.to_string()));
             if let Some(cursor) = cursor {
                 query.push(("cursor".to_string(), cursor.clone()));
             }
@@ -3087,11 +3080,7 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
                         (
                             matching,
                             self.crossref_page_index,
-                            if cursor.is_some() {
-                                CROSSREF_ROWS
-                            } else {
-                                1_000
-                            },
+                            CROSSREF_ROWS,
                             cursor.is_some(),
                         )
                     }
@@ -3965,6 +3954,7 @@ mod tests {
     enum LiveJsonTestOutcome {
         DropConnection,
         HttpStatus(u16),
+        OversizedResponse,
         Success,
     }
 
@@ -4031,6 +4021,14 @@ mod tests {
                         stream
                             .shutdown(std::net::Shutdown::Both)
                             .expect("test connection should close");
+                    }
+                    LiveJsonTestOutcome::OversizedResponse => {
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            SCHOLARLY_RESPONSE_MAXIMUM_BYTES + 1
+                        )
+                        .expect("oversized response headers should write");
                     }
                     LiveJsonTestOutcome::HttpStatus(status_code) => {
                         let reason = if status_code == 429 {
@@ -6581,6 +6579,157 @@ mod tests {
     }
 
     #[test]
+    fn crossref_probes_collect_large_metadata_within_the_existing_response_limit() {
+        use crate::crossref_workset::{CrossrefCheckpoint, CrossrefPhase, CrossrefWorkset};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let is_finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server_finished = Arc::clone(&is_finished);
+        let server = thread::spawn(move || {
+            let padding = "x".repeat(36 * 1024);
+            let mut requests = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !server_finished.load(Ordering::SeqCst) && Instant::now() < deadline {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("test request should connect: {error}"),
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = [0_u8; 8_192];
+                let size = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let target = request.split_whitespace().nth(1).unwrap();
+                let url = reqwest::Url::parse(&format!("http://{address}{target}")).unwrap();
+                let query = url.query_pairs().collect::<BTreeMap<_, _>>();
+                let rows = query["rows"].parse::<usize>().unwrap();
+                assert!(!query.contains_key("cursor"));
+                let filters = query["filter"]
+                    .split(',')
+                    .map(|filter| filter.split_once(':').unwrap())
+                    .collect::<BTreeMap<_, _>>();
+                let second = |name| {
+                    filters.get(name).map(|value| {
+                        chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S")
+                            .unwrap()
+                            .and_utc()
+                            .timestamp()
+                    })
+                };
+                let first = second("from-created-date").unwrap_or(1).max(1);
+                let last = second("until-created-date").unwrap().min(500);
+                let total = (last - first + 1).max(0) as u64;
+                let items = (first..=last)
+                    .take(rows)
+                    .map(|index| {
+                        json!({
+                            "DOI": format!("10.1234/bounded-{index}"),
+                            "title": [format!("Article {index}")],
+                            "issued": {"date-parts": [[2026, 1, 1]]},
+                            "volume": "1", "issue": "1",
+                            "created": {"timestamp": index * 1_000},
+                            "reference": [{"unstructured": padding}]
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let body = json!({"message": {"total-results": total, "items": items}}).to_string();
+                requests.push((rows, body.len()));
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                let written = stream.write_all(body.as_bytes());
+                if body.len() <= SCHOLARLY_RESPONSE_MAXIMUM_BYTES {
+                    written.unwrap();
+                }
+            }
+            requests
+        });
+        let result = (|| -> Result<usize, Box<dyn std::error::Error>> {
+            let root = tempfile::tempdir()?;
+            let initial = CrossrefCheckpoint::new(
+                "1234-5679".to_string(),
+                500,
+                Some("1970-01-01".to_string()),
+            )?;
+            let mut cache = CrossrefWorkset::create(root.path(), "http-probe", initial)?;
+            let mut transport =
+                LiveScholarlyTransport::new(LiveScholarlyConfig::from_value_pools(5, "", "", ""))?;
+            for _step in 0..32 {
+                if matches!(cache.checkpoint().phase, CrossrefPhase::Ready) {
+                    break;
+                }
+                let query = crossref_journal_query(&cache.checkpoint().query()?)?;
+                let mut payload = transport.get_json(
+                    CROSSREF_SOURCE,
+                    "journal_works",
+                    &format!("http://{address}/journals/1234-5679/works"),
+                    &query,
+                )?;
+                let message = &mut payload["message"];
+                let page = super::CrossrefWorksPage {
+                    total_results: message["total-results"].as_u64().unwrap(),
+                    items: take_json_array(message, "items"),
+                    next_cursor: None,
+                };
+                cache.accept(page)?;
+            }
+            assert!(matches!(cache.checkpoint().phase, CrossrefPhase::Ready));
+            assert_eq!(cache.checkpoint().root_total, Some(500));
+            let mut after = None;
+            let mut identities = std::collections::BTreeSet::new();
+            loop {
+                let page = cache.emit("9999-12-31", None, after.as_ref())?;
+                for work in page.works {
+                    assert!(identities.insert(work["DOI"].as_str().unwrap().to_string()));
+                }
+                if !page.has_more {
+                    break;
+                }
+                after = page.after;
+            }
+            Ok(identities.len())
+        })();
+        is_finished.store(true, Ordering::SeqCst);
+        let requests = server.join().unwrap();
+        assert!(
+            result.is_ok(),
+            "bounded collection failed: {result:?}; requests: {requests:?}"
+        );
+        assert_eq!(result.unwrap(), 500);
+        assert!(requests.len() > 2);
+        assert!(requests
+            .iter()
+            .all(|(rows, bytes)| *rows <= 225 && *bytes <= SCHOLARLY_RESPONSE_MAXIMUM_BYTES));
+    }
+
+    #[test]
+    fn crossref_response_over_the_byte_limit_still_stops_without_retry() {
+        let (result, transport, delays, starts, _) = execute_live_json_sequence(
+            CROSSREF_SOURCE,
+            "journal_works",
+            5,
+            vec![LiveJsonTestOutcome::OversizedResponse],
+        );
+        assert!(
+            matches!(result, Err(SourceError::Request { ref message, .. }) if message.contains("size limit"))
+        );
+        assert_eq!(transport.attempts().len(), 1);
+        assert_eq!(starts.len(), 1);
+        assert!(delays.is_empty());
+        assert!(!transport.attempts()[0].did_succeed);
+        assert!(!transport.attempts()[0].did_retry);
+    }
+
+    #[test]
     fn crossref_status_errors_record_attempts() {
         let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
             crossref_status: Some(503),
@@ -6710,7 +6859,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(query["rows"], "1000");
+        assert_eq!(query["rows"], "225");
         assert!(!query.contains_key("cursor"));
         assert!(!query.contains_key("sort"));
         assert!(query["filter"]
