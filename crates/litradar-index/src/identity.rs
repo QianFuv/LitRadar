@@ -316,12 +316,55 @@ pub fn merge_article_drafts(
 ///
 /// # Returns
 ///
-/// Deterministic canonical content with one representative when resolved DOI aliases differ.
+/// Refreshed publication metadata with stable identity and retained content enrichment.
+/// A later in-press observation cannot replace an existing formal publication.
 pub(crate) fn merge_resolved_article_drafts(
     left: &ArticleDraft,
     right: &ArticleDraft,
 ) -> Result<ArticleDraft, ArticleMergeError> {
-    merge_article_drafts_with_doi_policy(left, right, true)
+    let mut merged = merge_article_drafts_with_doi_policy(left, right, true)?;
+    let (preferred, fallback) = if left.in_press == Some(false) && right.in_press == Some(true) {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    merged.date = preferred.date.clone().or_else(|| {
+        fallback
+            .date
+            .as_ref()
+            .filter(|date| {
+                preferred.publication_year.is_none_or(|year| {
+                    publication_year_from_date(date).and_then(|value| value.parse().ok())
+                        == Some(year)
+                })
+            })
+            .cloned()
+    });
+    merged.publication_year = merged
+        .date
+        .as_deref()
+        .and_then(publication_year_from_date)
+        .and_then(|value| value.parse().ok())
+        .or(preferred.publication_year)
+        .or(fallback.publication_year);
+    merged.issue_title = preferred
+        .issue_title
+        .clone()
+        .or_else(|| fallback.issue_title.clone());
+    merged.volume = preferred.volume.clone().or_else(|| fallback.volume.clone());
+    merged.issue_number = preferred
+        .issue_number
+        .clone()
+        .or_else(|| fallback.issue_number.clone());
+    merged.start_page = preferred
+        .start_page
+        .clone()
+        .or_else(|| fallback.start_page.clone());
+    merged.end_page = preferred
+        .end_page
+        .clone()
+        .or_else(|| fallback.end_page.clone());
+    Ok(merged)
 }
 
 fn merge_article_drafts_with_doi_policy(
@@ -684,6 +727,77 @@ mod tests {
             merge_article_drafts(&left, &other_catalog),
             Err(ArticleMergeError::CatalogMismatch)
         );
+    }
+
+    #[test]
+    fn resolved_merge_accepts_corrected_publication_dates_and_precision() {
+        for (previous_year, previous_date, incoming_year, incoming_date) in [
+            (2025, "2025-10-17", 2026, "2026-08"),
+            (2026, "2026-07-07", 2026, "2026-08-07"),
+            (2026, "2026-08-07", 2026, "2026-07-07"),
+            (2026, "2026-01-01", 2026, "2026"),
+        ] {
+            let mut previous = article("Corrected Article", Some("10.1000/corrected"));
+            previous.publication_year = Some(previous_year);
+            previous.date = Some(previous_date.to_string());
+            let incoming = ArticleDraft {
+                publication_year: Some(incoming_year),
+                date: Some(incoming_date.to_string()),
+                ..previous.clone()
+            };
+            let merged = merge_resolved_article_drafts(&previous, &incoming).unwrap();
+            assert_eq!(merged.publication_year, Some(incoming_year));
+            assert_eq!(merged.date.as_deref(), Some(incoming_date));
+            assert_eq!(
+                merge_resolved_article_drafts(&merged, &incoming).unwrap(),
+                merged
+            );
+        }
+    }
+
+    #[test]
+    fn resolved_merge_promotes_publication_fields_without_reverting_to_in_press() {
+        let mut online = article("Promoted Article", Some("10.1000/promoted"));
+        online.publication_year = Some(2025);
+        online.date = Some("2025-10-17".to_string());
+        online.volume = Some("71".to_string());
+        online.issue_number = None;
+        online.in_press = Some(true);
+        let formal = ArticleDraft {
+            publication_year: Some(2026),
+            date: Some("2026-08".to_string()),
+            volume: Some("72".to_string()),
+            issue_number: Some("8".to_string()),
+            in_press: Some(false),
+            ..online.clone()
+        };
+        let merged = merge_resolved_article_drafts(&online, &formal).unwrap();
+        assert_eq!(merged, formal);
+        assert_eq!(
+            merge_resolved_article_drafts(&merged, &online).unwrap(),
+            formal
+        );
+    }
+
+    #[test]
+    fn resolved_merge_keeps_known_dates_only_when_the_incoming_year_agrees() {
+        let previous = article("Sparse Update", Some("10.1000/sparse"));
+        let missing = ArticleDraft {
+            publication_year: None,
+            date: None,
+            ..previous.clone()
+        };
+        assert_eq!(
+            merge_resolved_article_drafts(&previous, &missing).unwrap(),
+            previous
+        );
+        let changed_year = ArticleDraft {
+            publication_year: Some(2027),
+            ..missing
+        };
+        let merged = merge_resolved_article_drafts(&previous, &changed_year).unwrap();
+        assert_eq!(merged.publication_year, Some(2027));
+        assert_eq!(merged.date, None);
     }
 
     #[test]

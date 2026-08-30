@@ -460,6 +460,7 @@ pub fn write_content_batch(
                 &mut outcome,
             )?;
         }
+        writer.refresh_issue_dates()?;
         writer.refresh_journal_projections(journal_id, catalog, projection_refresh)?;
         outcome
     };
@@ -965,6 +966,7 @@ fn upsert_canonical_journal_with_statements(
 
 struct CanonicalContentWriter<'connection> {
     connection: &'connection Connection,
+    observed_issue_ids: BTreeSet<i64>,
     journal_projection: CachedStatement<'connection>,
     journal_upsert: CachedStatement<'connection>,
     issue_upsert: CachedStatement<'connection>,
@@ -985,6 +987,7 @@ impl<'connection> CanonicalContentWriter<'connection> {
     fn prepare(connection: &'connection Connection) -> Result<Self, ContentDatabaseError> {
         Ok(Self {
             connection,
+            observed_issue_ids: BTreeSet::new(),
             journal_projection: connection.prepare_cached(JOURNAL_PROJECTION_SQL)?,
             journal_upsert: connection.prepare_cached(JOURNAL_UPSERT_SQL)?,
             issue_upsert: connection.prepare_cached(
@@ -992,11 +995,7 @@ impl<'connection> CanonicalContentWriter<'connection> {
                      issue_id, journal_id, publication_year, title, volume, number, date
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(issue_id) DO UPDATE SET
-                     publication_year = CASE
-                         WHEN issues.publication_year IS NULL THEN excluded.publication_year
-                         WHEN excluded.publication_year IS NULL THEN issues.publication_year
-                         ELSE MIN(issues.publication_year, excluded.publication_year)
-                     END,
+                     publication_year = COALESCE(excluded.publication_year, issues.publication_year),
                      title = CASE
                          WHEN issues.title IS NULL THEN excluded.title
                          WHEN excluded.title IS NULL THEN issues.title
@@ -1014,13 +1013,7 @@ impl<'connection> CanonicalContentWriter<'connection> {
                          WHEN excluded.number IS NULL THEN issues.number
                          ELSE MIN(issues.number, excluded.number)
                      END,
-                     date = CASE
-                         WHEN issues.date IS NULL THEN excluded.date
-                         WHEN excluded.date IS NULL THEN issues.date
-                         WHEN length(excluded.date) > length(issues.date) THEN excluded.date
-                         WHEN length(excluded.date) < length(issues.date) THEN issues.date
-                         ELSE MIN(issues.date, excluded.date)
-                     END",
+                     date = COALESCE(excluded.date, issues.date)",
             )?,
             identity_lookup: connection.prepare_cached(
                 "SELECT article_id FROM article_identity_keys
@@ -1160,7 +1153,21 @@ impl<'connection> CanonicalContentWriter<'connection> {
             issue.number,
             issue.date,
         ])?;
+        self.observed_issue_ids.insert(issue_id);
         Ok(Some(issue_id))
+    }
+
+    fn refresh_issue_dates(&self) -> Result<(), ContentDatabaseError> {
+        let mut statement = self.connection.prepare_cached(
+            "UPDATE issues SET date = COALESCE(
+                 (SELECT date FROM articles WHERE issue_id = ?1 AND date IS NOT NULL
+                  ORDER BY length(date) DESC, date LIMIT 1), date)
+             WHERE issue_id = ?1",
+        )?;
+        for issue_id in &self.observed_issue_ids {
+            statement.execute([issue_id])?;
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1239,6 +1246,16 @@ impl<'connection> CanonicalContentWriter<'connection> {
                 merged.in_press.unwrap_or(false),
                 created_at,
             )?;
+            if previous_issue_id != issue_id {
+                if let Some(previous_issue_id) = previous_issue_id {
+                    self.observed_issue_ids.insert(previous_issue_id);
+                    self.connection.execute(
+                        "DELETE FROM issues WHERE issue_id = ?1
+                         AND NOT EXISTS (SELECT 1 FROM articles WHERE issue_id = ?1)",
+                        [previous_issue_id],
+                    )?;
+                }
+            }
             outcome.articles_changed += 1;
         }
 
@@ -2324,6 +2341,179 @@ mod tests {
                 .expect("row count should read");
             assert_eq!(count, expected, "unexpected replay cardinality for {table}");
         }
+    }
+
+    #[test]
+    fn publication_date_corrections_move_issues_and_refresh_projections_without_changing_ids() {
+        for (previous_year, previous_date) in [(2025, "2025-10-17"), (2026, "2026-01-01")] {
+            let connection = Connection::open_in_memory().unwrap();
+            init_content_db(&connection).unwrap();
+            let mut previous = batch();
+            previous.issues.clear();
+            previous.articles[0].publication_year = Some(previous_year);
+            previous.articles[0].date = Some(previous_date.to_string());
+            write_test_batch(&connection, &catalog(), &previous, "before-correction");
+            let (article_id, old_issue_id) = connection
+                .query_row("SELECT article_id, issue_id FROM articles", [], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+                })
+                .unwrap();
+            let old_aliases: i64 = connection
+                .query_row("SELECT COUNT(*) FROM article_identity_keys", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            let mut corrected = previous;
+            corrected.articles[0].publication_year = Some(2026);
+            corrected.articles[0].date = Some("2026-08".to_string());
+            let outcome = write_test_batch(&connection, &catalog(), &corrected, "correction");
+            let stored = connection
+                .query_row(
+                    "SELECT a.article_id, a.publication_year, a.date, i.publication_year, i.date,
+                            l.publication_year, l.date, a.issue_id = l.issue_id
+                     FROM articles a JOIN issues i USING(issue_id) JOIN article_listing l USING(article_id)",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?, row.get::<_, String>(4)?, row.get::<_, i64>(5)?,
+                        row.get::<_, String>(6)?, row.get::<_, bool>(7)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                stored,
+                (
+                    article_id,
+                    2026,
+                    "2026-08".to_string(),
+                    2026,
+                    "2026-08".to_string(),
+                    2026,
+                    "2026-08".to_string(),
+                    true
+                )
+            );
+            assert_eq!(outcome.articles_changed, 1);
+            assert_eq!(
+                outcome.change_events_emitted,
+                if previous_year == 2025 { 2 } else { 1 }
+            );
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM issues", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+            assert!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM article_identity_keys", [], |row| row
+                        .get::<_, i64>(
+                        0
+                    ))
+                    .unwrap()
+                    >= old_aliases
+            );
+            if previous_year == 2025 {
+                assert_eq!(connection.query_row(
+                    "SELECT issue_id FROM article_change_events WHERE change_kind = 'remove'",
+                    [], |row| row.get::<_, i64>(0)).unwrap(), old_issue_id);
+            }
+            let replay = write_test_batch(&connection, &catalog(), &corrected, "replay-correction");
+            assert_eq!(replay.articles_changed, 0);
+            assert_eq!(replay.change_events_emitted, 0);
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM article_search WHERE rowid = ?1",
+                        [article_id],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap(),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn corrected_issue_dates_follow_current_articles_independently_of_replay_order() {
+        let connection = Connection::open_in_memory().unwrap();
+        init_content_db(&connection).unwrap();
+        let mut observed = batch_with_article_count(2);
+        observed.issues.clear();
+        observed.articles[0].date = Some("2026-08-07".to_string());
+        observed.articles[1].date = Some("2026-08-08".to_string());
+        write_test_batch(&connection, &catalog(), &observed, "before-date-correction");
+        let original_date: String = connection
+            .query_row("SELECT date FROM issues", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(original_date, "2026-08-07");
+        observed.articles[0].date = Some("2026-08-10".to_string());
+        let mut correction = observed.clone();
+        correction.articles.truncate(1);
+        write_test_batch(&connection, &catalog(), &correction, "one-date-corrected");
+        for revision in ["ordered-replay", "reversed-replay"] {
+            let date: String = connection
+                .query_row("SELECT date FROM issues", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(date, "2026-08-08");
+            observed.articles.reverse();
+            let replay = write_test_batch(&connection, &catalog(), &observed, revision);
+            assert_eq!(replay.articles_changed, 0);
+            assert_eq!(replay.change_events_emitted, 0);
+        }
+        let date: String = connection
+            .query_row("SELECT date FROM issues", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(date, "2026-08-08");
+    }
+
+    #[test]
+    fn correcting_one_article_keeps_its_previous_issue_until_the_last_article_moves() {
+        let connection = Connection::open_in_memory().unwrap();
+        init_content_db(&connection).unwrap();
+        let mut previous = batch_with_article_count(2);
+        previous.issues.clear();
+        for article in &mut previous.articles {
+            article.publication_year = Some(2025);
+            article.date = Some("2025-10-17".to_string());
+        }
+        write_test_batch(&connection, &catalog(), &previous, "previous-issue");
+        let old_issue_id: i64 = connection
+            .query_row("SELECT issue_id FROM issues", [], |row| row.get(0))
+            .unwrap();
+        for (position, article) in previous.articles.iter().enumerate() {
+            let mut correction = previous.clone();
+            correction.articles = vec![ArticleDraft {
+                publication_year: Some(2026),
+                date: Some("2026-08".to_string()),
+                ..article.clone()
+            }];
+            write_test_batch(
+                &connection,
+                &catalog(),
+                &correction,
+                &format!("move-{position}"),
+            );
+            let issue_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM issues WHERE issue_id = ?1",
+                    [old_issue_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(issue_count, if position == 0 { 1 } else { 0 });
+        }
+        let article_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM articles", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(article_count, 2);
     }
 
     #[test]
