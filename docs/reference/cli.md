@@ -134,7 +134,7 @@ litradar admin backup restore
     [--auth-db PATH]
 ```
 
-备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 只选择 `data/index` 下的 v6 内容库，明确排除可重建的 `data/index-control`，包括项目 `index-batches.sqlite` 和每个 catalog control；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
+备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 只选择 `data/index` 下的 v6 内容库，明确排除可重建的 `data/index-control`（项目 `index-batches.sqlite` 和每个 catalog control）以及 `data/index-work`（Crossref 工作集）；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
 
 ## `index`
 
@@ -229,7 +229,7 @@ CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_alias
 - `--update` 使用 Incremental。从远端当前头部扫描到上一次完整成功 anchor，并完整包含该边界期次；没有成功行或成功 anchor 为 NULL 时安全执行完整覆盖。只有该模式在成功后发布 `.changes.json`。同 active batch 已完成的 journal 才跳过。
 - `--full-rescan` 使用 FullRescan，忽略 committed anchor 作为停止边界并核对完整 Provider 历史。它可以恢复同 batch、同模式和同 base 的 traversal checkpoint；同 batch 已完成的 journal 可跳过。该模式不发布 `.changes.json`，因此不能与 `--notify` 组合。
 
-一次 journal 运行开始时冻结 `base_anchor`；Provider 在第一个已确认页中冻结自己的 candidate head。恢复只接受 batch ID、同步模式和 base 都匹配的运行，模式或 batch 不一致会 fail closed。batch ID 只属于核心控制状态，不进入 Provider context 或 worker request JSON。
+一次 journal 运行开始时冻结 `base_anchor`；Provider 在确认候选顺序后冻结自己的 candidate head，Crossref 要先收齐并验证创建日期分片，再按本地期次组选择。恢复只接受 batch ID、同步模式和 base 都匹配的运行，模式或 batch 不一致会 fail closed。batch ID 只属于核心控制状态，不进入 Provider context 或 worker request JSON。
 
 每页先在内容库事务中写入规范 journal/issue/article、identity aliases、投影和 change outbox，再推进 traversal checkpoint。最终内容批次提交后，核心才在一个控制事务中删除运行 checkpoint 并替换 committed anchor。内容成功而控制提交失败时，旧 anchor 不变；重跑冻结窗口并依靠 alias/upsert 去重。
 
@@ -241,7 +241,29 @@ notify phase 使用 disposable batch schema v2 的独立 typed handoff state，�
 
 恢复规则按状态固定：结果尚未落盘或 child 返回 `running` 时复用同一 attempt ID，以便投递层返回已有 durable run；`failed`、`cancelled` 或 `timed_out` 在下一次 operator invocation 使用新 attempt；`unknown`、缺失/畸形/超大输出、上下文不匹配或 status/exit 不一致都不会自动启动 child。审核 delivery run/item/dedupe 后，可用原命令加 `--acknowledge-unknown-notify`；确认 ID 与时间会和新 attempt 在一个 transaction 中写入。attempt 只改变外层 scheduled run 身份，文章级 Confirmed/Unknown dedupe 跨 attempt 保留，所以已确认或不确定的文章不重发，新文章仍可投递。每次父进程调用对每个 catalog 最多启动一个 notify child。
 
-### 升级后恢复旧 English traversal
+### Crossref 2026-08 游标升级后的 English 恢复
+
+新版按 [Crossref 官方建议](sources/scholarly.md#crossref-分页)使用完整 created 历史分片、固定 update 条件和计数校验；无序结果验证后才本地排序并输出。没有新增公共 CLI 参数。临时工作集固定在 `data/index-work/scholarly/`，不参与备份，不放在 `/tmp`；响应上限仍是 16 MiB，单工作集主文件最多 4 GiB，事务日志另占磁盘。
+
+确认旧索引进程已停止、没有未过期的竞争 lease 后，在项目根目录使用新二进制恢复原来关闭通知的 English 增量批次：
+
+```bash
+litradar index \
+  --secret-key-file secrets/litradar.key \
+  --project-root . \
+  --file english_journals.csv \
+  --update \
+  --resume \
+  --no-notify
+```
+
+保留原 CSV、模式和 batch 正确性选项，不删除内容库、控制库或 batch ledger，也不加 `--no-resume`。旧 Scholarly v1 Crossref traversal 会保留 base/candidate 并从新查询头安全重放；v1 OpenAlex traversal 保留原 cursor 语义；NULL traversal 正常开始。新 traversal 为 v2，成功 anchor 仍为 v1，正式 schema 不变。v2 写入后不能盲目用旧二进制接管。
+
+同一次 resume 可以继续已验证片和有效 cursor，不再按 240 秒或 HTTP 500 重扫。下一次独立 update 仍会重新查询并补查整个成功边界期次，日期下界为 anchor 年份的 1 月 1 日；没有固定回看 7/30 天的逻辑，终点 cursor 也不是永久水位。缺失工作集时按原 `C/T`、update 条件和 candidate 重建，不能在丢失前半结果时继续旧 cursor。
+
+只有命令成功结束、同 batch 的全部选中 journal/catalog 完成、变更清单可解析且没有残留 traversal 或活动 lease，才确认本次更新完成。失败时保留日志、正式内容和恢复状态；不要用删除数据库来处理计数或容量错误。交互观察应预先限定，例如最多 3 分钟、3 次状态检查；到达界限只报告实际进度并停止观察，不把启动或部分处理算作完成，也不因此终止健康的索引进程。固定 cursor、时间上界和计数相等不提供远端快照保证。
+
+### 从 control v3 恢复旧 English traversal
 
 从 control v3 升级留下的 batchless traversal 只允许由显式单 CSV、默认 `--resume` 接管；隐式全部 CSV 会拒绝，以免把不同旧 epoch 混入一个 batch。对已有 English 失败状态，先确认没有旧索引进程，再沿用原命令的 mode、ledger 中保存的遗留 issue-batch 恢复值和 notify 选项，并增加下列参数。只有原值不是默认 `8` 时才需要显式传入 `--issue-batch`；此时预期会看到兼容性警告：
 

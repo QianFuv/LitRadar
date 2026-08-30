@@ -151,7 +151,11 @@ docker compose run --rm litradar index \
 4. 需要恢复 changes JSON 时必须用兼容的目录选择、sync mode、ledger 中保存的遗留 issue-batch 恢复值和 notify flags 重跑 `--update`，让默认 resume 继续同一 active batch。issue-batch 只用于匹配旧 active batch；若非默认值要求显式传入，CLI 会发出兼容性警告。存在已发布或可能已发布 manifest 时不要用 `--no-resume` 丢弃 handoff。
 5. 成功后确认命令退出 0、changes JSON 可解析、batch 历史进入 `completed`、`index_batch_lease` 与 catalog `provider_leases` 都没有活动所有者，再启动服务并检查 `/health/live`、`/health/ready` 和 `/`。
 
-scholarly 更新使用上次可信完成时间向前 30 天的重叠窗口，Crossref/OpenAlex 分别使用 `from-update-date` 和 `from_created_date`；缺失或不可信水位执行完整扫描。空窗口保留已有数据。CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
+Scholarly 增量使用成功期次 anchor 年份的 1 月 1 日作为日期下界，并完整补查 candidate 到 base 的边界期次；不是从完成时间回看 30 天。Crossref 保留 `from-update-date`，冻结 UTC 秒上界 `T`，按完整 created 历史分片；小片以最多 1000 条单响应校验，单秒仍过大才使用无排序 cursor，完整计数通过后在本地归并期次。OpenAlex 保留原有 `from_created_date` 和有序分页。缺少可用 anchor 或无法证明边界时进行同源无界重放，已有内容不因空结果被删除。规则和非快照限制见 [Scholarly](../reference/sources/scholarly.md)。
+
+同次 Crossref resume 不再使用 240 秒游标过期或 HTTP 500 强制重扫；下一次 update 仍须新查询并保留整期补查。升级后的 English 恢复使用原正确性选项和默认 `--resume`，只选 `english_journals.csv`，本次不发送通知；完整示例见 [CLI 恢复步骤](../reference/cli.md#crossref-2026-08-游标升级后的-english-恢复)。这次 API 兼容升级不要求删除内容库、控制库或重建约 10 GB 的 English 数据；新 traversal v2 不能由旧二进制直接恢复。
+
+CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
 
 当前 v6 备份与恢复验证不依赖平台原生 tokenizer。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前 v6 数据库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向生产镜像临时复制 DLL/SO 绕过版本边界。
 
@@ -162,6 +166,10 @@ scholarly 更新使用上次可信完成时间向前 30 天的重叠窗口，Cro
 | `./data`                 | `/app/data`                 | 唯一持久可写业务挂载          |
 | `./secrets/litradar.key` | `/run/secrets/litradar_key` | Compose secret，只读          |
 | 镜像官方 Meta bundle     | `/usr/share/litradar/meta`  | 不可变源；不在 `/app/data` 内 |
+
+Crossref 的可丢弃工作集固定在 `/app/data/index-work/scholarly/`，随现有 data 挂载持久化，不增加挂载或公开配置，也不进入备份。它不使用 `/tmp` 大排序文件，现有 64 MiB tmpfs 保持不变。每个工作集的 SQLite page cache 为 4 MiB、mmap 关闭、主文件上限 4 GiB；事务日志需要额外可用空间，4 MiB 不是进程 RSS 上限，HTTP JSON 仍受 16 MiB 限制。
+
+容量不足会明确失败并保留正式内容和旧 anchor，不能通过截断工作集宣告完成。未完成的自有缓存通常供 resume 复用；缺失或可识别损坏时，当前版本从同一冻结范围重新收集。路径、归属或 symlink/reparse point 校验失败则拒绝访问。不要在运行中手工清空工作目录，也不要用删除控制状态代替容量诊断。
 
 ### Meta bundle 与持久卷
 

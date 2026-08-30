@@ -9,6 +9,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 | `data/index/<catalog>.sqlite`             |     每个目录一个 | 需要备份的 Provider-neutral 内容库                                 |
 | `data/index-control/index-batches.sqlite` |         项目一个 | 可删除的 batch/catalog phase、manifest intent 和全局 lease ledger  |
 | `data/index-control/<catalog>.sqlite`     | 每个活动目录一个 | 可删除的 v4 Provider anchor/run checkpoint/lease 控制库            |
+| `data/index-work/scholarly/`              | 每个遍历一个工作集 | 可丢弃的 Crossref SQLite、归属记录及事务文件，不是内容库或控制库 |
 | `data/auth.sqlite`                        |             一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
 | `data/push_state/`                        |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源                  |
 | `data/folder_push_state/`                 |        多个 JSON | 保留的旧 push 导入源                                               |
@@ -24,7 +25,19 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 | 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建 |
 | catalog 索引控制库 |                     4 | v0/v1/v2/v3 安全事务迁移；可删除后按 v4 重建          |
 
-可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。
+上述内容、业务和控制库的可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。Crossref 私有工作集使用下面单独说明的连接策略，不改变这些正式 schema 版本。
+
+### Crossref 可丢弃工作集
+
+`data/index-work/scholarly/<token>.sqlite` 使用独立私有格式 v1，配套归属 JSON 和 SQLite 事务文件。token 是随机 32 位小写 hex，根目录由 core 构造，通过 private worker protocol v8 的 Scholarly bootstrap 传入，不能由 traversal 指定任意路径。文件保存完整创建日期分片树、必要的 Crossref 书目字段、去重/排序索引、计数及冻结状态；不存凭据、资源 URL 或 references。归属和路径不符、symlink/reparse point、foreign schema 均在使用或清理前拒绝。
+
+工作集使用 `foreign_keys=ON`、DELETE journal、`synchronous=FULL`、5 秒 busy timeout、4 MiB page cache 和禁用 mmap；4 KiB 页及 `max_page_count` 把主文件限制为 4 GiB，事务日志需要额外空间。4 MiB 不是进程总内存上限。记录与当前分片进度在同一事务中保存，完整计数通过后通过索引按 keyset 读取，每页最多 225 条、16 MiB；不将全刊读入内存，也不使用 `/tmp` 大排序文件。
+
+成功 anchor v1、Scholarly traversal v2 和工作集格式 v1 是三个不同的版本。严格读取有效 traversal v1：旧 Crossref cursor 从新查询头重放，保留原 base/candidate；OpenAlex 保留旧 cursor 语义。NULL traversal 正常新建，不需要手工修复 SQLite；旧二进制不能直接恢复 v2。
+
+core 仍以内容事务和控制事务确认进度。工作集超前一页时重放该步骤；缺失或可识别损坏时从相同 `C/T`、update 条件和 candidate 重新收集，不能续用缺少前半记录的旧 cursor。Provider 完成输出后可清理缓存，但后续控制提交失败仍需安全重建并幂等重放。磁盘满或容量超限保留正式内容与旧 anchor，不截断结果。正常失败保留未完成缓存；不会自动清理未知文件或其他期刊缓存。
+
+该目录被 Git 忽略，内容发现、备份和恢复均不使用它。丢失工作集只影响重取成本，不要求删除 `data/index` 或 `data/index-control`。计数和冻结范围并不保证远端快照，查询与期次覆盖语义见 [Scholarly](sources/scholarly.md)。
 
 ### 内容库破坏性切换
 
@@ -329,4 +342,4 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 ## 备份边界
 
-v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 只包含 `data/index/*.sqlite` 内容库；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v4 controls。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
+v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 只包含 `data/index/*.sqlite` 内容库；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v4 controls，`data/index-work` 的 Crossref 工作集也始终排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。

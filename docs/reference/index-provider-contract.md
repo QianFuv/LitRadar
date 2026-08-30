@@ -1,6 +1,6 @@
 # 索引与 Provider 契约
 
-本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `3`，实现来源是 `litradar-domain::index_contract`、`litradar-provider` 和 `litradar-index`；私有多进程 worker wire protocol 当前为 `6`。
+本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `3`，实现来源是 `litradar-domain::index_contract`、`litradar-provider` 和 `litradar-index`；私有多进程 worker wire protocol 当前为 `8`。
 
 核心边界只有三条：
 
@@ -95,6 +95,8 @@ Provider 对所请求期刊的观察：
 - `ProviderProgress::Complete { next_anchor }` 不再携带 traversal checkpoint，`next_anchor` 可为空；非空 anchor 同样最多 65,536 字节；
 - Provider 不得假定 anchor 或 checkpoint 会永久存在。
 
+Continue 可以不含文章。例如 Crossref 在完整创建日期分片通过计数校验前，只返回收集进度；空的 Continue 不能被 core 当作 journal 完成或跳过其 checkpoint 提交。
+
 ### `IndexFetchContext` 与同步模式
 
 核心每次调用 `IndexContentProvider::fetch(catalog, context)` 时传入：
@@ -103,7 +105,7 @@ Provider 对所请求期刊的观察：
 - `committed_anchor`：上一次整本期刊完整成功时提交的边界；
 - `traversal_checkpoint`：本次冻结运行下一步要处理的位置。
 
-三个 opaque 值（输入 anchor、输入 traversal、Complete 返回的 next anchor）都属于当前目录、Provider 和 `catalog_id` namespace。核心只检查为空、大小和进度形状，永远不解析 CNKI `year_issue_id`、Scholarly issue fingerprint、Crossref/OpenAlex cursor，也不把它们写入内容库。项目 batch ID 是核心恢复权限，不属于 `IndexFetchContext`，也不进入 worker request JSON。worker protocol v6 只携带相同 Provider context，并把当前 worker 所需的秘密单独通过 stdin bootstrap 传入；父进程独占 batch/control SQLite 和提交。因此完整 batch resume 不改变 Provider contract v3 或 worker protocol v6。
+三个 opaque 值（输入 anchor、输入 traversal、Complete 返回的 next anchor）都属于当前目录、Provider 和 `catalog_id` namespace。核心只检查为空、大小和进度形状，永远不解析 CNKI `year_issue_id`、Scholarly issue fingerprint、Crossref/OpenAlex cursor，也不把它们写入内容库。项目 batch ID 是核心恢复权限，不属于 `IndexFetchContext`，也不进入 worker request JSON。worker protocol v8 携带相同 Provider context，并把当前 worker 所需的秘密单独通过 stdin bootstrap 传入；只有 Scholarly bootstrap 额外接收 core 构造的绝对工作集根路径。父进程仍独占 batch/control SQLite 和正式内容提交，Provider contract v3 不变。
 
 模式语义：
 
@@ -128,10 +130,12 @@ project batch admission + ordered catalog phase
 
 最终内容已提交而控制事务失败时，旧 anchor 保持不变；下次运行重放冻结窗口并由稳定 identity/upsert 收敛。
 
+Crossref 私有工作集不是 core ACK 的替代品：缓存超前时先重放未确认步骤；缓存缺失或可识别的自有文件损坏时按原冻结范围重新收集，不能只续旧 cursor 而缺少前半结果。Complete 前清理缓存也不能证明内容或 anchor 已提交。路径和归属不匹配必须拒绝，不能猜测文件位置。
+
 ### 内置 Provider 的统一语义映射
 
 - 国内 `cnki` 使用稳定期次树：从 candidate head 到 base issue 的闭区间，处理完 base 的全部 papers 页后 Complete。
-- `scholarly` 使用规范字段生成 issue fingerprint，按出版日期降序，并用 anchor 日期过滤缩小 Crossref/OpenAlex 候选；过滤无法证明 base、candidate 可能回退或 OpenAlex 拒绝过滤时，在 Provider 内从无过滤头部重放。
+- `scholarly` 使用规范字段生成 issue fingerprint。Crossref 保留 anchor 年份下界和固定 update 上界，按完整 created 历史分片，计数通过后本地归并期次并完整输出 candidate/base 日期闭区间及同日平局组；OpenAlex 保持既有有序分页。无法证明边界时在 Provider 内无过滤重放并保留 candidate，详见 [Scholarly](sources/scholarly.md)。同次恢复可以复用进度，下一次 update 仍须新查询并补查整个 base 期次，不能复用终点 cursor。
 - `cnki_oversea` 当前明确不支持增量边界；三种模式都完整扫描，成功返回 NULL anchor。核心不会为它解释海外期次句柄。
 
 ## 规范化与稳定身份
@@ -177,7 +181,7 @@ bibliographic fingerprint 包含目录、规范题名、由 `publication_year` �
 - 打开开关时，所有匹配请求只使用配置的显式代理；代理不可达或请求失败会按现有有界错误/重试规则失败，不会改成直连。
 - URL 和 policy 在进程启动时一起验证；任一启用项没有 URL、未知 Provider 或无效 URL 都会在 Provider 请求前失败。
 
-直接索引模式在父进程内按所选 `provider_name` 取得决定，并只通过内存交给该注册。多进程模式则遵守 protocol v6 的秘密边界：
+直接索引模式在父进程内按所选 `provider_name` 取得决定，并只通过内存交给该注册。多进程模式则遵守 protocol v8 的秘密边界：
 
 1. 父进程按 worker request 中的 `provider_name` 选择代理；未启用时选择为空。
 2. 可丢弃 worker request JSON、进程参数和 child 环境都不含代理 URL。
@@ -223,6 +227,7 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 | `data/index/<catalog>.sqlite`                | 需要备份 | v6 规范期刊、期刊/文章 identity aliases、撤稿关系、列表投影、FTS 和文章变更 outbox     |
 | `data/index-control/index-batches.sqlite`    | 可丢弃   | v2 core-owned batch fingerprint、catalog phase/manifest intent、typed notify handoff 和全局 lease |
 | `data/index-control/<catalog>.sqlite`        | 可丢弃   | v4 Provider-scoped lease、batch-aware 成功 anchor 和运行 traversal checkpoint            |
+| `data/index-work/scholarly/`                 | 可丢弃   | 私有 Crossref 分片、必要书目字段、完整性计数和本地排序工作集；不是内容或提交权威          |
 
 成功 anchor 与运行 checkpoint 分表保存，并分别带可空 `completed_batch_id` / `batch_id`。成功行存在但 anchor 为 NULL 表示“完整成功但没有可复用边界”，不同于成功行缺失；它只有在完成标记属于 active batch 时才能跳过，否则新 batch 安全完整覆盖。删除控制状态会失去 batch、成功边界和恢复进度，并依靠 alias/upsert 收敛，不会改变内容身份。
 
@@ -230,7 +235,7 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 
 旧 catalog alias 若在任意 Provider namespace 下仍有 anchor 或 run checkpoint，运行固定失败；系统不会把 opaque 状态搬到当前 catalog ID。旧 alias journal 只有在不存在 issue、article、listing 和 outbox 历史时才可由事务清理。非空旧实体、身份所有权冲突和确定性 ID 冲突都在 Provider 请求前原子失败；内容 batch 写入时还会复核所有权。
 
-内容库禁止 Provider 名称、路由、检查点、lease、运行统计、上游 ID 和 URL。控制库禁止规范文章内容；batch ledger 不保存 Provider opaque state、代理或凭据。备份明确排除整个 `data/index-control`。
+内容库禁止 Provider 名称、路由、检查点、lease、运行统计、上游 ID 和 URL。控制库禁止规范文章内容；batch ledger 不保存 Provider opaque state、代理或凭据。备份明确排除整个 `data/index-control` 和 `data/index-work`。工作集只允许保存消费字段与中间进度，不保存凭据或资源 URL，也不参与内容发现。
 
 ## Conformance 流程
 

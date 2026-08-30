@@ -13,13 +13,17 @@
 | v2 固定范围            | `data/auth.sqlite` 和完整 `data/meta`           |
 | `--include-indexes`    | 创建时发现的全部 `data/index/*.sqlite`          |
 | `--include-push-state` | `data/push_state/` 和 `data/folder_push_state/` |
-| 始终排除               | 整个 `data/index-control/`，含 batch ledger、catalog checkpoint 和 lease |
+| 始终排除               | 整个 `data/index-control/`（batch ledger、catalog checkpoint 和 lease）及 `data/index-work/`（Crossref 工作集） |
 
 未选择的索引和状态组不会在恢复时修改。v2 Meta 和选择的可选组按精确快照恢复，包括“备份时为空”的情况。
 
 `--include-push-state` 中的 `.changes.json` 是 Provider-neutral 候选变更清单；其余 `<db>.json` 是启动迁移保留的旧投递导入源。持久投递权威状态已经包含在固定的 `auth.sqlite` 快照中，但若部署仍保留旧文件，建议同时选择该选项，以保留导入 hash 的来源证据和未消费的变更清单。恢复不会自动删除或改写这些源文件。
 
 `--include-indexes` 只选择 Provider-neutral v6 内容库。`data/index-control` 是可重建的运行控制状态：项目级 `index-batches.sqlite`（batch schema v2，含 typed notify handoff）和每个 catalog 的 v4 anchor/run/lease 控制库即使位于项目根下，也都不会进入 backup manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；清空控制状态后的首次索引会创建新 batch 并通过内容 identity alias/upsert 幂等收敛，但也会失去尚未完成的 notify handoff/Unknown acknowledgement 证明。
+
+`data/index-work/scholarly/` 只保存 Crossref 的必要消费字段、创建日期分片、计数和排序进度；其 SQLite、归属 JSON 和事务文件都不是内容索引，不进入 manifest、备份树、内容发现或恢复目标。它与正式内容/控制 schema 的版本独立，删除正式数据库不是工作集恢复步骤。
+
+工作集丢失或可识别的自有缓存损坏时，当前版本保留 core checkpoint 的 `C/T`、update 条件和 candidate，重新收集并通过稳定 identity/upsert 重放；不会只续旧 cursor 而丢掉前半结果。路径或身份不匹配会停止，不自动删除未知文件。成功输出后缓存可能已经清理，即使后续控制提交失败，也按相同规则重建。普通 Crossref API 升级或缓存故障无须清空 `data/index-control`，与下面的离线内容快照恢复不同。
 
 部署密钥不在选择范围内。Meta 或状态目录中出现 `.key` 或 `.pem` 文件时，创建会失败。
 
@@ -32,7 +36,7 @@ SQLite 使用 online backup API，可在 WAL 数据库仍有已提交写入时�
 - 投递 checkpoint、run、item、dedupe 和 lease 位于同一认证库；各状态转换使用事务、唯一约束和 revision CAS，认证库快照不会捕获单次转换的一半
 - 多个 SQLite 文件之间不是同一事务
 - 索引数据库、`.changes.json` 和保留的旧导入源与认证库/Meta 快照之间不是同一事务
-- 控制库不参与快照；活跃索引仍可能向内容库提交，因此严格时间点备份应停止索引命令
+- 控制库和 Crossref 工作集不参与快照；活跃索引仍可能向内容库提交，因此严格时间点备份应停止索引命令
 - Meta 和状态目录在复制前后各扫描并计算 hash；期间新增、删除或变化会使创建失败
 
 需要严格时间点一致性时，先停止 `litradar serve`，并确认没有独立的索引或投递子命令仍在写入。
@@ -153,6 +157,8 @@ docker compose run --rm --no-deps \
 恢复 v1 时目标 Meta 目录保持原样。未选择的索引或状态组也保持原样；选择的组会移除目标中不在清单内的旧文件。
 
 恢复不会创建、替换或清理目标 `data/index-control`。为避免把恢复前的 project batch/catalog phase 或 Provider checkpoint 与恢复后的内容时间点混用，离线恢复包含索引库时，应先确认没有索引进程，再移动或删除整个目标 `data/index-control`（包括 `index-batches.sqlite` 和所有 catalog controls），让下一次索引从空控制状态重建；该删除不会影响内容 ID。若只恢复认证库、Meta 或 push state 而不恢复内容索引，可保留当前控制目录，但下一次索引仍会按 active batch compatibility fail closed。
+
+恢复也不会创建、替换或清理目标 `data/index-work`。其中旧工作集不是恢复后的内容真相来源，不能手工把旧 token 填入新 checkpoint；新运行只使用匹配其归属和冻结 context 的缓存。若需要人工回收空间，先停止索引并确认文件归属，不把未知文件或其他期刊工作集一起删除。
 
 ## 失败处理
 
