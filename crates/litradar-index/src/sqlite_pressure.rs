@@ -526,6 +526,7 @@ fn run_pressure(config: PressureConfig) -> PressureReport {
     let scholarly_config = litradar_sources::LiveScholarlyConfig::from_value_pools(10, "", "", "");
     let execution = run_worker_processes_with_launcher(
         &request_dir,
+        &request_dir.join("worksets"),
         &content,
         &control,
         &context,

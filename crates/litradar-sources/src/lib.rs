@@ -2,6 +2,7 @@
 
 pub mod cnki_domestic;
 pub mod cnki_oversea;
+mod crossref_workset;
 pub mod jfbym;
 pub mod provider_proxy;
 pub mod providers;
@@ -43,10 +44,10 @@ pub use providers::{
     ZJLIB_PROVIDER_NAME,
 };
 pub use scholarly::{
-    normalize_doi, FixtureScholarlyTransport, LiveScholarlyConfig, LiveScholarlyTransport,
-    ScholarlyClient, ScholarlyFixtureData, ScholarlyRequest, ScholarlyRequestKind,
-    ScholarlyTransport, ScholarlyWorksPage, SourceAttempt, SourceError,
-    OPENALEX_MAX_WORKERS_PER_PROCESS, SEMANTIC_SCHOLAR_BATCH_SIZE,
+    normalize_doi, CrossrefQuery, CrossrefWorksPage, FixtureScholarlyTransport,
+    LiveScholarlyConfig, LiveScholarlyTransport, ScholarlyClient, ScholarlyFixtureData,
+    ScholarlyRequest, ScholarlyRequestKind, ScholarlyTransport, ScholarlyWorksPage, SourceAttempt,
+    SourceError, OPENALEX_MAX_WORKERS_PER_PROCESS, SEMANTIC_SCHOLAR_BATCH_SIZE,
 };
 pub use zjlib::{
     FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,

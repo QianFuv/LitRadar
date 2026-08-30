@@ -1918,6 +1918,7 @@ fn run_worker_processes(
         .join("worker-requests");
     run_worker_processes_with_launcher(
         &request_dir,
+        &std::path::absolute(config.project_root.join("data/index-work/scholarly"))?,
         content,
         control,
         context,
@@ -2172,6 +2173,7 @@ fn cleanup_stale_legacy_worker_requests(
 /// # Arguments
 ///
 /// * `request_dir` - Disposable worker request directory.
+/// * `scholarly_workset_dir` - Core-owned disposable Crossref collection directory.
 /// * `content` - Parent-owned content connection.
 /// * `control` - Parent-owned control connection.
 /// * `context` - Stable commit and lease context.
@@ -2190,6 +2192,7 @@ fn cleanup_stale_legacy_worker_requests(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_worker_processes_with_launcher<Launcher, Observer>(
     request_dir: &Path,
+    scholarly_workset_dir: &Path,
     content: &Connection,
     control: &Connection,
     context: &ParentWriterContext,
@@ -2268,6 +2271,7 @@ where
             scholarly_config,
             cnki_captcha_token,
             provider_proxy_url.as_deref(),
+            scholarly_workset_dir,
         ) {
             Ok(launched) => launched,
             Err(error) => {
@@ -2318,6 +2322,7 @@ fn worker_bootstrap(
     scholarly_config: &LiveScholarlyConfig,
     cnki_captcha_token: Option<&str>,
     provider_proxy_url: Option<&str>,
+    scholarly_workset_dir: &Path,
 ) -> LiveIndexWorkerBootstrap {
     LiveIndexWorkerBootstrap {
         protocol_version: PROTOCOL_VERSION,
@@ -2330,6 +2335,8 @@ fn worker_bootstrap(
         provider_proxy_url: provider_proxy_url.map(str::to_owned),
         scholarly_config: (request.provider_name == SCHOLARLY_PROVIDER_NAME)
             .then(|| scholarly_config.clone()),
+        scholarly_workset_dir: (request.provider_name == SCHOLARLY_PROVIDER_NAME)
+            .then(|| scholarly_workset_dir.to_path_buf()),
     }
 }
 
@@ -2339,12 +2346,14 @@ fn bootstrap_worker_process(
     scholarly_config: &LiveScholarlyConfig,
     cnki_captcha_token: Option<&str>,
     provider_proxy_url: Option<&str>,
+    scholarly_workset_dir: &Path,
 ) -> Result<LaunchedWorkerProcess, LiveIndexError> {
     let bootstrap = worker_bootstrap(
         request,
         scholarly_config,
         cnki_captcha_token,
         provider_proxy_url,
+        scholarly_workset_dir,
     );
     if write_message(&mut launched.writer, &bootstrap).is_err() {
         let _ = launched.child.force_kill_and_wait();
@@ -2710,6 +2719,9 @@ fn run_direct_request(
         config
             .provider_proxy_selection
             .for_provider(&request.provider_name),
+        (request.provider_name == SCHOLARLY_PROVIDER_NAME)
+            .then(|| std::path::absolute(config.project_root.join("data/index-work/scholarly")))
+            .transpose()?,
     )?;
     let provider = registration.index_content().cloned().ok_or_else(|| {
         LiveIndexError::InvalidConfig(format!(
@@ -2727,12 +2739,13 @@ fn run_fetch_worker_stream(
 ) -> Result<(), LiveIndexError> {
     let mut sequence = 0_u64;
     let execution = read_worker_bootstrap(request, reader).and_then(
-        |(cnki_captcha_token, provider_proxy, scholarly_config)| {
+        |(cnki_captcha_token, provider_proxy, scholarly_config, scholarly_workset_dir)| {
             fetch_worker_assignments(
                 request,
                 cnki_captcha_token,
                 provider_proxy,
                 scholarly_config,
+                scholarly_workset_dir,
                 reader,
                 writer,
                 &mut sequence,
@@ -2759,7 +2772,15 @@ fn run_fetch_worker_stream(
 fn read_worker_bootstrap(
     request: &LiveIndexWorkerRequest,
     reader: &mut impl Read,
-) -> Result<(Option<String>, ProviderProxy, LiveScholarlyConfig), LiveIndexError> {
+) -> Result<
+    (
+        Option<String>,
+        ProviderProxy,
+        LiveScholarlyConfig,
+        Option<PathBuf>,
+    ),
+    LiveIndexError,
+> {
     let bootstrap: LiveIndexWorkerBootstrap = read_message(reader)
         .map_err(|_| LiveIndexError::Worker(WORKER_PROTOCOL_FAILURE_MESSAGE.to_string()))?;
     let is_scholarly = request.provider_name == SCHOLARLY_PROVIDER_NAME;
@@ -2767,6 +2788,11 @@ fn read_worker_bootstrap(
         || bootstrap.worker_id != request.worker_id
         || (request.provider_name != CNKI_PROVIDER_NAME && bootstrap.cnki_captcha_token.is_some())
         || is_scholarly != bootstrap.scholarly_config.is_some()
+        || is_scholarly != bootstrap.scholarly_workset_dir.is_some()
+        || bootstrap
+            .scholarly_workset_dir
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute())
     {
         return Err(LiveIndexError::InvalidConfig(
             "worker bootstrap is invalid".to_string(),
@@ -2785,14 +2811,17 @@ fn read_worker_bootstrap(
         bootstrap.cnki_captcha_token,
         provider_proxy,
         scholarly_config,
+        bootstrap.scholarly_workset_dir,
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fetch_worker_assignments(
     request: &LiveIndexWorkerRequest,
     cnki_captcha_token: Option<String>,
     provider_proxy: ProviderProxy,
     scholarly_config: LiveScholarlyConfig,
+    scholarly_workset_dir: Option<PathBuf>,
     reader: &mut impl Read,
     writer: &mut impl Write,
     sequence: &mut u64,
@@ -2830,6 +2859,7 @@ fn fetch_worker_assignments(
         request.timeout_seconds,
         cnki_captcha_token,
         provider_proxy,
+        scholarly_workset_dir,
     )?;
     let provider = registration.index_content().cloned().ok_or_else(|| {
         LiveIndexError::InvalidConfig(format!(
@@ -2935,6 +2965,7 @@ fn build_index_registration(
     timeout_seconds: u64,
     cnki_captcha_token: Option<String>,
     provider_proxy: ProviderProxy,
+    scholarly_workset_dir: Option<PathBuf>,
 ) -> Result<ProviderRegistration, LiveIndexError> {
     match provider_name {
         SCHOLARLY_PROVIDER_NAME => {
@@ -2952,6 +2983,11 @@ fn build_index_registration(
             Ok(scholarly_index_registration(
                 transport,
                 has_semantic_scholar_key,
+                scholarly_workset_dir.ok_or_else(|| {
+                    LiveIndexError::InvalidConfig(
+                        "Scholarly workset directory is required".to_string(),
+                    )
+                })?,
             )?)
         }
         CNKI_OVERSEA_PROVIDER_NAME => {
@@ -3298,13 +3334,12 @@ mod tests {
         prepare_catalog_manifest_intent, prepare_worker_requests, publish_catalog_manifest,
         read_bounded_notify_output, read_worker_bootstrap, requested_sync_mode,
         run_batch_catalogs_with, run_live_index, run_live_index_worker_with_io,
-        run_worker_processes_with_launcher, validate_live_config, worker_bootstrap,
-        worker_failure_error, ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess,
-        LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerBootstrap,
-        LiveIndexWorkerFailure, LiveIndexWorkerFailureClass, LiveIndexWorkerOperation,
-        LiveIndexWorkerRequest, LiveRunTime, NotifyHandoffObservation, ParentWriterContext,
-        ProviderProxySelection, SupervisedChild, CNKI_PROVIDER_NAME,
-        LEGACY_WORKER_REQUEST_STALE_SECONDS, MAX_NOTIFY_HANDOFF_STDOUT_BYTES,
+        run_worker_processes_with_launcher, validate_live_config, worker_failure_error,
+        ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess, LeaseHeartbeat,
+        LiveIndexConfig, LiveIndexError, LiveIndexWorkerBootstrap, LiveIndexWorkerFailure,
+        LiveIndexWorkerFailureClass, LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime,
+        NotifyHandoffObservation, ParentWriterContext, ProviderProxySelection, SupervisedChild,
+        CNKI_PROVIDER_NAME, LEGACY_WORKER_REQUEST_STALE_SECONDS, MAX_NOTIFY_HANDOFF_STDOUT_BYTES,
     };
     use crate::batch::{
         admit_batch, complete_catalog, init_batch_db, prepare_notify_attempt, read_batch_catalogs,
@@ -3973,6 +4008,21 @@ mod tests {
             timestamp,
         )
         .expect("fixture traversal should advance");
+    }
+
+    fn worker_bootstrap(
+        request: &LiveIndexWorkerRequest,
+        scholarly_config: &litradar_sources::LiveScholarlyConfig,
+        token: Option<&str>,
+        proxy: Option<&str>,
+    ) -> LiveIndexWorkerBootstrap {
+        super::worker_bootstrap(
+            request,
+            scholarly_config,
+            token,
+            proxy,
+            &std::env::temp_dir().join("litradar-test-worksets"),
+        )
     }
 
     #[test]
@@ -5590,10 +5640,11 @@ mod tests {
                 worker_bootstrap(&request, &scholarly_config, None, proxy_url.as_deref());
             let mut input = Vec::new();
             write_message(&mut input, &bootstrap).expect("worker bootstrap should serialize");
-            let (_, multiprocess_proxy, multiprocess_scholarly_config) =
+            let (_, multiprocess_proxy, multiprocess_scholarly_config, workset_dir) =
                 read_worker_bootstrap(&request, &mut Cursor::new(input))
                     .expect("worker bootstrap should select a proxy");
 
+            assert_eq!(workset_dir.is_some(), provider_name == "scholarly");
             assert_eq!(multiprocess_proxy, direct_proxy);
             assert_eq!(multiprocess_proxy.url(), direct_proxy.url());
             assert!(!format!("{multiprocess_proxy:?}").contains(proxy_sentinel));
@@ -6130,6 +6181,7 @@ mod tests {
 
         let error = run_worker_processes_with_launcher(
             &request_dir,
+            &directory.path().join("worksets"),
             &content,
             &control,
             &context,
@@ -6408,6 +6460,7 @@ mod tests {
         )
         .expect("worker request should write");
         let bootstrap = LiveIndexWorkerBootstrap {
+            scholarly_workset_dir: Some(std::env::temp_dir().join("litradar-test-worksets")),
             protocol_version: PROTOCOL_VERSION,
             worker_id: 0,
             cnki_captcha_token: Some(sentinel.to_string()),
@@ -6445,6 +6498,7 @@ mod tests {
         let sentinel = "domestic-scholarly-secret-sentinel";
         let request = fetch_worker_request(CNKI_PROVIDER_NAME, "run-invalid-scholarly-bootstrap");
         let bootstrap = LiveIndexWorkerBootstrap {
+            scholarly_workset_dir: Some(std::env::temp_dir().join("litradar-test-worksets")),
             protocol_version: PROTOCOL_VERSION,
             worker_id: request.worker_id,
             cnki_captcha_token: None,
@@ -6477,6 +6531,7 @@ mod tests {
         .expect("worker request should write");
         let mismatches = [
             LiveIndexWorkerBootstrap {
+                scholarly_workset_dir: Some(std::env::temp_dir().join("litradar-test-worksets")),
                 protocol_version: PROTOCOL_VERSION - 1,
                 worker_id: 0,
                 cnki_captcha_token: None,
@@ -6484,6 +6539,7 @@ mod tests {
                 scholarly_config: Some(empty_scholarly_config()),
             },
             LiveIndexWorkerBootstrap {
+                scholarly_workset_dir: Some(std::env::temp_dir().join("litradar-test-worksets")),
                 protocol_version: PROTOCOL_VERSION,
                 worker_id: 1,
                 cnki_captcha_token: None,
@@ -6535,6 +6591,7 @@ mod tests {
         let error = tracing::subscriber::with_default(captured.subscriber(), || {
             run_worker_processes_with_launcher(
                 &request_dir,
+                &directory.path().join("worksets"),
                 &content,
                 &control,
                 &context,
@@ -6570,7 +6627,7 @@ mod tests {
     fn worker_protocol_version_seven_rejects_version_six_requests() {
         let directory = tempdir().expect("temporary directory should create");
         let mut request = fetch_worker_request("scholarly", "run-version-mismatch");
-        assert_eq!(PROTOCOL_VERSION, 7);
+        assert_eq!(PROTOCOL_VERSION, 8);
         request.protocol_version = 6;
         request.assignments.clear();
         let request_path = directory.path().join("worker-request.json");
@@ -6799,6 +6856,138 @@ mod tests {
         )
         .expect("anchor should read")
         .is_some());
+    }
+
+    #[test]
+    fn crossref_complete_cleanup_recollects_after_content_commits_before_control() {
+        let directory = tempdir().unwrap();
+        let content = open_content_db(directory.path().join("content.sqlite")).unwrap();
+        let control = open_control_db(directory.path().join("control.sqlite")).unwrap();
+        let catalog = catalog("crossref-replay");
+        let run = prepared_run(
+            prepare_journal_sync(
+                &control,
+                "english_journals",
+                "scholarly",
+                &catalog.catalog_id,
+                "crossref-run",
+                IndexSyncMode::Bootstrap,
+                false,
+                "2026-08-30T00:00:00Z",
+            )
+            .unwrap(),
+        );
+        acquire_lease(
+            &control,
+            "english_journals",
+            "scholarly",
+            &run.run_id,
+            LiveRunTime::now().epoch_seconds,
+        )
+        .unwrap();
+        let workset_dir = directory.path().join("data/index-work/scholarly");
+        let registration = litradar_sources::scholarly_index_registration(
+            litradar_sources::FixtureScholarlyTransport::new(litradar_sources::ScholarlyFixtureData {
+                crossref_works: vec![serde_json::json!({"DOI":"10.1000/core-replay","title":["Replay without duplicate content"],"published":{"date-parts":[[2026,8,1]]},"volume":"1","issue":"1"})],
+                ..Default::default()
+            }),false,workset_dir.clone()).unwrap();
+        let provider = registration.index_content().unwrap();
+        let persist = |batch: &ProviderBatch| {
+            commit_content_then_progress(
+                &control,
+                "english_journals",
+                "scholarly",
+                &catalog.catalog_id,
+                &run.run_id,
+                run.mode,
+                run.base_anchor.as_deref(),
+                &batch.progress,
+                "2026-08-30T00:00:00Z",
+                || {
+                    write_content_batch(
+                        &content,
+                        &catalog,
+                        batch,
+                        "crossref-replay-revision",
+                        "2026-08-30T00:00:00Z",
+                    )
+                },
+            )
+        };
+        let mut checkpoint = None;
+        let mut failed_id = None;
+        for step in 0..20 {
+            let batch = provider
+                .fetch(
+                    &catalog,
+                    IndexFetchContext {
+                        mode: run.mode,
+                        committed_anchor: run.base_anchor.as_deref(),
+                        traversal_checkpoint: checkpoint.as_deref(),
+                    },
+                )
+                .unwrap();
+            if let ProviderProgress::Continue { checkpoint: next } = &batch.progress {
+                persist(&batch).unwrap();
+                checkpoint = Some(next.clone());
+                continue;
+            }
+            assert_eq!(std::fs::read_dir(&workset_dir).unwrap().count(), 0);
+            if let Some(article_id) = failed_id {
+                let replay = persist(&batch).unwrap();
+                assert_eq!(replay.articles_changed, 0);
+                assert_eq!(replay.change_events_emitted, 0);
+                assert_eq!(
+                    content
+                        .query_row::<i64, _, _>("SELECT article_id FROM articles", [], |row| row
+                            .get(0))
+                        .unwrap(),
+                    article_id
+                );
+                assert_eq!(
+                    content
+                        .query_row::<i64, _, _>("SELECT count(*) FROM articles", [], |row| row
+                            .get(0))
+                        .unwrap(),
+                    1
+                );
+                assert!(read_sync_anchor(
+                    &control,
+                    "english_journals",
+                    "scholarly",
+                    &catalog.catalog_id
+                )
+                .unwrap()
+                .is_some());
+                return;
+            } else {
+                control.execute_batch("CREATE TRIGGER fail_crossref_control BEFORE INSERT ON provider_sync_anchors BEGIN SELECT RAISE(ABORT,'forced control failure'); END;").unwrap();
+                assert!(matches!(
+                    persist(&batch),
+                    Err(ContentCheckpointCommitError::Control(_))
+                ));
+                failed_id = Some(
+                    content
+                        .query_row::<i64, _, _>("SELECT article_id FROM articles", [], |row| {
+                            row.get(0)
+                        })
+                        .unwrap(),
+                );
+                assert!(read_sync_anchor(
+                    &control,
+                    "english_journals",
+                    "scholarly",
+                    &catalog.catalog_id
+                )
+                .unwrap()
+                .is_none());
+                control
+                    .execute_batch("DROP TRIGGER fail_crossref_control")
+                    .unwrap();
+            }
+            assert!(step < 19);
+        }
+        panic!("Crossref cache recovery did not complete within its test budget");
     }
 
     #[test]

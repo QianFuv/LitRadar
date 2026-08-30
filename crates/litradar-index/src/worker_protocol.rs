@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::fmt;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
 use litradar_domain::{IndexSyncMode, JournalCatalogEntry, ProviderBatch};
 use litradar_sources::LiveScholarlyConfig;
@@ -10,7 +11,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Current private worker protocol version.
-pub(crate) const PROTOCOL_VERSION: u32 = 7;
+pub(crate) const PROTOCOL_VERSION: u32 = 8;
 
 /// One journal and optional resume cursor assigned to a fetch worker.
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -111,6 +112,9 @@ pub(crate) struct WorkerBootstrap {
     /// Scholarly runtime configuration, present only for Scholarly workers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) scholarly_config: Option<LiveScholarlyConfig>,
+    /// Core-owned disposable collection directory, available only to Scholarly workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) scholarly_workset_dir: Option<PathBuf>,
 }
 
 impl fmt::Debug for WorkerBootstrap {
@@ -479,6 +483,7 @@ mod tests {
             mailto_sentinel,
         );
         let bootstrap = WorkerBootstrap {
+            scholarly_workset_dir: Some(std::env::temp_dir().join("litradar-test-worksets")),
             protocol_version: PROTOCOL_VERSION,
             worker_id: 2,
             cnki_captcha_token: Some(sentinel.to_string()),

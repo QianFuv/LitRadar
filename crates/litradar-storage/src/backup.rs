@@ -1655,6 +1655,11 @@ mod tests {
             .join("provider.sqlite");
         fs::write(&control_path, b"disposable provider checkpoint")
             .expect("control fixture should be written");
+        let workset_dir = fixture.source_root.join("data/index-work/scholarly");
+        fs::create_dir_all(&workset_dir).expect("workset fixture directory should exist");
+        let workset_path = workset_dir.join("0123456789abcdef0123456789abcdef.sqlite");
+        fs::write(&workset_path, b"disposable incomplete Crossref workset")
+            .expect("workset fixture should be written");
         fixture.write_metadata("catalog.csv", b"name,value\nsource,catalog\n");
         fixture.write_metadata("manual.bak", b"operator backup bytes");
         fixture.write_metadata("nested/notes.txt", b"nested metadata companion");
@@ -1668,6 +1673,15 @@ mod tests {
         let manifest = create_backup(&fixture.create_options(true, true))
             .expect("online backup should complete");
         let verified = verify_backup(&fixture.backup_dir).expect("backup should verify");
+        assert!(manifest
+            .components
+            .iter()
+            .all(|component| !component.path.contains("index-work")));
+        assert!(!fixture.backup_dir.join("index-work").exists());
+        assert_eq!(
+            fs::read(&workset_path).unwrap(),
+            b"disposable incomplete Crossref workset"
+        );
 
         assert_eq!(manifest, verified);
         assert_eq!(manifest.version, BACKUP_FORMAT_VERSION);

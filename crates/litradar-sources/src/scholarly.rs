@@ -32,7 +32,6 @@ const OPENALEX_SOURCE_FIELDS: &str = "id,display_name,issn_l,issn,works_count";
 const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,publication_date,language,cited_by_count,is_retracted,primary_location,locations,open_access,best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,primary_topic,funders,awards";
 const DEFAULT_USER_AGENT: &str = "LitRadar/0.1";
 const CROSSREF_ATTEMPT_INTERVAL_MS: u64 = 110;
-const CROSSREF_JOURNAL_WORK_ORDER: &str = "desc";
 const SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS: u64 = 1_100;
 const CROSSREF_ROWS: usize = 225;
 const OPENALEX_DOI_FILTER_MAX_VALUES: usize = 100;
@@ -1008,12 +1007,67 @@ fn partition_openalex_doi_batches(
     Ok(batches)
 }
 
-fn crossref_journal_filter(from_sync_date: Option<&str>) -> String {
+fn crossref_journal_query(request: &CrossrefQuery) -> Result<Vec<(String, String)>, SourceError> {
     let mut filters = vec!["type:journal-article".to_string()];
-    if let Some(value) = from_sync_date.filter(|value| !value.trim().is_empty()) {
-        filters.push(format!("from-update-date:{value}"));
+    let mut query = Vec::new();
+    match request {
+        CrossrefQuery::EarliestCreated { until } => {
+            filters.push(format!(
+                "until-created-date:{}",
+                crossref_timestamp(*until)?
+            ));
+            query.extend([
+                ("rows".to_string(), "1".to_string()),
+                ("sort".to_string(), "created".to_string()),
+                ("order".to_string(), "asc".to_string()),
+            ]);
+        }
+        CrossrefQuery::Works {
+            created_from,
+            created_until,
+            updated_from,
+            updated_until,
+            cursor,
+        } => {
+            if created_from > created_until || updated_from.is_some() != updated_until.is_some() {
+                return Err(SourceError::Configuration(
+                    "invalid Crossref date bounds".to_string(),
+                ));
+            }
+            filters.push(format!(
+                "from-created-date:{}",
+                crossref_timestamp(*created_from)?
+            ));
+            filters.push(format!(
+                "until-created-date:{}",
+                crossref_timestamp(*created_until)?
+            ));
+            if let (Some(from), Some(until)) = (updated_from, updated_until) {
+                filters.push(format!("from-update-date:{from}"));
+                filters.push(format!("until-update-date:{}", crossref_timestamp(*until)?));
+            }
+            query.push((
+                "rows".to_string(),
+                if cursor.is_some() {
+                    CROSSREF_ROWS
+                } else {
+                    1_000
+                }
+                .to_string(),
+            ));
+            if let Some(cursor) = cursor {
+                query.push(("cursor".to_string(), cursor.clone()));
+            }
+        }
     }
-    filters.join(",")
+    query.push(("filter".to_string(), filters.join(",")));
+    Ok(query)
+}
+
+fn crossref_timestamp(seconds: i64) -> Result<String, SourceError> {
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .map(|timestamp| timestamp.format("%Y-%m-%dT%H:%M:%S").to_string())
+        .ok_or_else(|| SourceError::Configuration("Crossref timestamp is out of range".to_string()))
 }
 
 fn openalex_source_work_filter(source_id: &str, from_sync_date: Option<&str>) -> String {
@@ -1096,6 +1150,40 @@ pub struct ScholarlyWorksPage {
     pub did_fallback_to_unfiltered: bool,
 }
 
+/// Crossref query with frozen UTC bounds and an optional cursor for one dense second.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrossrefQuery {
+    /// Discover the earliest creation timestamp across the journal's entire history.
+    EarliestCreated {
+        /// Inclusive UTC upper bound in seconds since the Unix epoch.
+        until: i64,
+    },
+    /// Read one inclusive creation partition without requesting publication sorting.
+    Works {
+        /// Inclusive UTC creation lower bound.
+        created_from: i64,
+        /// Inclusive UTC creation upper bound.
+        created_until: i64,
+        /// Existing synchronization lower bound, retained only for bounded updates.
+        updated_from: Option<String>,
+        /// Frozen UTC update upper bound, paired with the lower bound.
+        updated_until: Option<i64>,
+        /// Opaque cursor, including `*` when starting the dense partition.
+        cursor: Option<String>,
+    },
+}
+
+/// One Crossref response with its required reported result count.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrossrefWorksPage {
+    /// Work payloads before canonicalization or enrichment.
+    pub items: Vec<Value>,
+    /// Crossref's `message.total-results` count for this exact query.
+    pub total_results: u64,
+    /// Opaque cursor that may remain unchanged between successive pages.
+    pub next_cursor: Option<String>,
+}
+
 /// Request shape sent through a scholarly transport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScholarlyRequest {
@@ -1118,10 +1206,8 @@ pub enum ScholarlyRequestKind {
     CrossrefJournalWorks {
         /// ISSN lookup candidate.
         issn: String,
-        /// Optional lower synchronization-date filter.
-        from_sync_date: Option<String>,
-        /// Cursor returned by the previous page.
-        cursor: Option<String>,
+        /// Frozen discovery or partition request.
+        query: CrossrefQuery,
     },
     /// Fetch an OpenAlex source by ISSN.
     OpenAlexSourceByIssn {
@@ -2250,40 +2336,18 @@ impl LiveScholarlyTransport {
     fn crossref_journal_works(
         &mut self,
         issn: &str,
-        from_sync_date: Option<&str>,
-        cursor: Option<&str>,
+        request: &CrossrefQuery,
     ) -> Result<Value, SourceError> {
-        let mut query = vec![
-            ("rows".to_string(), CROSSREF_ROWS.to_string()),
-            ("cursor".to_string(), cursor.unwrap_or("*").to_string()),
-            (
-                "filter".to_string(),
-                crossref_journal_filter(from_sync_date),
-            ),
-            ("sort".to_string(), "published".to_string()),
-            ("order".to_string(), CROSSREF_JOURNAL_WORK_ORDER.to_string()),
-        ];
+        let mut query = crossref_journal_query(request)?;
         if let Some(mailto) = self.config.crossref_mailtos.first() {
             query.push(("mailto".to_string(), mailto.clone()));
         }
-        let mut payload = self.get_json(
+        self.get_json(
             CROSSREF_SOURCE,
             "journal_works",
             &format!("{CROSSREF_BASE_URL}/journals/{issn}/works"),
             &query,
-        )?;
-        let item_count = payload
-            .get("message")
-            .and_then(|message| message.get("items"))
-            .and_then(Value::as_array)
-            .map(Vec::len)
-            .unwrap_or(0);
-        if item_count < CROSSREF_ROWS {
-            if let Some(message) = payload.get_mut("message").and_then(Value::as_object_mut) {
-                message.remove("next-cursor");
-            }
-        }
-        Ok(payload)
+        )
     }
 
     fn openalex_source_by_issn(&mut self, issn: &str) -> Result<Value, SourceError> {
@@ -2969,13 +3033,13 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
     /// Execute one scholarly fixture request.
     fn request(&mut self, request: ScholarlyRequest) -> Result<Value, SourceError> {
         match &request.kind {
-            ScholarlyRequestKind::CrossrefJournalWorks {
-                issn,
-                from_sync_date,
-                cursor,
-            } => {
+            ScholarlyRequestKind::CrossrefJournalWorks { issn, query } => {
+                let from_sync_date = match query {
+                    CrossrefQuery::Works { updated_from, .. } => updated_from.clone(),
+                    CrossrefQuery::EarliestCreated { .. } => None,
+                };
                 self.journal_work_requests
-                    .push((issn.clone(), from_sync_date.clone()));
+                    .push((issn.clone(), from_sync_date));
                 let status_code = self.data.crossref_status.unwrap_or(200);
                 if status_code != 200 {
                     return Err(self.http_error(
@@ -2985,19 +3049,75 @@ impl ScholarlyTransport for FixtureScholarlyTransport {
                     ));
                 }
                 self.record_attempt(&request, Some(200), true, None);
-                if cursor.is_none() {
-                    self.crossref_page_index = 0;
-                }
-                let (items, next_cursor) = fixture_page(
-                    &self.data.crossref_work_pages,
-                    &self.data.crossref_works,
-                    self.crossref_page_index,
-                );
-                self.crossref_page_index += 1;
-                let next_cursor = next_cursor.map(|_| "stateful-crossref-cursor".to_string());
+                let works = if self.data.crossref_work_pages.is_empty() {
+                    self.data.crossref_works.iter().collect::<Vec<_>>()
+                } else {
+                    self.data.crossref_work_pages.iter().flatten().collect()
+                };
+                let created = |work: &&Value| {
+                    work.pointer("/created/timestamp")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0)
+                        .div_euclid(1_000)
+                };
+                let (mut matching, offset, rows, has_cursor) = match query {
+                    CrossrefQuery::EarliestCreated { until } => {
+                        let mut matching = works
+                            .into_iter()
+                            .filter(|work| created(work) <= *until)
+                            .collect::<Vec<_>>();
+                        matching.sort_by_key(created);
+                        (matching, 0, 1, false)
+                    }
+                    CrossrefQuery::Works {
+                        created_from,
+                        created_until,
+                        cursor,
+                        ..
+                    } => {
+                        if cursor.is_none() || cursor.as_deref() == Some("*") {
+                            self.crossref_page_index = 0;
+                        }
+                        let matching = works
+                            .into_iter()
+                            .filter(|work| {
+                                (*created_from..=*created_until).contains(&created(work))
+                            })
+                            .collect();
+                        (
+                            matching,
+                            self.crossref_page_index,
+                            if cursor.is_some() {
+                                CROSSREF_ROWS
+                            } else {
+                                1_000
+                            },
+                            cursor.is_some(),
+                        )
+                    }
+                };
+                let total_results = matching.len();
+                let items = matching
+                    .drain(..)
+                    .skip(offset)
+                    .take(rows)
+                    .map(|work| {
+                        let mut work = work.clone();
+                        if let Some(object) = work.as_object_mut() {
+                            object
+                                .entry("created")
+                                .or_insert_with(|| json!({"timestamp": 0}));
+                        }
+                        work
+                    })
+                    .collect::<Vec<_>>();
+                self.crossref_page_index = offset + items.len();
+                let next_cursor =
+                    (has_cursor && !items.is_empty()).then_some("stateful-crossref-cursor");
                 Ok(json!({
                     "message": {
                         "items": items,
+                        "total-results": total_results,
                         "next-cursor": next_cursor,
                     }
                 }))
@@ -3141,11 +3261,9 @@ impl ScholarlyTransport for LiveScholarlyTransport {
     /// Execute one live Scholarly source request.
     fn request(&mut self, request: ScholarlyRequest) -> Result<Value, SourceError> {
         match request.kind {
-            ScholarlyRequestKind::CrossrefJournalWorks {
-                issn,
-                from_sync_date,
-                cursor,
-            } => self.crossref_journal_works(&issn, from_sync_date.as_deref(), cursor.as_deref()),
+            ScholarlyRequestKind::CrossrefJournalWorks { issn, query } => {
+                self.crossref_journal_works(&issn, &query)
+            }
             ScholarlyRequestKind::OpenAlexSourceByIssn { issn } => {
                 self.openalex_source_by_issn(&issn)
             }
@@ -3239,18 +3357,16 @@ where
     /// # Arguments
     ///
     /// * `issn` - ISSN lookup candidate.
-    /// * `from_sync_date` - Optional lower synchronization-date filter.
-    /// * `cursor` - Cursor returned by the previous page.
+    /// * `query` - Frozen creation and update bounds, with an optional dense-second cursor.
     ///
     /// # Returns
     ///
     /// Bounded Crossref works page.
-    pub fn fetch_journal_works_page(
+    pub fn fetch_crossref_page(
         &mut self,
         issn: &str,
-        from_sync_date: Option<&str>,
-        cursor: Option<&str>,
-    ) -> Result<ScholarlyWorksPage, SourceError> {
+        query: &CrossrefQuery,
+    ) -> Result<CrossrefWorksPage, SourceError> {
         let url = format!("https://api.crossref.org/journals/{issn}/works");
         let mut payload = self.transport.request(ScholarlyRequest {
             service: CROSSREF_SOURCE.to_string(),
@@ -3259,23 +3375,33 @@ where
             url,
             kind: ScholarlyRequestKind::CrossrefJournalWorks {
                 issn: issn.to_string(),
-                from_sync_date: from_sync_date.map(str::to_string),
-                cursor: cursor.map(str::to_string),
+                query: query.clone(),
             },
         })?;
+        let total_results = payload
+            .pointer("/message/total-results")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                SourceError::InvalidFixture(
+                    "Crossref response has no valid total-results".to_string(),
+                )
+            })?;
         let next_cursor = payload
             .get("message")
             .and_then(|message| message.get("next-cursor"))
             .and_then(Value::as_str)
             .map(str::to_string);
         let items = payload
-            .get_mut("message")
-            .map(|message| take_json_array(message, "items"))
-            .unwrap_or_default();
-        Ok(ScholarlyWorksPage {
+            .pointer_mut("/message/items")
+            .filter(|items| items.is_array())
+            .and_then(|items| items.take().as_array().cloned())
+            .ok_or_else(|| {
+                SourceError::InvalidFixture("Crossref response has no items array".to_string())
+            })?;
+        Ok(CrossrefWorksPage {
             items,
+            total_results,
             next_cursor,
-            did_fallback_to_unfiltered: false,
         })
     }
 
@@ -3807,24 +3933,33 @@ mod tests {
     use super::test_support::CapturedLogs;
 
     use super::{
-        crossref_journal_filter, crossref_transport_attempt_limit,
+        crossref_journal_query, crossref_transport_attempt_limit,
         crossref_transport_envelope_seconds, crossref_transport_retry_delay,
         execute_openalex_batches, normalize_doi, normalize_issn, normalize_source_title,
         openalex_doi_query, openalex_doi_request_url, openalex_rate_headers,
         openalex_short_source_id, openalex_source_work_filter, partition_openalex_doi_batches,
         redact_url, run_bounded_indexed, take_json_array, unix_time_duration, unix_time_millis,
-        value_pool_from_text, FixtureScholarlyTransport, JsonRequest, LiveScholarlyConfig,
-        LiveScholarlyTransport, OpenAlexHealthOutcome, OpenAlexRateHeaders,
+        value_pool_from_text, CrossrefQuery, FixtureScholarlyTransport, JsonRequest,
+        LiveScholarlyConfig, LiveScholarlyTransport, OpenAlexHealthOutcome, OpenAlexRateHeaders,
         OpenAlexScheduleDecision, OpenAlexScheduler, OpenAlexSchedulerState,
         ProviderAttemptSchedule, ScholarlyClient, ScholarlyFixtureData, ScholarlyTransport,
         SemanticScholarHealthOutcome, SemanticScholarScheduleDecision,
-        SemanticScholarSchedulerState, SourceError, CROSSREF_ATTEMPT_INTERVAL_MS,
-        CROSSREF_JOURNAL_WORK_ORDER, CROSSREF_ROWS, CROSSREF_SOURCE,
-        OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
+        SemanticScholarSchedulerState, SourceError, CROSSREF_ATTEMPT_INTERVAL_MS, CROSSREF_ROWS,
+        CROSSREF_SOURCE, OPENALEX_DOI_FILTER_MAX_VALUES, OPENALEX_DOI_REQUEST_URL_BUDGET,
         OPENALEX_KEY_START_INTERVAL, OPENALEX_MAX_WORKERS_PER_PROCESS, OPENALEX_SOURCE_WORK_SORT,
         SCHOLARLY_RESPONSE_MAXIMUM_BYTES, SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS,
         SEMANTIC_SCHOLAR_SOURCE,
     };
+
+    fn test_crossref_query(cursor: Option<&str>, updated_from: Option<&str>) -> CrossrefQuery {
+        CrossrefQuery::Works {
+            created_from: 0,
+            created_until: 0,
+            updated_from: updated_from.map(str::to_string),
+            updated_until: updated_from.map(|_| 1_800_000_000),
+            cursor: cursor.map(str::to_string),
+        }
+    }
 
     #[derive(Clone, Copy)]
     enum LiveJsonTestOutcome {
@@ -6383,6 +6518,69 @@ mod tests {
     }
 
     #[test]
+    fn crossref_cursor_query_satisfies_august_2026_http_contract() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("test request should connect");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("request timeout should be set");
+            let mut request = [0_u8; 8_192];
+            let size = stream.read(&mut request).expect("test request should read");
+            let request = String::from_utf8_lossy(&request[..size]);
+            let target = request.split_whitespace().nth(1).expect("request target");
+            let url = reqwest::Url::parse(&format!("http://{address}{target}"))
+                .expect("request URL should parse");
+            let query = url.query_pairs().collect::<BTreeMap<_, _>>();
+            let is_incompatible = query.contains_key("cursor")
+                && query.get("sort").is_some_and(|sort| {
+                    matches!(
+                        sort.as_ref(),
+                        "issued" | "published" | "published-print" | "published-online"
+                    )
+                });
+            let (status, body) = if is_incompatible {
+                (
+                    "400 Bad Request",
+                    json!({
+                        "status": "failed",
+                        "message-type": "validation-failure",
+                        "message": [{"type": "sort-criteria-incompatible-with-cursor"}]
+                    }),
+                )
+            } else {
+                (
+                    "200 OK",
+                    json!({"message": {"total-results": 0, "items": []}}),
+                )
+            };
+            let body = body.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("test response should write");
+        });
+        let mut transport =
+            LiveScholarlyTransport::new(LiveScholarlyConfig::from_value_pools(3, "", "", ""))
+                .expect("live transport should build");
+        let result = transport.get_json(
+            CROSSREF_SOURCE,
+            "journal_works",
+            &format!("http://{address}/journals/1234-5678/works"),
+            &crossref_journal_query(&test_crossref_query(
+                Some("resume-cursor"),
+                Some("2026-01-01"),
+            ))
+            .unwrap(),
+        );
+        server.join().expect("test server should finish");
+        assert!(result.is_ok(), "cursor query must be accepted: {result:?}");
+    }
+
+    #[test]
     fn crossref_status_errors_record_attempts() {
         let transport = FixtureScholarlyTransport::new(ScholarlyFixtureData {
             crossref_status: Some(503),
@@ -6391,7 +6589,7 @@ mod tests {
         let mut client = ScholarlyClient::new(transport, true);
 
         let error = client
-            .fetch_journal_works_page("1234-5678", Some("2026-01-01"), None)
+            .fetch_crossref_page("1234-5678", &test_crossref_query(None, Some("2026-01-01")))
             .expect_err("Crossref fixture failure should fail loud");
 
         assert!(matches!(
@@ -6427,7 +6625,7 @@ mod tests {
         let mut client = ScholarlyClient::new(transport, true);
 
         let works = client
-            .fetch_journal_works_page("1234-5678", None, None)
+            .fetch_crossref_page("1234-5678", &test_crossref_query(None, None))
             .expect("Crossref fixture success should resolve");
 
         assert_eq!(works.items[0]["DOI"], "10.1/success");
@@ -6466,7 +6664,7 @@ mod tests {
         let mut client = ScholarlyClient::new(transport, true);
 
         let first = client
-            .fetch_journal_works_page("1234-5678", None, None)
+            .fetch_crossref_page("1234-5678", &test_crossref_query(Some("*"), None))
             .expect("first page should load");
         assert_eq!(first.items.len(), CROSSREF_ROWS);
         assert_eq!(
@@ -6477,16 +6675,23 @@ mod tests {
         assert!(client.attempts().is_empty());
 
         let second = client
-            .fetch_journal_works_page("1234-5678", None, first.next_cursor.as_deref())
+            .fetch_crossref_page(
+                "1234-5678",
+                &test_crossref_query(first.next_cursor.as_deref(), None),
+            )
             .expect("second page should load");
         assert_eq!(second.items.len(), CROSSREF_ROWS);
         assert_eq!(second.next_cursor, first.next_cursor);
 
         let third = client
-            .fetch_journal_works_page("1234-5678", None, second.next_cursor.as_deref())
+            .fetch_crossref_page(
+                "1234-5678",
+                &test_crossref_query(second.next_cursor.as_deref(), None),
+            )
             .expect("third page should load");
-        assert_eq!(third.items, vec![json!({"DOI": "10.1/final"})]);
-        assert_eq!(third.next_cursor, None);
+        assert_eq!(third.items[0]["DOI"], "10.1/final");
+        assert_eq!(third.total_results, 451);
+        assert_eq!(third.next_cursor, first.next_cursor);
     }
 
     #[test]
@@ -6501,15 +6706,26 @@ mod tests {
 
     #[test]
     fn provider_filters_map_one_synchronization_date_and_book_chapter_series() {
-        assert_eq!(
-            crossref_journal_filter(Some("2026-01-02")),
-            "type:journal-article,from-update-date:2026-01-02"
-        );
+        let query = crossref_journal_query(&test_crossref_query(None, Some("2026-01-02")))
+            .unwrap()
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(query["rows"], "1000");
+        assert!(!query.contains_key("cursor"));
+        assert!(!query.contains_key("sort"));
+        assert!(query["filter"]
+            .contains("from-update-date:2026-01-02,until-update-date:2027-01-15T08:00:00"));
+        assert!(query["filter"].contains(
+            "from-created-date:1970-01-01T00:00:00,until-created-date:1970-01-01T00:00:00"
+        ));
         assert_eq!(
             openalex_source_work_filter("S42", Some("2026-01-02")),
             "primary_location.source.id:S42,type:article|book-chapter,from_created_date:2026-01-02"
         );
-        assert_eq!(crossref_journal_filter(None), "type:journal-article");
+        let query = crossref_journal_query(&test_crossref_query(None, None)).unwrap();
+        assert!(query
+            .iter()
+            .all(|(_, value)| !value.contains("update-date")));
         assert_eq!(
             openalex_source_work_filter("S42", None),
             "primary_location.source.id:S42,type:article|book-chapter"
@@ -6518,7 +6734,17 @@ mod tests {
 
     #[test]
     fn source_list_requests_sort_from_newest_to_oldest() {
-        assert_eq!(CROSSREF_JOURNAL_WORK_ORDER, "desc");
+        let query = crossref_journal_query(&CrossrefQuery::EarliestCreated {
+            until: 1_800_000_000,
+        })
+        .unwrap()
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+        assert_eq!(query["sort"], "created");
+        assert_eq!(query["order"], "asc");
+        assert_eq!(query["rows"], "1");
+        assert!(!query.contains_key("cursor"));
+        assert!(!query["filter"].contains("update-date"));
         assert_eq!(OPENALEX_SOURCE_WORK_SORT, "publication_date:desc");
     }
 

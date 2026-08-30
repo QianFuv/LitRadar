@@ -8,6 +8,7 @@
 /backups/
 /data/index
 /data/index-control
+/data/index-work/
 /data/push/subscriptions.json
 /data/push_state
 /data/auth.sqlite
