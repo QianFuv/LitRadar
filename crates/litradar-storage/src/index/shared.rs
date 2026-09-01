@@ -293,3 +293,50 @@ impl SortDirection {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fts_filters_keep_search_projection_rowid_only() {
+        let mut clauses = Vec::new();
+        let mut values = Vec::new();
+
+        push_fts_filter(
+            &mut clauses,
+            &mut values,
+            "l.article_id",
+            &Some("genome OR clinical".to_string()),
+            ArticleSearchMode::Simple,
+        );
+
+        assert_eq!(
+            clauses,
+            ["l.article_id IN (SELECT rowid FROM article_search WHERE article_search MATCH ?)"]
+        );
+        assert_eq!(
+            values,
+            [SqlValue::Text("\"genome OR clinical\"".to_string())]
+        );
+
+        clauses.clear();
+        values.clear();
+        push_fts_filter(
+            &mut clauses,
+            &mut values,
+            "l.article_id",
+            &Some("title:genom* NOT preview".to_string()),
+            ArticleSearchMode::Advanced,
+        );
+
+        assert_eq!(
+            clauses,
+            ["l.article_id IN (SELECT rowid FROM article_search WHERE article_search MATCH ?)"]
+        );
+        assert_eq!(
+            values,
+            [SqlValue::Text("title:genom* NOT preview".to_string())]
+        );
+    }
+}

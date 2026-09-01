@@ -1045,6 +1045,122 @@ mod tests {
     }
 
     #[test]
+    fn article_search_contract_covers_full_detail_columns_and_replacement() {
+        let fixture = IndexFixture::new(true);
+        let connection = open_sqlite_connection(fixture_db_path(&fixture))
+            .expect("fixture database should open");
+        connection
+            .execute_batch(
+                "DELETE FROM article_search WHERE rowid = 1008;
+                 INSERT INTO article_search(
+                     rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
+                 ) VALUES (
+                     1008, 1008, 'Bibliographic Article',
+                     'Résumé article without an external identifier', '', '', 'Heidi',
+                     'Alpha Journal'
+                 );",
+            )
+            .expect("diacritic search fixture should replace the full projection row");
+        drop(connection);
+
+        let cases = [
+            (
+                "phrase",
+                "\"Genome sequencing\"",
+                ArticleSearchMode::Advanced,
+                vec![1001],
+            ),
+            (
+                "prefix",
+                "genom*",
+                ArticleSearchMode::Advanced,
+                vec![1004, 1001],
+            ),
+            (
+                "negation",
+                "genome NOT preview",
+                ArticleSearchMode::Advanced,
+                vec![1001],
+            ),
+            (
+                "title column",
+                "title:Clinical",
+                ArticleSearchMode::Advanced,
+                vec![1002],
+            ),
+            (
+                "journal column",
+                "journal_title:Alpha",
+                ArticleSearchMode::Advanced,
+                vec![1004, 1001, 1002, 1005, 1008],
+            ),
+            (
+                "author column",
+                "authors:Alice",
+                ArticleSearchMode::Advanced,
+                vec![1001],
+            ),
+            (
+                "diacritic folding",
+                "resume",
+                ArticleSearchMode::Simple,
+                vec![1008],
+            ),
+        ];
+
+        for (name, query, search_mode, expected_ids) in cases {
+            let page = list_articles(
+                &fixture.config,
+                Some(&fixture.db_name),
+                &ArticleListParams {
+                    q: Some(query.to_string()),
+                    search_mode,
+                    ..article_filter_params()
+                },
+            )
+            .unwrap_or_else(|error| panic!("{name} query should succeed: {error}"));
+            assert_eq!(article_ids(&page), expected_ids, "{name}");
+        }
+
+        let connection = open_sqlite_connection(fixture_db_path(&fixture))
+            .expect("fixture database should reopen");
+        connection
+            .execute_batch(
+                "DELETE FROM article_search WHERE rowid = 1001;
+                 INSERT INTO article_search(
+                     rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
+                 ) VALUES (
+                     1001, 1001, 'Replacement Methods', 'replacementtoken precision study',
+                     '10.1000/genome', '1001', 'Alice Bob', 'Alpha Journal'
+                 );",
+            )
+            .expect("search projection should support full-row replacement");
+        drop(connection);
+
+        let obsolete = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                q: Some("sequencing".to_string()),
+                ..article_filter_params()
+            },
+        )
+        .expect("obsolete-token query should succeed");
+        assert!(obsolete.items.is_empty());
+
+        let replacement = list_articles(
+            &fixture.config,
+            Some(&fixture.db_name),
+            &ArticleListParams {
+                q: Some("replacementtoken".to_string()),
+                ..article_filter_params()
+            },
+        )
+        .expect("replacement-token query should succeed");
+        assert_eq!(article_ids(&replacement), [1001]);
+    }
+
+    #[test]
     fn article_search_input_bounds_apply_before_sql() {
         let fixture = IndexFixture::new(true);
         let accepted = list_articles(
