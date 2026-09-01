@@ -6,7 +6,7 @@ use std::path::Path;
 use litradar_storage::{
     count_users, get_journal, migrate_auth_database, migrate_index_database, migrate_storage,
     preflight_index_database, preflight_storage, MigrationError, StorageConfig,
-    AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION,
+    AUTH_SCHEMA_VERSION, INDEX_SCHEMA_VERSION, MIN_SUPPORTED_INDEX_SCHEMA_VERSION,
 };
 use rusqlite::{Connection, OptionalExtension};
 use tempfile::tempdir;
@@ -1560,6 +1560,11 @@ fn empty_index_database_migration_creates_exact_provider_neutral_schema() {
 
     let schema = sqlite_schema_sql(&path);
     assert!(schema.contains("identity_kind in ('catalog_id', 'issn')"));
+    assert!(schema.contains("content = ''"));
+    assert!(schema.contains("contentless_delete = 1"));
+    assert!(!schema.contains("detail ="));
+    assert!(!schema.contains("columnsize ="));
+    assert!(!table_exists(&path, "article_search_content"));
     assert_eq!(foreign_key_count(&path, "journal_identity_keys"), 0);
     assert_eq!(foreign_key_count(&path, "article_retraction_dois"), 1);
     for forbidden in [
@@ -1586,11 +1591,13 @@ fn version_four_index_migration_preserves_content_and_seeds_identity_keys() {
     let path = temp_dir.path().join("version-four.sqlite");
     create_version_four_index_database(&path, true);
     let before = index_content_snapshot(&path);
+    let search_before = index_search_snapshot(&path);
 
     migrate_index_database(&path, None).expect("version four index should migrate");
 
     assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
     assert_eq!(index_content_snapshot(&path), before);
+    assert_eq!(index_search_snapshot(&path), search_before);
     assert_eq!(
         query_text_rows(
             &path,
@@ -1623,6 +1630,7 @@ fn version_five_index_migration_discards_legacy_scalar_and_preserves_other_conte
     let path = temp_dir.path().join("version-five.sqlite");
     create_version_five_index_database(&path);
     let before = index_content_snapshot(&path);
+    let search_before = index_search_snapshot(&path);
     let identity_before = query_text_rows(
         &path,
         "SELECT json_array(identity_kind, identity_value, canonical_catalog_id)
@@ -1640,6 +1648,7 @@ fn version_five_index_migration_discards_legacy_scalar_and_preserves_other_conte
 
     assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
     assert_eq!(index_content_snapshot(&path), before);
+    assert_eq!(index_search_snapshot(&path), search_before);
     assert_eq!(
         query_text_rows(
             &path,
@@ -1653,6 +1662,117 @@ fn version_five_index_migration_discards_legacy_scalar_and_preserves_other_conte
         .any(|column| column == "retraction_doi"));
     assert_eq!(table_row_count(&path, "article_retraction_dois"), 0);
     assert_eq!(foreign_key_violation_count(&path), 0);
+}
+
+#[test]
+fn version_six_preflight_is_read_only_and_explicit_migration_builds_version_seven() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let path = temp_dir.path().join("version-six.sqlite");
+    create_version_six_index_database(&path);
+    let content_before = index_content_snapshot(&path);
+    let search_before = index_search_snapshot(&path);
+    let bytes_before = fs::read(&path).expect("version six bytes should read");
+
+    preflight_index_database(&path, None).expect("version six preflight should succeed");
+
+    assert_eq!(user_version(&path), MIN_SUPPORTED_INDEX_SCHEMA_VERSION);
+    assert_eq!(
+        fs::read(&path).expect("preflight bytes should read"),
+        bytes_before
+    );
+
+    migrate_index_database(&path, None).expect("version six should migrate explicitly");
+
+    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
+    assert_eq!(index_content_snapshot(&path), content_before);
+    assert_eq!(index_search_snapshot(&path), search_before);
+    assert!(!table_exists(&path, "article_search_content"));
+    assert!(sqlite_schema_sql(&path).contains("contentless_delete = 1"));
+    assert_eq!(foreign_key_violation_count(&path), 0);
+}
+
+#[test]
+fn index_preflight_rejects_search_storage_that_mismatches_declared_version() {
+    let temp_dir = tempdir().expect("temp directory should be created");
+    let version_six_path = temp_dir.path().join("v6-with-v7-search.sqlite");
+    migrate_index_database(&version_six_path, None).expect("current index should initialize");
+    let connection = Connection::open(&version_six_path).expect("index should open");
+    connection
+        .pragma_update(None, "user_version", MIN_SUPPORTED_INDEX_SCHEMA_VERSION)
+        .expect("fixture version should downgrade");
+    drop(connection);
+    let version_six_bytes = fs::read(&version_six_path).expect("fixture bytes should read");
+
+    preflight_index_database(&version_six_path, None)
+        .expect_err("v6 must reject contentless v7 search storage");
+
+    assert_eq!(
+        fs::read(&version_six_path).expect("rejected v6 bytes should read"),
+        version_six_bytes
+    );
+
+    let version_seven_path = temp_dir.path().join("v7-with-v6-search.sqlite");
+    migrate_index_database(&version_seven_path, None).expect("current index should initialize");
+    let connection = Connection::open(&version_seven_path).expect("index should open");
+    connection
+        .execute_batch(
+            "DROP TABLE article_search;
+             CREATE VIRTUAL TABLE article_search
+             USING fts5(
+                 article_id UNINDEXED,
+                 title,
+                 abstract_text,
+                 doi,
+                 pmid,
+                 authors,
+                 journal_title,
+                 tokenize = 'unicode61 remove_diacritics 2'
+             );",
+        )
+        .expect("stored-content search fixture should install");
+    drop(connection);
+    let version_seven_bytes = fs::read(&version_seven_path).expect("fixture bytes should read");
+
+    preflight_index_database(&version_seven_path, None)
+        .expect_err("v7 must reject stored-content v6 search storage");
+
+    assert_eq!(
+        fs::read(&version_seven_path).expect("rejected v7 bytes should read"),
+        version_seven_bytes
+    );
+
+    let lookalike_path = temp_dir.path().join("v7-with-extra-search-option.sqlite");
+    migrate_index_database(&lookalike_path, None).expect("current index should initialize");
+    let connection = Connection::open(&lookalike_path).expect("index should open");
+    connection
+        .execute_batch(
+            "DROP TABLE article_search;
+             CREATE VIRTUAL TABLE article_search
+             USING fts5(
+                 article_id UNINDEXED,
+                 title,
+                 abstract_text,
+                 doi,
+                 pmid,
+                 authors,
+                 journal_title,
+                 content = '',
+                 contentless_delete = 1,
+                 prefix = '2',
+                 tokenize = 'unicode61 remove_diacritics 2'
+             );",
+        )
+        .expect("lookalike search fixture should install");
+    drop(connection);
+    let lookalike_bytes = fs::read(&lookalike_path).expect("fixture bytes should read");
+
+    preflight_index_database(&lookalike_path, None)
+        .expect_err("v7 must reject undeclared search options");
+
+    assert_eq!(
+        fs::read(&lookalike_path).expect("rejected lookalike bytes should read"),
+        lookalike_bytes
+    );
 }
 
 #[test]
@@ -2272,7 +2392,19 @@ fn create_version_four_index_database(path: &Path, has_content: bool) {
     let connection = Connection::open(path).expect("version four fixture should open");
     connection
         .execute_batch(
-            "DROP TABLE article_retraction_dois;
+            "DROP TABLE article_search;
+             CREATE VIRTUAL TABLE article_search
+             USING fts5(
+                 article_id UNINDEXED,
+                 title,
+                 abstract_text,
+                 doi,
+                 pmid,
+                 authors,
+                 journal_title,
+                 tokenize = 'unicode61 remove_diacritics 2'
+             );
+             DROP TABLE article_retraction_dois;
              ALTER TABLE articles ADD COLUMN retraction_doi TEXT;
              DROP TABLE journal_identity_keys;
              PRAGMA user_version = 4;",
@@ -2368,6 +2500,53 @@ fn create_version_five_index_database(path: &Path) {
         .expect("version five identity and scalar state should be installed");
 }
 
+fn create_version_six_index_database(path: &Path) {
+    create_version_five_index_database(path);
+    migrate_index_database(path, None).expect("fixture should migrate to current version");
+    let connection = Connection::open(path).expect("version six fixture should open");
+    connection
+        .execute_batch(
+            "DROP TABLE article_search;
+             CREATE VIRTUAL TABLE article_search
+             USING fts5(
+                 article_id UNINDEXED,
+                 title,
+                 abstract_text,
+                 doi,
+                 pmid,
+                 authors,
+                 journal_title,
+                 tokenize = 'unicode61 remove_diacritics 2'
+             );
+             INSERT INTO article_search (
+                 rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
+             )
+             SELECT
+                 articles.article_id,
+                 articles.article_id,
+                 articles.title,
+                 articles.abstract_text,
+                 articles.doi,
+                 articles.pmid,
+                 COALESCE((
+                     SELECT group_concat(
+                         CASE authors.type
+                             WHEN 'object' THEN json_extract(authors.value, '$.display_name')
+                             ELSE CAST(authors.value AS TEXT)
+                         END,
+                         '; '
+                     )
+                     FROM json_each(articles.authors_json) AS authors
+                 ), ''),
+                 journals.title
+             FROM articles
+             JOIN journals ON journals.journal_id = articles.journal_id
+             ORDER BY articles.article_id;
+             PRAGMA user_version = 6;",
+        )
+        .expect("version six search storage should install");
+}
+
 fn index_content_snapshot(path: &Path) -> Vec<Vec<String>> {
     [
         "SELECT json_array(journal_id, catalog_id, title, title_aliases_json, issns_json, issn, eissn, area, utd_rank, utd_rating, abs_rank, abs_rating, fms_rank, fms_rating, fmscn_rank, fmscn_rating) FROM journals ORDER BY journal_id",
@@ -2375,11 +2554,37 @@ fn index_content_snapshot(path: &Path) -> Vec<Vec<String>> {
         "SELECT json_array(article_id, journal_id, issue_id, title, publication_year, date, authors_json, start_page, end_page, abstract_text, doi, pmid, open_access, in_press) FROM articles ORDER BY article_id",
         "SELECT json_array(identity_kind, identity_value, article_id) FROM article_identity_keys ORDER BY identity_kind, identity_value",
         "SELECT json_array(article_id, journal_id, issue_id, publication_year, date, open_access, in_press, doi, pmid, area) FROM article_listing ORDER BY article_id",
-        "SELECT json_array(rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title) FROM article_search ORDER BY rowid",
         "SELECT json_array(event_id, content_revision, article_id, change_kind, journal_id, issue_id, in_press, created_at) FROM article_change_events ORDER BY event_id",
     ]
     .into_iter()
     .map(|query| query_text_rows(path, query))
+    .collect()
+}
+
+fn index_search_snapshot(path: &Path) -> Vec<Vec<String>> {
+    [
+        "article",
+        "abstract",
+        "doi:article",
+        "authors:Author",
+        "journal_title:\"Journal One\"",
+    ]
+    .into_iter()
+    .map(|query| {
+        let connection = Connection::open(path).expect("database should open for FTS query");
+        let mut statement = connection
+            .prepare(
+                "SELECT CAST(rowid AS TEXT) FROM article_search
+                 WHERE article_search MATCH ?1
+                 ORDER BY rowid",
+            )
+            .expect("FTS snapshot query should prepare");
+        statement
+            .query_map([query], |row| row.get::<_, String>(0))
+            .expect("FTS snapshot rows should query")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("FTS snapshot rows should collect")
+    })
     .collect()
 }
 

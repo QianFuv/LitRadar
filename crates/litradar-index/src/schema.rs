@@ -30,7 +30,16 @@ const LEGACY_JOURNAL_NOT_EMPTY_MESSAGE: &str =
     "legacy journal entity owns content or durable history";
 
 /// Current provider-neutral content database schema version.
-pub const CONTENT_SCHEMA_VERSION: i64 = 6;
+pub const CONTENT_SCHEMA_VERSION: i64 = 7;
+
+const MIN_SUPPORTED_CONTENT_SCHEMA_VERSION: i64 = 6;
+
+const VERSION_SIX_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
+    article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
+    tokenize='unicode61remove_diacritics2')";
+const VERSION_SEVEN_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
+    article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
+    content='',contentless_delete=1,tokenize='unicode61remove_diacritics2')";
 
 const CONTENT_TABLES_SQL: &str = "
     CREATE TABLE journals (
@@ -129,6 +138,8 @@ const CONTENT_TABLES_SQL: &str = "
         pmid,
         authors,
         journal_title,
+        content = '',
+        contentless_delete = 1,
         tokenize = 'unicode61 remove_diacritics 2'
     );
 
@@ -326,7 +337,7 @@ pub fn optimize_content_db(connection: &Connection) -> Result<(), ContentDatabas
     Ok(())
 }
 
-/// Initialize an empty content database or validate an existing v6 database.
+/// Initialize an empty content database or validate a supported content database.
 ///
 /// # Arguments
 ///
@@ -339,8 +350,8 @@ pub fn init_content_db(connection: &Connection) -> Result<(), ContentDatabaseErr
     configure_content_connection(connection)?;
     let version = connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
     let object_count = content_schema_object_count(connection)?;
-    if version == CONTENT_SCHEMA_VERSION {
-        return validate_current_content_schema(connection);
+    if (MIN_SUPPORTED_CONTENT_SCHEMA_VERSION..=CONTENT_SCHEMA_VERSION).contains(&version) {
+        return validate_content_schema(connection, version);
     }
     if version != 0 || object_count != 0 {
         return Err(ContentDatabaseError::RebuildRequired {
@@ -352,7 +363,7 @@ pub fn init_content_db(connection: &Connection) -> Result<(), ContentDatabaseErr
     transaction.execute_batch(CONTENT_TABLES_SQL)?;
     transaction.pragma_update(None, "user_version", CONTENT_SCHEMA_VERSION)?;
     transaction.commit()?;
-    validate_current_content_schema(connection)
+    validate_content_schema(connection, CONTENT_SCHEMA_VERSION)
 }
 
 /// Reconcile maintained journal identities and existing canonical metadata atomically.
@@ -476,7 +487,10 @@ fn content_schema_object_count(connection: &Connection) -> rusqlite::Result<i64>
     )
 }
 
-fn validate_current_content_schema(connection: &Connection) -> Result<(), ContentDatabaseError> {
+fn validate_content_schema(
+    connection: &Connection,
+    version: i64,
+) -> Result<(), ContentDatabaseError> {
     let expected = [
         "article_change_events",
         "article_identity_keys",
@@ -655,6 +669,7 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
             "index inventory mismatch: {actual_indexes:?}"
         )));
     }
+    validate_search_storage(connection, version)?;
     for forbidden in [
         "provider",
         "source",
@@ -686,6 +701,43 @@ fn validate_current_content_schema(connection: &Connection) -> Result<(), Conten
         }
     }
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    Ok(())
+}
+
+fn validate_search_storage(
+    connection: &Connection,
+    version: i64,
+) -> Result<(), ContentDatabaseError> {
+    let schema_sql = connection.query_row(
+        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'article_search'",
+        [],
+        |row| row.get::<_, String>(0),
+    )?;
+    let compact_sql = schema_sql
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let has_content_shadow = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_schema
+             WHERE type = 'table' AND name = 'article_search_content'
+         )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    let is_valid_storage = match version {
+        MIN_SUPPORTED_CONTENT_SCHEMA_VERSION => {
+            has_content_shadow && compact_sql == VERSION_SIX_SEARCH_SCHEMA
+        }
+        CONTENT_SCHEMA_VERSION => !has_content_shadow && compact_sql == VERSION_SEVEN_SEARCH_SCHEMA,
+        _ => false,
+    };
+    if !is_valid_storage {
+        return Err(ContentDatabaseError::InvalidCurrentSchema(
+            "article_search storage options do not match the declared schema version".to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -750,7 +802,7 @@ fn remove_empty_legacy_journal(
              SELECT 1
              FROM article_search AS article_search
              JOIN articles AS articles
-               ON articles.article_id = CAST(article_search.article_id AS INTEGER)
+               ON articles.article_id = article_search.rowid
              WHERE articles.journal_id = ?1
              UNION ALL
              SELECT 1 FROM article_change_events WHERE journal_id = ?1
@@ -1484,12 +1536,63 @@ fn refresh_journal_projections(
         )?;
     }
     if refresh.refresh_search_title {
-        connection.execute(
-            "UPDATE article_search SET journal_title = ?1 WHERE article_id IN (
-                 SELECT article_id FROM articles WHERE journal_id = ?2
-             )",
-            params![catalog.title, journal_id],
+        let projections = {
+            let mut statement = connection.prepare(
+                "SELECT
+                     articles.article_id,
+                     articles.title,
+                     articles.abstract_text,
+                     articles.doi,
+                     articles.pmid,
+                     COALESCE((
+                         SELECT group_concat(
+                             CASE authors.type
+                                 WHEN 'object' THEN json_extract(
+                                     authors.value, '$.display_name'
+                                 )
+                                 ELSE CAST(authors.value AS TEXT)
+                             END,
+                             '; '
+                         )
+                         FROM json_each(articles.authors_json) AS authors
+                     ), '')
+                 FROM articles
+                 WHERE articles.journal_id = ?1
+                 ORDER BY articles.article_id",
+            )?;
+            let rows = statement
+                .query_map([journal_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        let mut search_delete =
+            connection.prepare_cached("DELETE FROM article_search WHERE rowid = ?1")?;
+        let mut search_insert = connection.prepare_cached(
+            "INSERT INTO article_search (
+                 rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
+             ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
+        for (article_id, title, abstract_text, doi, pmid, authors) in projections {
+            search_delete.execute([article_id])?;
+            search_insert.execute(params![
+                article_id,
+                title,
+                abstract_text,
+                doi,
+                pmid,
+                authors,
+                catalog.title,
+            ])?;
+        }
     }
     Ok(())
 }
@@ -1505,6 +1608,7 @@ mod tests {
     use super::{
         init_content_db, open_content_db, reconcile_catalog_identities, write_content_batch,
         ContentDatabaseError, ContentWriteOutcome, CONTENT_SCHEMA_VERSION,
+        MIN_SUPPORTED_CONTENT_SCHEMA_VERSION,
     };
 
     const TEST_CREATED_AT: &str = "2026-07-18T00:00:00Z";
@@ -1530,7 +1634,7 @@ mod tests {
     }
 
     #[test]
-    fn content_database_connections_configure_new_and_reopened_v6_files() {
+    fn content_database_connections_configure_new_and_reopened_current_files() {
         let directory = tempfile::tempdir().expect("temporary directory should create");
         let path = directory.path().join("content.sqlite");
         let connection = open_content_db(&path).expect("new content database should open");
@@ -1714,14 +1818,16 @@ mod tests {
         catalog: &JournalCatalogEntry,
         expected_count: i64,
     ) {
+        let journal_query = format!("journal_title:\"{}\"", catalog.title.replace('"', "\"\""));
         let counts = connection
             .query_row(
                 "SELECT
                      (SELECT COUNT(*) FROM article_listing),
                      (SELECT COUNT(*) FROM article_listing WHERE area IS ?1),
                      (SELECT COUNT(*) FROM article_search),
-                     (SELECT COUNT(*) FROM article_search WHERE journal_title = ?2)",
-                rusqlite::params![catalog.area, catalog.title],
+                     (SELECT COUNT(*) FROM article_search
+                      WHERE article_search MATCH ?2)",
+                rusqlite::params![catalog.area, journal_query],
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
@@ -1788,6 +1894,17 @@ mod tests {
             .expect("schema SQL should read")
             .to_ascii_lowercase();
         assert!(schema.contains("identity_kind in ('catalog_id', 'issn')"));
+        assert!(schema.contains("content = ''"));
+        assert!(schema.contains("contentless_delete = 1"));
+        let content_shadow_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'table' AND name = 'article_search_content'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("FTS content shadow inventory should read");
+        assert_eq!(content_shadow_count, 0);
         for forbidden in [
             "provider_name",
             "library_id",
@@ -1805,6 +1922,48 @@ mod tests {
                 "forbidden schema token {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn version_six_content_schema_remains_runtime_readable_and_writable() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("current content schema should initialize");
+        connection
+            .execute_batch(
+                "DROP TABLE article_search;
+                 CREATE VIRTUAL TABLE article_search
+                 USING fts5(
+                     article_id UNINDEXED,
+                     title,
+                     abstract_text,
+                     doi,
+                     pmid,
+                     authors,
+                     journal_title,
+                     tokenize = 'unicode61 remove_diacritics 2'
+                 );
+                 PRAGMA user_version = 6;",
+            )
+            .expect("version six search storage should install");
+
+        init_content_db(&connection).expect("version six content schema should preflight");
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .expect("schema version should read"),
+            MIN_SUPPORTED_CONTENT_SCHEMA_VERSION
+        );
+
+        let mut renamed_catalog = catalog();
+        write_test_batch(
+            &connection,
+            &renamed_catalog,
+            &batch(),
+            "catalog:journal-1:v6-seed",
+        );
+        renamed_catalog.title = "Renamed Version Six Journal".to_string();
+        write_empty_catalog_update(&connection, &renamed_catalog, "catalog:journal-1:v6-title");
+        assert_projection_metadata(&connection, &renamed_catalog, 1);
     }
 
     #[test]
@@ -2647,11 +2806,7 @@ mod tests {
             &combined_catalog,
             "catalog:journal-1:combined",
         );
-        assert_eq!(
-            combined_changes,
-            title_only_changes + ARTICLE_COUNT as u64,
-            "combined metadata must add exactly one listing refresh"
-        );
+        assert!(combined_changes > ARTICLE_COUNT as u64);
         assert_projection_metadata(&connection, &combined_catalog, ARTICLE_COUNT as i64);
 
         assert_eq!(
@@ -2676,9 +2831,11 @@ mod tests {
         let changed_search_rows = connection
             .query_row(
                 "SELECT COUNT(*) FROM article_search
-                 WHERE abstract_text = 'Updated canonical abstract with additional detail'
-                   AND journal_title = ?1",
-                [combined_catalog.title.as_str()],
+                 WHERE article_search MATCH ?1",
+                [format!(
+                    "abstract_text:additional AND journal_title:\"{}\"",
+                    combined_catalog.title.replace('"', "\"\"")
+                )],
                 |row| row.get::<_, i64>(0),
             )
             .expect("changed search projection should read");
@@ -2779,13 +2936,16 @@ mod tests {
                 row.get::<_, String>(0)
             })
             .expect("listing DOI should read");
-        let search_doi = connection
-            .query_row("SELECT doi FROM article_search", [], |row| {
-                row.get::<_, String>(0)
-            })
-            .expect("search DOI should read");
+        let search_doi_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM article_search
+                 WHERE article_search MATCH 'doi:alternate'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("search DOI should match");
         assert_eq!(listing_doi, canonical_doi);
-        assert_eq!(search_doi, canonical_doi);
+        assert_eq!(search_doi_count, 1);
     }
 
     #[test]

@@ -1514,7 +1514,8 @@ mod tests {
         BackupRestoreOptions, Replacement, RestoreHook, ServiceKind, BACKUP_FORMAT_VERSION,
     };
     use crate::{
-        migrate_auth_database, migrate_index_database, open_sqlite_connection, StorageConfig,
+        migrate_auth_database, migrate_index_database, open_sqlite_connection,
+        preflight_index_database, StorageConfig, MIN_SUPPORTED_INDEX_SCHEMA_VERSION,
     };
 
     struct MutateMetadataAfterCopy;
@@ -1788,6 +1789,51 @@ mod tests {
             "{\"value\":1}"
         );
         drop(source_connection);
+    }
+
+    #[test]
+    fn backup_verification_and_restore_accept_supported_version_six_indexes() {
+        let fixture = BackupFixture::new("version-six-index");
+        let index_path = fixture.source_config.index_dir().join("fixture.sqlite");
+        migrate_index_database(&index_path, None).expect("current index should initialize");
+        let connection = Connection::open(&index_path).expect("index database should open");
+        connection
+            .execute_batch(
+                "DROP TABLE article_search;
+                 CREATE VIRTUAL TABLE article_search
+                 USING fts5(
+                     article_id UNINDEXED,
+                     title,
+                     abstract_text,
+                     doi,
+                     pmid,
+                     authors,
+                     journal_title,
+                     tokenize = 'unicode61 remove_diacritics 2'
+                 );
+                 PRAGMA user_version = 6;",
+            )
+            .expect("version six search storage should install");
+        drop(connection);
+
+        let manifest = create_backup(&fixture.create_options(true, false))
+            .expect("version six index backup should complete");
+        assert!(manifest.components.iter().any(|component| {
+            component.kind == BackupComponentKind::IndexDatabase
+                && component.schema_version == Some(MIN_SUPPORTED_INDEX_SCHEMA_VERSION)
+        }));
+        verify_backup(&fixture.backup_dir).expect("version six backup should verify");
+
+        let restore_root = fixture.root.path().join("version-six-restore");
+        let restore_config = StorageConfig::from_project_root(&restore_root);
+        restore_backup(&BackupRestoreOptions {
+            storage_config: restore_config.clone(),
+            auth_db_path: restore_config.auth_db_path().to_path_buf(),
+            backup_dir: fixture.backup_dir.clone(),
+        })
+        .expect("version six backup should restore");
+        preflight_index_database(restore_config.index_dir().join("fixture.sqlite"), None)
+            .expect("restored version six index should preflight");
     }
 
     #[test]

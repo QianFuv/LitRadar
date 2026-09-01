@@ -5328,14 +5328,16 @@ mod tests {
                       WHERE canonical_catalog_id = 'issn-1472-3409'),
                      (SELECT title FROM journals WHERE catalog_id = 'issn-1472-3409'),
                      (SELECT area FROM article_listing),
-                     (SELECT journal_title FROM article_search)",
+                     (SELECT COUNT(*) FROM article_search
+                      WHERE article_search MATCH
+                          'journal_title:\"Environment and Planning A Economy and Space\"')",
                 [],
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(3)?,
                     ))
                 },
             )
@@ -5346,7 +5348,7 @@ mod tests {
                 4,
                 "Environment and Planning A: Economy and Space".to_string(),
                 "Regional, Environmental & Resource Studies".to_string(),
-                "Environment and Planning A: Economy and Space".to_string(),
+                1,
             )
         );
     }

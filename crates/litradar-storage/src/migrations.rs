@@ -13,6 +13,7 @@ use rusqlite::{
 
 use litradar_domain::{normalize_contract_issn, ProviderOrderConfiguration};
 
+use crate::article_authors::decode_article_author_names;
 use crate::business::{import_legacy_delivery_state_files, DeliveryRepositoryError};
 use crate::{DatabaseResolutionError, StorageConfig};
 
@@ -20,7 +21,17 @@ use crate::{DatabaseResolutionError, StorageConfig};
 pub const AUTH_SCHEMA_VERSION: i64 = 15;
 
 /// Current index database schema version.
-pub const INDEX_SCHEMA_VERSION: i64 = 6;
+pub const INDEX_SCHEMA_VERSION: i64 = 7;
+
+/// Oldest index database schema accepted by normal runtime preflight.
+pub const MIN_SUPPORTED_INDEX_SCHEMA_VERSION: i64 = 6;
+
+const VERSION_SIX_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
+    article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
+    tokenize='unicode61remove_diacritics2')";
+const VERSION_SEVEN_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
+    article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
+    content='',contentless_delete=1,tokenize='unicode61remove_diacritics2')";
 
 const AUTH_DATABASE: &str = "auth";
 const INDEX_DATABASE: &str = "index";
@@ -481,9 +492,13 @@ fn preflight_index_database_inner(
 ) -> Result<IndexPreflightValidation, MigrationError> {
     if let Some((version, _)) = inspect_existing_index_database(path)? {
         reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
-        if version == INDEX_SCHEMA_VERSION {
+        if (MIN_SUPPORTED_INDEX_SCHEMA_VERSION..=INDEX_SCHEMA_VERSION).contains(&version) {
             let connection = open_read_only_index_connection(path)?;
-            validate_index_v6_schema_structure(&connection)?;
+            if version == MIN_SUPPORTED_INDEX_SCHEMA_VERSION {
+                validate_index_v6_schema_structure(&connection)?;
+            } else {
+                validate_index_v7_schema_structure(&connection)?;
+            }
             return Ok(IndexPreflightValidation::SchemaOnly);
         }
     }
@@ -500,19 +515,20 @@ fn migrate_index_database_inner(
         reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
         if version == INDEX_SCHEMA_VERSION {
             let connection = open_read_only_index_connection(path)?;
-            validate_index_v6_schema(&connection)?;
+            validate_index_v7_schema(&connection)?;
             return Ok(MigrationSummary {
                 from_version: version,
                 to_version: version,
             });
         }
-        if version == 4 || version == 5 {
+        if (4..=MIN_SUPPORTED_INDEX_SCHEMA_VERSION).contains(&version) {
             {
                 let connection = open_read_only_index_connection(path)?;
-                if version == 4 {
-                    validate_index_v4_schema(&connection)?;
-                } else {
-                    validate_index_v5_schema(&connection)?;
+                match version {
+                    4 => validate_index_v4_schema(&connection)?,
+                    5 => validate_index_v5_schema(&connection)?,
+                    MIN_SUPPORTED_INDEX_SCHEMA_VERSION => validate_index_v6_schema(&connection)?,
+                    _ => unreachable!("supported migration source should be validated"),
                 }
             }
             let connection = open_migration_connection(path)?;
@@ -523,11 +539,14 @@ fn migrate_index_database_inner(
             if version == 4 {
                 apply_index_version_five(&transaction)?;
             }
-            apply_index_version_six(&transaction)?;
+            if version <= 5 {
+                apply_index_version_six(&transaction)?;
+            }
+            apply_index_version_seven(&transaction)?;
             transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
             transaction.commit()?;
             connection.pragma_update(None, "foreign_keys", true)?;
-            validate_index_v6_schema(&connection)?;
+            validate_index_v7_schema(&connection)?;
             return Ok(MigrationSummary {
                 from_version: version,
                 to_version: INDEX_SCHEMA_VERSION,
@@ -550,7 +569,7 @@ fn migrate_index_database_inner(
     transaction.execute_batch(INDEX_CONTENT_TABLES_SQL)?;
     transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
     transaction.commit()?;
-    validate_index_v6_schema(&connection)?;
+    validate_index_v7_schema(&connection)?;
     Ok(MigrationSummary {
         from_version,
         to_version: INDEX_SCHEMA_VERSION,
@@ -663,11 +682,11 @@ fn open_read_only_index_connection(path: &Path) -> Result<Connection, MigrationE
 }
 
 fn validate_index_v4_schema(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_schema(connection, false, false)
+    validate_index_schema(connection, false, false, IndexSearchStorage::Stored)
 }
 
 fn validate_index_v5_schema(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_schema(connection, true, false)
+    validate_index_schema(connection, true, false, IndexSearchStorage::Stored)
 }
 
 fn validate_index_v6_schema(connection: &Connection) -> Result<(), MigrationError> {
@@ -676,7 +695,21 @@ fn validate_index_v6_schema(connection: &Connection) -> Result<(), MigrationErro
 }
 
 fn validate_index_v6_schema_structure(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_schema(connection, true, true)
+    validate_index_schema(connection, true, true, IndexSearchStorage::Stored)
+}
+
+fn validate_index_v7_schema(connection: &Connection) -> Result<(), MigrationError> {
+    validate_index_v7_schema_structure(connection)?;
+    validate_index_foreign_keys(connection)
+}
+
+fn validate_index_v7_schema_structure(connection: &Connection) -> Result<(), MigrationError> {
+    validate_index_schema(
+        connection,
+        true,
+        true,
+        IndexSearchStorage::ContentlessDelete,
+    )
 }
 
 fn validate_index_foreign_keys(connection: &Connection) -> Result<(), MigrationError> {
@@ -694,6 +727,7 @@ fn validate_index_schema(
     connection: &Connection,
     has_journal_identity_keys: bool,
     has_retraction_dois: bool,
+    search_storage: IndexSearchStorage,
 ) -> Result<(), MigrationError> {
     let mut expected = [
         "article_change_events",
@@ -897,6 +931,49 @@ fn validate_index_schema(
     if actual_indexes != expected_indexes {
         return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
     }
+    validate_index_search_storage(connection, search_storage)?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexSearchStorage {
+    Stored,
+    ContentlessDelete,
+}
+
+fn validate_index_search_storage(
+    connection: &Connection,
+    expected: IndexSearchStorage,
+) -> Result<(), MigrationError> {
+    let schema_sql = connection.query_row(
+        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'article_search'",
+        [],
+        |row| row.get::<_, String>(0),
+    )?;
+    let compact_sql = schema_sql
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let has_content_shadow = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_schema
+             WHERE type = 'table' AND name = 'article_search_content'
+         )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    let is_expected_storage = match expected {
+        IndexSearchStorage::Stored => {
+            has_content_shadow && compact_sql == VERSION_SIX_SEARCH_SCHEMA
+        }
+        IndexSearchStorage::ContentlessDelete => {
+            !has_content_shadow && compact_sql == VERSION_SEVEN_SEARCH_SCHEMA
+        }
+    };
+    if !is_expected_storage {
+        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
     Ok(())
 }
 
@@ -956,6 +1033,79 @@ fn apply_index_version_six(transaction: &Transaction<'_>) -> Result<(), Migratio
     if foreign_key_violation_count != 0 {
         return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
     }
+    Ok(())
+}
+
+fn apply_index_version_seven(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(
+        "DROP TABLE article_search;
+         CREATE VIRTUAL TABLE article_search
+         USING fts5(
+             article_id UNINDEXED,
+             title,
+             abstract_text,
+             doi,
+             pmid,
+             authors,
+             journal_title,
+             content = '',
+             contentless_delete = 1,
+             tokenize = 'unicode61 remove_diacritics 2'
+         );",
+    )?;
+    let projections = {
+        let mut statement = transaction.prepare(
+            "SELECT
+                 articles.article_id,
+                 articles.title,
+                 articles.abstract_text,
+                 articles.doi,
+                 articles.pmid,
+                 articles.authors_json,
+                 journals.title
+             FROM articles
+             JOIN journals ON journals.journal_id = articles.journal_id
+             ORDER BY articles.article_id",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    let mut insert = transaction.prepare(
+        "INSERT INTO article_search (
+             rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
+         ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?;
+    for (article_id, title, abstract_text, doi, pmid, authors_json, journal_title) in projections {
+        let authors = decode_article_author_names(&authors_json)
+            .map_err(|_| MigrationError::Sqlite(rusqlite::Error::InvalidQuery))?
+            .join("; ");
+        insert.execute(params![
+            article_id,
+            title,
+            abstract_text,
+            doi,
+            pmid,
+            authors,
+            journal_title,
+        ])?;
+    }
+    drop(insert);
+    transaction.execute(
+        "INSERT INTO article_search(article_search) VALUES('optimize')",
+        [],
+    )?;
     Ok(())
 }
 
@@ -2331,6 +2481,8 @@ pub(crate) const INDEX_CONTENT_TABLES_SQL: &str = "
         pmid,
         authors,
         journal_title,
+        content = '',
+        contentless_delete = 1,
         tokenize = 'unicode61 remove_diacritics 2'
     );
 
