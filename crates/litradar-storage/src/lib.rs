@@ -8,6 +8,7 @@ pub mod business;
 pub mod cnki;
 pub mod config;
 pub mod index;
+pub mod index_maintenance;
 pub mod meta;
 pub mod migrations;
 pub mod secrets;
@@ -104,6 +105,11 @@ pub use index::{
     get_article_locator, get_issue, get_journal, get_weekly_updates, list_areas, list_articles,
     list_index_database_names, list_issues, list_journal_options, list_journals, list_years,
     ArticleListParams, IndexRepositoryError, IssueListParams, JournalListParams,
+};
+pub use index_maintenance::{
+    optimize_index_storage, IndexDatabaseOptimizationReport, IndexDatabaseStorageMeasurement,
+    IndexStorageOptimizationError, IndexStorageOptimizationOptions,
+    IndexStorageOptimizationOutcome, IndexStorageOptimizationReport, IndexStorageRecoveryPaths,
 };
 pub use meta::{
     discover_packaged_meta_dir, prepare_managed_meta, ManagedMetaAction, ManagedMetaCatalogReport,

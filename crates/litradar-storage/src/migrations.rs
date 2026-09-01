@@ -15,6 +15,7 @@ use litradar_domain::{normalize_contract_issn, ProviderOrderConfiguration};
 
 use crate::article_authors::decode_article_author_names;
 use crate::business::{import_legacy_delivery_state_files, DeliveryRepositoryError};
+use crate::index_maintenance::{interrupted_index_maintenance_state, IndexStorageRecoveryPaths};
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
@@ -95,6 +96,8 @@ pub enum MigrationError {
     InvalidNotificationSettingsState,
     /// Legacy mutable delivery state could not be imported safely.
     DeliveryState(DeliveryRepositoryError),
+    /// Durable index maintenance evidence requires manual recovery before startup.
+    InterruptedIndexMaintenance(IndexStorageRecoveryPaths),
 }
 
 impl fmt::Display for MigrationError {
@@ -135,6 +138,13 @@ impl fmt::Display for MigrationError {
                 formatter.write_str("notification settings list state is invalid for migration")
             }
             Self::DeliveryState(error) => write!(formatter, "{error}"),
+            Self::InterruptedIndexMaintenance(paths) => write!(
+                formatter,
+                "interrupted index maintenance requires recovery; marker={}, staging={}, rollback={}",
+                paths.marker.display(),
+                paths.staging.display(),
+                paths.rollback.display(),
+            ),
         }
     }
 }
@@ -152,7 +162,8 @@ impl Error for MigrationError {
             | Self::InvalidIndexIdentityState
             | Self::IndexIdentityConflict
             | Self::InvalidRuntimeProviderOrderState
-            | Self::InvalidNotificationSettingsState => None,
+            | Self::InvalidNotificationSettingsState
+            | Self::InterruptedIndexMaintenance(_) => None,
         }
     }
 }
@@ -195,6 +206,7 @@ impl From<DeliveryRepositoryError> for MigrationError {
 ///
 /// Empty result after every configured database reaches its current version.
 pub fn migrate_storage(config: &StorageConfig) -> Result<(), MigrationError> {
+    ensure_index_maintenance_inactive(config)?;
     prepare_shared_storage(config)?;
     migrate_existing_index_databases(config)
 }
@@ -213,8 +225,16 @@ pub fn migrate_storage(config: &StorageConfig) -> Result<(), MigrationError> {
 ///
 /// Empty result after every configured database is ready for runtime use.
 pub fn preflight_storage(config: &StorageConfig) -> Result<(), MigrationError> {
+    ensure_index_maintenance_inactive(config)?;
     prepare_shared_storage(config)?;
     preflight_existing_index_databases(config)
+}
+
+fn ensure_index_maintenance_inactive(config: &StorageConfig) -> Result<(), MigrationError> {
+    if let Some(paths) = interrupted_index_maintenance_state(config)? {
+        return Err(MigrationError::InterruptedIndexMaintenance(paths));
+    }
+    Ok(())
 }
 
 fn prepare_shared_storage(config: &StorageConfig) -> Result<(), MigrationError> {
@@ -632,6 +652,7 @@ fn migration_error_kind(error: &MigrationError) -> &'static str {
         MigrationError::InvalidRuntimeProviderOrderState => "invalid_runtime_provider_order_state",
         MigrationError::InvalidNotificationSettingsState => "invalid_notification_settings_state",
         MigrationError::DeliveryState(_) => "delivery_state",
+        MigrationError::InterruptedIndexMaintenance(_) => "interrupted_index_maintenance",
     }
 }
 
@@ -642,7 +663,8 @@ fn migration_error_database_version(error: &MigrationError) -> i64 {
         MigrationError::Io(_)
         | MigrationError::Sqlite(_)
         | MigrationError::DatabaseResolution(_)
-        | MigrationError::DeliveryState(_) => -1,
+        | MigrationError::DeliveryState(_)
+        | MigrationError::InterruptedIndexMaintenance(_) => -1,
         MigrationError::InvalidIndexIdentityState | MigrationError::IndexIdentityConflict => 4,
         MigrationError::InvalidRuntimeProviderOrderState => 6,
         MigrationError::InvalidNotificationSettingsState => 13,

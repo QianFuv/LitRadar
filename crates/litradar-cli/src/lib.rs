@@ -15,11 +15,12 @@ use litradar_index::{
     LiveScholarlyConfig,
 };
 use litradar_storage::{
-    create_backup, migrate_auth_database, migrate_database_secrets,
+    create_backup, migrate_auth_database, migrate_database_secrets, optimize_index_storage,
     preflight_existing_index_databases, preflight_index_database, preflight_storage,
     restore_backup, rotate_database_secrets, verify_backup, verify_database_secrets,
-    BackupCreateOptions, BackupRestoreOptions, ManagedMetaAction, ManagedMetaPreparationReport,
-    SecretCodec, StorageConfig,
+    BackupCreateOptions, BackupRestoreOptions, IndexStorageOptimizationError,
+    IndexStorageOptimizationOptions, IndexStorageOptimizationOutcome, ManagedMetaAction,
+    ManagedMetaPreparationReport, SecretCodec, StorageConfig,
 };
 use litradar_worker::delivery::{
     run_manual_delivery_job, run_recommendation_delivery, DeliveryMode, DeliveryOutcomeState,
@@ -109,9 +110,32 @@ fn run_admin_command_inner(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let stdin = std::io::stdin();
-    let payload = run_admin_command_with_reader(args, stdin.lock())?;
-    print_result(&serde_json::to_string(&payload)?);
-    Ok(())
+    match run_admin_command_with_reader(args, stdin.lock()) {
+        Ok(payload) => {
+            print_result(&serde_json::to_string(&payload)?);
+            Ok(())
+        }
+        Err(error) => {
+            if let Some(optimization_error) = error.downcast_ref::<IndexStorageOptimizationError>()
+            {
+                print_result(&serde_json::to_string(
+                    &index_optimization_failure_payload(optimization_error),
+                )?);
+            }
+            Err(error)
+        }
+    }
+}
+
+fn index_optimization_failure_payload(error: &IndexStorageOptimizationError) -> serde_json::Value {
+    json!({
+        "status": "failed",
+        "error": {
+            "code": error.code(),
+            "message": error.to_string(),
+            "recovery_paths": error.recovery_paths(),
+        }
+    })
 }
 
 fn run_admin_command_with_reader(
@@ -119,6 +143,7 @@ fn run_admin_command_with_reader(
     mut password_reader: impl BufRead,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
     let project_root = extract_project_root(&mut args)?;
+    let has_explicit_auth_db = args.iter().any(|argument| argument == "--auth-db");
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
     let username = extract_string_option(&mut args, "--username")?;
     let should_read_password = remove_flag(&mut args, "--password-stdin");
@@ -130,11 +155,13 @@ fn run_admin_command_with_reader(
     let include_index_databases = remove_flag(&mut args, "--include-indexes");
     let include_push_state = remove_flag(&mut args, "--include-push-state");
     let is_restore_confirmed = remove_flag(&mut args, "--confirm-restore");
+    let is_index_maintenance_confirmed = remove_flag(&mut args, "--confirm-index-maintenance");
     let has_backup_options = output_dir.is_some()
         || backup_dir.is_some()
         || include_index_databases
         || include_push_state
-        || is_restore_confirmed;
+        || is_restore_confirmed
+        || is_index_maintenance_confirmed;
     match args.as_slice() {
         [command]
             if command == "bootstrap"
@@ -210,6 +237,7 @@ fn run_admin_command_with_reader(
                 && output_dir.is_some()
                 && backup_dir.is_none()
                 && !is_restore_confirmed
+                && !is_index_maintenance_confirmed
                 && username.is_none()
                 && !should_read_password
                 && secret_key_file.is_none()
@@ -241,6 +269,7 @@ fn run_admin_command_with_reader(
                 && !include_index_databases
                 && !include_push_state
                 && !is_restore_confirmed
+                && !is_index_maintenance_confirmed
                 && username.is_none()
                 && !should_read_password
                 && secret_key_file.is_none()
@@ -266,6 +295,7 @@ fn run_admin_command_with_reader(
                 && !include_index_databases
                 && !include_push_state
                 && is_restore_confirmed
+                && !is_index_maintenance_confirmed
                 && username.is_none()
                 && !should_read_password
                 && secret_key_file.is_none()
@@ -284,6 +314,34 @@ fn run_admin_command_with_reader(
             Ok(json!({
                 "status": "restored",
                 "backup": backup_dir,
+                "report": report,
+            }))
+        }
+        [group, command]
+            if group == "index"
+                && command == "optimize-storage"
+                && !has_explicit_auth_db
+                && username.is_none()
+                && !should_read_password
+                && secret_key_file.is_none()
+                && old_key_file.is_none()
+                && new_key_file.is_none()
+                && output_dir.is_none()
+                && backup_dir.is_none()
+                && !include_index_databases
+                && !include_push_state
+                && !is_restore_confirmed =>
+        {
+            let report = optimize_index_storage(&IndexStorageOptimizationOptions {
+                storage_config: StorageConfig::from_project_root(&project_root),
+                confirmed: is_index_maintenance_confirmed,
+            })?;
+            let status = match report.outcome {
+                IndexStorageOptimizationOutcome::Noop => "noop",
+                IndexStorageOptimizationOutcome::Optimized => "optimized",
+            };
+            Ok(json!({
+                "status": status,
                 "report": report,
             }))
         }
@@ -1258,7 +1316,8 @@ fn admin_usage() -> String {
             "litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]",
             "litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]",
             "litradar admin backup verify --backup PATH [--project-root PATH]",
-            "litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]"
+            "litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]",
+            "litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]"
         ]
     })
     .to_string()
@@ -1279,7 +1338,7 @@ fn delivery_usage(workflow: DeliveryWorkflow) -> String {
 mod tests {
     use std::collections::{BTreeMap, HashMap};
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::{Arc, Mutex};
 
@@ -1291,12 +1350,13 @@ mod tests {
     use super::{
         admin_usage, aggregate_delivery_status, delivery_usage, ensure_delivery_command_success,
         extract_auth_db_path, extract_bool_pair, extract_string_option, extract_usize_option,
-        index_concurrency_payload, index_usage, live_index_runtime_config, normalize_db_name,
-        parse_index_options, preflight_command_storage, preflight_index_command_databases,
-        prepare_index_managed_meta, resolve_delivery_targets, resolve_project_path,
-        run_admin_command_with_reader, run_index_command, run_index_command_with_bundled_meta_dir,
-        run_notify_command, run_push_command, run_scheduler_command, scheduler_usage,
-        serialize_index_outcome, IndexOptions,
+        index_concurrency_payload, index_optimization_failure_payload, index_usage,
+        live_index_runtime_config, normalize_db_name, parse_index_options,
+        preflight_command_storage, preflight_index_command_databases, prepare_index_managed_meta,
+        resolve_delivery_targets, resolve_project_path, run_admin_command_with_reader,
+        run_index_command, run_index_command_with_bundled_meta_dir, run_notify_command,
+        run_push_command, run_scheduler_command, scheduler_usage, serialize_index_outcome,
+        IndexOptions,
     };
     use litradar_index::{LiveCsvIndexOutcome, LiveIndexOutcome};
     use litradar_worker::delivery::{
@@ -1415,6 +1475,7 @@ mod tests {
         assert!(admin.contains("admin bootstrap --username NAME --password-stdin"));
         assert!(admin.contains("admin backup create --output PATH"));
         assert!(admin.contains("admin backup restore --backup PATH --confirm-restore"));
+        assert!(admin.contains("admin index optimize-storage --confirm-index-maintenance"));
         assert!(!admin.contains("--password "));
         for usage in [admin, index, notify, push, scheduler] {
             assert!(usage.contains("litradar "));
@@ -1798,6 +1859,90 @@ mod tests {
             )
             .expect("restored probe should load");
         assert_eq!(value, "cli-row");
+    }
+
+    #[test]
+    fn admin_index_storage_optimization_is_confirmed_and_returns_structured_reports() {
+        let root = temp_root("litradar-cli-index-storage-optimization");
+        let project_root = root.path().join("project");
+        let config = litradar_storage::StorageConfig::from_project_root(&project_root);
+        fs::create_dir_all(config.index_dir()).expect("index directory should create");
+        litradar_storage::migrate_index_database(config.index_dir().join("fixture.sqlite"), None)
+            .expect("fixture index should initialize");
+
+        let missing_confirmation = run_admin_command_with_reader(
+            vec![
+                "--project-root".to_string(),
+                project_root.to_string_lossy().into_owned(),
+                "index".to_string(),
+                "optimize-storage".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect_err("missing maintenance confirmation should fail");
+        let typed_error = missing_confirmation
+            .downcast_ref::<litradar_storage::IndexStorageOptimizationError>()
+            .expect("confirmation failure should retain its structured error type");
+        assert_eq!(typed_error.code(), "confirmation_required");
+        assert_eq!(
+            index_optimization_failure_payload(typed_error)["error"]["code"],
+            "confirmation_required"
+        );
+
+        let optimized = run_admin_command_with_reader(
+            vec![
+                "--project-root".to_string(),
+                project_root.to_string_lossy().into_owned(),
+                "--confirm-index-maintenance".to_string(),
+                "index".to_string(),
+                "optimize-storage".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect("confirmed optimization should succeed");
+        assert_eq!(optimized["status"], "optimized");
+        assert_eq!(optimized["report"]["database_count"], 1);
+        assert_eq!(
+            optimized["report"]["databases"][0]["target_schema_version"],
+            litradar_storage::INDEX_SCHEMA_VERSION
+        );
+
+        let empty_root = root.path().join("empty");
+        let noop = run_admin_command_with_reader(
+            vec![
+                "--project-root".to_string(),
+                empty_root.to_string_lossy().into_owned(),
+                "--confirm-index-maintenance".to_string(),
+                "index".to_string(),
+                "optimize-storage".to_string(),
+            ],
+            "".as_bytes(),
+        )
+        .expect("empty index target should be a no-op");
+        assert_eq!(noop["status"], "noop");
+        assert_eq!(noop["report"]["database_count"], 0);
+        assert!(!empty_root.join("data").exists());
+    }
+
+    #[test]
+    fn admin_index_storage_failures_have_stable_json_codes_and_recovery_paths() {
+        let rollback_error = litradar_storage::IndexStorageOptimizationError::RollbackFailed {
+            detail: "injected rollback failure".to_string(),
+            recovery_paths: Box::new(litradar_storage::IndexStorageRecoveryPaths {
+                marker: PathBuf::from("data/.litradar-index-maintenance.json"),
+                staging: PathBuf::from("data/.litradar-index-staging"),
+                rollback: PathBuf::from("data/.litradar-index-rollback"),
+            }),
+        };
+
+        let payload = index_optimization_failure_payload(&rollback_error);
+
+        assert_eq!(payload["status"], "failed");
+        assert_eq!(payload["error"]["code"], "rollback_failed");
+        assert!(payload["error"]["recovery_paths"]["marker"]
+            .as_str()
+            .is_some_and(|path| path.contains(".litradar-index-maintenance.json")));
+        assert!(!payload.to_string().contains("article"));
     }
 
     #[test]
@@ -2939,7 +3084,19 @@ mod tests {
             .expect("content database should open for downgrade fixture");
         connection
             .execute_batch(
-                "DROP TABLE article_retraction_dois;
+                "DROP TABLE article_search;
+                 CREATE VIRTUAL TABLE article_search
+                 USING fts5(
+                     article_id UNINDEXED,
+                     title,
+                     abstract_text,
+                     doi,
+                     pmid,
+                     authors,
+                     journal_title,
+                     tokenize = 'unicode61 remove_diacritics 2'
+                 );
+                 DROP TABLE article_retraction_dois;
                  ALTER TABLE articles ADD COLUMN retraction_doi TEXT;
                  DROP TABLE journal_identity_keys;
                  PRAGMA user_version = 4;",

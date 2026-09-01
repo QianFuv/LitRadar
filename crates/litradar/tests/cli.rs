@@ -5,6 +5,7 @@ mod support;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use litradar_domain::{ScheduledDeliveryJob, ScheduledJobSpec};
 use serde_json::Value;
@@ -91,6 +92,174 @@ fn index_command_help_exposes_full_rescan_defaults_and_mode_relationships() {
     assert!(payload["modes"]["acknowledge_unknown_notify"]
         .as_str()
         .is_some_and(|value| value.contains("ambiguous notify attempt")));
+}
+
+#[test]
+fn admin_index_storage_optimizer_binary_reports_help_success_noop_and_failures_as_json() {
+    let help = run_litradar(&["admin", "--help"]);
+    let help_payload: Value =
+        serde_json::from_slice(&help.stdout).expect("admin help should be JSON");
+    assert!(help.status.success());
+    assert!(help_payload["usage"]
+        .as_array()
+        .is_some_and(|lines| lines.iter().any(|line| {
+            line.as_str().is_some_and(|line| {
+                line.contains("index optimize-storage --confirm-index-maintenance")
+            })
+        })));
+
+    let root = tempdir().expect("temporary project root should create");
+    let config = litradar_storage::StorageConfig::from_project_root(root.path());
+    fs::create_dir_all(config.index_dir()).expect("index directory should create");
+    litradar_storage::migrate_index_database(config.index_dir().join("fixture.sqlite"), None)
+        .expect("fixture index should initialize");
+
+    let missing_confirmation = run_litradar_in(
+        root.path(),
+        &["admin", "index", "optimize-storage", "--project-root", "."],
+    );
+    let missing_payload: Value = serde_json::from_slice(&missing_confirmation.stdout)
+        .expect("confirmation failure should be JSON");
+    assert!(!missing_confirmation.status.success());
+    assert_eq!(missing_payload["status"], "failed");
+    assert_eq!(missing_payload["error"]["code"], "confirmation_required");
+
+    let optimized = run_litradar_in(
+        root.path(),
+        &[
+            "admin",
+            "index",
+            "optimize-storage",
+            "--confirm-index-maintenance",
+            "--project-root",
+            ".",
+        ],
+    );
+    let optimized_payload: Value =
+        serde_json::from_slice(&optimized.stdout).expect("success should be JSON");
+    assert!(optimized.status.success());
+    assert_eq!(optimized_payload["status"], "optimized");
+    assert_eq!(optimized_payload["report"]["database_count"], 1);
+
+    let empty = tempdir().expect("empty project root should create");
+    let noop = run_litradar_in(
+        empty.path(),
+        &[
+            "admin",
+            "index",
+            "optimize-storage",
+            "--confirm-index-maintenance",
+            "--project-root",
+            ".",
+        ],
+    );
+    let noop_payload: Value = serde_json::from_slice(&noop.stdout).expect("no-op should be JSON");
+    assert!(noop.status.success());
+    assert_eq!(noop_payload["status"], "noop");
+    assert!(!empty.path().join("data").exists());
+}
+
+#[test]
+fn admin_index_storage_optimizer_binary_refuses_active_unsupported_and_stale_targets() {
+    let active_root = tempdir().expect("active project root should create");
+    let active_config = litradar_storage::StorageConfig::from_project_root(active_root.path());
+    fs::create_dir_all(active_config.index_dir()).expect("index directory should create");
+    litradar_storage::migrate_index_database(
+        active_config.index_dir().join("fixture.sqlite"),
+        None,
+    )
+    .expect("fixture index should initialize");
+    litradar_storage::migrate_auth_database(active_config.auth_db_path())
+        .expect("auth database should initialize");
+    litradar_storage::record_service_heartbeat(
+        active_config.auth_db_path(),
+        litradar_storage::ServiceKind::Worker,
+        "active-worker",
+        current_epoch_seconds() as f64,
+    )
+    .expect("active heartbeat should persist");
+
+    let active = run_litradar_in(
+        active_root.path(),
+        &[
+            "admin",
+            "index",
+            "optimize-storage",
+            "--confirm-index-maintenance",
+            "--project-root",
+            ".",
+        ],
+    );
+    let active_payload: Value =
+        serde_json::from_slice(&active.stdout).expect("active failure should be JSON");
+    assert!(!active.status.success());
+    assert_eq!(active_payload["error"]["code"], "active_target");
+
+    let unsupported_root = tempdir().expect("unsupported project root should create");
+    let unsupported_config =
+        litradar_storage::StorageConfig::from_project_root(unsupported_root.path());
+    fs::create_dir_all(unsupported_config.index_dir()).expect("index directory should create");
+    let unsupported_path = unsupported_config.index_dir().join("fixture.sqlite");
+    litradar_storage::migrate_index_database(&unsupported_path, None)
+        .expect("fixture index should initialize");
+    let connection = litradar_storage::open_sqlite_connection(&unsupported_path)
+        .expect("fixture database should open");
+    connection
+        .pragma_update(
+            None,
+            "user_version",
+            litradar_storage::INDEX_SCHEMA_VERSION + 1,
+        )
+        .expect("fixture schema version should update");
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode = DELETE;")
+        .expect("fixture should checkpoint");
+    drop(connection);
+
+    let unsupported = run_litradar_in(
+        unsupported_root.path(),
+        &[
+            "admin",
+            "index",
+            "optimize-storage",
+            "--confirm-index-maintenance",
+            "--project-root",
+            ".",
+        ],
+    );
+    let unsupported_payload: Value =
+        serde_json::from_slice(&unsupported.stdout).expect("unsupported failure should be JSON");
+    assert!(!unsupported.status.success());
+    assert_eq!(unsupported_payload["error"]["code"], "unsupported_schema");
+
+    let stale_root = tempdir().expect("stale project root should create");
+    fs::create_dir_all(stale_root.path().join("data")).expect("data directory should create");
+    fs::write(
+        stale_root
+            .path()
+            .join("data")
+            .join(".litradar-index-maintenance.json"),
+        b"retained evidence\n",
+    )
+    .expect("stale marker should write");
+    let stale = run_litradar_in(
+        stale_root.path(),
+        &[
+            "admin",
+            "index",
+            "optimize-storage",
+            "--confirm-index-maintenance",
+            "--project-root",
+            ".",
+        ],
+    );
+    let stale_payload: Value =
+        serde_json::from_slice(&stale.stdout).expect("stale failure should be JSON");
+    assert!(!stale.status.success());
+    assert_eq!(stale_payload["error"]["code"], "interrupted_state");
+    assert!(stale_payload["error"]["recovery_paths"]["rollback"]
+        .as_str()
+        .is_some_and(|path| path.contains(".litradar-index-rollback")));
 }
 
 #[test]
@@ -954,6 +1123,15 @@ fn direct_output_macros_match_the_explicit_source_allowlist() {
         ),
     ]);
     assert_eq!(observed, expected);
+}
+
+fn current_epoch_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .try_into()
+        .unwrap_or(i64::MAX)
 }
 
 fn collect_rust_sources(directory: &Path, files: &mut Vec<PathBuf>) {
