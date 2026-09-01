@@ -639,6 +639,42 @@ mod tests {
     }
 
     #[test]
+    fn acknowledgement_removes_only_the_inclusive_cursor_range() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("content schema should initialize");
+        for event_id in [7, 8] {
+            insert_event(
+                &connection,
+                &ContentChangeEvent {
+                    event_id,
+                    content_revision: format!("revision-{event_id}"),
+                    article_id: 100 + event_id,
+                    change_kind: "upsert".to_string(),
+                    journal_id: 10,
+                    issue_id: None,
+                    in_press: false,
+                    created_at: "2026-07-18T00:00:00Z".to_string(),
+                },
+            );
+        }
+
+        assert_eq!(
+            acknowledge_content_change_events(&connection, 7)
+                .expect("bounded acknowledgement should succeed"),
+            1
+        );
+        let remaining =
+            list_content_change_events(&connection, 0, 10).expect("remaining outbox should read");
+        assert_eq!(
+            remaining
+                .iter()
+                .map(|event| (event.event_id, event.content_revision.as_str()))
+                .collect::<Vec<_>>(),
+            [(8, "revision-8")]
+        );
+    }
+
+    #[test]
     fn prepared_manifest_republishes_exact_bytes_after_acknowledgement() {
         let connection = Connection::open_in_memory().expect("database should open");
         init_content_db(&connection).expect("content schema should initialize");

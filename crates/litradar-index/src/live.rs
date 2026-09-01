@@ -47,8 +47,8 @@ use crate::control::{
 };
 use crate::identity::{ArticleIdentityError, ArticleMergeError};
 use crate::schema::{
-    open_content_db, optimize_content_db, reconcile_catalog_identities, write_content_batch,
-    ContentDatabaseError,
+    open_content_db, optimize_content_db, reconcile_catalog_identities,
+    write_content_batch_with_change_event_policy, ContentDatabaseError,
 };
 use crate::stats::IndexRunMetrics;
 use crate::transforms::CatalogContractError;
@@ -1916,12 +1916,13 @@ fn run_worker_processes(
         .join("data")
         .join("index-control")
         .join("worker-requests");
-    run_worker_processes_with_launcher(
+    run_worker_processes_with_launcher_and_change_event_policy(
         &request_dir,
         &std::path::absolute(config.project_root.join("data/index-work/scholarly"))?,
         content,
         control,
         context,
+        config.update,
         requests,
         &config.scholarly_config,
         config.cnki_captcha_token.as_deref(),
@@ -2190,12 +2191,52 @@ fn cleanup_stale_legacy_worker_requests(
 ///
 /// Aggregate metrics after every worker stream and process completes.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn run_worker_processes_with_launcher<Launcher, Observer>(
     request_dir: &Path,
     scholarly_workset_dir: &Path,
     content: &Connection,
     control: &Connection,
     context: &ParentWriterContext,
+    requests: Vec<LiveIndexWorkerRequest>,
+    scholarly_config: &LiveScholarlyConfig,
+    cnki_captcha_token: Option<&str>,
+    provider_proxy_selection: &ProviderProxySelection,
+    metrics: IndexRunMetrics,
+    heartbeat_interval: Duration,
+    launcher: Launcher,
+    observer: Observer,
+) -> Result<IndexRunMetrics, LiveIndexError>
+where
+    Launcher: FnMut(&Path, usize) -> Result<LaunchedWorkerProcess, LiveIndexError>,
+    Observer: FnMut(WriterCommitObservation),
+{
+    run_worker_processes_with_launcher_and_change_event_policy(
+        request_dir,
+        scholarly_workset_dir,
+        content,
+        control,
+        context,
+        true,
+        requests,
+        scholarly_config,
+        cnki_captcha_token,
+        provider_proxy_selection,
+        metrics,
+        heartbeat_interval,
+        launcher,
+        observer,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_worker_processes_with_launcher_and_change_event_policy<Launcher, Observer>(
+    request_dir: &Path,
+    scholarly_workset_dir: &Path,
+    content: &Connection,
+    control: &Connection,
+    context: &ParentWriterContext,
+    should_record_change_events: bool,
     requests: Vec<LiveIndexWorkerRequest>,
     scholarly_config: &LiveScholarlyConfig,
     cnki_captcha_token: Option<&str>,
@@ -2302,6 +2343,7 @@ where
         content,
         control,
         context,
+        should_record_change_events,
         &mut children,
         &mut progress,
         metrics,
@@ -2421,6 +2463,7 @@ fn supervise_worker_processes(
     content: &Connection,
     control: &Connection,
     context: &ParentWriterContext,
+    should_record_change_events: bool,
     children: &mut [SpawnedWorker],
     progress: &mut [WorkerProgress],
     mut metrics: IndexRunMetrics,
@@ -2453,6 +2496,7 @@ fn supervise_worker_processes(
                     content,
                     control,
                     context,
+                    should_record_change_events,
                     children,
                     progress,
                     &mut metrics,
@@ -2490,6 +2534,7 @@ fn handle_worker_message(
     content: &Connection,
     control: &Connection,
     context: &ParentWriterContext,
+    should_record_change_events: bool,
     children: &mut [SpawnedWorker],
     progress: &mut [WorkerProgress],
     metrics: &mut IndexRunMetrics,
@@ -2549,12 +2594,13 @@ fn handle_worker_message(
                 &batch.progress,
                 &context.timestamp,
                 || {
-                    write_content_batch(
+                    write_content_batch_with_change_event_policy(
                         content,
                         &assignment.entry,
                         &batch,
                         &content_revision,
                         &context.timestamp,
+                        should_record_change_events,
                     )
                 },
             )
@@ -3114,12 +3160,13 @@ fn index_entries_with_provider(
                 &progress,
                 &request.timestamp,
                 || {
-                    write_content_batch(
+                    write_content_batch_with_change_event_policy(
                         content,
                         entry,
                         &batch,
                         &content_revision,
                         &request.timestamp,
+                        should_record_change_events(run.mode),
                     )
                 },
             )?;
@@ -3153,6 +3200,10 @@ fn index_entries_with_provider(
         "success",
     );
     Ok(metrics)
+}
+
+fn should_record_change_events(mode: IndexSyncMode) -> bool {
+    matches!(mode, IndexSyncMode::Incremental)
 }
 
 fn duration_millis(duration: Duration) -> u64 {
@@ -3334,12 +3385,13 @@ mod tests {
         prepare_catalog_manifest_intent, prepare_worker_requests, publish_catalog_manifest,
         read_bounded_notify_output, read_worker_bootstrap, requested_sync_mode,
         run_batch_catalogs_with, run_live_index, run_live_index_worker_with_io,
-        run_worker_processes_with_launcher, validate_live_config, worker_failure_error,
-        ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess, LeaseHeartbeat,
-        LiveIndexConfig, LiveIndexError, LiveIndexWorkerBootstrap, LiveIndexWorkerFailure,
-        LiveIndexWorkerFailureClass, LiveIndexWorkerOperation, LiveIndexWorkerRequest, LiveRunTime,
-        NotifyHandoffObservation, ParentWriterContext, ProviderProxySelection, SupervisedChild,
-        CNKI_PROVIDER_NAME, LEGACY_WORKER_REQUEST_STALE_SECONDS, MAX_NOTIFY_HANDOFF_STDOUT_BYTES,
+        run_worker_processes_with_launcher, should_record_change_events, validate_live_config,
+        worker_failure_error, ContentCommitErrorKind, DirectIndexRequest, LaunchedWorkerProcess,
+        LeaseHeartbeat, LiveIndexConfig, LiveIndexError, LiveIndexWorkerBootstrap,
+        LiveIndexWorkerFailure, LiveIndexWorkerFailureClass, LiveIndexWorkerOperation,
+        LiveIndexWorkerRequest, LiveRunTime, NotifyHandoffObservation, ParentWriterContext,
+        ProviderProxySelection, SupervisedChild, CNKI_PROVIDER_NAME,
+        LEGACY_WORKER_REQUEST_STALE_SECONDS, MAX_NOTIFY_HANDOFF_STDOUT_BYTES,
     };
     use crate::batch::{
         admit_batch, complete_catalog, init_batch_db, prepare_notify_attempt, read_batch_catalogs,
@@ -3639,12 +3691,18 @@ mod tests {
 
     struct InterruptingProvider {
         call_count: Mutex<usize>,
+        expected_committed_anchor: Option<String>,
     }
 
     impl InterruptingProvider {
         fn new() -> Self {
+            Self::with_committed_anchor(Some("anchor-old"))
+        }
+
+        fn with_committed_anchor(expected_committed_anchor: Option<&str>) -> Self {
             Self {
                 call_count: Mutex::new(0),
+                expected_committed_anchor: expected_committed_anchor.map(str::to_string),
             }
         }
     }
@@ -3659,7 +3717,10 @@ mod tests {
             *call_count += 1;
             match *call_count {
                 1 => {
-                    assert_eq!(context.committed_anchor, Some("anchor-old"));
+                    assert_eq!(
+                        context.committed_anchor,
+                        self.expected_committed_anchor.as_deref()
+                    );
                     assert_eq!(context.traversal_checkpoint, None);
                     let mut batch = canonical_batch(catalog);
                     batch.progress = ProviderProgress::Continue {
@@ -3888,6 +3949,16 @@ mod tests {
             JournalSyncPreparation::Run(run) => run,
             JournalSyncPreparation::Skip => panic!("fixture journal should not skip"),
         }
+    }
+
+    fn pending_event_revisions(connection: &Connection) -> Vec<String> {
+        connection
+            .prepare("SELECT content_revision FROM article_change_events ORDER BY event_id")
+            .expect("outbox query should prepare")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("outbox query should run")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("outbox rows should collect")
     }
 
     fn seed_completed_sync(
@@ -4205,13 +4276,16 @@ mod tests {
     fn live_config_selects_exact_sync_modes_and_rejects_conflicts() {
         let mut config = worker_test_config("provider-a", None);
         assert_eq!(requested_sync_mode(&config), IndexSyncMode::Bootstrap);
+        assert!(!should_record_change_events(requested_sync_mode(&config)));
 
         config.update = true;
         assert_eq!(requested_sync_mode(&config), IndexSyncMode::Incremental);
+        assert!(should_record_change_events(requested_sync_mode(&config)));
 
         config.update = false;
         config.full_rescan = true;
         assert_eq!(requested_sync_mode(&config), IndexSyncMode::FullRescan);
+        assert!(!should_record_change_events(requested_sync_mode(&config)));
 
         config.update = true;
         assert!(matches!(
@@ -5166,6 +5240,80 @@ mod tests {
     }
 
     #[test]
+    fn non_update_interruption_and_resume_skip_events_until_final_cleanup() {
+        let directory = tempdir().expect("temporary directory should create");
+        let content_path = directory.path().join("content.sqlite");
+        let control_path = directory.path().join("control.sqlite");
+        let content = open_content_db(&content_path).expect("content should open");
+        let control = open_control_db(&control_path).expect("control should open");
+        content
+            .execute(
+                "INSERT INTO article_change_events (
+                     event_id, content_revision, article_id, change_kind, journal_id,
+                     issue_id, in_press, created_at
+                 ) VALUES (41, 'durable-prior-revision', 9001, 'upsert', 7001, NULL, 0,
+                           '2026-07-17T00:00:00Z')",
+                [],
+            )
+            .expect("durable prior event should insert");
+        content
+            .execute_batch(
+                "CREATE TRIGGER reject_transient_non_update_events
+                 BEFORE INSERT ON article_change_events
+                 BEGIN SELECT RAISE(ABORT, 'non-update event insert attempted'); END;",
+            )
+            .expect("event insertion guard should install");
+        let request = direct_request("provider-a", "bootstrap-resume-run");
+        acquire_lease(
+            &control,
+            &request.catalog_name,
+            &request.provider_name,
+            &request.run_id,
+            LiveRunTime::now().epoch_seconds,
+        )
+        .expect("bootstrap lease should acquire");
+
+        let error = index_entries_with_provider(
+            &content,
+            &control,
+            &InterruptingProvider::with_committed_anchor(None),
+            &request,
+        )
+        .expect_err("second provider page should interrupt the bootstrap run");
+        assert!(matches!(error, LiveIndexError::Provider(_)));
+        assert_eq!(
+            pending_event_revisions(&content),
+            ["durable-prior-revision"]
+        );
+
+        let provider = RecordingProvider::new(None);
+        let resumed = index_entries_with_provider(&content, &control, &provider, &request)
+            .expect("bootstrap run should resume from its committed checkpoint");
+        assert_eq!(resumed.articles_changed, 0);
+        assert_eq!(resumed.change_events_emitted, 0);
+        assert_eq!(
+            pending_event_revisions(&content),
+            ["durable-prior-revision"]
+        );
+        assert_eq!(
+            provider
+                .observations
+                .lock()
+                .expect("observations should lock")
+                .as_slice(),
+            [ObservedFetchContext {
+                mode: IndexSyncMode::Bootstrap,
+                committed_anchor: None,
+                traversal_checkpoint: Some("cursor-after-head".to_string()),
+            }]
+        );
+
+        finalize_indexed_content(&content, &content_path, false)
+            .expect("completed non-update finalization should clear stale events");
+        assert!(pending_event_revisions(&content).is_empty());
+    }
+
+    #[test]
     fn interrupted_update_reuses_frozen_anchor_after_new_content_commits() {
         let directory = tempdir().expect("temporary directory should create");
         let content =
@@ -5883,13 +6031,18 @@ mod tests {
         let metrics = index_entries_with_provider(&content, &replay_control, &provider, &replay)
             .expect("control-loss replay should succeed");
         assert_eq!(metrics.articles_changed, 0);
-        for table in ["journals", "issues", "articles", "article_change_events"] {
+        for (table, expected) in [
+            ("journals", 1),
+            ("issues", 1),
+            ("articles", 1),
+            ("article_change_events", 0),
+        ] {
             let count = content
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
                     row.get::<_, i64>(0)
                 })
                 .expect("row count should read");
-            assert_eq!(count, 1, "unexpected replay count for {table}");
+            assert_eq!(count, expected, "unexpected replay count for {table}");
         }
     }
 

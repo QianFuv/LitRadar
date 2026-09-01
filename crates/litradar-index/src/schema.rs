@@ -442,6 +442,38 @@ pub fn write_content_batch(
     content_revision: &str,
     created_at: &str,
 ) -> Result<ContentWriteOutcome, ContentDatabaseError> {
+    write_content_batch_with_change_event_policy(
+        connection,
+        catalog,
+        batch,
+        content_revision,
+        created_at,
+        true,
+    )
+}
+
+/// Write one canonical batch with an explicit content change-event policy.
+///
+/// # Arguments
+///
+/// * `connection` - Open provider-neutral content database.
+/// * `catalog` - LitRadar-owned maintained journal entry.
+/// * `batch` - Canonical provider response.
+/// * `content_revision` - Core-owned idempotency label for emitted outbox rows.
+/// * `created_at` - Safe content change timestamp.
+/// * `should_record_change_events` - Whether changed articles should enter the durable outbox.
+///
+/// # Returns
+///
+/// Deterministic write counts after one immediate transaction commits.
+pub(crate) fn write_content_batch_with_change_event_policy(
+    connection: &Connection,
+    catalog: &JournalCatalogEntry,
+    batch: &ProviderBatch,
+    content_revision: &str,
+    created_at: &str,
+    should_record_change_events: bool,
+) -> Result<ContentWriteOutcome, ContentDatabaseError> {
     validate_provider_batch(catalog, batch)?;
     if content_revision.is_empty() || content_revision != content_revision.trim() {
         return Err(ContentDatabaseError::InvalidCurrentSchema(
@@ -450,7 +482,8 @@ pub fn write_content_batch(
     }
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     let outcome = {
-        let mut writer = CanonicalContentWriter::prepare(&transaction)?;
+        let mut writer =
+            CanonicalContentWriter::prepare(&transaction, should_record_change_events)?;
         writer.claim_catalog_identity_keys(catalog)?;
         let (journal_id, projection_refresh) = writer.upsert_journal(catalog)?;
         for issue in &batch.issues {
@@ -1018,6 +1051,7 @@ fn upsert_canonical_journal_with_statements(
 
 struct CanonicalContentWriter<'connection> {
     connection: &'connection Connection,
+    should_record_change_events: bool,
     observed_issue_ids: BTreeSet<i64>,
     journal_projection: CachedStatement<'connection>,
     journal_upsert: CachedStatement<'connection>,
@@ -1036,9 +1070,13 @@ struct CanonicalContentWriter<'connection> {
 }
 
 impl<'connection> CanonicalContentWriter<'connection> {
-    fn prepare(connection: &'connection Connection) -> Result<Self, ContentDatabaseError> {
+    fn prepare(
+        connection: &'connection Connection,
+        should_record_change_events: bool,
+    ) -> Result<Self, ContentDatabaseError> {
         Ok(Self {
             connection,
+            should_record_change_events,
             observed_issue_ids: BTreeSet::new(),
             journal_projection: connection.prepare_cached(JOURNAL_PROJECTION_SQL)?,
             journal_upsert: connection.prepare_cached(JOURNAL_UPSERT_SQL)?,
@@ -1270,34 +1308,36 @@ impl<'connection> CanonicalContentWriter<'connection> {
                 catalog,
                 &merged,
             )?;
-            if existing.is_some()
-                && (previous_issue_id != issue_id
-                    || existing
-                        .as_ref()
-                        .is_some_and(|(value, _)| value.in_press != merged.in_press))
-            {
+            if self.should_record_change_events {
+                if existing.is_some()
+                    && (previous_issue_id != issue_id
+                        || existing
+                            .as_ref()
+                            .is_some_and(|(value, _)| value.in_press != merged.in_press))
+                {
+                    outcome.change_events_emitted += self.record_content_change_event(
+                        content_revision,
+                        resolution.article_id,
+                        "remove",
+                        journal_id,
+                        previous_issue_id,
+                        existing
+                            .as_ref()
+                            .and_then(|(value, _)| value.in_press)
+                            .unwrap_or(false),
+                        created_at,
+                    )?;
+                }
                 outcome.change_events_emitted += self.record_content_change_event(
                     content_revision,
                     resolution.article_id,
-                    "remove",
+                    "upsert",
                     journal_id,
-                    previous_issue_id,
-                    existing
-                        .as_ref()
-                        .and_then(|(value, _)| value.in_press)
-                        .unwrap_or(false),
+                    issue_id,
+                    merged.in_press.unwrap_or(false),
                     created_at,
                 )?;
             }
-            outcome.change_events_emitted += self.record_content_change_event(
-                content_revision,
-                resolution.article_id,
-                "upsert",
-                journal_id,
-                issue_id,
-                merged.in_press.unwrap_or(false),
-                created_at,
-            )?;
             if previous_issue_id != issue_id {
                 if let Some(previous_issue_id) = previous_issue_id {
                     self.observed_issue_ids.insert(previous_issue_id);
