@@ -19,7 +19,7 @@
 
 `--include-push-state` 中的 `.changes.json` 是 Provider-neutral 候选变更清单；其余 `<db>.json` 是启动迁移保留的旧投递导入源。持久投递权威状态已经包含在固定的 `auth.sqlite` 快照中，但若部署仍保留旧文件，建议同时选择该选项，以保留导入 hash 的来源证据和未消费的变更清单。恢复不会自动删除或改写这些源文件。
 
-`--include-indexes` 只选择 Provider-neutral v6 内容库。`data/index-control` 是可重建的运行控制状态：项目级 `index-batches.sqlite`（batch schema v2，含 typed notify handoff）和每个 catalog 的 v4 anchor/run/lease 控制库即使位于项目根下，也都不会进入 backup manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；清空控制状态后的首次索引会创建新 batch 并通过内容 identity alias/upsert 幂等收敛，但也会失去尚未完成的 notify handoff/Unknown acknowledgement 证明。
+`--include-indexes` 只选择 Provider-neutral、受当前二进制支持的精确 v6/v7 内容库。`data/index-control` 是可重建的运行控制状态：项目级 `index-batches.sqlite`（batch schema v2，含 typed notify handoff）和每个 catalog 的 v4 anchor/run/lease 控制库即使位于项目根下，也都不会进入 backup manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；清空控制状态后的首次索引会创建新 batch 并通过内容 identity alias/upsert 幂等收敛，但也会失去尚未完成的 notify handoff/Unknown acknowledgement 证明。
 
 `data/index-work/scholarly/` 只保存 Crossref 的必要消费字段、创建日期分片、计数和排序进度；其 SQLite、归属 JSON 和事务文件都不是内容索引，不进入 manifest、备份树、内容发现或恢复目标。它与正式内容/控制 schema 的版本独立，删除正式数据库不是工作集恢复步骤。
 
@@ -86,6 +86,39 @@ litradar admin backup verify \
 - SQLite `quick_check` 失败
 
 备份目录中的任何额外说明或附件也会失败。把说明和密钥放在备份目录之外。
+
+## 为离线索引优化准备回滚点
+
+`litradar admin index optimize-storage` 会把精确 v6/v7 内容库离线重建为 v7。若当前索引仍是 v6，优化前的 verified backup 是旧二进制降级所需的唯一受支持回滚点。不要把同一份 v7 文件的 `user_version` 改成 6，也不要手工补建 `article_search_content`。
+
+完整顺序：
+
+1. 停止 `serve`、独立 `index`/投递命令和计划任务子进程，确认没有进程继续写 `data/`。
+2. 等待 API/worker/调度心跳超过 90 秒；若索引进程被强制终止，还要等待 batch/catalog lease 过期。
+3. 创建包含索引的严格时间点备份；需要保留 changes/旧导入源时同时选择 `--include-push-state`。
+4. 独立运行 `backup verify`，并把成功备份保持只读、与活动 `data/` 分离。
+5. 统计 `data/index/*.sqlite` 的总字节数，确认同一文件系统至少有 `2 × source_bytes + 64 MiB` 可用空间。
+6. 运行带显式确认的优化命令，保存完整 stdout JSON 和日志；检查 `status=optimized`、`optimized_bytes`、`reclaimed_bytes`、每库 schema/影子表/freelist/FTS 分配和行计数。
+7. 启动当前二进制，检查 `/`、`/health/live`、`/health/ready`、`/openapi.json` 和代表性检索/详情/分页。确认业务结果与优化前一致后，继续保留 v6 备份直到降级窗口结束。
+
+本机命令骨架：
+
+```bash
+litradar admin backup create \
+  --project-root /srv/litradar \
+  --output /srv/backups/litradar-before-index-v7 \
+  --include-indexes \
+  --include-push-state
+
+litradar admin backup verify \
+  --backup /srv/backups/litradar-before-index-v7
+
+litradar admin index optimize-storage \
+  --project-root /srv/litradar \
+  --confirm-index-maintenance
+```
+
+如果优化失败并返回非空 `error.recovery_paths`，不要删除 marker、staging 或 rollback；保留备份、完整错误 JSON 和这些精确路径。只有优化器成功退出并自行清理恢复状态，才可启动服务。旧二进制不能打开 v7；需要降级时先停止当前服务，重新验证优化前 v6 备份，再按下述离线恢复流程恢复包含索引的快照。
 
 ## Docker Compose
 

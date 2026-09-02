@@ -134,7 +134,36 @@ litradar admin backup restore
     [--auth-db PATH]
 ```
 
-备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 只选择 `data/index` 下的 v6 内容库，明确排除可重建的 `data/index-control`（项目 `index-batches.sqlite` 和每个 catalog control）以及 `data/index-work`（Crossref 工作集）；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
+备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 只选择 `data/index` 下受当前二进制支持的精确 v6/v7 内容库，明确排除可重建的 `data/index-control`（项目 `index-batches.sqlite` 和每个 catalog control）以及 `data/index-work`（Crossref 工作集）；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
+
+### 索引存储优化
+
+```text
+litradar admin index optimize-storage
+    --confirm-index-maintenance
+    [--project-root PATH]
+```
+
+这是显式、离线、整目录替换操作，不接受 `--auth-db` 或部署密钥。它把受支持的精确 v6/v7 内容库从规范化关系表重建为精确 v7，删除 stored-content FTS 的重复内容并压缩 freelist；普通 `serve`、查询和索引启动只 preflight 精确 v6/v7，不会自动升级 v6。
+
+运行前必须停止 `serve`、独立 `index`/投递命令和计划任务子进程，等待 API/worker/调度心跳超过 90 秒，并等待所有 batch/catalog lease 到期或由正常退出释放。先创建并独立验证带 `--include-indexes` 的备份；需要旧二进制降级时，必须保留这份 v6 备份。可用空间至少按 `2 × source_bytes + 64 MiB` 预留；命令也会在复制前记录 `temporary_bytes_required` 估计。
+
+成功 stdout 为一行 JSON：
+
+- 顶层 `status` 为 `optimized` 或空索引目录的 `noop`，`report.outcome` 使用相同 snake-case 值；
+- `report` 包含 `database_count`、`source_bytes`、`temporary_bytes_required`、`optimized_bytes`、`reclaimed_bytes` 和 `databases`；
+- 每个数据库包含安全文件名、`source_schema_version`、`target_schema_version`、权威 `row_counts`，以及 `before`/`after` 的 `file_bytes`、页大小/页数、freelist、FTS 分配和 `has_content_shadow`。
+
+优化器在任何目录切换前验证源库 `quick_check`、外键、FTS rowid 和固定查询语料；候选还必须通过精确 v7 schema、权威表计数/键集合、无影子表和 freelist 不超过 1%。切换后会再次执行完整验证，失败时自动回滚；成功后才删除 rollback 和维护标记。
+
+失败 stdout 先输出 `{"status":"failed","error":...}`，命令随后非零退出。稳定 `error.code` 包括：
+
+- `confirmation_required`、`active_target`、`active_lease`；
+- `interrupted_state`、`invalid_layout`、`unsupported_schema`；
+- `validation_failed`、`source_changed`、`io`、`sqlite`；
+- `operation_failed`、`rollback_failed`。
+
+只有需要人工恢复的失败才提供非空 `error.recovery_paths`，其中包含精确 `marker`、`staging` 和 `rollback` 路径。不要删除、合并或重命名这些证据；保留完整 JSON 和日志后按路径判断恢复。运维顺序和 Docker 命令见[备份与恢复](../operations/backup.md)与[Docker 部署](../operations/docker.md#离线索引存储优化)。
 
 ## `index`
 
@@ -207,7 +236,7 @@ CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_alias
 
 `index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册 `IndexContentProvider`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线摘要页和全文使用各自的 default + per-catalog 顺序，和索引 Provider 单选相互独立。
 
-内容库必须是新建/空 v0、精确 v6，或可事务迁移的精确 v4/v5。非空 v0 及 v1–v3 会返回包含确切路径的 rebuild-required 错误；命令不自动删除、改名或降低 `user_version`。先备份，再移动或删除点名文件并重建。
+内容库必须是新建/空 v0、精确 v6/v7，或可事务迁移到 v7 的精确 v4/v5。新文件使用 v7；普通启动对精确 v6/v7 只做 preflight，不自动把 v6 改为 v7。非空 v0 及 v1–v3 会返回包含确切路径的 rebuild-required 错误；命令不自动删除、改名或降低 `user_version`。先备份，再移动或删除点名文件并重建。
 
 ### 实时恢复与增量同步
 

@@ -21,7 +21,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 | 数据库             | `PRAGMA user_version` | 升级策略                                              |
 | ------------------ | --------------------: | ----------------------------------------------------- |
 | 认证/业务库        |                    15 | 版本化 migration                                      |
-| 内容索引库         |                     6 | 新建/验证精确 v6；精确 v4/v5 原子迁移到 v6            |
+| 内容索引库         |                     7 | 新建精确 v7；运行时读写精确 v6/v7；精确 v4/v5 原子迁移到 v7 |
 | 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建 |
 | catalog 索引控制库 |                     4 | v0/v1/v2/v3 安全事务迁移；可删除后按 v4 重建          |
 
@@ -45,10 +45,12 @@ core 仍以内容事务和控制事务确认进度。工作集超前一页时重
 
 - 不存在的新文件；
 - 没有任何 schema object 的空 v0 SQLite；
-- 表、列、索引和 `user_version` 精确匹配的 v4 或 v5，随后在一个事务内迁移到 v6；
-- 表、列、索引和 `user_version` 精确匹配的 v6。
+- 表、列、索引和 `user_version` 精确匹配的 v4 或 v5，随后在一个事务内迁移到 v7；
+- 表、列、索引和 `user_version` 精确匹配的 v6 或 v7。
 
-非空 v0 以及 v1–v3 返回 `IndexRebuildRequired`，文件保持字节不变。未来版本也在业务访问前拒绝。v4 会先新增期刊身份键，再与 v5 一样迁移到 v6。迁移保留期刊、期次、文章、投影、outbox、身份键和稳定 ID；唯一有意丢弃的是旧 `articles.retraction_doi`，因为旧适配器无法区分真正撤稿与通用 Crossref relation。不要手工修改 `user_version` 或拼接表结构。
+非空 v0 以及 v1–v3 返回 `IndexRebuildRequired`，文件保持字节不变。未来版本也在业务访问前拒绝。v4 会先新增期刊身份键，再与 v5 一样迁移到 v7。迁移保留期刊、期次、文章、投影、outbox、身份键和稳定 ID；唯一有意丢弃的是旧 `articles.retraction_doi`，因为旧适配器无法区分真正撤稿与通用 Crossref relation。不要手工修改 `user_version` 或拼接表结构。
+
+普通服务启动和业务访问对精确 v6/v7 只做只读 schema preflight，不会在启动时把 v6 自动改成 v7。新建内容库使用 v7；现有 v6 只有在停机并显式运行 `litradar admin index optimize-storage --confirm-index-maintenance` 时才重建为 v7。该离线命令的门禁和恢复路径见 [CLI 参考](cli.md#索引存储优化)。
 
 处理步骤：
 
@@ -57,9 +59,9 @@ core 仍以内容事务和控制事务确认进度。工作集超前一页时重
 3. 按错误信息移动或删除那个确切的 `data/index/*.sqlite` 文件；系统不会代为删除。
 4. 用当前维护目录重新运行 `litradar index`。
 
-旧 v1–v3 文章 ID、收藏和 tracking 引用不会迁移或重映射；精确 v4/v5 到 v6 的迁移不重映射这些 ID。
+旧 v1–v3 文章 ID、收藏和 tracking 引用不会迁移或重映射；精确 v4/v5 到 v7 的迁移不重映射这些 ID。
 
-## v6 内容索引库
+## v6/v7 内容索引库
 
 ### 关系
 
@@ -150,7 +152,7 @@ Provider 写入前使用真实 Gregorian 日历校验日期，年/月信息不�
 
 ### `article_search`
 
-FTS5 使用内置 `unicode61 remove_diacritics 2`，字段为：
+FTS5 的 v6 和 v7 都使用内置 `unicode61 remove_diacritics 2`，字段为：
 
 - `article_id UNINDEXED`；
 - `title`；
@@ -160,7 +162,17 @@ FTS5 使用内置 `unicode61 remove_diacritics 2`，字段为：
 - `authors`；
 - `journal_title`。
 
-内容 v6 不依赖外部 `simple` tokenizer 创建 schema。
+v6 是 stored-content FTS，因此包含重复保存全文列的 `article_search_content` 影子表。v7 使用以下精确选项：
+
+```sql
+content = '',
+contentless_delete = 1,
+tokenize = 'unicode61 remove_diacritics 2'
+```
+
+v7 不创建 `article_search_content`，详情和列表字段继续以 `articles`、`journals` 和 `article_listing` 为权威来源；全文查询只依赖 FTS `rowid`/`MATCH` 结果，因此短语、布尔、否定、前缀和列限定语义不变。两种版本都不依赖外部 `simple` tokenizer。
+
+当前二进制在 rollout 窗口内读写精确 v6/v7，但旧的 v6-only 二进制不能打开 v7。需要降级时必须停机并恢复优化前已验证、包含索引的 v6 备份；不得降低 `user_version`、复制 v7 文件给旧二进制或手工重建影子表。
 
 ### `article_change_events`
 
@@ -284,7 +296,7 @@ v11 升级保留旧 ID、code、创建者、首位使用者和使用时间；已
 
 创建 tracking folder、切换 tracking folder、单条幂等收藏以及批量添加/删除/移动都使用 `BEGIN IMMEDIATE`。重复收藏由 `ON CONFLICT DO NOTHING RETURNING id` 与精确既有行查询返回真实 ID；批量中途失败会整体回滚。动态 favorite `IN` 查询每块最多 500 个 ID。
 
-v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4/v5 到 v6 的迁移保留 ID。无法解析的旧引用由运维人员或用户清理。
+v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4/v5 到 v7 的迁移保留 ID。无法解析的旧引用由运维人员或用户清理。
 
 ### 用户通知配置
 
@@ -346,4 +358,4 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 ## 备份边界
 
-v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 只包含 `data/index/*.sqlite` 内容库；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v4 controls，`data/index-work` 的 Crossref 工作集也始终排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
+v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 只包含受当前二进制支持的精确 v6/v7 `data/index/*.sqlite` 内容库；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v4 controls，`data/index-work` 的 Crossref 工作集也始终排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
