@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+/**
+ * Keyboard-accessible article cards that open a shared detail dialog.
+ */
+
+import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 
 import { ArticleDetailDialogContent } from '@/components/feature/article-detail-dialog-content';
 import { ArticleListCard } from '@/components/feature/article-list-card';
-import { Button } from '@/components/ui/button';
 import { Dialog, DialogTrigger } from '@/components/ui/dialog';
 import { type Article } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -23,7 +26,37 @@ type ArticleDialogCardProps = {
 };
 
 /**
- * Render a selectable article card with an explicit detail-dialog trigger.
+ * Open the card with Enter or Space without scrolling the workspace.
+ *
+ * @param event - Keyboard input on the article trigger.
+ */
+function handleArticleTriggerKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+  if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault();
+    event.currentTarget.click();
+  }
+}
+
+/**
+ * Preserve text selection when a pointer gesture ends inside the article card.
+ *
+ * @param event - Pointer-generated click on the article trigger.
+ */
+function preserveArticleTextSelection(event: MouseEvent<HTMLDivElement>): void {
+  const selection = window.getSelection();
+  if (
+    event.detail > 0 &&
+    selection &&
+    !selection.isCollapsed &&
+    (event.currentTarget.contains(selection.anchorNode) ||
+      event.currentTarget.contains(selection.focusNode))
+  ) {
+    event.preventDefault();
+  }
+}
+
+/**
+ * Render a selectable article card that opens its detail dialog from the whole surface.
  *
  * @param props - Article card and dialog configuration.
  * @returns Article card and lazily mounted detail dialog.
@@ -48,30 +81,28 @@ export function ArticleDialogCard({
     <Dialog open={open} onOpenChange={setOpen}>
       <div className={cn('flex items-start gap-3', className)}>
         {leading && <div className="pt-4">{leading}</div>}
-        <ArticleListCard
-          className="min-w-0 flex-1"
-          title={resolvedTitle}
-          journalTitle={article.journal_title}
-          volume={article.volume}
-          number={article.number}
-          date={article.date}
-          preview={resolvedPreview}
-          openAccess={article.open_access}
-          inPress={article.in_press}
-          action={
-            <DialogTrigger asChild>
-              <Button
-                ref={triggerRef}
-                type="button"
-                variant="outline"
-                size="sm"
-                className="min-h-11 md:min-h-10"
-              >
-                查看详情
-              </Button>
-            </DialogTrigger>
-          }
-        />
+        <DialogTrigger asChild>
+          <div
+            ref={triggerRef}
+            role="button"
+            tabIndex={0}
+            aria-label={`查看文章详情：${article.title || '未命名文章'}`}
+            className="min-w-0 flex-1 cursor-pointer rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            onClick={preserveArticleTextSelection}
+            onKeyDown={handleArticleTriggerKeyDown}
+          >
+            <ArticleListCard
+              title={resolvedTitle}
+              journalTitle={article.journal_title}
+              volume={article.volume}
+              number={article.number}
+              date={article.date}
+              preview={resolvedPreview}
+              openAccess={article.open_access}
+              inPress={article.in_press}
+            />
+          </div>
+        </DialogTrigger>
       </div>
       {open && (
         <ArticleDetailDialogContent

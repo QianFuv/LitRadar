@@ -1029,11 +1029,8 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.screenshot({ path: '../output/ui/navigation-mobile.png', fullPage: true });
   await filterDialog.getByRole('button', { name: '关闭' }).click();
 
-  const firstArticleAction = page.getByRole('button', { name: '查看详情' }).first();
-  const firstArticleCard = page
-    .locator('[data-slot="card"]')
-    .filter({ has: firstArticleAction })
-    .first();
+  const firstArticleAction = page.getByRole('button', { name: /^查看文章详情：/ }).first();
+  const firstArticleCard = firstArticleAction.locator('[data-slot="card"]');
   const firstArticleTitle = firstArticleCard.locator('[data-slot="card-title"]');
   await expect(firstArticleCard).toBeVisible();
   await expect(firstArticleTitle).toBeVisible();
@@ -1044,10 +1041,13 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   expect(articleCardBox).not.toBeNull();
   expect(articleTitleBox).not.toBeNull();
   expect(articleActionBox).not.toBeNull();
+  await expect(firstArticleCard.locator('[data-slot="card-footer"]')).toHaveCount(0);
+  expect(articleActionBox?.width).toBe(articleCardBox?.width);
+  expect(articleActionBox?.height).toBe(articleCardBox?.height);
   expect(articleCardBox?.x ?? -1).toBeGreaterThanOrEqual(0);
   expect((articleCardBox?.x ?? 390) + (articleCardBox?.width ?? 1)).toBeLessThanOrEqual(390);
   expect((articleTitleBox?.y ?? 844) + (articleTitleBox?.height ?? 1)).toBeLessThanOrEqual(
-    articleActionBox?.y ?? 0,
+    (articleCardBox?.y ?? 0) + (articleCardBox?.height ?? 0),
   );
   await page.screenshot({ path: '../output/ui/search-results-mobile.png', fullPage: true });
 
@@ -1060,7 +1060,9 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   expect(triggerBox).not.toBeNull();
   expect((triggerBox?.y ?? 844) + (triggerBox?.height ?? 0)).toBeLessThanOrEqual(796);
 
-  const lastInteractive = page.locator('#main-content button:not([disabled])').last();
+  const lastInteractive = page
+    .locator('#main-content :is(button:not([disabled]), [role="button"])')
+    .last();
   await lastInteractive.scrollIntoViewIfNeeded();
   const lastInteractiveBox = await lastInteractive.boundingBox();
   const updatedTriggerBox = await mobileTrigger.boundingBox();
@@ -1287,13 +1289,25 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   await expect(title).toHaveCSS('text-wrap-style', 'balance');
   await page.screenshot({ path: '../output/ui/polish-search-mobile.png', fullPage: true });
 
-  const details = page.getByRole('button', { name: '查看详情' });
+  const details = page.getByRole('button', { name: /^查看文章详情：/ });
   await expectComfortableTarget(details, 44);
-  await details.click();
+  await expect(card.locator('[data-slot="card-footer"]')).toHaveCount(0);
+  await title.click();
   const dialog = page.getByRole('dialog', { name: /Graph Evidence/ });
   await expectComfortableTarget(dialog.getByRole('button', { name: '关闭', exact: true }), 44);
+  await page.screenshot({
+    path: '../output/ui/article-dialog-mobile.png',
+    fullPage: true,
+    animations: 'disabled',
+  });
   await page.keyboard.press('Escape');
   await expect(details).toBeFocused();
+  for (const key of ['Enter', 'Space']) {
+    await details.press(key);
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(details).toBeFocused();
+  }
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await expectComfortableTarget(clear, 40);
@@ -1352,7 +1366,7 @@ async function interfacePolishFavoriteTest({ page }: { page: Page }): Promise<vo
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/?q=graph');
   await hideDevelopmentIndicator(page);
-  await page.getByRole('button', { name: '查看详情' }).click();
+  await page.getByRole('button', { name: /^查看文章详情：/ }).click();
   const trigger = page.getByRole('button', { name: '收藏', exact: true });
   await expect(trigger).toBeVisible();
   await expect(page.getByRole('dialog', { name: /Graph Evidence/ })).toHaveCSS('scale', '1');

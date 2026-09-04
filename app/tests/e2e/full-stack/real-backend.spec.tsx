@@ -154,7 +154,10 @@ async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void>
   await expect(page).toHaveURL(/\?q=Evidence(?:%20|\+)Graphs/);
   await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
 
-  await page.getByRole('button', { name: '查看详情' }).first().click();
+  await page
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .first()
+    .click();
   let articleDialog = page.getByRole('dialog', { name: ARTICLE_TITLE });
   await expect(articleDialog).toBeVisible();
   await articleDialog.getByRole('button', { name: '收藏', exact: true }).click();
@@ -169,7 +172,10 @@ async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void>
 
   await page.reload();
   await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: '查看详情' }).first().click();
+  await page
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .first()
+    .click();
   articleDialog = page.getByRole('dialog', { name: ARTICLE_TITLE });
   await expect(articleDialog.getByRole('button', { name: '已收藏', exact: true })).toBeVisible();
 }

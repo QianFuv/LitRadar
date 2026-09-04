@@ -2,7 +2,7 @@
  * Article card selection, dialog accessibility, copy actions, and safe-link coverage.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test, vi } from 'vitest';
@@ -122,7 +122,7 @@ function renderArticleCard(article: Article): void {
 }
 
 /**
- * Verify card text remains selectable and the named trigger opens an accessible dialog.
+ * Verify the whole card opens with pointer or keyboard input and regains focus on close.
  */
 async function opensAndClosesAccessibleDialog(): Promise<void> {
   registerArticleDialogHandlers();
@@ -131,16 +131,54 @@ async function opensAndClosesAccessibleDialog(): Promise<void> {
 
   expect(screen.getByText('Selectable title').closest('button')).toBeNull();
   expect(screen.getByText('Selectable abstract text').closest('button')).toBeNull();
+  const card = screen.getByRole('button', { name: '查看文章详情：Selectable title' });
+  expect(card).toHaveAttribute('tabindex', '0');
+  expect(card.querySelector('[data-slot="card-footer"]')).toBeNull();
+  expect(screen.queryByText('查看详情')).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  await user.click(screen.getByText('Selectable abstract text'));
   expect(await screen.findByRole('dialog')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '关闭' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  expect(card).toHaveFocus();
 
-  await user.click(screen.getByRole('button', { name: '查看详情' }));
-  expect(await screen.findByRole('dialog')).toBeInTheDocument();
-  await user.keyboard('{Escape}');
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  for (const key of ['{Enter}', ' ']) {
+    await user.keyboard(key);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(card).toHaveFocus();
+  }
+}
+
+/** Verify text selection and a sibling selection checkbox do not open article details. */
+async function keepsSelectionSeparateFromOpening(): Promise<void> {
+  registerArticleDialogHandlers();
+  const user = userEvent.setup();
+  renderWithQuery(
+    <AuthProvider>
+      <ArticleDialogCard
+        article={SAFE_ARTICLE}
+        dbName="fixture.sqlite"
+        leading={<input type="checkbox" aria-label="选择文章" />}
+      />
+    </AuthProvider>,
+  );
+
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(screen.getByText('Selectable title'));
+  selection?.addRange(range);
+  try {
+    fireEvent.click(screen.getByText('Selectable title'), { detail: 1 });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  } finally {
+    selection?.removeAllRanges();
+  }
+  const checkbox = screen.getByRole('checkbox', { name: '选择文章' });
+  await user.click(checkbox);
+  expect(checkbox).toBeChecked();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 }
 
 /**
@@ -156,7 +194,7 @@ async function copiesArticleValuesAndUsesStableActionRoutes(): Promise<void> {
   });
   renderArticleCard(SAFE_ARTICLE);
 
-  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   expect(await screen.findByRole('dialog')).toBeInTheDocument();
 
   expect(screen.queryByRole('link', { name: '查看详情' })).not.toBeInTheDocument();
@@ -223,7 +261,7 @@ async function doesNotExposeStoredOrDirectExternalLinks(): Promise<void> {
     doi: 'javascript:alert(1)',
   });
 
-  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   expect(await screen.findByRole('dialog')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '复制 DOI' })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: '打开 DOI' })).not.toBeInTheDocument();
@@ -241,7 +279,7 @@ async function reportsCopyFailure(): Promise<void> {
   });
   renderArticleCard(SAFE_ARTICLE);
 
-  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   await user.click(screen.getByRole('button', { name: '复制文章标题' }));
 
   expect(await screen.findByRole('alert')).toHaveTextContent('复制失败，请手动选择文本复制。');
@@ -257,7 +295,7 @@ async function opensDataSourceSettingsWithoutDialogStacking(): Promise<void> {
   const user = userEvent.setup();
   renderArticleCard(SAFE_ARTICLE);
 
-  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   const settingsLink = await screen.findByRole('link', { name: '去设置登录' });
   expect(settingsLink).toHaveAttribute('href', '/?view=favorites&folder=4&settings=data-sources');
   window.addEventListener('click', preventDocumentNavigation, { once: true });
@@ -284,7 +322,7 @@ async function recoversArticleAccessAfterReopening(): Promise<void> {
   const user = userEvent.setup();
   renderArticleCard(SAFE_ARTICLE);
 
-  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   const failedAccess = await screen.findByRole('button', { name: '访问状态失败' });
   expect(failedAccess).toHaveAttribute('title', 'temporary access failure');
   expect(document.querySelector('[data-article-access-state="error"]')).not.toBeNull();
@@ -292,13 +330,17 @@ async function recoversArticleAccessAfterReopening(): Promise<void> {
 
   await user.click(screen.getByRole('button', { name: '关闭' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  await user.click(screen.getByRole('button', { name: '查看详情' }));
+  await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
 
   expect(await screen.findByRole('link', { name: '获取全文' })).toBeInTheDocument();
   expect(requestCount).toBe(2);
 }
 
 describe('article dialog workflow', () => {
+  test(
+    'keeps text and checkbox selection separate from opening details',
+    keepsSelectionSeparateFromOpening,
+  );
   test(
     'keeps card text selectable and supports named open and close controls',
     opensAndClosesAccessibleDialog,

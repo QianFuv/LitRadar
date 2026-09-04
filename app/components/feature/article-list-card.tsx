@@ -1,20 +1,13 @@
 'use client';
 
 /**
- * Compact article summary card with selectable content and explicit actions.
+ * Compact article summary card with selectable content.
  */
 
 import { type ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 type ArticleListCardProps = {
@@ -26,7 +19,6 @@ type ArticleListCardProps = {
   preview?: ReactNode;
   openAccess?: number | boolean | null;
   inPress?: number | boolean | null;
-  action?: ReactNode;
   className?: string;
 };
 
@@ -57,7 +49,7 @@ function hasPreviewContent(preview: ReactNode): boolean {
 }
 
 /**
- * Render article metadata, selectable title/preview content, and an optional action.
+ * Render article metadata and selectable title/preview content.
  *
  * @param props - Article list card content.
  * @returns Article list card.
@@ -71,7 +63,6 @@ export function ArticleListCard({
   preview,
   openAccess,
   inPress,
-  action,
   className,
 }: ArticleListCardProps) {
   const hasPreview = hasPreviewContent(preview);
@@ -121,11 +112,6 @@ export function ArticleListCard({
             {preview}
           </div>
         </CardContent>
-      )}
-      {action && (
-        <CardFooter className="justify-end border-t bg-muted/25 px-4 py-2.5 sm:px-5">
-          {action}
-        </CardFooter>
       )}
     </Card>
   );
