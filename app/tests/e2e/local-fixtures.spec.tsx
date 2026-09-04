@@ -2,7 +2,7 @@
  * Browser flows backed exclusively by Playwright route fixtures.
  */
 
-import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
+import { expect, test, type Browser, type Locator, type Page, type Route } from '@playwright/test';
 
 type ChromeColorProperty = 'backgroundColor' | 'borderColor' | 'color';
 
@@ -1394,6 +1394,29 @@ async function interfacePolishFavoriteTest({ page }: { page: Page }): Promise<vo
   await expect(selectedTrigger).toBeFocused();
 }
 
+/**
+ * Verify the server document opts out of extension theming before any client script can run.
+ *
+ * @param fixtures - Playwright browser and configured application URL.
+ */
+async function nativeThemeDocumentTest({
+  browser,
+  baseURL,
+}: {
+  browser: Browser;
+  baseURL?: string;
+}): Promise<void> {
+  const context = await browser.newContext({ baseURL, javaScriptEnabled: false });
+  try {
+    const page = await context.newPage();
+    await page.goto('/login');
+    await expect(page.locator('head meta[name="darkreader-lock"]')).toHaveCount(1);
+  } finally {
+    await context.close();
+  }
+}
+
+test('declares native theme ownership before hydration', nativeThemeDocumentTest);
 test('shows the local administrator bootstrap boundary', bootstrapBoundaryTest);
 test(
   'redirects an authenticated login visit without showing the form',

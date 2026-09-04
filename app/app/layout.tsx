@@ -15,6 +15,9 @@ export const metadata: Metadata = {
   icons: {
     icon: '/litradar-logo.png',
   },
+  other: {
+    'darkreader-lock': 'true',
+  },
 };
 
 export const viewport: Viewport = {
