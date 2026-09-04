@@ -690,7 +690,9 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    className="border-destructive/30 text-destructive"
+                                    className="size-11 border-destructive/30 p-0 text-destructive md:h-10 md:w-auto md:px-3"
+                                    aria-label="移除收藏"
+                                    title="移除收藏"
                                     disabled={removeMut.isPending}
                                     onClick={(event) => {
                                       event.stopPropagation();
@@ -699,7 +701,7 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
                                     }}
                                   >
                                     <Trash2 className="h-4 w-4" aria-hidden="true" />
-                                    移除收藏
+                                    <span className="hidden md:inline">移除收藏</span>
                                   </Button>
                                 }
                               />

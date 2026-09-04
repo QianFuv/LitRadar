@@ -1,10 +1,14 @@
 'use client';
 
+/**
+ * Article metadata and responsive, accessible detail actions.
+ */
+
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { Check, Copy, ExternalLink, FileDown, Loader2, Settings } from 'lucide-react';
+import { Check, CircleAlert, Copy, ExternalLink, FileDown, Loader2, Settings } from 'lucide-react';
 
 import { getArticleActionUrlForDatabase, getArticleAccess, type Article } from '@/lib/api';
 import { FavoriteButton } from '@/components/feature/favorite-button';
@@ -40,6 +44,8 @@ type ArticleDetailDialogContentProps = {
 };
 
 type ArticleCopyTarget = 'title' | 'info';
+
+const ARTICLE_ACTION_BUTTON_CLASS_NAME = 'size-11 p-0 md:h-10 md:w-auto md:px-3';
 
 /**
  * Build the existing plain-text article information summary.
@@ -247,11 +253,17 @@ export function ArticleDetailDialogContent({
         </div>
 
         <div className="border-t pt-4">
-          <div className="flex flex-wrap items-center gap-2">
+          <div
+            role="group"
+            aria-label="文章操作"
+            className="flex flex-wrap items-center gap-1 md:gap-2"
+          >
             <Button
               variant="outline"
               size="sm"
+              className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
               aria-label={copyStatus === 'info' ? '已复制' : '复制信息'}
+              title={copyStatus === 'info' ? '已复制' : '复制信息'}
               onClick={handleCopyArticleInfo}
             >
               <span className="grid" aria-hidden="true">
@@ -271,7 +283,9 @@ export function ArticleDetailDialogContent({
                     ) : (
                       <Copy className="h-4 w-4" aria-hidden="true" />
                     )}
-                    <span>{copyStatus === 'info' ? '已复制' : '复制信息'}</span>
+                    <span className="hidden md:inline">
+                      {copyStatus === 'info' ? '已复制' : '复制信息'}
+                    </span>
                   </MotionSpan>
                 </MotionPresence>
               </span>
@@ -280,7 +294,7 @@ export function ArticleDetailDialogContent({
               <MotionDiv
                 key={accessState}
                 data-article-access-state={accessState}
-                className="flex flex-wrap gap-2"
+                className="flex flex-wrap gap-1 md:gap-2"
                 variants={FADE_VARIANTS}
                 initial="hidden"
                 animate="visible"
@@ -288,44 +302,89 @@ export function ArticleDetailDialogContent({
                 transition={stateTransition}
               >
                 {isAccessLoading && (
-                  <Button variant="outline" size="sm" disabled>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+                    aria-label={isAccessPending ? '加载访问' : '刷新访问'}
+                    disabled
+                  >
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                    {isAccessPending ? '加载访问' : '刷新访问'}
+                    <span className="hidden md:inline">
+                      {isAccessPending ? '加载访问' : '刷新访问'}
+                    </span>
                   </Button>
                 )}
                 {isAccessQueryEnabled && !isAccessFetching && isAccessError && (
                   <Button
                     variant="outline"
                     size="sm"
+                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+                    aria-label="访问状态失败"
                     disabled
                     title={accessError instanceof Error ? accessError.message : '访问状态不可用'}
                   >
-                    <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                    访问状态失败
+                    <CircleAlert className="h-4 w-4 text-destructive" aria-hidden="true" />
+                    <span className="hidden md:inline">访问状态失败</span>
                   </Button>
                 )}
                 {canShowAccessActions && abstractUrl && (
-                  <Button asChild variant="outline" size="sm">
-                    <a href={abstractUrl} target="_blank" rel="noreferrer">
+                  <Button
+                    asChild
+                    variant="outline"
+                    size="sm"
+                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+                  >
+                    <a
+                      href={abstractUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={abstractAction?.label ?? '查看摘要页'}
+                      title={abstractAction?.label ?? '查看摘要页'}
+                    >
                       <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                      {abstractAction?.label ?? '查看摘要页'}
+                      <span className="hidden md:inline">
+                        {abstractAction?.label ?? '查看摘要页'}
+                      </span>
                     </a>
                   </Button>
                 )}
                 {canShowAccessActions && fullTextUrl && (
-                  <Button asChild variant="outline" size="sm">
-                    <a href={fullTextUrl} target="_blank" rel="noreferrer">
+                  <Button
+                    asChild
+                    variant="outline"
+                    size="sm"
+                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+                  >
+                    <a
+                      href={fullTextUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={fulltextAction?.label ?? '获取全文'}
+                      title={fulltextAction?.label ?? '获取全文'}
+                    >
                       <FileDown className="h-4 w-4" aria-hidden="true" />
-                      {fulltextAction?.label ?? '获取全文'}
+                      <span className="hidden md:inline">
+                        {fulltextAction?.label ?? '获取全文'}
+                      </span>
                     </a>
                   </Button>
                 )}
                 {canShowAccessActions && fulltextAction?.requires_login && (
                   <DialogClose asChild>
-                    <Button asChild variant="outline" size="sm">
-                      <Link href={dataSourceSettingsHref}>
+                    <Button
+                      asChild
+                      variant="outline"
+                      size="sm"
+                      className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+                    >
+                      <Link
+                        href={dataSourceSettingsHref}
+                        aria-label="去设置登录"
+                        title="去设置登录"
+                      >
                         <Settings className="h-4 w-4" aria-hidden="true" />
-                        去设置登录
+                        <span className="hidden md:inline">去设置登录</span>
                       </Link>
                     </Button>
                   </DialogClose>
@@ -343,8 +402,15 @@ export function ArticleDetailDialogContent({
                 transition={stateTransition}
               >
                 {isFavoriteStatePending ? (
-                  <Button variant="outline" size="sm" disabled>
-                    加载收藏…
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+                    aria-label="加载收藏…"
+                    disabled
+                  >
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    <span className="hidden md:inline">加载收藏…</span>
                   </Button>
                 ) : (
                   <FavoriteButton

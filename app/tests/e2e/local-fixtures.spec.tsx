@@ -1347,11 +1347,32 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   await title.click();
   const dialog = page.getByRole('dialog', { name: /Graph Evidence/ });
   await expectConsistentDialogClose(dialog, 44);
+  const articleActions = dialog.getByRole('group', { name: '文章操作' });
+  await expect(articleActions.getByRole('link', { name: '查看摘要页' })).toBeVisible();
+  await expect(articleActions.getByRole('link', { name: '获取全文' })).toBeVisible();
+  await expect(articleActions.getByRole('button', { name: '复制信息' })).toBeVisible();
+  await expect(articleActions.getByRole('button', { name: '收藏', exact: true })).toBeVisible();
+  const actionControls = articleActions.locator('button, a');
+  await expect(actionControls).toHaveCount(4);
+  for (const control of await actionControls.all()) {
+    await expectComfortableTarget(control, 44);
+    await expect.poll(() => control.innerText()).toBe('');
+  }
   await page.screenshot({
     path: '../output/ui/article-dialog-mobile.png',
     fullPage: true,
     animations: 'disabled',
   });
+  await page.setViewportSize({ width: 320, height: 740 });
+  expect(
+    await articleActions.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.screenshot({
+    path: '../output/ui/article-dialog-narrow.png',
+    fullPage: true,
+    animations: 'disabled',
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.keyboard.press('Escape');
   await expect(details).toBeFocused();
   for (const key of ['Enter', 'Space']) {
@@ -1421,6 +1442,10 @@ async function interfacePolishFavoriteTest({ page }: { page: Page }): Promise<vo
   await page.getByRole('button', { name: /^查看文章详情：/ }).click();
   const trigger = page.getByRole('button', { name: '收藏', exact: true });
   await expect(trigger).toBeVisible();
+  await expect(trigger.getByText('收藏', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: '查看摘要页' }).getByText('查看摘要页'),
+  ).toBeVisible();
   await expect(page.getByRole('dialog', { name: /Graph Evidence/ })).toHaveCSS('scale', '1');
   await page.evaluate(() => document.fonts.ready);
   const initialWidth = (await trigger.boundingBox())?.width ?? 0;

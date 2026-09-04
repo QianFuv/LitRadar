@@ -128,11 +128,12 @@ export function FavoriteButton({
             size="sm"
             static
             className={cn(
-              'min-h-11 md:min-h-10',
+              'size-11 p-0 md:h-10 md:w-auto md:px-3',
               isFav &&
                 'text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400',
             )}
             aria-label={isFav ? '已收藏' : '收藏'}
+            title={isFav ? '已收藏' : '收藏'}
             onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}
           >
             <span
@@ -143,7 +144,7 @@ export function FavoriteButton({
               <Star
                 className={cn('motion-control size-4 transition-[fill]', isFav && 'fill-current')}
               />
-              <span className="grid">
+              <span className="hidden md:grid">
                 <span className="invisible col-start-1 row-start-1">已收藏</span>
                 <span className="col-start-1 row-start-1">{isFav ? '已收藏' : '收藏'}</span>
               </span>
