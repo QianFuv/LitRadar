@@ -51,7 +51,8 @@ function FilterChip({ label, onRemove, removeLabel }: FilterChipProps) {
       type="button"
       variant="secondary"
       size="xs"
-      className="h-7 max-w-full rounded-full px-2.5"
+      static
+      className="min-h-11 max-w-full rounded-full px-3 md:min-h-10"
       aria-label={removeLabel}
       title={removeLabel}
       onClick={onRemove}
@@ -172,7 +173,8 @@ export function ActiveFilterChips() {
             type="button"
             variant="ghost"
             size="xs"
-            className="ml-auto h-7"
+            static
+            className="ml-auto min-h-11 md:min-h-10"
             onClick={() => {
               void setQ(null);
               void setAreas([]);

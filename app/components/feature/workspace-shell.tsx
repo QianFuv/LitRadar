@@ -56,7 +56,7 @@ export function WorkspaceShell({
                 <Button
                   variant="outline"
                   size="icon"
-                  className="z-10 shrink-0 md:hidden"
+                  className="z-10 size-11 shrink-0 md:hidden"
                   aria-label={sidebarOpenLabel}
                 >
                   <Menu className="h-5 w-5" />

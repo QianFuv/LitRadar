@@ -60,7 +60,13 @@ export function ArticleDialogCard({
           inPress={article.in_press}
           action={
             <DialogTrigger asChild>
-              <Button ref={triggerRef} type="button" variant="outline" size="sm">
+              <Button
+                ref={triggerRef}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-11 md:min-h-10"
+              >
                 查看详情
               </Button>
             </DialogTrigger>

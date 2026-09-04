@@ -1157,6 +1157,143 @@ async function userMenuNavigationTest({ page }: { page: Page }): Promise<void> {
   await verifiesUserMenuNavigationAndTheme(page);
 }
 
+/**
+ * Serve a long, badged article and its access actions for control checks.
+ *
+ * @param route - Intercepted API route.
+ */
+async function serveInterfacePolishApi(route: Route): Promise<void> {
+  const pathname = new URL(route.request().url()).pathname;
+  if (pathname === '/api/articles') {
+    await fulfillJson(route, {
+      items: [
+        {
+          article_id: 'polish-fixture',
+          title:
+            'Graph Evidence Synthesis for Transparent and Reproducible Living Literature Reviews',
+          journal_title: 'Journal of Reproducible Literature',
+          authors: ['Browser Fixture'],
+          date: '2026-07-15',
+          abstract:
+            'A readable summary with clear metadata and explicit actions on a narrow screen.',
+          open_access: 1,
+          in_press: 1,
+        },
+      ],
+      page: { total: null, limit: 50, offset: 0, next_cursor: null, has_more: false },
+    });
+    return;
+  }
+  if (pathname === '/api/articles/polish-fixture/access') {
+    await fulfillJson(route, {
+      abstract_page: { available: true, label: '查看摘要页', requires_login: false, message: null },
+      fulltext: { available: true, label: '获取全文', requires_login: false, message: null },
+    });
+    return;
+  }
+  await serveTrackingApi(route);
+}
+
+/**
+ * Verify an actual control box is large enough without relying on overlapping pseudo-elements.
+ *
+ * @param control - Interactive element to measure.
+ * @param minimumSize - Minimum width and height in CSS pixels.
+ */
+async function expectComfortableTarget(control: Locator, minimumSize: number): Promise<void> {
+  await expect(control).toBeVisible();
+  await expect
+    .poll(async () => {
+      const box = await control.boundingBox();
+      return Math.min(box?.width ?? 0, box?.height ?? 0);
+    })
+    .toBeGreaterThanOrEqual(minimumSize);
+}
+
+/**
+ * Verify touch targets, readable mobile titles, keyboard focus, and restrained press feedback.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function interfacePolishControlsTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveInterfacePolishApi);
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?q=graph');
+  await hideDevelopmentIndicator(page);
+
+  const input = page.getByRole('combobox', { name: '搜索文章' });
+  const clear = page.getByRole('button', { name: '清空搜索输入' });
+  const submit = page.getByRole('button', { name: '搜索', exact: true });
+  await expectComfortableTarget(clear, 44);
+  await expectComfortableTarget(submit, 44);
+  await expectComfortableTarget(page.getByRole('button', { name: '搜索语法帮助' }), 44);
+  await expectComfortableTarget(page.getByRole('button', { name: '打开筛选器' }), 44);
+  await expectComfortableTarget(page.getByRole('button', { name: '移除搜索 graph' }), 44);
+
+  const card = page.locator('[data-slot="card"]').filter({ hasText: 'Graph Evidence' });
+  const title = card.locator('[data-slot="card-title"]');
+  const titleBox = await title.boundingBox();
+  const badgeBox = await card.getByText('开放获取', { exact: true }).boundingBox();
+  expect(badgeBox?.y ?? 0).toBeGreaterThanOrEqual((titleBox?.y ?? 0) + (titleBox?.height ?? 0));
+  await expect(title).toHaveCSS('text-wrap-style', 'balance');
+  await page.screenshot({ path: '../output/ui/polish-search-mobile.png', fullPage: true });
+
+  const details = page.getByRole('button', { name: '查看详情' });
+  await expectComfortableTarget(details, 44);
+  await details.click();
+  const dialog = page.getByRole('dialog', { name: /Graph Evidence/ });
+  await expectComfortableTarget(dialog.getByRole('button', { name: '关闭', exact: true }), 44);
+  await page.keyboard.press('Escape');
+  await expect(details).toBeFocused();
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expectComfortableTarget(clear, 40);
+  const animationSession = await page.context().newCDPSession(page);
+  await animationSession.send('Animation.enable');
+  await animationSession.send('Animation.setPlaybackRate', { playbackRate: 0.1 });
+  expect(await animationSession.send('Animation.getPlaybackRate')).toEqual({ playbackRate: 0.1 });
+  await submit.hover();
+  await page.mouse.down();
+  await expect
+    .poll(() =>
+      submit.evaluate((element) =>
+        element
+          .getAnimations()
+          .some(
+            (animation) =>
+              animation instanceof CSSTransition && animation.transitionProperty === 'scale',
+          ),
+      ),
+    )
+    .toBe(true);
+  await expect(submit).toHaveCSS('scale', '0.96');
+  await page.screenshot({ path: '../output/ui/polish-press-desktop.png', fullPage: true });
+  await page.mouse.up();
+  await expect(submit).toHaveCSS('scale', 'none');
+  await animationSession.send('Animation.setPlaybackRate', { playbackRate: 1 });
+  await animationSession.detach();
+  await clear.hover();
+  await page.mouse.down();
+  await expect(clear).toHaveCSS('scale', 'none');
+  await expect(clear).not.toHaveAttribute('static');
+  await page.mouse.up();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue('');
+  await expect(page).toHaveURL('/?q=graph');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await submit.hover();
+  await page.mouse.down();
+  await expect(submit).toHaveCSS('scale', 'none');
+  await page.mouse.move(1, 1);
+  await page.mouse.up();
+  await page.setViewportSize({ width: 320, height: 740 });
+  expect(await page.locator('body').evaluate((element) => element.scrollWidth <= innerWidth)).toBe(
+    true,
+  );
+}
+
 test('shows the local administrator bootstrap boundary', bootstrapBoundaryTest);
 test(
   'redirects an authenticated login visit without showing the form',
@@ -1172,3 +1309,4 @@ test('preserves dynamic settings under reduced motion', reducedMotionDynamicSett
 test('supports the administrator center across desktop and mobile', administratorCenterTest);
 test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);
+test('polishes search targets and restrained control feedback', interfacePolishControlsTest);

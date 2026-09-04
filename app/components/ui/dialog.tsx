@@ -104,7 +104,7 @@ function DialogContent({
         {children}
         <DialogPrimitive.Close
           data-slot="dialog-close"
-          className="motion-control ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+          className="motion-control absolute top-2 right-2 flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-[background-color,color,box-shadow] hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none md:size-10 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
         >
           <XIcon />
           <span className="sr-only">关闭</span>
@@ -156,7 +156,7 @@ function DialogTitle({ className, ...props }: React.ComponentProps<typeof Dialog
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('text-lg leading-none font-semibold', className)}
+      className={cn('pr-8 text-balance text-lg leading-snug font-semibold', className)}
       {...props}
     />
   );
@@ -175,7 +175,7 @@ function DialogDescription({
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn('text-muted-foreground text-sm', className)}
+      className={cn('text-pretty text-muted-foreground text-sm', className)}
       {...props}
     />
   );

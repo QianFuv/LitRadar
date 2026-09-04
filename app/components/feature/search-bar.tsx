@@ -241,7 +241,7 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
     >
       <div className="relative min-w-0 flex-1">
         <Search
-          className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground"
+          className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
           aria-hidden="true"
         />
         <Popover
@@ -271,7 +271,7 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
               autoComplete="off"
               spellCheck={false}
               placeholder="搜索文章…"
-              className="search-input pl-9 pr-9"
+              className="search-input h-11 pl-10 pr-11 md:h-10 md:pr-10"
               value={inputValue}
               onChange={(event) => {
                 setInputValue(event.target.value);
@@ -289,7 +289,7 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
           </PopoverAnchor>
           {searchHistory.length > 0 && (
             <PopoverContent
-              className="w-[var(--radix-popover-trigger-width)] p-0"
+              className="w-[var(--radix-popover-trigger-width)] rounded-xl border-0 p-0 shadow-vercel-card"
               align="start"
               onOpenAutoFocus={(event: Event) => event.preventDefault()}
             >
@@ -303,7 +303,8 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-6 text-xs"
+                    static
+                    className="min-h-11 text-xs md:min-h-10"
                     onClick={handleClearHistory}
                   >
                     清空
@@ -332,14 +333,22 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
                           role="option"
                           aria-selected={activeHistoryIndex === index}
                           className={cn(
-                            'motion-control group flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm transition-[background-color,color] hover:bg-accent',
+                            'motion-control group flex min-h-11 w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none transition-[background-color,color] hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 md:min-h-10',
                             activeHistoryIndex === index && 'bg-accent',
                           )}
                           onMouseMove={() => setActiveHistoryIndex(index)}
                           onClick={() => handleHistoryItemClick(query)}
                         >
                           <span className="truncate">{query}</span>
-                          <Search className="motion-control h-3 w-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                          <Search
+                            aria-hidden="true"
+                            className={cn(
+                              'motion-control size-4 shrink-0 text-muted-foreground transition-opacity',
+                              activeHistoryIndex === index
+                                ? 'opacity-100'
+                                : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+                            )}
+                          />
                         </button>
                       </MotionDiv>
                     ))}
@@ -349,35 +358,26 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
             </PopoverContent>
           )}
         </Popover>
-        <MotionPresence>
-          {inputValue && (
-            <MotionDiv
-              key="clear-search-draft"
-              className="absolute right-2.5 top-2.5"
-              variants={FADE_VARIANTS}
-              initial="hidden"
-              animate="visible"
-              exit={{ opacity: 0, pointerEvents: 'none', scale: 0.9 }}
-              transition={transition}
-            >
-              <button
-                type="button"
-                aria-label="清空搜索输入"
-                onClick={() => {
-                  setInputValue('');
-                  setActiveHistoryIndex(-1);
-                  inputRef.current?.focus();
-                }}
-                className="motion-control block text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </MotionDiv>
-          )}
-        </MotionPresence>
+        {inputValue && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            static
+            aria-label="清空搜索输入"
+            onClick={() => {
+              setInputValue('');
+              setActiveHistoryIndex(-1);
+              inputRef.current?.focus();
+            }}
+            className="absolute right-0 top-0 size-11 rounded-l-none text-muted-foreground hover:text-foreground md:size-10"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </Button>
+        )}
       </div>
 
-      <Button type="submit" className="shrink-0 px-3 sm:px-4">
+      <Button type="submit" className="h-11 min-w-11 shrink-0 px-3 sm:px-4 md:h-10">
         搜索
       </Button>
       <Popover>
@@ -386,6 +386,7 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
             type="button"
             variant="outline"
             size="icon"
+            className="size-11 md:size-10"
             aria-label="搜索语法帮助"
             title="搜索语法帮助"
           >

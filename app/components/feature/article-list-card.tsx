@@ -85,17 +85,17 @@ export function ArticleListCard({
   return (
     <Card
       className={cn(
-        'motion-control content-visibility-card gap-0 overflow-hidden py-0 transition-[background-color,box-shadow] hover:bg-accent/30 hover:shadow-md',
+        'motion-control content-visibility-card gap-0 overflow-hidden py-0 transition-[background-color] hover:bg-accent/30',
         className,
       )}
     >
       <CardHeader className="gap-2 px-4 py-4 sm:px-5 sm:py-5">
-        <div className="flex items-start justify-between gap-3">
-          <CardTitle className="text-base leading-snug text-foreground sm:text-lg">
+        <div className="flex flex-col items-start gap-2 sm:flex-row sm:justify-between sm:gap-3">
+          <CardTitle className="min-w-0 text-balance break-words text-base leading-snug text-foreground sm:text-lg">
             {title}
           </CardTitle>
           {hasBadges && (
-            <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+            <div className="flex shrink-0 flex-wrap gap-1.5 sm:justify-end">
               {isOpenAccess && (
                 <Badge variant="secondary" className="px-2 py-0 text-[11px]">
                   开放获取
@@ -117,7 +117,9 @@ export function ArticleListCard({
       </CardHeader>
       {hasPreview && (
         <CardContent className="px-4 pb-4 sm:px-5 sm:pb-5">
-          <div className="line-clamp-3 text-sm leading-6 text-muted-foreground">{preview}</div>
+          <div className="line-clamp-3 text-pretty text-sm leading-6 text-muted-foreground">
+            {preview}
+          </div>
         </CardContent>
       )}
       {action && (
