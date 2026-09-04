@@ -19,6 +19,23 @@ use crate::open_sqlite_connection;
 const ENVELOPE_PREFIX: &str = "litradarenc:v1:";
 const SECRET_KEY_BYTES: usize = 32;
 
+#[derive(Clone, Copy)]
+enum NotificationSecretField {
+    PushplusToken,
+    AiApiKey,
+    AiBackupApiKey,
+}
+
+impl NotificationSecretField {
+    fn name(self) -> &'static str {
+        match self {
+            Self::PushplusToken => "pushplus_token",
+            Self::AiApiKey => "ai_api_key",
+            Self::AiBackupApiKey => "ai_backup_api_key",
+        }
+    }
+}
+
 /// Codec for versioned encrypted secret envelopes.
 #[derive(Clone)]
 pub struct SecretCodec {
@@ -329,10 +346,20 @@ fn visit_secret_values(
 ) -> Result<(), SecretError> {
     let notification_rows = query_notification_secrets(transaction)?;
     for (user_id, field, stored) in notification_rows {
-        let context = notification_context(user_id, field);
+        let context = notification_context(user_id, field.name());
         if let Some(replacement) = visitor(&stored, &context)? {
             transaction.execute(
-                &format!("UPDATE notification_settings SET {field} = ?1 WHERE user_id = ?2"),
+                match field {
+                    NotificationSecretField::PushplusToken => {
+                        "UPDATE notification_settings SET pushplus_token = ?1 WHERE user_id = ?2"
+                    }
+                    NotificationSecretField::AiApiKey => {
+                        "UPDATE notification_settings SET ai_api_key = ?1 WHERE user_id = ?2"
+                    }
+                    NotificationSecretField::AiBackupApiKey => {
+                        "UPDATE notification_settings SET ai_backup_api_key = ?1 WHERE user_id = ?2"
+                    }
+                },
                 params![replacement, user_id],
             )?;
         }
@@ -365,7 +392,7 @@ fn inspect_secret_values(
     mut visitor: impl FnMut(&str, &str) -> Result<(), SecretError>,
 ) -> Result<(), SecretError> {
     for (user_id, field, stored) in query_notification_secrets(connection)? {
-        visitor(&stored, &notification_context(user_id, field))?;
+        visitor(&stored, &notification_context(user_id, field.name()))?;
     }
     for (field, stored) in query_runtime_secrets(connection)? {
         visitor(&stored, &runtime_context(&field))?;
@@ -378,16 +405,28 @@ fn inspect_secret_values(
 
 fn query_notification_secrets(
     connection: &Connection,
-) -> Result<Vec<(i64, &'static str, String)>, SecretError> {
+) -> Result<Vec<(i64, NotificationSecretField, String)>, SecretError> {
     let mut statement = connection.prepare(
         "SELECT user_id, pushplus_token, ai_api_key, ai_backup_api_key FROM notification_settings",
     )?;
     let rows = statement.query_map([], |row| {
         let user_id = row.get::<_, i64>(0)?;
         Ok([
-            (user_id, "pushplus_token", row.get::<_, String>(1)?),
-            (user_id, "ai_api_key", row.get::<_, String>(2)?),
-            (user_id, "ai_backup_api_key", row.get::<_, String>(3)?),
+            (
+                user_id,
+                NotificationSecretField::PushplusToken,
+                row.get::<_, String>(1)?,
+            ),
+            (
+                user_id,
+                NotificationSecretField::AiApiKey,
+                row.get::<_, String>(2)?,
+            ),
+            (
+                user_id,
+                NotificationSecretField::AiBackupApiKey,
+                row.get::<_, String>(3)?,
+            ),
         ])
     })?;
     let mut values = Vec::new();
