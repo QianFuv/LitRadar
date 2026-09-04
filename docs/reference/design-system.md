@@ -119,7 +119,7 @@ Sizes：
 - `xs`、`sm`、`default`、`lg`
 - `icon-xs`、`icon-sm`、`icon`、`icon-lg`
 
-Button 统一使用 `rounded-md`、禁用态 opacity、有限属性 transition 和 3px `focus-visible` ring。图标按钮必须提供可访问名称。
+Button 统一使用 `rounded-md`、禁用态 opacity、有限属性 transition 和 3px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、筛选移除、收藏等高频或需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
 
 ### Badge
 
@@ -164,7 +164,11 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 ### 文章列表层级
 
-文章卡片使用紧凑的单一表面：标题是第一视觉层，期刊/卷期/日期使用较小的中性元数据行，开放获取与预发表 badge 作为次级信号，摘要限制三行，明确的“查看详情”操作位于浅色底栏。卡片正文保持可选择，不把整张卡片改成按钮，也不让 badge、摘要或操作与标题竞争。
+文章卡片使用紧凑的单一表面：标题是第一视觉层，期刊/卷期/日期使用较小的中性元数据行，开放获取与预发表 badge 作为次级信号，摘要限制三行，明确的“查看详情”操作位于浅色底栏。标题使用均衡换行，摘要使用 `text-pretty`；窄屏 badge 排在标题下方，避免挤压长标题。卡片正文保持可选择，不把整张卡片改成按钮，也不让 badge、摘要或操作与标题竞争。hover 只改变背景，不替换共享阴影环或制造可点击整张卡片的浮起效果。
+
+搜索框、清空、搜索、帮助、筛选移除、查看详情及收藏操作在移动端保留至少 44px 的实际命中高度，桌面为 40px；图标按钮同时保证相应宽度，不使用会重叠的伪元素扩展命中区。搜索清空即时反馈并归还输入焦点，不改变已提交查询。搜索历史与收藏选择器使用 10px 外圆角、8px padding 和 2px 内圆角，沿用共享 shadow stack。
+
+收藏按钮为两个文字状态预留相同宽度，避免切换时推动相邻操作；星形使用 `currentColor`，仅选中状态填充，配合文字和收藏夹的 `aria-pressed` 表达状态。收藏文字使用浅色 `amber-700` / 深色 `amber-400`，不对标签或图标重播 presence 入场。
 
 搜索的 loading、error、empty 和 results 只在列表级状态边界交叉淡入淡出；错误与空态使用 `StateMessage`。列表边界之外只保留一个即时更新的 live region，分页加载复用该语义状态，避免退出中的视觉表面成为陈旧播报。长文章结果不逐卡应用 presence、layout 或 stagger，继续保留 `content-visibility-card` 与 Intersection Observer sentinel。
 
@@ -206,6 +210,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 - 加载、成功与错误反馈使用 `role="status"` / `role="alert"`。
 - 展开、选中和当前状态使用 Radix data attributes 或对应 ARIA 属性。
 - Dialog、DropdownMenu、Select、Popover、Checkbox 和 Switch 复用 Radix 的键盘与焦点行为。
+- 默认 Dialog 关闭按钮为移动端 44×44px、桌面 40×40px，标题预留关闭区并使用均衡换行，描述使用 `text-pretty`。
 - Dialog 动画和普通 transition 受全局 reduced-motion 规则约束；关闭动画期间仍由 Radix 保持 portal 与焦点归还生命周期。
 
 颜色不能作为唯一状态信号；状态文本、图标或 ARIA 语义应与颜色同时存在。
