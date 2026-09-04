@@ -1583,6 +1583,7 @@ pub fn scheduler_worker_id() -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
 
@@ -2224,14 +2225,16 @@ mod tests {
         };
         let logs = CapturedLogs::default();
 
-        let (result, process_elapsed) = logs.capture(|| {
+        let (result, cancellation_elapsed) = logs.capture(|| {
             let cancellation = SchedulerCancellation::new();
             let cancellation_request = cancellation.clone();
+            let cancellation_heartbeat_path = heartbeat_path.clone();
             let cancel_thread = thread::spawn(move || {
-                thread::sleep(Duration::from_secs(1));
+                wait_for_process_tree_heartbeat(&cancellation_heartbeat_path);
+                let requested_at = Instant::now();
                 cancellation_request.cancel();
+                requested_at
             });
-            let started_at = Instant::now();
             let result = execute_scheduled_process(
                 process,
                 1,
@@ -2240,16 +2243,15 @@ mod tests {
                 &cancellation,
                 &mut || HeartbeatDirective::Continue,
             );
-            let process_elapsed = started_at.elapsed();
-            cancel_thread
+            let requested_at = cancel_thread
                 .join()
                 .expect("cancellation request should complete");
-            (result, process_elapsed)
+            (result, requested_at.elapsed())
         });
 
         assert_eq!(result.status, SchedulerRunState::Cancelled);
         assert!(result.output_summary.contains("cancelled"));
-        assert!(process_elapsed < Duration::from_secs(3));
+        assert!(cancellation_elapsed < Duration::from_secs(3));
         assert_process_tree_heartbeat_stopped(&heartbeat_path);
         assert_single_child_failure(&logs, "cancelled");
     }
@@ -2410,14 +2412,7 @@ mod tests {
             let grandchild_pid = grandchild.id();
             let grandchild_waiter = thread::spawn(move || grandchild.wait());
             drop(grandchild_waiter);
-            let deadline = Instant::now() + Duration::from_secs(3);
-            while !heartbeat_path.exists() {
-                assert!(
-                    Instant::now() < deadline,
-                    "scheduler grandchild heartbeat did not start"
-                );
-                thread::sleep(Duration::from_millis(10));
-            }
+            wait_for_process_tree_heartbeat(&heartbeat_path);
             assert_ne!(grandchild_pid, 0);
         }
         thread::sleep(Duration::from_secs(15));
@@ -2429,9 +2424,14 @@ mod tests {
         let path = std::env::var_os(PROCESS_TREE_HEARTBEAT_ENV)
             .map(PathBuf::from)
             .expect("scheduler process-tree heartbeat path should be provided");
+        let mut heartbeat = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("scheduler process-tree heartbeat should open");
         let mut counter = 0_u64;
         loop {
-            std::fs::write(&path, format!("{} {counter}", std::process::id()))
+            writeln!(heartbeat, "{} {counter}", std::process::id())
                 .expect("scheduler process-tree heartbeat should write");
             counter = counter.saturating_add(1);
             thread::sleep(Duration::from_millis(10));
@@ -2465,12 +2465,12 @@ mod tests {
             .map(|pair| PathBuf::from(&pair[1]))
     }
 
-    fn assert_process_tree_heartbeat_stopped(path: &Path) {
+    fn wait_for_process_tree_heartbeat(path: &Path) -> String {
         let deadline = Instant::now() + Duration::from_secs(3);
-        let first = loop {
+        loop {
             if let Ok(contents) = std::fs::read_to_string(path) {
                 if !contents.is_empty() {
-                    break contents;
+                    return contents;
                 }
             }
             assert!(
@@ -2478,7 +2478,11 @@ mod tests {
                 "scheduler process-tree heartbeat was never published"
             );
             thread::sleep(Duration::from_millis(10));
-        };
+        }
+    }
+
+    fn assert_process_tree_heartbeat_stopped(path: &Path) {
+        let first = wait_for_process_tree_heartbeat(path);
         thread::sleep(Duration::from_millis(150));
         let second = std::fs::read_to_string(path)
             .expect("scheduler process-tree heartbeat should remain readable");
