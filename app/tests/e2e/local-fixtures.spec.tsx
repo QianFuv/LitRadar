@@ -970,13 +970,19 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
     fullPage: true,
   });
 
-  await page.getByRole('menuitem', { name: '外观主题' }).hover();
+  await expect(
+    page.getByRole('group', { name: '外观主题' }).getByRole('menuitemradio'),
+  ).toHaveCount(3);
+  await expect(page.getByRole('menu')).toHaveCount(1);
   await page.getByRole('menuitemradio', { name: '深色' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('dark');
   await expect(page.locator('html')).toHaveClass(/dark/);
 
   await trigger.click();
-  await page.getByRole('menuitem', { name: '外观主题' }).hover();
+  await expect(page.getByRole('menuitemradio', { name: '深色' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
   await page.getByRole('menuitemradio', { name: '跟随系统' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('system');
 
@@ -1006,7 +1012,6 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await expect(trigger).toBeFocused();
 
   await trigger.click();
-  await page.getByRole('menuitem', { name: '外观主题' }).hover();
   await page.getByRole('menuitemradio', { name: '浅色' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('light');
   await expect(page.locator('html')).not.toHaveClass(/dark/);
@@ -1020,7 +1025,6 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.screenshot({ path: '../output/ui/default-chrome-light.png', fullPage: true });
 
   await trigger.click();
-  await page.getByRole('menuitem', { name: '外观主题' }).hover();
   await page.getByRole('menuitemradio', { name: '跟随系统' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('system');
   await expect(page.locator('html')).toHaveClass(/dark/);
@@ -1090,6 +1094,21 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
     (lastInteractiveBox?.y ?? 0) < (updatedTriggerBox?.y ?? 0) + (updatedTriggerBox?.height ?? 0) &&
     (lastInteractiveBox?.y ?? 0) + (lastInteractiveBox?.height ?? 0) > (updatedTriggerBox?.y ?? 0);
   expect(doesOverlap).toBe(false);
+
+  await page.setViewportSize({ width: 320, height: 740 });
+  await mobileTrigger.click();
+  const mobileMenu = page.getByRole('menu', { name: '账号菜单' });
+  await expect(page.getByRole('menu')).toHaveCount(1);
+  await expect(
+    mobileMenu.getByRole('group', { name: '外观主题' }).getByRole('menuitemradio'),
+  ).toHaveCount(3);
+  expect(await mobileMenu.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: '../output/ui/theme-controls-mobile.png', animations: 'disabled' });
+  await mobileMenu.getByRole('menuitemradio', { name: '深色' }).click();
+  await expect(mobileMenu).toHaveCount(0);
+  await expect(page.locator('html')).toHaveClass(/dark/);
 
   expect(hydrationDiagnostics).toEqual([]);
 }

@@ -133,7 +133,9 @@ async function exposesAccountActions(): Promise<void> {
     'href',
     '/?view=favorites&folder=4&settings=general',
   );
-  expect(screen.getByRole('menuitem', { name: '外观主题' })).toBeInTheDocument();
+  expect(screen.getByRole('group', { name: '外观主题' })).toBeInTheDocument();
+  expect(screen.getAllByRole('menuitemradio')).toHaveLength(3);
+  expect(screen.queryByRole('menuitem', { name: '外观主题' })).not.toBeInTheDocument();
   expect(screen.queryByRole('menuitem', { name: '文献检索' })).not.toBeInTheDocument();
   expect(screen.queryByRole('menuitem', { name: '我的收藏' })).not.toBeInTheDocument();
   expect(screen.queryByRole('menuitem', { name: '每周更新' })).not.toBeInTheDocument();
@@ -200,17 +202,18 @@ async function selectsThemePreferences(): Promise<void> {
   const trigger = screen.getByRole('button', { name: /打开账号菜单/ });
 
   await user.click(trigger);
-  await user.hover(screen.getByRole('menuitem', { name: '外观主题' }));
+  expect(screen.getByRole('menuitemradio', { name: '跟随系统' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
   fireEvent.click(await screen.findByRole('menuitemradio', { name: '深色' }));
   expect(userMenuMocks.setTheme).toHaveBeenLastCalledWith('dark');
 
   await user.click(trigger);
-  await user.hover(screen.getByRole('menuitem', { name: '外观主题' }));
   fireEvent.click(await screen.findByRole('menuitemradio', { name: '浅色' }));
   expect(userMenuMocks.setTheme).toHaveBeenLastCalledWith('light');
 
   await user.click(trigger);
-  await user.hover(screen.getByRole('menuitem', { name: '外观主题' }));
   fireEvent.click(await screen.findByRole('menuitemradio', { name: '跟随系统' }));
   expect(userMenuMocks.setTheme).toHaveBeenLastCalledWith('system');
 }

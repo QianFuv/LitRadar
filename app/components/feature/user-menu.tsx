@@ -7,8 +7,6 @@
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu';
 import {
   AlertTriangle,
-  Check,
-  ChevronRight,
   ChevronUp,
   LogOut,
   Monitor,
@@ -147,8 +145,6 @@ export function UserMenu() {
   }
 
   const selectedTheme = isMounted ? (theme ?? 'system') : 'system';
-  const selectedThemeLabel =
-    THEME_ITEMS.find((item) => item.value === selectedTheme)?.label ?? '跟随系统';
   const settingsHref = buildSettingsCenterHref(pathname, searchParams, 'general');
   const adminHref = buildAdminCenterHref(pathname, searchParams, 'overview');
   const isAdminOpen = parseAdminSection(searchParams.get('admin')) !== null;
@@ -218,7 +214,7 @@ export function UserMenu() {
             align="end"
             side="top"
             sideOffset={8}
-            className={cn(MENU_CONTENT_CLASS, 'w-60')}
+            className={cn(MENU_CONTENT_CLASS, 'w-64 max-w-[calc(100vw-2rem)]')}
           >
             <DropdownMenuPrimitive.Label className="flex items-center gap-3 px-2 py-2">
               <Image
@@ -249,50 +245,37 @@ export function UserMenu() {
               </Link>
             </DropdownMenuPrimitive.Item>
 
-            <DropdownMenuPrimitive.Sub>
-              <DropdownMenuPrimitive.SubTrigger
-                aria-label="外观主题"
-                className={cn(MENU_ITEM_CLASS, 'group/theme-menu data-[state=open]:bg-accent')}
-              >
-                <Monitor />
+            <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+              <span className="flex shrink-0 items-center gap-2 text-sm">
+                <Monitor className="size-4 text-muted-foreground" aria-hidden="true" />
                 <span>外观主题</span>
-                <span className="ml-auto text-xs text-muted-foreground">{selectedThemeLabel}</span>
-                <ChevronRight className="motion-chevron size-4 transition-transform group-data-[state=open]/theme-menu:rotate-90" />
-              </DropdownMenuPrimitive.SubTrigger>
-              <DropdownMenuPrimitive.Portal>
-                <DropdownMenuPrimitive.SubContent
-                  alignOffset={-4}
-                  sideOffset={6}
-                  className={cn(MENU_CONTENT_CLASS, 'min-w-40')}
+              </span>
+              {isMounted && (
+                <DropdownMenuPrimitive.RadioGroup
+                  aria-label="外观主题"
+                  value={selectedTheme}
+                  onValueChange={handleThemeChange}
+                  className="flex shrink-0 items-center gap-1"
                 >
-                  {isMounted ? (
-                    <DropdownMenuPrimitive.RadioGroup
-                      aria-label="主题"
-                      value={selectedTheme}
-                      onValueChange={handleThemeChange}
-                    >
-                      {THEME_ITEMS.map((item) => {
-                        const Icon = item.icon;
+                  {THEME_ITEMS.map((item) => {
+                    const Icon = item.icon;
 
-                        return (
-                          <DropdownMenuPrimitive.RadioItem
-                            key={item.value}
-                            value={item.value}
-                            className={cn(MENU_ITEM_CLASS, 'pr-8')}
-                          >
-                            <Icon />
-                            <span>{item.label}</span>
-                            <DropdownMenuPrimitive.ItemIndicator className="absolute right-2 flex size-4 items-center justify-center">
-                              <Check className="size-4" />
-                            </DropdownMenuPrimitive.ItemIndicator>
-                          </DropdownMenuPrimitive.RadioItem>
-                        );
-                      })}
-                    </DropdownMenuPrimitive.RadioGroup>
-                  ) : null}
-                </DropdownMenuPrimitive.SubContent>
-              </DropdownMenuPrimitive.Portal>
-            </DropdownMenuPrimitive.Sub>
+                    return (
+                      <DropdownMenuPrimitive.RadioItem
+                        key={item.value}
+                        value={item.value}
+                        textValue={item.label}
+                        aria-label={item.label}
+                        title={item.label}
+                        className="motion-control flex size-11 shrink-0 cursor-default items-center justify-center rounded-md text-muted-foreground outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-accent data-[highlighted]:text-foreground data-[state=checked]:bg-accent data-[state=checked]:text-foreground md:size-9"
+                      >
+                        <Icon className="size-4" aria-hidden="true" />
+                      </DropdownMenuPrimitive.RadioItem>
+                    );
+                  })}
+                </DropdownMenuPrimitive.RadioGroup>
+              )}
+            </div>
 
             {user.is_admin && (
               <DropdownMenuPrimitive.Item asChild>
