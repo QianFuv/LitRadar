@@ -1158,7 +1158,7 @@ async function userMenuNavigationTest({ page }: { page: Page }): Promise<void> {
 }
 
 /**
- * Serve a long, badged article and its access actions for control checks.
+ * Serve a long, badged article and a successful favorite mutation for polish checks.
  *
  * @param route - Intercepted API route.
  */
@@ -1184,10 +1184,25 @@ async function serveInterfacePolishApi(route: Route): Promise<void> {
     });
     return;
   }
+  if (pathname === '/api/favorites/check') {
+    await fulfillJson(route, []);
+    return;
+  }
   if (pathname === '/api/articles/polish-fixture/access') {
     await fulfillJson(route, {
       abstract_page: { available: true, label: '查看摘要页', requires_login: false, message: null },
       fulltext: { available: true, label: '获取全文', requires_login: false, message: null },
+    });
+    return;
+  }
+  if (pathname === '/api/favorites/folders/4/articles' && route.request().method() === 'POST') {
+    await fulfillJson(route, {
+      id: 2,
+      folder_id: 4,
+      article_id: 'polish-fixture',
+      db_name: 'fixture.sqlite',
+      note: '',
+      created_at: 2,
     });
     return;
   }
@@ -1208,6 +1223,39 @@ async function expectComfortableTarget(control: Locator, minimumSize: number): P
       return Math.min(box?.width ?? 0, box?.height ?? 0);
     })
     .toBeGreaterThanOrEqual(minimumSize);
+}
+
+/**
+ * Measure rendered text contrast after compositing a control over the active theme surface.
+ *
+ * @param control - Control whose text must remain readable in either theme.
+ */
+async function expectReadableControlText(control: Locator): Promise<void> {
+  const contrast = await control.evaluate((element) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas is required to resolve computed CSS colors');
+    const styles = getComputedStyle(element);
+    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--background');
+    context.fillRect(0, 0, 1, 1);
+    context.fillStyle = styles.backgroundColor;
+    context.fillRect(0, 0, 1, 1);
+    const background = Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
+    context.fillStyle = styles.color;
+    context.fillRect(0, 0, 1, 1);
+    const foreground = Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
+    const luminances = [background, foreground].map((channels) =>
+      channels.reduce((luminance, channel, index) => {
+        const value = channel / 255;
+        const linearValue = value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        return luminance + linearValue * [0.2126, 0.7152, 0.0722][index];
+      }, 0),
+    );
+    return (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
+  });
+  expect(contrast).toBeGreaterThanOrEqual(4.5);
 }
 
 /**
@@ -1294,6 +1342,58 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   );
 }
 
+/**
+ * Verify favorite state changes preserve control geometry and provide readable, semantic feedback.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function interfacePolishFavoriteTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveInterfacePolishApi);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/?q=graph');
+  await hideDevelopmentIndicator(page);
+  await page.getByRole('button', { name: '查看详情' }).click();
+  const trigger = page.getByRole('button', { name: '收藏', exact: true });
+  await expect(trigger).toBeVisible();
+  await expect(page.getByRole('dialog', { name: /Graph Evidence/ })).toHaveCSS('scale', '1');
+  await page.evaluate(() => document.fonts.ready);
+  const initialWidth = (await trigger.boundingBox())?.width ?? 0;
+  await trigger.click();
+  const folder = page.getByRole('button', { name: 'Tracking', exact: true });
+  await folder.click();
+  const selectedTrigger = page.getByRole('button', { name: '已收藏', exact: true });
+  await expect(selectedTrigger).toBeVisible();
+  await expect.poll(async () => (await selectedTrigger.boundingBox())?.width).toBe(initialWidth);
+  await expect(folder).toHaveAttribute('aria-pressed', 'true');
+  await expectComfortableTarget(folder, 40);
+  expect(
+    await selectedTrigger.locator('svg').evaluate((element) => {
+      const style = getComputedStyle(element);
+      return style.fill === style.color;
+    }),
+  ).toBe(true);
+  await expect(page.getByRole('link', { name: '查看摘要页' })).toBeVisible();
+  await page.screenshot({
+    path: '../output/ui/polish-favorite-light.png',
+    fullPage: true,
+    animations: 'disabled',
+  });
+  await expectReadableControlText(selectedTrigger);
+  await expectReadableControlText(folder);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await page.screenshot({
+    path: '../output/ui/polish-favorite-dark.png',
+    fullPage: true,
+    animations: 'disabled',
+  });
+  await expectReadableControlText(selectedTrigger);
+  await expectReadableControlText(folder);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-slot="popover-content"]')).toHaveCount(0);
+  await expect(selectedTrigger).toBeFocused();
+}
+
 test('shows the local administrator bootstrap boundary', bootstrapBoundaryTest);
 test(
   'redirects an authenticated login visit without showing the form',
@@ -1310,3 +1410,4 @@ test('supports the administrator center across desktop and mobile', administrato
 test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);
 test('polishes search targets and restrained control feedback', interfacePolishControlsTest);
+test('polishes stable and semantic favorite feedback', interfacePolishFavoriteTest);

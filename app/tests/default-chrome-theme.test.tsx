@@ -63,7 +63,7 @@ const SEMANTIC_COLOR_FIXTURES = [
   },
   {
     path: 'components/feature/favorite-button.tsx',
-    utilities: ['text-yellow-500', 'fill-yellow-500'],
+    utilities: ['text-amber-700', 'dark:text-amber-400', 'fill-current'],
   },
   {
     path: 'components/admin/scheduled-tasks-card.tsx',
