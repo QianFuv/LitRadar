@@ -54,7 +54,7 @@ fn provider_proxy_locked_reqwest_contract_covers_schemes_dns_ports_and_authentic
             .expect("authenticated HTTP proxy should validate"),
     )
     .expect("HTTP proxy client should build")
-    .get("http://provider-target.test/article")
+    .get("http://127.0.0.1/article")
     .send()
     .expect("HTTP proxy request should succeed")
     .text()
@@ -64,7 +64,7 @@ fn provider_proxy_locked_reqwest_contract_covers_schemes_dns_ports_and_authentic
         .join()
         .expect("HTTP proxy thread should finish")
         .expect("HTTP proxy should receive one request");
-    assert!(http_request.starts_with("GET http://provider-target.test/article HTTP/1.1\r\n"));
+    assert!(http_request.starts_with("GET http://127.0.0.1/article HTTP/1.1\r\n"));
     assert!(http_request
         .to_ascii_lowercase()
         .contains("proxy-authorization: basic dxnlcjpwyxnzd29yza=="));

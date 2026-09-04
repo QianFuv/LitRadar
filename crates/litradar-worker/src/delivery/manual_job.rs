@@ -420,7 +420,7 @@ mod tests {
             .expect("manual run should admit")
             {
                 DeliveryRunAdmissionOutcome::Enqueued(run) => run,
-                other => panic!("unexpected manual admission: {other:?}"),
+                _ => panic!("manual admission should enqueue a new run"),
             }
         }
     }

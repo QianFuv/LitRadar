@@ -942,7 +942,7 @@ fn seed_terminal_delivery_run(
     .expect("terminal fixture should admit")
     {
         litradar_storage::DeliveryRunAdmissionOutcome::Enqueued(run) => run,
-        admission => panic!("unexpected terminal fixture admission: {admission:?}"),
+        _ => panic!("terminal fixture admission should enqueue a new run"),
     };
     let claimed = match litradar_storage::claim_delivery_run(
         auth_db_path,

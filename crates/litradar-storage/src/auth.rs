@@ -2262,13 +2262,11 @@ mod tests {
             .expect("fixture user should exist");
         let connection = open_auth_connection(&auth_db_path).expect("auth connection should open");
         connection
-            .execute_batch(&format!(
+            .execute_batch(
                 "CREATE TRIGGER fail_credential_token_revoke \
                  BEFORE DELETE ON access_tokens \
-                 WHEN OLD.user_id = {} \
                  BEGIN SELECT RAISE(ABORT, 'injected token revoke failure'); END;",
-                user_id.value()
-            ))
+            )
             .expect("fault trigger should install");
         drop(connection);
 

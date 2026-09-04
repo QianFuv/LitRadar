@@ -691,7 +691,7 @@ mod tests {
             .expect("fixture run should admit")
             {
                 DeliveryRunAdmissionOutcome::Enqueued(run) => run,
-                other => panic!("unexpected fixture admission: {other:?}"),
+                _ => panic!("fixture admission should enqueue a new run"),
             }
         }
     }

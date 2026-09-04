@@ -658,7 +658,7 @@ mod tests {
         let started_at = Instant::now();
         let error = client
             .post_json_with_resolver(
-                Url::parse("http://pending-dns.example/v1").unwrap(),
+                Url::parse("http://localhost/v1").unwrap(),
                 Arc::new(PendingDnsResolver),
                 &[],
                 &json!({}),

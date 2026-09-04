@@ -3906,7 +3906,7 @@ mod tests {
             ManualDeliveryRunAdmissionOutcome::Admitted(DeliveryRunAdmissionOutcome::Enqueued(
                 run,
             )) => run,
-            other => panic!("unexpected first manual admission: {other:?}"),
+            _ => panic!("first manual admission should enqueue a new run"),
         };
         let claimed = expect_claimed(
             claim_delivery_run(&path, first.id, "manual-owner", first.revision, 11.0, 30.0)
@@ -4110,7 +4110,7 @@ mod tests {
                 ManualDeliveryRunAdmissionOutcome::Admitted(
                     DeliveryRunAdmissionOutcome::Enqueued(run),
                 ) => run,
-                other => panic!("unexpected manual admission: {other:?}"),
+                _ => panic!("manual admission should enqueue a new run"),
             };
         let claimed = expect_claimed(
             claim_delivery_run(
@@ -4605,7 +4605,7 @@ mod tests {
         let enqueued =
             match admit_delivery_run(&path, &create).expect("first admission should succeed") {
                 DeliveryRunAdmissionOutcome::Enqueued(record) => record,
-                other => panic!("first admission should enqueue, got {other:?}"),
+                _ => panic!("first admission should enqueue a new run"),
             };
         assert!(matches!(
             admit_delivery_run(&path, &create).expect("repeated admission should load"),
