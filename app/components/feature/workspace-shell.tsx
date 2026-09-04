@@ -64,13 +64,13 @@ export function WorkspaceShell({
               </DialogTrigger>
               <DialogContent
                 placement="left"
-                className="gap-0 overflow-hidden p-0 shadow-lg md:hidden"
+                className="flex flex-col gap-0 overflow-hidden p-0 shadow-lg md:hidden"
               >
                 <DialogHeader className="sr-only">
                   <DialogTitle>{sidebarDialogTitle}</DialogTitle>
                   <DialogDescription>{sidebarDialogDescription}</DialogDescription>
                 </DialogHeader>
-                <div className="h-full w-full pt-8 [&>*]:h-full [&>*]:w-full">{sidebar}</div>
+                <div className="min-h-0 w-full flex-1 [&>*]:h-full [&>*]:w-full">{sidebar}</div>
               </DialogContent>
             </Dialog>
             {toolbar}

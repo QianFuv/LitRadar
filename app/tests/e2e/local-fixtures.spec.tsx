@@ -632,6 +632,11 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   const mobileCategories = mobileDialog
     .locator('header')
     .getByRole('navigation', { name: '设置分类' });
+  const navigationInsets = await mobileCategories.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return { left: Math.round(bounds.left), right: Math.round(innerWidth - bounds.right) };
+  });
+  expect(navigationInsets.right).toBe(navigationInsets.left);
   await expect(mobileDialog.locator('[data-mobile-overflow-cue="true"]')).toBeVisible();
   await expect(mobileCategories.getByRole('button', { name: '常规' })).toHaveAttribute(
     'data-section-active',
@@ -727,6 +732,7 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await expect(page).toHaveURL('/?q=graph&admin=overview');
   const adminDialog = page.getByRole('dialog', { name: '管理面板' });
   await expect(adminDialog).toBeVisible();
+  await expectConsistentDialogClose(adminDialog, 40);
   await expect(adminDialog).toHaveCSS('max-width', '1152px');
   await expect(page.getByRole('heading', { name: '概览', exact: true })).toBeVisible();
   await expect(adminDialog.locator('[data-motion-section-header="overview"]')).toBeVisible();
@@ -746,6 +752,7 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await expect(adminDialog.locator('[data-motion-scheduler-state="workers-1-1"]')).toBeVisible();
   await adminDialog.getByRole('button', { name: '新建任务' }).click();
   const taskDialog = page.getByRole('dialog', { name: '新建定时任务' });
+  await expectConsistentDialogClose(taskDialog, 40);
   const indexFields = taskDialog.locator('[data-motion-scheduled-fields="index"]');
   const deliveryFields = taskDialog.locator('[data-motion-scheduled-fields="delivery"]');
   await expect(indexFields).not.toHaveAttribute('inert');
@@ -774,12 +781,18 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await page.goto('/?q=graph&admin=overview');
   const mobileDialog = page.getByRole('dialog', { name: '管理面板' });
   await expect(mobileDialog).toBeVisible();
+  await expectConsistentDialogClose(mobileDialog, 44);
   await hideDevelopmentIndicator(page);
   await expect(mobileDialog).toHaveCSS('width', '390px');
   await expect(mobileDialog).toHaveCSS('height', '844px');
   const mobileCategories = mobileDialog
     .locator('header')
     .getByRole('navigation', { name: '管理分类' });
+  const navigationInsets = await mobileCategories.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return { left: Math.round(bounds.left), right: Math.round(innerWidth - bounds.right) };
+  });
+  expect(navigationInsets.right).toBe(navigationInsets.left);
   await expect(mobileDialog.locator('[data-mobile-overflow-cue="true"]')).toBeVisible();
   await expect(mobileCategories.getByRole('button', { name: '概览' })).toHaveAttribute(
     'data-section-active',
@@ -972,6 +985,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await expect(page).toHaveURL('/?q=graph&settings=general');
   const settingsDialog = page.getByRole('dialog', { name: '设置中心' });
   await expect(settingsDialog).toBeVisible();
+  await expectConsistentDialogClose(settingsDialog, 40);
   await expectElementChromeToBeGrayscale(settingsDialog, [
     'backgroundColor',
     'borderColor',
@@ -1020,6 +1034,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
 
   await page.getByRole('button', { name: '打开筛选器' }).click();
   const filterDialog = page.getByRole('dialog', { name: '筛选器' });
+  await expect(filterDialog.getByRole('button', { name: '关闭' })).toHaveCount(0);
   const mobileNavigation = filterDialog.getByRole('navigation', { name: '页面导航' });
   await expect(mobileNavigation.getByRole('link')).toHaveCount(3);
   await expect(mobileNavigation.getByRole('link', { name: '文献检索' })).toHaveAttribute(
@@ -1027,7 +1042,8 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
     'page',
   );
   await page.screenshot({ path: '../output/ui/navigation-mobile.png', fullPage: true });
-  await filterDialog.getByRole('button', { name: '关闭' }).click();
+  await page.mouse.click(382, 400);
+  await expect(filterDialog).toHaveCount(0);
 
   const firstArticleAction = page.getByRole('button', { name: /^查看文章详情：/ }).first();
   const firstArticleCard = firstArticleAction.locator('[data-slot="card"]');
@@ -1228,6 +1244,42 @@ async function expectComfortableTarget(control: Locator, minimumSize: number): P
 }
 
 /**
+ * Verify every dialog uses the same corner inset and the shared button radius.
+ *
+ * @param dialog - Visible dialog to inspect.
+ * @param size - Expected touch target size for the active viewport.
+ */
+async function expectConsistentDialogClose(dialog: Locator, size: number): Promise<void> {
+  await expect(dialog).toBeVisible();
+  await expect
+    .poll(() =>
+      dialog.evaluate((element) => {
+        const close = element.querySelector<HTMLElement>(':scope > [data-slot="dialog-close"]');
+        if (!close) return null;
+        const dialogBox = element.getBoundingClientRect();
+        const closeBox = close.getBoundingClientRect();
+        const dialogStyle = getComputedStyle(element);
+        const standardButton = document.querySelector('[data-slot="button"][type="submit"]');
+        return {
+          top: Math.round(
+            closeBox.top - dialogBox.top - Number.parseFloat(dialogStyle.borderTopWidth),
+          ),
+          right: Math.round(
+            dialogBox.right - closeBox.right - Number.parseFloat(dialogStyle.borderRightWidth),
+          ),
+          width: Math.round(closeBox.width),
+          height: Math.round(closeBox.height),
+          hasSharedRadius:
+            standardButton !== null &&
+            getComputedStyle(close).borderTopLeftRadius ===
+              getComputedStyle(standardButton).borderTopLeftRadius,
+        };
+      }),
+    )
+    .toEqual({ top: 16, right: 16, width: size, height: size, hasSharedRadius: true });
+}
+
+/**
  * Measure rendered text contrast after compositing a control over the active theme surface.
  *
  * @param control - Control whose text must remain readable in either theme.
@@ -1294,7 +1346,7 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   await expect(card.locator('[data-slot="card-footer"]')).toHaveCount(0);
   await title.click();
   const dialog = page.getByRole('dialog', { name: /Graph Evidence/ });
-  await expectComfortableTarget(dialog.getByRole('button', { name: '关闭', exact: true }), 44);
+  await expectConsistentDialogClose(dialog, 44);
   await page.screenshot({
     path: '../output/ui/article-dialog-mobile.png',
     fullPage: true,
@@ -1430,6 +1482,103 @@ async function nativeThemeDocumentTest({
   }
 }
 
+/**
+ * Serve enough area filters to require scrolling inside a mobile sidebar.
+ *
+ * @param route - Intercepted fixture API request.
+ */
+async function serveLongSidebarApi(route: Route): Promise<void> {
+  if (new URL(route.request().url()).pathname === '/api/meta/areas') {
+    await fulfillJson(
+      route,
+      Array.from({ length: 24 }, (unusedValue, index) => ({
+        value: `field_${index + 1}`,
+        count: index + 1,
+      })),
+    );
+    return;
+  }
+  await serveTrackingApi(route);
+}
+
+/**
+ * Verify long drawers scroll with real wheel and touch input and dismiss without a close button.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveLongSidebarApi);
+  await page.setViewportSize({ width: 616, height: 751 });
+  await page.goto('/?q=graph');
+  await hideDevelopmentIndicator(page);
+  const trigger = page.getByRole('button', { name: '打开筛选器' });
+  await trigger.click();
+  const drawer = page.getByRole('dialog', { name: '筛选器' });
+  await expect(drawer.getByText('field_24', { exact: true })).toBeAttached();
+  const scrollContainer = drawer.locator('aside > div').first();
+  const lastSection = drawer.getByText('暂无可用发表年份');
+  await expect(lastSection).not.toBeInViewport();
+  await page.screenshot({ path: '../output/ui/mobile-sidebar-top.png', animations: 'disabled' });
+
+  await page.mouse.move(160, 500);
+  await page.mouse.wheel(0, 2000);
+  await expect
+    .poll(() => scrollContainer.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  await expect(lastSection).toBeInViewport();
+  await expect(drawer.getByRole('button', { name: '关闭', exact: true })).toHaveCount(0);
+  await page.screenshot({ path: '../output/ui/mobile-sidebar-bottom.png', animations: 'disabled' });
+
+  const touchSession = await page.context().newCDPSession(page);
+  try {
+    await touchSession.send('Emulation.setTouchEmulationEnabled', {
+      enabled: true,
+      maxTouchPoints: 1,
+    });
+    /**
+     * Dispatch a trusted touch drag through successive browser frames.
+     *
+     * @param startY - Starting vertical position in viewport CSS pixels.
+     * @param distance - Signed vertical distance traveled by the finger.
+     */
+    async function swipeSidebar(startY: number, distance: number): Promise<void> {
+      await touchSession.send('Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [{ x: 160, y: startY }],
+      });
+      for (let step = 1; step <= 8; step += 1) {
+        await touchSession.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: 160, y: startY + (distance * step) / 8 }],
+        });
+        await page.evaluate(() => new Promise(requestAnimationFrame));
+      }
+      await touchSession.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    }
+    const initialScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
+    await swipeSidebar(120, 500);
+    await expect
+      .poll(() => scrollContainer.evaluate((element) => element.scrollTop))
+      .toBeLessThan(initialScrollTop);
+    const upperScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
+    await swipeSidebar(640, -400);
+    await expect
+      .poll(() => scrollContainer.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(upperScrollTop);
+  } finally {
+    await touchSession.detach();
+  }
+
+  await page.mouse.click(600, 100);
+  await expect(drawer).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.keyboard.press('Escape');
+  await expect(drawer).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+}
+
+test('scrolls a long mobile sidebar and dismisses without a close button', mobileSidebarScrollTest);
 test('declares native theme ownership before hydration', nativeThemeDocumentTest);
 test('shows the local administrator bootstrap boundary', bootstrapBoundaryTest);
 test(

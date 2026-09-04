@@ -162,7 +162,7 @@ export function SectionedDialogFrame<SectionId extends string>({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         aria-busy={isBusy || undefined}
-        className="flex h-dvh w-screen max-w-none translate-x-[-50%] translate-y-[-50%] gap-0 overflow-hidden rounded-none border-0 p-0 shadow-none [&>[data-slot=dialog-close]]:top-5 [&>[data-slot=dialog-close]]:right-5 [&>[data-slot=dialog-close]]:flex [&>[data-slot=dialog-close]]:size-10 [&>[data-slot=dialog-close]]:items-center [&>[data-slot=dialog-close]]:justify-center [&>[data-slot=dialog-close]]:rounded-md [&>[data-slot=dialog-close]]:border [&>[data-slot=dialog-close]]:bg-background [&>[data-slot=dialog-close]]:opacity-100 [&>[data-slot=dialog-close]]:hover:bg-accent md:h-[min(90dvh,52rem)] md:w-[min(calc(100vw-2rem),72rem)] md:max-w-6xl md:rounded-lg md:border md:shadow-lg md:[&>[data-slot=dialog-close]]:right-auto md:[&>[data-slot=dialog-close]]:left-5"
+        className="flex h-dvh w-screen max-w-none translate-x-[-50%] translate-y-[-50%] gap-0 overflow-hidden rounded-none border-0 p-0 shadow-none md:h-[min(90dvh,52rem)] md:w-[min(calc(100vw-2rem),72rem)] md:max-w-6xl md:rounded-lg md:border md:shadow-lg"
         onOpenAutoFocus={() => {
           if (!returnFocusRef.current) {
             const activeElement =
@@ -196,7 +196,7 @@ export function SectionedDialogFrame<SectionId extends string>({
         <DialogTitle className="sr-only">{centerTitle}</DialogTitle>
         <DialogDescription className="sr-only">{dialogDescription}</DialogDescription>
 
-        <aside className="hidden w-60 shrink-0 flex-col border-r bg-muted/20 px-3 pb-5 pt-16 md:flex">
+        <aside className="hidden w-60 shrink-0 flex-col border-r bg-muted/20 px-3 pb-5 pt-6 md:flex">
           <div className="px-3 pb-5">
             <div className="text-lg font-semibold">{centerTitle}</div>
             <p className="mt-1 text-xs text-muted-foreground">{centerSubtitle}</p>
@@ -212,9 +212,9 @@ export function SectionedDialogFrame<SectionId extends string>({
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="shrink-0 border-b bg-background px-5 pb-4 pt-5 pr-14 md:px-8 md:py-5 md:pr-8">
+          <header className="shrink-0 border-b bg-background px-5 pb-4 pt-6 md:px-8 md:py-6">
             <div className="md:hidden">
-              <div className="text-lg font-semibold">{centerTitle}</div>
+              <div className="pr-12 text-lg font-semibold">{centerTitle}</div>
               <div className="relative mt-4" data-mobile-overflow-cue="true">
                 <SectionedDialogNavigation
                   activeSection={activeSection}
@@ -230,7 +230,7 @@ export function SectionedDialogFrame<SectionId extends string>({
                 />
               </div>
             </div>
-            <div className="mt-4 min-h-14 md:mt-0">
+            <div className="mt-4 min-h-14 md:mt-0 md:pr-12">
               <h2 className="sr-only">{activeDefinition.label}</h2>
               <MotionPresence mode="wait">
                 <MotionDiv

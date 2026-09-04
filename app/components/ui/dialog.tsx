@@ -8,6 +8,7 @@ import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { XIcon } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 /**
@@ -102,13 +103,20 @@ function DialogContent({
         {...props}
       >
         {children}
-        <DialogPrimitive.Close
-          data-slot="dialog-close"
-          className="motion-control absolute top-2 right-2 flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-[background-color,color,box-shadow] hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none md:size-10 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
-        >
-          <XIcon />
-          <span className="sr-only">关闭</span>
-        </DialogPrimitive.Close>
+        {placement === 'center' && (
+          <DialogPrimitive.Close data-slot="dialog-close" asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              static
+              aria-label="关闭"
+              className="absolute right-4 top-4 z-10 size-11 text-muted-foreground hover:text-foreground md:size-10"
+            >
+              <XIcon className="size-4" strokeWidth={1.5} aria-hidden="true" />
+            </Button>
+          </DialogPrimitive.Close>
+        )}
       </DialogPrimitive.Content>
     </DialogPortal>
   );
@@ -124,7 +132,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn('flex flex-col gap-2 text-center sm:text-left', className)}
+      className={cn('flex flex-col gap-2 pr-12 text-center sm:text-left', className)}
       {...props}
     />
   );
@@ -156,7 +164,7 @@ function DialogTitle({ className, ...props }: React.ComponentProps<typeof Dialog
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('pr-8 text-balance text-lg leading-snug font-semibold', className)}
+      className={cn('text-balance text-lg leading-snug font-semibold', className)}
       {...props}
     />
   );

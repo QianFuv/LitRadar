@@ -177,7 +177,7 @@ export function ArticleDetailDialogContent({
   return (
     <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] overflow-y-auto md:max-w-4xl">
       <DialogHeader>
-        <DialogTitle className="pr-8 text-xl leading-snug">
+        <DialogTitle className="text-xl leading-snug">
           {article.title || '未命名文章'}
           <Button
             variant="ghost"

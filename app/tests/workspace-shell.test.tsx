@@ -85,7 +85,8 @@ async function opensAccessibleSidebarDialog(): Promise<void> {
   expect(within(dialog).getByText('测试移动侧栏内容。')).toBeInTheDocument();
   expect(within(dialog).getByRole('button', { name: '侧栏操作' })).toBeInTheDocument();
 
-  await user.click(within(dialog).getByRole('button', { name: '关闭' }));
+  expect(within(dialog).queryByRole('button', { name: '关闭' })).toBeNull();
+  await user.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog', { name: '测试侧栏' })).toBeNull());
   expect(trigger).toHaveFocus();
 }

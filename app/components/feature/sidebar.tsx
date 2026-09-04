@@ -126,11 +126,11 @@ export function WorkspaceSidebar({ children, className, headerContent }: Workspa
   return (
     <aside
       className={cn(
-        'flex h-full w-80 min-w-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
+        'flex h-full min-h-0 w-80 min-w-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
         className,
       )}
     >
-      <div className="flex-1 space-y-8 overflow-y-auto p-6">
+      <div className="min-h-0 flex-1 space-y-8 overflow-y-auto overscroll-contain p-6">
         <div className="space-y-4">
           <Button
             variant="ghost"
