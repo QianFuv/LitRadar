@@ -160,15 +160,17 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行三列导航：`Search` /“检索”对应文献检索，`Star` /“收藏”对应我的收藏，`CalendarDays` /“周报”对应每周更新。短标签必须始终可见以便快速辨认，链接同时保留完整 `aria-label`、`title` 和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
 
-所有受保护页面右下角使用带圆形头像、用户名和展开提示的账号 pill。账号菜单只承载四类账号级动作：打开聚合设置中心、在子菜单中选择 system/light/dark 主题、向管理员显示管理面板入口，以及使用 destructive 语义退出登录。页面级导航不应在账号菜单中重复；设置与管理链接必须保留当前 pathname 和现有 query，并用一次性标记让 Dialog 关闭后把焦点归还给账号按钮。菜单复用 Radix Dropdown Menu 的键盘导航、Escape、点击外部关闭与焦点归还行为，并避开设备 safe area。退出登录的红色属于明确的危险操作语义，不受普通 UI chrome 的中性色约束。
+所有受保护页面右下角使用带圆形头像、用户名和展开提示的账号 pill。账号菜单只承载四类账号级动作：打开聚合设置中心、在“外观主题”右侧通过 Monitor / Sun / Moon 三个图标直接选择 system/light/dark 主题、向管理员显示管理面板入口，以及使用 destructive 语义退出登录。主题选项使用同一行的 radio items、明确的可访问名称与选中态，不再展开子菜单。页面级导航不应在账号菜单中重复；设置与管理链接必须保留当前 pathname 和现有 query，并用一次性标记让 Dialog 关闭后把焦点归还给账号按钮。菜单复用 Radix Dropdown Menu 的键盘导航、Escape、点击外部关闭与焦点归还行为，并避开设备 safe area。退出登录的红色属于明确的危险操作语义，不受普通 UI chrome 的中性色约束。
 
 ### 文章列表层级
 
-文章卡片使用紧凑的单一表面：标题是第一视觉层，期刊/卷期/日期使用较小的中性元数据行，开放获取与预发表 badge 作为次级信号，摘要限制三行，明确的“查看详情”操作位于浅色底栏。标题使用均衡换行，摘要使用 `text-pretty`；窄屏 badge 排在标题下方，避免挤压长标题。卡片正文保持可选择，不把整张卡片改成按钮，也不让 badge、摘要或操作与标题竞争。hover 只改变背景，不替换共享阴影环或制造可点击整张卡片的浮起效果。
+文章卡片使用紧凑的单一表面：标题是第一视觉层，期刊/卷期/日期使用较小的中性元数据行，开放获取与预发表 badge 作为次级信号，摘要限制三行。整张卡片是详情入口，不再保留“查看详情”按钮及底栏；点击标题、摘要或空白区域均可打开，也支持 Enter、空格与可见焦点环，关闭后焦点回到卡片。标题使用均衡换行，摘要使用 `text-pretty`；窄屏 badge 排在标题下方，避免挤压长标题。拖选正文与卡片外的独立多选框不会打开详情。hover 只改变背景，沿用共享阴影环。
 
-搜索框、清空、搜索、帮助、筛选移除、查看详情及收藏操作在移动端保留至少 44px 的实际命中高度，桌面为 40px；图标按钮同时保证相应宽度，不使用会重叠的伪元素扩展命中区。搜索清空即时反馈并归还输入焦点，不改变已提交查询。搜索历史与收藏选择器使用 10px 外圆角、8px padding 和 2px 内圆角，沿用共享 shadow stack。
+搜索框、清空、搜索、帮助、筛选移除及收藏操作在移动端保留至少 44px 的实际命中高度，桌面为 40px；图标按钮同时保证相应宽度，不使用会重叠的伪元素扩展命中区。搜索清空即时反馈并归还输入焦点，不改变已提交查询。搜索历史与收藏选择器使用 10px 外圆角、8px padding 和 2px 内圆角，沿用共享 shadow stack。
 
 收藏按钮为两个文字状态预留相同宽度，避免切换时推动相邻操作；星形使用 `currentColor`，仅选中状态填充，配合文字和收藏夹的 `aria-pressed` 表达状态。收藏文字使用浅色 `amber-700` / 深色 `amber-400`，不对标签或图标重播 presence 入场。
+
+文章详情底部操作在 `md` 以下显示为 44×44px 的纯图标圆角按钮，间距为 4px；复制、摘要页、全文、数据源登录、收藏和移除收藏均保留可访问名称。加载与错误使用明确的状态图标。桌面端恢复文字与 8px 间距；收藏按钮在移动端固定宽度、桌面端为文字状态预留宽度。
 
 搜索的 loading、error、empty 和 results 只在列表级状态边界交叉淡入淡出；错误与空态使用 `StateMessage`。列表边界之外只保留一个即时更新的 live region，分页加载复用该语义状态，避免退出中的视觉表面成为陈旧播报。长文章结果不逐卡应用 presence、layout 或 stagger，继续保留 `content-visibility-card` 与 Intersection Observer sentinel。
 
@@ -185,7 +187,8 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 - 页面 padding 常从 `p-4` / 紧凑间距过渡到 `sm:p-6`。
 - 收藏页在 `md` 从单列变成 `280px + 1fr`。
 - 表单按钮和选择器通常在移动端占满宽度，`sm` 后恢复行内布局。
-- Dialog 默认适应窄屏；首页筛选器在移动端覆盖左侧并在 `md` 隐藏。
+- Dialog 默认适应窄屏；首页筛选器在移动端覆盖左侧并在 `md` 隐藏。移动侧栏不显示关闭按钮或为其留白，点击遮罩或按 Escape 关闭；固定高度的 flex 容器通过 `min-h-0` 约束内部滚动区，长内容可以上下滑动。
+- 设置中心与管理面板的移动分类导航占满头部可用宽度，只有标题行预留关闭按钮空间。
 - 全视口 shell 使用 `h-dvh` / `min-h-dvh`，避免移动浏览器工具栏遮挡。
 - 浮动账号 pill 使用设备安全区定位；页面或内部滚动区预留对应底部净空。
 - 长列表使用独立滚动容器、Intersection Observer 和命名的 `content-visibility-card`、`content-visibility-row`、`content-visibility-table-row`、`content-visibility-filter-row` 类。每个类都编码匹配内容类型的 intrinsic block size，业务组件不重复任意 CSS 声明。
@@ -210,7 +213,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 - 加载、成功与错误反馈使用 `role="status"` / `role="alert"`。
 - 展开、选中和当前状态使用 Radix data attributes 或对应 ARIA 属性。
 - Dialog、DropdownMenu、Select、Popover、Checkbox 和 Switch 复用 Radix 的键盘与焦点行为。
-- 默认 Dialog 关闭按钮为移动端 44×44px、桌面 40×40px，标题预留关闭区并使用均衡换行，描述使用 `text-pretty`。
+- 居中 Dialog（包括移动端全屏设置与管理面板）的关闭按钮统一位于右上角，距上、右边缘各 16px；复用 ghost Button，静止时仅显示 16px 细线叉号，不显示边框、阴影或底色，悬停时出现淡色圆角背景，键盘焦点保留可见提示。实际命中区为移动端 44×44px、桌面 40×40px。标题行预留按钮空间，设置中心与后台不单独覆盖位置或样式；左侧抽屉不显示该按钮。标题使用均衡换行，描述使用 `text-pretty`。
 - Dialog 动画和普通 transition 受全局 reduced-motion 规则约束；关闭动画期间仍由 Radix 保持 portal 与焦点归还生命周期。
 
 颜色不能作为唯一状态信号；状态文本、图标或 ARIA 语义应与颜色同时存在。
