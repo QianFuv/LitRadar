@@ -21,9 +21,10 @@ const NEW_FINGERPRINT = "fedcba9876543210:1";
  * Build one minimal SARIF result.
  *
  * @param {string} fingerprint - Primary-location fingerprint.
+ * @param {string | undefined} columnFingerprint - Optional start-column fingerprint.
  * @returns {object} Minimal SARIF result.
  */
-function sarifResult(fingerprint) {
+function sarifResult(fingerprint, columnFingerprint) {
   return {
     ruleId: "rust/hard-coded-cryptographic-value",
     locations: [
@@ -34,7 +35,12 @@ function sarifResult(fingerprint) {
         },
       },
     ],
-    partialFingerprints: { primaryLocationLineHash: fingerprint },
+    partialFingerprints: {
+      primaryLocationLineHash: fingerprint,
+      ...(columnFingerprint === undefined
+        ? {}
+        : { primaryLocationStartColumnFingerprint: columnFingerprint }),
+    },
   };
 }
 
@@ -182,3 +188,58 @@ test(
 test("rejects an unused reviewed finding", rejectsUnusedReviewedFinding);
 test("rejects an expired allowlist", rejectsExpiredAllowlist);
 test("rejects duplicate reviewed findings", rejectsDuplicateReviewedFinding);
+
+/** Prove that reviewed columns remain distinct and do not suppress a third value on the same line. */
+async function filtersOnlyExactReviewedColumns() {
+  const fixture = await createFixture(
+    ["16", "48", "99"].map((column) =>
+      sarifResult(REVIEWED_FINGERPRINT, column),
+    ),
+    reviewedAllowlist(
+      ["16", "48"].map((column) => ({
+        path: REVIEWED_PATH,
+        fingerprint: REVIEWED_FINGERPRINT,
+        columnFingerprint: column,
+      })),
+    ),
+  );
+  try {
+    const summary = await filterReviewedFindings(fixture);
+    assert.equal(summary.reviewedCount, 2);
+    assert.equal(summary.remainingCount, 1);
+    const filtered = JSON.parse(await readFile(fixture.sarifPath, "utf8"));
+    assert.deepEqual(filtered.runs[0].results, [
+      sarifResult(REVIEWED_FINGERPRINT, "99"),
+    ]);
+  } finally {
+    await removeFixture(fixture.root);
+  }
+}
+
+/** Prove that a missing column cannot match a column-specific review. */
+async function rejectsMissingReviewedColumn() {
+  const fixture = await createFixture(
+    [sarifResult(REVIEWED_FINGERPRINT)],
+    reviewedAllowlist([
+      {
+        path: REVIEWED_PATH,
+        fingerprint: REVIEWED_FINGERPRINT,
+        columnFingerprint: "16",
+      },
+    ]),
+  );
+  try {
+    await assert.rejects(
+      filterReviewedFindings(fixture),
+      /unused reviewed findings/u,
+    );
+  } finally {
+    await removeFixture(fixture.root);
+  }
+}
+
+test(
+  "filters only exact reviewed columns on a shared line",
+  filtersOnlyExactReviewedColumns,
+);
+test("rejects a missing reviewed column", rejectsMissingReviewedColumn);

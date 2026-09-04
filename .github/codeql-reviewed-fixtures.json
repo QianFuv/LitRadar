@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "ruleId": "rust/hard-coded-cryptographic-value",
   "owner": "repository-security-maintainers",
-  "rationale": "CodeQL Rust build-mode none analyzes deterministic credentials and legacy salts that are reachable only from cfg(test), integration-test, API test-support, or the full-stack fixture example. Each reviewed result is constrained by rule, repository path, and CodeQL primary-location fingerprint; production findings are never included.",
+  "rationale": "CodeQL Rust build-mode none analyzes deterministic credentials and legacy salts that are reachable only from cfg(test), integration-test, API test-support, or the full-stack fixture example. Each reviewed result is constrained by rule, repository path, and CodeQL primary-location fingerprint, with a start-column fingerprint when needed to distinguish values on the same line; production findings are never included.",
   "expiresOn": "2026-09-30",
   "findings": [
     {
@@ -19,6 +19,26 @@
     },
     {
       "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "25b74aad89e9a1ab:1",
+      "columnFingerprint": "32"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "25b74aad89e9a1ab:1",
+      "columnFingerprint": "45"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "3dd31825d87d2191:1",
+      "columnFingerprint": "16"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "3dd31825d87d2191:1",
+      "columnFingerprint": "48"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
       "fingerprint": "6073432965a704b8:1"
     },
     {
@@ -27,7 +47,42 @@
     },
     {
       "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "973c8611f84cc02a:1",
+      "columnFingerprint": "16"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "973c8611f84cc02a:1",
+      "columnFingerprint": "34"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "9bc347112eec7a41:1",
+      "columnFingerprint": "16"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "9bc347112eec7a41:1",
+      "columnFingerprint": "29"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "cae83bab430329e1:1",
+      "columnFingerprint": "31"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
       "fingerprint": "e52428de716f8a7d:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "f0fc29a1cde378b9:1",
+      "columnFingerprint": "16"
+    },
+    {
+      "path": "crates/litradar-auth/src/password.rs",
+      "fingerprint": "f0fc29a1cde378b9:1",
+      "columnFingerprint": "25"
     },
     {
       "path": "crates/litradar-auth/src/service.rs",
@@ -35,7 +90,37 @@
     },
     {
       "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "14a08958c64103ad:1",
+      "columnFingerprint": "31"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "18907dca9999bce2:1",
+      "columnFingerprint": "29"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
       "fingerprint": "1a93bf96361b27c2:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "1da0da4cf2973c6:1",
+      "columnFingerprint": "34"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "1f6f1310764ba287:1",
+      "columnFingerprint": "25"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "2ffef8ff21093209:1",
+      "columnFingerprint": "32"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "323e487a20ce71f:1",
+      "columnFingerprint": "29"
     },
     {
       "path": "crates/litradar-auth/src/service.rs",
@@ -47,7 +132,27 @@
     },
     {
       "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "4aaf3aa499307b5e:1",
+      "columnFingerprint": "34"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "5c8fce461cc052b8:1",
+      "columnFingerprint": "26"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "5c8fce461cc052b8:1",
+      "columnFingerprint": "51"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
       "fingerprint": "6bb3a7a1f574312c:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "6db591e7db757690:1",
+      "columnFingerprint": "43"
     },
     {
       "path": "crates/litradar-auth/src/service.rs",
@@ -59,7 +164,22 @@
     },
     {
       "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "a67414c238e35879:1",
+      "columnFingerprint": "30"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "abd673232ed15910:1",
+      "columnFingerprint": "25"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
       "fingerprint": "bab000ad9a9a5c34:1"
+    },
+    {
+      "path": "crates/litradar-auth/src/service.rs",
+      "fingerprint": "c525fc75e417b35d:1",
+      "columnFingerprint": "25"
     },
     {
       "path": "crates/litradar-auth/src/service.rs",
@@ -72,6 +192,11 @@
     {
       "path": "crates/litradar-auth/src/service.rs",
       "fingerprint": "f617f7461485aaf0:1"
+    },
+    {
+      "path": "crates/litradar-sources/src/jfbym.rs",
+      "fingerprint": "58b8cb24b745fb2f:1",
+      "columnFingerprint": "17"
     },
     {
       "path": "crates/litradar-storage/src/auth.rs",
@@ -112,6 +237,16 @@
     {
       "path": "crates/litradar-storage/src/auth.rs",
       "fingerprint": "98b09df7e9c9c7a3:1"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "a5befc24c7c67ffd:1",
+      "columnFingerprint": "0"
+    },
+    {
+      "path": "crates/litradar-storage/src/auth.rs",
+      "fingerprint": "c034f7f2bda8bb1e:1",
+      "columnFingerprint": "0"
     },
     {
       "path": "crates/litradar-storage/src/auth.rs",

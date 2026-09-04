@@ -68,10 +68,9 @@ jobs:
         if: matrix.language == 'rust'
         env:
           SARIF_DIRECTORY: ${{ steps.analysis.outputs.sarif-output }}
-        run: >-
-          node scripts/filter-codeql-sarif.mjs
-          "$SARIF_DIRECTORY"
-          .github/codeql-reviewed-fixtures.json
+        run: |
+          node --test scripts/filter-codeql-sarif.test.mjs
+          node scripts/filter-codeql-sarif.mjs "$SARIF_DIRECTORY" .github/codeql-reviewed-fixtures.json
 
       - name: Fail on CodeQL alerts
         env:

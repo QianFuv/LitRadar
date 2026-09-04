@@ -9,7 +9,9 @@ import { pathToFileURL } from "node:url";
 const EXPECTED_SCHEMA_VERSION = 1;
 const EXPECTED_RULE_ID = "rust/hard-coded-cryptographic-value";
 const FINGERPRINT_PROPERTY = "primaryLocationLineHash";
+const COLUMN_FINGERPRINT_PROPERTY = "primaryLocationStartColumnFingerprint";
 const FINGERPRINT_PATTERN = /^[0-9a-f]{8,64}:[1-9][0-9]*$/u;
+const COLUMN_FINGERPRINT_PATTERN = /^(?:0|[1-9][0-9]*)$/u;
 
 /**
  * Require a non-empty string field from parsed JSON.
@@ -31,10 +33,15 @@ function requireNonEmptyString(value, fieldName) {
  * @param {string} ruleId - CodeQL rule identifier.
  * @param {string} sourcePath - Repository-relative source path.
  * @param {string} fingerprint - CodeQL primary-location fingerprint.
+ * @param {string | undefined} columnFingerprint - Optional reviewed start-column fingerprint.
  * @returns {string} A stable map key.
  */
-function findingKey(ruleId, sourcePath, fingerprint) {
-  return JSON.stringify([ruleId, sourcePath, fingerprint]);
+function findingKey(ruleId, sourcePath, fingerprint, columnFingerprint) {
+  return JSON.stringify(
+    columnFingerprint === undefined
+      ? [ruleId, sourcePath, fingerprint]
+      : [ruleId, sourcePath, fingerprint, columnFingerprint],
+  );
 }
 
 /**
@@ -87,13 +94,22 @@ export function parseReviewedFindings(rawAllowlist, today = new Date()) {
     if (!FINGERPRINT_PATTERN.test(fingerprint)) {
       throw new Error(`invalid CodeQL fingerprint: ${fingerprint}`);
     }
-    const key = findingKey(ruleId, sourcePath, fingerprint);
+    const columnFingerprint = finding.columnFingerprint;
+    if (columnFingerprint !== undefined) {
+      requireNonEmptyString(columnFingerprint, "findings[].columnFingerprint");
+      if (!COLUMN_FINGERPRINT_PATTERN.test(columnFingerprint)) {
+        throw new Error(
+          `invalid CodeQL column fingerprint: ${columnFingerprint}`,
+        );
+      }
+    }
+    const key = findingKey(ruleId, sourcePath, fingerprint, columnFingerprint);
     if (entries.has(key)) {
       throw new Error(
         `duplicate reviewed finding: ${sourcePath} ${fingerprint}`,
       );
     }
-    entries.set(key, { ruleId, sourcePath, fingerprint });
+    entries.set(key, { ruleId, sourcePath, fingerprint, columnFingerprint });
   }
 
   return {
@@ -151,12 +167,12 @@ async function collectSarifFiles(inputPath) {
 }
 
 /**
- * Extract an exact allowlist key from one SARIF result when possible.
+ * Extract exact allowlist keys, preferring reviewed columns over legacy line-only entries.
  *
  * @param {object} result - SARIF result object.
- * @returns {string | undefined} Exact result key, or undefined for incomplete results.
+ * @returns {string[]} Exact result keys, or an empty list for incomplete results.
  */
-function resultKey(result) {
+function resultKeys(result) {
   const ruleId = result.ruleId;
   const sourcePath =
     result.locations?.[0]?.physicalLocation?.artifactLocation?.uri;
@@ -166,9 +182,17 @@ function resultKey(result) {
     typeof sourcePath !== "string" ||
     typeof fingerprint !== "string"
   ) {
-    return undefined;
+    return [];
   }
-  return findingKey(ruleId, sourcePath, fingerprint);
+  const columnFingerprint =
+    result.partialFingerprints?.[COLUMN_FINGERPRINT_PROPERTY];
+  const legacyKey = findingKey(ruleId, sourcePath, fingerprint);
+  return typeof columnFingerprint === "string"
+    ? [
+        findingKey(ruleId, sourcePath, fingerprint, columnFingerprint),
+        legacyKey,
+      ]
+    : [legacyKey];
 }
 
 /**
@@ -195,8 +219,10 @@ export async function filterReviewedFindings(options) {
       const results = Array.isArray(run.results) ? run.results : [];
       const retained = [];
       for (const result of results) {
-        const key = resultKey(result);
-        if (key !== undefined && entries.has(key)) {
+        const key = resultKeys(result).find((candidate) =>
+          entries.has(candidate),
+        );
+        if (key !== undefined) {
           const nextUsage = (usage.get(key) ?? 0) + 1;
           if (nextUsage > 1) {
             throw new Error(`reviewed finding matched more than once: ${key}`);
@@ -215,7 +241,11 @@ export async function filterReviewedFindings(options) {
   const unusedEntries = [];
   for (const [key, entry] of entries) {
     if (!usage.has(key)) {
-      unusedEntries.push(`${entry.sourcePath} ${entry.fingerprint}`);
+      const column =
+        entry.columnFingerprint === undefined
+          ? ""
+          : ` column ${entry.columnFingerprint}`;
+      unusedEntries.push(`${entry.sourcePath} ${entry.fingerprint}${column}`);
     }
   }
   if (unusedEntries.length > 0) {
