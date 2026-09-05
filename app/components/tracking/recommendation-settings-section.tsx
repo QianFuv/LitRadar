@@ -397,7 +397,7 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
               id="ai-api-key"
               name="ai_api_key"
               type="password"
-              autoComplete="off"
+              autoComplete="new-password"
               spellCheck={false}
               value={primary.apiKey ?? ''}
               onChange={(event) =>
@@ -535,7 +535,7 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
                 id="ai-backup-api-key"
                 name="ai_backup_api_key"
                 type="password"
-                autoComplete="off"
+                autoComplete="new-password"
                 spellCheck={false}
                 value={backup.apiKey ?? ''}
                 onChange={(event) =>

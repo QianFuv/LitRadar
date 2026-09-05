@@ -159,6 +159,30 @@ async function rendersSectionsWithSharedTextareas(): Promise<void> {
   expect(screen.getByRole('heading', { name: '手动推送' })).toBeInTheDocument();
 }
 
+/** Verify AI secrets avoid saved-login reuse while preserving explicit key replacement. */
+async function keepsAiCredentialsSeparateFromSavedLogins(): Promise<void> {
+  installTrackingPageHandlers();
+  const user = userEvent.setup();
+  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+
+  const primaryKey = await screen.findByLabelText('API Key');
+  const backupKey = screen.getByLabelText('Backup API Key');
+  for (const keyField of [primaryKey, backupKey]) {
+    expect(keyField).toHaveAttribute('type', 'password');
+    expect(keyField).toHaveAttribute('autocomplete', 'new-password');
+    expect(keyField).toHaveValue('');
+  }
+  const saveButton = screen.getByRole('button', { name: '保存更改' });
+  expect(saveButton).toBeDisabled();
+  expect(screen.getByRole('button', { name: '取消更改' })).toBeDisabled();
+
+  await user.type(primaryKey, 'replacement-ai-key');
+  expect(saveButton).toBeEnabled();
+  await user.click(saveButton);
+  await waitFor(() => expect(savedSettingsPayload?.ai_api_key).toBe('replacement-ai-key'));
+  expect(savedSettingsPayload).not.toHaveProperty('ai_backup_api_key');
+}
+
 /**
  * Verify database narrowing and secret preserve/clear semantics survive save.
  */
@@ -627,6 +651,10 @@ describe('TrackingSettingsContent', () => {
   );
   test('blocks tracking edits during a pending save', blocksTrackingEditsWhileSaving);
   test('renders named sections with shared textareas', rendersSectionsWithSharedTextareas);
+  test(
+    'keeps AI credentials separate from saved logins',
+    keepsAiCredentialsSeparateFromSavedLogins,
+  );
   test('preserves database and secret update semantics', savesDatabaseAndSecretSemantics, 10_000);
   test('preserves database scope when the catalog fails', preservesDatabaseScopeWhenCatalogFails);
   test('retries a failed settings save without losing the draft', retriesFailedSettingsSave);
