@@ -14,7 +14,7 @@ import { AccountCard } from '@/components/settings/account-card';
 import { CnkiSettingsCard } from '@/components/settings/cnki-card';
 import { InviteCodeCard } from '@/components/settings/invite-code-card';
 import { PasswordCard } from '@/components/settings/password-card';
-import { AuthProvider } from '@/lib/auth-context';
+import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -334,6 +334,12 @@ async function rendersAccessTokenCreationErrorsAndRetainsRawInput(): Promise<voi
   expect(receivedNames).toEqual(Array.from(details.keys()));
 }
 
+/** Mount the private password fixture only after server authentication is resolved. */
+function AuthenticatedPasswordFixture() {
+  const { user, loading } = useAuth();
+  return loading || !user ? null : <PasswordCard />;
+}
+
 /**
  * Verify the password card remains bound to the shared authentication context.
  */
@@ -346,7 +352,7 @@ async function rendersPasswordCard(): Promise<void> {
 
   renderWithQuery(
     <AuthProvider>
-      <PasswordCard />
+      <AuthenticatedPasswordFixture />
     </AuthProvider>,
   );
 
