@@ -2,7 +2,7 @@
  * Tracking section rendering, shared textarea, database, save, and secret coverage.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -506,7 +506,41 @@ beforeEach(() => {
   });
 });
 
+/** Verify pending saves disable every editable tracking field until the response settles. */
+async function blocksTrackingEditsWhileSaving(): Promise<void> {
+  installTrackingPageHandlers();
+  let finishSave: (() => void) | undefined;
+  const saveGate = new Promise<void>((resolve) => {
+    finishSave = resolve;
+  });
+  server.use(
+    http.put('http://localhost/api/tracking/notification-settings', async (context) => {
+      await saveGate;
+      return updateNotificationSettingsResponse(context);
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  const prompt = await screen.findByLabelText('System Prompt');
+  await user.clear(prompt);
+  await user.type(prompt, 'Submitted prompt');
+  await user.click(screen.getByRole('button', { name: '保存更改' }));
+  try {
+    expect(prompt).toBeDisabled();
+    expect(screen.getByLabelText('关键词')).toBeDisabled();
+    await user.type(prompt, ' unwanted edit');
+    expect(prompt).toHaveValue('Submitted prompt');
+  } finally {
+    await act(async () => {
+      finishSave?.();
+    });
+  }
+  await waitFor(() => expect(prompt).not.toBeDisabled());
+  expect(savedSettingsPayload?.ai_system_prompt).toBe('Submitted prompt');
+}
+
 describe('TrackingSettingsContent', () => {
+  test('blocks tracking edits during a pending save', blocksTrackingEditsWhileSaving);
   test('renders named sections with shared textareas', rendersSectionsWithSharedTextareas);
   test('preserves database and secret update semantics', savesDatabaseAndSecretSemantics, 10_000);
   test('preserves database scope when the catalog fails', preservesDatabaseScopeWhenCatalogFails);

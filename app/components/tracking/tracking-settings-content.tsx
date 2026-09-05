@@ -72,7 +72,10 @@ export function TrackingSettingsContent({
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className="flex-1">
+      <fieldset
+        className="m-0 min-w-0 flex-1 border-0 p-0"
+        disabled={recommendation.save.mutation.isPending}
+      >
         {isInitialLoading ? (
           <div role="status" className="rounded-md border px-3 py-4 text-sm text-muted-foreground">
             正在加载已保存的推荐配置…
@@ -98,7 +101,7 @@ export function TrackingSettingsContent({
             <ManualPushCard model={trackingPage.manualPush} />
           </>
         )}
-      </div>
+      </fieldset>
 
       {!isInitialLoading && !isInitialError && (
         <div className="sticky bottom-0 -mx-5 mt-6 flex flex-col gap-3 border-t bg-background/95 px-5 py-4 backdrop-blur-sm sm:flex-row sm:items-center sm:justify-end md:-mx-8 md:px-8">

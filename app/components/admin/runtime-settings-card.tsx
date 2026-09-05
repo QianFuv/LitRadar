@@ -662,7 +662,10 @@ export function RuntimeSettingsCard() {
             加载中…
           </div>
         ) : (
-          <div className="space-y-6">
+          <fieldset
+            className="m-0 min-w-0 space-y-6 border-0 p-0"
+            disabled={saveMutation.isPending}
+          >
             {genericSettingGroups.map(([group, groupSettings]) => (
               <section key={group} className="space-y-3" aria-labelledby={`runtime-group-${group}`}>
                 <h3 id={`runtime-group-${group}`} className="text-base font-semibold">
@@ -804,7 +807,7 @@ export function RuntimeSettingsCard() {
                   onChange={updateFormValue}
                 />
               ) : null)}
-          </div>
+          </fieldset>
         )}
         <MotionPresence>
           {(mutationError || saveFeedback) && (

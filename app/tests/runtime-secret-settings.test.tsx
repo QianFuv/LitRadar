@@ -2,7 +2,7 @@
  * Runtime secret-pool management component coverage.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -307,7 +307,45 @@ beforeEach(() => {
   });
 });
 
+/** Verify pending runtime saves protect scalar fields and secret-pool mutations. */
+async function blocksRuntimeEditsWhileSaving(): Promise<void> {
+  renderRuntimeSettings();
+  let finishSave: (() => void) | undefined;
+  const saveGate = new Promise<void>((resolve) => {
+    finishSave = resolve;
+  });
+  server.use(
+    http.put('http://localhost/api/admin/runtime-settings', async ({ request }) => {
+      updatePayload = await request.json();
+      await saveGate;
+      return HttpResponse.json(runtimeSettingsFixture());
+    }),
+  );
+  const user = userEvent.setup();
+  const filter = await screen.findByLabelText('Log filter');
+  await user.clear(filter);
+  await user.type(filter, 'litradar=debug');
+  await user.click(screen.getByRole('button', { name: '保存配置' }));
+  try {
+    expect(filter).toBeDisabled();
+    expect(screen.getByLabelText('OpenAlex API key pool 新密钥 1')).toBeDisabled();
+    expect(screen.getByRole('button', { name: '清除全部密钥' })).toBeDisabled();
+    await user.type(filter, ' unwanted edit');
+    expect(filter).toHaveValue('litradar=debug');
+  } finally {
+    await act(async () => {
+      finishSave?.();
+    });
+  }
+  await waitFor(() => expect(filter).not.toBeDisabled());
+  expect(updatePayload).toEqual({
+    values: { log_filter: 'litradar=debug' },
+    secret_pool_updates: {},
+  });
+}
+
 describe('runtime secret settings', () => {
+  test('blocks runtime edits during a pending save', blocksRuntimeEditsWhileSaving);
   test('renders and preserves stored secret rows', rendersAndPreservesStoredSecrets);
   test('adds and removes individual stored keys', updatesStoredSecretPool);
   test('clears the complete secret pool only through null', clearsSecretPoolWithNull);
