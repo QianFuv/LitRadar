@@ -287,24 +287,27 @@ async function serveTrackingApi(route: Route): Promise<void> {
     ]);
     return;
   }
-  if (pathname === '/api/favorites/folders/4/articles') {
-    await fulfillJson(route, [
-      {
-        id: 1,
-        folder_id: 4,
-        article_id: 'favorite-fixture-1',
-        db_name: 'fixture.sqlite',
-        note: '',
-        created_at: 1,
-        journal_id: 'fixture-journal',
-        journal_title: 'Journal of Reproducible Literature',
-        title: 'A Unified Workspace for Literature Monitoring',
-        authors: ['Jia Liu', 'Alex Morgan'],
-        date: '2026-07-15',
-        abstract:
-          'A browser fixture illustrating folder management, citation export, and shared article presentation.',
-      },
-    ]);
+  if (pathname === '/api/favorites/folders/4/articles/page') {
+    await fulfillJson(route, {
+      items: [
+        {
+          id: 1,
+          folder_id: 4,
+          article_id: 'favorite-fixture-1',
+          db_name: 'fixture.sqlite',
+          note: '',
+          created_at: 1,
+          journal_id: 'fixture-journal',
+          journal_title: 'Journal of Reproducible Literature',
+          title: 'A Unified Workspace for Literature Monitoring',
+          authors: ['Jia Liu', 'Alex Morgan'],
+          date: '2026-07-15',
+          abstract:
+            'A browser fixture illustrating folder management, citation export, and shared article presentation.',
+        },
+      ],
+      page: { total: null, limit: 50, offset: 0, next_cursor: null, has_more: false },
+    });
     return;
   }
   if (pathname === '/api/favorites/check/batch' && request.method() === 'POST') {

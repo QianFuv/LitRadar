@@ -3,7 +3,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
@@ -11,9 +11,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
-import { AuthProvider } from '@/lib/auth-context';
+import { AuthProvider, useAuth } from '@/lib/auth-context';
 import type { FavoriteArticleItem, FavoriteCheck } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
+import { favoriteArticlePageResponse } from '@/tests/mocks/handlers/favorites';
 import { renderWithQuery } from '@/tests/render';
 
 const favoriteFlowMocks = vi.hoisted(() => ({
@@ -133,10 +134,19 @@ function renderFavoritesPage(): ReturnType<typeof renderWithQuery> {
   server.use(http.get('http://localhost/api/auth/me', currentUserResponse));
   return renderWithQuery(
     <AuthProvider>
-      <NuqsTestingAdapter searchParams="?folder=3">
-        <FavoritesPageContent userId={21} />
-      </NuqsTestingAdapter>
+      <AuthenticatedFavoriteFixture />
     </AuthProvider>,
+  );
+}
+
+/** Render private fixture content only after its real authentication boundary resolves. */
+function AuthenticatedFavoriteFixture() {
+  const { user, loading } = useAuth();
+  if (loading || !user) return null;
+  return (
+    <NuqsTestingAdapter searchParams="?folder=3">
+      <FavoritesPageContent userId={user.id} />
+    </NuqsTestingAdapter>
   );
 }
 
@@ -166,7 +176,9 @@ async function rendersFavoritesWorkspace(): Promise<void> {
   const user = userEvent.setup();
   server.use(
     http.get('http://localhost/api/favorites/folders', foldersResponse),
-    http.get('http://localhost/api/favorites/folders/3/articles', () => HttpResponse.json([])),
+    http.get('http://localhost/api/favorites/folders/3/articles/page', () =>
+      favoriteArticlePageResponse([]),
+    ),
   );
 
   renderFavoritesPage();
@@ -279,8 +291,8 @@ async function confirmsFolderDeletion(): Promise<void> {
           : [{ id: 3, name: 'Reading', is_tracking: false, article_count: 1, created_at: 1 }],
       ),
     ),
-    http.get('http://localhost/api/favorites/folders/3/articles', () =>
-      HttpResponse.json([favoriteArticleFixture(1)]),
+    http.get('http://localhost/api/favorites/folders/3/articles/page', () =>
+      favoriteArticlePageResponse([favoriteArticleFixture(1)]),
     ),
     http.delete('http://localhost/api/favorites/folders/3', async () => {
       deleteRequestCount += 1;
@@ -328,8 +340,8 @@ async function confirmsSingleFavoriteRemoval(): Promise<void> {
         },
       ]),
     ),
-    http.get('http://localhost/api/favorites/folders/3/articles', () =>
-      HttpResponse.json(articles),
+    http.get('http://localhost/api/favorites/folders/3/articles/page', () =>
+      favoriteArticlePageResponse(articles),
     ),
     http.delete('http://localhost/api/favorites/folders/3/articles/article-1', async () => {
       removeCount += 1;
@@ -383,8 +395,8 @@ async function confirmsBulkFavoriteRemoval(): Promise<void> {
         },
       ]),
     ),
-    http.get('http://localhost/api/favorites/folders/3/articles', () =>
-      HttpResponse.json(articles),
+    http.get('http://localhost/api/favorites/folders/3/articles/page', () =>
+      favoriteArticlePageResponse(articles),
     ),
     http.post(
       'http://localhost/api/favorites/folders/3/articles/bulk-remove',
@@ -426,8 +438,8 @@ async function rendersFavoriteMetadataAvailability(): Promise<void> {
         { id: 4, name: 'Archive', is_tracking: false, article_count: 0, created_at: 2 },
       ]),
     ),
-    http.get('http://localhost/api/favorites/folders/3/articles', () =>
-      HttpResponse.json([
+    http.get('http://localhost/api/favorites/folders/3/articles/page', () =>
+      favoriteArticlePageResponse([
         {
           ...favoriteArticleFixture(1),
           metadata_status: 'missing',
@@ -473,8 +485,8 @@ async function managesFoldersAndExportFormats(): Promise<void> {
   const trackingPayloads: unknown[] = [];
   server.use(
     http.get('http://localhost/api/favorites/folders', () => HttpResponse.json(folders)),
-    http.get('http://localhost/api/favorites/folders/:folderId/articles', () =>
-      HttpResponse.json([]),
+    http.get('http://localhost/api/favorites/folders/:folderId/articles/page', () =>
+      favoriteArticlePageResponse([]),
     ),
     http.post('http://localhost/api/favorites/folders', async ({ request }) => {
       const payload = (await request.json()) as { is_tracking: boolean; name: string };
@@ -559,8 +571,8 @@ async function retriesFailedBulkMove(): Promise<void> {
         { id: 4, name: 'Archive', is_tracking: false, article_count: 0, created_at: 2 },
       ]),
     ),
-    http.get('http://localhost/api/favorites/folders/3/articles', () =>
-      HttpResponse.json(articles),
+    http.get('http://localhost/api/favorites/folders/3/articles/page', () =>
+      favoriteArticlePageResponse(articles),
     ),
     http.post(
       'http://localhost/api/favorites/folders/3/articles/bulk-move',
@@ -624,7 +636,41 @@ beforeEach(() => {
   });
 });
 
+/** Verify the production hook follows server cursors even for a short first page. */
+async function loadsFavoriteCursorPages(): Promise<void> {
+  const cursors: Array<string | null> = [];
+  server.use(
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/favorites/folders/3/articles/page', ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      expect(params.has('offset')).toBe(false);
+      cursors.push(params.get('cursor'));
+      return params.get('cursor') === 'fixture-next'
+        ? favoriteArticlePageResponse([favoriteArticleFixture(2)])
+        : favoriteArticlePageResponse([favoriteArticleFixture(1)], 'fixture-next');
+    }),
+  );
+  renderFavoritesPage();
+  expect(await screen.findByText('Article 1', {}, { timeout: 5000 })).toBeInTheDocument();
+  favoriteFlowMocks.useVisiblePageList.mockReturnValue({
+    loadMoreRef: () => undefined,
+    prefetchRef: () => undefined,
+    visiblePages: 2,
+  });
+  const options = favoriteFlowMocks.useVisiblePageList.mock.lastCall as unknown as [
+    { onFetchNextPage: () => void },
+  ];
+  await act(async () => options[0].onFetchNextPage());
+  expect(await screen.findByText('Article 2', {}, { timeout: 5000 })).toBeInTheDocument();
+  expect(screen.getByText('Article 1')).toBeInTheDocument();
+  expect(cursors).toEqual([null, 'fixture-next']);
+  expect(favoriteFlowMocks.useVisiblePageList).toHaveBeenLastCalledWith(
+    expect.objectContaining({ hasNextPage: false }),
+  );
+}
+
 describe('favorite mutation flow', () => {
+  test('loads favorite pages using opaque cursors', loadsFavoriteCursorPages, 15000);
   test('renders favorites in the shared workspace', rendersFavoritesWorkspace);
   test('updates visible state and cached folder membership', updatesFavoriteCache);
   test('confirms a removal before mutating folder membership', confirmsFavoriteRemoval);

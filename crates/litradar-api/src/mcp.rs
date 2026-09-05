@@ -565,6 +565,7 @@ fn business_tool_error_message(error: &BusinessRepositoryError) -> String {
         | BusinessRepositoryError::SourceFolderNotFound
         | BusinessRepositoryError::TargetFolderNotFound
         | BusinessRepositoryError::SourceAndTargetFoldersSame
+        | BusinessRepositoryError::InvalidFavoriteCursor
         | BusinessRepositoryError::InvalidInput(_)
         | BusinessRepositoryError::InvalidInvitePolicy
         | BusinessRepositoryError::InvalidScheduledJob(_)

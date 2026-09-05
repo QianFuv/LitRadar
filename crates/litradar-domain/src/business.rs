@@ -98,6 +98,15 @@ pub enum FavoriteMetadataStatus {
     Unavailable,
 }
 
+/// Stable cursor page of favorite references and available article metadata.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct FavoriteArticlePage {
+    /// Favorite rows in descending creation time and row-id order.
+    pub items: Vec<FavoriteArticleResponse>,
+    /// Cursor continuation metadata without an expensive total count.
+    pub page: crate::PageMeta,
+}
+
 /// Favorite row enriched with optional article metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct FavoriteArticleResponse {

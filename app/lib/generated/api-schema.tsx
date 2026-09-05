@@ -1026,6 +1026,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/favorites/folders/{folder_id}/articles/page': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Return one stable cursor page from an owned favorite folder. */
+    get: operations['list_folder_article_page'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/favorites/folders/{folder_id}/count': {
     parameters: {
       query?: never;
@@ -1969,6 +1986,13 @@ export interface components {
       db_name?: string;
       /** @description User note text. */
       note?: string;
+    };
+    /** @description Stable cursor page of favorite references and available article metadata. */
+    FavoriteArticlePage: {
+      /** @description Favorite rows in descending creation time and row-id order. */
+      items: components['schemas']['FavoriteArticleResponse'][];
+      /** @description Cursor continuation metadata without an expensive total count. */
+      page: components['schemas']['PageMeta'];
     };
     /** @description Favorite article reference used by bulk operations. */
     FavoriteArticleRef: {
@@ -4598,6 +4622,52 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['FavoriteBulkResult'];
+        };
+      };
+    };
+  };
+  list_folder_article_page: {
+    parameters: {
+      query?: {
+        /** @description Opaque continuation bound to this user and folder. */
+        cursor?: string;
+        /** @description Maximum row count, defaulting to fifty. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Folder row identifier. */
+        folder_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Stable favorite article page. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['FavoriteArticlePage'];
+        };
+      };
+      /** @description Invalid limit or cursor. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Owned folder not found. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
         };
       };
     };

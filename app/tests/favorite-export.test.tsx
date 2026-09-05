@@ -9,9 +9,10 @@ import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
-import { AuthProvider } from '@/lib/auth-context';
+import { AuthProvider, useAuth } from '@/lib/auth-context';
 import type { FavoriteArticleItem } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
+import { favoriteArticlePageResponse } from '@/tests/mocks/handlers/favorites';
 import { renderWithQuery } from '@/tests/render';
 
 const favoriteExportMocks = vi.hoisted(() => ({
@@ -49,7 +50,9 @@ function installFavoritePageHandlers(): void {
         { id: 3, name: 'Reading', is_tracking: false, article_count: 0, created_at: 1 },
       ]),
     ),
-    http.get('http://localhost/api/favorites/folders/3/articles', () => HttpResponse.json([])),
+    http.get('http://localhost/api/favorites/folders/3/articles/page', () =>
+      favoriteArticlePageResponse([]),
+    ),
   );
 }
 
@@ -59,10 +62,19 @@ function installFavoritePageHandlers(): void {
 function renderFavoritesPage(): void {
   renderWithQuery(
     <AuthProvider>
-      <NuqsTestingAdapter searchParams="?folder=3">
-        <FavoritesPageContent userId={21} />
-      </NuqsTestingAdapter>
+      <AuthenticatedFavoriteFixture />
     </AuthProvider>,
+  );
+}
+
+/** Render private fixture content only after its real authentication boundary resolves. */
+function AuthenticatedFavoriteFixture() {
+  const { user, loading } = useAuth();
+  if (loading || !user) return null;
+  return (
+    <NuqsTestingAdapter searchParams="?folder=3">
+      <FavoritesPageContent userId={user.id} />
+    </NuqsTestingAdapter>
   );
 }
 

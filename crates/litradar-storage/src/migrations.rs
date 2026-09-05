@@ -19,7 +19,7 @@ use crate::index_maintenance::{interrupted_index_maintenance_state, IndexStorage
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 15;
+pub const AUTH_SCHEMA_VERSION: i64 = 16;
 
 /// Current index database schema version.
 pub const INDEX_SCHEMA_VERSION: i64 = 7;
@@ -427,6 +427,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             13 => apply_auth_version_thirteen(&transaction)?,
             14 => apply_auth_version_fourteen(&transaction)?,
             15 => apply_auth_version_fifteen(&transaction)?,
+            16 => apply_auth_version_sixteen(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1887,6 +1888,14 @@ fn apply_auth_version_fifteen(transaction: &Transaction<'_>) -> Result<(), Migra
             [],
         )?;
     }
+    Ok(())
+}
+
+fn apply_auth_version_sixteen(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_favorites_cursor \
+         ON favorites(user_id, folder_id, created_at DESC, id DESC);",
+    )?;
     Ok(())
 }
 

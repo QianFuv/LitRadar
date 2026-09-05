@@ -2299,6 +2299,87 @@
         ]
       }
     },
+    "/api/favorites/folders/{folder_id}/articles/page": {
+      "get": {
+        "tags": ["favorites"],
+        "summary": "Return one stable cursor page from an owned favorite folder.",
+        "operationId": "list_folder_article_page",
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "path",
+            "description": "Folder row identifier.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum row count, defaulting to fifty.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "maximum": 500,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque continuation bound to this user and folder.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stable favorite article page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteArticlePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid limit or cursor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Owned folder not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/favorites/folders/{folder_id}/articles/{article_id}": {
       "delete": {
         "tags": ["favorites"],
@@ -4271,6 +4352,24 @@
             "type": "string",
             "description": "User note text.",
             "maxLength": 2000
+          }
+        }
+      },
+      "FavoriteArticlePage": {
+        "type": "object",
+        "description": "Stable cursor page of favorite references and available article metadata.",
+        "required": ["items", "page"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteArticleResponse"
+            },
+            "description": "Favorite rows in descending creation time and row-id order."
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "Cursor continuation metadata without an expensive total count."
           }
         }
       },

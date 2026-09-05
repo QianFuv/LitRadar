@@ -6,11 +6,11 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use litradar_domain::{
-    ErrorEnvelope, FavoriteAdd, FavoriteArticleResponse, FavoriteBatchCheckRequest,
-    FavoriteBulkAdd, FavoriteBulkAddResult, FavoriteBulkMove, FavoriteBulkRemove,
-    FavoriteBulkResult, FavoriteCheckResponse, FavoriteResponse, FavoriteTrackingResponse,
-    FolderCreate, FolderRename, FolderResponse, InputValidationError, OkResponse,
-    TrackingSetRequest, UserId, MAX_BATCH_ARTICLE_IDS, MAX_DATABASE_NAME_CHARS,
+    ErrorEnvelope, FavoriteAdd, FavoriteArticlePage, FavoriteArticleResponse,
+    FavoriteBatchCheckRequest, FavoriteBulkAdd, FavoriteBulkAddResult, FavoriteBulkMove,
+    FavoriteBulkRemove, FavoriteBulkResult, FavoriteCheckResponse, FavoriteResponse,
+    FavoriteTrackingResponse, FolderCreate, FolderRename, FolderResponse, InputValidationError,
+    OkResponse, TrackingSetRequest, UserId, MAX_BATCH_ARTICLE_IDS, MAX_DATABASE_NAME_CHARS,
 };
 use litradar_storage::{BusinessRepositoryError, StorageConfig};
 use serde::Deserialize;
@@ -37,6 +37,18 @@ pub(crate) struct FolderArticlesQuery {
     limit: Option<i64>,
     /// Offset row count.
     offset: Option<i64>,
+}
+
+/// Query parameters for stable favorite article pages.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct FolderArticlePageQuery {
+    /// Maximum row count, defaulting to fifty.
+    #[param(minimum = 1, maximum = 500)]
+    limit: Option<i64>,
+    /// Opaque continuation bound to this user and folder.
+    #[param(max_length = 128)]
+    cursor: Option<String>,
 }
 
 /// Query parameters for removing or checking favorites.
@@ -314,6 +326,43 @@ pub(crate) async fn list_folder_articles(
     })
     .await?;
     Ok(Json(rows))
+}
+
+/// Return one stable cursor page from an owned favorite folder.
+#[utoipa::path(
+    get,
+    path = "/api/favorites/folders/{folder_id}/articles/page",
+    tag = "favorites",
+    params(("folder_id" = i64, Path, description = "Folder row identifier."), FolderArticlePageQuery),
+    responses(
+        (status = 200, description = "Stable favorite article page.", body = FavoriteArticlePage),
+        (status = 400, description = "Invalid limit or cursor.", body = ErrorEnvelope),
+        (status = 404, description = "Owned folder not found.", body = ErrorEnvelope)
+    ),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn list_folder_article_page(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(folder_id): Path<i64>,
+    Query(query): Query<FolderArticlePageQuery>,
+) -> Result<Json<FavoriteArticlePage>, ApiError> {
+    let (user, _) = require_current_user(&state, &headers).await?;
+    let limit = query.limit.unwrap_or(50);
+    if !(1..=500).contains(&limit) {
+        return Err(ApiError::bad_request("limit must be between 1 and 500"));
+    }
+    let page = run_business(&state, move |storage| {
+        litradar_storage::list_favorite_article_page(
+            &storage,
+            user.id,
+            folder_id,
+            limit,
+            query.cursor.as_deref(),
+        )
+    })
+    .await?;
+    Ok(Json(page))
 }
 
 /// Get the favorite count for a folder.
@@ -682,7 +731,8 @@ fn map_business_error(error: BusinessRepositoryError) -> ApiError {
         BusinessRepositoryError::SourceAndTargetFoldersSame => {
             ApiError::bad_request(error.to_string())
         }
-        BusinessRepositoryError::InvalidInput(_) => ApiError::bad_request(error.to_string()),
+        BusinessRepositoryError::InvalidFavoriteCursor
+        | BusinessRepositoryError::InvalidInput(_) => ApiError::bad_request(error.to_string()),
         _ => ApiError::internal_server_error(),
     }
 }

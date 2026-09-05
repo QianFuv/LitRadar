@@ -365,3 +365,7 @@ v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递�
 Weekly queries, the tracking availability count, and manual weekly delivery share the same UTC seven-day manifest window. They merge current and managed history publications, deduplicate identical publications, and include only notifiable article IDs that still exist in an available content database. Backfill IDs do not contribute to this count or manual candidate set.
 
 A manual job fixes the window end to its durable creation time. It passes parsed source snapshots into the existing delivery workflow, preserving the original source run identity and per-user attempt deduplication; it does not reread a mutable current manifest between discovery and delivery. Untimestamped or out-of-window publications are excluded, while malformed managed files remain visible failures.
+
+### Favorite cursor pagination
+
+Auth schema v16 adds idx_favorites_cursor on (user_id, folder_id, created_at DESC, id DESC). The new GET /api/favorites/folders/{folder_id}/articles/page endpoint seeks from an opaque, versioned user/folder-bound cursor and reads limit + 1 rows without an exact total. Cursor timestamps preserve their original floating-point bits. The existing /articles array endpoint retains its limit/offset contract for older clients.

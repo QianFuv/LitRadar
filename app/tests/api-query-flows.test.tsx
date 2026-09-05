@@ -9,7 +9,7 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vitest';
 
 import { getNextArticlePageParam } from '@/components/feature/results-list';
-import { getArticles, type ArticlePage } from '@/lib/api';
+import { getArticles, getFolderArticlePage, type ArticlePage } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -159,7 +159,27 @@ async function preservesPartialDatePrecision(): Promise<void> {
   expect(page.items[0]?.date_precision).toBe('year');
 }
 
+/** Verify favorite continuations are serialized without an inferred offset. */
+async function serializesFavoriteCursor(): Promise<void> {
+  let capturedUrl = '';
+  server.use(
+    http.get('http://localhost/api/favorites/folders/3/articles/page', ({ request }) => {
+      capturedUrl = request.url;
+      return HttpResponse.json({
+        items: [],
+        page: { total: null, limit: 50, offset: 0, next_cursor: null, has_more: false },
+      });
+    }),
+  );
+  await getFolderArticlePage(3, 50, 'opaque+cursor|value');
+  const params = new URL(capturedUrl).searchParams;
+  expect(params.get('cursor')).toBe('opaque+cursor|value');
+  expect(params.get('limit')).toBe('50');
+  expect(params.has('offset')).toBe(false);
+}
+
 describe('article query flows', () => {
+  test('serializes favorite cursor pagination', serializesFavoriteCursor);
   test('serializes filters and cursor parameters', serializesArticleQuery);
   test('loads cursor pages through an infinite query', loadsInfinitePages);
   test('preserves partial publication-date precision', preservesPartialDatePrecision);

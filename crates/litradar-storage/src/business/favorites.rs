@@ -2,6 +2,18 @@
 
 use super::shared::*;
 use super::*;
+
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+
+const FAVORITE_CURSOR_PAGE_SQL: &str =
+    "SELECT id, folder_id, article_id, db_name, note, created_at FROM favorites \
+         WHERE user_id = ?1 AND folder_id = ?2 AND (created_at, id) < (?3, ?4) \
+         ORDER BY created_at DESC, id DESC LIMIT ?5";
+const FAVORITE_FIRST_PAGE_SQL: &str =
+    "SELECT id, folder_id, article_id, db_name, note, created_at FROM favorites \
+         WHERE user_id = ?1 AND folder_id = ?2 \
+         ORDER BY created_at DESC, id DESC LIMIT ?3";
 use litradar_domain::{
     validate_characters, validate_favorite_add, validate_favorite_article_ref,
     validate_folder_name, validate_item_count, validate_positive_id, ArticleId,
@@ -527,8 +539,15 @@ pub fn list_favorite_articles(
     offset: i64,
 ) -> Result<Vec<FavoriteArticleResponse>, BusinessRepositoryError> {
     let favorites = list_favorites(config.auth_db_path(), user_id, folder_id, limit, offset)?;
+    Ok(enrich_favorite_articles(config, favorites))
+}
+
+fn enrich_favorite_articles(
+    config: &StorageConfig,
+    favorites: Vec<FavoriteResponse>,
+) -> Vec<FavoriteArticleResponse> {
     let (metadata, unavailable_databases) = load_favorite_metadata(config, &favorites);
-    Ok(favorites
+    favorites
         .into_iter()
         .map(|favorite| {
             let key = (favorite.db_name.clone(), favorite.article_id.value());
@@ -556,7 +575,126 @@ pub fn list_favorite_articles(
             }
             response
         })
-        .collect())
+        .collect()
+}
+
+/// List one owned folder using a stable creation-time and row-id cursor.
+///
+/// # Arguments
+///
+/// * `config` - Storage paths for auth and optional article metadata.
+/// * `user_id` - Authenticated owner of the folder.
+/// * `folder_id` - Requested folder identifier.
+/// * `limit` - Page size between one and five hundred.
+/// * `cursor` - Opaque continuation returned by a previous page in this scope.
+///
+/// # Returns
+///
+/// A bounded page that remains stable when earlier rows are inserted or removed.
+pub fn list_favorite_article_page(
+    config: &StorageConfig,
+    user_id: UserId,
+    folder_id: i64,
+    limit: i64,
+    cursor: Option<&str>,
+) -> Result<litradar_domain::FavoriteArticlePage, BusinessRepositoryError> {
+    validate_positive_id("folder_id", folder_id)?;
+    validate_positive_id("limit", limit)?;
+    validate_item_count("limit", limit as usize, 500)?;
+    let mut connection = open_business_connection(config.auth_db_path())?;
+    let transaction = connection.transaction()?;
+    ensure_folder_exists(
+        &transaction,
+        user_id,
+        folder_id,
+        BusinessRepositoryError::FolderNotFound,
+    )?;
+    let continuation = cursor
+        .map(|value| decode_favorite_cursor(value, user_id, folder_id))
+        .transpose()?;
+    let sql = if continuation.is_some() {
+        FAVORITE_CURSOR_PAGE_SQL
+    } else {
+        FAVORITE_FIRST_PAGE_SQL
+    };
+    let mut statement = transaction.prepare(sql)?;
+    let rows = match continuation {
+        Some((created_at, favorite_id)) => statement.query_map(
+            params![
+                user_id.value(),
+                folder_id,
+                created_at,
+                favorite_id,
+                limit + 1
+            ],
+            favorite_from_row,
+        ),
+        None => statement.query_map(
+            params![user_id.value(), folder_id, limit + 1],
+            favorite_from_row,
+        ),
+    }?;
+    let mut favorites = collect_rows(rows)?;
+    drop(statement);
+    transaction.commit()?;
+    let has_more = favorites.len() > limit as usize;
+    favorites.truncate(limit as usize);
+    let next_cursor = if has_more {
+        favorites
+            .last()
+            .map(|favorite| encode_favorite_cursor(user_id, favorite))
+    } else {
+        None
+    };
+    Ok(litradar_domain::FavoriteArticlePage {
+        items: enrich_favorite_articles(config, favorites),
+        page: litradar_domain::PageMeta {
+            total: None,
+            limit,
+            offset: 0,
+            next_cursor,
+            has_more: Some(has_more),
+        },
+    })
+}
+
+fn encode_favorite_cursor(user_id: UserId, favorite: &FavoriteResponse) -> String {
+    URL_SAFE_NO_PAD.encode(format!(
+        "1|{}|{}|{:016x}|{}",
+        user_id.value(),
+        favorite.folder_id,
+        favorite.created_at.to_bits(),
+        favorite.id,
+    ))
+}
+
+fn decode_favorite_cursor(
+    cursor: &str,
+    user_id: UserId,
+    folder_id: i64,
+) -> Result<(f64, i64), BusinessRepositoryError> {
+    let invalid = || BusinessRepositoryError::InvalidFavoriteCursor;
+    if cursor.len() > 128 {
+        return Err(invalid());
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| invalid())?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
+    let fields = text.split('|').collect::<Vec<_>>();
+    let [version, owner, folder, timestamp, favorite_id] = fields.as_slice() else {
+        return Err(invalid());
+    };
+    if *version != "1"
+        || owner.parse::<i64>().map_err(|_| invalid())? != user_id.value()
+        || folder.parse::<i64>().map_err(|_| invalid())? != folder_id
+    {
+        return Err(invalid());
+    }
+    let created_at = f64::from_bits(u64::from_str_radix(timestamp, 16).map_err(|_| invalid())?);
+    let favorite_id = favorite_id.parse::<i64>().map_err(|_| invalid())?;
+    if !created_at.is_finite() || created_at < 0.0 || favorite_id <= 0 {
+        return Err(invalid());
+    }
+    Ok((created_at, favorite_id))
 }
 
 /// List favorite rows without index metadata.
@@ -1905,6 +2043,84 @@ mod tests {
                 params![title, authors_json],
             )
             .expect("metadata article should insert");
+    }
+
+    #[test]
+    fn favorite_cursor_preserves_equal_timestamps_database_identity_and_scope() {
+        let (root, auth_db_path, user_id) = favorite_test_database();
+        let config = StorageConfig::from_project_root(root.path()).with_auth_db_path(&auth_db_path);
+        let folder =
+            create_folder(&auth_db_path, user_id, "Cursor", false).expect("folder should create");
+        let connection = Connection::open(&auth_db_path).expect("database should open");
+        let created_at = 1_700_000_000.000_000_2_f64;
+        for (article_id, db_name) in [
+            (101, "alpha.sqlite"),
+            (101, "beta.sqlite"),
+            (102, "alpha.sqlite"),
+        ] {
+            connection.execute(
+                "INSERT INTO favorites (user_id, folder_id, article_id, db_name, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![user_id.value(), folder.id, article_id, db_name, created_at],
+            ).expect("favorite should insert");
+        }
+        let first = list_favorite_article_page(&config, user_id, folder.id, 2, None)
+            .expect("first page should load");
+        let cursor = first
+            .page
+            .next_cursor
+            .as_deref()
+            .expect("page should continue");
+        assert_eq!(first.items[0].id, 3);
+        assert_eq!(first.items[1].id, 2);
+        assert_eq!(
+            decode_favorite_cursor(cursor, user_id, folder.id)
+                .expect("cursor should decode")
+                .0
+                .to_bits(),
+            created_at.to_bits()
+        );
+        assert!(decode_favorite_cursor(cursor, UserId(user_id.value() + 1), folder.id).is_err());
+        assert!(decode_favorite_cursor(cursor, user_id, folder.id + 1).is_err());
+        connection
+            .execute("DELETE FROM favorites WHERE id = 3", [])
+            .expect("leading favorite should delete");
+        let next = list_favorite_article_page(&config, user_id, folder.id, 2, Some(cursor))
+            .expect("next page should load");
+        assert_eq!(next.items.len(), 1);
+        assert_eq!(next.items[0].id, 1);
+        assert_eq!(next.items[0].db_name, "alpha.sqlite");
+        assert_eq!(next.page.has_more, Some(false));
+        for bits in [
+            f64::NAN.to_bits(),
+            f64::INFINITY.to_bits(),
+            (-1.0_f64).to_bits(),
+        ] {
+            let malformed = URL_SAFE_NO_PAD.encode(format!(
+                "1|{}|{}|{bits:016x}|1",
+                user_id.value(),
+                folder.id
+            ));
+            assert!(decode_favorite_cursor(&malformed, user_id, folder.id).is_err());
+        }
+        assert!(decode_favorite_cursor(&"a".repeat(129), user_id, folder.id).is_err());
+        let mut statement = connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {FAVORITE_CURSOR_PAGE_SQL}"))
+            .expect("page query should explain");
+        let details = statement
+            .query_map(
+                params![user_id.value(), folder.id, created_at, 2, 3],
+                |row| row.get::<_, String>(3),
+            )
+            .expect("query plan should read")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("plan should collect")
+            .join(" ");
+        assert!(details.contains("idx_favorites_cursor"), "{details}");
+        assert!(!details.contains("TEMP B-TREE"), "{details}");
+        assert!(
+            details.contains("created_at<?"),
+            "cursor must seek by time: {details}"
+        );
     }
 
     fn favorite_test_database() -> (TempDir, PathBuf, UserId) {

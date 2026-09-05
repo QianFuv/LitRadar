@@ -121,6 +121,10 @@ pub fn public_routes() -> Router<ApiState> {
             axum::routing::get(favorites::list_folder_articles).post(favorites::add_favorite),
         )
         .route(
+            "/favorites/folders/{folder_id}/articles/page",
+            axum::routing::get(favorites::list_folder_article_page),
+        )
+        .route(
             "/favorites/folders/{folder_id}/count",
             axum::routing::get(favorites::folder_count),
         )

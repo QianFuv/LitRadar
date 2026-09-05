@@ -52,6 +52,7 @@ fn empty_auth_database_migration_creates_current_schema() {
     }
     for index in [
         "idx_folders_one_tracking_per_user",
+        "idx_favorites_cursor",
         "idx_delivery_checkpoints_scope",
         "idx_delivery_runs_external_scope",
         "idx_delivery_runs_active_scope",
@@ -77,6 +78,38 @@ fn empty_auth_database_migration_creates_current_schema() {
     ] {
         assert!(runtime_setting(&path, field).is_none());
     }
+}
+
+#[test]
+fn favorite_cursor_migration_preserves_version_fifteen_rows_and_is_idempotent() {
+    let directory = tempdir().expect("temporary database should exist");
+    let path = directory.path().join("auth.sqlite");
+    migrate_auth_database(&path).expect("fixture schema should initialize");
+    let connection = Connection::open(&path).expect("database should open");
+    connection.execute_batch(
+        "DROP INDEX idx_favorites_cursor; PRAGMA user_version = 15; \
+         INSERT INTO users (id, username, password_hash, salt, created_at, updated_at) VALUES (1, 'cursor-owner', 'hash', 'salt', 1, 1); \
+         INSERT INTO folders (id, user_id, name, created_at, updated_at) VALUES (1, 1, 'Cursor', 1, 1); \
+         INSERT INTO favorites (user_id, folder_id, article_id, db_name, note, created_at) VALUES (1, 1, 101, 'fixture.sqlite', 'preserved', 1.25);"
+    ).expect("version fifteen fixture should populate");
+    migrate_auth_database(&path).expect("cursor index should migrate");
+    migrate_auth_database(&path).expect("migration should be idempotent");
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert!(index_exists(&path, "idx_favorites_cursor"));
+    let row = connection
+        .query_row(
+            "SELECT article_id, note, created_at FROM favorites",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            },
+        )
+        .expect("favorite should survive migration");
+    assert_eq!(row, (101, "preserved".into(), 1.25));
 }
 
 #[test]
@@ -1156,6 +1189,7 @@ fn cancellation_status_migration_preserves_version_four_runs() {
         .expect("version four fixture should be created");
     drop(connection);
 
+    complete_favorite_schema_fixture(&path);
     migrate_auth_database(&path).expect("version four database should migrate");
 
     let connection = Connection::open(&path).expect("migrated database should open");
@@ -1280,6 +1314,7 @@ fn scheduler_migration_disables_and_preserves_legacy_commands() {
         .expect("version one fixture should be created");
     drop(connection);
 
+    complete_favorite_schema_fixture(&path);
     migrate_auth_database(&path).expect("version one database should migrate");
 
     let connection = Connection::open(&path).expect("migrated database should open");
@@ -1355,6 +1390,7 @@ fn scheduler_durable_migration_preserves_tasks_and_adds_safe_defaults() {
         .expect("version two fixture should be created");
     drop(connection);
 
+    complete_favorite_schema_fixture(&path);
     migrate_auth_database(&path).expect("version two database should migrate");
 
     let connection = Connection::open(&path).expect("migrated database should open");
@@ -2655,4 +2691,18 @@ fn create_nonempty_index_database(path: &Path, version: i64) {
     connection
         .pragma_update(None, "user_version", version)
         .expect("legacy index version should be set");
+}
+
+/// Complete the unrelated favorites table omitted by scheduler-only legacy fixtures.
+fn complete_favorite_schema_fixture(path: &Path) {
+    Connection::open(path)
+        .expect("fixture should open")
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS favorites (
+            id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, folder_id INTEGER NOT NULL,
+            article_id INTEGER NOT NULL, db_name TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL
+        );",
+        )
+        .expect("legacy favorite schema should exist");
 }

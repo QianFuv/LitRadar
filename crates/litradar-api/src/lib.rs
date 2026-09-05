@@ -4117,6 +4117,162 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn favorite_cursor_pages_survive_mutations_and_preserve_legacy_arrays() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("cursor_owner", false);
+        let folder = litradar_storage::get_tracking_folder(backend.auth_db_path(), user.user_id())
+            .expect("folder lookup should work")
+            .expect("default folder should exist");
+        let connection = Connection::open(backend.auth_db_path()).expect("database should open");
+        for article_id in 101..105_i64 {
+            connection.execute(
+                "INSERT INTO favorites (user_id, folder_id, article_id, db_name, note, created_at) \
+                 VALUES (?1, ?2, ?3, 'fixture.sqlite', '', ?4)",
+                rusqlite::params![user.user_id().value(), folder.id, article_id, (article_id - 100) as f64],
+            ).expect("favorite should insert");
+        }
+        let app = backend.router();
+        let auth = user.authorization_header();
+        let page_path = format!("/api/favorites/folders/{}/articles/page", folder.id);
+        let first = json_request(
+            &app,
+            Method::GET,
+            &format!("{page_path}?limit=2"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(first.status, StatusCode::OK);
+        assert_eq!(first.payload["items"][0]["article_id"], "104");
+        assert_eq!(first.payload["items"][1]["article_id"], "103");
+        let cursor = first.payload["page"]["next_cursor"]
+            .as_str()
+            .expect("next cursor should exist");
+        connection
+            .execute("DELETE FROM favorites WHERE article_id = 104", [])
+            .expect("first item should delete");
+        let next = json_request(
+            &app,
+            Method::GET,
+            &format!("{page_path}?limit=2&cursor={cursor}"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(next.status, StatusCode::OK);
+        assert_eq!(next.payload["items"][0]["article_id"], "102");
+        assert_eq!(next.payload["items"][1]["article_id"], "101");
+        assert_eq!(next.payload["page"]["has_more"], false);
+        let first = json_request(
+            &app,
+            Method::GET,
+            &format!("{page_path}?limit=2"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        let cursor = first.payload["page"]["next_cursor"]
+            .as_str()
+            .expect("next cursor should exist");
+        connection.execute(
+            "INSERT INTO favorites (user_id, folder_id, article_id, db_name, note, created_at) \
+             VALUES (?1, ?2, 105, 'fixture.sqlite', '', 5)",
+            rusqlite::params![user.user_id().value(), folder.id],
+        ).expect("new leading item should insert");
+        let next = json_request(
+            &app,
+            Method::GET,
+            &format!("{page_path}?limit=2&cursor={cursor}"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(
+            next.payload["items"]
+                .as_array()
+                .expect("items should be an array")
+                .len(),
+            1
+        );
+        assert_eq!(next.payload["items"][0]["article_id"], "101");
+        let legacy = json_request(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/favorites/folders/{}/articles?limit=2&offset=0",
+                folder.id
+            ),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(legacy.status, StatusCode::OK);
+        assert!(legacy.payload.is_array());
+        let bad_cursor = json_request(
+            &app,
+            Method::GET,
+            &format!("{page_path}?cursor=invalid"),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(bad_cursor.status, StatusCode::BAD_REQUEST);
+        let other_folder = litradar_storage::create_folder(
+            backend.auth_db_path(),
+            user.user_id(),
+            "Another cursor folder",
+            false,
+        )
+        .expect("second owned folder should create");
+        let wrong_scope = json_request(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/favorites/folders/{}/articles/page?cursor={cursor}",
+                other_folder.id
+            ),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(wrong_scope.status, StatusCode::BAD_REQUEST);
+        for limit in [0, 501] {
+            let invalid_limit = json_request(
+                &app,
+                Method::GET,
+                &format!("{page_path}?limit={limit}"),
+                Some(&auth),
+                None,
+                None,
+            )
+            .await;
+            assert_eq!(invalid_limit.status, StatusCode::BAD_REQUEST);
+        }
+        let other = backend.authenticated_user("cursor_other", false);
+        let foreign = json_request(
+            &app,
+            Method::GET,
+            &page_path,
+            Some(&other.authorization_header()),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(foreign.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn favorites_routes_cover_folder_article_batch_export_and_tracking_flows() {
         let backend = TestBackend::new();
         let user = backend.authenticated_user("reader", false);

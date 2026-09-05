@@ -70,7 +70,7 @@ pub use delivery::{
 pub use favorites::{
     add_favorite, batch_is_favorited, bulk_add_favorites, bulk_move_favorites,
     bulk_remove_favorites, count_favorites, create_folder, delete_folder, get_tracking_folder,
-    is_favorited, list_favorite_articles, list_favorites, list_folders,
+    is_favorited, list_favorite_article_page, list_favorite_articles, list_favorites, list_folders,
     load_favorite_citation_records, load_favorite_citation_snapshot, remove_favorite,
     rename_folder, set_tracking_folder, FavoriteCitationRecord, FavoriteCitationReference,
     FavoriteCitationSnapshot,
@@ -168,6 +168,8 @@ pub enum BusinessRepositoryError {
     InvalidScheduledJob(String),
     /// Scheduled task timing settings failed validation.
     InvalidScheduledTask(String),
+    /// A favorite cursor is malformed or belongs to another request scope.
+    InvalidFavoriteCursor,
     /// A migrated legacy task was enabled without a typed replacement job.
     LegacyScheduledTaskCannotBeEnabled,
     /// An invite expiration or use quota falls outside the managed policy.
@@ -186,6 +188,7 @@ impl fmt::Display for BusinessRepositoryError {
     /// Format the repository error.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidFavoriteCursor => formatter.write_str("Invalid favorite pagination cursor"),
             Self::Sqlite(error) => write!(formatter, "{error}"),
             Self::Io(error) => write!(formatter, "{error}"),
             Self::Json(error) => write!(formatter, "{error}"),

@@ -169,6 +169,12 @@ export interface FavoriteArticleItem extends FavoriteItem {
   eissn?: string | null;
 }
 
+/** Stable cursor page of favorite article rows. */
+export interface FavoriteArticlePage {
+  items: FavoriteArticleItem[];
+  page: PageMeta;
+}
+
 export interface FavoriteCheck {
   folder_id: number;
   folder_name: string;

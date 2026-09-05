@@ -7,6 +7,7 @@ import type {
   ArticleId,
   CitationFormat,
   FavoriteArticleItem,
+  FavoriteArticlePage,
   FavoriteArticleRef,
   FavoriteBatchCheckItem,
   FavoriteCheck,
@@ -109,6 +110,31 @@ export function getFolderArticles(
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   return requestJson<FavoriteArticleItem[]>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles`, params),
+    null,
+    undefined,
+    '获取收藏文章失败',
+  );
+}
+
+/**
+ * Read one stable favorite page without counting preceding rows.
+ *
+ * @param folderId - Owned favorite folder.
+ * @param limit - Maximum returned rows.
+ * @param cursor - Opaque server continuation or null for the first page.
+ * @returns Favorite rows and the next cursor.
+ */
+export function getFolderArticlePage(
+  folderId: number,
+  limit: number,
+  cursor: string | null = null,
+): Promise<FavoriteArticlePage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor !== null) {
+    params.set('cursor', cursor);
+  }
+  return requestJson<FavoriteArticlePage>(
+    buildApiUrl(`/api/favorites/folders/${folderId}/articles/page`, params),
     null,
     undefined,
     '获取收藏文章失败',

@@ -22,3 +22,26 @@ export function createFavoriteScenarioHandlers(folders: FolderScenario[] = []): 
 
 /** Stable favorites happy-path handlers. */
 export const FAVORITE_SCENARIO_HANDLERS = createFavoriteScenarioHandlers();
+
+/**
+ * Return a bounded favorite page for component and API-flow fixtures.
+ *
+ * @param items - Favorite article rows.
+ * @param nextCursor - Optional next page continuation.
+ * @returns JSON page response matching the real cursor endpoint.
+ */
+export function favoriteArticlePageResponse(
+  items: unknown[],
+  nextCursor: string | null = null,
+): Response {
+  return HttpResponse.json({
+    items,
+    page: {
+      total: null,
+      limit: 50,
+      offset: 0,
+      next_cursor: nextCursor,
+      has_more: nextCursor !== null,
+    },
+  });
+}

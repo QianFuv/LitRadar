@@ -10,7 +10,7 @@ import {
   createFolder,
   deleteFolder,
   downloadFavoriteExport,
-  getFolderArticles,
+  getFolderArticlePage,
   getFolders,
   removeFavorite,
   renameFolder,
@@ -132,11 +132,10 @@ export function useFavoritesPage(userId: number) {
     error: favoritesError,
     refetch: refetchFavorites,
   } = useInfiniteQuery({
-    queryKey: ['folder-articles', activeFolderId],
-    queryFn: ({ pageParam = 0 }) => getFolderArticles(activeFolderId!, PAGE_SIZE, pageParam),
-    getNextPageParam: (lastPage, allPages) =>
-      lastPage.length === PAGE_SIZE ? allPages.flat().length : undefined,
-    initialPageParam: 0,
+    queryKey: ['folder-articles', activeFolderId, 'cursor', userId],
+    queryFn: ({ pageParam }) => getFolderArticlePage(activeFolderId!, PAGE_SIZE, pageParam),
+    getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
+    initialPageParam: null as string | null,
     enabled: true && !!activeFolderId && !!selectedFolder,
   });
 
@@ -152,7 +151,7 @@ export function useFavoritesPage(userId: number) {
     scrollContainerId: 'results-scroll-container',
   });
   const visiblePageCount = Math.min(visiblePages, loadedPages);
-  const favorites = favoritePages.slice(0, visiblePageCount).flat();
+  const favorites = favoritePages.slice(0, visiblePageCount).flatMap((page) => page.items);
   const prefetchIndex = Math.max(0, favorites.length - 25);
   const selectedKeySet = new Set(selectedArticleKeys);
   const selectedFavorites = favorites.filter((favorite) =>
