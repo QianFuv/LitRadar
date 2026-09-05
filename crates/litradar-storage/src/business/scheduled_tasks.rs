@@ -513,6 +513,38 @@ pub fn claim_ready_scheduled_runs(
     claimed_at: f64,
     lease_seconds: f64,
 ) -> Result<Vec<ScheduledRunClaim>, BusinessRepositoryError> {
+    claim_ready_scheduled_runs_with_limit(
+        auth_db_path,
+        worker_id,
+        claimed_at,
+        lease_seconds,
+        usize::MAX,
+    )
+}
+
+/// Claim pending runs only for the execution slots currently available.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Path to the authentication database.
+/// * `worker_id` - Claiming worker identifier.
+/// * `claimed_at` - Claim timestamp.
+/// * `lease_seconds` - Duration of the initial claim lease.
+/// * `available_slots` - Maximum number of claims that can start immediately.
+///
+/// # Returns
+///
+/// Claimed runs; excess work stays pending without consuming a lease.
+pub fn claim_ready_scheduled_runs_with_limit(
+    auth_db_path: impl AsRef<Path>,
+    worker_id: &str,
+    claimed_at: f64,
+    lease_seconds: f64,
+    available_slots: usize,
+) -> Result<Vec<ScheduledRunClaim>, BusinessRepositoryError> {
+    if available_slots == 0 {
+        return Ok(Vec::new());
+    }
     let auth_db_path = auth_db_path.as_ref();
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -552,16 +584,25 @@ pub fn claim_ready_scheduled_runs(
                    WHERE active.task_id = run.task_id
                      AND active.status IN ('claimed', 'running')
                )
-             ORDER BY run.scheduled_for, run.id",
+               AND NOT EXISTS (
+                   SELECT 1 FROM scheduled_task_runs AS earlier
+                   WHERE earlier.task_id = run.task_id AND earlier.status = 'pending'
+                     AND (earlier.scheduled_for < run.scheduled_for
+                          OR (earlier.scheduled_for = run.scheduled_for AND earlier.id < run.id))
+               )
+             ORDER BY run.scheduled_for, run.id LIMIT ?1",
         )?;
         let rows = statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            })?
+            .query_map(
+                [i64::try_from(available_slots).unwrap_or(i64::MAX)],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         rows
     };
@@ -880,6 +921,70 @@ mod tests {
 
     use super::*;
     use crate::migrate_auth_database;
+
+    #[test]
+    fn scheduler_claim_capacity_keeps_excess_work_pending_without_leases() {
+        let directory = tempdir().expect("temporary database should exist");
+        let auth_db_path = directory.path().join("auth.sqlite");
+        migrate_auth_database(&auth_db_path).expect("schema should migrate");
+        let job = ScheduledJobSpec::Index(ScheduledIndexJob {
+            metadata_file: Some("journals.csv".into()),
+            notify: false,
+            push: false,
+        });
+        for index in 0..5 {
+            let task = create_scheduled_task(
+                &auth_db_path,
+                ScheduledTaskCreateParams {
+                    name: &format!("Task {index}"),
+                    job: &job,
+                    cron: "* * * * *",
+                    timezone: "UTC",
+                    timeout_seconds: 60,
+                    coalesce: false,
+                    enabled: true,
+                },
+            )
+            .expect("task should create");
+            enqueue_scheduled_runs(&auth_db_path, &task, &[100, 160])
+                .expect("slots should enqueue");
+        }
+        assert!(
+            claim_ready_scheduled_runs_with_limit(&auth_db_path, "worker-a", 200.0, 90.0, 0)
+                .expect("full worker should not claim")
+                .is_empty()
+        );
+        let first =
+            claim_ready_scheduled_runs_with_limit(&auth_db_path, "worker-a", 200.0, 90.0, 2)
+                .expect("two free slots should claim");
+        let second =
+            claim_ready_scheduled_runs_with_limit(&auth_db_path, "worker-b", 200.0, 90.0, 1)
+                .expect("one additional free slot should claim");
+        assert_eq!(first.len(), 2);
+        assert_eq!(second.len(), 1);
+        let task_ids = first
+            .iter()
+            .chain(&second)
+            .map(|claim| claim.task.id)
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(task_ids.len(), 3);
+        let connection = Connection::open(&auth_db_path).expect("database should open");
+        let pending: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM scheduled_task_runs WHERE status = 'pending' \
+             AND worker_id IS NULL AND claim_expires_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("pending state should read");
+        assert_eq!(pending, 7);
+        assert_eq!(
+            claim_ready_scheduled_runs(&auth_db_path, "legacy-worker", 200.0, 90.0)
+                .expect("legacy unbounded entry point should remain compatible")
+                .len(),
+            2
+        );
+    }
 
     #[test]
     fn scheduler_repository_validates_typed_jobs_and_replaces_legacy_rows() {

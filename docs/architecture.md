@@ -290,3 +290,9 @@ HTTP 组件共享的 `blocking executor` 有 8 个 permit。除此之外，手�
 ## 部署边界
 
 默认 Compose 只运行一个非 root、只读根文件系统且丢弃全部 Linux capabilities 的 `litradar` 容器，并把唯一 HTTP 入口 `127.0.0.1:8000` 发布到宿主机 loopback。公网部署必须增加 TLS 反向代理和共享限流，不能把默认端口直接改为所有网卡。详见 [Docker 部署](operations/docker.md)和[安全说明](operations/security.md)。
+
+### Scheduled execution across service ticks
+
+The embedded scheduler keeps up to four active executions across scan ticks. A long index job does not delay discovery of later due tasks: each tick still enqueues due slots, then claims only as many jobs as there are free execution slots. Excess work remains durable and pending without an early claim lease; each task still has at most one active run.
+
+The service owns the active execution set and cooperatively cancels and drains every child on shutdown or an infrastructure failure. Per-run heartbeats and process-tree supervision remain unchanged. The one-shot scheduler CLI continues waiting for its own admitted runs to finish. Tick summaries report executions collected since the previous scan, while per-run terminal events remain immediate.

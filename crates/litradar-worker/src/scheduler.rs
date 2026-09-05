@@ -564,10 +564,74 @@ fn run_due_scheduler_once_at_with_runner(
     })
 }
 
+/// Scan due slots and claim only work that can start immediately.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Authentication and scheduler database path.
+/// * `worker_id` - Stable scheduler instance identifier.
+/// * `available_slots` - Free execution slots in the service.
+///
+/// # Returns
+///
+/// Tick metadata and durable claims without waiting for child execution.
+pub fn prepare_scheduled_runs(
+    auth_db_path: impl AsRef<Path>,
+    worker_id: &str,
+    available_slots: usize,
+) -> Result<(SchedulerExecutionResult, Vec<ScheduledRunClaim>), SchedulerError> {
+    let span = tracing::info_span!("scheduler.tick", component = "scheduler", worker_id);
+    span.in_scope(|| {
+        prepare_scheduler_tick_with_limit(
+            auth_db_path.as_ref(),
+            worker_id,
+            current_unix_time(),
+            available_slots,
+        )
+    })
+}
+
+/// Execute a previously admitted claim using the existing process supervisor.
+///
+/// # Arguments
+///
+/// * `auth_db_path` - Authentication and scheduler database path.
+/// * `application_executable` - Canonical child executable.
+/// * `secret_key_file` - Deployment key file passed to the child.
+/// * `claim` - Durable claim to start and heartbeat.
+/// * `cancellation` - Shared cooperative shutdown signal.
+///
+/// # Returns
+///
+/// Final persisted execution status after the child has been reaped.
+pub fn run_scheduled_claim(
+    auth_db_path: impl AsRef<Path>,
+    application_executable: impl AsRef<Path>,
+    secret_key_file: impl AsRef<Path>,
+    claim: ScheduledRunClaim,
+    cancellation: SchedulerCancellation,
+) -> Result<ScheduledTaskExecution, SchedulerError> {
+    let mut runner = ProcessScheduledJobRunner {
+        application_executable: application_executable.as_ref().to_path_buf(),
+        secret_key_file: secret_key_file.as_ref().to_path_buf(),
+        cancellation,
+    };
+    execute_scheduled_claim(auth_db_path.as_ref(), claim, &mut runner)
+}
+
 fn prepare_scheduler_tick(
     auth_db_path: &Path,
     worker_id: &str,
     now: f64,
+) -> Result<(SchedulerExecutionResult, Vec<ScheduledRunClaim>), SchedulerError> {
+    prepare_scheduler_tick_with_limit(auth_db_path, worker_id, now, usize::MAX)
+}
+
+fn prepare_scheduler_tick_with_limit(
+    auth_db_path: &Path,
+    worker_id: &str,
+    now: f64,
+    available_slots: usize,
 ) -> Result<(SchedulerExecutionResult, Vec<ScheduledRunClaim>), SchedulerError> {
     litradar_storage::record_scheduler_heartbeat(auth_db_path, worker_id, now)?;
     let previous_check = litradar_storage::get_scheduler_last_checked_at(auth_db_path)?;
@@ -610,11 +674,12 @@ fn prepare_scheduler_tick(
         already_executed += represented_slots.saturating_sub(inserted);
     }
     litradar_storage::record_scheduler_check(auth_db_path, now)?;
-    let claims = litradar_storage::claim_ready_scheduled_runs(
+    let claims = litradar_storage::claim_ready_scheduled_runs_with_limit(
         auth_db_path,
         worker_id,
         now,
         RUN_LEASE_SECONDS,
+        available_slots,
     )?;
     let claimed = claims.len();
     let skipped_count = skipped.len();

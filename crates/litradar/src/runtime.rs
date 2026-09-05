@@ -12,12 +12,16 @@ use litradar_storage::{
     report_security_audit_persistence_failure, SecurityAuditRetentionResult,
 };
 use litradar_worker::scheduler::{
-    run_due_scheduler_once, scheduler_worker_id, SchedulerCancellation, SchedulerExecutionResult,
+    prepare_scheduled_runs, run_scheduled_claim, scheduler_worker_id, ScheduledTaskExecution,
+    SchedulerCancellation, SchedulerError, SchedulerExecutionResult,
 };
 use tokio::sync::watch;
+use tokio::task::JoinSet;
 use tracing::Instrument;
 
 use crate::config::ServeConfig;
+
+const SCHEDULER_EXECUTION_LIMIT: usize = 4;
 
 const AUDIT_RETENTION_INTERVAL: Duration = Duration::from_secs(86_400);
 
@@ -223,31 +227,22 @@ async fn run_scheduler_loop(
     let scheduler_interval = config.scheduler_interval;
     let tick_config = config.clone();
     let tick_worker_id = worker_id.clone();
-    let tick_cancellation = cancellation.clone();
+    let claim_cancellation = cancellation.clone();
     run_scheduler_loop_with(
         scheduler_interval,
         shutdown,
         cancellation,
         &worker_id,
-        move || {
+        move |available_slots| {
             let auth_db_path = tick_config.auth_db_path.clone();
-            let application_executable = tick_config.application_executable.clone();
-            let secret_key_file = tick_config.api_config.secret_key_file.clone();
             let worker_id = tick_worker_id.clone();
-            let cancellation = tick_cancellation.clone();
             let span = tracing::Span::current();
             let subscriber = tracing::dispatcher::get_default(Clone::clone);
             async move {
                 match tokio::task::spawn_blocking(move || {
                     tracing::dispatcher::with_default(&subscriber, || {
                         span.in_scope(|| {
-                            run_due_scheduler_once(
-                                auth_db_path,
-                                application_executable,
-                                secret_key_file,
-                                &worker_id,
-                                cancellation,
-                            )
+                            prepare_scheduled_runs(auth_db_path, &worker_id, available_slots)
                         })
                     })
                 })
@@ -265,6 +260,31 @@ async fn run_scheduler_loop(
                 }
             }
         },
+        move |claim| {
+            let auth_db_path = config.auth_db_path.clone();
+            let application_executable = config.application_executable.clone();
+            let secret_key_file = config.api_config.secret_key_file.clone();
+            let cancellation = claim_cancellation.clone();
+            let span = tracing::Span::current();
+            let subscriber = tracing::dispatcher::get_default(Clone::clone);
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    tracing::dispatcher::with_default(&subscriber, || {
+                        span.in_scope(|| {
+                            run_scheduled_claim(
+                                auth_db_path,
+                                application_executable,
+                                secret_key_file,
+                                claim,
+                                cancellation,
+                            )
+                        })
+                    })
+                })
+                .await
+                .map_err(|_| SchedulerError::ExecutionThread)?
+            }
+        },
         tokio::time::sleep,
     )
     .instrument(scheduler_span)
@@ -276,44 +296,90 @@ struct SchedulerTickError {
     error_kind: &'static str,
 }
 
-async fn run_scheduler_loop_with<Tick, TickFuture, Delay, DelayFuture>(
+async fn run_scheduler_loop_with<
+    Work,
+    Tick,
+    TickFuture,
+    Execute,
+    ExecutionFuture,
+    Delay,
+    DelayFuture,
+>(
     scheduler_interval: Duration,
     mut shutdown: watch::Receiver<bool>,
     cancellation: SchedulerCancellation,
     worker_id: &str,
     mut run_tick: Tick,
+    mut execute: Execute,
     mut delay: Delay,
 ) -> Result<(), Box<dyn Error>>
 where
-    Tick: FnMut() -> TickFuture,
-    TickFuture: Future<Output = Result<SchedulerExecutionResult, SchedulerTickError>>,
+    Tick: FnMut(usize) -> TickFuture,
+    TickFuture: Future<Output = Result<(SchedulerExecutionResult, Vec<Work>), SchedulerTickError>>,
+    Execute: FnMut(Work) -> ExecutionFuture,
+    ExecutionFuture:
+        Future<Output = Result<ScheduledTaskExecution, SchedulerError>> + Send + 'static,
     Delay: FnMut(Duration) -> DelayFuture,
     DelayFuture: Future<Output = ()>,
 {
-    loop {
+    let mut executions = JoinSet::new();
+    let mut completed = Vec::new();
+    let mut outcome: Result<(), Box<dyn Error>> = 'scheduler: loop {
         if cancellation.is_cancelled() || *shutdown.borrow() {
-            return Ok(());
+            break Ok(());
         }
         let tick_started_at = Instant::now();
-        let result = match run_tick().await {
-            Ok(result) => result,
-            Err(error) => {
-                emit_scheduler_tick_failed(worker_id, tick_started_at, error.error_kind);
-                return Err(error.source);
-            }
-        };
-        emit_scheduler_tick_completed(worker_id, &result, tick_started_at);
-        if cancellation.is_cancelled() || *shutdown.borrow() {
-            return Ok(());
+        let (mut result, claims) =
+            match run_tick(SCHEDULER_EXECUTION_LIMIT - executions.len()).await {
+                Ok(result) => result,
+                Err(error) => {
+                    emit_scheduler_tick_failed(worker_id, tick_started_at, error.error_kind);
+                    break Err(error.source);
+                }
+            };
+        result.executed.append(&mut completed);
+        for claim in claims {
+            executions.spawn(execute(claim));
         }
-        tokio::select! {
-            () = delay(scheduler_interval) => {}
-            changed = shutdown.changed() => {
-                let _ = changed;
-                return Ok(());
+        emit_scheduler_tick_completed(worker_id, &result, tick_started_at);
+        let next_tick = delay(scheduler_interval);
+        tokio::pin!(next_tick);
+        loop {
+            if cancellation.is_cancelled() || *shutdown.borrow() {
+                break 'scheduler Ok(());
             }
+            tokio::select! {
+                biased;
+                changed = shutdown.changed() => {
+                    let _ = changed;
+                    break 'scheduler Ok(());
+                }
+                Some(result) = executions.join_next(), if !executions.is_empty() => {
+                    match result {
+                        Ok(Ok(execution)) => completed.push(execution),
+                        Ok(Err(error)) => {
+                            emit_scheduler_tick_failed(worker_id, tick_started_at, "execution_error");
+                            break 'scheduler Err(error.into());
+                        }
+                        Err(error) => {
+                            emit_scheduler_tick_failed(worker_id, tick_started_at, "join_error");
+                            break 'scheduler Err(error.into());
+                        }
+                    }
+                }
+                () = &mut next_tick => break,
+            }
+        }
+    };
+    cancellation.cancel();
+    while let Some(result) = executions.join_next().await {
+        match result {
+            Ok(Err(error)) if outcome.is_ok() => outcome = Err(error.into()),
+            Err(error) if outcome.is_ok() => outcome = Err(error.into()),
+            _ => {}
         }
     }
+    outcome
 }
 
 fn emit_scheduler_tick_completed(
@@ -631,7 +697,8 @@ mod tests {
     use std::time::Duration;
 
     use litradar_worker::scheduler::{
-        SchedulerCancellation, SchedulerExecutionResult, SchedulerMode,
+        ScheduledTaskExecution, SchedulerCancellation, SchedulerError, SchedulerExecutionResult,
+        SchedulerMode,
     };
     use serde_json::Value;
     use tokio::sync::{watch, Notify};
@@ -836,6 +903,122 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scheduler_loop_scans_again_before_active_work_finishes() {
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let next_started = Arc::new(Notify::new());
+        let clock = Arc::new(Notify::new());
+        let slots = Arc::new(Mutex::new(Vec::new()));
+        let slots_for_tick = Arc::clone(&slots);
+        let finished = Arc::new(AtomicUsize::new(0));
+        let finished_for_job = Arc::clone(&finished);
+        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let work_started = Arc::clone(&started);
+        let work_release = Arc::clone(&release);
+        let next_work_started = Arc::clone(&next_started);
+        let tick_clock = Arc::clone(&clock);
+        let mut tick_count = 0;
+        let scheduler = run_scheduler_loop_with(
+            Duration::from_secs(60),
+            shutdown_receiver,
+            SchedulerCancellation::new(),
+            "liveness-fixture",
+            move |available_slots| {
+                slots_for_tick
+                    .lock()
+                    .expect("slots should lock")
+                    .push(available_slots);
+                let index = tick_count;
+                tick_count += 1;
+                async move { Ok::<_, SchedulerTickError>((fixture_scheduler_result(), vec![index])) }
+            },
+            move |index| {
+                let started = Arc::clone(&work_started);
+                let release = Arc::clone(&work_release);
+                let next_started = Arc::clone(&next_work_started);
+                let finished = Arc::clone(&finished_for_job);
+                async move {
+                    if index == 0 {
+                        started.notify_one();
+                        release.notified().await;
+                    } else {
+                        next_started.notify_one();
+                    }
+                    finished.fetch_add(1, Ordering::SeqCst);
+                    Ok(fixture_scheduler_execution(index))
+                }
+            },
+            move |_| {
+                let clock = Arc::clone(&tick_clock);
+                async move { clock.notified().await }
+            },
+        );
+        let observer = async move {
+            started.notified().await;
+            clock.notify_one();
+            let did_start = tokio::time::timeout(Duration::from_secs(2), next_started.notified())
+                .await
+                .is_ok();
+            shutdown_sender
+                .send(true)
+                .expect("scheduler should still be listening");
+            release.notify_one();
+            did_start
+        };
+        let (result, did_start) = tokio::join!(scheduler, observer);
+        result.expect("scheduler should shut down");
+        assert!(
+            did_start,
+            "later work must start before the earlier task finishes"
+        );
+        assert_eq!(*slots.lock().expect("slots should lock"), vec![4, 3]);
+        assert_eq!(
+            finished.load(Ordering::SeqCst),
+            2,
+            "shutdown must drain both jobs"
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduler_execution_failure_cancels_and_drains_other_jobs() {
+        let cancellation = SchedulerCancellation::new();
+        let job_cancellation = cancellation.clone();
+        let did_finish = Arc::new(AtomicBool::new(false));
+        let job_finished = Arc::clone(&did_finish);
+        let (_shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let scheduler = run_scheduler_loop_with(
+            Duration::from_secs(60),
+            shutdown_receiver,
+            cancellation.clone(),
+            "failure-fixture",
+            |_| async {
+                Ok::<_, SchedulerTickError>((fixture_scheduler_result(), vec![false, true]))
+            },
+            move |should_fail| {
+                let cancellation = job_cancellation.clone();
+                let did_finish = Arc::clone(&job_finished);
+                async move {
+                    if should_fail {
+                        return Err(SchedulerError::HeartbeatLost);
+                    }
+                    while !cancellation.is_cancelled() {
+                        tokio::task::yield_now().await;
+                    }
+                    did_finish.store(true, Ordering::SeqCst);
+                    Ok(fixture_scheduler_execution(1))
+                }
+            },
+            |_| pending(),
+        );
+        let result = tokio::time::timeout(Duration::from_secs(2), scheduler)
+            .await
+            .expect("failure must not leave a running task behind");
+        assert!(result.is_err());
+        assert!(cancellation.is_cancelled());
+        assert!(did_finish.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
     async fn scheduler_loop_runs_the_first_tick_before_waiting() {
         let cancellation = SchedulerCancellation::new();
         let tick_cancellation = cancellation.clone();
@@ -848,11 +1031,14 @@ mod tests {
             shutdown_receiver,
             cancellation,
             "fixture-worker",
-            move || {
+            move |_| {
                 tick_count_assertion.fetch_add(1, Ordering::SeqCst);
                 tick_cancellation.cancel();
-                async { Ok::<_, SchedulerTickError>(fixture_scheduler_result()) }
+                async {
+                    Ok::<_, SchedulerTickError>((fixture_scheduler_result(), Vec::<()>::new()))
+                }
             },
+            |_: ()| pending::<Result<ScheduledTaskExecution, SchedulerError>>(),
             |_| pending(),
         )
         .await
@@ -874,10 +1060,13 @@ mod tests {
             shutdown_receiver,
             cancellation,
             "fixture-worker",
-            move || {
+            move |_| {
                 tick_count_assertion.fetch_add(1, Ordering::SeqCst);
-                async { Ok::<_, SchedulerTickError>(fixture_scheduler_result()) }
+                async {
+                    Ok::<_, SchedulerTickError>((fixture_scheduler_result(), Vec::<()>::new()))
+                }
             },
+            |_: ()| pending::<Result<ScheduledTaskExecution, SchedulerError>>(),
             move |_| {
                 let wait_started = Arc::clone(&wait_started_for_delay);
                 async move {
@@ -924,7 +1113,8 @@ mod tests {
             shutdown_receiver,
             cancellation.clone(),
             "fixture-worker",
-            move || {
+            |_| async { Ok::<_, SchedulerTickError>((fixture_scheduler_result(), vec![()])) },
+            move |()| {
                 let tick_started = Arc::clone(&tick_started_for_work);
                 let cancellation = tick_cancellation.clone();
                 let did_finish_tick = Arc::clone(&did_finish_tick_assertion);
@@ -934,7 +1124,7 @@ mod tests {
                         tokio::task::yield_now().await;
                     }
                     did_finish_tick.store(true, Ordering::SeqCst);
-                    Ok::<_, SchedulerTickError>(fixture_scheduler_result())
+                    Ok::<_, SchedulerError>(fixture_scheduler_execution(1))
                 }
             },
             |_| pending(),
@@ -1023,6 +1213,15 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    fn fixture_scheduler_execution(task_id: i64) -> ScheduledTaskExecution {
+        ScheduledTaskExecution {
+            task_id,
+            job_id: format!("fixture-{task_id}"),
+            name: "Fixture task".into(),
+            status: litradar_domain::SchedulerRunState::Success,
+        }
     }
 
     fn fixture_scheduler_result() -> SchedulerExecutionResult {
