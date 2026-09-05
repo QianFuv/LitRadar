@@ -87,7 +87,7 @@ function countListenerCalls(calls: readonly unknown[][], eventType: string): num
 function clientErrorPayloads(calls: readonly unknown[][]): ClientErrorEvent[] {
   const events: ClientErrorEvent[] = [];
   for (const call of calls) {
-    const value = call[0];
+    const value = call[1];
     if (
       typeof value === 'object' &&
       value !== null &&
@@ -120,8 +120,10 @@ function emitsAllowlistedLocalEvents(): void {
   expect(reportClientError('global_boundary', error)).toBe(true);
   expect(reportClientError('global_boundary', error)).toBe(false);
 
+  expect(consoleReport.mock.calls[0][0]).toBe('[client.error] global_boundary: type_error');
   const events = clientErrorPayloads(consoleReport.mock.calls);
   expect(events).toHaveLength(1);
+  expect(Object.isFrozen(events[0])).toBe(true);
   expect(events[0]).toEqual({
     component: 'browser',
     digest: 'digest-123',
@@ -139,6 +141,8 @@ function emitsAllowlistedLocalEvents(): void {
   expect(serialized).not.toContain(querySentinel);
   expect(serialized).not.toContain('fragment-secret');
   expect(serialized).not.toContain(storageSentinel);
+  expect(JSON.stringify(consoleReport.mock.calls)).not.toContain(messageSentinel);
+  expect(JSON.stringify(consoleReport.mock.calls)).not.toContain(stackSentinel);
   expect(fetchReport).not.toHaveBeenCalled();
 }
 

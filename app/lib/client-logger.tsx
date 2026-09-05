@@ -214,6 +214,7 @@ export function reportClientError(
   if (isDuplicateError(error)) {
     return false;
   }
-  console.error(buildClientErrorEvent(source, error, context));
+  const event = buildClientErrorEvent(source, error, context);
+  console.error(`[client.error] ${event.source}: ${event.error_kind}`, event);
   return true;
 }

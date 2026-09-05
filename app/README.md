@@ -153,7 +153,7 @@ Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不�
 
 ## 浏览器错误日志
 
-route/global Error Boundary、`window.error` 和 `unhandledrejection` 共用 `client-logger.tsx`。它只向当前浏览器的 `console.error` 写一个冻结对象：`timestamp`、`level=error`、`event=client.error`、`component=browser`、`source`、不含 query 的 route pathname、`error_kind`，以及可选安全 `digest`/`request_id`。
+route/global Error Boundary、`window.error` 和 `unhandledrejection` 共用 `client-logger.tsx`。它只向当前浏览器的 `console.error` 写一条包含安全分类摘要和冻结对象的日志；摘要为 `[client.error] <source>: <error_kind>`，便于开发错误面板显示。对象字段为 `timestamp`、`level=error`、`event=client.error`、`component=browser`、`source`、不含 query 的 route pathname、`error_kind`，以及可选安全 `digest`/`request_id`。
 
 记录器不枚举原 Error，不写 message、stack、promise reason、请求/响应 body、token、query 或 Web Storage，也不发起 fetch/beacon。对象身份用于去重，Providers 在 React Strict Mode 下确定性安装和移除全局 listener。非 2xx API 响应的 `X-Request-Id` 保存在 `ApiError.requestId`；错误边界可以把它作为安全关联 ID 输出，运维人员再按同一 ID 查询服务端日志。完整示例与事故流程见[日志运维](../docs/operations/logging.md)。
 

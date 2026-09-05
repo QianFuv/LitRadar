@@ -145,7 +145,7 @@ compact 只改变显示形式，不改变事件选择或隐私规则。一次本
 
 ## 浏览器本地事件
 
-浏览器错误记录器只调用 `console.error`，不会发送 fetch、beacon 或其他遥测请求。固定字段为：
+浏览器错误记录器只调用 `console.error`，不会发送 fetch、beacon 或其他遥测请求。每条日志先传入 `[client.error] <source>: <error_kind>` 安全摘要，确保开发错误面板可读，再传入冻结的结构化对象。固定字段为：
 
 ```json
 {
