@@ -1,9 +1,16 @@
 //! Weekly update manifest loading and article grouping.
 
-use std::path::PathBuf;
 use std::time::SystemTime;
 
-use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+#[cfg(test)]
+use chrono::TimeDelta;
+use chrono::{DateTime, SecondsFormat, Utc};
+
+use crate::weekly_manifest::{
+    load_weekly_manifests, normalize_db_name, parse_iso_datetime, weekly_window_start,
+};
+#[cfg(test)]
+use crate::weekly_manifest::{parse_weekly_manifest, WeeklyManifest};
 
 use super::articles::fetch_articles_by_ids;
 use super::shared::*;
@@ -186,13 +193,6 @@ pub fn get_weekly_update_articles(
         .unwrap_or_default();
     install_weekly_membership(&mut connection, &article_ids)?;
     fetch_weekly_article_page(&connection, params)
-}
-
-fn weekly_window_start(window_end: DateTime<Utc>) -> DateTime<Utc> {
-    let window_delta = TimeDelta::try_days(7).expect("seven-day duration should be valid");
-    window_end
-        .checked_sub_signed(window_delta)
-        .unwrap_or(DateTime::<Utc>::MIN_UTC)
 }
 
 fn load_weekly_buckets(
@@ -476,142 +476,6 @@ fn group_weekly_articles_by_journal(
     journals
 }
 
-fn load_weekly_manifests(
-    config: &StorageConfig,
-    window_start: DateTime<Utc>,
-    window_end: DateTime<Utc>,
-) -> Result<Vec<WeeklyManifest>, IndexRepositoryError> {
-    let push_state_dir = config.project_root().join("data").join("push_state");
-    if !push_state_dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut manifests = Vec::new();
-    let mut seen = HashSet::new();
-    for path in weekly_manifest_paths(&push_state_dir)? {
-        let payload = read_weekly_manifest_payload(&path)?;
-        let Some(manifest) = parse_weekly_manifest(payload) else {
-            continue;
-        };
-        if manifest.generated_at >= window_start
-            && manifest.generated_at <= window_end
-            && seen.insert((
-                manifest.db_name.clone(),
-                manifest.run_id.clone(),
-                manifest.generated_at,
-                manifest.article_ids.clone(),
-            ))
-        {
-            manifests.push(manifest);
-        }
-    }
-    manifests.sort_by(|left, right| {
-        right
-            .generated_at
-            .cmp(&left.generated_at)
-            .then_with(|| left.db_name.cmp(&right.db_name))
-            .then_with(|| left.run_id.cmp(&right.run_id))
-            .then_with(|| left.article_ids.cmp(&right.article_ids))
-    });
-    Ok(manifests)
-}
-
-fn weekly_manifest_paths(push_state_dir: &Path) -> Result<Vec<PathBuf>, IndexRepositoryError> {
-    let mut paths = Vec::new();
-    for entry in fs::read_dir(push_state_dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_file() && is_change_manifest_path(&entry.path()) {
-            paths.push(entry.path());
-        }
-    }
-    let history_directory = push_state_dir.join("history");
-    if history_directory.exists() {
-        for catalog_entry in fs::read_dir(history_directory)? {
-            let catalog_entry = catalog_entry?;
-            if !catalog_entry.file_type()?.is_dir() {
-                continue;
-            }
-            for entry in fs::read_dir(catalog_entry.path())? {
-                let entry = entry?;
-                if entry.file_type()?.is_file() && is_managed_history_manifest_path(&entry.path()) {
-                    paths.push(entry.path());
-                }
-            }
-        }
-    }
-    paths.sort();
-    Ok(paths)
-}
-
-fn is_change_manifest_path(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|value| value.to_str())
-        .is_some_and(|name| name.ends_with(".changes.json"))
-}
-
-fn is_managed_history_manifest_path(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|value| value.to_str())
-        .and_then(|value| value.strip_suffix(".changes.json"))
-        .is_some_and(|digest| {
-            digest.len() == 64
-                && digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
-}
-
-#[derive(Debug, Deserialize)]
-struct WeeklyManifestPayload {
-    db_name: Option<String>,
-    generated_at: Option<String>,
-    run_id: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_json_i64_list")]
-    notifiable_article_ids: Vec<i64>,
-}
-
-fn read_weekly_manifest_payload(
-    path: &Path,
-) -> Result<WeeklyManifestPayload, IndexRepositoryError> {
-    let reader = std::io::BufReader::new(fs::File::open(path)?);
-    Ok(serde_json::from_reader(reader)?)
-}
-
-fn parse_weekly_manifest(payload: WeeklyManifestPayload) -> Option<WeeklyManifest> {
-    let db_name = payload.db_name.as_deref().and_then(normalize_db_name)?;
-    let mut seen = HashSet::new();
-    let mut article_ids = Vec::new();
-    for item in payload.notifiable_article_ids {
-        if seen.insert(item) {
-            article_ids.push(item);
-        }
-    }
-    if article_ids.is_empty() {
-        return None;
-    }
-    let generated_at = payload
-        .generated_at
-        .as_deref()
-        .or(payload.run_id.as_deref())
-        .and_then(parse_manifest_datetime)?;
-    Some(WeeklyManifest {
-        db_name,
-        run_id: payload.run_id,
-        generated_at,
-        article_ids,
-    })
-}
-
-fn deserialize_json_i64_list<'de, D>(deserializer: D) -> Result<Vec<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = JsonValue::deserialize(deserializer)?;
-    let Some(items) = value.as_array() else {
-        return Ok(Vec::new());
-    };
-    Ok(items.iter().filter_map(JsonValue::as_i64).collect())
-}
-
 fn weekly_article_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WeeklyArticleRecord> {
     let date = row.get::<_, Option<String>>(5)?;
     Ok(WeeklyArticleRecord {
@@ -633,17 +497,6 @@ fn weekly_article_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WeeklyAr
     })
 }
 
-fn normalize_db_name(value: &str) -> Option<String> {
-    let filename = Path::new(value.trim()).file_name()?.to_str()?;
-    if filename.is_empty() {
-        None
-    } else if filename.ends_with(".sqlite") {
-        Some(filename.to_string())
-    } else {
-        Some(format!("{filename}.sqlite"))
-    }
-}
-
 #[cfg(test)]
 fn normalize_iso_datetime(value: &str) -> Option<String> {
     parse_iso_datetime(value).map(format_utc_datetime)
@@ -657,37 +510,12 @@ fn iso_minus_days(value: &str, days: i64) -> Option<String> {
         .map(format_utc_datetime)
 }
 
-fn parse_iso_datetime(value: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value.trim())
-        .ok()
-        .map(|date| date.with_timezone(&Utc))
-}
-
-fn parse_manifest_datetime(value: &str) -> Option<DateTime<Utc>> {
-    parse_iso_datetime(value).or_else(|| {
-        let value = value.trim();
-        let timestamp = value.parse::<i64>().ok()?;
-        if timestamp.to_string() != value {
-            return None;
-        }
-        DateTime::<Utc>::from_timestamp(timestamp, 0)
-    })
-}
-
 fn format_utc_datetime(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 fn format_precise_utc_datetime(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::AutoSi, true)
-}
-
-#[derive(Debug, Clone)]
-struct WeeklyManifest {
-    db_name: String,
-    run_id: Option<String>,
-    generated_at: DateTime<Utc>,
-    article_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -708,6 +536,38 @@ mod tests {
     use crate::index::test_support::{
         fixture_db_path, weekly_article_ids, write_weekly_manifest, IndexFixture,
     };
+
+    #[test]
+    fn weekly_count_matches_summary_when_only_history_is_current() {
+        let fixture = IndexFixture::new(true);
+        let now = DateTime::<Utc>::from(SystemTime::now());
+        write_weekly_manifest(
+            &fixture.config,
+            "fixture.changes.json",
+            json!({
+                "db_name": fixture.db_name,
+                "generated_at": format_precise_utc_datetime(now - TimeDelta::days(8)),
+                "notifiable_article_ids": [1003, 1004],
+                "backfill_article_ids": [1002]
+            }),
+        );
+        write_weekly_history_manifest(
+            &fixture.config,
+            &"a".repeat(64),
+            &json!({
+                "db_name": fixture.db_name,
+                "generated_at": format_precise_utc_datetime(now - TimeDelta::days(1)),
+                "run_id": "history-only",
+                "notifiable_article_ids": [1001, 999999]
+            }),
+        );
+        let summary = get_weekly_updates_summary_at(&fixture.config, now)
+            .expect("weekly summary should load");
+        let count =
+            crate::count_weekly_articles(&fixture.config, &[]).expect("weekly count should load");
+        assert_eq!(summary.databases[0].new_article_count, 1);
+        assert_eq!(count, summary.databases[0].new_article_count);
+    }
 
     #[test]
     fn weekly_updates_cover_manifest_merging_grouping_and_missing_databases() {

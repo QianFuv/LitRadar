@@ -74,70 +74,24 @@ pub fn count_weekly_articles(
     config: &StorageConfig,
     selected_databases: &[String],
 ) -> Result<usize, BusinessRepositoryError> {
-    let push_state_dir = config.project_root().join("data").join("push_state");
-    if !push_state_dir.exists() {
-        return Ok(0);
-    }
+    let manifests = crate::weekly_manifest::load_available_weekly_manifests(
+        config,
+        chrono::DateTime::<chrono::Utc>::from(SystemTime::now()),
+        selected_databases,
+    )
+    .map_err(|error| BusinessRepositoryError::Io(std::io::Error::other(error)))?;
     let mut seen = HashSet::new();
-    for entry in fs::read_dir(push_state_dir)? {
-        let path = entry?.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("json")
-            || !path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .is_some_and(|name| name.ends_with(".changes.json"))
-        {
-            continue;
-        }
-        let manifest = read_weekly_article_count_manifest(&path)?;
-        let Some(db_name) = manifest
-            .db_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        if !is_database_selected(selected_databases, &db_name) {
-            continue;
-        }
-        for article_id in manifest
-            .notifiable_article_ids
-            .into_iter()
-            .chain(manifest.backfill_article_ids)
-        {
-            seen.insert((db_name.clone(), article_id));
+    for manifest in manifests {
+        if is_database_selected(selected_databases, &manifest.db_name) {
+            seen.extend(
+                manifest
+                    .article_ids
+                    .into_iter()
+                    .map(|id| (manifest.db_name.clone(), id)),
+            );
         }
     }
     Ok(seen.len())
-}
-
-#[derive(Debug, Deserialize)]
-struct WeeklyArticleCountManifest {
-    db_name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_json_i64_list")]
-    notifiable_article_ids: Vec<i64>,
-    #[serde(default, deserialize_with = "deserialize_json_i64_list")]
-    backfill_article_ids: Vec<i64>,
-}
-
-fn read_weekly_article_count_manifest(
-    path: &Path,
-) -> Result<WeeklyArticleCountManifest, BusinessRepositoryError> {
-    let reader = std::io::BufReader::new(fs::File::open(path)?);
-    Ok(serde_json::from_reader(reader)?)
-}
-
-fn deserialize_json_i64_list<'de, D>(deserializer: D) -> Result<Vec<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-    let Some(items) = value.as_array() else {
-        return Ok(Vec::new());
-    };
-    Ok(items.iter().filter_map(Value::as_i64).collect())
 }
 
 pub(super) fn open_business_connection(
@@ -182,20 +136,32 @@ pub(super) fn now_seconds() -> f64 {
 mod tests {
     use std::fs;
 
-    use tempfile::tempdir;
-
     use super::*;
-    use crate::StorageConfig;
+    use tempfile::tempdir;
 
     #[test]
     fn tracking_weekly_article_count_reads_only_needed_manifest_fields() {
-        let temp_dir = tempdir().expect("temp dir should be created");
-        let config = StorageConfig::from_project_root(temp_dir.path());
+        let root = tempdir().expect("temporary project should exist");
+        let config = StorageConfig::from_project_root(root.path());
+        fs::create_dir_all(config.index_dir()).expect("index directory should exist");
+        let connection = open_sqlite_connection(config.index_dir().join("fixture.sqlite"))
+            .expect("fixture database should open");
+        connection.execute_batch(
+            "CREATE TABLE journals (journal_id INTEGER PRIMARY KEY); \
+             CREATE TABLE article_listing (article_id INTEGER PRIMARY KEY, journal_id INTEGER); \
+             INSERT INTO journals VALUES (1); INSERT INTO article_listing VALUES (1001, 1), (1002, 1);"
+        ).expect("article membership should exist");
         let push_state_dir = config.project_root().join("data").join("push_state");
         fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
         fs::write(
             push_state_dir.join("fixture.changes.json"),
-            r#"{"db_name":"fixture.sqlite","notifiable_article_ids":[10,10,"11",null],"backfill_article_ids":[12,"13"],"summary":{"issues":[{"added_article_ids":[10,11,12,13]}]}}"#,
+            serde_json::json!({
+                "db_name": "fixture.sqlite",
+                "generated_at": chrono::DateTime::<chrono::Utc>::from(SystemTime::now()).to_rfc3339(),
+                "notifiable_article_ids": [1001, 1001, "1002", null],
+                "backfill_article_ids": [1002],
+                "summary": {"issues": [{"added_article_ids": [1001,1002]}]}
+            }).to_string(),
         )
         .expect("manifest should write");
         fs::write(
@@ -211,8 +177,8 @@ mod tests {
         let unselected_count = count_weekly_articles(&config, &["other.sqlite".to_string()])
             .expect("unselected weekly article count should load");
 
-        assert_eq!(all_count, 2);
-        assert_eq!(selected_count, 2);
+        assert_eq!(all_count, 1);
+        assert_eq!(selected_count, 1);
         assert_eq!(unselected_count, 0);
     }
 }

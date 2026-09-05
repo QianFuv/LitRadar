@@ -1,145 +1,101 @@
-//! Manual weekly change-manifest discovery and parsing.
+//! Manual weekly snapshots shared with weekly queries and counts.
 
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ManualWeeklyManifest {
     pub(super) db_name: String,
-    pub(super) path: PathBuf,
+    pub(super) manifest: litradar_recommend::ChangeManifest,
 }
 
 pub(super) fn manual_weekly_manifests(
-    project_root: &Path,
+    storage: &litradar_storage::StorageConfig,
     selected_databases: &[String],
+    window_end: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<ManualWeeklyManifest>, DeliveryError> {
-    let push_state_dir = project_root.join("data").join("push_state");
-    if !push_state_dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut manifests = Vec::new();
-    for entry in
-        fs::read_dir(push_state_dir).map_err(|error| DeliveryError::Manual(error.to_string()))?
-    {
-        let path = entry
-            .map_err(|error| DeliveryError::Manual(error.to_string()))?
-            .path();
-        if !path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|name| name.ends_with(".changes.json"))
-        {
-            continue;
-        }
-        let payload = read_manual_manifest_payload(&path)?;
-        let Some(db_name) = manual_manifest_db_name(&payload) else {
-            continue;
-        };
-        if !is_database_selected(selected_databases, &db_name) {
-            continue;
-        }
-        if !manual_manifest_has_notifiable_articles(&payload) {
-            continue;
-        }
-        manifests.push(ManualWeeklyManifest { db_name, path });
-    }
-    manifests.sort_by(|left, right| {
-        left.db_name
-            .cmp(&right.db_name)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    Ok(manifests)
-}
-
-#[derive(Debug, Deserialize)]
-struct ManualManifestPayload {
-    db_name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_json_i64_list")]
-    notifiable_article_ids: Vec<i64>,
-}
-
-fn read_manual_manifest_payload(path: &Path) -> Result<ManualManifestPayload, DeliveryError> {
-    let reader = std::io::BufReader::new(
-        fs::File::open(path).map_err(|error| DeliveryError::Manual(error.to_string()))?,
-    );
-    serde_json::from_reader(reader).map_err(|error| DeliveryError::Manual(error.to_string()))
-}
-
-fn manual_manifest_db_name(payload: &ManualManifestPayload) -> Option<String> {
-    let value = payload.db_name.as_deref()?;
-    normalize_db_name(value)
-}
-
-fn manual_manifest_has_notifiable_articles(payload: &ManualManifestPayload) -> bool {
-    !payload.notifiable_article_ids.is_empty()
-}
-
-fn deserialize_json_i64_list<'de, D>(deserializer: D) -> Result<Vec<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-    let Some(items) = value.as_array() else {
-        return Ok(Vec::new());
-    };
-    Ok(items.iter().filter_map(Value::as_i64).collect())
-}
-
-fn normalize_db_name(value: &str) -> Option<String> {
-    let filename = Path::new(value.trim()).file_name()?.to_str()?;
-    if filename.is_empty() {
-        None
-    } else if filename.ends_with(".sqlite") {
-        Some(filename.to_string())
-    } else {
-        Some(format!("{filename}.sqlite"))
-    }
+    Ok(
+        litradar_storage::weekly_manifest::load_available_weekly_manifests(
+            storage,
+            window_end,
+            selected_databases,
+        )?
+        .into_iter()
+        .filter(|manifest| is_database_selected(selected_databases, &manifest.db_name))
+        .map(|manifest| ManualWeeklyManifest {
+            db_name: manifest.db_name,
+            manifest: litradar_recommend::ChangeManifest {
+                pending_issue_keys: Vec::new(),
+                pending_inpress_keys: Vec::new(),
+                pending_article_ids: manifest.article_ids,
+                run_id: manifest.run_id,
+            },
+        })
+        .collect(),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
+    use super::*;
     use tempfile::tempdir;
 
-    use super::*;
-
     #[test]
-    fn manual_weekly_manifests_parse_only_needed_fields() {
-        let root = tempdir().expect("temp dir should be created");
-        let push_state_dir = root.path().join("data").join("push_state");
-        fs::create_dir_all(&push_state_dir).expect("push state dir should be created");
+    fn manual_weekly_manifests_share_fixed_history_membership_and_identity() {
+        let root = tempdir().expect("temporary project should exist");
+        let storage = litradar_storage::StorageConfig::from_project_root(root.path());
+        let window_end = chrono::DateTime::parse_from_rfc3339("2026-09-05T12:00:00.250Z")
+            .expect("window should parse")
+            .with_timezone(&chrono::Utc);
+        let history = root.path().join("data/push_state/history/fixture");
+        fs::create_dir_all(&history).expect("history should exist");
+        fs::create_dir_all(storage.index_dir()).expect("index directory should exist");
+        let connection =
+            litradar_storage::open_sqlite_connection(storage.index_dir().join("fixture.sqlite"))
+                .expect("fixture database should open");
+        connection.execute_batch(
+            "CREATE TABLE journals (journal_id INTEGER PRIMARY KEY); \
+             CREATE TABLE article_listing (article_id INTEGER PRIMARY KEY, journal_id INTEGER); \
+             INSERT INTO journals VALUES (1); INSERT INTO article_listing VALUES (101, 1), (102, 1);"
+        ).expect("article membership should exist");
+        let payload = serde_json::json!({
+            "db_name": "fixture.sqlite", "run_id": " original-source-run ",
+            "generated_at": "2026-09-05T12:00:00.250Z", "notifiable_article_ids": [101, 101, 999],
+            "backfill_article_ids": [102]
+        });
+        let history_path = history.join(format!("{}.changes.json", "a".repeat(64)));
+        fs::write(&history_path, payload.to_string()).expect("history should write");
         fs::write(
-            push_state_dir.join("alpha.changes.json"),
-            r#"{"db_name":"alpha","notifiable_article_ids":[10,"11",null],"summary":{"issues":[{"added_article_ids":[10,11,12]}]}}"#,
+            root.path().join("data/push_state/fixture.changes.json"),
+            payload.to_string(),
         )
-        .expect("alpha manifest should write");
-        fs::write(
-            push_state_dir.join("beta.changes.json"),
-            r#"{"db_name":"beta","notifiable_article_ids":["12"],"summary":{"added_article_ids":[12]}}"#,
-        )
-        .expect("beta manifest should write");
-        fs::write(
-            push_state_dir.join("legacy.changes.json"),
-            r#"{"db_path":"data/index/legacy.sqlite","notifiable_article_ids":[12]}"#,
-        )
-        .expect("legacy manifest should write");
-        fs::write(
-            push_state_dir.join("runtime.json"),
-            r#"{"status":"completed"}"#,
-        )
-        .expect("runtime state should write");
-
+        .expect("duplicate current publication should write");
         let manifests =
-            manual_weekly_manifests(root.path(), &[]).expect("manual weekly manifests should load");
-
+            manual_weekly_manifests(&storage, &[], window_end).expect("snapshots should load");
         assert_eq!(manifests.len(), 1);
-        assert_eq!(manifests[0].db_name, "alpha.sqlite");
+        assert_eq!(manifests[0].manifest.pending_article_ids, vec![101]);
         assert_eq!(
-            manifests[0]
-                .path
-                .file_name()
-                .and_then(|value| value.to_str()),
-            Some("alpha.changes.json")
+            manifests[0].manifest.run_id.as_deref(),
+            Some("original-source-run")
         );
+        assert!(
+            manual_weekly_manifests(&storage, &["other.sqlite".into()], window_end)
+                .expect("selection should apply")
+                .is_empty()
+        );
+        assert!(manual_weekly_manifests(
+            &storage,
+            &[],
+            window_end - chrono::TimeDelta::milliseconds(1)
+        )
+        .expect("future publication should be excluded")
+        .is_empty());
+        fs::write(root.path().join("data/push_state/fixture.changes.json"),
+            r#"{"db_name":"fixture.sqlite","generated_at":"2000-01-01T00:00:00Z","notifiable_article_ids":[102]}"#)
+            .expect("stale current publication should write");
+        let history_only =
+            manual_weekly_manifests(&storage, &[], window_end).expect("history should remain");
+        assert_eq!(history_only, manifests);
+        fs::write(&history_path, "{").expect("invalid history should write");
+        assert!(manual_weekly_manifests(&storage, &[], window_end).is_err());
     }
 }

@@ -20,7 +20,6 @@ use litradar_domain::{
 };
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::secrets::{notification_context, runtime_context};

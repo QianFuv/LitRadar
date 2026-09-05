@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,7 +26,6 @@ use litradar_recommend::{
     DEFAULT_OPENAI_MODEL, MAX_ARTICLES_PER_PUSH, PUSHPLUS_CHANNEL,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 mod candidates;
 mod folder;
@@ -532,6 +532,8 @@ pub struct RecommendationRunOutcome {
 /// Manual weekly push run configuration.
 #[derive(Debug, Clone)]
 pub struct ManualWeeklyPushConfig {
+    /// Fixed source window captured when the durable manual job was created.
+    pub window_end: chrono::DateTime<chrono::Utc>,
     /// Storage path configuration.
     pub storage_config: litradar_storage::StorageConfig,
     /// Deployment secret codec.

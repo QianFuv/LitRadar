@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
-use std::fs;
 use std::path::Path;
 
 use litradar_domain::{
@@ -16,8 +15,6 @@ use litradar_domain::{
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params_from_iter, Connection, OptionalExtension};
-use serde::Deserialize;
-use serde_json::Value as JsonValue;
 
 use crate::{open_sqlite_connection, DatabaseResolutionError, StorageConfig};
 

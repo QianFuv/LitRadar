@@ -13,6 +13,7 @@ pub mod meta;
 pub mod migrations;
 pub mod secrets;
 pub mod sqlite;
+pub mod weekly_manifest;
 
 pub use announcements::{list_active_announcements, AnnouncementRepositoryError};
 pub use auth::{

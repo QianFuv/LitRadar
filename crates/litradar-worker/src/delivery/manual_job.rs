@@ -140,7 +140,10 @@ pub fn run_manual_delivery_job(
                 .map_err(|_| ())
         });
     let user_id = UserId(running.user_id.expect("validated manual job has a user"));
+    let window_duration = std::time::Duration::try_from_secs_f64(running.created_at)
+        .map_err(|_| DeliveryError::Manual("Manual job creation time is invalid".into()))?;
     let result = run_manual_weekly_push(&ManualWeeklyPushConfig {
+        window_end: chrono::DateTime::from(std::time::UNIX_EPOCH + window_duration),
         storage_config: storage_config.clone(),
         secret_codec,
         user_id,

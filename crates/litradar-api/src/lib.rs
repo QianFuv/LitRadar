@@ -4674,6 +4674,7 @@ mod tests {
             push_state_dir.join("fixture.changes.json"),
             serde_json::json!({
                 "db_name": index_database.db_name,
+                "generated_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock should follow epoch").as_secs().to_string(),
                 "notifiable_article_ids": [index_database.article_id],
                 "backfill_article_ids": [9002]
             })
@@ -4943,7 +4944,7 @@ mod tests {
 
         assert_eq!(initial_status.status, StatusCode::OK);
         assert_eq!(initial_status.payload["total_folders"], 1);
-        assert_eq!(initial_status.payload["weekly_articles_available"], 2);
+        assert_eq!(initial_status.payload["weekly_articles_available"], 1);
         assert_eq!(initial_status.payload["notification_configured"], false);
         assert_eq!(empty_settings.status, StatusCode::OK);
         assert!(empty_settings.payload.is_null());

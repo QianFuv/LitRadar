@@ -359,3 +359,9 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 ## 备份边界
 
 v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 只包含受当前二进制支持的精确 v6/v7 `data/index/*.sqlite` 内容库；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v4 controls，`data/index-work` 的 Crossref 工作集也始终排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
+
+### Weekly query and manual delivery membership
+
+Weekly queries, the tracking availability count, and manual weekly delivery share the same UTC seven-day manifest window. They merge current and managed history publications, deduplicate identical publications, and include only notifiable article IDs that still exist in an available content database. Backfill IDs do not contribute to this count or manual candidate set.
+
+A manual job fixes the window end to its durable creation time. It passes parsed source snapshots into the existing delivery workflow, preserving the original source run identity and per-user attempt deduplication; it does not reread a mutable current manifest between discovery and delivery. Untimestamped or out-of-window publications are excluded, while malformed managed files remain visible failures.

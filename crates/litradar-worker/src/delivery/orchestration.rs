@@ -56,13 +56,19 @@ pub fn run_recommendation_delivery_for_user(
     config: &RecommendationRunConfig,
     user_id: UserId,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
-    run_recommendation_delivery_for_user_in_attempt(config, user_id, config.attempt_id.as_deref())
+    run_recommendation_delivery_for_user_in_attempt(
+        config,
+        user_id,
+        config.attempt_id.as_deref(),
+        None,
+    )
 }
 
 fn run_recommendation_delivery_for_user_in_attempt(
     config: &RecommendationRunConfig,
     user_id: UserId,
     attempt_id: Option<&str>,
+    manifest: Option<litradar_recommend::ChangeManifest>,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
     let timeout_seconds = config.timeout_seconds.max(1);
     let mut ai_selector = DefaultDeliveryAiSelector::live(
@@ -76,10 +82,11 @@ fn run_recommendation_delivery_for_user_in_attempt(
         config.retry_attempts,
         config.execution_control.clone(),
     )?;
-    run_recommendation_delivery_with_services_for_user(
+    run_recommendation_delivery_with_manifest_for_user(
         config,
         Some(user_id),
         attempt_id,
+        manifest,
         &mut ai_selector,
         &mut pushplus_sender,
     )
@@ -149,8 +156,9 @@ fn run_manual_weekly_push_inner(
     }
 
     let manifests = manual_weekly_manifests(
-        config.storage_config.project_root(),
+        &config.storage_config,
         &settings.selected_databases,
+        config.window_end,
     )?;
     if manifests.is_empty() {
         let message = if settings.selected_databases.is_empty() {
@@ -193,7 +201,7 @@ fn run_manual_weekly_push_inner(
                 secret_codec: config.secret_codec.clone(),
                 index_db_path,
                 db_name: manifest.db_name,
-                changes_file: Some(manifest.path),
+                changes_file: None,
                 attempt_id: None,
                 ai_model: config.ai_model.clone(),
                 max_candidates: config.max_candidates,
@@ -207,6 +215,7 @@ fn run_manual_weekly_push_inner(
             },
             config.user_id,
             Some(&config.attempt_id),
+            Some(manifest.manifest),
         )?);
     }
 
@@ -258,6 +267,24 @@ fn run_recommendation_delivery_with_services_for_user(
     ai_selector: &mut impl DeliveryAiSelector,
     pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
+    run_recommendation_delivery_with_manifest_for_user(
+        config,
+        subscriber_user_id,
+        attempt_id,
+        None,
+        ai_selector,
+        pushplus_sender,
+    )
+}
+
+fn run_recommendation_delivery_with_manifest_for_user(
+    config: &RecommendationRunConfig,
+    subscriber_user_id: Option<UserId>,
+    attempt_id: Option<&str>,
+    manifest: Option<litradar_recommend::ChangeManifest>,
+    ai_selector: &mut impl DeliveryAiSelector,
+    pushplus_sender: &mut impl DeliveryPushPlusSender,
+) -> Result<RecommendationRunOutcome, DeliveryError> {
     let started_at = Instant::now();
     let workflow_span = tracing::info_span!(
         "delivery.workflow",
@@ -279,6 +306,7 @@ fn run_recommendation_delivery_with_services_for_user(
             config,
             subscriber_user_id,
             attempt_id,
+            manifest,
             ai_selector,
             pushplus_sender,
         );
@@ -291,14 +319,18 @@ fn execute_recommendation_delivery_with_services_for_user(
     config: &RecommendationRunConfig,
     subscriber_user_id: Option<UserId>,
     attempt_id: Option<&str>,
+    manifest: Option<litradar_recommend::ChangeManifest>,
     ai_selector: &mut impl DeliveryAiSelector,
     pushplus_sender: &mut impl DeliveryPushPlusSender,
 ) -> Result<RecommendationRunOutcome, DeliveryError> {
-    let manifest = config
-        .changes_file
-        .as_ref()
-        .map(|path| load_change_manifest(path, &config.db_name))
-        .transpose()?;
+    let manifest = match manifest {
+        Some(manifest) => Some(manifest),
+        None => config
+            .changes_file
+            .as_ref()
+            .map(|path| load_change_manifest(path, &config.db_name))
+            .transpose()?,
+    };
     let source_external_id = match manifest.as_ref().and_then(|value| value.run_id.clone()) {
         Some(run_id) => run_id,
         None => format!("run-{}", litradar_storage::random_hex(16)?),
@@ -2021,6 +2053,51 @@ mod tests {
         assert!(dedupe.iter().any(|row| {
             row.article_id == 102 && row.status == litradar_storage::DeliveryDedupeStatus::Confirmed
         }));
+    }
+
+    #[test]
+    fn manual_snapshot_ignores_replaced_source_and_replays_the_same_attempt() {
+        let fixture = DeliveryFixture::new(notification_settings("folder", true, vec![]));
+        let changes_file = fixture.root.path().join("snapshot.changes.json");
+        fs::write(&changes_file,
+            r#"{"db_name":"fixture.sqlite","run_id":"snapshot-source","notifiable_article_ids":[101]}"#)
+            .expect("source should write");
+        let snapshot = load_change_manifest(&changes_file, "fixture.sqlite")
+            .expect("snapshot should parse before replacement");
+        fs::write(&changes_file, "{").expect("current publication should be replaced");
+        let config = fixture.config(
+            DeliveryWorkflow::Push,
+            DeliveryMode::Execute,
+            Some(changes_file),
+            None,
+        );
+        let mut selector = FixtureDeliveryAiSelector::new(vec![selection_outcome(&[101], "")]);
+        let mut sender = FixturePushPlusSender::new(Vec::new());
+        let outcome = run_recommendation_delivery_with_manifest_for_user(
+            &config,
+            Some(fixture.user_id),
+            Some("snapshot-attempt"),
+            Some(snapshot.clone()),
+            &mut selector,
+            &mut sender,
+        )
+        .expect("owned snapshot should execute without rereading the source");
+        assert_eq!(outcome.status, DeliveryOutcomeState::Completed);
+        assert_eq!(outcome.candidate_article_ids, vec![101]);
+        assert_eq!(favorite_count(&fixture.auth_db_path), 1);
+        let mut replay_selector = FixtureDeliveryAiSelector::new(Vec::new());
+        let replay = run_recommendation_delivery_with_manifest_for_user(
+            &config,
+            Some(fixture.user_id),
+            Some("snapshot-attempt"),
+            Some(snapshot),
+            &mut replay_selector,
+            &mut sender,
+        )
+        .expect("same source and attempt should replay");
+        assert_eq!(replay.delivery_run_id, outcome.delivery_run_id);
+        assert!(replay_selector.subscriber_ids.is_empty());
+        assert_eq!(favorite_count(&fixture.auth_db_path), 1);
     }
 
     #[test]
