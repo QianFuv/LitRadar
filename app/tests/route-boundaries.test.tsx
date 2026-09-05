@@ -84,7 +84,8 @@ async function resetsRouteErrors(): Promise<void> {
 
   expect(reset).toHaveBeenCalledOnce();
   expect(report).toHaveBeenCalledOnce();
-  expect(report.mock.calls[0][0]).toMatchObject({
+  expect(report.mock.calls[0][0]).toBe('[client.error] route_boundary: error');
+  expect(report.mock.calls[0][1]).toMatchObject({
     component: 'browser',
     digest: 'route-digest',
     error_kind: 'error',
@@ -92,7 +93,7 @@ async function resetsRouteErrors(): Promise<void> {
     route: '/',
     source: 'route_boundary',
   });
-  expect(JSON.stringify(report.mock.calls[0][0])).not.toContain('sensitive route detail');
+  expect(JSON.stringify(report.mock.calls[0])).not.toContain('sensitive route detail');
 }
 
 /**
