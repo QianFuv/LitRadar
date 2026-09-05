@@ -133,8 +133,9 @@ pub use metadata::{
     list_journal_options, list_journals, list_years, IssueListParams, JournalListParams,
 };
 pub use weekly::{
-    get_weekly_update_articles, get_weekly_updates, get_weekly_updates_summary,
-    WeeklyArticlePageParams, LEGACY_WEEKLY_ARTICLE_LIMIT,
+    get_weekly_update_articles, get_weekly_update_articles_with_cache, get_weekly_updates,
+    get_weekly_updates_summary, get_weekly_updates_summary_with_cache, WeeklyArticlePageParams,
+    LEGACY_WEEKLY_ARTICLE_LIMIT,
 };
 
 #[cfg(test)]

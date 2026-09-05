@@ -129,3 +129,5 @@ pub use secrets::{
 pub use sqlite::{
     cleanup_sqlite_sidecars, open_sqlite_connection, try_load_extension, SqliteSidecarCleanup,
 };
+
+pub use weekly_manifest::{WeeklyManifestCache, WeeklyManifestCacheStats};

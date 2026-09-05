@@ -24,6 +24,7 @@ const AUTH_RATE_LIMIT_AUDIT_INTERVAL_SECONDS: u64 = 60;
 #[derive(Clone)]
 pub struct ApiState {
     storage_config: StorageConfig,
+    weekly_manifest_cache: Arc<litradar_storage::WeeklyManifestCache>,
     secret_codec: SecretCodec,
     are_session_cookies_secure: bool,
     auth_rate_limiter: Arc<Mutex<AuthRateLimiter>>,
@@ -119,6 +120,7 @@ impl ApiState {
         )
         .expect("built-in article provider registry should be valid");
         Self {
+            weekly_manifest_cache: Arc::new(litradar_storage::WeeklyManifestCache::default()),
             storage_config,
             secret_codec,
             are_session_cookies_secure,
@@ -187,6 +189,11 @@ impl ApiState {
     pub(crate) fn with_article_providers(mut self, article_providers: ProviderRegistry) -> Self {
         self.article_providers = Arc::new(article_providers);
         self
+    }
+
+    /// Return the shared bounded weekly manifest parser cache.
+    pub(crate) fn weekly_manifest_cache(&self) -> Arc<litradar_storage::WeeklyManifestCache> {
+        Arc::clone(&self.weekly_manifest_cache)
     }
 
     /// Return storage configuration.

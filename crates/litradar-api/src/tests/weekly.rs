@@ -17,6 +17,55 @@ use crate::AUTHENTICATED_CACHE_CONTROL;
     miri,
     ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
 )]
+async fn weekly_summary_and_article_routes_reuse_the_same_manifest_cache() {
+    let backend = TestBackend::new();
+    let user = backend.authenticated_user("cache_reader", false);
+    let database = backend.create_index_database("cached.sqlite");
+    backend.create_weekly_manifest(&database);
+    let state = crate::state::ApiState::new(
+        backend.storage_config().clone(),
+        backend.secret_codec().clone(),
+        false,
+    );
+    let cache = state.weekly_manifest_cache();
+    let app = axum::Router::new()
+        .nest("/api", crate::routes::public_routes())
+        .with_state(state);
+    let auth = user.authorization_header();
+    let summary = json_request(
+        &app,
+        Method::GET,
+        "/api/weekly-updates/summary",
+        Some(&auth),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(summary.status, StatusCode::OK);
+    assert_eq!(cache.stats().parse_attempts, 1);
+    let end = summary.payload["window_end"]
+        .as_str()
+        .expect("summary should expose window end");
+    let journal = summary.payload["databases"][0]["journals"][0]["journal_id"]
+        .as_str()
+        .expect("journal id should be a string");
+    let uri = format!("/api/weekly-updates/articles?db=cached.sqlite&journal_id={journal}&window_end={end}&limit=50");
+    for _ in 0..2 {
+        let page = json_request(&app, Method::GET, &uri, Some(&auth), None, None).await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert!(!page.payload["items"]
+            .as_array()
+            .expect("items should be an array")
+            .is_empty());
+    }
+    assert_eq!(cache.stats().parse_attempts, 1);
+}
+
+#[tokio::test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+)]
 async fn weekly_updates_match_shared_scenario() {
     let backend = TestBackend::new();
     let user = backend.authenticated_user("scenario_reader", false);

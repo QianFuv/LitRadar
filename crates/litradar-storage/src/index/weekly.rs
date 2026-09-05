@@ -7,7 +7,8 @@ use chrono::TimeDelta;
 use chrono::{DateTime, SecondsFormat, Utc};
 
 use crate::weekly_manifest::{
-    load_weekly_manifests, normalize_db_name, parse_iso_datetime, weekly_window_start,
+    load_weekly_manifests, load_weekly_manifests_with_cache, normalize_db_name, parse_iso_datetime,
+    weekly_window_start, WeeklyManifestCache,
 };
 #[cfg(test)]
 use crate::weekly_manifest::{parse_weekly_manifest, WeeklyManifest};
@@ -112,10 +113,39 @@ fn get_weekly_updates_summary_at(
     config: &StorageConfig,
     now: DateTime<Utc>,
 ) -> Result<WeeklyUpdatesSummaryResponse, IndexRepositoryError> {
+    weekly_summary_inner(config, now, None)
+}
+
+/// Return a weekly summary while reusing unchanged parsed manifests.
+///
+/// # Arguments
+///
+/// * `config` - Storage paths.
+/// * `cache` - Shared process-local parser cache.
+///
+/// # Returns
+///
+/// The same bounded summary as an uncached query.
+pub fn get_weekly_updates_summary_with_cache(
+    config: &StorageConfig,
+    cache: &WeeklyManifestCache,
+) -> Result<WeeklyUpdatesSummaryResponse, IndexRepositoryError> {
+    weekly_summary_inner(
+        config,
+        DateTime::<Utc>::from(SystemTime::now()),
+        Some(cache),
+    )
+}
+
+fn weekly_summary_inner(
+    config: &StorageConfig,
+    now: DateTime<Utc>,
+    cache: Option<&WeeklyManifestCache>,
+) -> Result<WeeklyUpdatesSummaryResponse, IndexRepositoryError> {
     let window_start_at = weekly_window_start(now);
     let window_start = format_precise_utc_datetime(window_start_at);
     let window_end = format_precise_utc_datetime(now);
-    let by_db = load_weekly_buckets(config, window_start_at, now)?;
+    let by_db = load_weekly_buckets_with_cache(config, window_start_at, now, cache)?;
     let mut databases = Vec::new();
     for (db_name, bucket) in by_db {
         let db_path = config.index_dir().join(&db_name);
@@ -167,6 +197,33 @@ pub fn get_weekly_update_articles(
     config: &StorageConfig,
     params: &WeeklyArticlePageParams,
 ) -> Result<WeeklyArticlePage, IndexRepositoryError> {
+    weekly_article_page_inner(config, params, None)
+}
+
+/// Return a weekly article page using a shared parsed-manifest cache.
+///
+/// # Arguments
+///
+/// * `config` - Storage paths.
+/// * `params` - Fixed-window page filters and cursor.
+/// * `cache` - Shared process-local parser cache.
+///
+/// # Returns
+///
+/// A page with identical membership and error semantics to uncached reads.
+pub fn get_weekly_update_articles_with_cache(
+    config: &StorageConfig,
+    params: &WeeklyArticlePageParams,
+    cache: &WeeklyManifestCache,
+) -> Result<WeeklyArticlePage, IndexRepositoryError> {
+    weekly_article_page_inner(config, params, Some(cache))
+}
+
+fn weekly_article_page_inner(
+    config: &StorageConfig,
+    params: &WeeklyArticlePageParams,
+    cache: Option<&WeeklyManifestCache>,
+) -> Result<WeeklyArticlePage, IndexRepositoryError> {
     validate_weekly_article_page_params(params)?;
     let window_end = parse_iso_datetime(&params.window_end).ok_or_else(|| {
         IndexRepositoryError::InvalidInput(
@@ -186,7 +243,7 @@ pub fn get_weekly_update_articles(
     if !journal_exists {
         return Err(IndexRepositoryError::NotFound("Journal not found"));
     }
-    let mut by_db = load_weekly_buckets(config, window_start, window_end)?;
+    let mut by_db = load_weekly_buckets_with_cache(config, window_start, window_end, cache)?;
     let article_ids = by_db
         .remove(&db_name)
         .map(|bucket| bucket.article_ids)
@@ -200,7 +257,19 @@ fn load_weekly_buckets(
     window_start: DateTime<Utc>,
     window_end: DateTime<Utc>,
 ) -> Result<HashMap<String, WeeklyBucket>, IndexRepositoryError> {
-    let manifests = load_weekly_manifests(config, window_start, window_end)?;
+    load_weekly_buckets_with_cache(config, window_start, window_end, None)
+}
+
+fn load_weekly_buckets_with_cache(
+    config: &StorageConfig,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    cache: Option<&WeeklyManifestCache>,
+) -> Result<HashMap<String, WeeklyBucket>, IndexRepositoryError> {
+    let manifests = match cache {
+        Some(cache) => load_weekly_manifests_with_cache(config, window_start, window_end, cache)?,
+        None => load_weekly_manifests(config, window_start, window_end)?,
+    };
     let mut by_db: HashMap<String, WeeklyBucket> = HashMap::new();
     for manifest in manifests {
         let bucket = by_db

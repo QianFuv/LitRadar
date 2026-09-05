@@ -249,3 +249,11 @@ pwsh ./scripts/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 
 - 前端 API 入口是 `app/lib/api.tsx` 和 `app/lib/api/`。
 - 前端 API 始终同源；本地 Rust 服务需要监听固定的 `127.0.0.1:8001` 才能被 `pnpm dev` 代理。
 - 全局 scholarly key 池与用户级 AI/PushPlus 设置是两套不同配置。
+
+### Weekly manifest cache verification
+
+The API shares parsed weekly manifests across summary and article-page requests. The cache holds at most 64 publications and 1,000,000 article IDs, expires entries after 60 seconds, and checks canonical paths plus file length and timestamps before reuse. Changed or malformed files are not served from a prior cache entry. Oversized publications are read normally but not retained. The cache contains source metadata only, with no account credentials.
+
+Run correctness checks with `cargo test -p litradar-storage --test weekly_manifest_cache --locked` and the deterministic expiry test with `cargo test -p litradar-storage weekly_manifest_cache_expires --locked`. Run the opt-in comparison with `cargo test -p litradar-storage --test weekly_manifest_cache --release --locked -- --ignored --nocapture`.
+
+One local Windows release run on 2026-09-05 used eight catalogs with 10,000 articles each. Ten uncached continuation pages took 267.83 ms total, versus 198.03 ms with a warm cache; the warm series added zero parse attempts after the initial eight. This is a synthetic single-run result, not a production latency guarantee. Directory metadata checks, membership grouping, and each query's temporary SQLite membership table remain part of the cost.

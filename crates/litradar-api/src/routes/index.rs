@@ -407,8 +407,9 @@ pub(crate) async fn get_weekly_updates_summary(
     headers: HeaderMap,
 ) -> Result<Json<litradar_domain::WeeklyUpdatesSummaryResponse>, ApiError> {
     require_current_user(&state, &headers).await?;
+    let cache = state.weekly_manifest_cache();
     let payload = run_index(&state, move |storage| {
-        litradar_storage::index::get_weekly_updates_summary(&storage)
+        litradar_storage::index::get_weekly_updates_summary_with_cache(&storage, &cache)
     })
     .await?;
     Ok(Json(payload))
@@ -451,8 +452,9 @@ pub(crate) async fn get_weekly_update_articles(
 ) -> Result<Json<litradar_domain::WeeklyArticlePage>, ApiError> {
     require_current_user(&state, &headers).await?;
     let params = parse_weekly_article_query(raw_query.as_deref())?;
+    let cache = state.weekly_manifest_cache();
     let payload = run_index(&state, move |storage| {
-        litradar_storage::index::get_weekly_update_articles(&storage, &params)
+        litradar_storage::index::get_weekly_update_articles_with_cache(&storage, &params, &cache)
     })
     .await?;
     Ok(Json(payload))
