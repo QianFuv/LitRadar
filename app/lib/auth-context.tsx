@@ -11,6 +11,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -54,50 +55,6 @@ const AuthContext = createContext<AuthState | null>(null);
 const ACCESS_TOKEN_STORAGE_KEY = 'litradar:v1:session_access_token';
 const LOGOUT_WARNING_STORAGE_KEY = 'litradar:v1:logout_revocation_unconfirmed';
 const USER_STORAGE_KEY = 'litradar:v1:user';
-
-/**
- * Check whether a parsed value matches the stored user shape.
- *
- * @param value - Parsed storage value.
- * @returns Whether the value is an auth user.
- */
-function isAuthUser(value: unknown): value is AuthUser {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  const user = value as Record<string, unknown>;
-  return (
-    typeof user.id === 'number' &&
-    typeof user.username === 'string' &&
-    typeof user.is_admin === 'boolean'
-  );
-}
-
-/**
- * Read the stored authenticated user snapshot.
- *
- * @returns User snapshot or null.
- */
-function readStoredUser(): AuthUser | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  const rawUser = readLocalStorageValue(USER_STORAGE_KEY);
-  if (!rawUser) {
-    return null;
-  }
-  try {
-    const parsedUser: unknown = JSON.parse(rawUser);
-    if (isAuthUser(parsedUser)) {
-      return parsedUser;
-    }
-    removeLocalStorageValue(USER_STORAGE_KEY);
-    return null;
-  } catch {
-    removeLocalStorageValue(USER_STORAGE_KEY);
-    return null;
-  }
-}
 
 /**
  * Persist non-secret authenticated user metadata locally.
@@ -193,66 +150,112 @@ function logoutWarningFromError(error: unknown): LogoutRevocationWarning {
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
+  const sessionGeneration = useRef(0);
+  const verifiedUser = useRef<AuthUser | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [logoutWarning, setLogoutWarning] = useState<LogoutRevocationWarning | null>(null);
 
-  const clearSession = useCallback(() => {
-    clearStoredSession();
+  /** Hide private state and cancel requests before discarding their cached results. */
+  const clearPrivateState = useCallback(() => {
+    verifiedUser.current = null;
     setUser(null);
+    void queryClient.cancelQueries();
     queryClient.clear();
   }, [queryClient]);
+
+  /** Invalidate pending identity checks and clear the local session after logout. */
+  const clearSession = useCallback(() => {
+    sessionGeneration.current += 1;
+    clearStoredSession();
+    clearPrivateState();
+    setLoading(false);
+  }, [clearPrivateState]);
 
   useEffect(() => {
     let didCancel = false;
 
-    const restoreSession = async () => {
-      const storedLogoutWarning = readStoredLogoutWarning();
-      if (!didCancel) {
-        setLogoutWarning(storedLogoutWarning);
+    /** Verify the shared cookie without trusting a stored identity or a stale response. */
+    const restoreSession = async (shouldClearPrivateState = true) => {
+      const generation = ++sessionGeneration.current;
+      if (shouldClearPrivateState) {
+        setLoading(true);
+        clearPrivateState();
       }
-      const storedUser = readStoredUser();
-      if (storedUser && !didCancel) {
-        setUser(storedUser);
-      }
-
+      setLogoutWarning(readStoredLogoutWarning());
       try {
         const currentUser = await getCurrentUser();
-        if (didCancel) {
+        if (didCancel || generation !== sessionGeneration.current) {
           return;
         }
+        const previousUser = verifiedUser.current;
+        if (
+          previousUser &&
+          (previousUser.id !== currentUser.id ||
+            previousUser.is_admin !== currentUser.is_admin ||
+            previousUser.username !== currentUser.username)
+        ) {
+          clearPrivateState();
+        }
+        verifiedUser.current = currentUser;
         clearStoredAccessTokens();
         writeStoredUser(currentUser);
         setUser(currentUser);
       } catch {
-        clearStoredSession();
-        if (!didCancel) {
-          setUser(null);
-          queryClient.clear();
+        if (didCancel || generation !== sessionGeneration.current) {
+          return;
         }
+        clearStoredSession();
+        clearPrivateState();
       } finally {
-        if (!didCancel) {
+        if (!didCancel && generation === sessionGeneration.current) {
           setLoading(false);
         }
       }
     };
 
+    /** Treat another document's session metadata only as a server verification signal. */
+    const handleSessionStorage = (event: StorageEvent) => {
+      if (
+        event.key === null ||
+        event.key === USER_STORAGE_KEY ||
+        event.key === LOGOUT_WARNING_STORAGE_KEY
+      ) {
+        void restoreSession();
+      }
+    };
+
+    /** Recheck expired or externally changed cookies when the document becomes visible. */
+    const handleSessionVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void restoreSession(false);
+      }
+    };
+
+    window.addEventListener('storage', handleSessionStorage);
+    document.addEventListener('visibilitychange', handleSessionVisibility);
     void restoreSession();
 
     return () => {
       didCancel = true;
+      sessionGeneration.current += 1;
+      window.removeEventListener('storage', handleSessionStorage);
+      document.removeEventListener('visibilitychange', handleSessionVisibility);
     };
-  }, [queryClient]);
+  }, [clearPrivateState]);
 
   const login = useCallback(
     async (username: string, password: string) => {
       const response = await loginUser(username, password);
-      queryClient.clear();
+      sessionGeneration.current += 1;
+      clearPrivateState();
       clearStoredAccessTokens();
       writeStoredUser(response.user);
+      verifiedUser.current = response.user;
       setUser(response.user);
+      setLoading(false);
     },
-    [queryClient],
+    [clearPrivateState],
   );
 
   const register = useCallback(
@@ -302,7 +305,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [loading, login, logout, logoutWarning, recoverLogout, register, user],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider key={user?.id ?? 'anonymous'} value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 /**

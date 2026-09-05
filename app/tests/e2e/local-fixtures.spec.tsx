@@ -1622,6 +1622,86 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
   await expect(trigger).toBeFocused();
 }
 
+/**
+ * Verify logout and a new login propagate through native storage events in one cookie context.
+ *
+ * @param fixtures - Browser page and configured application origin.
+ */
+async function crossTabSessionTest({
+  page,
+  baseURL,
+}: {
+  page: Page;
+  baseURL?: string;
+}): Promise<void> {
+  if (!baseURL) {
+    throw new Error('The browser fixture requires an application base URL');
+  }
+  const context = page.context();
+  await context.addCookies([{ name: 'litradar_review_session', value: 'first', url: baseURL }]);
+  await context.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === '/api/auth/me') {
+      const cookie = route.request().headers().cookie ?? '';
+      if (cookie.includes('litradar_review_session=second')) {
+        await fulfillJson(route, { id: 55, username: 'browser_second', is_admin: false });
+      } else if (cookie.includes('litradar_review_session=first')) {
+        await fulfillJson(route, { id: 41, username: 'browser_user', is_admin: false });
+      } else {
+        await fulfillJson(route, { detail: 'Authentication required' }, 401);
+      }
+      return;
+    }
+    if (pathname === '/api/auth/invite-required') {
+      await fulfillJson(route, { required: false, bootstrap_required: false });
+      return;
+    }
+    if (pathname === '/api/auth/logout' || pathname === '/api/auth/login') {
+      const isLogin = pathname.endsWith('/login');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: {
+          'Set-Cookie': isLogin
+            ? 'litradar_review_session=second; Path=/; HttpOnly'
+            : 'litradar_review_session=; Path=/; Max-Age=0; HttpOnly',
+        },
+        body: JSON.stringify(
+          isLogin
+            ? {
+                expires_at: Date.now() / 1000 + 3600,
+                user: { id: 55, username: 'browser_second', is_admin: false },
+              }
+            : { ok: true },
+        ),
+      });
+      return;
+    }
+    await serveTrackingApi(route);
+  });
+  const secondPage = await context.newPage();
+  await page.goto('/');
+  await secondPage.goto('/');
+  await expect(page.getByRole('button', { name: '打开账号菜单：browser_user' })).toBeVisible();
+  await secondPage.getByRole('button', { name: '打开账号菜单：browser_user' }).click();
+  await secondPage.getByRole('menuitem', { name: '退出登录' }).click();
+  await expect(page).toHaveURL(/\/login/);
+  await expect(secondPage).toHaveURL(/\/login/);
+  await secondPage.getByLabel('用户名').fill('browser_second');
+  await secondPage.getByLabel('密码', { exact: true }).fill('browser-second-password');
+  await secondPage.getByRole('button', { name: '登录', exact: true }).first().click();
+  await expect(page.getByRole('button', { name: '打开账号菜单：browser_second' })).toBeVisible();
+  await expect(
+    secondPage.getByRole('button', { name: '打开账号菜单：browser_second' }),
+  ).toBeVisible();
+  expect(
+    (await context.cookies()).find((cookie) => cookie.name === 'litradar_review_session')?.value,
+  ).toBe('second');
+  await secondPage.close();
+}
+
+test('synchronizes logout and account changes across browser tabs', crossTabSessionTest);
+
 test('scrolls a long mobile sidebar and dismisses without a close button', mobileSidebarScrollTest);
 test('declares native theme ownership before hydration', nativeThemeDocumentTest);
 test('shows the local administrator bootstrap boundary', bootstrapBoundaryTest);

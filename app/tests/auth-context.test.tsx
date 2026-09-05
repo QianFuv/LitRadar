@@ -2,7 +2,7 @@
  * Authentication restore coverage using the real provider and MSW transport.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vitest';
@@ -325,7 +325,103 @@ async function recoversLogoutAfterFreshAuthentication(): Promise<void> {
   expect(screen.getByText('anonymous')).toBeInTheDocument();
 }
 
+/** Verify external metadata is only a revalidation signal and clears private state. */
+async function reconcilesExternalSessions(): Promise<void> {
+  let currentUser: typeof RESTORED_USER | null = RESTORED_USER;
+  server.use(
+    http.get('http://localhost/api/auth/me', () =>
+      currentUser
+        ? HttpResponse.json(currentUser)
+        : HttpResponse.json({ detail: 'Authentication required' }, { status: 401 }),
+    ),
+  );
+  const { queryClient } = renderWithQuery(
+    <AuthProvider>
+      <AuthProbe />
+    </AuthProvider>,
+  );
+  expect(await screen.findByText('restored_admin')).toBeInTheDocument();
+  queryClient.setQueryData(['private-old-user'], 'private data');
+  currentUser = { id: 22, username: 'replacement', is_admin: false };
+  act(() =>
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'litradar:v1:user',
+        newValue: JSON.stringify({ id: 999, username: 'untrusted' }),
+      }),
+    ),
+  );
+  expect(screen.getByText('loading')).toBeInTheDocument();
+  expect(screen.queryByText('restored_admin')).not.toBeInTheDocument();
+  expect(queryClient.getQueryData(['private-old-user'])).toBeUndefined();
+  expect(await screen.findByText('replacement')).toBeInTheDocument();
+  expect(screen.queryByText('untrusted')).not.toBeInTheDocument();
+  currentUser = null;
+  act(() => document.dispatchEvent(new Event('visibilitychange')));
+  await waitFor(() => expect(screen.getByText('ready')).toBeInTheDocument());
+  expect(screen.getByText('anonymous')).toBeInTheDocument();
+}
+
+/** Verify an old session response cannot overwrite a newer verified identity. */
+async function ignoresStaleSessionRestoration(): Promise<void> {
+  let requestCount = 0;
+  let releaseResponse: ((response: Response) => void) | undefined;
+  const firstResponse = new Promise<Response>((resolve) => {
+    releaseResponse = resolve;
+  });
+  server.use(
+    http.get('http://localhost/api/auth/me', async () => {
+      requestCount += 1;
+      return requestCount === 1
+        ? firstResponse
+        : HttpResponse.json({
+            id: 22,
+            username: 'replacement',
+            is_admin: false,
+          });
+    }),
+  );
+  renderWithQuery(
+    <AuthProvider>
+      <AuthProbe />
+    </AuthProvider>,
+  );
+  await waitFor(() => expect(requestCount).toBe(1));
+  act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'litradar:v1:user' })));
+  expect(await screen.findByText('replacement')).toBeInTheDocument();
+  await act(async () => {
+    releaseResponse?.(HttpResponse.json(RESTORED_USER));
+  });
+  expect(screen.queryByText('restored_admin')).not.toBeInTheDocument();
+  expect(JSON.parse(window.localStorage.getItem('litradar:v1:user') ?? '{}').id).toBe(22);
+}
+
+/** Verify a routine visibility check does not discard unchanged account state. */
+async function preservesUnchangedVisibleSession(): Promise<void> {
+  let requestCount = 0;
+  server.use(
+    http.get('http://localhost/api/auth/me', () => {
+      requestCount += 1;
+      return HttpResponse.json(RESTORED_USER);
+    }),
+  );
+  const { queryClient } = renderWithQuery(
+    <AuthProvider>
+      <AuthProbe />
+    </AuthProvider>,
+  );
+  expect(await screen.findByText('restored_admin')).toBeInTheDocument();
+  queryClient.setQueryData(['private-same-user'], 'draft context');
+  act(() => document.dispatchEvent(new Event('visibilitychange')));
+  expect(screen.queryByText('loading')).not.toBeInTheDocument();
+  await waitFor(() => expect(requestCount).toBe(2));
+  expect(queryClient.getQueryData(['private-same-user'])).toBe('draft context');
+}
+
 describe('AuthProvider restore', () => {
+  test('preserves unchanged account state on visibility checks', preservesUnchangedVisibleSession);
+  test('reconciles cross-tab identity and visible-page expiry', reconcilesExternalSessions);
+  test('ignores stale session restoration', ignoresStaleSessionRestoration);
   test('reconciles stored metadata with the server session', restoresServerSession);
   test('requires an authoritative server session', requiresAuthoritativeServerSession);
   test('logs in and clears stale client state', logsInAndClearsStaleClientState);
