@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, TransactionBehavior};
 
 use super::shared::{now_seconds, open_business_connection};
 
@@ -314,9 +314,7 @@ pub fn cleanup_security_audit_events(
                 [],
                 |row| row.get::<_, Option<f64>>(0),
             )
-            .optional()
-            .map_err(SecurityAuditError::from)?
-            .flatten();
+            .map_err(SecurityAuditError::from)?;
         if last_cleanup.is_some_and(|value| value >= current_time - RETENTION_INTERVAL_SECONDS) {
             transaction.commit().map_err(SecurityAuditError::from)?;
             return Ok(SecurityAuditRetentionResult {
@@ -343,16 +341,18 @@ pub fn cleanup_security_audit_events(
                 |row| row.get::<_, bool>(0),
             )
             .map_err(SecurityAuditError::from)?;
-        let maintenance_rows = transaction
-            .execute(
-                "UPDATE security_audit_maintenance SET last_retention_at = ?1 WHERE id = 1",
-                [current_time],
-            )
-            .map_err(SecurityAuditError::from)?;
-        if maintenance_rows != 1 {
-            return Err(SecurityAuditError::Sqlite(
-                rusqlite::Error::QueryReturnedNoRows,
-            ));
+        if !has_more_expired {
+            let maintenance_rows = transaction
+                .execute(
+                    "UPDATE security_audit_maintenance SET last_retention_at = ?1 WHERE id = 1",
+                    [current_time],
+                )
+                .map_err(SecurityAuditError::from)?;
+            if maintenance_rows != 1 {
+                return Err(SecurityAuditError::Sqlite(
+                    rusqlite::Error::QueryReturnedNoRows,
+                ));
+            }
         }
         transaction.commit().map_err(SecurityAuditError::from)?;
         Ok(SecurityAuditRetentionResult {
@@ -482,6 +482,8 @@ mod tests {
     use super::*;
     use crate::migrate_auth_database;
 
+    static RETENTION_FAILURE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn security_audit_events_persist_under_concurrent_log_pressure_without_content() {
         let temp_dir = tempdir().expect("temporary database should be created");
@@ -517,7 +519,74 @@ mod tests {
     }
 
     #[test]
+    fn security_audit_backlog_continues_until_the_daily_window_is_complete() {
+        let _guard = RETENTION_FAILURE_TEST_LOCK
+            .lock()
+            .expect("retention failure tests should serialize");
+        for expired_count in [10_001, 25_001] {
+            let directory = tempdir().expect("temporary database should exist");
+            let path = directory.path().join("auth.sqlite");
+            migrate_auth_database(&path).expect("schema should migrate");
+            let connection = open_business_connection(&path).expect("database should open");
+            connection.execute(
+                "WITH RECURSIVE sequence(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < ?1) \
+                 INSERT INTO security_audit_events (action, outcome, occurred_at) SELECT 'login', 'completed', 1 FROM sequence",
+                [expired_count],
+            ).expect("expired events should seed");
+            append_security_audit_event(
+                &path,
+                &SecurityAuditEvent::new("login", "completed").with_occurred_at(20_000_000.0),
+            )
+            .expect("recent event should seed");
+            let first = cleanup_security_audit_events(&path, 1, 20_000_000.0)
+                .expect("first batch should run");
+            assert_eq!(first.deleted_count, 10_000);
+            assert!(first.has_more_expired);
+            let marker: Option<f64> = connection
+                .query_row(
+                    "SELECT last_retention_at FROM security_audit_maintenance WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("marker should read");
+            assert!(
+                marker.is_none(),
+                "a partial cleanup must not close the daily window"
+            );
+            connection.execute_batch("CREATE TRIGGER fail_backlog BEFORE DELETE ON security_audit_events BEGIN SELECT RAISE(FAIL, 'injected backlog failure'); END;")
+                .expect("failure trigger should install");
+            assert!(cleanup_security_audit_events(&path, 1, 20_000_060.0).is_err());
+            connection
+                .execute_batch("DROP TRIGGER fail_backlog")
+                .expect("failure trigger should clear");
+            let mut deleted_count = first.deleted_count;
+            for batch in 1..=2 {
+                let result =
+                    cleanup_security_audit_events(&path, 1, 20_000_060.0 + f64::from(batch) * 60.0)
+                        .expect("backlog continuation should recover");
+                assert!(result.deleted_count <= 10_000);
+                deleted_count += result.deleted_count;
+            }
+            assert_eq!(deleted_count, expired_count as usize);
+            assert_eq!(
+                list_security_audit_events(&path)
+                    .expect("recent events should remain")
+                    .len(),
+                1
+            );
+            assert!(
+                !cleanup_security_audit_events(&path, 1, 20_000_300.0)
+                    .expect("another instance should honor completion")
+                    .did_run
+            );
+        }
+    }
+
+    #[test]
     fn security_audit_retention_is_daily_bounded_and_transactional() {
+        let _guard = RETENTION_FAILURE_TEST_LOCK
+            .lock()
+            .expect("retention failure tests should serialize");
         let temp_dir = tempdir().expect("temporary database should be created");
         let auth_db_path = temp_dir.path().join("auth.sqlite");
         migrate_auth_database(&auth_db_path).expect("audit schema should migrate");

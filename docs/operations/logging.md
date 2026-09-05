@@ -214,7 +214,7 @@ sqlite3 -readonly data/auth.sqlite \
    ORDER BY COUNT(*) DESC;"
 ```
 
-`audit_retention_days` 默认 180 天，可配置为 1–3650 天。服务启动后立即检查，之后每 24 小时检查；认证库中的 maintenance 行跨实例声明每日窗口，每次事务最多删除 10,000 条过期记录。保留失败会整体回滚，且不会推进 maintenance 时间。
+`audit_retention_days` 默认 180 天，可配置为 1–3650 天。服务启动后立即检查，之后每 24 小时检查；每个事务仍最多删除 10,000 条过期记录；有积压时不推进 maintenance 完成时间，并每 60 秒继续一批，清空后恢复每 24 小时检查。认证库中的 maintenance 行跨实例声明已完成的每日窗口。保留失败整体回滚且不推进完成时间，已知积压中的失败仍按 60 秒重试。
 
 ## Docker 保留策略
 

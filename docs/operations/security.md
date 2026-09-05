@@ -46,7 +46,7 @@ Unix 取消和超时先向整个 group 发送 SIGTERM，等待 250 ms grace peri
 
 手动投递使用相同监管器和私有类型化 `delivery-run` child。SQLite 保存每用户唯一 active run、owner/revision lease、10 分钟绝对 deadline 与取消标志；实例池默认并发 2。child 每个业务边界轮询取消，所有 HTTP timeout 受剩余 deadline 限制。dispatcher 在取消 grace 后回收完整树；deadline 到达时直接强制回收。若强制回收时不能证明外部副作用未发生，任务固定为 `unknown` 且不允许自动重试。
 
-默认保留 180 天，可通过 `audit_retention_days` 设置 1–3650 天。启动后立即检查并每 24 小时检查一次；跨实例持久窗口和每事务 10,000 行上限避免无界删除。系统不暴露远程审计 API，查询、导出和取证只能使用受控的只读数据库副本；具体 SQL 与告警规则见[日志运维](logging.md)。`auth.sqlite` 固定备份范围包含审计历史和 maintenance 标记。
+默认保留 180 天，可通过 `audit_retention_days` 设置 1–3650 天。启动后立即检查；有积压时每 60 秒继续一批，清空后才推进跨实例每日完成窗口并恢复每 24 小时检查。每个事务最多删除 10,000 行，失败回滚且不推进完成时间。系统不暴露远程审计 API，查询、导出和取证只能使用受控的只读数据库副本；具体 SQL 与告警规则见[日志运维](logging.md)。`auth.sqlite` 固定备份范围包含审计历史和 maintenance 标记。
 
 ## 数据库凭据加密
 

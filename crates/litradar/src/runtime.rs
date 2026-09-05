@@ -23,6 +23,8 @@ use crate::config::ServeConfig;
 
 const SCHEDULER_EXECUTION_LIMIT: usize = 4;
 
+const AUDIT_BACKLOG_INTERVAL: Duration = Duration::from_secs(60);
+
 const AUDIT_RETENTION_INTERVAL: Duration = Duration::from_secs(86_400);
 
 /// Run HTTP and scheduling under one coordinated lifecycle.
@@ -151,20 +153,29 @@ where
     Delay: FnMut(Duration) -> DelayFuture,
     DelayFuture: Future<Output = ()>,
 {
+    let mut has_backlog = false;
     loop {
         if *shutdown.borrow() {
             return Ok(());
         }
         let started_at = Instant::now();
         match run_tick().await {
-            Ok(result) => emit_audit_retention_completed(&result, started_at),
+            Ok(result) => {
+                has_backlog = result.has_more_expired;
+                emit_audit_retention_completed(&result, started_at);
+            }
             Err(error) => emit_audit_retention_failed(started_at, error.error_kind),
         }
         if *shutdown.borrow() {
             return Ok(());
         }
+        let next_interval = if has_backlog {
+            AUDIT_BACKLOG_INTERVAL
+        } else {
+            interval
+        };
         tokio::select! {
-            () = delay(interval) => {}
+            () = delay(next_interval) => {}
             changed = shutdown.changed() => {
                 let _ = changed;
                 return Ok(());
@@ -709,6 +720,57 @@ mod tests {
         coordinate_components, run_audit_retention_loop_with, run_scheduler_loop_with,
         wait_for_shutdown, AuditRetentionTickError, SchedulerTickError,
     };
+
+    #[tokio::test]
+    async fn audit_retention_continues_known_backlog_after_transient_failure() {
+        let delays = Arc::new(Mutex::new(Vec::new()));
+        let observed_delays = Arc::clone(&delays);
+        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let mut tick_count = 0;
+        run_audit_retention_loop_with(
+            Duration::from_secs(86_400),
+            shutdown_receiver,
+            move || {
+                tick_count += 1;
+                if tick_count == 4 {
+                    shutdown_sender
+                        .send(true)
+                        .expect("loop should remain active");
+                }
+                let tick = tick_count;
+                async move {
+                    if tick == 2 {
+                        return Err(AuditRetentionTickError {
+                            error_kind: "persistence_error",
+                        });
+                    }
+                    Ok(litradar_storage::SecurityAuditRetentionResult {
+                        did_run: tick < 4,
+                        deleted_count: 1,
+                        has_more_expired: tick == 1,
+                        cutoff: 1000.0,
+                    })
+                }
+            },
+            move |duration| {
+                observed_delays
+                    .lock()
+                    .expect("delays should lock")
+                    .push(duration);
+                async {}
+            },
+        )
+        .await
+        .expect("bounded continuation should finish");
+        assert_eq!(
+            *delays.lock().expect("delays should lock"),
+            vec![
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(86_400)
+            ]
+        );
+    }
 
     #[tokio::test]
     async fn audit_retention_runs_immediately_and_records_observability() {
