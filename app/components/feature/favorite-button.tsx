@@ -46,7 +46,7 @@ export function FavoriteButton({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [folderToRemove, setFolderToRemove] = useState<Folder | null>(null);
-  const queryKey = ['fav-check', articleId, db] as const;
+  const queryKey = ['fav-check', user?.id, db, articleId] as const;
   const initialFolderIdsValue = Array.from(new Set(initialFolderIds)).sort((a, b) => a - b);
   const [optimisticFolderIds, setOptimisticFolderIds] = useState<number[] | null>(null);
   const cachedFolderIds =
@@ -77,7 +77,7 @@ export function FavoriteButton({
 
   const addMut = useMutation({
     mutationFn: (folderId: number) => addFavorite(folderId, articleId, db),
-    onSuccess: (_, folderId) => {
+    onSuccess: async (_, folderId) => {
       const folderName = folders.find((folder) => folder.id === folderId)?.name ?? '';
       setOptimisticFolderIds((current) => {
         const baseFolderIds =
@@ -93,7 +93,10 @@ export function FavoriteButton({
         }
         return [...current, { folder_id: folderId, folder_name: folderName }];
       });
-      queryClient.removeQueries({ queryKey: ['fav-check-batch', user?.id, db] });
+      const batchKey = ['fav-check-batch', user?.id, db];
+      await queryClient.cancelQueries({ queryKey: batchKey });
+      queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
+      await queryClient.invalidateQueries({ queryKey: batchKey });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
     },
@@ -101,7 +104,7 @@ export function FavoriteButton({
 
   const removeMut = useMutation({
     mutationFn: (folderId: number) => removeFavorite(folderId, articleId, db),
-    onSuccess: (_, folderId) => {
+    onSuccess: async (_, folderId) => {
       setOptimisticFolderIds((current) => {
         const baseFolderIds =
           current ??
@@ -113,7 +116,10 @@ export function FavoriteButton({
       queryClient.setQueryData(queryKey, (current: FavoriteCheck[] = []) =>
         current.filter((item) => item.folder_id !== folderId),
       );
-      queryClient.removeQueries({ queryKey: ['fav-check-batch', user?.id, db] });
+      const batchKey = ['fav-check-batch', user?.id, db];
+      await queryClient.cancelQueries({ queryKey: batchKey });
+      queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
+      await queryClient.invalidateQueries({ queryKey: batchKey });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
       setFolderToRemove((current) => (current?.id === folderId ? null : current));

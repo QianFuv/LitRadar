@@ -229,7 +229,7 @@ async function updatesFavoriteCache(): Promise<void> {
   });
   await waitFor(() => {
     expect(
-      queryClient.getQueryData<FavoriteCheck[]>(['fav-check', 'article-1', 'fixture.sqlite']),
+      queryClient.getQueryData<FavoriteCheck[]>(['fav-check', 21, 'fixture.sqlite', 'article-1']),
     ).toEqual([{ folder_id: 3, folder_name: 'Reading' }]);
   });
 }
@@ -354,9 +354,15 @@ async function confirmsSingleFavoriteRemoval(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderFavoritesPage();
+  const { queryClient } = renderFavoritesPage();
 
   expect(await screen.findByText('Article 1')).toBeInTheDocument();
+  const singleKey = ['fav-check', 21, 'fixture.sqlite', 'article-1'];
+  const batchKey = ['fav-check-batch', 21, 'fixture.sqlite', 'visible', 'article-1'];
+  const otherUserKey = ['fav-check', 22, 'fixture.sqlite', 'article-1'];
+  queryClient.setQueryData(singleKey, [{ folder_id: 3, folder_name: 'Reading' }]);
+  queryClient.setQueryData(batchKey, { 'article-1': [{ folder_id: 3, folder_name: 'Reading' }] });
+  queryClient.setQueryData(otherUserKey, [{ folder_id: 9, folder_name: 'Other user' }]);
   expect(document.querySelector('[data-motion-favorite-key="1"]')).not.toBeNull();
   await user.click(await screen.findByRole('button', { name: '移除收藏' }));
   expect(removeCount).toBe(0);
@@ -374,6 +380,11 @@ async function confirmsSingleFavoriteRemoval(): Promise<void> {
 
   await waitFor(() => expect(removeCount).toBe(2));
   expect(await screen.findByText('此收藏夹为空')).toBeInTheDocument();
+  expect(queryClient.getQueryData(singleKey)).toBeUndefined();
+  expect(queryClient.getQueryData(batchKey)).toBeUndefined();
+  expect(queryClient.getQueryData(otherUserKey)).toEqual([
+    { folder_id: 9, folder_name: 'Other user' },
+  ]);
   await waitFor(() => expect(document.querySelector('[data-motion-favorite-key="1"]')).toBeNull());
 }
 

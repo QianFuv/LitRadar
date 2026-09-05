@@ -247,7 +247,65 @@ async function retriesUnavailableBatchMembership(): Promise<void> {
   expect(result.current.favoriteStateError).toBeNull();
 }
 
+/** Verify an already resolved list remains subscribed when membership is invalidated. */
+async function refreshesResolvedMembershipAfterInvalidation(): Promise<void> {
+  let isFavorited = true;
+  server.use(
+    http.post('http://localhost/api/favorites/check/batch', () =>
+      HttpResponse.json([
+        {
+          article_id: '101',
+          folders: isFavorited ? [{ folder_id: 3, folder_name: 'Reading' }] : [],
+        },
+      ]),
+    ),
+  );
+  const queryClient = createTestQueryClient();
+  const { result } = renderHook(() => useFavoriteChecks(['101'], 'fixture.sqlite', 21), {
+    wrapper: createQueryWrapper(queryClient),
+  });
+  await waitFor(() => expect(result.current.favoriteChecksByArticle['101']).toHaveLength(1));
+  isFavorited = false;
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['fav-check-batch', 21, 'fixture.sqlite'] });
+  });
+  await waitFor(() => expect(result.current.favoriteChecksByArticle['101']).toEqual([]));
+}
+
+/** Verify invalidating a long visible list respects the server's five-hundred-item bound. */
+async function boundsLargeMembershipRefreshes(): Promise<void> {
+  const requestedSizes: number[] = [];
+  server.use(
+    http.post('http://localhost/api/favorites/check/batch', async ({ request }) => {
+      const payload = (await request.json()) as { article_ids: string[] };
+      requestedSizes.push(payload.article_ids.length);
+      expect(payload.article_ids.length).toBeLessThanOrEqual(500);
+      return HttpResponse.json(
+        payload.article_ids.map((article_id) => ({ article_id, folders: [] })),
+      );
+    }),
+  );
+  const queryClient = createTestQueryClient();
+  const articleIds = Array.from({ length: 600 }, (_, index) => String(index + 1));
+  const { result } = renderHook(() => useFavoriteChecks(articleIds, 'fixture.sqlite', 21), {
+    wrapper: createQueryWrapper(queryClient),
+  });
+  await waitFor(() =>
+    expect(Object.keys(result.current.favoriteChecksByArticle)).toHaveLength(600),
+  );
+  expect(requestedSizes).toEqual([500, 100]);
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['fav-check-batch', 21, 'fixture.sqlite'] });
+  });
+  expect(requestedSizes).toEqual([500, 100, 500, 100]);
+}
+
 describe('useFavoriteChecks', () => {
+  test('bounds large membership refreshes', boundsLargeMembershipRefreshes);
+  test(
+    'refreshes resolved membership after invalidation',
+    refreshesResolvedMembershipAfterInvalidation,
+  );
   test('retries unavailable batch membership', retriesUnavailableBatchMembership);
   test('propagates single lookup failure', propagatesFavoriteLookupFailure);
   test('propagates batch lookup failure', propagatesFavoriteBatchFailure);

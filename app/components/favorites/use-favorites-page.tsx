@@ -22,6 +22,7 @@ import {
   type FavoriteItem,
 } from '@/lib/api';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
+import { invalidateFavoriteMemberships } from '@/components/feature/use-favorite-checks';
 
 /**
  * Build a stable identity for one favorite row in selection state.
@@ -178,7 +179,8 @@ export function useFavoritesPage(userId: number) {
 
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteFolder(id),
-    onSuccess: (_data, deletedFolderId) => {
+    onSuccess: async (_data, deletedFolderId) => {
+      await invalidateFavoriteMemberships(queryClient, userId);
       setSelectedArticleKeys([]);
       setMoveTargetFolderId('');
       setBatchFeedback(null);
@@ -192,7 +194,8 @@ export function useFavoritesPage(userId: number) {
 
   const renameMut = useMutation({
     mutationFn: ({ id, name }: { id: number; name: string }) => renameFolder(id, name),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await invalidateFavoriteMemberships(queryClient, userId);
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       setEditingId(null);
     },
@@ -206,7 +209,8 @@ export function useFavoritesPage(userId: number) {
   const removeMut = useMutation({
     mutationFn: (item: FavoriteItem) =>
       removeFavorite(item.folder_id, item.article_id, item.db_name),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await invalidateFavoriteMemberships(queryClient, userId);
       queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
     },
@@ -230,7 +234,8 @@ export function useFavoritesPage(userId: number) {
 
   const bulkRemoveMut = useMutation({
     mutationFn: (articles: FavoriteArticleRef[]) => bulkRemoveFavorites(activeFolderId!, articles),
-    onSuccess: (count) => {
+    onSuccess: async (count) => {
+      await invalidateFavoriteMemberships(queryClient, userId);
       setBulkRemoveTarget(null);
       setSelectedArticleKeys([]);
       setBatchFeedback({
@@ -256,7 +261,8 @@ export function useFavoritesPage(userId: number) {
       targetFolderId: number;
       articles: FavoriteArticleRef[];
     }) => bulkMoveFavorites(activeFolderId!, targetFolderId, articles),
-    onSuccess: (count) => {
+    onSuccess: async (count) => {
+      await invalidateFavoriteMemberships(queryClient, userId);
       const targetFolderName = moveTargetFolders.find(
         (folder) => folder.id === Number(moveTargetFolderId),
       )?.name;
