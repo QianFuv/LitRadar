@@ -14,6 +14,8 @@ import { checkFavoritesBatch, type ArticleId, type FavoriteCheck } from '@/lib/a
 export type FavoriteChecksResult = Readonly<{
   favoriteChecksByArticle: Record<ArticleId, FavoriteCheck[]>;
   isFavoriteStatePending: boolean;
+  favoriteStateError: Error | null;
+  retryFavoriteChecks: () => void;
 }>;
 
 /** Shared immutable value for disabled favorite-check scopes. */
@@ -100,17 +102,29 @@ export function useFavoriteChecks(
   const missingFavoriteArticleIdsKey = missingFavoriteArticleIds.join(',');
   const isMissingQueryEnabled = hasActiveScope && missingFavoriteArticleIds.length > 0;
 
-  const { data: fetchedFavoriteChecksByArticle = {}, isPending } = useQuery({
+  const {
+    data: fetchedFavoriteChecksByArticle = {},
+    isPending,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: [...favoriteBatchBaseKey, 'missing', missingFavoriteArticleIdsKey],
     queryFn: () => checkFavoritesBatch(missingFavoriteArticleIds, dbName),
     enabled: isMissingQueryEnabled,
     staleTime: 5 * 60 * 1000,
   });
 
+  /** Retry unresolved membership only while the authenticated scope is active. */
+  const retryFavoriteChecks = () => {
+    if (isMissingQueryEnabled) void refetch();
+  };
+
   if (!hasActiveScope) {
     return {
       favoriteChecksByArticle: EMPTY_FAVORITE_CHECKS,
       isFavoriteStatePending: false,
+      favoriteStateError: null,
+      retryFavoriteChecks,
     };
   }
 
@@ -120,5 +134,7 @@ export function useFavoriteChecks(
       ...fetchedFavoriteChecksByArticle,
     }),
     isFavoriteStatePending: isMissingQueryEnabled && isPending,
+    favoriteStateError: isMissingQueryEnabled ? error : null,
+    retryFavoriteChecks,
   };
 }

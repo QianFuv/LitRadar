@@ -42,6 +42,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
+import { Button } from '@/components/ui/button';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import { cn } from '@/lib/utils';
 
@@ -423,11 +424,12 @@ export function WeeklyUpdatesView() {
   );
   const renderedArticleIds = renderedArticles.map((article) => article.article_id);
   const prefetchIndex = Math.max(0, renderedArticles.length - WEEKLY_PREFETCH_THRESHOLD);
-  const { favoriteChecksByArticle, isFavoriteStatePending } = useFavoriteChecks(
-    renderedArticleIds,
-    effectiveSelectedDb,
-    user?.id,
-  );
+  const {
+    favoriteChecksByArticle,
+    isFavoriteStatePending,
+    favoriteStateError,
+    retryFavoriteChecks,
+  } = useFavoriteChecks(renderedArticleIds, effectiveSelectedDb, user?.id);
 
   const totalDatabases = weeklySummary?.databases.length ?? 0;
   const totalArticles = useMemo(() => {
@@ -516,6 +518,17 @@ export function WeeklyUpdatesView() {
       >
         {announcement}
       </p>
+      {favoriteStateError && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 p-3 text-sm"
+        >
+          <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
+          <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
+            重试收藏状态
+          </Button>
+        </div>
+      )}
       <MotionPresence mode="wait">
         {weeklyState === 'loading' ? (
           <MotionDiv
@@ -726,7 +739,15 @@ export function WeeklyUpdatesView() {
                               (item) => item.folder_id,
                             ) ?? []
                           }
-                          isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
+                          isFavoriteStatePending={
+                            Boolean(user) &&
+                            isFavoriteStatePending &&
+                            !favoriteChecksByArticle[article.article_id]
+                          }
+                          isFavoriteStateUnavailable={
+                            Boolean(favoriteStateError) &&
+                            !favoriteChecksByArticle[article.article_id]
+                          }
                         />
                       ))}
 

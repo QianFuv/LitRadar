@@ -173,7 +173,7 @@ async function rendersTypedResultContent(): Promise<void> {
   }
   expect(article).toHaveAttribute('data-database', 'scenario.sqlite');
   expect(article).toHaveAttribute('data-folder-ids', '7');
-  expect(article).toHaveAttribute('data-favorite-pending', 'true');
+  expect(article).toHaveAttribute('data-favorite-pending', 'false');
   expect(requestUrl?.searchParams.get('db')).toBe('scenario.sqlite');
   expect(requestUrl?.searchParams.get('q')).toBe('Fixture');
   expect(requestUrl?.searchParams.getAll('area')).toEqual(['Medicine']);

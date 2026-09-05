@@ -40,6 +40,7 @@ type ArticleDetailDialogContentProps = {
   dbName: string;
   initialFolderIds?: number[];
   isFavoriteStatePending?: boolean;
+  isFavoriteStateUnavailable?: boolean;
   extraActions?: ReactNode;
 };
 
@@ -100,6 +101,7 @@ export function ArticleDetailDialogContent({
   dbName,
   initialFolderIds = [],
   isFavoriteStatePending = false,
+  isFavoriteStateUnavailable = false,
   extraActions,
 }: ArticleDetailDialogContentProps) {
   const pathname = usePathname();
@@ -417,6 +419,7 @@ export function ArticleDetailDialogContent({
                     articleId={article.article_id}
                     dbName={dbName}
                     initialFolderIds={initialFolderIds}
+                    isFavoriteStateUnavailable={isFavoriteStateUnavailable}
                   />
                 )}
               </MotionDiv>

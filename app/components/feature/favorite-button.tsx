@@ -33,10 +33,12 @@ export function FavoriteButton({
   articleId,
   dbName,
   initialFolderIds = [],
+  isFavoriteStateUnavailable = false,
 }: {
   articleId: ArticleId;
   dbName: string;
   initialFolderIds?: number[];
+  isFavoriteStateUnavailable?: boolean;
 }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -50,14 +52,24 @@ export function FavoriteButton({
   const cachedFolderIds =
     queryClient.getQueryData<FavoriteCheck[]>(queryKey)?.map((item) => item.folder_id) ?? null;
 
-  const { data: checks } = useQuery({
+  const {
+    data: checks,
+    error: checksError,
+    isFetching: isCheckingFavorite,
+    refetch: refetchChecks,
+  } = useQuery({
     queryKey,
     queryFn: () => checkFavorite(articleId, db),
     enabled: !!user && open,
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: folders = [], isPending: isFoldersPending } = useQuery({
+  const {
+    data: folders = [],
+    isPending: isFoldersPending,
+    error: foldersError,
+    refetch: refetchFolders,
+  } = useQuery({
     queryKey: ['folders', user?.id],
     queryFn: () => getFolders(),
     enabled: !!user && open,
@@ -115,7 +127,11 @@ export function FavoriteButton({
     optimisticFolderIds ??
     cachedFolderIds ??
     initialFolderIdsValue;
-  const isFav = resolvedFolderIds.length > 0;
+  const isFavoriteUnknown =
+    Boolean(checksError) || (isFavoriteStateUnavailable && checks === undefined);
+  const isFav = !isFavoriteUnknown && resolvedFolderIds.length > 0;
+  const favoriteLabel = isFavoriteUnknown ? '收藏状态未知' : isFav ? '已收藏' : '收藏';
+  const lookupError = checksError ?? foldersError;
   const favFolderIds = new Set(resolvedFolderIds);
 
   return (
@@ -132,12 +148,12 @@ export function FavoriteButton({
               isFav &&
                 'text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400',
             )}
-            aria-label={isFav ? '已收藏' : '收藏'}
-            title={isFav ? '已收藏' : '收藏'}
+            aria-label={favoriteLabel}
+            title={favoriteLabel}
             onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}
           >
             <span
-              data-favorite-state={isFav ? 'active' : 'inactive'}
+              data-favorite-state={isFavoriteUnknown ? 'unknown' : isFav ? 'active' : 'inactive'}
               className="flex items-center gap-1"
               aria-hidden="true"
             >
@@ -146,7 +162,7 @@ export function FavoriteButton({
               />
               <span className="hidden md:grid">
                 <span className="invisible col-start-1 row-start-1">已收藏</span>
-                <span className="col-start-1 row-start-1">{isFav ? '已收藏' : '收藏'}</span>
+                <span className="col-start-1 row-start-1">{favoriteLabel}</span>
               </span>
             </span>
           </Button>
@@ -158,7 +174,21 @@ export function FavoriteButton({
         >
           <div className="space-y-1">
             <div className="px-2 py-1 text-xs text-muted-foreground font-medium">选择收藏夹</div>
-            {isFoldersPending ? (
+            {lookupError ? (
+              <div role="alert" className="space-y-2 px-2 py-2 text-xs text-destructive">
+                <p>{lookupError instanceof Error ? lookupError.message : '无法读取收藏状态'}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    void Promise.all([refetchChecks(), refetchFolders()]);
+                  }}
+                >
+                  重试收藏状态
+                </Button>
+              </div>
+            ) : isFoldersPending || (isCheckingFavorite && checks === undefined) ? (
               <div role="status" className="px-2 py-2 text-xs text-muted-foreground">
                 加载中…
               </div>
@@ -180,7 +210,12 @@ export function FavoriteButton({
                         ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
                         : 'hover:bg-accent',
                     )}
-                    disabled={addMut.isPending || removeMut.isPending}
+                    disabled={
+                      addMut.isPending ||
+                      removeMut.isPending ||
+                      isCheckingFavorite ||
+                      isFavoriteUnknown
+                    }
                     onClick={() => {
                       if (isInFolder) {
                         removeMut.reset();

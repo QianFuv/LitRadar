@@ -3,7 +3,7 @@
  */
 
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import type { ReactNode } from 'react';
 import { describe, expect, test } from 'vitest';
@@ -12,7 +12,7 @@ import {
   useFavoriteChecks,
   type FavoriteChecksResult,
 } from '@/components/feature/use-favorite-checks';
-import type { ArticleId, FavoriteCheck } from '@/lib/api';
+import { checkFavorite, checkFavoritesBatch, type ArticleId, type FavoriteCheck } from '@/lib/api';
 import { createTestQueryClient } from '@/tests/render';
 import { server } from '@/tests/mocks/server';
 
@@ -181,23 +181,76 @@ function disablesInvalidScopes(): void {
   expect(result.current).toEqual({
     favoriteChecksByArticle: {},
     isFavoriteStatePending: false,
+    favoriteStateError: null,
+    retryFavoriteChecks: expect.any(Function),
   });
 
   rerender({ articleIds: ['article-1'], dbName: '', userId: 21 });
   expect(result.current).toEqual({
     favoriteChecksByArticle: {},
     isFavoriteStatePending: false,
+    favoriteStateError: null,
+    retryFavoriteChecks: expect.any(Function),
   });
 
   rerender({ articleIds: [], dbName: 'fixture.sqlite', userId: 21 });
   expect(result.current).toEqual({
     favoriteChecksByArticle: {},
     isFavoriteStatePending: false,
+    favoriteStateError: null,
+    retryFavoriteChecks: expect.any(Function),
   });
   expect(batchRequests).toEqual([]);
 }
 
+/** Verify membership lookup failures remain distinguishable from known empty results. */
+async function propagatesFavoriteLookupFailure(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/favorites/check', () =>
+      HttpResponse.json({ detail: 'Favorite lookup unavailable' }, { status: 503 }),
+    ),
+  );
+  await expect(checkFavorite('101', 'fixture.sqlite')).rejects.toMatchObject({ status: 503 });
+}
+
+/** Verify failed batch lookups cannot poison the cache with an empty successful record. */
+async function propagatesFavoriteBatchFailure(): Promise<void> {
+  server.use(
+    http.post('http://localhost/api/favorites/check/batch', () =>
+      HttpResponse.json({ detail: 'Favorite lookup unavailable' }, { status: 503 }),
+    ),
+  );
+  await expect(checkFavoritesBatch(['101'], 'fixture.sqlite')).rejects.toMatchObject({
+    status: 503,
+  });
+}
+
+/** Verify the batch hook exposes a failure and retries it into authoritative empty membership. */
+async function retriesUnavailableBatchMembership(): Promise<void> {
+  let shouldFail = true;
+  server.use(
+    http.post('http://localhost/api/favorites/check/batch', () =>
+      shouldFail
+        ? HttpResponse.json({ detail: 'Favorite lookup unavailable' }, { status: 503 })
+        : HttpResponse.json([{ article_id: '101', folders: [] }]),
+    ),
+  );
+  const queryClient = createTestQueryClient();
+  const { result } = renderHook(() => useFavoriteChecks(['101'], 'fixture.sqlite', 21), {
+    wrapper: createQueryWrapper(queryClient),
+  });
+  await waitFor(() => expect(result.current.favoriteStateError).toMatchObject({ status: 503 }));
+  expect(result.current.favoriteChecksByArticle['101']).toBeUndefined();
+  shouldFail = false;
+  act(() => result.current.retryFavoriteChecks());
+  await waitFor(() => expect(result.current.favoriteChecksByArticle['101']).toEqual([]));
+  expect(result.current.favoriteStateError).toBeNull();
+}
+
 describe('useFavoriteChecks', () => {
+  test('retries unavailable batch membership', retriesUnavailableBatchMembership);
+  test('propagates single lookup failure', propagatesFavoriteLookupFailure);
+  test('propagates batch lookup failure', propagatesFavoriteBatchFailure);
   test('requests only unique missing article ids', requestsOnlyMissingIds);
   test('isolates favorite caches by user and database', isolatesUserAndDatabaseScopes);
   test('disables anonymous and empty scopes', disablesInvalidScopes);

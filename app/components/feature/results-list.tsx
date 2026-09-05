@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/motion';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
+import { Button } from '@/components/ui/button';
 import { useCallback, useMemo, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
@@ -138,11 +139,12 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
   const visiblePageCount = Math.min(visiblePages, loadedPages);
   const visibleArticles = pages.slice(0, visiblePageCount).flatMap((page) => page.items);
   const visibleArticleIds = visibleArticles.map((article) => article.article_id);
-  const { favoriteChecksByArticle, isFavoriteStatePending } = useFavoriteChecks(
-    visibleArticleIds,
-    currentDb,
-    user?.id,
-  );
+  const {
+    favoriteChecksByArticle,
+    isFavoriteStatePending,
+    favoriteStateError,
+    retryFavoriteChecks,
+  } = useFavoriteChecks(visibleArticleIds, currentDb, user?.id);
 
   const highlightTerms = useMemo(() => parseFtsHighlightTerms(q), [q]);
 
@@ -242,7 +244,14 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
             initialFolderIds={
               favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
             }
-            isFavoriteStatePending={Boolean(user) && isFavoriteStatePending}
+            isFavoriteStatePending={
+              Boolean(user) &&
+              isFavoriteStatePending &&
+              !favoriteChecksByArticle[article.article_id]
+            }
+            isFavoriteStateUnavailable={
+              Boolean(favoriteStateError) && !favoriteChecksByArticle[article.article_id]
+            }
           />
         ))}
 
@@ -288,6 +297,17 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
       >
         {resultAnnouncement}
       </p>
+      {favoriteStateError && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 p-3 text-sm"
+        >
+          <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
+          <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
+            重试收藏状态
+          </Button>
+        </div>
+      )}
       <MotionPresence mode="wait">
         <MotionDiv
           key={resultState}

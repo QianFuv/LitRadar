@@ -19,6 +19,7 @@ type ArticleDialogCardProps = {
   preview?: ReactNode;
   initialFolderIds?: number[];
   isFavoriteStatePending?: boolean;
+  isFavoriteStateUnavailable?: boolean;
   extraActions?: ReactNode;
   leading?: ReactNode;
   triggerRef?: (node?: Element | null) => void;
@@ -68,6 +69,7 @@ export function ArticleDialogCard({
   preview,
   initialFolderIds = [],
   isFavoriteStatePending = false,
+  isFavoriteStateUnavailable = false,
   extraActions,
   leading,
   triggerRef,
@@ -110,6 +112,7 @@ export function ArticleDialogCard({
           dbName={dbName}
           initialFolderIds={initialFolderIds}
           isFavoriteStatePending={isFavoriteStatePending}
+          isFavoriteStateUnavailable={isFavoriteStateUnavailable}
           extraActions={extraActions}
         />
       )}

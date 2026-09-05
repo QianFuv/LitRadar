@@ -265,21 +265,14 @@ export async function downloadFavoriteExport(
  * @param dbName - Database name.
  * @returns Favorite checks.
  */
-export async function checkFavorite(
-  articleId: ArticleId,
-  dbName: string,
-): Promise<FavoriteCheck[]> {
+export function checkFavorite(articleId: ArticleId, dbName: string): Promise<FavoriteCheck[]> {
   const params = new URLSearchParams({ article_id: articleId, db_name: dbName });
-  try {
-    return await requestJson<FavoriteCheck[]>(
-      buildApiUrl('/api/favorites/check', params),
-      null,
-      undefined,
-      '获取收藏状态失败',
-    );
-  } catch {
-    return [];
-  }
+  return requestJson<FavoriteCheck[]>(
+    buildApiUrl('/api/favorites/check', params),
+    null,
+    undefined,
+    '获取收藏状态失败',
+  );
 }
 
 /**
@@ -293,23 +286,14 @@ export async function checkFavoritesBatch(
   articleIds: ArticleId[],
   dbName: string,
 ): Promise<Record<ArticleId, FavoriteCheck[]>> {
-  if (articleIds.length === 0) {
-    return {};
-  }
-  try {
-    const data = await requestJson<FavoriteBatchCheckItem[]>(
-      buildApiUrl('/api/favorites/check/batch'),
-      null,
-      {
-        method: 'POST',
-        body: JSON.stringify({ article_ids: articleIds, db_name: dbName }),
-      },
-      '获取收藏状态失败',
-    );
-    return Object.fromEntries(data.map((item) => [item.article_id, item.folders]));
-  } catch {
-    return {};
-  }
+  if (articleIds.length === 0) return {};
+  const data = await requestJson<FavoriteBatchCheckItem[]>(
+    buildApiUrl('/api/favorites/check/batch'),
+    null,
+    { method: 'POST', body: JSON.stringify({ article_ids: articleIds, db_name: dbName }) },
+    '获取收藏状态失败',
+  );
+  return Object.fromEntries(data.map((item) => [item.article_id, item.folders]));
 }
 
 /**

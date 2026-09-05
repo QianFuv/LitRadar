@@ -9,7 +9,7 @@ import { describe, expect, test, vi } from 'vitest';
 
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import type { Article } from '@/lib/api';
-import { AuthProvider } from '@/lib/auth-context';
+import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -113,12 +113,19 @@ function registerArticleDialogHandlers(): void {
  *
  * @param article - Article fixture to render.
  */
-function renderArticleCard(article: Article): void {
+async function renderArticleCard(article: Article): Promise<void> {
   renderWithQuery(
     <AuthProvider>
-      <ArticleDialogCard article={article} dbName="fixture.sqlite" />
+      <AuthenticatedArticleFixture article={article} />
     </AuthProvider>,
   );
+  await screen.findByRole('button', { name: /^查看文章详情：/ });
+}
+
+/** Mount the private article fixture only after server authentication is resolved. */
+function AuthenticatedArticleFixture({ article }: { article: Article }) {
+  const { user, loading } = useAuth();
+  return loading || !user ? null : <ArticleDialogCard article={article} dbName="fixture.sqlite" />;
 }
 
 /**
@@ -127,7 +134,7 @@ function renderArticleCard(article: Article): void {
 async function opensAndClosesAccessibleDialog(): Promise<void> {
   registerArticleDialogHandlers();
   const user = userEvent.setup();
-  renderArticleCard(SAFE_ARTICLE);
+  await renderArticleCard(SAFE_ARTICLE);
 
   expect(screen.getByText('Selectable title').closest('button')).toBeNull();
   expect(screen.getByText('Selectable abstract text').closest('button')).toBeNull();
@@ -192,7 +199,7 @@ async function copiesArticleValuesAndUsesStableActionRoutes(): Promise<void> {
     configurable: true,
     value: { writeText },
   });
-  renderArticleCard(SAFE_ARTICLE);
+  await renderArticleCard(SAFE_ARTICLE);
 
   await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   expect(await screen.findByRole('dialog')).toBeInTheDocument();
@@ -255,7 +262,7 @@ async function copiesArticleValuesAndUsesStableActionRoutes(): Promise<void> {
 async function doesNotExposeStoredOrDirectExternalLinks(): Promise<void> {
   registerArticleDialogHandlers();
   const user = userEvent.setup();
-  renderArticleCard({
+  await renderArticleCard({
     ...SAFE_ARTICLE,
     article_id: 'unsafe-article',
     doi: 'javascript:alert(1)',
@@ -277,7 +284,7 @@ async function reportsCopyFailure(): Promise<void> {
     configurable: true,
     value: { writeText: vi.fn().mockRejectedValue(new Error('clipboard denied')) },
   });
-  renderArticleCard(SAFE_ARTICLE);
+  await renderArticleCard(SAFE_ARTICLE);
 
   await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   await user.click(screen.getByRole('button', { name: '复制文章标题' }));
@@ -293,7 +300,7 @@ async function opensDataSourceSettingsWithoutDialogStacking(): Promise<void> {
     http.get('http://localhost/api/articles/:articleId/access', articleLoginRequiredResponse),
   );
   const user = userEvent.setup();
-  renderArticleCard(SAFE_ARTICLE);
+  await renderArticleCard(SAFE_ARTICLE);
 
   await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   const settingsLink = await screen.findByRole('link', { name: '去设置登录' });
@@ -320,7 +327,7 @@ async function recoversArticleAccessAfterReopening(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderArticleCard(SAFE_ARTICLE);
+  await renderArticleCard(SAFE_ARTICLE);
 
   await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   const failedAccess = await screen.findByRole('button', { name: '访问状态失败' });
