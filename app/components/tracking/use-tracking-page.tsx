@@ -70,6 +70,7 @@ export function useTrackingPage(userId: number) {
   const [keywordInput, setKeywordInput] = useState('');
   const [directionInput, setDirectionInput] = useState('');
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [databaseSelectionNotice, setDatabaseSelectionNotice] = useState<string | null>(null);
 
   const { data: status } = useQuery({
     queryKey: ['tracking-status'],
@@ -221,24 +222,11 @@ export function useTrackingPage(userId: number) {
     },
   });
   const requiresTrackingFolder = deliveryMethod === 'folder' || syncToTrackingFolder;
-  const normalizedSelectedDatabases = useCallback(
-    (selection: string[]): string[] => {
-      const allowed = new Set(availableDatabases);
-      const next = availableDatabases.filter(
-        (dbName) => allowed.has(dbName) && selection.includes(dbName),
-      );
-      if (next.length === 0 || next.length === availableDatabases.length) {
-        return [];
-      }
-      return next;
-    },
-    [availableDatabases],
-  );
-  const effectiveSelectedDatabases = databasesQuery.isSuccess
-    ? normalizedSelectedDatabases(selectedDatabases)
-    : selectedDatabases;
-  const allDatabasesSelected =
-    availableDatabases.length === 0 || effectiveSelectedDatabases.length === 0;
+  const effectiveSelectedDatabases = Array.from(new Set(selectedDatabases));
+  const unavailableSelectedDatabases = databasesQuery.isSuccess
+    ? effectiveSelectedDatabases.filter((dbName) => !availableDatabases.includes(dbName))
+    : [];
+  const allDatabasesSelected = effectiveSelectedDatabases.length === 0;
   const manualPushStatus = manualPushQuery.data;
   const isManualPushActive =
     manualPushStatus?.status === 'pending' || manualPushStatus?.status === 'running';
@@ -309,6 +297,7 @@ export function useTrackingPage(userId: number) {
     onSuccess: (savedSettings) => {
       queryClient.setQueryData(['notification-settings', userId], savedSettings);
       setDraftSettings(null);
+      setDatabaseSelectionNotice(null);
       queryClient.invalidateQueries({ queryKey: ['notification-settings', userId] });
       queryClient.invalidateQueries({ queryKey: ['tracking-status'] });
       setSettingsSaved(true);
@@ -320,6 +309,7 @@ export function useTrackingPage(userId: number) {
   /** Restore the recommendation draft to the latest stored query value. */
   const discardSettings = useCallback((): void => {
     setDraftSettings(null);
+    setDatabaseSelectionNotice(null);
     setKeywordInput('');
     setDirectionInput('');
     setSettingsSaved(false);
@@ -352,6 +342,7 @@ export function useTrackingPage(userId: number) {
 
   /** Represent all database selection with the existing empty-list contract. */
   function selectAllDatabases() {
+    setDatabaseSelectionNotice(null);
     updateDraftSettings((current) => ({
       ...current,
       selected_databases: [],
@@ -360,17 +351,24 @@ export function useTrackingPage(userId: number) {
 
   /** Update one database selection while preserving the empty-list all-selected contract. */
   function setDatabaseSelected(dbName: string, checked: boolean) {
+    const currentSelection = allDatabasesSelected ? availableDatabases : effectiveSelectedDatabases;
+    if (!checked && currentSelection.length === 1 && currentSelection[0] === dbName) {
+      setDatabaseSelectionNotice('至少保留一个数据库；如需全部，请点击“设为全部数据库”。');
+      return;
+    }
+    setDatabaseSelectionNotice(null);
     updateDraftSettings((current) => {
-      const currentSelection = normalizedSelectedDatabases(current.selected_databases);
       const baseSelection =
-        currentSelection.length === 0 ? [...availableDatabases] : [...currentSelection];
+        current.selected_databases.length === 0 ? availableDatabases : current.selected_databases;
       const nextSelection = checked
-        ? [...baseSelection, dbName]
+        ? Array.from(new Set([...baseSelection, dbName]))
         : baseSelection.filter((name) => name !== dbName);
-      return {
-        ...current,
-        selected_databases: normalizedSelectedDatabases(nextSelection),
-      };
+      return nextSelection.length === 0
+        ? current
+        : {
+            ...current,
+            selected_databases: nextSelection,
+          };
     });
   }
 
@@ -426,6 +424,8 @@ export function useTrackingPage(userId: number) {
         allSelected: allDatabasesSelected,
         available: availableDatabases,
         effectiveSelected: effectiveSelectedDatabases,
+        unavailable: unavailableSelectedDatabases,
+        notice: databaseSelectionNotice,
         query: databasesQuery,
         selectAll: selectAllDatabases,
         setSelected: setDatabaseSelected,

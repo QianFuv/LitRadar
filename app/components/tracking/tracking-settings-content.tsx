@@ -106,6 +106,11 @@ export function TrackingSettingsContent({
       {!isInitialLoading && !isInitialError && (
         <div className="sticky bottom-0 -mx-5 mt-6 flex flex-col gap-3 border-t bg-background/95 px-5 py-4 backdrop-blur-sm sm:flex-row sm:items-center sm:justify-end md:-mx-8 md:px-8">
           <div className="min-h-5 flex-1 text-sm">
+            {recommendation.databaseSelection.unavailable.length > 0 && (
+              <span role="alert" className="text-destructive">
+                推送数据库已不可用，请在“文献追踪”中重新选择或明确设为全部。
+              </span>
+            )}
             {recommendation.save.didSave && (
               <span role="status" className="text-green-600 dark:text-green-400">
                 已保存
@@ -131,7 +136,11 @@ export function TrackingSettingsContent({
           <Button
             type="button"
             className="w-full sm:w-auto"
-            disabled={!trackingPage.hasUnsavedSettings || recommendation.save.mutation.isPending}
+            disabled={
+              !trackingPage.hasUnsavedSettings ||
+              recommendation.save.mutation.isPending ||
+              recommendation.databaseSelection.unavailable.length > 0
+            }
             onClick={() => recommendation.save.mutation.mutate()}
           >
             <Save className="size-4" />

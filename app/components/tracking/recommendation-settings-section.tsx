@@ -284,9 +284,42 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
                 当前范围:{' '}
                 {databaseSelection.allSelected
                   ? `全部数据库（${databaseSelection.available.length} 个）`
-                  : `已选 ${databaseSelection.effectiveSelected.length} / ${databaseSelection.available.length} 个数据库`}
+                  : `已选 ${databaseSelection.effectiveSelected.filter((name) => databaseSelection.available.includes(name)).length} / ${databaseSelection.available.length} 个数据库`}
               </p>
             </div>
+          )}
+          {databaseSelection.unavailable.length > 0 && (
+            <div className="space-y-2 rounded-md border border-destructive/50 p-3 text-sm">
+              <p className="text-destructive">已失效的数据库选择</p>
+              {databaseSelection.unavailable.map((dbName) => (
+                <div key={dbName} className="flex items-center justify-between gap-2">
+                  <span className="break-all">{dbName}</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`移除失效数据库 ${dbName}`}
+                    disabled={databaseSelection.effectiveSelected.length === 1}
+                    onClick={() => databaseSelection.setSelected(dbName, false)}
+                  >
+                    移除
+                  </Button>
+                </div>
+              ))}
+              <p className="text-muted-foreground">
+                请先选择可用数据库并移除失效项，或明确设为全部数据库。
+              </p>
+              {databaseSelection.available.length === 0 && (
+                <Button type="button" variant="outline" onClick={databaseSelection.selectAll}>
+                  设为全部数据库
+                </Button>
+              )}
+            </div>
+          )}
+          {databaseSelection.notice && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {databaseSelection.notice}
+            </p>
           )}
         </div>
 

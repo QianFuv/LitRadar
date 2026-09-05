@@ -539,7 +539,92 @@ async function blocksTrackingEditsWhileSaving(): Promise<void> {
   expect(savedSettingsPayload?.ai_system_prompt).toBe('Submitted prompt');
 }
 
+/** Verify unavailable saved choices cannot expand during unrelated edits. */
+async function requiresExplicitUnavailableDatabaseCorrection(): Promise<void> {
+  installTrackingPageHandlers();
+  server.use(
+    http.get('http://localhost/api/tracking/notification-settings', () =>
+      HttpResponse.json({
+        ...NOTIFICATION_SETTINGS_FIXTURE,
+        selected_databases: ['retired.sqlite'],
+      }),
+    ),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  const alpha = await screen.findByRole('checkbox', { name: 'alpha.sqlite' });
+  await user.click(screen.getByRole('switch', { name: '启用推荐' }));
+  const save = screen.getByRole('button', { name: '保存更改' });
+  expect(save).toBeDisabled();
+  expect(alpha).not.toBeChecked();
+  expect(screen.getByText('retired.sqlite')).toBeInTheDocument();
+  await user.click(save);
+  expect(savedSettingsPayload).toBeNull();
+  await user.click(alpha);
+  expect(save).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: '移除失效数据库 retired.sqlite' }));
+  expect(save).toBeEnabled();
+  await user.click(save);
+  await waitFor(() => expect(savedSettingsPayload?.selected_databases).toEqual(['alpha.sqlite']));
+}
+
+/** Verify cancelling the final choice never silently means all databases. */
+async function preservesLastDatabaseUntilExplicitAllSelection(): Promise<void> {
+  installTrackingPageHandlers();
+  server.use(
+    http.get('http://localhost/api/tracking/notification-settings', () =>
+      HttpResponse.json({ ...NOTIFICATION_SETTINGS_FIXTURE, selected_databases: ['alpha.sqlite'] }),
+    ),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(<TrackingSettingsContent userId={51} section="tracking" />);
+  const alpha = await screen.findByRole('checkbox', { name: 'alpha.sqlite' });
+  await user.click(alpha);
+  expect(alpha).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: 'beta.sqlite' })).not.toBeChecked();
+  expect(screen.getByText(/至少保留一个数据库/)).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '设为全部数据库' }));
+  await user.click(screen.getByRole('button', { name: '保存更改' }));
+  await waitFor(() => expect(savedSettingsPayload?.selected_databases).toEqual([]));
+}
+
+/** Verify empty catalogs explain blocked saves in both tracking categories. */
+async function recoversUnavailableChoiceWithEmptyCatalog(): Promise<void> {
+  installTrackingPageHandlers();
+  server.use(
+    http.get('http://localhost/api/meta/databases', () => HttpResponse.json([])),
+    http.get('http://localhost/api/tracking/notification-settings', () =>
+      HttpResponse.json({
+        ...NOTIFICATION_SETTINGS_FIXTURE,
+        selected_databases: ['retired.sqlite'],
+      }),
+    ),
+  );
+  const user = userEvent.setup();
+  const view = renderWithQuery(<TrackingSettingsContent userId={51} section="notifications" />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('推送数据库已不可用');
+  expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled();
+  view.rerender(<TrackingSettingsContent userId={51} section="tracking" />);
+  expect(screen.getByText('retired.sqlite')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '设为全部数据库' }));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '保存更改' }));
+  await waitFor(() => expect(savedSettingsPayload?.selected_databases).toEqual([]));
+}
+
 describe('TrackingSettingsContent', () => {
+  test(
+    'recovers an unavailable choice with an empty catalog',
+    recoversUnavailableChoiceWithEmptyCatalog,
+  );
+  test(
+    'requires explicit correction of unavailable database choices',
+    requiresExplicitUnavailableDatabaseCorrection,
+  );
+  test(
+    'preserves the last database until explicit all selection',
+    preservesLastDatabaseUntilExplicitAllSelection,
+  );
   test('blocks tracking edits during a pending save', blocksTrackingEditsWhileSaving);
   test('renders named sections with shared textareas', rendersSectionsWithSharedTextareas);
   test('preserves database and secret update semantics', savesDatabaseAndSecretSemantics, 10_000);
