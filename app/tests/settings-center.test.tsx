@@ -2,9 +2,10 @@
  * Aggregated settings URL, dialog navigation, and unsaved-transition coverage.
  */
 
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
+import { Activity } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
@@ -129,6 +130,36 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
   });
 }
 
+/** Verify temporary React effect cleanup does not close URL-requested settings. */
+async function keepsSettingsOpenAfterActivityResumes(): Promise<void> {
+  const user = userEvent.setup();
+  const view = renderWithQuery(
+    <Activity mode="visible">
+      <SettingsCenterDialog />
+    </Activity>,
+  );
+  expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
+  view.rerender(
+    <Activity mode="hidden">
+      <SettingsCenterDialog />
+    </Activity>,
+  );
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  view.rerender(
+    <Activity mode="visible">
+      <SettingsCenterDialog />
+    </Activity>,
+  );
+
+  await user.click(await screen.findByRole('radio', { name: /^深色/ }));
+
+  expect(themeMocks.setTheme).toHaveBeenCalledWith('dark');
+  expect(screen.getByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
+  expect(navigationMocks.router.replace).not.toHaveBeenCalled();
+}
+
 /** Verify tracking and notification categories retain one shared draft controller. */
 async function preservesSharedTrackingCategoryState(): Promise<void> {
   installTrackingHandlers();
@@ -251,6 +282,10 @@ beforeEach(() => {
 describe('settings center', () => {
   test('preserves unrelated query state for every settings section', preservesSettingsQueryState);
   test('opens and navigates the query-driven dialog', opensAndNavigatesSettingsDialog);
+  test(
+    'keeps URL-requested settings open after Activity resumes',
+    keepsSettingsOpenAfterActivityResumes,
+  );
   test(
     'restores focus to a menu trigger after its portal unmounts',
     restoresFocusToTransientMenuTrigger,

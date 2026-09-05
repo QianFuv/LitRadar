@@ -174,6 +174,10 @@ export function SectionedDialogFrame<SectionId extends string>({
           }
         }}
         onCloseAutoFocus={(event) => {
+          if (open) {
+            event.preventDefault();
+            return;
+          }
           const focusTarget = returnFocusRef.current;
           returnFocusRef.current = null;
           if (focusTarget?.isConnected) {

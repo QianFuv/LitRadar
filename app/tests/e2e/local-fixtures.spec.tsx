@@ -1703,6 +1703,71 @@ async function crossTabSessionTest({
   await secondPage.close();
 }
 
+/**
+ * Serve article access that requires opening the data-source settings center.
+ *
+ * @param route - Intercepted fixture API request.
+ */
+async function serveArticleSettingsApi(route: Route): Promise<void> {
+  const pathname = new URL(route.request().url()).pathname;
+  if (pathname.endsWith('/access')) {
+    await fulfillJson(route, {
+      abstract_page: {
+        available: true,
+        label: '查看摘要页',
+        requires_login: false,
+        message: null,
+      },
+      fulltext: {
+        available: false,
+        label: '获取全文',
+        requires_login: true,
+        message: '需要登录',
+      },
+    });
+    return;
+  }
+  if (pathname === '/api/cnki/session') {
+    await fulfillJson(route, {
+      configured: false,
+      status: 'empty',
+      expires_at: null,
+      cookie_names: [],
+    });
+    return;
+  }
+  await serveTrackingApi(route);
+}
+
+/**
+ * Keep data-source settings usable after navigation unmounts the article dialog.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function articleDataSourceSettingsTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveArticleSettingsApi);
+  for (const workspace of ['/?q=graph', '/?view=favorites&folder=4', '/?view=weekly-updates']) {
+    await page.goto(workspace);
+    const articleTrigger = page.getByRole('button', { name: /^查看文章详情：/ }).first();
+    await articleTrigger.click();
+    const articleDialog = page.getByRole('dialog');
+    await articleDialog.getByRole('link', { name: '去设置登录' }).click();
+
+    await expect(page).toHaveURL(
+      new RegExp(`${workspace.replace('?', '\\?')}&settings=data-sources$`),
+    );
+    const settingsDialog = page.getByRole('dialog', { name: '设置中心' });
+    await expect(settingsDialog.getByText('未配置', { exact: true })).toBeVisible();
+    await settingsDialog.getByRole('button', { name: '刷新 CNKI 登录状态' }).click();
+    await expect(settingsDialog).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(1);
+    await settingsDialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${workspace.replace('?', '\\?')}$`));
+    await expect(settingsDialog).toHaveCount(0);
+  }
+}
+
+test('opens usable data-source settings from article details', articleDataSourceSettingsTest);
 test('synchronizes logout and account changes across browser tabs', crossTabSessionTest);
 
 test('scrolls a long mobile sidebar and dismisses without a close button', mobileSidebarScrollTest);
