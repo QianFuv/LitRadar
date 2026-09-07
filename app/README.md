@@ -28,10 +28,15 @@ CI 与前端构建阶段使用：
 
 ## 本地运行
 
+准备好前端依赖和仓库部署密钥后，在仓库根目录运行 `node scripts/dev.mjs`，或在本目录运行 `pnpm dev:full`，即可一起启动前后端。按 `Ctrl+C` 一起关闭；启动失败或任一进程意外退出也会清理另一进程。无需先运行 `pnpm build`，也无需建立静态资源目录连接。完整准备步骤和隔离数据目录参数见[开发指南](../docs/guides/development.md)。
+
+需要分开启动时，使用以下命令。
+
 先在仓库根目录启动只监听 loopback 8001 的统一 Rust 应用；HTTP 和内嵌调度共享该进程：
 
 ```bash
 cargo run --bin litradar -- serve \
+  --development \
   --host 127.0.0.1 \
   --port 8001 \
   --secret-key-file secrets/litradar.key

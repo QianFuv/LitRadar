@@ -79,6 +79,7 @@ impl ServeConfig {
             return Err("--scheduler-interval-seconds must be greater than zero".into());
         }
         let are_secure_cookies_required = remove_flag(&mut args, "--require-secure-cookies");
+        let is_development = remove_flag(&mut args, "--development");
         if !args.is_empty() {
             return Err(format!("unexpected serve arguments: {}", args.join(" ")).into());
         }
@@ -87,6 +88,8 @@ impl ServeConfig {
         let mut api_config = ApiConfig::new(project_root, host, port, secret_key_file);
         api_config.bundled_meta_dir = bundled_meta_dir;
         api_config.are_secure_cookies_required = are_secure_cookies_required;
+        api_config.is_development = is_development;
+        api_config.validate_development_mode()?;
         Ok(Self {
             api_config,
             application_executable,
@@ -102,7 +105,7 @@ impl ServeConfig {
 ///
 /// Usage text for service runtime options.
 pub(crate) fn serve_usage() -> &'static str {
-    "Usage: litradar serve --secret-key-file PATH [--host HOST] [--port PORT] [--project-root PATH] [--scheduler-interval-seconds N] [--require-secure-cookies]"
+    "Usage: litradar serve --secret-key-file PATH [--host HOST] [--port PORT] [--project-root PATH] [--scheduler-interval-seconds N] [--require-secure-cookies] [--development]"
 }
 
 fn extract_string_option(
@@ -156,6 +159,7 @@ mod tests {
 
         assert_eq!(config.api_config.bind_address(), "0.0.0.0:9001");
         assert!(config.api_config.are_secure_cookies_required);
+        assert!(!config.api_config.is_development);
         assert_eq!(config.application_executable, PathBuf::from("litradar"));
         assert_eq!(config.scheduler_interval, Duration::from_secs(5));
     }
@@ -174,6 +178,41 @@ mod tests {
         .expect_err("zero interval should fail");
 
         assert!(error.to_string().contains("must be greater than zero"));
+    }
+
+    #[test]
+    fn development_mode_requires_an_explicit_loopback_only_opt_in() {
+        let arguments = vec![
+            "--project-root".to_string(),
+            "fixture-root".to_string(),
+            "--secret-key-file".to_string(),
+            "secret.key".to_string(),
+            "--development".to_string(),
+        ];
+        let config = ServeConfig::from_args_with_bundled_meta_dir(
+            arguments.clone(),
+            PathBuf::from("litradar"),
+            None,
+        )
+        .expect("local development should parse");
+        assert!(config.api_config.is_development);
+        assert_eq!(config.api_config.host, "127.0.0.1");
+
+        for extra_arguments in [
+            vec!["--host", "0.0.0.0"],
+            vec!["--host", "192.0.2.1"],
+            vec!["--require-secure-cookies"],
+        ] {
+            let mut invalid_arguments = arguments.clone();
+            invalid_arguments.extend(extra_arguments.into_iter().map(str::to_string));
+            let error = ServeConfig::from_args_with_bundled_meta_dir(
+                invalid_arguments,
+                PathBuf::from("litradar"),
+                None,
+            )
+            .expect_err("development must reject public listeners and production flags");
+            assert!(error.to_string().contains("Development mode requires"));
+        }
     }
 
     #[test]

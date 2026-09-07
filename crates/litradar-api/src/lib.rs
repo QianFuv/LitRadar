@@ -206,6 +206,7 @@ pub fn try_build_router(config: ApiConfig) -> Result<Router, Box<dyn Error>> {
 fn try_build_router_with_state(
     mut config: ApiConfig,
 ) -> Result<(Router, ApiState), Box<dyn Error>> {
+    config.validate_development_mode()?;
     let web_root = config.project_root.join("web");
     let storage_config = StorageConfig::from_project_root(config.project_root.clone());
     litradar_storage::preflight_storage(&storage_config)?;
@@ -220,10 +221,14 @@ fn try_build_router_with_state(
     config.apply_runtime_settings(&runtime_settings)?;
     let provider_proxy_selection =
         litradar_sources::ProviderProxySelection::from_runtime_settings(&runtime_settings)?;
-    let security_header_policy = security_headers::load_security_header_policy(
-        &web_root,
-        config.are_secure_cookies_required,
-    )?;
+    let security_header_policy = if config.is_development {
+        security_headers::development_security_header_policy()
+    } else {
+        security_headers::load_security_header_policy(
+            &web_root,
+            config.are_secure_cookies_required,
+        )?
+    };
     let state = ApiState::new_with_auth_policy(
         storage_config,
         secret_codec,
@@ -233,12 +238,15 @@ fn try_build_router_with_state(
         provider_proxy_selection,
     );
 
-    let router = Router::new()
+    let mut router = Router::new()
         .nest_service("/mcp", mcp::service(&config, state.clone()))
         .merge(openapi::docs_router())
         .merge(routes::health_routes())
-        .nest(API_PREFIX, routes::public_routes())
-        .fallback_service(static_frontend_service(web_root))
+        .nest(API_PREFIX, routes::public_routes());
+    if !config.is_development {
+        router = router.fallback_service(static_frontend_service(web_root));
+    }
+    let router = router
         .layer(from_fn(cache_control_middleware))
         .layer(cors_layer(&config));
     let router = http_observability::instrument_router(router)
@@ -1156,6 +1164,94 @@ mod tests {
         assert_eq!(public_health.status, StatusCode::OK);
         assert_eq!(public_health.payload, serde_json::json!({"status": "ok"}));
         assert!(public_health.headers.get(CACHE_CONTROL).is_none());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn development_routes_ignore_missing_or_stale_frontend_builds() {
+        for has_static_export in [false, true] {
+            let backend = TestBackend::new();
+            let web_root = backend.project_root().join("web");
+            if has_static_export {
+                fs::write(web_root.join("csp-hashes.json"), "stale-build")
+                    .expect("stale manifest should write");
+            } else {
+                fs::remove_dir_all(&web_root).expect("fixture export should be removed");
+            }
+            let mut config = ApiConfig::new(
+                backend.project_root().to_path_buf(),
+                "127.0.0.1".to_string(),
+                0,
+                backend.project_root().join("secret.key"),
+            );
+            config.is_development = true;
+            let app = try_build_router(config)
+                .expect("development APIs should not depend on a frontend build");
+
+            for (uri, status) in [
+                ("/", StatusCode::NOT_FOUND),
+                ("/index.html", StatusCode::NOT_FOUND),
+                ("/health/live", StatusCode::OK),
+                ("/openapi.json", StatusCode::OK),
+                ("/docs/", StatusCode::OK),
+                ("/api/auth/me", StatusCode::UNAUTHORIZED),
+                ("/api/does-not-exist", StatusCode::NOT_FOUND),
+            ] {
+                let response = static_frontend_request(&app, Method::GET, uri, &[]).await;
+                assert_eq!(response.status, status, "GET {uri}");
+                assert_security_header_baseline(&response.headers, false);
+                let csp = response.headers[CONTENT_SECURITY_POLICY]
+                    .to_str()
+                    .expect("CSP should be ASCII");
+                assert!(csp.contains("script-src 'self';"));
+                assert!(!csp.contains("sha256-"));
+            }
+        }
+    }
+
+    #[test]
+    fn default_router_startup_still_requires_a_verified_static_export() {
+        for has_static_export in [false, true] {
+            let backend = TestBackend::new();
+            let web_root = backend.project_root().join("web");
+            if has_static_export {
+                fs::write(web_root.join("index.html"), "changed-after-build")
+                    .expect("changed HTML should write");
+            } else {
+                fs::remove_dir_all(web_root).expect("fixture export should be removed");
+            }
+            let config = ApiConfig::new(
+                backend.project_root().to_path_buf(),
+                "127.0.0.1".to_string(),
+                0,
+                backend.project_root().join("secret.key"),
+            );
+            let error = try_build_router(config)
+                .expect_err("default startup must not silently switch to development mode");
+            assert!(error.to_string().contains("static"));
+        }
+    }
+
+    #[test]
+    fn development_router_rejects_public_or_hardened_configuration_before_storage() {
+        for (host, are_secure_cookies_required) in [("0.0.0.0", false), ("127.0.0.1", true)] {
+            let project = tempfile::tempdir().expect("temporary project should be created");
+            let mut config = ApiConfig::new(
+                project.path().to_path_buf(),
+                host.to_string(),
+                0,
+                project.path().join("missing.key"),
+            );
+            config.is_development = true;
+            config.are_secure_cookies_required = are_secure_cookies_required;
+            let error = try_build_router(config)
+                .expect_err("programmatic callers must preserve the development boundary");
+            assert!(error.to_string().contains("Development mode requires"));
+            assert!(!project.path().join("data").exists());
+        }
     }
 
     #[tokio::test]

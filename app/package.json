@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.32.0",
   "scripts": {
     "dev": "next dev --port 8000",
+    "dev:full": "node ../scripts/dev.mjs",
     "build": "next build && node ../scripts/generate-csp.mjs out",
     "lint": "eslint",
     "format": "prettier --write .",

@@ -37,6 +37,8 @@ pub struct ApiConfig {
     pub auth_rate_limit_policy: AuthRateLimitPolicy,
     /// Whether startup must fail unless secure session cookies are enabled.
     pub are_secure_cookies_required: bool,
+    /// Whether the loopback service runs without hosting a static frontend.
+    pub is_development: bool,
 }
 
 impl ApiConfig {
@@ -68,7 +70,20 @@ impl ApiConfig {
             trusted_proxy_cidrs: default_runtime_trusted_proxy_cidrs(),
             auth_rate_limit_policy: default_runtime_auth_rate_limit_policy(),
             are_secure_cookies_required: false,
+            is_development: false,
         }
+    }
+
+    /// Validate the explicit local development boundary before preparing storage.
+    ///
+    /// # Returns
+    ///
+    /// An error if development mode uses a public listener or hardened production flags.
+    pub fn validate_development_mode(&self) -> Result<(), ApiConfigError> {
+        if self.is_development && (self.host != "127.0.0.1" || self.are_secure_cookies_required) {
+            return Err(ApiConfigError::InvalidDevelopmentMode);
+        }
+        Ok(())
     }
 
     /// Apply database-backed admin runtime settings.
@@ -139,6 +154,8 @@ pub enum ApiConfigError {
     InvalidRuntimeSetting(String),
     /// Production startup requires secure session cookies.
     SecureCookiesRequired,
+    /// Local development was combined with a public listener or production hardening.
+    InvalidDevelopmentMode,
 }
 
 impl fmt::Debug for ApiConfigError {
@@ -155,6 +172,9 @@ impl fmt::Display for ApiConfigError {
             Self::InvalidRuntimeSetting(detail) => formatter.write_str(detail),
             Self::SecureCookiesRequired => formatter.write_str(
                 "Secure session cookies are required; set secure_cookies to true before startup",
+            ),
+            Self::InvalidDevelopmentMode => formatter.write_str(
+                "Development mode requires --host 127.0.0.1 and cannot use --require-secure-cookies",
             ),
         }
     }
@@ -269,6 +289,7 @@ mod tests {
             AuthRateLimitPolicy::default()
         );
         assert!(!config.are_secure_cookies_required);
+        assert!(!config.is_development);
     }
 
     #[test]

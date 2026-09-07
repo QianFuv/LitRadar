@@ -269,10 +269,12 @@ Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的
 5. 加载全局运行设置并构造受管 Provider 代理选择。
 6. 应用 Provider 代理、CORS、MCP、Cookie、可信代理和认证限流策略。
 7. 若启用 `--require-secure-cookies` 但设置仍为 `false`，拒绝启动。
-8. 重新散列 `web/` 下全部 HTML，并要求 `web/csp-hashes.json` 与静态导出完全一致后构造 CSP。
+8. 默认重新散列 `web/` 下全部 HTML，并要求 `web/csp-hashes.json` 与静态导出完全一致后构造 CSP。显式 `--development` 模式不托管静态前端，使用无构建脚本哈希的基础安全策略，不读取静态构建。
 9. 绑定监听端口并并发启动 HTTP 与立即执行的调度 tick。
 
 默认调度间隔为 30 秒，可用 `--scheduler-interval-seconds N` 覆盖；N 必须大于 0。任一组件意外失败都会使整个 `serve` 调用失败。
+
+`--development` 是显式启动参数，不是数据库运行设置或环境覆盖，只允许 `--host 127.0.0.1`，且与 `--require-secure-cookies` 互斥。检查在存储准备前完成；省略参数时，静态构建缺失或 CSP 清单不匹配仍会导致启动失败。本地可通过 `node scripts/dev.mjs` 同时启动 Rust 开发模式和 Next.js，并在同一终端统一停止。
 
 `--require-secure-cookies` 同时选择 hardened HTTPS 响应模式：在 Secure Cookie 启动门通过后，应用为所有响应增加 `Strict-Transport-Security: max-age=31536000`。未传该参数的 loopback HTTP 模式不发送 HSTS。CSP 清单由 `pnpm --dir app build` 自动生成；打包或部署不得绕过该构建步骤，也不得把不同构建的 HTML 与清单混用。
 

@@ -39,12 +39,25 @@ pnpm install --frozen-lockfile
 
 ## 运行开发服务
 
+### 一条命令启动前后端
+
+完成部署密钥和前端依赖准备后，在仓库根目录运行：
+
+```bash
+node scripts/dev.mjs
+```
+
+也可以在 `app/` 中运行 `pnpm dev:full`。脚本检查部署密钥和 8000/8001 端口，使用锁定依赖编译并启动 Rust 开发服务，同时启动 Next.js，最多等待 5 分钟确认两个服务就绪。浏览器入口为 `http://localhost:8000`，按 `Ctrl+C` 关闭前后端；任一服务启动失败或意外退出时，脚本也会停止另一服务。退出最多给予子进程 10 秒宽限，再终止仍存活的进程树。端口已被占用时直接报错，不终止已有服务。
+
+该命令不需要前端生产构建、静态资源目录或目录连接。默认使用仓库中的数据和部署密钥；需要隔离数据时，使用 `node scripts/dev.mjs --project-root PATH`，该目录必须已有 `secrets/litradar.key`，源码和前端依赖仍从当前仓库读取。脚本不会生成或替换部署密钥。
+
 ### 统一应用服务
 
 在仓库根目录运行：
 
 ```bash
 cargo run --bin litradar -- serve \
+  --development \
   --host 127.0.0.1 \
   --port 8001 \
   --secret-key-file secrets/litradar.key
@@ -57,6 +70,8 @@ cargo run --bin litradar -- serve \
 - Swagger UI：`http://localhost:8000/docs/`
 - OpenAPI：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
+
+`--development` 显式选择不托管静态前端的本地模式：Rust 保留 API、认证、健康检查、接口文档、MCP、内嵌任务和基础安全响应头，但不读取 `web/` 或 `csp-hashes.json`；直接访问后端的页面路径返回 404。该模式只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合。省略 `--development` 时仍按生产静态托管模式运行，并严格校验 HTML 和 CSP 清单；缺失构建不会自动降级为开发模式。
 
 服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查和静态流量被抑制。日志格式和 filter 是管理员“运行配置”中的持久设置，不接受进程环境覆盖：首次按默认 JSON 启动，登录管理页把 `log_format` 改为 `compact`，按需把 `log_filter` 改为例如 `warn,litradar=debug,litradar_api=debug`，再重启进程。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
 

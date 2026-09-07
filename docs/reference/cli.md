@@ -54,6 +54,7 @@ litradar serve --secret-key-file PATH
     [--project-root PATH]
     [--scheduler-interval-seconds N]
     [--require-secure-cookies]
+    [--development]
 ```
 
 | 参数                             | 默认值       | 含义                                                 |
@@ -64,8 +65,11 @@ litradar serve --secret-key-file PATH
 | `--project-root PATH`            | 当前工作目录 | 数据、静态 Web 和扩展根目录                          |
 | `--scheduler-interval-seconds N` | `30`         | 立即执行首个 tick 后的调度间隔；必须大于 0           |
 | `--require-secure-cookies`       | 关闭         | 要求数据库 `secure_cookies=true`，否则绑定端口前失败 |
+| `--development`                  | 关闭         | 本地开发只提供后端接口，不依赖或托管前端静态构建     |
 
 `serve` 是唯一常驻入口。它先准备和迁移存储，再在一个进程中并发运行 HTTP 与内嵌调度。计划任务使用当前 `litradar` 可执行文件启动类型化子命令进程，并把每次运行隔离到 Unix process group 或 Windows Job Object。SIGINT/SIGTERM 会先终止完整进程树、等待直接子进程，再保存 `cancelled`；任一运行组件意外失败会关闭另一组件并使进程非零退出。
+
+`--development` 只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合；无效组合在准备存储前拒绝。该模式保留 API、认证、MCP、文档、健康检查、内嵌任务和基础安全响应头，页面路径返回 404，页面由 Next.js 开发服务器提供。省略此参数时仍必须提供经过 CSP 清单验证的 `web/`；不会根据目录是否存在自动选择模式。本地一键启停命令见[开发指南](../guides/development.md#一条命令启动前后端)。
 
 ## `admin`
 

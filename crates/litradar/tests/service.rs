@@ -100,12 +100,45 @@ fn unified_service_serves_frontend_openapi_and_authenticated_api_then_cleans_up(
     assert!(!root_path.exists());
 }
 
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "Miri does not support child processes or TCP listeners"
+)]
+fn development_service_starts_without_a_frontend_build() {
+    let temp_dir = tempdir().expect("temporary service root should be created");
+    let project_root = temp_dir.path();
+    fs::write(project_root.join("secret.key"), [32_u8; 32]).expect("secret key should write");
+    let port = reserve_loopback_port();
+    let mut service = ServiceChild::spawn_with_args(project_root, port, &["--development"]);
+
+    let ready = wait_for_ready(&mut service, port);
+    let root = http_get(port, "/", None).expect("development root should respond");
+    let openapi = http_get(port, "/openapi.json", None).expect("OpenAPI should respond");
+    let anonymous = http_get(port, "/api/auth/me", None).expect("auth API should respond");
+
+    assert_eq!(ready.status, 200);
+    assert_eq!(ready.json()["status"], "ok");
+    assert_eq!(root.status, 404);
+    assert_eq!(openapi.status, 200);
+    assert!(openapi.json()["paths"]["/api/auth/me"].is_object());
+    assert_eq!(anonymous.status, 401);
+    assert!(!project_root.join("web").exists());
+
+    service.terminate();
+    assert!(wait_for_port_release(port));
+}
+
 struct ServiceChild {
     child: Option<Child>,
 }
 
 impl ServiceChild {
     fn spawn(project_root: &Path, port: u16) -> Self {
+        Self::spawn_with_args(project_root, port, &[])
+    }
+
+    fn spawn_with_args(project_root: &Path, port: u16, additional_args: &[&str]) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_litradar"))
             .current_dir(project_root)
             .args([
@@ -121,6 +154,7 @@ impl ServiceChild {
                 "--scheduler-interval-seconds",
                 "3600",
             ])
+            .args(additional_args)
             .env_remove("RUST_LOG")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

@@ -63,6 +63,20 @@ impl fmt::Display for SecurityHeaderError {
 
 impl Error for SecurityHeaderError {}
 
+/// Build the baseline API policy when Next.js hosts the development frontend.
+///
+/// # Returns
+///
+/// Security headers without static-export script hashes or production HSTS.
+pub(crate) fn development_security_header_policy() -> SecurityHeaderPolicy {
+    SecurityHeaderPolicy {
+        content_security_policy: HeaderValue::from_static(
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+        ),
+        is_hsts_enabled: false,
+    }
+}
+
 /// Load and verify the CSP manifest against every deployed HTML file.
 ///
 /// # Arguments
