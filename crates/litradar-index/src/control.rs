@@ -1013,19 +1013,6 @@ pub fn adopt_legacy_batch_state(
 ) -> Result<LegacyBatchAdoption, ControlDatabaseError> {
     validate_batch_id(batch_id)?;
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-    let has_lease = transaction.query_row(
-        "SELECT EXISTS(
-             SELECT 1 FROM provider_leases
-             WHERE catalog_name = ?1 AND provider_name = ?2
-         )",
-        params![catalog_name, provider_name],
-        |row| row.get::<_, bool>(0),
-    )?;
-    if has_lease {
-        return Err(ControlDatabaseError::InvalidSyncState {
-            reason: "legacy batch adoption requires an unleased catalog",
-        });
-    }
     let legacy = {
         let mut statement = transaction.prepare(
             "SELECT sync_mode, started_at
@@ -1046,6 +1033,19 @@ pub fn adopt_legacy_batch_state(
             started_at: None,
             checkpoints_adopted: 0,
             anchors_adopted: 0,
+        });
+    }
+    let has_lease = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM provider_leases
+             WHERE catalog_name = ?1 AND provider_name = ?2
+         )",
+        params![catalog_name, provider_name],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if has_lease {
+        return Err(ControlDatabaseError::InvalidSyncState {
+            reason: "legacy batch adoption requires an unleased catalog",
         });
     }
     if !allow_adoption {
@@ -2039,6 +2039,68 @@ mod tests {
     }
 
     #[test]
+    fn modern_batch_resume_defers_lease_checks_to_acquisition() {
+        for now in [101, 400] {
+            let connection = current_control();
+            let original = prepared_run(
+                prepare_journal_sync(
+                    &connection,
+                    CATALOG_NAME,
+                    PROVIDER_NAME,
+                    CATALOG_ID,
+                    "old-run",
+                    IndexSyncMode::Incremental,
+                    true,
+                    TIMESTAMP,
+                )
+                .expect("modern checkpoint should prepare"),
+            );
+            advance_run_checkpoint(
+                &connection,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                CATALOG_ID,
+                &original.run_id,
+                original.mode,
+                original.base_anchor.as_deref(),
+                "saved-cursor",
+                TIMESTAMP,
+            )
+            .expect("traversal progress should persist");
+            let before = read_run_checkpoint(&connection, CATALOG_NAME, PROVIDER_NAME, CATALOG_ID)
+                .expect("checkpoint should read");
+            acquire_lease(&connection, CATALOG_NAME, PROVIDER_NAME, "old-run", 100)
+                .expect("original lease should acquire");
+            let adoption = adopt_legacy_batch_state(
+                &connection,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                BATCH_ID,
+                IndexSyncMode::Incremental,
+                false,
+            )
+            .expect("modern batch has no legacy state to adopt");
+            assert_eq!(adoption.checkpoints_adopted, 0);
+            assert_eq!(adoption.anchors_adopted, 0);
+            assert_eq!(
+                read_run_checkpoint(&connection, CATALOG_NAME, PROVIDER_NAME, CATALOG_ID)
+                    .expect("checkpoint should remain readable"),
+                before,
+            );
+            let acquisition =
+                acquire_lease(&connection, CATALOG_NAME, PROVIDER_NAME, "new-run", now);
+            if now == 101 {
+                assert!(matches!(
+                    acquisition,
+                    Err(ControlDatabaseError::ActiveLease { .. })
+                ));
+            } else {
+                acquisition.expect("expired lease should allow the original batch to resume");
+            }
+        }
+    }
+
+    #[test]
     fn legacy_adoption_is_single_selection_only_and_preserves_completed_anchors() {
         let connection = current_control();
         connection
@@ -2071,6 +2133,27 @@ mod tests {
             ),
             Err(ControlDatabaseError::InvalidSyncState { .. })
         ));
+        acquire_lease(
+            &connection,
+            CATALOG_NAME,
+            PROVIDER_NAME,
+            "legacy-owner",
+            100,
+        )
+        .expect("legacy lease should acquire");
+        assert!(matches!(
+            adopt_legacy_batch_state(
+                &connection,
+                CATALOG_NAME,
+                PROVIDER_NAME,
+                BATCH_ID,
+                IndexSyncMode::Incremental,
+                true,
+            ),
+            Err(ControlDatabaseError::InvalidSyncState { .. }),
+        ));
+        release_lease(&connection, CATALOG_NAME, PROVIDER_NAME, "legacy-owner")
+            .expect("legacy owner should release its lease before adoption");
         let adoption = adopt_legacy_batch_state(
             &connection,
             CATALOG_NAME,
