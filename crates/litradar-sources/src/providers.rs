@@ -2229,13 +2229,35 @@ fn scholarly_article_draft(
     openalex: Option<&Value>,
     semantic_scholar: Option<&Value>,
 ) -> Option<ArticleDraft> {
-    let title = first_text(work.get("title"))?;
+    let doi = json_text(work.get("DOI")).and_then(|value| normalize_contract_doi(&value));
+    let title = first_text(work.get("title"))
+        .or_else(|| {
+            let (expected_doi, enrichment) = doi.as_ref().zip(openalex)?;
+            let enrichment_doi = enrichment
+                .get("doi")
+                .and_then(Value::as_str)
+                .and_then(normalize_contract_doi);
+            if enrichment_doi.as_ref() != Some(expected_doi) {
+                return None;
+            }
+            json_text(enrichment.get("display_name")).or_else(|| json_text(enrichment.get("title")))
+        })
+        .or_else(|| {
+            let (expected_doi, enrichment) = doi.as_ref().zip(semantic_scholar)?;
+            let enrichment_doi = enrichment
+                .pointer("/externalIds/DOI")
+                .and_then(Value::as_str)
+                .and_then(normalize_contract_doi);
+            if enrichment_doi.as_ref() != Some(expected_doi) {
+                return None;
+            }
+            json_text(enrichment.get("title"))
+        })?;
     let date = crossref_date(work);
     let publication_year = date
         .as_deref()
         .and_then(|value| value.get(..4))
         .and_then(|value| value.parse().ok());
-    let doi = json_text(work.get("DOI")).and_then(|value| normalize_contract_doi(&value));
     let pmid = json_text(work.get("PMID")).and_then(|value| normalize_contract_pmid(&value));
     let volume = json_text(work.get("volume"));
     let issue_number = json_text(work.get("issue"));
@@ -4006,6 +4028,64 @@ mod tests {
     }
 
     #[test]
+    fn crossref_workset_preserves_untitled_work_with_matching_enrichment() {
+        let root = tempfile::tempdir().expect("workset root should be created");
+        let mut untitled = dated_crossref_work("2", 2, "untitled-editorial", 0);
+        untitled["title"] = json!(["\u{00a0}"]);
+        let mut client = ScholarlyClient::new(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                crossref_works: vec![
+                    untitled,
+                    dated_crossref_work("1", 1, "ordinary-article", 10),
+                ],
+                openalex_by_doi: BTreeMap::from([(
+                    "10.1000/untitled-editorial".to_string(),
+                    json!({
+                        "doi": "https://doi.org/10.1000/untitled-editorial",
+                        "title": "\u{00a0}",
+                        "display_name": "\u{00a0}"
+                    }),
+                )]),
+                semantic_scholar_by_doi: BTreeMap::from([(
+                    "10.1000/untitled-editorial".to_string(),
+                    json!({
+                        "externalIds": {"DOI": "10.1000/untitled-editorial"},
+                        "title": "Editorial"
+                    }),
+                )]),
+                ..Default::default()
+            }),
+            true,
+        );
+
+        let batches = collect_crossref_batches(
+            &mut client,
+            IndexSyncMode::Bootstrap,
+            None,
+            None,
+            root.path(),
+        );
+        let articles = batches
+            .iter()
+            .flat_map(|batch| &batch.articles)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            articles.len(),
+            2,
+            "enrichment must preserve the selected work"
+        );
+        let editorial = articles
+            .iter()
+            .find(|article| article.doi.as_deref() == Some("10.1000/untitled-editorial"))
+            .expect("the untitled DOI must not be dropped");
+        assert_eq!(editorial.title, "Editorial");
+        assert_eq!(editorial.date.as_deref(), Some("2026-07-02"));
+        assert!(batch_is_complete(
+            batches.last().expect("workset should complete")
+        ));
+    }
+
+    #[test]
     fn crossref_next_update_starts_a_new_query_and_includes_appended_base_articles() {
         let root = tempfile::tempdir().unwrap();
         let original = dated_crossref_work("2", 2, "base-original", 0);
@@ -4539,6 +4619,77 @@ mod tests {
         assert!(!DomesticCnkiArticleAccessProvider::<
             FixtureDomesticCnkiTransport,
         >::supports_article(&article));
+    }
+
+    #[test]
+    fn scholarly_title_enrichment_preserves_source_priority() {
+        let mut work = json!({
+            "DOI": "https://doi.org/10.1000/SAME",
+            "title": ["Crossref title"],
+            "published": {"date-parts": [[2026, 7, 18]]},
+            "volume": "1",
+            "issue": "2"
+        });
+        let mut openalex = json!({
+            "doi": "https://doi.org/10.1000/same",
+            "display_name": "OpenAlex title"
+        });
+        let semantic_scholar = json!({
+            "externalIds": {"DOI": "10.1000/SAME"},
+            "title": "Semantic Scholar title"
+        });
+        for expected in ["Crossref title", "OpenAlex title", "Semantic Scholar title"] {
+            let article = scholarly_article_draft(
+                &catalog(),
+                &work,
+                Some(&openalex),
+                Some(&semantic_scholar),
+            )
+            .expect("a matching source should supply the title");
+            assert_eq!(article.title, expected);
+            assert_eq!(article.doi.as_deref(), Some("10.1000/same"));
+            assert_eq!(article.date.as_deref(), Some("2026-07-18"));
+            assert_eq!(article.volume.as_deref(), Some("1"));
+            if expected == "Crossref title" {
+                work["title"] = json!(["\u{00a0}"]);
+            } else {
+                openalex["display_name"] = json!("\u{00a0}");
+            }
+        }
+    }
+
+    #[test]
+    fn scholarly_title_enrichment_requires_a_matching_doi_and_nonblank_title() {
+        let work = json!({"DOI": "10.1000/expected", "title": ["\u{00a0}"]});
+        for (openalex, semantic_scholar) in [
+            (
+                json!({"doi": "10.1000/other", "display_name": "Wrong article"}),
+                json!({"externalIds": {"DOI": "10.1000/other"}, "title": "Wrong article"}),
+            ),
+            (
+                json!({"display_name": "Unidentified article"}),
+                json!({"title": "Unidentified article"}),
+            ),
+            (
+                json!({"doi": "10.1000/expected", "display_name": "\u{00a0}"}),
+                json!({"externalIds": {"DOI": "10.1000/expected"}, "title": "\u{00a0}"}),
+            ),
+        ] {
+            assert!(scholarly_article_draft(
+                &catalog(),
+                &work,
+                Some(&openalex),
+                Some(&semantic_scholar)
+            )
+            .is_none());
+        }
+        assert!(scholarly_article_draft(
+            &catalog(),
+            &json!({"title": ["\u{00a0}"], "volume": "1", "published": {"date-parts": [[2026]]}}),
+            Some(&json!({"display_name": "Unidentified article"})),
+            Some(&json!({"title": "Unidentified article"})),
+        )
+        .is_none());
     }
 
     #[test]

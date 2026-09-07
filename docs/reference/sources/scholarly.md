@@ -23,7 +23,7 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 | ---------------- | --------------------------------------------------------- | ----------------------------------------------- |
 | Crossref         | 按 ISSN 获取主文章清单                                    | DOI、题名、作者、摘要、日期、卷期页码、撤稿关系 |
 | OpenAlex         | DOI 增强；Crossref 整刊查询均为 404 或空结果时提供清单 fallback | 题名、作者、摘要、日期、PMID、OA                |
-| Semantic Scholar | 按 DOI 批量增强                                           | 摘要、OA                                        |
+| Semantic Scholar | 按 DOI 批量增强                                           | 题名、摘要、OA                                  |
 
 上游 URL、source ID、Crossref cursor、OpenAlex cursor 和 Semantic Scholar PDF/landing-page URL 不进入 `ArticleDraft` 或内容数据库。OpenAlex source ID 与 cursor 只存在于可丢弃 traversal checkpoint；Crossref cursor 可存在于 traversal 和私有工作集。成功 anchor 只使用规范书目信息和日期，不含 Provider/upstream ID 或 URL。
 
@@ -47,7 +47,7 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 
 | 规范字段                          | 顺序/规则                                                            |
 | --------------------------------- | -------------------------------------------------------------------- |
-| `title`                           | Crossref，缺失时 OpenAlex                                            |
+| `title`                           | Crossref，缺失或空白时按同一 DOI 使用 OpenAlex，再使用 Semantic Scholar |
 | `authors`                         | Crossref，缺失时 OpenAlex；只保留有序 display name                   |
 | `abstract_text`                   | Crossref 去标记文本，缺失时 OpenAlex，再缺失时 Semantic Scholar      |
 | `publication_year` / `date`       | Crossref 日期链，缺失时 OpenAlex publication date                    |
@@ -58,6 +58,8 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 | `retraction_dois`                 | Crossref `updated-by` 中 type 为 retraction 的全部规范 DOI，排序去重 |
 
 Provider 不返回 PDF URL、landing page、permalink 或 content location。在线全文不是 Scholarly 当前声明的能力。
+
+题名增强只采用规范化 DOI 与 Crossref 记录一致的响应；正常 Crossref 题名保持优先，补齐题名不改变原 DOI、日期和卷期。Semantic Scholar 的既有 batch 请求同时获取 `title`，不增加单独的题名请求。所有来源题名仍为空或不能确认相同 DOI 时，保留不可转换记录的失败边界，不虚构题名或丢弃该记录以推进检查点。
 
 通用 Crossref `relation` 不表示撤稿，不能填充 `retraction_dois`。`updated-by` 中 correction 等其他 update type、格式不合法的 DOI、source 标签、更新时间和原始 update payload 都会被忽略；多个来源重复报告同一撤稿 DOI 时只保留一条。
 
