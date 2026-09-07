@@ -651,6 +651,10 @@ fn validate_domestic_response(endpoint: &str, text: &str) -> Result<(), Domestic
         return Err(DomesticCnkiSourceError::PermanentArticleMissing);
     }
     let has_expected_structure = match endpoint {
+        "navigation" => {
+            let html = text.to_ascii_lowercase();
+            html.contains("<html") && html.contains("</html>")
+        }
         "journal_search" => text.contains("/knavi/detail?") || has_explicit_empty_marker(text),
         "journal_detail" => input_value(text, "pykm").is_some() || has_explicit_empty_marker(text),
         "year_issues" => text.contains("YearIssueTree"),
@@ -2291,6 +2295,63 @@ fn json_strings(value: &Value, scalar_field: &str, array_field: &str) -> Vec<Str
     values
 }
 
+fn resolve_domestic_journal_with_request<F>(
+    locator: &DomesticJournalLocator,
+    mut request_text: F,
+) -> Result<Option<Value>, DomesticCnkiSourceError>
+where
+    F: FnMut(&str, &str, &[(String, String)]) -> Result<String, DomesticCnkiSourceError>,
+{
+    let mut queries = Vec::new();
+    for title in locator.titles() {
+        queries.extend(
+            domestic_title_search_terms(title)
+                .into_iter()
+                .map(|term| (term, "TI")),
+        );
+    }
+    queries.extend(locator.issns().iter().cloned().map(|issn| (issn, "SN")));
+    let mut detail_urls = Vec::new();
+    let mut seen_detail_urls = BTreeSet::new();
+    for pass_index in 0..2 {
+        for (keyword, field) in &queries {
+            let form = domestic_journal_search_form(keyword, field)
+                .into_iter()
+                .collect::<Vec<_>>();
+            let text = request_text(
+                "journal_search",
+                &format!("{DOMESTIC_NAVI_BASE_URL}/knavi/journals/searchbaseinfo"),
+                &form,
+            )?;
+            append_unique_domestic_detail_urls(
+                &mut detail_urls,
+                &mut seen_detail_urls,
+                parse_domestic_journal_search_results(&text)?,
+            );
+        }
+        if !detail_urls.is_empty() || queries.is_empty() || pass_index == 1 {
+            break;
+        }
+        let navigation = request_text(
+            "navigation",
+            &format!("{DOMESTIC_NAVI_BASE_URL}/knavi/?uniplatform={DOMESTIC_PLATFORM}&language={DOMESTIC_LANGUAGE}"),
+            &[],
+        )?;
+        validate_domestic_response("navigation", &navigation)?;
+    }
+    for detail_url in detail_urls {
+        let text = request_text("journal_detail", &detail_url, &[])?;
+        if input_value(&text, "pykm").is_none() {
+            continue;
+        }
+        let details = parse_domestic_journal_detail(&text)?;
+        if domestic_journal_detail_matches(&details, locator) {
+            return Ok(Some(details));
+        }
+    }
+    Ok(None)
+}
+
 fn append_unique_domestic_detail_urls(
     detail_urls: &mut Vec<String>,
     seen_detail_urls: &mut BTreeSet<String>,
@@ -2522,33 +2583,6 @@ impl LiveDomesticCnkiTransport {
             captcha_session: SharedDomesticCaptchaSession::new(),
             attempts: Vec::new(),
         })
-    }
-
-    fn search_journals(
-        &mut self,
-        keyword: &str,
-        field_name: &str,
-    ) -> Result<Vec<Value>, DomesticCnkiSourceError> {
-        let form = domestic_journal_search_form(keyword, field_name);
-        let data: Vec<(String, String)> = form.into_iter().collect();
-        let text = self.post_text(
-            &format!("{DOMESTIC_NAVI_BASE_URL}/knavi/journals/searchbaseinfo"),
-            &data,
-            Some(&format!("{DOMESTIC_NAVI_BASE_URL}/knavi")),
-            "journal_search",
-        )?;
-        parse_domestic_journal_search_results(&text)
-    }
-
-    fn get_journal_detail(
-        &mut self,
-        detail_url: &str,
-    ) -> Result<Option<Value>, DomesticCnkiSourceError> {
-        let text = self.get_text(detail_url, None, "journal_detail")?;
-        if input_value(&text, "pykm").is_none() {
-            return Ok(None);
-        }
-        parse_domestic_journal_detail(&text).map(Some)
     }
 
     fn get_text(
@@ -2866,33 +2900,18 @@ impl DomesticCnkiTransport for LiveDomesticCnkiTransport {
         &mut self,
         locator: &DomesticJournalLocator,
     ) -> Result<Option<Value>, DomesticCnkiSourceError> {
-        let mut detail_urls = Vec::new();
-        let mut seen_detail_urls = BTreeSet::new();
-        for title in locator.titles() {
-            for search_term in domestic_title_search_terms(title) {
-                append_unique_domestic_detail_urls(
-                    &mut detail_urls,
-                    &mut seen_detail_urls,
-                    self.search_journals(&search_term, "TI")?,
-                );
+        resolve_domestic_journal_with_request(locator, |endpoint, url, data| {
+            if endpoint == "journal_search" {
+                self.post_text(
+                    url,
+                    data,
+                    Some(&format!("{DOMESTIC_NAVI_BASE_URL}/knavi")),
+                    endpoint,
+                )
+            } else {
+                self.get_text(url, None, endpoint)
             }
-        }
-        for issn in locator.issns() {
-            append_unique_domestic_detail_urls(
-                &mut detail_urls,
-                &mut seen_detail_urls,
-                self.search_journals(issn, "SN")?,
-            );
-        }
-        for detail_url in detail_urls {
-            let Some(details) = self.get_journal_detail(&detail_url)? else {
-                continue;
-            };
-            if domestic_journal_detail_matches(&details, locator) {
-                return Ok(Some(details));
-            }
-        }
-        Ok(None)
+        })
     }
 
     /// Fetch publication issues for one domestic journal.
@@ -3049,6 +3068,125 @@ mod tests {
           <span class="rowtit">DOI：</span><p>10.1000/domestic.sample</p>
         </body></html>
     "#;
+
+    #[test]
+    fn empty_domestic_search_initializes_navigation_and_retries_once() {
+        let locator = DomesticJournalLocator::new(
+            vec!["世界经济".to_string()],
+            vec!["1002-9621".to_string()],
+        );
+        let mut is_initialized = false;
+        let mut calls = Vec::new();
+        let result =
+            super::resolve_domestic_journal_with_request(&locator, |endpoint, url, _data| {
+                calls.push(endpoint.to_string());
+                Ok(match endpoint {
+                    "journal_search" if !is_initialized => "<div>找到 0 条结果</div>".to_string(),
+                    "journal_search" => SEARCH_HTML.to_string(),
+                    "navigation" => {
+                        assert!(url.starts_with("https://navi.cnki.net/knavi/?"));
+                        is_initialized = true;
+                        "<html><body>Navigation</body></html>".to_string()
+                    }
+                    "journal_detail" => DETAIL_HTML.to_string(),
+                    _ => panic!("unexpected journal request"),
+                })
+            })
+            .expect("navigation initialization should recover the search")
+            .expect("the known journal must be resolved after initialization");
+        assert_eq!(result["title"], "世界经济");
+        assert_eq!(result["issn"], "1002-9621");
+        assert_eq!(
+            calls,
+            [
+                "journal_search",
+                "journal_search",
+                "navigation",
+                "journal_search",
+                "journal_search",
+                "journal_detail"
+            ]
+        );
+    }
+
+    #[test]
+    fn domestic_navigation_recovery_is_bounded_and_propagates_failures() {
+        let locator = DomesticJournalLocator::new(
+            vec!["世界经济".to_string()],
+            vec!["1002-9621".to_string()],
+        );
+        for navigation in [
+            Ok("<html><body>Navigation</body></html>".to_string()),
+            Ok("<div>Incomplete navigation</div>".to_string()),
+            Err(DomesticCnkiSourceError::Request(
+                "fixture verification failed".to_string(),
+            )),
+        ] {
+            let mut calls = Vec::new();
+            let result =
+                super::resolve_domestic_journal_with_request(&locator, |endpoint, _url, _data| {
+                    calls.push(endpoint.to_string());
+                    match endpoint {
+                        "journal_search" => Ok("<div>找到 0 条结果</div>".to_string()),
+                        "navigation" => navigation.clone(),
+                        _ => panic!("an empty search must not request a detail page"),
+                    }
+                });
+            assert_eq!(calls.iter().filter(|call| *call == "navigation").count(), 1);
+            if navigation
+                .as_ref()
+                .is_ok_and(|html| html.starts_with("<html>"))
+            {
+                assert!(result.expect("bounded empty retry should finish").is_none());
+                assert_eq!(calls.len(), 5);
+            } else {
+                assert!(
+                    result.is_err(),
+                    "failed initialization must stop before another search"
+                );
+                assert_eq!(calls.len(), 3);
+            }
+        }
+        let empty = DomesticJournalLocator::new(Vec::new(), Vec::new());
+        assert!(
+            super::resolve_domestic_journal_with_request(&empty, |_, _, _| {
+                panic!("an empty locator must not make requests")
+            })
+            .expect("empty locator should be absent")
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn domestic_navigation_recovery_preserves_candidate_identity_checks() {
+        let locator = DomesticJournalLocator::new(
+            vec!["世界经济".to_string()],
+            vec!["1002-9621".to_string()],
+        );
+        for has_matching_issn in [true, false] {
+            let mut detail_count = 0;
+            let result =
+                super::resolve_domestic_journal_with_request(&locator, |endpoint, _url, _data| {
+                    Ok(match endpoint {
+                        "journal_search" => SEARCH_HTML.to_string(),
+                        "journal_detail" => {
+                            detail_count += 1;
+                            if has_matching_issn {
+                                DETAIL_HTML.to_string()
+                            } else {
+                                DETAIL_HTML.replace("1002-9621", "2049-3630")
+                            }
+                        }
+                        _ => {
+                            panic!("existing candidates must not trigger navigation initialization")
+                        }
+                    })
+                })
+                .expect("candidate checks should finish");
+            assert_eq!(result.is_some(), has_matching_issn);
+            assert_eq!(detail_count, if has_matching_issn { 1 } else { 2 });
+        }
+    }
 
     #[test]
     fn domestic_search_form_matches_har_shape_without_overseas_hosts() {

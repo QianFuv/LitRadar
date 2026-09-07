@@ -48,6 +48,8 @@ Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，使用 canonical titl
 
 同一索引进程处理一本期刊期间，首次 batch 取得的期刊详情和刊期树作为内存快照复用于后续页面；该刊完成后立即释放。新进程或新一轮已完成期刊索引会重新获取快照，因此 checkpoint 仍只依赖稳定 `year_issue_id`，不持久化上游句柄。
 
+初次刊名与 ISSN 查询全部为空时，客户端先访问带尾斜杠的 HTTPS `/knavi/` 导航入口，使用同一 Cookie 和验证码会话完成必要的验证，再把原查询完整重试一次。导航初始化同样受代理、HTTPS 主机限制、响应校验、总超时和验证码预算约束；初始化失败直接返回错误，重试仍无候选才返回未找到。已有候选的正常解析或 ISSN 冲突不会触发此恢复，也不会放宽期刊身份检查。
+
 Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anchor，并完整包含 anchor 期次的全部 papers 页。首次确认的远端头部成为本次冻结 candidate；运行期间新增的更高期次留给下一次 update。只有闭区间全部完成后才返回 candidate 作为新 anchor。committed issue 已从 year list 消失时安全完整扫描；恢复中的 candidate/current 消失则 fail closed。FullRescan 忽略 anchor 停止边界并覆盖完整期次树。
 
 基础站点为 `https://navi.cnki.net` 与 `https://kns.cnki.net`。Transport 对初始 URL、Referer、challenge、每个 redirect hop 和最终 URL 使用同一规则：只允许这两个精确主机的 HTTPS 默认端口，拒绝 userinfo、IP literal、自定义端口、协议降级和跨域跳转。当前私有请求路径包括 journal 搜索、详情、year list、papers、article abstract 和 captcha verify API；这些路径不是内容契约。
