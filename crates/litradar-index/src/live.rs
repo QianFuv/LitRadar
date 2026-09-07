@@ -83,6 +83,8 @@ pub struct LiveIndexConfig {
     pub secret_key_file: PathBuf,
     /// Optional canonical CSV filename under `data/meta`.
     pub file: Option<String>,
+    /// Optional selected CSV after which to pause without completing later catalogs.
+    pub stop_after: Option<String>,
     /// Number of bounded source workers, including OpenAlex DOI enrichment requests.
     pub worker_count: usize,
     /// Number of journal worker processes.
@@ -122,6 +124,7 @@ impl fmt::Debug for LiveIndexConfig {
             .field("project_root", &self.project_root)
             .field("secret_key_file", &self.secret_key_file)
             .field("file", &self.file)
+            .field("stop_after", &self.stop_after)
             .field("worker_count", &self.worker_count)
             .field("process_count", &self.process_count)
             .field("issue_batch_size", &self.issue_batch_size)
@@ -147,7 +150,7 @@ impl fmt::Debug for LiveIndexConfig {
 pub struct LiveIndexOutcome {
     /// Final run status.
     pub status: String,
-    /// Human-readable message for skipped work.
+    /// Human-readable message for skipped or paused work.
     pub message: Option<String>,
     /// Per-catalog outcomes.
     pub csvs: Vec<LiveCsvIndexOutcome>,
@@ -767,6 +770,7 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
         config.notify,
         config.notify_dry_run,
     )?;
+    catalog_run_limit(&request, config.stop_after.as_deref())?;
     let control_dir = config.project_root.join("data").join("index-control");
     std::fs::create_dir_all(&control_dir)?;
     let batch_path = control_dir.join(BATCH_DATABASE_FILE_NAME);
@@ -836,13 +840,38 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
         let _ = release_batch_lease(&batch_connection, &batch.batch_id, &owner_id);
         return Err(error);
     }
+    finalize_batch_run(&batch_connection, &batch, outcomes)
+}
+
+fn finalize_batch_run(
+    batch_connection: &Connection,
+    batch: &IndexBatch,
+    outcomes: Vec<LiveCsvIndexOutcome>,
+) -> Result<LiveIndexOutcome, LiveIndexError> {
+    if outcomes.len() < batch.catalogs.len() {
+        release_batch_lease(batch_connection, &batch.batch_id, &batch.owner_id)?;
+        tracing::info!(
+            event = "index.batch.paused",
+            component = "index",
+            batch_id = batch.batch_id,
+            completed_catalog_count = outcomes.len(),
+        );
+        return Ok(LiveIndexOutcome {
+            status: "paused".to_string(),
+            message: Some(
+                "Requested catalog boundary reached; resume without --stop-after to continue."
+                    .to_string(),
+            ),
+            csvs: outcomes,
+        });
+    }
     if let Err(error) = complete_batch(
-        &batch_connection,
+        batch_connection,
         &batch.batch_id,
-        &owner_id,
+        &batch.owner_id,
         LiveRunTime::now().epoch_seconds,
     ) {
-        let _ = release_batch_lease(&batch_connection, &batch.batch_id, &owner_id);
+        let _ = release_batch_lease(batch_connection, &batch.batch_id, &batch.owner_id);
         return Err(error.into());
     }
     Ok(LiveIndexOutcome {
@@ -850,6 +879,25 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
         message: None,
         csvs: outcomes,
     })
+}
+
+fn catalog_run_limit(
+    request: &IndexBatchRequest,
+    stop_after: Option<&str>,
+) -> Result<usize, LiveIndexError> {
+    match stop_after {
+        None => Ok(request.catalogs.len()),
+        Some(file) => request
+            .catalogs
+            .iter()
+            .position(|catalog| catalog.file_name == file)
+            .map(|ordinal| ordinal + 1)
+            .ok_or_else(|| {
+                LiveIndexError::InvalidConfig(
+                    "--stop-after must name an exact CSV in the selected catalogs".to_string(),
+                )
+            }),
+    }
 }
 
 fn freeze_catalog_inputs(
@@ -963,6 +1011,7 @@ where
         &str,
     ) -> Result<NotifyHandoffObservation, LiveIndexError>,
 {
+    let catalog_limit = catalog_run_limit(request, config.stop_after.as_deref())?;
     let catalogs = read_batch_catalogs(batch_connection, &batch.batch_id)?;
     if catalogs.len() != request.catalogs.len() {
         return Err(BatchDatabaseError::InvalidState {
@@ -971,7 +1020,7 @@ where
         .into());
     }
     let mut outcomes = Vec::with_capacity(request.catalogs.len());
-    for (stored, input) in catalogs.iter().zip(&request.catalogs) {
+    for (stored, input) in catalogs.iter().zip(&request.catalogs).take(catalog_limit) {
         if stored.file_name != input.file_name || stored.catalog_name != input.catalog_name {
             return Err(BatchDatabaseError::InvalidState {
                 reason: "active batch catalog order changed after admission",
@@ -4375,6 +4424,164 @@ mod tests {
     }
 
     #[test]
+    fn stop_after_catalog_preserves_later_work_on_resume() {
+        for completed_before in 0..=2 {
+            let directory = tempdir().expect("temporary project should create");
+            let mut config = worker_test_config("provider-a", None);
+            config.project_root = directory.path().to_path_buf();
+            config.stop_after = Some("chinese.csv".to_string());
+            let connection = Connection::open_in_memory().expect("batch database should open");
+            init_batch_db(&connection).expect("batch schema should initialize");
+            let request = IndexBatchRequest::new(
+                vec![
+                    batch_input("ccf.csv", "provider-a", 1),
+                    batch_input("chinese.csv", "provider-a", 2),
+                    batch_input("english.csv", "provider-a", 3),
+                ],
+                CatalogSelection::All,
+                IndexSyncMode::Incremental,
+                20,
+                false,
+                false,
+            )
+            .expect("batch request should build");
+            let now = LiveRunTime::now().epoch_seconds;
+            let batch = match admit_batch(&connection, &request, true, "first-owner", now)
+                .expect("batch should create")
+            {
+                BatchAdmission::Ready(batch) => batch,
+                BatchAdmission::Abandoning(_) => panic!("new batch should be ready"),
+            };
+            let outcome = BatchCatalogOutcome {
+                run_id: "fixture-run".to_string(),
+                journal_count: 1,
+                written_article_count: 0,
+                source_attempt_count: 0,
+                manifest_path: None,
+            };
+            for ordinal in 0..completed_before {
+                transition_catalog_phase(
+                    &connection,
+                    &batch.batch_id,
+                    &batch.owner_id,
+                    ordinal,
+                    BatchCatalogPhase::Indexing,
+                    now,
+                )
+                .expect("catalog should enter indexing");
+                complete_catalog(
+                    &connection,
+                    &batch.batch_id,
+                    &batch.owner_id,
+                    ordinal,
+                    &outcome,
+                    now,
+                )
+                .expect("earlier catalog should complete");
+            }
+            let mut calls = Vec::new();
+            let outcomes = run_batch_catalogs_with(
+                &config,
+                &connection,
+                &batch,
+                &request,
+                |config, input, _| {
+                    assert_ne!(
+                        input.file_name, "english.csv",
+                        "later provider must not run"
+                    );
+                    calls.push(input.catalog_name.clone());
+                    Ok(super::catalog_outcome_from_persisted(
+                        config, input, &outcome, None,
+                    ))
+                },
+                |_, _, _, _| panic!("notifications are disabled"),
+            )
+            .expect("requested catalog boundary should succeed");
+            assert_eq!(calls.len(), 2 - completed_before);
+            assert_eq!(outcomes.len(), 2);
+            let stored = read_batch_catalogs(&connection, &batch.batch_id)
+                .expect("catalog phases should read");
+            assert_eq!(stored[0].phase, BatchCatalogPhase::Completed);
+            assert_eq!(stored[1].phase, BatchCatalogPhase::Completed);
+            assert_eq!(stored[2].phase, BatchCatalogPhase::Pending);
+            let paused = super::finalize_batch_run(&connection, &batch, outcomes)
+                .expect("partial batch should release its lease normally");
+            assert_eq!(paused.status, "paused");
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM index_batch_lease", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .expect("lease count should read"),
+                0,
+            );
+            let resumed = match admit_batch(&connection, &request, true, "next-owner", now)
+                .expect("same batch should resume immediately")
+            {
+                BatchAdmission::Ready(batch) => batch,
+                BatchAdmission::Abandoning(_) => panic!("paused batch must not be abandoned"),
+            };
+            assert_eq!(resumed.batch_id, batch.batch_id);
+            config.stop_after = None;
+            let outcomes = run_batch_catalogs_with(
+                &config,
+                &connection,
+                &resumed,
+                &request,
+                |config, input, _| {
+                    assert_eq!(
+                        input.file_name, "english.csv",
+                        "completed catalogs must not rerun"
+                    );
+                    Ok(super::catalog_outcome_from_persisted(
+                        config, input, &outcome, None,
+                    ))
+                },
+                |_, _, _, _| panic!("notifications are disabled"),
+            )
+            .expect("remaining catalog should complete");
+            let finished = super::finalize_batch_run(&connection, &resumed, outcomes)
+                .expect("all catalogs should finalize the batch");
+            assert_eq!(finished.status, "succeeded");
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT status FROM index_batches WHERE batch_id = ?1",
+                        [&batch.batch_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .expect("batch status should read"),
+                "completed",
+            );
+        }
+    }
+
+    #[test]
+    fn stop_after_requires_an_exact_selected_catalog() {
+        let request = IndexBatchRequest::new(
+            vec![batch_input("chinese.csv", "provider-a", 1)],
+            CatalogSelection::ExplicitFile,
+            IndexSyncMode::Incremental,
+            20,
+            false,
+            false,
+        )
+        .expect("batch request should build");
+        assert_eq!(super::catalog_run_limit(&request, None).unwrap(), 1);
+        assert_eq!(
+            super::catalog_run_limit(&request, Some("chinese.csv")).unwrap(),
+            1
+        );
+        for invalid in ["english.csv", "../chinese.csv", "chinese", ""] {
+            assert!(matches!(
+                super::catalog_run_limit(&request, Some(invalid)),
+                Err(LiveIndexError::InvalidConfig(_)),
+            ));
+        }
+    }
+
+    #[test]
     fn late_catalog_retry_calls_only_the_first_unfinished_catalog() {
         let batch_connection = Connection::open_in_memory().expect("batch database should open");
         init_batch_db(&batch_connection).expect("batch schema should initialize");
@@ -5672,6 +5879,7 @@ mod tests {
             project_root: ".".into(),
             secret_key_file: "secret.key".into(),
             file: None,
+            stop_after: None,
             worker_count: 1,
             process_count: 1,
             issue_batch_size: 1,
@@ -6053,6 +6261,7 @@ mod tests {
             project_root: ".".into(),
             secret_key_file: "secret.key".into(),
             file: None,
+            stop_after: None,
             worker_count: 2,
             process_count: 3,
             issue_batch_size: 2,
@@ -6192,6 +6401,7 @@ mod tests {
                 project_root: directory.path().to_path_buf(),
                 secret_key_file: "secret.key".into(),
                 file: None,
+                stop_after: None,
                 worker_count: 1,
                 process_count: 1,
                 issue_batch_size: 1,
@@ -6235,6 +6445,7 @@ mod tests {
             project_root: ".".into(),
             secret_key_file: "secret.key".into(),
             file: None,
+            stop_after: None,
             worker_count: 2,
             process_count: 3,
             issue_batch_size: 2,

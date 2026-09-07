@@ -421,6 +421,7 @@ fn run_index_command_with_bundled_meta_dir(
         project_root: project_root.clone(),
         secret_key_file: secret_key_file.clone(),
         file: options.file.clone(),
+        stop_after: options.stop_after.clone(),
         worker_count: options.worker_count,
         process_count: options.process_count,
         issue_batch_size: options.issue_batch_size,
@@ -493,6 +494,7 @@ fn prepare_index_managed_meta(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IndexOptions {
     file: Option<String>,
+    stop_after: Option<String>,
     worker_count: usize,
     process_count: usize,
     issue_batch_size: usize,
@@ -508,6 +510,7 @@ struct IndexOptions {
 
 fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn Error>> {
     let file = extract_string_option_any(args, &["--file", "-f"])?;
+    let stop_after = extract_string_option(args, "--stop-after")?;
     let worker_count = positive_usize(
         "--workers",
         extract_usize_option_any(args, &["--workers", "-w"])?,
@@ -541,6 +544,7 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
     }
     Ok(IndexOptions {
         file,
+        stop_after,
         worker_count,
         process_count,
         issue_batch_size,
@@ -1265,7 +1269,7 @@ fn live_index_runtime_config(
 
 fn index_usage() -> String {
     let payload = json!({
-        "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--full-rescan|--no-full-rescan] [--notify] [--notify-dry-run] [--acknowledge-unknown-notify]",
+        "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--stop-after FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--full-rescan|--no-full-rescan] [--notify] [--notify-dry-run] [--acknowledge-unknown-notify]",
         "defaults": {
             "workers": DEFAULT_INDEX_WORKER_COUNT,
             "processes": DEFAULT_INDEX_PROCESS_COUNT,
@@ -1280,6 +1284,7 @@ fn index_usage() -> String {
             "resume": "continue only a compatible active project batch; completed batches always start a new independent update",
             "no_resume": "abandon the active batch and its owned traversal checkpoints, then start a new batch from committed anchors",
             "file": "select and freeze exactly one CSV; it cannot adopt an active all-CSV batch",
+            "stop_after": "pause after finalizing the named selected CSV; keep the original batch resumable without starting later catalogs",
             "issue_batch": "legacy active-batch resume metadata; explicit use warns and does not control current Provider concurrency or memory",
             "acknowledge_unknown_notify": "after review, acknowledge an ambiguous notify attempt and resume with a new delivery attempt",
         },
@@ -1982,6 +1987,19 @@ mod tests {
     }
 
     #[test]
+    fn index_options_preserve_stop_after_without_changing_selection() {
+        let mut args = vec![
+            "--stop-after".to_string(),
+            "chinese_journals.csv".to_string(),
+        ];
+        let options = parse_index_options(&mut args).expect("catalog pause should parse");
+        assert!(args.is_empty());
+        assert_eq!(options.stop_after.as_deref(), Some("chinese_journals.csv"));
+        assert!(options.file.is_none());
+        assert!(options.resume);
+    }
+
+    #[test]
     fn index_issue_batch_warns_once_only_when_explicit() {
         let root = temp_root("litradar-cli-legacy-issue-batch-warning");
         let arguments = |issue_batch: Option<&str>| {
@@ -2156,6 +2174,7 @@ mod tests {
         };
         let options = IndexOptions {
             file: None,
+            stop_after: None,
             worker_count: 4,
             process_count: 2,
             issue_batch_size: 3,

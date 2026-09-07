@@ -176,6 +176,7 @@ litradar index --secret-key-file PATH
     [--project-root PATH]
     [--auth-db PATH]
     [--file FILE]
+    [--stop-after FILE]
     [--workers N]
     [--processes N]
     [--issue-batch N]
@@ -192,6 +193,7 @@ litradar index --secret-key-file PATH
 | ------------------------------------------ | -------- | ------------------------------------------------------------ |
 | `--secret-key-file PATH`                   | 必填     | 解密索引运行配置                                             |
 | `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件                             |
+| `--stop-after FILE`                       | 关闭     | 指定目录完成保存后暂停，保留原 batch 和后续目录供续跑          |
 | `--workers N`、`-w N`                      | `6`      | 每个期刊子进程内的 CNKI 详情请求和 OpenAlex DOI 增强并发上限 |
 | `--processes N`                            | `1`      | 单个 CSV 的独立期刊子进程数                                  |
 | `--issue-batch N`                          | `8`      | 旧 active batch 的恢复兼容值；当前 Provider 不读取该值       |
@@ -245,6 +247,8 @@ CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_alias
 ### 实时恢复与增量同步
 
 每条命令先在 `data/index-control/index-batches.sqlite` 取得项目级 lease，再为当前目录/Provider 在 `data/index-control/<stem>.sqlite` 取得独立 lease。父进程每 30 秒续期到未来 300 秒；未过期所有者会在调用上游前阻止新的竞争命令。正常结束释放 lease；进程被强制终止时，先确认旧进程已经消失并等待 lease 过期，不要同时启动第二个索引进程。
+
+`--stop-after chinese_journals.csv` 会在该目录的索引、变更清单和已启用的通知收尾成功后正常退出，不启动后续目录。文件名必须精确属于当前选择的 CSV；此选项不改变冻结的目录选择或 batch 指纹。若仍有后续目录，退出码为 0、顶层 `status` 为 `paused`，释放项目 lease 并保留 active batch；以后去掉该选项、保留原 correctness inputs 和 `--resume` 即可继续。若目标目录已经完成，同样在该边界停止；若目标是最后一个目录，则整批正常完成。
 
 默认 `--resume` 的边界是“兼容的 active project batch”，不是所有历史成功状态。batch 指纹覆盖：
 
