@@ -21,6 +21,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { readFreshFavoriteCheck } from '@/components/feature/use-favorite-checks';
 import { cn } from '@/lib/utils';
 
 /**
@@ -78,6 +79,11 @@ export function FavoriteButton({
   const addMut = useMutation({
     mutationFn: (folderId: number) => addFavorite(folderId, articleId, db),
     onSuccess: async (_, folderId) => {
+      const batchKey = ['fav-check-batch', user?.id, db];
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey, exact: true }),
+        queryClient.cancelQueries({ queryKey: batchKey }),
+      ]);
       const folderName = folders.find((folder) => folder.id === folderId)?.name ?? '';
       setOptimisticFolderIds((current) => {
         const baseFolderIds =
@@ -93,8 +99,6 @@ export function FavoriteButton({
         }
         return [...current, { folder_id: folderId, folder_name: folderName }];
       });
-      const batchKey = ['fav-check-batch', user?.id, db];
-      await queryClient.cancelQueries({ queryKey: batchKey });
       queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
       await queryClient.invalidateQueries({ queryKey: batchKey });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
@@ -105,6 +109,11 @@ export function FavoriteButton({
   const removeMut = useMutation({
     mutationFn: (folderId: number) => removeFavorite(folderId, articleId, db),
     onSuccess: async (_, folderId) => {
+      const batchKey = ['fav-check-batch', user?.id, db];
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey, exact: true }),
+        queryClient.cancelQueries({ queryKey: batchKey }),
+      ]);
       setOptimisticFolderIds((current) => {
         const baseFolderIds =
           current ??
@@ -116,8 +125,6 @@ export function FavoriteButton({
       queryClient.setQueryData(queryKey, (current: FavoriteCheck[] = []) =>
         current.filter((item) => item.folder_id !== folderId),
       );
-      const batchKey = ['fav-check-batch', user?.id, db];
-      await queryClient.cancelQueries({ queryKey: batchKey });
       queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
       await queryClient.invalidateQueries({ queryKey: batchKey });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
@@ -134,7 +141,8 @@ export function FavoriteButton({
     cachedFolderIds ??
     initialFolderIdsValue;
   const isFavoriteUnknown =
-    Boolean(checksError) || (isFavoriteStateUnavailable && checks === undefined);
+    Boolean(checksError) ||
+    (isFavoriteStateUnavailable && readFreshFavoriteCheck(queryClient, queryKey) === undefined);
   const isFav = !isFavoriteUnknown && resolvedFolderIds.length > 0;
   const favoriteLabel = isFavoriteUnknown ? '收藏状态未知' : isFav ? '已收藏' : '收藏';
   const lookupError = checksError ?? foldersError;

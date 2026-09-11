@@ -242,16 +242,18 @@ export function checkFavorite(articleId: ArticleId, dbName: string): Promise<Fav
  *
  * @param articleIds - Article ids.
  * @param dbName - Database name.
+ * @param signal - Cancellation signal for the active lookup.
  * @returns Favorite checks keyed by article id.
  */
 export async function checkFavoritesBatch(
   articleIds: ArticleId[],
   dbName: string,
+  signal?: AbortSignal,
 ): Promise<Record<ArticleId, FavoriteCheck[]>> {
   if (articleIds.length === 0) return {};
   const data = await requestJson<FavoriteBatchCheckItem[]>(
     buildApiUrl('/api/favorites/check/batch'),
-    { method: 'POST', body: JSON.stringify({ article_ids: articleIds, db_name: dbName }) },
+    { method: 'POST', body: JSON.stringify({ article_ids: articleIds, db_name: dbName }), signal },
     '获取收藏状态失败',
   );
   return Object.fromEntries(data.map((item) => [item.article_id, item.folders]));

@@ -713,7 +713,62 @@ async function retriesUnknownFavoriteState(): Promise<void> {
   await waitFor(() => expect(favoriteRequestBody).not.toBeNull());
 }
 
+/**
+ * Keep failed list membership unknown until a fresh individual lookup succeeds.
+ *
+ * @param cacheState - Whether the retained membership expired or was invalidated.
+ */
+async function rejectsUnavailableCachedMembership(
+  cacheState: 'stale' | 'invalidated',
+): Promise<void> {
+  let shouldFail = true;
+  server.use(
+    http.get('http://localhost/api/auth/me', currentUserResponse),
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/favorites/check', () =>
+      shouldFail
+        ? HttpResponse.json({ detail: 'Favorite lookup unavailable' }, { status: 503 })
+        : existingFavoriteResponse(),
+    ),
+  );
+  const user = userEvent.setup();
+  const { queryClient } = renderWithQuery(
+    <AuthProvider>
+      <FavoriteButton articleId="article-1" dbName="fixture.sqlite" isFavoriteStateUnavailable />
+    </AuthProvider>,
+  );
+  await screen.findByRole('button', { name: '收藏状态未知' });
+  const queryKey = ['fav-check', 21, 'fixture.sqlite', 'article-1'];
+  await act(async () => {
+    queryClient.setQueryData<FavoriteCheck[]>(
+      queryKey,
+      [{ folder_id: 3, folder_name: 'Reading' }],
+      { updatedAt: Date.now() - (cacheState === 'stale' ? 5 * 60 * 1000 + 1 : 0) },
+    );
+    if (cacheState === 'invalidated') {
+      await queryClient.invalidateQueries({ queryKey, refetchType: 'none' });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  expect(screen.getByRole('button', { name: '收藏状态未知' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '收藏状态未知' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Favorite lookup unavailable');
+  expect(screen.getByRole('button', { name: '收藏状态未知' })).toBeInTheDocument();
+
+  shouldFail = false;
+  await user.click(screen.getByRole('button', { name: '重试收藏状态' }));
+  expect(await screen.findByRole('button', { name: '已收藏' })).toBeInTheDocument();
+  const folder = await screen.findByRole('button', { name: 'Reading' });
+  await waitFor(() => expect(folder).toBeEnabled());
+  expect(folder).toHaveAttribute('aria-pressed', 'true');
+}
+
 describe('favorite mutation flow', () => {
+  test.each(['stale', 'invalidated'] as const)(
+    'keeps unavailable %s membership unknown until a fresh lookup succeeds',
+    rejectsUnavailableCachedMembership,
+  );
   test('retries unknown favorite state before allowing changes', retriesUnknownFavoriteState);
   test('loads favorite pages using opaque cursors', loadsFavoriteCursorPages, 15000);
   test('renders favorites in the shared workspace', rendersFavoritesWorkspace);
