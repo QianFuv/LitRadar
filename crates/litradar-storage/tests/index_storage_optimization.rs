@@ -71,7 +71,7 @@ fn measure_database(path: &Path) -> StorageMeasurement {
 fn storage_measurement_reports_bytes_and_schema_objects_without_row_contents() {
     let directory = tempdir().expect("temporary directory should create");
     let path = directory.path().join("catalog.sqlite");
-    migrate_index_database(&path, None).expect("index database should initialize");
+    migrate_index_database(&path).expect("index database should initialize");
     let connection = open_sqlite_connection(&path).expect("index database should open");
     connection
         .execute_batch(
@@ -122,7 +122,7 @@ fn storage_measurement_reports_bytes_and_schema_objects_without_row_contents() {
 }
 
 #[test]
-fn confirmed_optimizer_rebuilds_v6_from_canonical_rows_and_is_repeatable_on_v7() {
+fn confirmed_optimizer_rebuilds_v6_from_canonical_rows_and_is_repeatable_on_current_schema() {
     let root = tempdir().expect("temporary root should create");
     let config = StorageConfig::from_project_root(root.path());
     fs::create_dir_all(config.index_dir()).expect("index directory should create");
@@ -152,7 +152,7 @@ fn confirmed_optimizer_rebuilds_v6_from_canonical_rows_and_is_repeatable_on_v7()
     );
     assert_eq!(canonical_snapshot(&path), canonical_before);
     assert_eq!(search_snapshot(&path), search_before);
-    preflight_index_database(&path, None).expect("optimized database should preflight");
+    preflight_index_database(&path).expect("optimized database should preflight");
     assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
     assert_no_maintenance_artifacts(root.path());
 
@@ -160,10 +160,13 @@ fn confirmed_optimizer_rebuilds_v6_from_canonical_rows_and_is_repeatable_on_v7()
         storage_config: config,
         confirmed: true,
     })
-    .expect("current v7 optimization should be repeatable");
+    .expect("current schema optimization should be repeatable");
 
     assert_eq!(repeated.outcome, IndexStorageOptimizationOutcome::Optimized);
-    assert_eq!(repeated.databases[0].source_schema_version, 7);
+    assert_eq!(
+        repeated.databases[0].source_schema_version,
+        INDEX_SCHEMA_VERSION
+    );
     assert_eq!(canonical_snapshot(&path), canonical_before);
     assert_eq!(search_snapshot(&path), search_before);
     assert_no_maintenance_artifacts(root.path());
@@ -400,7 +403,7 @@ fn stale_maintenance_state_blocks_optimizer_and_normal_startup_before_auth_creat
 }
 
 fn create_version_six_fixture(path: &Path) {
-    migrate_index_database(path, None).expect("current index should initialize");
+    migrate_index_database(path).expect("current index should initialize");
     let connection = open_sqlite_connection(path).expect("fixture database should open");
     connection
         .execute_batch(
@@ -475,7 +478,8 @@ fn create_version_six_fixture(path: &Path) {
                     102, 102, 'Preview article', 'Résumé genome preview',
                     NULL, NULL, 'Chloé', 'Alpha Journal'
                 );
-            PRAGMA user_version = 6;
+            CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
+                 PRAGMA user_version = 6;
             PRAGMA wal_checkpoint(TRUNCATE);
             PRAGMA journal_mode = DELETE;
             "#,

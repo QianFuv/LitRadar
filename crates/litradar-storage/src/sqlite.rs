@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, LoadExtensionGuard, OpenFlags};
+use rusqlite::{Connection, OpenFlags};
 
 /// Result of a best-effort SQLite WAL sidecar cleanup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,43 +90,6 @@ fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(value)
 }
 
-/// Try to load an optional SQLite extension.
-///
-/// # Arguments
-///
-/// * `connection` - Open SQLite connection.
-/// * `extension_path` - Optional dynamic extension path.
-///
-/// # Returns
-///
-/// True when the extension loaded, or false when no path was configured.
-pub fn try_load_extension(
-    connection: &Connection,
-    extension_path: Option<&Path>,
-) -> rusqlite::Result<bool> {
-    let Some(path) = extension_path else {
-        return Ok(false);
-    };
-    let _guard = unsafe { LoadExtensionGuard::new(connection)? };
-    unsafe { connection.load_extension(path, None::<&str>) }
-        .map_err(|error| extension_load_error(path, error))?;
-    Ok(true)
-}
-
-fn extension_load_error(path: &Path, error: rusqlite::Error) -> rusqlite::Error {
-    let detail = error.to_string();
-    match error {
-        rusqlite::Error::SqliteFailure(code, _) => rusqlite::Error::SqliteFailure(
-            code,
-            Some(format!(
-                "failed to load SQLite extension {}: {detail}",
-                path.display()
-            )),
-        ),
-        other => other,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rusqlite::OpenFlags;
@@ -134,8 +97,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::{
-        cleanup_sqlite_sidecars, open_sqlite_connection, sqlite_sidecar_paths, try_load_extension,
-        SqliteSidecarCleanup,
+        cleanup_sqlite_sidecars, open_sqlite_connection, sqlite_sidecar_paths, SqliteSidecarCleanup,
     };
 
     #[test]
@@ -158,16 +120,6 @@ mod tests {
 
         assert_eq!(busy_timeout_ms, 30_000);
         assert_eq!(name, "contract");
-    }
-
-    #[test]
-    fn missing_extension_preserves_loader_error() {
-        let connection = rusqlite::Connection::open_in_memory().expect("connection should open");
-        let error =
-            try_load_extension(&connection, Some(std::path::Path::new("missing-extension")))
-                .expect_err("missing extension should preserve the loader failure");
-
-        assert!(error.to_string().contains("missing-extension"));
     }
 
     #[test]

@@ -2936,8 +2936,7 @@ mod tests {
     }
 
     fn create_index_database(path: &Path) {
-        litradar_storage::migrate_index_database(path, None)
-            .expect("index database should migrate");
+        litradar_storage::migrate_index_database(path).expect("index database should migrate");
         let connection =
             litradar_storage::open_sqlite_connection(path).expect("index database should open");
         connection

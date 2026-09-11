@@ -268,20 +268,20 @@ cargo clippy -p litradar-provider -p litradar-sources -p litradar-index --all-ta
 5. 备份内容库；控制库无需迁移。
 6. 运行索引并检查共享 alias 的 ID/count 对比。
 
-不需要替换 v6 内容库；精确 v4/v5 内容库会原子迁移到 v6。不要把旧 Provider anchor 或 traversal checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库，新 Provider 首次运行安全完整覆盖。摘要页和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
+不需要替换受支持的 v6/v7/v8 内容库；精确 v4/v5 内容库会原子迁移到 v8。不要把旧 Provider anchor 或 traversal checkpoint 复制给新 Provider；两个 namespace 可同时存在于可丢弃控制库，新 Provider 首次运行安全完整覆盖。摘要页和全文 Provider 顺序独立配置，不必跟随索引 Provider 一起切换。
 
-## v6 升级与旧版本重建
+## v8 升级与旧版本重建
 
 应用只接受：
 
 - 不存在的新文件；
 - 完全空的 v0 SQLite；
 - schema 精确匹配、可在一个事务内迁移的 v4 或 v5 内容库；
-- schema 精确匹配的 v6 内容库。
+- schema 精确匹配的 v6/v7/v8 内容库。
 
-v4 会先增加 `journal_identity_keys` 及其索引，再与 v5 一样迁移到 v6。v5 到 v6 把撤稿关系规范化为 `article_retraction_dois`，不携带旧单值 `articles.retraction_doi`；除此之外不重映射内容 ID，也不改变 projection 或 outbox。v0 非空库及 v1–v3 索引库不会迁移到 v6。
+v4 会先增加 `journal_identity_keys` 及其索引，再与 v5 一样完成后续迁移到 v8。历史 v5 到 v6 步骤把撤稿关系规范化为 `article_retraction_dois`，不携带旧单值 `articles.retraction_doi`；v7 使用 contentless-delete FTS，v8 删除重复的 outbox 主键索引。这些步骤不重映射内容 ID，并保留 projection 和 outbox 记录。现有 v6/v7 的运行时 preflight 保持只读，只有显式迁移或离线优化才升级到 v8。v0 非空库及 v1–v3 索引库不会迁移到 v8。
 
-只有需要重建 v1–v3 时，才在执行任何移动或删除前确认以下影响：旧内容不会导入 v6；重建会使用新的规范身份空间；旧 favorite/tracking 中的 article ID 可能变成陈旧引用。应用不会自动删除、重命名或改写旧库，也不会迁移或清理这些引用。
+只有需要重建 v1–v3 时，才在执行任何移动或删除前确认以下影响：旧内容不会导入 v8；重建会使用新的规范身份空间；旧 favorite/tracking 中的 article ID 可能变成陈旧引用。应用不会自动删除、重命名或改写旧库，也不会迁移或清理这些引用。
 
 遇到 rebuild-required 错误时使用以下顺序：
 
@@ -290,5 +290,5 @@ v4 会先增加 `journal_identity_keys` 及其索引，再与 v5 一样迁移到
 3. 记录错误中给出的确切文件路径和可用于重建后比较的期刊/文章数量。
 4. 优先把该确切旧索引文件移动到备份位置；确认不再需要回退时才删除。不要使用目录级通配删除。
 5. 从未改名的维护目录重新运行索引。
-6. 验证 v6 schema、目录期刊数、文章数和抽样内容，再恢复服务。
+6. 验证 v8 schema、目录期刊数、文章数和抽样内容，再恢复服务。
 7. 明确决定保留、导出或清理无法解析的旧 favorite/tracking 引用；LitRadar 不会代替运维人员作此决定。

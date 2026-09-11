@@ -81,6 +81,83 @@ fn empty_auth_database_migration_creates_current_schema() {
 }
 
 #[test]
+fn version_seventeen_removes_duplicate_indexes_and_preserves_unique_constraints() {
+    let directory = tempdir().expect("temporary directory should exist");
+    let path = directory.path().join("auth.sqlite");
+    migrate_auth_database(&path).expect("current auth schema should initialize");
+    let connection = Connection::open(&path).expect("auth database should open");
+    connection
+        .execute_batch(
+            r#"CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
+             CREATE INDEX IF NOT EXISTS idx_notification_settings_user ON notification_settings(user_id);
+             PRAGMA user_version = 16;
+             INSERT INTO users (id, username, password_hash, salt, created_at, updated_at)
+                 VALUES (1, 'index-owner', 'hash', 'salt', 1, 1);
+             INSERT INTO invite_codes (
+                 id, code, created_by, created_at, expires_at, max_uses, use_count
+             ) VALUES (1, 'retained-invite', 1, 1, 61, 1, 0);
+             INSERT INTO notification_settings (id, user_id, keywords, created_at, updated_at)
+                 VALUES (1, 1, '["retained"]', 1, 1);"#,
+        )
+        .expect("version sixteen fixture should initialize");
+    drop(connection);
+    let invite_before = query_text_rows(
+        &path,
+        "SELECT json_array(id, code, created_by, created_at, expires_at, max_uses, use_count)
+         FROM invite_codes ORDER BY id",
+    );
+    let notification_before = query_text_rows(
+        &path,
+        "SELECT json_array(id, user_id, keywords, created_at, updated_at)
+         FROM notification_settings ORDER BY id",
+    );
+
+    migrate_auth_database(&path).expect("version sixteen should migrate");
+    migrate_auth_database(&path).expect("current auth migration should be idempotent");
+
+    assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
+    assert!(!index_exists(&path, "idx_invite_codes_code"));
+    assert!(!index_exists(&path, "idx_notification_settings_user"));
+    assert_eq!(
+        query_text_rows(
+            &path,
+            "SELECT json_array(id, code, created_by, created_at, expires_at, max_uses, use_count)
+             FROM invite_codes ORDER BY id",
+        ),
+        invite_before
+    );
+    assert_eq!(
+        query_text_rows(
+            &path,
+            "SELECT json_array(id, user_id, keywords, created_at, updated_at)
+             FROM notification_settings ORDER BY id",
+        ),
+        notification_before
+    );
+    let connection = Connection::open(&path).expect("migrated auth database should open");
+    let invite_error = connection
+        .execute(
+            "INSERT INTO invite_codes (code, created_at, expires_at, max_uses, use_count)
+             VALUES ('retained-invite', 2, 62, 1, 0)",
+            [],
+        )
+        .expect_err("duplicate invite codes must remain forbidden");
+    assert!(invite_error
+        .to_string()
+        .contains("UNIQUE constraint failed: invite_codes.code"));
+    let notification_error = connection
+        .execute(
+            "INSERT INTO notification_settings (user_id, created_at, updated_at)
+             VALUES (1, 2, 2)",
+            [],
+        )
+        .expect_err("multiple notification settings per user must remain forbidden");
+    assert!(notification_error
+        .to_string()
+        .contains("UNIQUE constraint failed: notification_settings.user_id"));
+}
+
+#[test]
 fn favorite_cursor_migration_preserves_version_fifteen_rows_and_is_idempotent() {
     let directory = tempdir().expect("temporary database should exist");
     let path = directory.path().join("auth.sqlite");
@@ -1523,7 +1600,7 @@ fn empty_index_database_migration_creates_exact_provider_neutral_schema() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("index.sqlite");
 
-    migrate_index_database(&path, Some(Path::new("missing-tokenizer")))
+    migrate_index_database(&path)
         .expect("empty index database should migrate without a tokenizer extension");
 
     assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
@@ -1629,7 +1706,7 @@ fn version_four_index_migration_preserves_content_and_seeds_identity_keys() {
     let before = index_content_snapshot(&path);
     let search_before = index_search_snapshot(&path);
 
-    migrate_index_database(&path, None).expect("version four index should migrate");
+    migrate_index_database(&path).expect("version four index should migrate");
 
     assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
     assert_eq!(index_content_snapshot(&path), before);
@@ -1652,7 +1729,7 @@ fn version_four_index_migration_preserves_content_and_seeds_identity_keys() {
     assert_eq!(foreign_key_count(&path, "journal_identity_keys"), 0);
     let after_first = fs::read(&path).expect("migrated index bytes should read");
 
-    migrate_index_database(&path, None).expect("current version should be a no-op");
+    migrate_index_database(&path).expect("current version should be a no-op");
 
     assert_eq!(
         fs::read(&path).expect("no-op index bytes should read"),
@@ -1680,7 +1757,7 @@ fn version_five_index_migration_discards_legacy_scalar_and_preserves_other_conte
         ["10.1000/legacy-relation"]
     );
 
-    migrate_index_database(&path, None).expect("version five index should migrate");
+    migrate_index_database(&path).expect("version five index should migrate");
 
     assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
     assert_eq!(index_content_snapshot(&path), before);
@@ -1701,7 +1778,7 @@ fn version_five_index_migration_discards_legacy_scalar_and_preserves_other_conte
 }
 
 #[test]
-fn version_six_preflight_is_read_only_and_explicit_migration_builds_version_seven() {
+fn version_six_preflight_is_read_only_and_explicit_migration_builds_current_schema() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("version-six.sqlite");
     create_version_six_index_database(&path);
@@ -1709,7 +1786,7 @@ fn version_six_preflight_is_read_only_and_explicit_migration_builds_version_seve
     let search_before = index_search_snapshot(&path);
     let bytes_before = fs::read(&path).expect("version six bytes should read");
 
-    preflight_index_database(&path, None).expect("version six preflight should succeed");
+    preflight_index_database(&path).expect("version six preflight should succeed");
 
     assert_eq!(user_version(&path), MIN_SUPPORTED_INDEX_SCHEMA_VERSION);
     assert_eq!(
@@ -1717,7 +1794,7 @@ fn version_six_preflight_is_read_only_and_explicit_migration_builds_version_seve
         bytes_before
     );
 
-    migrate_index_database(&path, None).expect("version six should migrate explicitly");
+    migrate_index_database(&path).expect("version six should migrate explicitly");
 
     assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
     assert_eq!(index_content_snapshot(&path), content_before);
@@ -1730,28 +1807,8 @@ fn version_six_preflight_is_read_only_and_explicit_migration_builds_version_seve
 #[test]
 fn index_preflight_rejects_search_storage_that_mismatches_declared_version() {
     let temp_dir = tempdir().expect("temp directory should be created");
-    let version_six_path = temp_dir.path().join("v6-with-v7-search.sqlite");
-    migrate_index_database(&version_six_path, None).expect("current index should initialize");
-    let connection = Connection::open(&version_six_path).expect("index should open");
-    connection
-        .pragma_update(None, "user_version", MIN_SUPPORTED_INDEX_SCHEMA_VERSION)
-        .expect("fixture version should downgrade");
-    drop(connection);
-    let version_six_bytes = fs::read(&version_six_path).expect("fixture bytes should read");
-
-    preflight_index_database(&version_six_path, None)
-        .expect_err("v6 must reject contentless v7 search storage");
-
-    assert_eq!(
-        fs::read(&version_six_path).expect("rejected v6 bytes should read"),
-        version_six_bytes
-    );
-
-    let version_seven_path = temp_dir.path().join("v7-with-v6-search.sqlite");
-    migrate_index_database(&version_seven_path, None).expect("current index should initialize");
-    let connection = Connection::open(&version_seven_path).expect("index should open");
-    connection
-        .execute_batch(
+    let search_schema = |options: &str| {
+        format!(
             "DROP TABLE article_search;
              CREATE VIRTUAL TABLE article_search
              USING fts5(
@@ -1762,53 +1819,156 @@ fn index_preflight_rejects_search_storage_that_mismatches_declared_version() {
                  pmid,
                  authors,
                  journal_title,
+                 {options}
                  tokenize = 'unicode61 remove_diacritics 2'
-             );",
+             );"
         )
-        .expect("stored-content search fixture should install");
-    drop(connection);
-    let version_seven_bytes = fs::read(&version_seven_path).expect("fixture bytes should read");
+    };
+    let contentless_options = "content = '', contentless_delete = 1,";
+    for version in MIN_SUPPORTED_INDEX_SCHEMA_VERSION..=INDEX_SCHEMA_VERSION {
+        let (expected_options, wrong_storage_options) = if version == 6 {
+            ("", contentless_options)
+        } else {
+            (contentless_options, "")
+        };
+        for (case, invalid_options) in [
+            ("wrong-storage", wrong_storage_options.to_string()),
+            (
+                "extra-search-option",
+                format!("{expected_options} prefix = '2',"),
+            ),
+        ] {
+            let path = temp_dir.path().join(format!("v{version}-{case}.sqlite"));
+            migrate_index_database(&path).expect("current index should initialize");
+            let connection = Connection::open(&path).expect("index should open");
+            connection
+                .execute_batch(&search_schema(expected_options))
+                .expect("declared search storage should install");
+            if version < 8 {
+                connection
+                    .execute_batch(
+                        "CREATE INDEX idx_article_change_events_order ON article_change_events(event_id);",
+                    )
+                    .expect("historical index inventory should install");
+            }
+            connection
+                .pragma_update(None, "user_version", version)
+                .expect("declared fixture version should install");
+            connection
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode = DELETE;")
+                .expect("fixture should checkpoint");
+            drop(connection);
+            let valid_bytes = fs::read(&path).expect("valid fixture bytes should read");
 
-    preflight_index_database(&version_seven_path, None)
-        .expect_err("v7 must reject stored-content v6 search storage");
+            preflight_index_database(&path)
+                .expect("exact historical or current schema must preflight before FTS mutation");
+            assert_eq!(
+                fs::read(&path).expect("valid preflight bytes should read"),
+                valid_bytes
+            );
 
-    assert_eq!(
-        fs::read(&version_seven_path).expect("rejected v7 bytes should read"),
-        version_seven_bytes
-    );
+            let connection = Connection::open(&path).expect("validated index should open");
+            connection
+                .execute_batch(&search_schema(&invalid_options))
+                .expect("invalid FTS storage or options should install");
+            drop(connection);
+            let invalid_bytes = fs::read(&path).expect("invalid fixture bytes should read");
 
-    let lookalike_path = temp_dir.path().join("v7-with-extra-search-option.sqlite");
-    migrate_index_database(&lookalike_path, None).expect("current index should initialize");
-    let connection = Connection::open(&lookalike_path).expect("index should open");
+            let error = preflight_index_database(&path)
+                .expect_err("FTS storage and options must match the declared schema version");
+            assert!(matches!(
+                error,
+                MigrationError::Sqlite(rusqlite::Error::InvalidQuery)
+            ));
+            assert_eq!(
+                fs::read(&path).expect("rejected fixture bytes should read"),
+                invalid_bytes
+            );
+        }
+    }
+}
+
+#[test]
+fn version_seven_preflight_is_read_only_and_migration_only_removes_redundant_index() {
+    let directory = tempdir().expect("temporary directory should exist");
+    let path = directory.path().join("version-seven.sqlite");
+    create_version_six_index_database(&path);
+    migrate_index_database(&path).expect("content fixture should migrate");
+    let connection = Connection::open(&path).expect("content database should open");
     connection
         .execute_batch(
-            "DROP TABLE article_search;
-             CREATE VIRTUAL TABLE article_search
-             USING fts5(
-                 article_id UNINDEXED,
-                 title,
-                 abstract_text,
-                 doi,
-                 pmid,
-                 authors,
-                 journal_title,
-                 content = '',
-                 contentless_delete = 1,
-                 prefix = '2',
-                 tokenize = 'unicode61 remove_diacritics 2'
-             );",
+            "CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
+             PRAGMA user_version = 7;
+             PRAGMA wal_checkpoint(TRUNCATE);
+             PRAGMA journal_mode = DELETE;",
         )
-        .expect("lookalike search fixture should install");
+        .expect("version seven fixture should initialize");
     drop(connection);
-    let lookalike_bytes = fs::read(&lookalike_path).expect("fixture bytes should read");
+    let content_before = index_content_snapshot(&path);
+    let search_before = index_search_snapshot(&path);
+    let bytes_before = fs::read(&path).expect("version seven bytes should read");
 
-    preflight_index_database(&lookalike_path, None)
-        .expect_err("v7 must reject undeclared search options");
+    preflight_index_database(&path).expect("version seven must remain runtime compatible");
 
+    assert_eq!(user_version(&path), 7);
     assert_eq!(
-        fs::read(&lookalike_path).expect("rejected lookalike bytes should read"),
-        lookalike_bytes
+        fs::read(&path).expect("preflight bytes should read"),
+        bytes_before
     );
+    assert!(index_exists(&path, "idx_article_change_events_order"));
+
+    migrate_index_database(&path).expect("version seven should migrate explicitly");
+    migrate_index_database(&path).expect("current migration should remain idempotent");
+
+    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
+    assert!(!index_exists(&path, "idx_article_change_events_order"));
+    assert_eq!(index_content_snapshot(&path), content_before);
+    assert_eq!(index_search_snapshot(&path), search_before);
+    assert!(!table_exists(&path, "article_search_content"));
+    let query_plan = Connection::open(&path)
+        .expect("migrated content should open")
+        .query_row(
+            "EXPLAIN QUERY PLAN
+             SELECT event_id, content_revision, article_id, change_kind, journal_id,
+                    issue_id, in_press, created_at
+             FROM article_change_events WHERE event_id > 0 ORDER BY event_id LIMIT 1000",
+            [],
+            |row| row.get::<_, String>(3),
+        )
+        .expect("outbox query plan should load");
+    assert!(query_plan.contains("INTEGER PRIMARY KEY"));
+}
+
+#[test]
+fn index_preflight_enforces_versioned_index_inventory_without_modifying_invalid_files() {
+    let directory = tempdir().expect("temporary directory should exist");
+    for (name, mutation) in [
+        ("missing-required-index", "DROP INDEX idx_articles_doi;"),
+        (
+            "obsolete-index-in-current-schema",
+            "CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);",
+        ),
+        ("missing-historical-index", "PRAGMA user_version = 7;"),
+    ] {
+        let path = directory.path().join(format!("{name}.sqlite"));
+        migrate_index_database(&path).expect("current schema should initialize");
+        let connection = Connection::open(&path).expect("fixture should open");
+        connection
+            .execute_batch(mutation)
+            .expect("fixture mutation should succeed");
+        connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode = DELETE;")
+            .expect("fixture should checkpoint");
+        drop(connection);
+        let bytes_before = fs::read(&path).expect("fixture bytes should read");
+
+        preflight_index_database(&path).expect_err("mismatched index inventory must be rejected");
+
+        assert_eq!(
+            fs::read(&path).expect("rejected bytes should read"),
+            bytes_before
+        );
+    }
 }
 
 #[test]
@@ -1817,7 +1977,7 @@ fn empty_version_four_index_migration_creates_an_empty_identity_map() {
     let path = temp_dir.path().join("empty-version-four.sqlite");
     create_version_four_index_database(&path, false);
 
-    migrate_index_database(&path, None).expect("empty version four index should migrate");
+    migrate_index_database(&path).expect("empty version four index should migrate");
 
     assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
     assert!(table_exists(&path, "journal_identity_keys"));
@@ -1841,8 +2001,8 @@ fn version_four_identity_conflict_rolls_back_atomically() {
     drop(connection);
     let before = index_content_snapshot(&path);
 
-    let error = migrate_index_database(&path, None)
-        .expect_err("conflicting version four identities should fail");
+    let error =
+        migrate_index_database(&path).expect_err("conflicting version four identities should fail");
 
     assert!(matches!(&error, MigrationError::IndexIdentityConflict));
     assert_eq!(
@@ -1864,7 +2024,7 @@ fn pre_v4_index_versions_require_rebuild_without_modifying_files() {
         create_nonempty_index_database(&path, version);
         let before = fs::read(&path).expect("legacy bytes should read");
 
-        let error = migrate_index_database(&path, None)
+        let error = migrate_index_database(&path)
             .expect_err("legacy index database should require a rebuild");
 
         match error {
@@ -1891,7 +2051,7 @@ fn pre_v4_index_versions_require_rebuild_without_modifying_files() {
 fn malformed_current_index_schema_is_rejected_by_preflight_without_modifying_files() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("malformed-current.sqlite");
-    migrate_index_database(&path, None).expect("current index database should initialize");
+    migrate_index_database(&path).expect("current index database should initialize");
     let connection = Connection::open(&path).expect("current index database should open");
     connection
         .execute("ALTER TABLE articles ADD COLUMN provider TEXT", [])
@@ -1899,7 +2059,7 @@ fn malformed_current_index_schema_is_rejected_by_preflight_without_modifying_fil
     drop(connection);
     let before = fs::read(&path).expect("malformed current bytes should read");
 
-    preflight_index_database(&path, None)
+    preflight_index_database(&path)
         .expect_err("malformed current schema should be rejected by preflight");
 
     assert_eq!(
@@ -1912,7 +2072,7 @@ fn malformed_current_index_schema_is_rejected_by_preflight_without_modifying_fil
 fn current_index_preflight_defers_foreign_key_validation() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("current-with-orphan.sqlite");
-    migrate_index_database(&path, None).expect("current index database should initialize");
+    migrate_index_database(&path).expect("current index database should initialize");
     let connection = Connection::open(&path).expect("current index database should open");
     connection
         .pragma_update(None, "foreign_keys", false)
@@ -1926,9 +2086,9 @@ fn current_index_preflight_defers_foreign_key_validation() {
         .expect("foreign key violation should be installed with enforcement disabled");
     drop(connection);
 
-    preflight_index_database(&path, None)
+    preflight_index_database(&path)
         .expect("schema-only preflight should defer foreign key validation");
-    let error = migrate_index_database(&path, None)
+    let error = migrate_index_database(&path)
         .expect_err("explicit migration validation should reject the foreign key violation");
 
     assert!(matches!(
@@ -1961,7 +2121,7 @@ fn index_preflight_runs_full_validation_after_a_real_migration() {
         .expect("foreign key violation should be installed with enforcement disabled");
     drop(connection);
 
-    let error = preflight_index_database(&path, None)
+    let error = preflight_index_database(&path)
         .expect_err("real migration should run full foreign key validation");
 
     assert!(matches!(
@@ -1978,12 +2138,12 @@ fn current_database_migrations_are_idempotent() {
     let auth_path = temp_dir.path().join("auth.sqlite");
     let index_path = temp_dir.path().join("index.sqlite");
     migrate_auth_database(&auth_path).expect("auth database should migrate once");
-    migrate_index_database(&index_path, None).expect("index database should migrate once");
+    migrate_index_database(&index_path).expect("index database should migrate once");
     let auth_before = fs::read(&auth_path).expect("auth database bytes should read");
     let index_before = fs::read(&index_path).expect("index database bytes should read");
 
     migrate_auth_database(&auth_path).expect("current auth database should be a no-op");
-    migrate_index_database(&index_path, None).expect("current index database should be a no-op");
+    migrate_index_database(&index_path).expect("current index database should be a no-op");
 
     assert_eq!(
         fs::read(&auth_path).expect("auth bytes should read"),
@@ -2073,8 +2233,8 @@ fn newer_database_migrations_fail_without_modifying_files() {
 
     let auth_error =
         migrate_auth_database(&auth_path).expect_err("newer auth database should be rejected");
-    let index_error = migrate_index_database(&index_path, None)
-        .expect_err("newer index database should be rejected");
+    let index_error =
+        migrate_index_database(&index_path).expect_err("newer index database should be rejected");
 
     assert!(matches!(
         auth_error,
@@ -2121,7 +2281,7 @@ fn storage_preflight_defers_current_index_foreign_key_validation() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let config = StorageConfig::from_project_root(temp_dir.path());
     let index_path = config.index_dir().join("current-with-orphan.sqlite");
-    migrate_index_database(&index_path, None).expect("current index database should initialize");
+    migrate_index_database(&index_path).expect("current index database should initialize");
     let connection = Connection::open(&index_path).expect("current index database should open");
     connection
         .pragma_update(None, "foreign_keys", false)
@@ -2424,7 +2584,7 @@ fn sqlite_schema_sql(path: &Path) -> String {
 }
 
 fn create_version_four_index_database(path: &Path, has_content: bool) {
-    migrate_index_database(path, None).expect("current index fixture should initialize");
+    migrate_index_database(path).expect("current index fixture should initialize");
     let connection = Connection::open(path).expect("version four fixture should open");
     connection
         .execute_batch(
@@ -2443,6 +2603,7 @@ fn create_version_four_index_database(path: &Path, has_content: bool) {
              DROP TABLE article_retraction_dois;
              ALTER TABLE articles ADD COLUMN retraction_doi TEXT;
              DROP TABLE journal_identity_keys;
+             CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
              PRAGMA user_version = 4;",
         )
         .expect("current-only index objects should be removed");
@@ -2538,7 +2699,7 @@ fn create_version_five_index_database(path: &Path) {
 
 fn create_version_six_index_database(path: &Path) {
     create_version_five_index_database(path);
-    migrate_index_database(path, None).expect("fixture should migrate to current version");
+    migrate_index_database(path).expect("fixture should migrate to current version");
     let connection = Connection::open(path).expect("version six fixture should open");
     connection
         .execute_batch(
@@ -2578,6 +2739,7 @@ fn create_version_six_index_database(path: &Path) {
              FROM articles
              JOIN journals ON journals.journal_id = articles.journal_id
              ORDER BY articles.article_id;
+             CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
              PRAGMA user_version = 6;",
         )
         .expect("version six search storage should install");

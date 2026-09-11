@@ -29,155 +29,11 @@ const JOURNAL_IDENTITY_CONFLICT_MESSAGE: &str =
 const LEGACY_JOURNAL_NOT_EMPTY_MESSAGE: &str =
     "legacy journal entity owns content or durable history";
 
-/// Current provider-neutral content database schema version.
-pub const CONTENT_SCHEMA_VERSION: i64 = 7;
-
-const MIN_SUPPORTED_CONTENT_SCHEMA_VERSION: i64 = 6;
-
-const VERSION_SIX_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
-    article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
-    tokenize='unicode61remove_diacritics2')";
-const VERSION_SEVEN_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
-    article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
-    content='',contentless_delete=1,tokenize='unicode61remove_diacritics2')";
-
-const CONTENT_TABLES_SQL: &str = "
-    CREATE TABLE journals (
-        journal_id INTEGER PRIMARY KEY,
-        catalog_id TEXT NOT NULL UNIQUE,
-        title TEXT NOT NULL,
-        title_aliases_json TEXT NOT NULL,
-        issns_json TEXT NOT NULL,
-        issn TEXT,
-        eissn TEXT,
-        area TEXT,
-        utd_rank TEXT,
-        utd_rating TEXT,
-        abs_rank TEXT,
-        abs_rating TEXT,
-        fms_rank TEXT,
-        fms_rating TEXT,
-        fmscn_rank TEXT,
-        fmscn_rating TEXT
-    );
-
-    CREATE TABLE journal_identity_keys (
-        identity_kind TEXT NOT NULL CHECK (identity_kind IN ('catalog_id', 'issn')),
-        identity_value TEXT NOT NULL,
-        canonical_catalog_id TEXT NOT NULL,
-        PRIMARY KEY (identity_kind, identity_value)
-    );
-
-    CREATE TABLE issues (
-        issue_id INTEGER PRIMARY KEY,
-        journal_id INTEGER NOT NULL,
-        publication_year INTEGER,
-        title TEXT,
-        volume TEXT,
-        number TEXT,
-        date TEXT,
-        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE articles (
-        article_id INTEGER PRIMARY KEY,
-        journal_id INTEGER NOT NULL,
-        issue_id INTEGER,
-        title TEXT NOT NULL,
-        publication_year INTEGER,
-        date TEXT,
-        authors_json TEXT NOT NULL,
-        start_page TEXT,
-        end_page TEXT,
-        abstract_text TEXT,
-        doi TEXT,
-        pmid TEXT,
-        open_access INTEGER,
-        in_press INTEGER,
-        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
-        FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE article_retraction_dois (
-        article_id INTEGER NOT NULL,
-        retraction_doi TEXT NOT NULL,
-        PRIMARY KEY (article_id, retraction_doi),
-        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE article_identity_keys (
-        identity_kind TEXT NOT NULL CHECK (identity_kind IN ('doi', 'pmid', 'bibliographic')),
-        identity_value TEXT NOT NULL,
-        article_id INTEGER NOT NULL,
-        PRIMARY KEY (identity_kind, identity_value),
-        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE article_listing (
-        article_id INTEGER PRIMARY KEY,
-        journal_id INTEGER NOT NULL,
-        issue_id INTEGER,
-        publication_year INTEGER,
-        date TEXT,
-        open_access INTEGER,
-        in_press INTEGER,
-        doi TEXT,
-        pmid TEXT,
-        area TEXT,
-        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE,
-        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
-        FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
-    );
-
-    CREATE VIRTUAL TABLE article_search
-    USING fts5(
-        article_id UNINDEXED,
-        title,
-        abstract_text,
-        doi,
-        pmid,
-        authors,
-        journal_title,
-        content = '',
-        contentless_delete = 1,
-        tokenize = 'unicode61 remove_diacritics 2'
-    );
-
-    CREATE TABLE article_change_events (
-        event_id INTEGER PRIMARY KEY,
-        content_revision TEXT NOT NULL,
-        article_id INTEGER NOT NULL,
-        change_kind TEXT NOT NULL CHECK (change_kind IN ('upsert', 'remove')),
-        journal_id INTEGER NOT NULL,
-        issue_id INTEGER,
-        in_press INTEGER NOT NULL CHECK (in_press IN (0, 1)),
-        created_at TEXT NOT NULL
-    );
-
-    CREATE INDEX idx_journals_issn ON journals(issn);
-    CREATE INDEX idx_journals_eissn ON journals(eissn);
-    CREATE INDEX idx_journal_identity_keys_catalog
-        ON journal_identity_keys(canonical_catalog_id);
-    CREATE INDEX idx_issues_journal_year ON issues(journal_id, publication_year);
-    CREATE INDEX idx_articles_journal ON articles(journal_id);
-    CREATE INDEX idx_articles_issue ON articles(issue_id);
-    CREATE INDEX idx_articles_date_id ON articles(date, article_id);
-    CREATE INDEX idx_articles_doi ON articles(doi);
-    CREATE INDEX idx_articles_pmid ON articles(pmid);
-    CREATE INDEX idx_article_retraction_dois_doi
-        ON article_retraction_dois(retraction_doi);
-    CREATE INDEX idx_article_identity_keys_article ON article_identity_keys(article_id);
-    CREATE INDEX idx_article_listing_date_id ON article_listing(date, article_id);
-    CREATE INDEX idx_article_listing_journal_date_id
-        ON article_listing(journal_id, date, article_id);
-    CREATE INDEX idx_article_listing_issue ON article_listing(issue_id);
-    CREATE UNIQUE INDEX idx_article_change_events_revision
-        ON article_change_events(
-            content_revision, article_id, change_kind, journal_id,
-            COALESCE(issue_id, -1), in_press
-        );
-    CREATE INDEX idx_article_change_events_order ON article_change_events(event_id);
-";
+pub use litradar_storage::index_schema::INDEX_SCHEMA_VERSION as CONTENT_SCHEMA_VERSION;
+use litradar_storage::index_schema::{
+    validate_index_schema_structure, IndexSchemaError, INDEX_CONTENT_TABLES_SQL,
+    MIN_SUPPORTED_INDEX_SCHEMA_VERSION as MIN_SUPPORTED_CONTENT_SCHEMA_VERSION,
+};
 
 /// Provider-neutral content database initialization or write failure.
 #[derive(Debug)]
@@ -307,7 +163,7 @@ struct JournalProjectionRefresh {
 ///
 /// # Returns
 ///
-/// Initialized v6 connection or an explicit rebuild-required failure.
+/// Initialized current connection or an explicit rebuild-required failure.
 pub fn open_content_db(path: impl AsRef<Path>) -> Result<Connection, ContentDatabaseError> {
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(INDEX_BUSY_TIMEOUT_SECONDS))?;
@@ -360,7 +216,7 @@ pub fn init_content_db(connection: &Connection) -> Result<(), ContentDatabaseErr
     }
 
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-    transaction.execute_batch(CONTENT_TABLES_SQL)?;
+    transaction.execute_batch(INDEX_CONTENT_TABLES_SQL)?;
     transaction.pragma_update(None, "user_version", CONTENT_SCHEMA_VERSION)?;
     transaction.commit()?;
     validate_content_schema(connection, CONTENT_SCHEMA_VERSION)
@@ -524,185 +380,12 @@ fn validate_content_schema(
     connection: &Connection,
     version: i64,
 ) -> Result<(), ContentDatabaseError> {
-    let expected = [
-        "article_change_events",
-        "article_identity_keys",
-        "article_listing",
-        "article_retraction_dois",
-        "article_search",
-        "articles",
-        "issues",
-        "journal_identity_keys",
-        "journals",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect::<BTreeSet<_>>();
-    let mut statement = connection.prepare(
-        "SELECT name
-         FROM sqlite_schema
-         WHERE type = 'table'
-           AND name NOT LIKE 'sqlite_%'
-           AND name NOT LIKE 'article_search_%'
-         ORDER BY name",
-    )?;
-    let actual = statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
-    if actual != expected {
-        return Err(ContentDatabaseError::InvalidCurrentSchema(format!(
-            "table inventory mismatch: {actual:?}"
-        )));
-    }
-    let expected_columns: &[(&str, &[&str])] = &[
-        (
-            "journals",
-            &[
-                "journal_id",
-                "catalog_id",
-                "title",
-                "title_aliases_json",
-                "issns_json",
-                "issn",
-                "eissn",
-                "area",
-                "utd_rank",
-                "utd_rating",
-                "abs_rank",
-                "abs_rating",
-                "fms_rank",
-                "fms_rating",
-                "fmscn_rank",
-                "fmscn_rating",
-            ],
-        ),
-        (
-            "journal_identity_keys",
-            &["identity_kind", "identity_value", "canonical_catalog_id"],
-        ),
-        (
-            "issues",
-            &[
-                "issue_id",
-                "journal_id",
-                "publication_year",
-                "title",
-                "volume",
-                "number",
-                "date",
-            ],
-        ),
-        (
-            "articles",
-            &[
-                "article_id",
-                "journal_id",
-                "issue_id",
-                "title",
-                "publication_year",
-                "date",
-                "authors_json",
-                "start_page",
-                "end_page",
-                "abstract_text",
-                "doi",
-                "pmid",
-                "open_access",
-                "in_press",
-            ],
-        ),
-        ("article_retraction_dois", &["article_id", "retraction_doi"]),
-        (
-            "article_identity_keys",
-            &["identity_kind", "identity_value", "article_id"],
-        ),
-        (
-            "article_listing",
-            &[
-                "article_id",
-                "journal_id",
-                "issue_id",
-                "publication_year",
-                "date",
-                "open_access",
-                "in_press",
-                "doi",
-                "pmid",
-                "area",
-            ],
-        ),
-        (
-            "article_search",
-            &[
-                "article_id",
-                "title",
-                "abstract_text",
-                "doi",
-                "pmid",
-                "authors",
-                "journal_title",
-            ],
-        ),
-        (
-            "article_change_events",
-            &[
-                "event_id",
-                "content_revision",
-                "article_id",
-                "change_kind",
-                "journal_id",
-                "issue_id",
-                "in_press",
-                "created_at",
-            ],
-        ),
-    ];
-    for (table_name, expected) in expected_columns {
-        let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
-        let actual = statement
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        if actual != *expected {
-            return Err(ContentDatabaseError::InvalidCurrentSchema(format!(
-                "column inventory mismatch for {table_name}: {actual:?}"
-            )));
+    validate_index_schema_structure(connection, version).map_err(|error| match error {
+        IndexSchemaError::Sqlite(error) => ContentDatabaseError::Sqlite(error),
+        IndexSchemaError::InvalidStructure(message) => {
+            ContentDatabaseError::InvalidCurrentSchema(message)
         }
-    }
-    let expected_indexes = [
-        "idx_article_change_events_order",
-        "idx_article_change_events_revision",
-        "idx_article_identity_keys_article",
-        "idx_article_listing_date_id",
-        "idx_article_listing_issue",
-        "idx_article_listing_journal_date_id",
-        "idx_article_retraction_dois_doi",
-        "idx_articles_date_id",
-        "idx_articles_doi",
-        "idx_articles_issue",
-        "idx_articles_journal",
-        "idx_articles_pmid",
-        "idx_issues_journal_year",
-        "idx_journal_identity_keys_catalog",
-        "idx_journals_eissn",
-        "idx_journals_issn",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect::<BTreeSet<_>>();
-    let mut statement = connection.prepare(
-        "SELECT name FROM sqlite_schema
-         WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
-         ORDER BY name",
-    )?;
-    let actual_indexes = statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
-    if actual_indexes != expected_indexes {
-        return Err(ContentDatabaseError::InvalidCurrentSchema(format!(
-            "index inventory mismatch: {actual_indexes:?}"
-        )));
-    }
-    validate_search_storage(connection, version)?;
+    })?;
     for forbidden in [
         "provider",
         "source",
@@ -734,43 +417,6 @@ fn validate_content_schema(
         }
     }
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
-    Ok(())
-}
-
-fn validate_search_storage(
-    connection: &Connection,
-    version: i64,
-) -> Result<(), ContentDatabaseError> {
-    let schema_sql = connection.query_row(
-        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'article_search'",
-        [],
-        |row| row.get::<_, String>(0),
-    )?;
-    let compact_sql = schema_sql
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>()
-        .to_ascii_lowercase();
-    let has_content_shadow = connection.query_row(
-        "SELECT EXISTS(
-             SELECT 1 FROM sqlite_schema
-             WHERE type = 'table' AND name = 'article_search_content'
-         )",
-        [],
-        |row| row.get::<_, bool>(0),
-    )?;
-    let is_valid_storage = match version {
-        MIN_SUPPORTED_CONTENT_SCHEMA_VERSION => {
-            has_content_shadow && compact_sql == VERSION_SIX_SEARCH_SCHEMA
-        }
-        CONTENT_SCHEMA_VERSION => !has_content_shadow && compact_sql == VERSION_SEVEN_SEARCH_SCHEMA,
-        _ => false,
-    };
-    if !is_valid_storage {
-        return Err(ContentDatabaseError::InvalidCurrentSchema(
-            "article_search storage options do not match the declared schema version".to_string(),
-        ));
-    }
     Ok(())
 }
 
@@ -1965,6 +1611,33 @@ mod tests {
     }
 
     #[test]
+    fn version_seven_content_schema_remains_runtime_readable_and_writable() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        init_content_db(&connection).expect("current content schema should initialize");
+        connection
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
+                 PRAGMA user_version = 7;",
+            )
+            .expect("version seven index inventory should install");
+
+        init_content_db(&connection).expect("version seven content schema should preflight");
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .expect("schema version should read"),
+            7
+        );
+        write_test_batch(
+            &connection,
+            &catalog(),
+            &batch(),
+            "catalog:journal-1:v7-seed",
+        );
+        assert_projection_metadata(&connection, &catalog(), 1);
+    }
+
+    #[test]
     fn version_six_content_schema_remains_runtime_readable_and_writable() {
         let connection = Connection::open_in_memory().expect("database should open");
         init_content_db(&connection).expect("current content schema should initialize");
@@ -1982,6 +1655,7 @@ mod tests {
                      journal_title,
                      tokenize = 'unicode61 remove_diacritics 2'
                  );
+                 CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
                  PRAGMA user_version = 6;",
             )
             .expect("version six search storage should install");

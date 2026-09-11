@@ -19,20 +19,13 @@ use crate::index_maintenance::{interrupted_index_maintenance_state, IndexStorage
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 16;
+pub const AUTH_SCHEMA_VERSION: i64 = 17;
 
-/// Current index database schema version.
-pub const INDEX_SCHEMA_VERSION: i64 = 7;
+pub use crate::index_schema::{INDEX_SCHEMA_VERSION, MIN_SUPPORTED_INDEX_SCHEMA_VERSION};
 
-/// Oldest index database schema accepted by normal runtime preflight.
-pub const MIN_SUPPORTED_INDEX_SCHEMA_VERSION: i64 = 6;
-
-const VERSION_SIX_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
-    article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
-    tokenize='unicode61remove_diacritics2')";
-const VERSION_SEVEN_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
-    article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
-    content='',contentless_delete=1,tokenize='unicode61remove_diacritics2')";
+use crate::index_schema::{
+    validate_index_schema_structure, IndexSchemaError, INDEX_CONTENT_TABLES_SQL,
+};
 
 const AUTH_DATABASE: &str = "auth";
 const INDEX_DATABASE: &str = "index";
@@ -264,7 +257,6 @@ pub fn migrate_existing_index_databases(config: &StorageConfig) -> Result<(), Mi
         database_kind = INDEX_DATABASE,
         target_version = INDEX_SCHEMA_VERSION,
     );
-    let tokenizer_path = config.simple_tokenizer_path();
     let paths = match config.list_index_databases() {
         Ok(paths) => paths,
         Err(error) => {
@@ -285,7 +277,7 @@ pub fn migrate_existing_index_databases(config: &StorageConfig) -> Result<(), Mi
     let discovered_count = paths.len();
     let mut completed_count = 0_usize;
     for path in paths {
-        if let Err(error) = migrate_index_database(path, tokenizer_path.as_deref()) {
+        if let Err(error) = migrate_index_database(path) {
             tracing::warn!(
                 event = "storage.migration.batch.failed",
                 component = "storage",
@@ -332,7 +324,6 @@ pub fn preflight_existing_index_databases(config: &StorageConfig) -> Result<(), 
         database_kind = INDEX_DATABASE,
         target_version = INDEX_SCHEMA_VERSION,
     );
-    let tokenizer_path = config.simple_tokenizer_path();
     let paths = match config.list_index_databases() {
         Ok(paths) => paths,
         Err(error) => {
@@ -353,7 +344,7 @@ pub fn preflight_existing_index_databases(config: &StorageConfig) -> Result<(), 
     let discovered_count = paths.len();
     let mut completed_count = 0_usize;
     for path in paths {
-        if let Err(error) = preflight_index_database(path, tokenizer_path.as_deref()) {
+        if let Err(error) = preflight_index_database(path) {
             tracing::warn!(
                 event = "storage.index_preflight.batch.failed",
                 component = "storage",
@@ -428,6 +419,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             14 => apply_auth_version_fourteen(&transaction)?,
             15 => apply_auth_version_fifteen(&transaction)?,
             16 => apply_auth_version_sixteen(&transaction)?,
+            17 => apply_auth_version_seventeen(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -445,17 +437,13 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
 /// # Arguments
 ///
 /// * `path` - Index SQLite database path.
-/// * `simple_tokenizer_path` - Optional SQLite `simple` tokenizer extension path.
 ///
 /// # Returns
 ///
 /// Empty result after all pending migrations commit.
-pub fn migrate_index_database(
-    path: impl AsRef<Path>,
-    simple_tokenizer_path: Option<&Path>,
-) -> Result<(), MigrationError> {
+pub fn migrate_index_database(path: impl AsRef<Path>) -> Result<(), MigrationError> {
     run_database_migration(INDEX_DATABASE, INDEX_SCHEMA_VERSION, || {
-        migrate_index_database_inner(path.as_ref(), simple_tokenizer_path)
+        migrate_index_database_inner(path.as_ref())
     })
 }
 
@@ -464,15 +452,11 @@ pub fn migrate_index_database(
 /// # Arguments
 ///
 /// * `path` - Index SQLite database path.
-/// * `simple_tokenizer_path` - Optional SQLite `simple` tokenizer extension path.
 ///
 /// # Returns
 ///
 /// Empty result after schema-only validation or a required fully validated migration completes.
-pub fn preflight_index_database(
-    path: impl AsRef<Path>,
-    simple_tokenizer_path: Option<&Path>,
-) -> Result<(), MigrationError> {
+pub fn preflight_index_database(path: impl AsRef<Path>) -> Result<(), MigrationError> {
     let started_at = Instant::now();
     tracing::info!(
         event = "storage.index_preflight.started",
@@ -480,7 +464,7 @@ pub fn preflight_index_database(
         database_kind = INDEX_DATABASE,
         target_version = INDEX_SCHEMA_VERSION,
     );
-    match preflight_index_database_inner(path.as_ref(), simple_tokenizer_path) {
+    match preflight_index_database_inner(path.as_ref()) {
         Ok(validation) => {
             tracing::info!(
                 event = "storage.index_preflight.completed",
@@ -507,50 +491,35 @@ pub fn preflight_index_database(
     }
 }
 
-fn preflight_index_database_inner(
-    path: &Path,
-    simple_tokenizer_path: Option<&Path>,
-) -> Result<IndexPreflightValidation, MigrationError> {
+fn preflight_index_database_inner(path: &Path) -> Result<IndexPreflightValidation, MigrationError> {
     if let Some((version, _)) = inspect_existing_index_database(path)? {
         reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
         if (MIN_SUPPORTED_INDEX_SCHEMA_VERSION..=INDEX_SCHEMA_VERSION).contains(&version) {
             let connection = open_read_only_index_connection(path)?;
-            if version == MIN_SUPPORTED_INDEX_SCHEMA_VERSION {
-                validate_index_v6_schema_structure(&connection)?;
-            } else {
-                validate_index_v7_schema_structure(&connection)?;
-            }
+            validate_index_structure(&connection, version)?;
             return Ok(IndexPreflightValidation::SchemaOnly);
         }
     }
-    migrate_index_database(path, simple_tokenizer_path)?;
+    migrate_index_database(path)?;
     Ok(IndexPreflightValidation::FullIntegrity)
 }
 
-fn migrate_index_database_inner(
-    path: &Path,
-    _simple_tokenizer_path: Option<&Path>,
-) -> Result<MigrationSummary, MigrationError> {
+fn migrate_index_database_inner(path: &Path) -> Result<MigrationSummary, MigrationError> {
     let inspection = inspect_existing_index_database(path)?;
     if let Some((version, object_count)) = inspection {
         reject_newer_version(INDEX_DATABASE, version, INDEX_SCHEMA_VERSION)?;
         if version == INDEX_SCHEMA_VERSION {
             let connection = open_read_only_index_connection(path)?;
-            validate_index_v7_schema(&connection)?;
+            validate_index_schema(&connection, INDEX_SCHEMA_VERSION)?;
             return Ok(MigrationSummary {
                 from_version: version,
                 to_version: version,
             });
         }
-        if (4..=MIN_SUPPORTED_INDEX_SCHEMA_VERSION).contains(&version) {
+        if (4..INDEX_SCHEMA_VERSION).contains(&version) {
             {
                 let connection = open_read_only_index_connection(path)?;
-                match version {
-                    4 => validate_index_v4_schema(&connection)?,
-                    5 => validate_index_v5_schema(&connection)?,
-                    MIN_SUPPORTED_INDEX_SCHEMA_VERSION => validate_index_v6_schema(&connection)?,
-                    _ => unreachable!("supported migration source should be validated"),
-                }
+                validate_index_schema(&connection, version)?;
             }
             let connection = open_migration_connection(path)?;
             configure_writable_connection(&connection)?;
@@ -563,11 +532,14 @@ fn migrate_index_database_inner(
             if version <= 5 {
                 apply_index_version_six(&transaction)?;
             }
-            apply_index_version_seven(&transaction)?;
+            if version <= 6 {
+                apply_index_version_seven(&transaction)?;
+            }
+            transaction.execute_batch("DROP INDEX idx_article_change_events_order;")?;
             transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
             transaction.commit()?;
             connection.pragma_update(None, "foreign_keys", true)?;
-            validate_index_v7_schema(&connection)?;
+            validate_index_schema(&connection, INDEX_SCHEMA_VERSION)?;
             return Ok(MigrationSummary {
                 from_version: version,
                 to_version: INDEX_SCHEMA_VERSION,
@@ -590,7 +562,7 @@ fn migrate_index_database_inner(
     transaction.execute_batch(INDEX_CONTENT_TABLES_SQL)?;
     transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
     transaction.commit()?;
-    validate_index_v7_schema(&connection)?;
+    validate_index_schema(&connection, INDEX_SCHEMA_VERSION)?;
     Ok(MigrationSummary {
         from_version,
         to_version: INDEX_SCHEMA_VERSION,
@@ -704,298 +676,25 @@ fn open_read_only_index_connection(path: &Path) -> Result<Connection, MigrationE
     Ok(connection)
 }
 
-fn validate_index_v4_schema(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_schema(connection, false, false, IndexSearchStorage::Stored)
+fn validate_index_structure(connection: &Connection, version: i64) -> Result<(), MigrationError> {
+    validate_index_schema_structure(connection, version).map_err(|error| match error {
+        IndexSchemaError::Sqlite(error) => MigrationError::Sqlite(error),
+        IndexSchemaError::InvalidStructure(_) => {
+            MigrationError::Sqlite(rusqlite::Error::InvalidQuery)
+        }
+    })
 }
 
-fn validate_index_v5_schema(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_schema(connection, true, false, IndexSearchStorage::Stored)
-}
-
-fn validate_index_v6_schema(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_v6_schema_structure(connection)?;
-    validate_index_foreign_keys(connection)
-}
-
-fn validate_index_v6_schema_structure(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_schema(connection, true, true, IndexSearchStorage::Stored)
-}
-
-fn validate_index_v7_schema(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_v7_schema_structure(connection)?;
-    validate_index_foreign_keys(connection)
-}
-
-fn validate_index_v7_schema_structure(connection: &Connection) -> Result<(), MigrationError> {
-    validate_index_schema(
-        connection,
-        true,
-        true,
-        IndexSearchStorage::ContentlessDelete,
-    )
-}
-
-fn validate_index_foreign_keys(connection: &Connection) -> Result<(), MigrationError> {
-    let foreign_key_violation_count =
-        connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-            row.get::<_, i64>(0)
-        })?;
-    if foreign_key_violation_count != 0 {
-        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
-    }
-    Ok(())
-}
-
-fn validate_index_schema(
-    connection: &Connection,
-    has_journal_identity_keys: bool,
-    has_retraction_dois: bool,
-    search_storage: IndexSearchStorage,
-) -> Result<(), MigrationError> {
-    let mut expected = [
-        "article_change_events",
-        "article_identity_keys",
-        "article_listing",
-        "article_search",
-        "articles",
-        "issues",
-        "journals",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect::<BTreeSet<_>>();
-    if has_journal_identity_keys {
-        expected.insert("journal_identity_keys".to_string());
-    }
-    if has_retraction_dois {
-        expected.insert("article_retraction_dois".to_string());
-    }
-    let mut statement = connection.prepare(
-        "SELECT name
-         FROM sqlite_schema
-         WHERE type = 'table'
-           AND name NOT LIKE 'sqlite_%'
-           AND name NOT LIKE 'article_search_%'
-         ORDER BY name",
-    )?;
-    let actual = statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
-    if actual != expected {
-        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
-    }
-    let expected_columns: &[(&str, &[&str])] = &[
-        (
-            "journals",
-            &[
-                "journal_id",
-                "catalog_id",
-                "title",
-                "title_aliases_json",
-                "issns_json",
-                "issn",
-                "eissn",
-                "area",
-                "utd_rank",
-                "utd_rating",
-                "abs_rank",
-                "abs_rating",
-                "fms_rank",
-                "fms_rating",
-                "fmscn_rank",
-                "fmscn_rating",
-            ],
-        ),
-        (
-            "issues",
-            &[
-                "issue_id",
-                "journal_id",
-                "publication_year",
-                "title",
-                "volume",
-                "number",
-                "date",
-            ],
-        ),
-        (
-            "article_identity_keys",
-            &["identity_kind", "identity_value", "article_id"],
-        ),
-        (
-            "article_listing",
-            &[
-                "article_id",
-                "journal_id",
-                "issue_id",
-                "publication_year",
-                "date",
-                "open_access",
-                "in_press",
-                "doi",
-                "pmid",
-                "area",
-            ],
-        ),
-        (
-            "article_search",
-            &[
-                "article_id",
-                "title",
-                "abstract_text",
-                "doi",
-                "pmid",
-                "authors",
-                "journal_title",
-            ],
-        ),
-        (
-            "article_change_events",
-            &[
-                "event_id",
-                "content_revision",
-                "article_id",
-                "change_kind",
-                "journal_id",
-                "issue_id",
-                "in_press",
-                "created_at",
-            ],
-        ),
-    ];
-    for (table_name, expected) in expected_columns {
-        if table_columns(connection, table_name)? != *expected {
+fn validate_index_schema(connection: &Connection, version: i64) -> Result<(), MigrationError> {
+    validate_index_structure(connection, version)?;
+    if version >= 6 {
+        let violation_count =
+            connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        if violation_count != 0 {
             return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
         }
-    }
-    let expected_article_columns = if has_retraction_dois {
-        &[
-            "article_id",
-            "journal_id",
-            "issue_id",
-            "title",
-            "publication_year",
-            "date",
-            "authors_json",
-            "start_page",
-            "end_page",
-            "abstract_text",
-            "doi",
-            "pmid",
-            "open_access",
-            "in_press",
-        ][..]
-    } else {
-        &[
-            "article_id",
-            "journal_id",
-            "issue_id",
-            "title",
-            "publication_year",
-            "date",
-            "authors_json",
-            "start_page",
-            "end_page",
-            "abstract_text",
-            "doi",
-            "pmid",
-            "open_access",
-            "in_press",
-            "retraction_doi",
-        ][..]
-    };
-    if table_columns(connection, "articles")? != expected_article_columns {
-        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
-    }
-    if has_journal_identity_keys
-        && table_columns(connection, "journal_identity_keys")?
-            != ["identity_kind", "identity_value", "canonical_catalog_id"]
-    {
-        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
-    }
-    if has_retraction_dois
-        && table_columns(connection, "article_retraction_dois")? != ["article_id", "retraction_doi"]
-    {
-        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
-    }
-    let mut expected_indexes = [
-        "idx_article_change_events_order",
-        "idx_article_change_events_revision",
-        "idx_article_identity_keys_article",
-        "idx_article_listing_date_id",
-        "idx_article_listing_issue",
-        "idx_article_listing_journal_date_id",
-        "idx_articles_date_id",
-        "idx_articles_doi",
-        "idx_articles_issue",
-        "idx_articles_journal",
-        "idx_articles_pmid",
-        "idx_issues_journal_year",
-        "idx_journals_eissn",
-        "idx_journals_issn",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect::<BTreeSet<_>>();
-    if has_journal_identity_keys {
-        expected_indexes.insert("idx_journal_identity_keys_catalog".to_string());
-    }
-    if has_retraction_dois {
-        expected_indexes.insert("idx_article_retraction_dois_doi".to_string());
-    }
-    let mut statement = connection.prepare(
-        "SELECT name FROM sqlite_schema
-         WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
-         ORDER BY name",
-    )?;
-    let actual_indexes = statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
-    if actual_indexes != expected_indexes {
-        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
-    }
-    validate_index_search_storage(connection, search_storage)?;
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IndexSearchStorage {
-    Stored,
-    ContentlessDelete,
-}
-
-fn validate_index_search_storage(
-    connection: &Connection,
-    expected: IndexSearchStorage,
-) -> Result<(), MigrationError> {
-    let schema_sql = connection.query_row(
-        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'article_search'",
-        [],
-        |row| row.get::<_, String>(0),
-    )?;
-    let compact_sql = schema_sql
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>()
-        .to_ascii_lowercase();
-    let has_content_shadow = connection.query_row(
-        "SELECT EXISTS(
-             SELECT 1 FROM sqlite_schema
-             WHERE type = 'table' AND name = 'article_search_content'
-         )",
-        [],
-        |row| row.get::<_, bool>(0),
-    )?;
-    let is_expected_storage = match expected {
-        IndexSearchStorage::Stored => {
-            has_content_shadow && compact_sql == VERSION_SIX_SEARCH_SCHEMA
-        }
-        IndexSearchStorage::ContentlessDelete => {
-            !has_content_shadow && compact_sql == VERSION_SEVEN_SEARCH_SCHEMA
-        }
-    };
-    if !is_expected_storage {
-        return Err(MigrationError::Sqlite(rusqlite::Error::InvalidQuery));
     }
     Ok(())
 }
@@ -1891,6 +1590,14 @@ fn apply_auth_version_fifteen(transaction: &Transaction<'_>) -> Result<(), Migra
     Ok(())
 }
 
+fn apply_auth_version_seventeen(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(
+        "DROP INDEX IF EXISTS idx_invite_codes_code;
+         DROP INDEX IF EXISTS idx_notification_settings_user;",
+    )?;
+    Ok(())
+}
+
 fn apply_auth_version_sixteen(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
     transaction.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_favorites_cursor \
@@ -2415,144 +2122,6 @@ const INDEX_VERSION_SIX_SQL: &str = "
         ON article_retraction_dois(retraction_doi);
 ";
 
-pub(crate) const INDEX_CONTENT_TABLES_SQL: &str = "
-    CREATE TABLE journals (
-        journal_id INTEGER PRIMARY KEY,
-        catalog_id TEXT NOT NULL UNIQUE,
-        title TEXT NOT NULL,
-        title_aliases_json TEXT NOT NULL,
-        issns_json TEXT NOT NULL,
-        issn TEXT,
-        eissn TEXT,
-        area TEXT,
-        utd_rank TEXT,
-        utd_rating TEXT,
-        abs_rank TEXT,
-        abs_rating TEXT,
-        fms_rank TEXT,
-        fms_rating TEXT,
-        fmscn_rank TEXT,
-        fmscn_rating TEXT
-    );
-
-    CREATE TABLE journal_identity_keys (
-        identity_kind TEXT NOT NULL CHECK (identity_kind IN ('catalog_id', 'issn')),
-        identity_value TEXT NOT NULL,
-        canonical_catalog_id TEXT NOT NULL,
-        PRIMARY KEY (identity_kind, identity_value)
-    );
-
-    CREATE TABLE issues (
-        issue_id INTEGER PRIMARY KEY,
-        journal_id INTEGER NOT NULL,
-        publication_year INTEGER,
-        title TEXT,
-        volume TEXT,
-        number TEXT,
-        date TEXT,
-        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE articles (
-        article_id INTEGER PRIMARY KEY,
-        journal_id INTEGER NOT NULL,
-        issue_id INTEGER,
-        title TEXT NOT NULL,
-        publication_year INTEGER,
-        date TEXT,
-        authors_json TEXT NOT NULL,
-        start_page TEXT,
-        end_page TEXT,
-        abstract_text TEXT,
-        doi TEXT,
-        pmid TEXT,
-        open_access INTEGER,
-        in_press INTEGER,
-        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
-        FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE article_retraction_dois (
-        article_id INTEGER NOT NULL,
-        retraction_doi TEXT NOT NULL,
-        PRIMARY KEY (article_id, retraction_doi),
-        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE article_identity_keys (
-        identity_kind TEXT NOT NULL CHECK (identity_kind IN ('doi', 'pmid', 'bibliographic')),
-        identity_value TEXT NOT NULL,
-        article_id INTEGER NOT NULL,
-        PRIMARY KEY (identity_kind, identity_value),
-        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE article_listing (
-        article_id INTEGER PRIMARY KEY,
-        journal_id INTEGER NOT NULL,
-        issue_id INTEGER,
-        publication_year INTEGER,
-        date TEXT,
-        open_access INTEGER,
-        in_press INTEGER,
-        doi TEXT,
-        pmid TEXT,
-        area TEXT,
-        FOREIGN KEY (article_id) REFERENCES articles(article_id) ON DELETE CASCADE,
-        FOREIGN KEY (journal_id) REFERENCES journals(journal_id) ON DELETE CASCADE,
-        FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
-    );
-
-    CREATE VIRTUAL TABLE article_search
-    USING fts5(
-        article_id UNINDEXED,
-        title,
-        abstract_text,
-        doi,
-        pmid,
-        authors,
-        journal_title,
-        content = '',
-        contentless_delete = 1,
-        tokenize = 'unicode61 remove_diacritics 2'
-    );
-
-    CREATE TABLE article_change_events (
-        event_id INTEGER PRIMARY KEY,
-        content_revision TEXT NOT NULL,
-        article_id INTEGER NOT NULL,
-        change_kind TEXT NOT NULL CHECK (change_kind IN ('upsert', 'remove')),
-        journal_id INTEGER NOT NULL,
-        issue_id INTEGER,
-        in_press INTEGER NOT NULL CHECK (in_press IN (0, 1)),
-        created_at TEXT NOT NULL
-    );
-
-    CREATE INDEX idx_journals_issn ON journals(issn);
-    CREATE INDEX idx_journals_eissn ON journals(eissn);
-    CREATE INDEX idx_journal_identity_keys_catalog
-        ON journal_identity_keys(canonical_catalog_id);
-    CREATE INDEX idx_issues_journal_year ON issues(journal_id, publication_year);
-    CREATE INDEX idx_articles_journal ON articles(journal_id);
-    CREATE INDEX idx_articles_issue ON articles(issue_id);
-    CREATE INDEX idx_articles_date_id ON articles(date, article_id);
-    CREATE INDEX idx_articles_doi ON articles(doi);
-    CREATE INDEX idx_articles_pmid ON articles(pmid);
-    CREATE INDEX idx_article_retraction_dois_doi
-        ON article_retraction_dois(retraction_doi);
-    CREATE INDEX idx_article_identity_keys_article ON article_identity_keys(article_id);
-    CREATE INDEX idx_article_listing_date_id ON article_listing(date, article_id);
-    CREATE INDEX idx_article_listing_journal_date_id
-        ON article_listing(journal_id, date, article_id);
-    CREATE INDEX idx_article_listing_issue ON article_listing(issue_id);
-    CREATE UNIQUE INDEX idx_article_change_events_revision
-        ON article_change_events(
-            content_revision, article_id, change_kind, journal_id,
-            COALESCE(issue_id, -1), in_press
-        );
-    CREATE INDEX idx_article_change_events_order ON article_change_events(event_id);
-";
-
 #[cfg(test)]
 /// Shared structured-log capture helpers for storage module tests.
 pub(crate) mod test_support {
@@ -2712,11 +2281,10 @@ mod tests {
 
         let root = tempdir().expect("temporary root should be created");
         let current_path = root.path().join(PATH_SENTINEL).join("current.sqlite");
-        migrate_index_database(&current_path, None)
-            .expect("current index fixture should initialize");
+        migrate_index_database(&current_path).expect("current index fixture should initialize");
         let schema_logs = CapturedLogs::default();
         schema_logs
-            .capture(|| preflight_index_database(&current_path, None))
+            .capture(|| preflight_index_database(&current_path))
             .expect("current index preflight should complete");
 
         let schema_events = schema_logs.events();
@@ -2730,7 +2298,7 @@ mod tests {
         let new_path = root.path().join(PATH_SENTINEL).join("new.sqlite");
         let migration_logs = CapturedLogs::default();
         migration_logs
-            .capture(|| preflight_index_database(&new_path, None))
+            .capture(|| preflight_index_database(&new_path))
             .expect("new index preflight should migrate the database");
 
         let migration_events = migration_logs.events();

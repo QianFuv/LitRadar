@@ -9,6 +9,7 @@ pub mod cnki;
 pub mod config;
 pub mod index;
 pub mod index_maintenance;
+pub mod index_schema;
 pub mod meta;
 pub mod migrations;
 pub mod secrets;
@@ -125,8 +126,6 @@ pub use secrets::{
     migrate_database_secrets, rotate_database_secrets, verify_database_secrets, SecretCodec,
     SecretError, SecretMigrationReport, SecretVerificationReport,
 };
-pub use sqlite::{
-    cleanup_sqlite_sidecars, open_sqlite_connection, try_load_extension, SqliteSidecarCleanup,
-};
+pub use sqlite::{cleanup_sqlite_sidecars, open_sqlite_connection, SqliteSidecarCleanup};
 
 pub use weekly_manifest::{WeeklyManifestCache, WeeklyManifestCacheStats};

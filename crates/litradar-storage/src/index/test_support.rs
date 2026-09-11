@@ -100,7 +100,7 @@ pub(super) fn create_fixture_user(config: &StorageConfig) {
 
 pub(super) fn create_fixture_schema(connection: &Connection) {
     connection
-        .execute_batch(crate::migrations::INDEX_CONTENT_TABLES_SQL)
+        .execute_batch(crate::index_schema::INDEX_CONTENT_TABLES_SQL)
         .expect("exact content schema should be created");
     connection
         .execute_batch(

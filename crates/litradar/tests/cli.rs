@@ -111,7 +111,7 @@ fn admin_index_storage_optimizer_binary_reports_help_success_noop_and_failures_a
     let root = tempdir().expect("temporary project root should create");
     let config = litradar_storage::StorageConfig::from_project_root(root.path());
     fs::create_dir_all(config.index_dir()).expect("index directory should create");
-    litradar_storage::migrate_index_database(config.index_dir().join("fixture.sqlite"), None)
+    litradar_storage::migrate_index_database(config.index_dir().join("fixture.sqlite"))
         .expect("fixture index should initialize");
 
     let missing_confirmation = run_litradar_in(
@@ -164,11 +164,8 @@ fn admin_index_storage_optimizer_binary_refuses_active_unsupported_and_stale_tar
     let active_root = tempdir().expect("active project root should create");
     let active_config = litradar_storage::StorageConfig::from_project_root(active_root.path());
     fs::create_dir_all(active_config.index_dir()).expect("index directory should create");
-    litradar_storage::migrate_index_database(
-        active_config.index_dir().join("fixture.sqlite"),
-        None,
-    )
-    .expect("fixture index should initialize");
+    litradar_storage::migrate_index_database(active_config.index_dir().join("fixture.sqlite"))
+        .expect("fixture index should initialize");
     litradar_storage::migrate_auth_database(active_config.auth_db_path())
         .expect("auth database should initialize");
     litradar_storage::record_service_heartbeat(
@@ -200,7 +197,7 @@ fn admin_index_storage_optimizer_binary_refuses_active_unsupported_and_stale_tar
         litradar_storage::StorageConfig::from_project_root(unsupported_root.path());
     fs::create_dir_all(unsupported_config.index_dir()).expect("index directory should create");
     let unsupported_path = unsupported_config.index_dir().join("fixture.sqlite");
-    litradar_storage::migrate_index_database(&unsupported_path, None)
+    litradar_storage::migrate_index_database(&unsupported_path)
         .expect("fixture index should initialize");
     let connection = litradar_storage::open_sqlite_connection(&unsupported_path)
         .expect("fixture database should open");
@@ -678,8 +675,7 @@ fn notify_and_push_commands_preflight_current_indexes_without_full_integrity_sca
     fs::write(&secret_key_file, [24_u8; 32]).expect("secret key should write");
     litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
     let index_path = storage_config.index_dir().join("fixture.sqlite");
-    litradar_storage::migrate_index_database(&index_path, None)
-        .expect("fixture index should migrate");
+    litradar_storage::migrate_index_database(&index_path).expect("fixture index should migrate");
     let connection =
         litradar_storage::open_sqlite_connection(&index_path).expect("fixture index should open");
     connection
@@ -740,11 +736,8 @@ fn notify_and_push_emit_terminal_json_before_nonzero_exit() {
     let secret_key_file = root.path().join("secret.key");
     fs::write(&secret_key_file, [29_u8; 32]).expect("secret key should write");
     litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
-    litradar_storage::migrate_index_database(
-        storage_config.index_dir().join("fixture.sqlite"),
-        None,
-    )
-    .expect("fixture index should migrate");
+    litradar_storage::migrate_index_database(storage_config.index_dir().join("fixture.sqlite"))
+        .expect("fixture index should migrate");
 
     for (command, workflow, terminal_status) in [
         (
@@ -828,11 +821,8 @@ fn notify_internal_handoff_emits_one_compact_attempt_contract() {
     let secret_key_file = root.path().join("secret.key");
     fs::write(&secret_key_file, [31_u8; 32]).expect("secret key should write");
     litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
-    litradar_storage::migrate_index_database(
-        storage_config.index_dir().join("fixture.sqlite"),
-        None,
-    )
-    .expect("fixture index should migrate");
+    litradar_storage::migrate_index_database(storage_config.index_dir().join("fixture.sqlite"))
+        .expect("fixture index should migrate");
 
     for (suffix, terminal_status, should_succeed) in [
         (
@@ -985,11 +975,8 @@ fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     let secret_key_file = root.path().join("secret.key");
     fs::write(&secret_key_file, [25_u8; 32]).expect("secret key should write");
     litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
-    litradar_storage::migrate_index_database(
-        storage_config.index_dir().join("fixture.sqlite"),
-        None,
-    )
-    .expect("fixture index should migrate");
+    litradar_storage::migrate_index_database(storage_config.index_dir().join("fixture.sqlite"))
+        .expect("fixture index should migrate");
     let job = ScheduledJobSpec::Notify(ScheduledDeliveryJob {
         database: Some("fixture.sqlite".to_string()),
         max_candidates: Some(5),

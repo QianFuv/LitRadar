@@ -845,10 +845,8 @@ fn run_delivery_command_inner(
     preflight_command_storage(&project_root, &auth_db_path)?;
     let secret_codec = SecretCodec::load(&secret_key_file)?;
     verify_database_secrets(&auth_db_path, &secret_codec)?;
-    let storage_config = StorageConfig::from_project_root(&project_root);
-    let tokenizer_path = storage_config.simple_tokenizer_path();
     for target in &targets {
-        preflight_index_database(&target.index_db_path, tokenizer_path.as_deref())?;
+        preflight_index_database(&target.index_db_path)?;
     }
     let mut outcomes = Vec::new();
     for target in targets {
@@ -979,8 +977,7 @@ fn preflight_index_command_databases(
         .index_dir()
         .join(format!("{catalog_name}.sqlite"));
     if index_path.exists() {
-        let tokenizer_path = storage_config.simple_tokenizer_path();
-        preflight_index_database(&index_path, tokenizer_path.as_deref())?;
+        preflight_index_database(&index_path)?;
     }
     Ok(())
 }
@@ -1872,7 +1869,7 @@ mod tests {
         let project_root = root.path().join("project");
         let config = litradar_storage::StorageConfig::from_project_root(&project_root);
         fs::create_dir_all(config.index_dir()).expect("index directory should create");
-        litradar_storage::migrate_index_database(config.index_dir().join("fixture.sqlite"), None)
+        litradar_storage::migrate_index_database(config.index_dir().join("fixture.sqlite"))
             .expect("fixture index should initialize");
 
         let missing_confirmation = run_admin_command_with_reader(
@@ -3023,7 +3020,7 @@ mod tests {
         let secret_key_file = root.path().join("secret.key");
         fs::write(&secret_key_file, [5_u8; 32]).expect("secret key should write");
         let index_path = root.path().join("data/index/current-with-orphan.sqlite");
-        litradar_storage::migrate_index_database(&index_path, None)
+        litradar_storage::migrate_index_database(&index_path)
             .expect("current index database should initialize");
         let connection = litradar_storage::open_sqlite_connection(&index_path)
             .expect("current index database should open");
@@ -3097,7 +3094,7 @@ mod tests {
     }
 
     fn create_version_four_content_database(path: &Path) {
-        litradar_storage::migrate_index_database(path, None)
+        litradar_storage::migrate_index_database(path)
             .expect("current content database should initialize");
         let connection = litradar_storage::open_sqlite_connection(path)
             .expect("content database should open for downgrade fixture");
@@ -3118,6 +3115,7 @@ mod tests {
                  DROP TABLE article_retraction_dois;
                  ALTER TABLE articles ADD COLUMN retraction_doi TEXT;
                  DROP TABLE journal_identity_keys;
+                 CREATE INDEX idx_article_change_events_order ON article_change_events(event_id);
                  PRAGMA user_version = 4;",
             )
             .expect("version four fixture should be created");

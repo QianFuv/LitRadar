@@ -1444,7 +1444,7 @@ mod tests {
         let index_path = storage_config
             .index_dir()
             .join("current-with-orphan.sqlite");
-        litradar_storage::migrate_index_database(&index_path, None)
+        litradar_storage::migrate_index_database(&index_path)
             .expect("current index database should initialize");
         let connection = Connection::open(&index_path).expect("current index database should open");
         connection

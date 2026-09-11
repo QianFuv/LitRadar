@@ -156,7 +156,7 @@ fn benchmark_weekly_manifest_cache() {
         )
         .expect("benchmark window should update");
         let path = config.index_dir().join(format!("{catalog}.sqlite"));
-        migrate_index_database(&path, None).expect("index schema should migrate");
+        migrate_index_database(&path).expect("index schema should migrate");
         let connection = open_sqlite_connection(path).expect("index should open");
         connection.execute_batch(
             "INSERT INTO journals (journal_id, catalog_id, title, title_aliases_json, issns_json) VALUES (1, 'fixture', 'Fixture journal', '[]', '[]'); \

@@ -1795,7 +1795,7 @@ mod tests {
     fn backup_verification_and_restore_accept_supported_version_six_indexes() {
         let fixture = BackupFixture::new("version-six-index");
         let index_path = fixture.source_config.index_dir().join("fixture.sqlite");
-        migrate_index_database(&index_path, None).expect("current index should initialize");
+        migrate_index_database(&index_path).expect("current index should initialize");
         let connection = Connection::open(&index_path).expect("index database should open");
         connection
             .execute_batch(
@@ -1811,6 +1811,7 @@ mod tests {
                      journal_title,
                      tokenize = 'unicode61 remove_diacritics 2'
                  );
+                 CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
                  PRAGMA user_version = 6;",
             )
             .expect("version six search storage should install");
@@ -1832,7 +1833,7 @@ mod tests {
             backup_dir: fixture.backup_dir.clone(),
         })
         .expect("version six backup should restore");
-        preflight_index_database(restore_config.index_dir().join("fixture.sqlite"), None)
+        preflight_index_database(restore_config.index_dir().join("fixture.sqlite"))
             .expect("restored version six index should preflight");
     }
 
@@ -2427,7 +2428,7 @@ mod tests {
 
         fn create_index_probe(&self, value: &str) -> PathBuf {
             let index_path = self.source_config.index_dir().join("fixture.sqlite");
-            migrate_index_database(&index_path, None).expect("index database should migrate");
+            migrate_index_database(&index_path).expect("index database should migrate");
             write_probe(&index_path, value);
             index_path
         }

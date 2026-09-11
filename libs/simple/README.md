@@ -13,9 +13,9 @@ The platform directories also retain the dictionaries used by those artifacts.
 
 ## Current runtime boundary
 
-Content schema v6 defines `article_search` with SQLite's built-in `unicode61` tokenizer. Index creation, migration validation, REST/MCP queries, and the production container do not load or require these native assets. Merely placing a DLL or shared object at a historical fixed path must not change current database behavior.
+Supported content schemas v6, v7, and v8 define `article_search` with SQLite's built-in `unicode61` tokenizer. Index creation, migration validation, REST/MCP queries, and the production container do not load or require these native assets. Merely placing a DLL or shared object at a historical fixed path must not change current database behavior.
 
-Any future importer for a database that actually declares `tokenize='simple'` must detect that schema explicitly and isolate the compatibility operation from current v6 query connections. It must not restore path-based auto-loading for every database.
+Any future importer for a database that actually declares `tokenize='simple'` must detect that schema explicitly and isolate the compatibility operation from current query connections. It must not restore path-based auto-loading for every database.
 
 LitRadar does not add pinyin query expansion to the current `unicode61` search path.
 

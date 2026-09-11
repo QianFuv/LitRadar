@@ -377,8 +377,7 @@ fn create_fixture_index_database(path: &Path) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("index db parent should be created");
     }
-    litradar_storage::migrate_index_database(path, None)
-        .expect("fixture index schema should migrate");
+    litradar_storage::migrate_index_database(path).expect("fixture index schema should migrate");
     let connection = Connection::open(path).expect("index db should open");
     connection
         .execute_batch(

@@ -195,7 +195,7 @@ pub enum IndexStorageOptimizationError {
     InterruptedState(Box<IndexStorageRecoveryPaths>),
     /// The index directory contains material that cannot be copied safely.
     InvalidLayout(String),
-    /// One source database is outside the supported v6/v7 rollout window.
+    /// One source database is outside the shared supported content schema range.
     UnsupportedDatabase {
         /// Safe database filename.
         database: String,
@@ -749,7 +749,7 @@ fn validate_supported_source_schema(
             found: version,
         });
     }
-    preflight_index_database(&database.path, None).map_err(|error| {
+    preflight_index_database(&database.path).map_err(|error| {
         IndexStorageOptimizationError::Validation {
             database: database.name.clone(),
             check: format!("exact schema preflight: {error}"),
@@ -910,10 +910,10 @@ fn build_staged_database(
     source: &SourceDatabase,
     staged_path: &Path,
 ) -> Result<(), IndexStorageOptimizationError> {
-    migrate_index_database(staged_path, None).map_err(|error| {
+    migrate_index_database(staged_path).map_err(|error| {
         IndexStorageOptimizationError::Validation {
             database: source.name.clone(),
-            check: format!("v7 staging initialization: {error}"),
+            check: format!("v{INDEX_SCHEMA_VERSION} staging initialization: {error}"),
         }
     })?;
     let mut connection = Connection::open_with_flags(
@@ -1028,10 +1028,10 @@ fn validate_rebuilt_database(
     source: &SourceDatabase,
     candidate_path: &Path,
 ) -> Result<IndexDatabaseOptimizationReport, IndexStorageOptimizationError> {
-    preflight_index_database(candidate_path, None).map_err(|error| {
+    preflight_index_database(candidate_path).map_err(|error| {
         IndexStorageOptimizationError::Validation {
             database: source.name.clone(),
-            check: format!("v7 exact schema preflight: {error}"),
+            check: format!("v{INDEX_SCHEMA_VERSION} exact schema preflight: {error}"),
         }
     })?;
     let connection = open_read_only(candidate_path)?;
@@ -1533,7 +1533,7 @@ mod tests {
         let config = StorageConfig::from_project_root(root.path());
         fs::create_dir_all(config.index_dir()).expect("index directory should create");
         let path = config.index_dir().join("fixture.sqlite");
-        migrate_index_database(&path, None).expect("index should initialize");
+        migrate_index_database(&path).expect("index should initialize");
         let connection = open_sqlite_connection(&path).expect("index should open");
         connection
             .execute_batch(

@@ -1204,6 +1204,7 @@ dependencies = [
  "litradar-domain",
  "litradar-provider",
  "litradar-sources",
+ "litradar-storage",
  "litradar-worker",
  "rusqlite",
  "serde",
