@@ -31,7 +31,6 @@ export type {
 export {
   ApiError,
   DEFAULT_DATABASE,
-  DEFAULT_DB,
   SELECTED_DATABASE_KEY,
   buildApiUrl,
   buildDatabaseUrl,

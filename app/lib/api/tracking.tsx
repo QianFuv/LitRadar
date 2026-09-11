@@ -23,7 +23,6 @@ import { buildApiUrl, requestJson } from '@/lib/api/client';
 export function getTrackingStatus(): Promise<TrackingStatus> {
   return requestJson<TrackingStatus>(
     buildApiUrl('/api/tracking/status'),
-    null,
     undefined,
     '获取追踪状态失败',
     parseTrackingStatus,
@@ -38,7 +37,6 @@ export function getTrackingStatus(): Promise<TrackingStatus> {
 export function pushWeeklyToTracking(): Promise<ManualPushStatus> {
   return requestJson<ManualPushStatus>(
     buildApiUrl('/api/tracking/push-weekly'),
-    null,
     { method: 'POST' },
     '推送每周文章失败',
     parseManualPushStatus,
@@ -53,25 +51,8 @@ export function pushWeeklyToTracking(): Promise<ManualPushStatus> {
 export function getPushWeeklyStatus(): Promise<ManualPushStatus> {
   return requestJson<ManualPushStatus>(
     buildApiUrl('/api/tracking/push-weekly/status'),
-    null,
     undefined,
     '获取推送状态失败',
-    parseManualPushStatus,
-  );
-}
-
-/**
- * Fetch one durable weekly-push run by its opaque identifier.
- *
- * @param jobId - Owner-visible durable job identifier.
- * @returns Durable push status.
- */
-export function getPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
-  return requestJson<ManualPushStatus>(
-    buildApiUrl(`/api/tracking/push-weekly/runs/${encodeURIComponent(jobId)}`),
-    null,
-    undefined,
-    '获取推送任务失败',
     parseManualPushStatus,
   );
 }
@@ -85,7 +66,6 @@ export function getPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
 export function cancelPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
   return requestJson<ManualPushStatus>(
     buildApiUrl(`/api/tracking/push-weekly/runs/${encodeURIComponent(jobId)}/cancel`),
-    null,
     { method: 'POST' },
     '取消推送任务失败',
     parseManualPushStatus,
@@ -101,7 +81,6 @@ export function cancelPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
 export function acknowledgeUnknownPushWeeklyRun(jobId: string): Promise<ManualPushStatus> {
   return requestJson<ManualPushStatus>(
     buildApiUrl(`/api/tracking/push-weekly/runs/${encodeURIComponent(jobId)}/acknowledge`),
-    null,
     { method: 'POST' },
     '确认未知推送结果失败',
     parseManualPushStatus,
@@ -116,7 +95,6 @@ export function acknowledgeUnknownPushWeeklyRun(jobId: string): Promise<ManualPu
 export function getNotificationSettings(): Promise<NotificationSettings | null> {
   return requestJson<NotificationSettings | null>(
     buildApiUrl('/api/tracking/notification-settings'),
-    null,
     undefined,
     '获取通知设置失败',
     parseNullableNotificationSettings,
@@ -131,7 +109,6 @@ export function getNotificationSettings(): Promise<NotificationSettings | null> 
 export function getAiEndpoints(): Promise<string[]> {
   return requestJson<string[]>(
     buildApiUrl('/api/tracking/ai-endpoints'),
-    null,
     undefined,
     '获取 AI Endpoint 列表失败',
     parseAiEndpointCatalog,
@@ -149,7 +126,6 @@ export function updateNotificationSettings(
 ): Promise<NotificationSettings> {
   return requestJson<NotificationSettings>(
     buildApiUrl('/api/tracking/notification-settings'),
-    null,
     {
       method: 'PUT',
       body: JSON.stringify(settings),

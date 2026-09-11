@@ -1538,7 +1538,7 @@ async function serveLongSidebarApi(route: Route): Promise<void> {
   if (new URL(route.request().url()).pathname === '/api/meta/areas') {
     await fulfillJson(
       route,
-      Array.from({ length: 24 }, (unusedValue, index) => ({
+      Array.from(Array<number>(24).keys(), (index) => ({
         value: `field_${index + 1}`,
         count: index + 1,
       })),

@@ -21,16 +21,6 @@ function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>)
 }
 
 /**
- * Render a semantic Select item group.
- *
- * @param props - Radix Select group properties.
- * @returns Select group.
- */
-function SelectGroup({ ...props }: React.ComponentProps<typeof SelectPrimitive.Group>) {
-  return <SelectPrimitive.Group data-slot="select-group" {...props} />;
-}
-
-/**
  * Render the selected value or placeholder.
  *
  * @param props - Radix Select value properties.
@@ -119,22 +109,6 @@ function SelectContent({
 }
 
 /**
- * Render a non-selectable group label.
- *
- * @param props - Radix Select label properties.
- * @returns Styled group label.
- */
-function SelectLabel({ className, ...props }: React.ComponentProps<typeof SelectPrimitive.Label>) {
-  return (
-    <SelectPrimitive.Label
-      data-slot="select-label"
-      className={cn('text-muted-foreground px-2 py-1.5 text-xs', className)}
-      {...props}
-    />
-  );
-}
-
-/**
  * Render one selectable option and its checked indicator.
  *
  * @param props - Radix Select item properties and visible label.
@@ -164,25 +138,6 @@ function SelectItem({
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
     </SelectPrimitive.Item>
-  );
-}
-
-/**
- * Render a visual separator between option groups.
- *
- * @param props - Radix Select separator properties.
- * @returns Styled separator.
- */
-function SelectSeparator({
-  className,
-  ...props
-}: React.ComponentProps<typeof SelectPrimitive.Separator>) {
-  return (
-    <SelectPrimitive.Separator
-      data-slot="select-separator"
-      className={cn('bg-border pointer-events-none -mx-1 my-1 h-px', className)}
-      {...props}
-    />
   );
 }
 
@@ -231,12 +186,9 @@ function SelectScrollDownButton({
 export {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectScrollDownButton,
   SelectScrollUpButton,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 };

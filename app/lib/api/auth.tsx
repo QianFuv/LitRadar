@@ -22,13 +22,11 @@ import type {
 /**
  * Get the current authenticated user.
  *
- * @param token - Optional explicit bearer access token.
  * @returns Current user.
  */
-export function getCurrentUser(token?: string | null): Promise<AuthUser> {
+export function getCurrentUser(): Promise<AuthUser> {
   return requestJson<AuthUser>(
     buildApiUrl('/api/auth/me'),
-    token,
     undefined,
     '获取用户失败',
     parseAuthUser,
@@ -45,7 +43,6 @@ export function getCurrentUser(token?: string | null): Promise<AuthUser> {
 export function loginUser(username: string, password: string): Promise<LoginResponse> {
   return requestJson<LoginResponse>(
     buildApiUrl('/api/auth/login'),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({ username, password }),
@@ -70,7 +67,6 @@ export async function registerUser(
 ): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl('/api/auth/register'),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({ username, password, invite_code: inviteCode }),
@@ -82,13 +78,11 @@ export async function registerUser(
 /**
  * Revoke the active login token.
  *
- * @param token - Optional explicit bearer access token.
  */
-export async function logoutUser(token?: string | null): Promise<void> {
+export async function logoutUser(): Promise<void> {
   try {
     await requestJson<unknown>(
       buildApiUrl('/api/auth/logout'),
-      token,
       { method: 'POST' },
       '服务端会话撤销未确认',
     );
@@ -108,7 +102,6 @@ export async function logoutUser(token?: string | null): Promise<void> {
 export async function logoutAllSessions(): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl('/api/auth/logout-all'),
-    null,
     { method: 'POST' },
     '撤销全部会话失败',
   );
@@ -122,7 +115,6 @@ export async function logoutAllSessions(): Promise<void> {
 export function getInviteRequirement(): Promise<InviteRequirement> {
   return requestJson<InviteRequirement>(
     buildApiUrl('/api/auth/invite-required'),
-    null,
     undefined,
     '获取邀请码状态失败',
     parseInviteRequirement,
@@ -134,12 +126,7 @@ export function getInviteRequirement(): Promise<InviteRequirement> {
  * @returns Access tokens.
  */
 export function getAccessTokens(): Promise<AccessToken[]> {
-  return requestJson<AccessToken[]>(
-    buildApiUrl('/api/auth/tokens'),
-    null,
-    undefined,
-    '获取访问令牌失败',
-  );
+  return requestJson<AccessToken[]>(buildApiUrl('/api/auth/tokens'), undefined, '获取访问令牌失败');
 }
 
 /**
@@ -150,7 +137,6 @@ export function getAccessTokens(): Promise<AccessToken[]> {
 export function getCnkiSession(): Promise<CnkiSessionStatus> {
   return requestJson<CnkiSessionStatus>(
     buildApiUrl('/api/cnki/session'),
-    null,
     undefined,
     '获取知网登录状态失败',
   );
@@ -164,7 +150,6 @@ export function getCnkiSession(): Promise<CnkiSessionStatus> {
 export function startCnkiLogin(): Promise<CnkiLoginStartResponse> {
   return requestJson<CnkiLoginStartResponse>(
     buildApiUrl('/api/cnki/login/start'),
-    null,
     { method: 'POST' },
     '启动知网登录失败',
   );
@@ -183,7 +168,6 @@ export function pollCnkiLogin(
 ): Promise<CnkiLoginPollResponse> {
   return requestJson<CnkiLoginPollResponse>(
     buildApiUrl('/api/cnki/login/poll'),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({
@@ -203,7 +187,6 @@ export function pollCnkiLogin(
 export function clearCnkiSession(): Promise<CnkiSessionStatus> {
   return requestJson<CnkiSessionStatus>(
     buildApiUrl('/api/cnki/session'),
-    null,
     { method: 'DELETE' },
     '清除知网登录失败',
   );
@@ -222,7 +205,6 @@ export function createAccessToken(
 ): Promise<{ id: number; token: string; name: string; expires_at: number }> {
   return requestJson<{ id: number; token: string; name: string; expires_at: number }>(
     buildApiUrl('/api/auth/tokens'),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({ name, ttl }),
@@ -239,7 +221,6 @@ export function createAccessToken(
 export async function revokeAccessToken(tokenId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/auth/tokens/${tokenId}`),
-    null,
     { method: 'DELETE' },
     '撤销访问令牌失败',
   );
@@ -254,7 +235,6 @@ export async function revokeAccessToken(tokenId: number): Promise<void> {
 export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl('/api/auth/change-password'),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
@@ -271,7 +251,6 @@ export async function changePassword(oldPassword: string, newPassword: string): 
 export function getInviteCode(): Promise<InviteCode | null> {
   return requestJson<InviteCode | null>(
     buildApiUrl('/api/auth/invite-code'),
-    null,
     undefined,
     '获取邀请码失败',
   );
@@ -285,7 +264,6 @@ export function getInviteCode(): Promise<InviteCode | null> {
 export function generateInviteCode(): Promise<InviteCode> {
   return requestJson<InviteCode>(
     buildApiUrl('/api/auth/invite-code'),
-    null,
     { method: 'POST' },
     '生成邀请码失败',
   );
@@ -299,7 +277,6 @@ export function generateInviteCode(): Promise<InviteCode> {
 export function rotateInviteCode(): Promise<InviteCode> {
   return requestJson<InviteCode>(
     buildApiUrl('/api/auth/invite-code/rotate'),
-    null,
     { method: 'POST' },
     '轮换邀请码失败',
   );
@@ -311,7 +288,6 @@ export function rotateInviteCode(): Promise<InviteCode> {
 export async function revokeInviteCode(): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl('/api/auth/invite-code'),
-    null,
     { method: 'DELETE' },
     '撤销邀请码失败',
   );

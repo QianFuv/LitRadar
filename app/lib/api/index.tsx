@@ -11,7 +11,6 @@ import {
 } from '@/lib/api/client';
 import type {
   AnnouncementInfo,
-  Article,
   ArticleAccessResponse,
   ArticleId,
   ArticlePage,
@@ -20,7 +19,6 @@ import type {
   JournalOption,
   ValueCount,
   WeeklyArticlePage,
-  WeeklyUpdatesResponse,
   WeeklyUpdatesSummaryResponse,
   YearSummary,
 } from '@/lib/api/types';
@@ -33,12 +31,7 @@ const DEFAULT_ARTICLE_SEARCH_MODE: ArticleSearchMode = 'simple';
  * @returns Database names.
  */
 export function getDatabases(): Promise<string[]> {
-  return requestJson<string[]>(
-    buildApiUrl('/api/meta/databases'),
-    null,
-    undefined,
-    '获取数据库失败',
-  );
+  return requestJson<string[]>(buildApiUrl('/api/meta/databases'), undefined, '获取数据库失败');
 }
 
 /**
@@ -50,7 +43,6 @@ export function getDatabases(): Promise<string[]> {
 export function getAreas(dbName = readSelectedDatabase()): Promise<ValueCount[]> {
   return requestJson<ValueCount[]>(
     buildDatabaseUrl('/api/meta/areas', dbName),
-    null,
     undefined,
     '获取领域失败',
   );
@@ -65,7 +57,6 @@ export function getAreas(dbName = readSelectedDatabase()): Promise<ValueCount[]>
 export function getYears(dbName = readSelectedDatabase()): Promise<YearSummary[]> {
   return requestJson<YearSummary[]>(
     buildDatabaseUrl('/api/years', dbName),
-    null,
     undefined,
     '获取年份失败',
   );
@@ -80,7 +71,6 @@ export function getYears(dbName = readSelectedDatabase()): Promise<YearSummary[]
 export function getJournalOptions(dbName = readSelectedDatabase()): Promise<JournalOption[]> {
   return requestJson<JournalOption[]>(
     buildDatabaseUrl('/api/meta/journals', dbName),
-    null,
     undefined,
     '获取期刊失败',
   );
@@ -115,23 +105,8 @@ export function getArticles(
   nextParams.set('include_total', includeTotal ? '1' : '0');
   return requestJson<ArticlePage>(
     buildDatabaseUrl('/api/articles', dbName, nextParams),
-    null,
     undefined,
     '获取文章失败',
-  );
-}
-
-/**
- * Fetch weekly update data.
- *
- * @returns Weekly update response.
- */
-export function getWeeklyUpdates(): Promise<WeeklyUpdatesResponse> {
-  return requestJson<WeeklyUpdatesResponse>(
-    buildApiUrl('/api/weekly-updates'),
-    null,
-    undefined,
-    '获取每周更新失败',
   );
 }
 
@@ -152,7 +127,6 @@ export type WeeklyArticlePageRequest = {
 export function getWeeklyUpdatesSummary(): Promise<WeeklyUpdatesSummaryResponse> {
   return requestJson<WeeklyUpdatesSummaryResponse>(
     buildApiUrl('/api/weekly-updates/summary'),
-    null,
     undefined,
     '获取每周更新摘要失败',
   );
@@ -182,7 +156,6 @@ export function getWeeklyUpdateArticles(
   }
   return requestJson<WeeklyArticlePage>(
     buildApiUrl('/api/weekly-updates/articles', params),
-    null,
     undefined,
     '获取每周更新文章失败',
   );
@@ -196,7 +169,6 @@ export function getWeeklyUpdateArticles(
 export function getAnnouncements(): Promise<AnnouncementInfo[]> {
   return requestJson<AnnouncementInfo[]>(
     buildApiUrl('/api/announcements'),
-    null,
     undefined,
     '获取公告失败',
   );
@@ -204,17 +176,6 @@ export function getAnnouncements(): Promise<AnnouncementInfo[]> {
 
 /** Article action resolved online through a stable LitRadar route. */
 export type ArticleActionKind = 'abstract' | 'fulltext';
-
-/**
- * Build an online article action URL for the selected database.
- *
- * @param articleId - Article id.
- * @param action - Online action kind.
- * @returns Stable LitRadar action URL.
- */
-export function getArticleActionUrl(articleId: ArticleId, action: ArticleActionKind): string {
-  return getArticleActionUrlForDatabase(articleId, readSelectedDatabase(), action);
-}
 
 /**
  * Build an online article action URL for a specific database.
@@ -247,24 +208,7 @@ export function getArticleAccess(
 ): Promise<ArticleAccessResponse> {
   return requestJson<ArticleAccessResponse>(
     buildDatabaseUrl(`/api/articles/${articleId}/access`, dbName),
-    null,
     undefined,
     '获取文章访问状态失败',
-  );
-}
-
-/**
- * Fetch one article by id from a database.
- *
- * @param articleId - Article id.
- * @param dbName - Database name.
- * @returns Article record.
- */
-export function getArticleById(articleId: ArticleId, dbName: string): Promise<Article> {
-  return requestJson<Article>(
-    buildDatabaseUrl(`/api/articles/${articleId}`, dbName),
-    null,
-    undefined,
-    '获取文章详情失败',
   );
 }

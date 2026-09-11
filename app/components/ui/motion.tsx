@@ -46,12 +46,8 @@ export const COLLAPSE_VARIANTS = {
   visible: { height: 'auto', opacity: 1 },
   exit: { height: 0, opacity: 0 },
 } satisfies Variants;
-
-export const MotionArticle = m.article;
 export const MotionDiv = m.div;
 export const MotionForm = m.form;
-export const MotionList = m.ul;
-export const MotionListItem = m.li;
 export const MotionParagraph = m.p;
 export const MotionSection = m.section;
 export const MotionSpan = m.span;

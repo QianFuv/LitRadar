@@ -33,12 +33,7 @@ import type {
  * @returns Admin stats.
  */
 export function adminGetStats(): Promise<AdminStats> {
-  return requestJson<AdminStats>(
-    buildApiUrl('/api/admin/stats'),
-    null,
-    undefined,
-    '获取统计信息失败',
-  );
+  return requestJson<AdminStats>(buildApiUrl('/api/admin/stats'), undefined, '获取统计信息失败');
 }
 
 /**
@@ -49,7 +44,6 @@ export function adminGetStats(): Promise<AdminStats> {
 export function adminGetUsers(): Promise<AdminUserInfo[]> {
   return requestJson<AdminUserInfo[]>(
     buildApiUrl('/api/admin/users'),
-    null,
     undefined,
     '获取用户列表失败',
   );
@@ -64,7 +58,6 @@ export function adminGetUsers(): Promise<AdminUserInfo[]> {
 export async function adminSetAdmin(userId: number, isAdmin: boolean): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/users/${userId}/admin`),
-    null,
     {
       method: 'PUT',
       body: JSON.stringify({ is_admin: isAdmin }),
@@ -82,7 +75,6 @@ export async function adminSetAdmin(userId: number, isAdmin: boolean): Promise<v
 export async function adminResetPassword(userId: number, newPassword: string): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/users/${userId}/reset-password`),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({ new_password: newPassword }),
@@ -99,7 +91,6 @@ export async function adminResetPassword(userId: number, newPassword: string): P
 export async function adminDeleteUser(userId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/users/${userId}`),
-    null,
     { method: 'DELETE' },
     '删除用户失败',
   );
@@ -113,7 +104,6 @@ export async function adminDeleteUser(userId: number): Promise<void> {
 export function adminGetInviteCodes(): Promise<AdminInviteCode[]> {
   return requestJson<AdminInviteCode[]>(
     buildApiUrl('/api/admin/invite-codes'),
-    null,
     undefined,
     '获取邀请码列表失败',
   );
@@ -128,7 +118,6 @@ export function adminGetInviteCodes(): Promise<AdminInviteCode[]> {
 export function adminCreateInviteCode(input: AdminInviteCodeCreate = {}): Promise<AdminInviteCode> {
   return requestJson<AdminInviteCode>(
     buildApiUrl('/api/admin/invite-codes'),
-    null,
     { method: 'POST', body: JSON.stringify(input) },
     '创建邀请码失败',
   );
@@ -142,7 +131,6 @@ export function adminCreateInviteCode(input: AdminInviteCodeCreate = {}): Promis
 export async function adminRevokeInviteCode(codeId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/invite-codes/${codeId}`),
-    null,
     { method: 'DELETE' },
     '撤销邀请码失败',
   );
@@ -156,7 +144,6 @@ export async function adminRevokeInviteCode(codeId: number): Promise<void> {
 export function adminGetRuntimeSettings(): Promise<RuntimeSettingInfo[]> {
   return requestJson<RuntimeSettingInfo[]>(
     buildApiUrl('/api/admin/runtime-settings'),
-    null,
     undefined,
     '获取运行配置失败',
     parseRuntimeSettingList,
@@ -171,7 +158,6 @@ export function adminGetRuntimeSettings(): Promise<RuntimeSettingInfo[]> {
 export function adminGetProviderCatalog(): Promise<ProviderCatalogResponse> {
   return requestJson<ProviderCatalogResponse>(
     buildApiUrl('/api/admin/provider-catalog'),
-    null,
     undefined,
     '获取 Provider 配置目录失败',
     parseProviderCatalogResponse,
@@ -189,7 +175,6 @@ export function adminUpdateRuntimeSettings(
 ): Promise<RuntimeSettingInfo[]> {
   return requestJson<RuntimeSettingInfo[]>(
     buildApiUrl('/api/admin/runtime-settings'),
-    null,
     {
       method: 'PUT',
       body: JSON.stringify(payload),
@@ -207,7 +192,6 @@ export function adminUpdateRuntimeSettings(
 export function adminGetScheduledTasks(): Promise<ScheduledTaskInfo[]> {
   return requestJson<ScheduledTaskInfo[]>(
     buildApiUrl('/api/admin/scheduled-tasks'),
-    null,
     undefined,
     '获取定时任务失败',
     parseScheduledTaskList,
@@ -222,7 +206,6 @@ export function adminGetScheduledTasks(): Promise<ScheduledTaskInfo[]> {
 export function adminGetSchedulerStatus(): Promise<SchedulerStatus> {
   return requestJson<SchedulerStatus>(
     buildApiUrl('/api/admin/scheduler/status'),
-    null,
     undefined,
     '获取调度器状态失败',
     parseSchedulerStatus,
@@ -238,7 +221,6 @@ export function adminGetSchedulerStatus(): Promise<SchedulerStatus> {
 export function adminCreateScheduledTask(payload: ScheduledTaskCreate): Promise<ScheduledTaskInfo> {
   return requestJson<ScheduledTaskInfo>(
     buildApiUrl('/api/admin/scheduled-tasks'),
-    null,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -261,7 +243,6 @@ export function adminUpdateScheduledTask(
 ): Promise<ScheduledTaskInfo> {
   return requestJson<ScheduledTaskInfo>(
     buildApiUrl(`/api/admin/scheduled-tasks/${taskId}`),
-    null,
     {
       method: 'PUT',
       body: JSON.stringify(payload),
@@ -279,7 +260,6 @@ export function adminUpdateScheduledTask(
 export async function adminDeleteScheduledTask(taskId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/scheduled-tasks/${taskId}`),
-    null,
     { method: 'DELETE' },
     '删除定时任务失败',
   );
@@ -293,7 +273,6 @@ export async function adminDeleteScheduledTask(taskId: number): Promise<void> {
 export function adminGetAnnouncements(): Promise<AnnouncementInfo[]> {
   return requestJson<AnnouncementInfo[]>(
     buildApiUrl('/api/admin/announcements'),
-    null,
     undefined,
     '获取公告列表失败',
   );
@@ -308,7 +287,6 @@ export function adminGetAnnouncements(): Promise<AnnouncementInfo[]> {
 export function adminCreateAnnouncement(payload: AnnouncementCreate): Promise<AnnouncementInfo> {
   return requestJson<AnnouncementInfo>(
     buildApiUrl('/api/admin/announcements'),
-    null,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -330,7 +308,6 @@ export function adminUpdateAnnouncement(
 ): Promise<AnnouncementInfo> {
   return requestJson<AnnouncementInfo>(
     buildApiUrl(`/api/admin/announcements/${announcementId}`),
-    null,
     {
       method: 'PUT',
       body: JSON.stringify(payload),
@@ -347,7 +324,6 @@ export function adminUpdateAnnouncement(
 export async function adminDeleteAnnouncement(announcementId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/admin/announcements/${announcementId}`),
-    null,
     { method: 'DELETE' },
     '删除公告失败',
   );

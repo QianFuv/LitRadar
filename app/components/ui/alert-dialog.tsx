@@ -21,18 +21,6 @@ function AlertDialog({ ...props }: React.ComponentProps<typeof AlertDialogPrimit
 }
 
 /**
- * Render a control that opens its AlertDialog.
- *
- * @param props - Radix AlertDialog trigger properties.
- * @returns AlertDialog trigger.
- */
-function AlertDialogTrigger({
-  ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Trigger>) {
-  return <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />;
-}
-
-/**
  * Render AlertDialog content in a portal.
  *
  * @param props - Radix AlertDialog portal properties.
@@ -205,5 +193,4 @@ export {
   AlertDialogOverlay,
   AlertDialogPortal,
   AlertDialogTitle,
-  AlertDialogTrigger,
 };

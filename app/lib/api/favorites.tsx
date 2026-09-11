@@ -6,7 +6,6 @@ import { buildApiUrl, requestDownload, requestJson } from '@/lib/api/client';
 import type {
   ArticleId,
   CitationFormat,
-  FavoriteArticleItem,
   FavoriteArticlePage,
   FavoriteArticleRef,
   FavoriteBatchCheckItem,
@@ -35,12 +34,7 @@ export interface FavoriteExportDownload {
  * @returns Folders.
  */
 export function getFolders(): Promise<Folder[]> {
-  return requestJson<Folder[]>(
-    buildApiUrl('/api/favorites/folders'),
-    null,
-    undefined,
-    '获取收藏夹失败',
-  );
+  return requestJson<Folder[]>(buildApiUrl('/api/favorites/folders'), undefined, '获取收藏夹失败');
 }
 
 /**
@@ -53,7 +47,6 @@ export function getFolders(): Promise<Folder[]> {
 export function createFolder(name: string, isTracking = false): Promise<Folder> {
   return requestJson<Folder>(
     buildApiUrl('/api/favorites/folders'),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({ name, is_tracking: isTracking }),
@@ -71,7 +64,6 @@ export function createFolder(name: string, isTracking = false): Promise<Folder> 
 export async function renameFolder(folderId: number, name: string): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/favorites/folders/${folderId}`),
-    null,
     {
       method: 'PUT',
       body: JSON.stringify({ name }),
@@ -88,31 +80,8 @@ export async function renameFolder(folderId: number, name: string): Promise<void
 export async function deleteFolder(folderId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl(`/api/favorites/folders/${folderId}`),
-    null,
     { method: 'DELETE' },
     '删除收藏夹失败',
-  );
-}
-
-/**
- * Fetch articles in a folder.
- *
- * @param folderId - Folder id.
- * @param limit - Page size.
- * @param offset - Page offset.
- * @returns Favorite articles.
- */
-export function getFolderArticles(
-  folderId: number,
-  limit: number,
-  offset: number,
-): Promise<FavoriteArticleItem[]> {
-  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  return requestJson<FavoriteArticleItem[]>(
-    buildApiUrl(`/api/favorites/folders/${folderId}/articles`, params),
-    null,
-    undefined,
-    '获取收藏文章失败',
   );
 }
 
@@ -135,7 +104,6 @@ export function getFolderArticlePage(
   }
   return requestJson<FavoriteArticlePage>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles/page`, params),
-    null,
     undefined,
     '获取收藏文章失败',
   );
@@ -156,7 +124,6 @@ export function addFavorite(
 ): Promise<FavoriteItem> {
   return requestJson<FavoriteItem>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles`),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({ article_id: articleId, db_name: dbName, note: '' }),
@@ -180,7 +147,6 @@ export async function removeFavorite(
   const params = new URLSearchParams({ db_name: dbName });
   await requestJson<unknown>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles/${articleId}`, params),
-    null,
     { method: 'DELETE' },
     '移除收藏失败',
   );
@@ -199,7 +165,6 @@ export async function bulkRemoveFavorites(
 ): Promise<number> {
   const data = await requestJson<{ count: number }>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles/bulk-remove`),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({ articles }),
@@ -224,7 +189,6 @@ export async function bulkMoveFavorites(
 ): Promise<number> {
   const data = await requestJson<{ count: number }>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles/bulk-move`),
-    null,
     {
       method: 'POST',
       body: JSON.stringify({ target_folder_id: targetFolderId, articles }),
@@ -248,7 +212,6 @@ export async function downloadFavoriteExport(
   const params = new URLSearchParams({ format });
   const download = await requestDownload(
     buildApiUrl(`/api/favorites/folders/${folderId}/export`, params),
-    null,
     undefined,
     '导出引用失败',
   );
@@ -269,7 +232,6 @@ export function checkFavorite(articleId: ArticleId, dbName: string): Promise<Fav
   const params = new URLSearchParams({ article_id: articleId, db_name: dbName });
   return requestJson<FavoriteCheck[]>(
     buildApiUrl('/api/favorites/check', params),
-    null,
     undefined,
     '获取收藏状态失败',
   );
@@ -289,7 +251,6 @@ export async function checkFavoritesBatch(
   if (articleIds.length === 0) return {};
   const data = await requestJson<FavoriteBatchCheckItem[]>(
     buildApiUrl('/api/favorites/check/batch'),
-    null,
     { method: 'POST', body: JSON.stringify({ article_ids: articleIds, db_name: dbName }) },
     '获取收藏状态失败',
   );
@@ -304,7 +265,6 @@ export async function checkFavoritesBatch(
 export async function setTrackingFolder(folderId: number): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl('/api/favorites/tracking'),
-    null,
     {
       method: 'PUT',
       body: JSON.stringify({ folder_id: folderId }),

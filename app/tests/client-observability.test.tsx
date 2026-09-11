@@ -212,11 +212,11 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
 
   let correlatedError: unknown;
   try {
-    await requestJson(
-      `http://remote.example/failure?token=${querySentinel}`,
-      'authorization-token-never-log',
-      { method: 'POST', body: JSON.stringify({ secret: bodySentinel }) },
-    );
+    await requestJson(`http://remote.example/failure?token=${querySentinel}`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer authorization-token-never-log' },
+      body: JSON.stringify({ secret: bodySentinel }),
+    });
   } catch (error) {
     correlatedError = error;
   }

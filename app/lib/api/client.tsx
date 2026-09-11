@@ -67,7 +67,6 @@ export class ApiError extends Error {
   }
 }
 export const DEFAULT_DATABASE = 'ccf_computer_journals.sqlite';
-export const DEFAULT_DB = DEFAULT_DATABASE;
 export const SELECTED_DATABASE_KEY = 'litradar:v1:selected_database';
 const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 
@@ -233,19 +232,13 @@ async function createApiError(response: Response, fallback: string): Promise<Api
  * Fetch one API response with shared credentials and headers.
  *
  * @param url - Absolute endpoint URL.
- * @param token - Optional bearer token.
  * @param init - Fetch options.
  * @returns Raw fetch response.
  */
-async function fetchApiResponse(
-  url: string,
-  token?: string | null,
-  init?: RequestInit,
-): Promise<Response> {
+async function fetchApiResponse(url: string, init?: RequestInit): Promise<Response> {
   const hasBody = typeof init?.body !== 'undefined';
   const headers: Record<string, string> = {
     ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(init?.headers as Record<string, string> | undefined),
   };
   return fetch(url, { ...init, credentials: 'include', headers });
@@ -283,10 +276,9 @@ async function parseJson<T>(
 }
 
 /**
- * Fetch JSON from an endpoint using browser cookies and optional bearer auth.
+ * Fetch JSON from an endpoint using the browser session cookie.
  *
  * @param url - Absolute endpoint URL.
- * @param token - Optional explicit bearer access token.
  * @param init - Fetch options.
  * @param fallback - Fallback error message.
  * @param parser - Optional runtime contract parser for control-plane responses.
@@ -294,12 +286,11 @@ async function parseJson<T>(
  */
 export async function requestJson<T>(
   url: string,
-  token?: string | null,
   init?: RequestInit,
   fallback = '请求失败',
   parser?: ContractParser<T>,
 ): Promise<T> {
-  const response = await fetchApiResponse(url, token, init);
+  const response = await fetchApiResponse(url, init);
   return parseJson<T>(response, fallback, parser);
 }
 
@@ -307,18 +298,16 @@ export async function requestJson<T>(
  * Fetch a download while reusing the shared API error parser.
  *
  * @param url - Absolute endpoint URL.
- * @param token - Optional explicit bearer access token.
  * @param init - Fetch options.
  * @param fallback - Fallback error message.
  * @returns Download Blob and optional safe server filename.
  */
 export async function requestDownload(
   url: string,
-  token?: string | null,
   init?: RequestInit,
   fallback = '下载失败',
 ): Promise<ApiDownload> {
-  const response = await fetchApiResponse(url, token, init);
+  const response = await fetchApiResponse(url, init);
   if (!response.ok) {
     throw await createApiError(response, fallback);
   }

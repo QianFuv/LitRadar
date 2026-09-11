@@ -1,226 +1,74 @@
 /**
- * Shared data-plane and control-plane API value types.
+ * Generated API value types and explicit sparse metadata accepted by the browser UI.
  */
 
-export type ArticleId = string;
+import type { components } from '@/lib/generated/api-schema';
 
-export type JournalId = string;
+type ApiSchemas = components['schemas'];
 
-export type ArticleSearchMode = 'simple' | 'advanced';
-
+export type ArticleId = ApiSchemas['ArticleId'];
+export type JournalId = ApiSchemas['JournalId'];
+export type ArticleSearchMode = ApiSchemas['ArticleSearchMode'];
 export type { DatePrecision, PushStatsState } from '@/lib/api-contract';
 
-export interface PageMeta {
-  total: number | null;
-  limit: number;
-  offset: number;
-  next_cursor?: string | null;
-  has_more?: boolean | null;
-}
+export type PageMeta = Omit<ApiSchemas['PageMeta'], 'total'> &
+  Required<Pick<ApiSchemas['PageMeta'], 'total'>>;
 
-export interface Article {
-  article_id: ArticleId;
-  journal_id?: JournalId | null;
-  issue_id?: number | null;
-  title?: string | null;
-  publication_year?: number | null;
-  date?: string | null;
-  date_precision?: import('@/lib/api-contract').DatePrecision | null;
-  authors?: string[] | null;
-  abstract?: string | null;
-  doi?: string | null;
-  pmid?: string | null;
-  start_page?: string | null;
-  end_page?: string | null;
-  retraction_dois?: string[];
-  journal_title?: string | null;
-  open_access?: boolean | null;
-  in_press?: boolean | null;
-  volume?: string | null;
-  number?: string | null;
-}
+/** Article cards also accept sparse metadata from unavailable favorite records. */
+export type Article = Pick<ApiSchemas['ArticleRecord'], 'article_id'> &
+  Partial<
+    Omit<
+      ApiSchemas['ArticleRecord'],
+      'article_id' | 'authors' | 'journal_id' | 'journal_title' | 'title'
+    >
+  > & {
+    [Field in 'authors' | 'journal_id' | 'journal_title' | 'title']?:
+      | ApiSchemas['ArticleRecord'][Field]
+      | null;
+  };
 
-export interface ArticlePage {
+export type ArticlePage = Omit<ApiSchemas['ArticlePage'], 'items' | 'page'> & {
   items: Article[];
   page: PageMeta;
-}
+};
 
-export interface ArticleAccessAction {
-  available: boolean;
-  label: string;
-  requires_login: boolean;
-  message?: string | null;
-}
-
-export interface ArticleAccessResponse {
-  abstract_page: ArticleAccessAction;
-  fulltext: ArticleAccessAction;
-}
-
-export interface ValueCount {
-  value: string;
-  count: number;
-}
-
-export interface YearSummary {
-  year: number;
-  issue_count: number;
-  journal_count: number;
-}
-
-export interface JournalOption {
-  journal_id: JournalId;
-  title?: string;
-}
-
+export type ArticleAccessAction = ApiSchemas['ArticleAccessAction'];
+export type ArticleAccessResponse = ApiSchemas['ArticleAccessResponse'];
+export type ValueCount = ApiSchemas['ValueCount'];
+export type YearSummary = ApiSchemas['YearSummary'];
+export type JournalOption = Pick<ApiSchemas['JournalOption'], 'journal_id'> &
+  Partial<Pick<ApiSchemas['JournalOption'], 'title'>>;
 export type WeeklyArticle = Article;
-
-export interface WeeklyJournalUpdate {
-  journal_id: JournalId;
-  journal_title?: string;
-  new_article_count: number;
-  articles: WeeklyArticle[];
-}
-
-export interface WeeklyDatabaseUpdate {
-  db_name: string;
-  run_id?: string;
-  generated_at: string;
-  new_article_count: number;
-  journals: WeeklyJournalUpdate[];
-}
-
-export interface WeeklyUpdatesResponse {
-  generated_at: string;
-  window_start: string;
-  window_end: string;
-  databases: WeeklyDatabaseUpdate[];
-}
-
-export interface WeeklyJournalSummary {
-  journal_id: JournalId;
-  journal_title?: string | null;
-  new_article_count: number;
-}
-
-export interface WeeklyDatabaseSummary {
-  db_name: string;
-  run_id?: string | null;
-  generated_at: string;
-  new_article_count: number;
-  journals: WeeklyJournalSummary[];
-}
-
-export interface WeeklyUpdatesSummaryResponse {
-  generated_at: string;
-  window_start: string;
-  window_end: string;
-  databases: WeeklyDatabaseSummary[];
-}
-
-export interface WeeklyArticlePage {
+export type WeeklyJournalSummary = ApiSchemas['WeeklyJournalSummary'];
+export type WeeklyDatabaseSummary = ApiSchemas['WeeklyDatabaseSummary'];
+export type WeeklyUpdatesSummaryResponse = ApiSchemas['WeeklyUpdatesSummaryResponse'];
+export type WeeklyArticlePage = Omit<ApiSchemas['WeeklyArticlePage'], 'items' | 'page'> & {
   items: WeeklyArticle[];
   page: PageMeta;
-}
+};
 
-export interface AnnouncementInfo {
-  id: number;
-  title: string;
-  message: string;
-  priority: 'high' | 'normal' | 'low';
-  enabled: boolean;
-  created_at: number;
-  updated_at: number;
-}
+type AnnouncementPriority = 'high' | 'normal' | 'low';
 
-export interface Folder {
-  id: number;
-  name: string;
-  is_tracking: boolean;
-  article_count: number;
-  created_at: number;
-}
-
-export interface FavoriteItem {
-  id: number;
-  folder_id: number;
-  article_id: ArticleId;
-  db_name: string;
-  note: string;
-  created_at: number;
-}
-
-export interface FavoriteArticleItem extends FavoriteItem {
-  metadata_status: 'available' | 'missing' | 'unavailable';
-  journal_id?: JournalId | null;
-  issue_id?: number | null;
-  title?: string | null;
-  publication_year?: number | null;
-  date?: string | null;
-  authors?: string[] | null;
-  abstract?: string | null;
-  doi?: string | null;
-  journal_title?: string | null;
-  open_access?: boolean | null;
-  in_press?: boolean | null;
-  volume?: string | null;
-  number?: string | null;
-  issn?: string | null;
-  eissn?: string | null;
-}
+export type AnnouncementInfo = Omit<ApiSchemas['AnnouncementInfo'], 'priority'> & {
+  priority: AnnouncementPriority;
+};
+export type Folder = ApiSchemas['FolderResponse'];
+export type FavoriteItem = ApiSchemas['FavoriteResponse'];
+export type FavoriteArticleItem = ApiSchemas['FavoriteArticleResponse'];
 
 /** Stable cursor page of favorite article rows. */
-export interface FavoriteArticlePage {
-  items: FavoriteArticleItem[];
+export type FavoriteArticlePage = Omit<ApiSchemas['FavoriteArticlePage'], 'page'> & {
   page: PageMeta;
-}
+};
 
-export interface FavoriteCheck {
-  folder_id: number;
-  folder_name: string;
-}
-
-export interface FavoriteBatchCheckItem {
-  article_id: ArticleId;
-  folders: FavoriteCheck[];
-}
-
-export interface FavoriteArticleRef {
-  article_id: ArticleId;
-  db_name: string;
-}
-
+export type FavoriteCheck = ApiSchemas['FavoriteCheckResponse'];
+export type FavoriteBatchCheckItem = ApiSchemas['FavoriteBatchCheckResponse'];
+export type FavoriteArticleRef = Required<ApiSchemas['FavoriteArticleRef']>;
 export type CitationFormat = 'bibtex' | 'ris' | 'endnote';
-
-export interface AccessToken {
-  id: number;
-  name: string;
-  expires_at: number;
-  created_at: number;
-}
-
-export interface CnkiSessionStatus {
-  configured: boolean;
-  status: 'empty' | 'waiting_scan' | 'active' | 'expired' | string;
-  has_bff_user_token: boolean;
-  expires_at?: number | null;
-  seconds_remaining?: number | null;
-  cookie_names: string[];
-  updated_at?: number | null;
-  last_used_at?: number | null;
-}
-
-export interface CnkiLoginStartResponse {
-  uuid: string;
-  status: string;
-  qr_code: string;
-  session: CnkiSessionStatus;
-}
-
-export interface CnkiLoginPollResponse {
-  status: string;
-  session: CnkiSessionStatus;
-}
+export type AccessToken = ApiSchemas['TokenInfo'];
+export type CnkiSessionStatus = ApiSchemas['CnkiSessionStatusResponse'];
+export type CnkiLoginStartResponse = ApiSchemas['CnkiLoginStartResponse'];
+export type CnkiLoginPollResponse = ApiSchemas['CnkiLoginPollResponse'];
 export type {
   AdminInviteCode,
   AdminInviteCodeCreate,
@@ -228,65 +76,18 @@ export type {
   InviteCodeStatus,
 } from '@/lib/api-contract';
 
-export interface AdminUserInfo {
-  id: number;
-  username: string;
-  is_admin: boolean;
-  created_at: number;
-  updated_at: number;
-  folder_count: number;
-  favorite_count: number;
-  notify_enabled: boolean;
-}
-
-export interface IndexDbStats {
-  db_name: string;
-  articles: number;
-  journals: number;
-  issues: number;
-  error?: boolean;
-}
-
-export interface PushDbStats {
-  db_name: string;
-  status: import('@/lib/api-contract').PushStatsState;
-  last_completed?: string | null;
-  delivered_count?: number;
-  user_results?: number;
-}
-
-export interface AdminStats {
-  auth: {
-    total_users: number;
-    admin_count: number;
-    total_folders: number;
-    total_favorites: number;
-    total_invite_codes: number;
-    used_invite_codes: number;
-    unused_invite_codes: number;
-    active_tokens: number;
-    notification_subscribers: number;
-    scheduled_tasks: number;
-    active_announcements: number;
-  };
-  index: {
-    databases: IndexDbStats[];
-    total_articles: number;
-    total_journals: number;
-  };
+export type AdminUserInfo = ApiSchemas['AdminUserInfo'];
+export type IndexDbStats = Omit<ApiSchemas['IndexDatabaseStats'], 'error'> & {
+  error?: Exclude<ApiSchemas['IndexDatabaseStats']['error'], null>;
+};
+export type PushDbStats = Omit<ApiSchemas['PushStats'], 'delivered_count' | 'user_results'> & {
+  [Field in 'delivered_count' | 'user_results']?: NonNullable<ApiSchemas['PushStats'][Field]>;
+};
+export type AdminStats = Omit<ApiSchemas['AdminStatsResponse'], 'index' | 'push'> & {
+  index: Omit<ApiSchemas['IndexStats'], 'databases'> & { databases: IndexDbStats[] };
   push: PushDbStats[];
-}
-
-export interface AnnouncementCreate {
-  title: string;
-  message: string;
-  priority: 'high' | 'normal' | 'low';
-  enabled: boolean;
-}
-
-export interface AnnouncementUpdate {
-  title?: string;
-  message?: string;
-  priority?: 'high' | 'normal' | 'low';
-  enabled?: boolean;
-}
+};
+export type AnnouncementCreate = Required<Omit<ApiSchemas['AnnouncementCreate'], 'priority'>> & {
+  priority: AnnouncementPriority;
+};
+export type AnnouncementUpdate = Partial<AnnouncementCreate>;
