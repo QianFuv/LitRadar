@@ -315,7 +315,8 @@ impl AuthService {
             PasswordVerification::Invalid => return Ok(None),
             PasswordVerification::ValidCurrent => row.token_generation,
             PasswordVerification::ValidLegacy => {
-                let Some(token_generation) = self.upgrade_legacy_password(&row, password)? else {
+                let Some(token_generation) = self.upgrade_legacy_authorization(&row, password)?
+                else {
                     return Ok(None);
                 };
                 token_generation
@@ -331,7 +332,11 @@ impl AuthService {
         }))
     }
 
-    fn upgrade_legacy_password(
+    /// Upgrade verified legacy credentials and return the authorized token generation.
+    ///
+    /// If a concurrent update wins, reverify the credentials against the current row before
+    /// returning its generation. The result contains no password or bearer-token material.
+    fn upgrade_legacy_authorization(
         &self,
         legacy_row: &UserCredentialRow,
         password: &str,
@@ -1166,7 +1171,7 @@ mod tests {
             .reset_password(user.id, "replacement-password")
             .expect("concurrent reset should run"));
         assert!(service
-            .upgrade_legacy_password(&stale_credentials, STRONG_PASSWORD)
+            .upgrade_legacy_authorization(&stale_credentials, STRONG_PASSWORD)
             .expect("stale legacy upgrade should recheck current credentials")
             .is_none());
         assert!(service
