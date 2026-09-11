@@ -411,18 +411,15 @@ pub fn scholarly_access_registration() -> Result<ProviderRegistration, ProviderR
 ///
 /// # Arguments
 ///
-/// * `transport` - CNKI source transport used only for request-time resolution.
+/// * `provider` - CNKI abstract provider preserving its request-time transport policy.
 ///
 /// # Returns
 ///
 /// Access-only CNKI registration.
-pub fn cnki_oversea_access_registration<T>(
-    transport: T,
-) -> Result<ProviderRegistration, ProviderRegistryError>
-where
-    T: CnkiTransport + Send + 'static,
-{
-    let provider = Arc::new(CnkiArticleAccessProvider::new(transport));
+pub fn cnki_oversea_access_registration(
+    provider: impl ArticleAbstractProvider + 'static,
+) -> Result<ProviderRegistration, ProviderRegistryError> {
+    let provider = Arc::new(provider);
     ProviderRegistration::try_new(
         ProviderDescriptor {
             name: CNKI_OVERSEA_PROVIDER_NAME.to_string(),
@@ -733,18 +730,15 @@ where
 ///
 /// # Arguments
 ///
-/// * `transport` - Domestic CNKI source transport used only for request-time resolution.
+/// * `provider` - Domestic CNKI abstract provider preserving its request-time transport policy.
 ///
 /// # Returns
 ///
 /// Access-only domestic CNKI registration.
-pub fn cnki_access_registration<T>(
-    transport: T,
-) -> Result<ProviderRegistration, ProviderRegistryError>
-where
-    T: DomesticCnkiTransport + Send + 'static,
-{
-    let provider = Arc::new(DomesticCnkiArticleAccessProvider::new(transport));
+pub fn cnki_access_registration(
+    provider: impl ArticleAbstractProvider + 'static,
+) -> Result<ProviderRegistration, ProviderRegistryError> {
+    let provider = Arc::new(provider);
     ProviderRegistration::try_new(
         ProviderDescriptor {
             name: CNKI_PROVIDER_NAME.to_string(),
@@ -4575,8 +4569,10 @@ mod tests {
             )]),
             fail_endpoint: None,
         };
-        let cnki = cnki_oversea_access_registration(FixtureCnkiTransport::new(fixture))
-            .expect("CNKI access should register");
+        let cnki = cnki_oversea_access_registration(CnkiArticleAccessProvider::new(
+            FixtureCnkiTransport::new(fixture),
+        ))
+        .expect("CNKI access should register");
         assert!(cnki.index_content().is_none());
         assert!(cnki.article_full_text().is_none());
         assert_eq!(
@@ -5506,8 +5502,10 @@ mod tests {
         assert_eq!(second.articles.len(), 1);
         assert_eq!(second.articles[0].title, "第二期文章");
 
-        let access = cnki_access_registration(FixtureDomesticCnkiTransport::new(fixture))
-            .expect("domestic access registration");
+        let access = cnki_access_registration(DomesticCnkiArticleAccessProvider::new(
+            FixtureDomesticCnkiTransport::new(fixture),
+        ))
+        .expect("domestic access registration");
         assert!(access.index_content().is_none());
         assert!(access.article_full_text().is_none());
         assert_eq!(
@@ -6334,8 +6332,11 @@ mod tests {
             ("SECOND00".to_string(), "Other later article".to_string()),
             ("TARGET".to_string(), "Target later article".to_string()),
         ];
-        let access = cnki_access_registration(FixtureDomesticCnkiTransport::new(
-            domestic_paged_fixture(vec![("202512".to_string(), vec![first_page, second_page])]),
+        let access = cnki_access_registration(DomesticCnkiArticleAccessProvider::new(
+            FixtureDomesticCnkiTransport::new(domestic_paged_fixture(vec![(
+                "202512".to_string(),
+                vec![first_page, second_page],
+            )])),
         ))
         .expect("domestic access registration");
         let mut locator = article_locator("Target later article", "世界经济");

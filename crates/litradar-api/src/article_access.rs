@@ -20,12 +20,12 @@ use litradar_provider::{
     ProviderRegistry, ProviderRegistryError,
 };
 use litradar_sources::{
-    scholarly_access_registration, CnkiArticleAccessProvider, DomesticCnkiArticleAccessProvider,
-    LiveCnkiConfig, LiveCnkiTransport, LiveDomesticCnkiConfig, LiveDomesticCnkiTransport,
-    LiveZjlibCnkiConfig, LiveZjlibCnkiTransport, ProviderProxy, ProviderProxySelection,
-    ZhejiangLibraryCnkiClient, ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError,
-    CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
-    DEFAULT_FULL_TEXT_MAXIMUM_BYTES, DOMESTIC_CNKI_REDIRECT_HOSTS, ZJLIB_PROVIDER_NAME,
+    cnki_access_registration, cnki_oversea_access_registration, scholarly_access_registration,
+    CnkiArticleAccessProvider, DomesticCnkiArticleAccessProvider, LiveCnkiConfig,
+    LiveCnkiTransport, LiveDomesticCnkiConfig, LiveDomesticCnkiTransport, LiveZjlibCnkiConfig,
+    LiveZjlibCnkiTransport, ProviderProxy, ProviderProxySelection, ZhejiangLibraryCnkiClient,
+    ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, CNKI_OVERSEA_PROVIDER_NAME,
+    CNKI_PROVIDER_NAME, DEFAULT_FULL_TEXT_MAXIMUM_BYTES, ZJLIB_PROVIDER_NAME,
 };
 #[cfg(test)]
 use litradar_sources::{FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport};
@@ -652,29 +652,12 @@ impl ArticleAbstractProvider for LiveCnkiAccessProvider {
 fn live_cnki_oversea_access_registration(
     provider_proxy: ProviderProxy,
 ) -> Result<ProviderRegistration, ProviderRegistryError> {
-    let provider = Arc::new(LiveCnkiAccessProvider {
+    cnki_oversea_access_registration(LiveCnkiAccessProvider {
         config: LiveCnkiConfig {
             timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
         },
         provider_proxy,
-    });
-    ProviderRegistration::try_new(
-        ProviderDescriptor {
-            name: CNKI_OVERSEA_PROVIDER_NAME.to_string(),
-            capabilities: ProviderCapabilities {
-                article_abstract: true,
-                ..ProviderCapabilities::default()
-            },
-            allowed_redirect_hosts: CNKI_REDIRECT_HOSTS
-                .iter()
-                .map(|host| (*host).to_string())
-                .collect(),
-        },
-        ProviderImplementations {
-            article_abstract: Some(provider),
-            ..ProviderImplementations::default()
-        },
-    )
+    })
 }
 
 struct LiveDomesticCnkiAccessProvider {
@@ -736,30 +719,13 @@ fn live_cnki_access_registration(
     captcha_token: Option<String>,
     provider_proxy: ProviderProxy,
 ) -> Result<ProviderRegistration, ProviderRegistryError> {
-    let provider = Arc::new(LiveDomesticCnkiAccessProvider {
+    cnki_access_registration(LiveDomesticCnkiAccessProvider {
         config: LiveDomesticCnkiConfig {
             timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
             captcha_token,
         },
         provider_proxy,
-    });
-    ProviderRegistration::try_new(
-        ProviderDescriptor {
-            name: CNKI_PROVIDER_NAME.to_string(),
-            capabilities: ProviderCapabilities {
-                article_abstract: true,
-                ..ProviderCapabilities::default()
-            },
-            allowed_redirect_hosts: DOMESTIC_CNKI_REDIRECT_HOSTS
-                .iter()
-                .map(|host| (*host).to_string())
-                .collect(),
-        },
-        ProviderImplementations {
-            article_abstract: Some(provider),
-            ..ProviderImplementations::default()
-        },
-    )
+    })
 }
 
 impl ArticleFullTextProvider for ZjlibCnkiFullTextProvider {

@@ -6234,7 +6234,7 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
-    async fn cnki_routes_cover_replay_session_status_and_clear_without_secret_leaks() {
+    async fn cnki_routes_cover_session_status_and_clear_without_secret_leaks() {
         let route_config = TestRouteConfigGuard::new();
         let backend = TestBackend::new();
         let user = backend.authenticated_user("cnki_user", false);
@@ -6274,7 +6274,7 @@ mod tests {
             })),
         )
         .await;
-        route_config.set_cnki_replay_mode(Some("start_success"));
+        route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::PollTimeout));
         let waiting_start = json_request(
             &app,
             Method::POST,
@@ -6297,7 +6297,7 @@ mod tests {
         )
         .await;
 
-        route_config.set_cnki_replay_mode(Some("warmup_failure"));
+        route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::WarmupFailure));
         let warmup_poll = json_request(
             &app,
             Method::POST,
@@ -6311,7 +6311,7 @@ mod tests {
         )
         .await;
 
-        route_config.set_cnki_replay_mode(Some("poll_success"));
+        route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::Success));
         let success_start = json_request(
             &app,
             Method::POST,
@@ -6348,14 +6348,17 @@ mod tests {
             user.user_id(),
         )
         .expect("CNKI session status should load");
-        let storage_generation = litradar_storage::get_cnki_session_data(
+        let stored_session = litradar_storage::get_cnki_session_data(
             backend.auth_db_path(),
             backend.secret_codec(),
             user.user_id(),
         )
         .expect("CNKI session data should load")
-        .expect("CNKI session data should exist")
-        .generation;
+        .expect("CNKI session data should exist");
+        let storage_generation = stored_session.generation;
+        let stored_token = stored_session.session_data["bff_user_token"]
+            .as_str()
+            .expect("fixture token should be persisted");
         let cleared = json_request(
             &app,
             Method::DELETE,
@@ -6410,10 +6413,7 @@ mod tests {
             success_poll.payload["session"]["cookie_names"],
             serde_json::json!(["userToken", "vpn358_sid"])
         );
-        assert!(!success_poll
-            .payload
-            .to_string()
-            .contains("SECRET_COOKIE_VALUE"));
+        assert!(!success_poll.payload.to_string().contains(stored_token));
         assert!(!success_poll
             .payload
             .to_string()
@@ -6429,7 +6429,7 @@ mod tests {
         assert_eq!(tombstone.0, "empty");
         assert!(tombstone.1 > storage_generation);
         assert!(tombstone.2.starts_with("litradarenc:v1:"));
-        assert!(!tombstone.2.contains("SECRET_COOKIE_VALUE"));
+        assert!(!tombstone.2.contains(stored_token));
         assert!(!tombstone.2.contains("SECRET_VPN_VALUE"));
     }
 
@@ -6438,7 +6438,7 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
-    async fn cnki_routes_use_live_fixture_without_replay_mode() {
+    async fn cnki_routes_use_fixture_through_source_client() {
         let route_config = TestRouteConfigGuard::new();
         route_config.set_cnki_fixture_mode(Some(FixtureZjlibCnkiMode::Success));
         let backend = TestBackend::new();
@@ -6762,10 +6762,6 @@ mod tests {
             Self { _lock: lock }
         }
 
-        fn set_cnki_replay_mode(&self, mode: Option<&str>) {
-            crate::routes::cnki::set_replay_mode_for_tests(mode);
-        }
-
         fn set_cnki_fixture_mode(&self, mode: Option<FixtureZjlibCnkiMode>) {
             crate::routes::cnki::set_fixture_mode_for_tests(mode);
         }
@@ -6782,7 +6778,6 @@ mod tests {
     }
 
     fn reset_route_test_config() {
-        crate::routes::cnki::set_replay_mode_for_tests(None);
         crate::routes::cnki::set_fixture_mode_for_tests(None);
         crate::routes::index::set_fixture_mode_for_tests(None);
     }
