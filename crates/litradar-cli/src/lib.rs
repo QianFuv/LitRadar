@@ -145,30 +145,16 @@ fn run_admin_command_with_reader(
     let project_root = extract_project_root(&mut args)?;
     let has_explicit_auth_db = args.iter().any(|argument| argument == "--auth-db");
     let auth_db_path = extract_auth_db_path_with_project_root(&mut args, &project_root)?;
-    let username = extract_string_option(&mut args, "--username")?;
-    let should_read_password = remove_flag(&mut args, "--password-stdin");
-    let secret_key_file = extract_path_option(&mut args, "--secret-key-file")?;
-    let old_key_file = extract_path_option(&mut args, "--old-key-file")?;
-    let new_key_file = extract_path_option(&mut args, "--new-key-file")?;
-    let output_dir = extract_path_option(&mut args, "--output")?;
-    let backup_dir = extract_path_option(&mut args, "--backup")?;
-    let include_index_databases = remove_flag(&mut args, "--include-indexes");
-    let include_push_state = remove_flag(&mut args, "--include-push-state");
-    let is_restore_confirmed = remove_flag(&mut args, "--confirm-restore");
-    let is_index_maintenance_confirmed = remove_flag(&mut args, "--confirm-index-maintenance");
-    let has_backup_options = output_dir.is_some()
-        || backup_dir.is_some()
-        || include_index_databases
-        || include_push_state
-        || is_restore_confirmed
-        || is_index_maintenance_confirmed;
-    match args.as_slice() {
-        [command]
-            if command == "bootstrap"
-                && username.is_some()
-                && should_read_password
-                && !has_backup_options =>
-        {
+    let command = extract_admin_command(&mut args)?;
+    match command.as_slice() {
+        [command] if command == "bootstrap" => {
+            let username =
+                extract_string_option(&mut args, "--username")?.ok_or_else(admin_usage)?;
+            let should_read_password = remove_flag(&mut args, "--password-stdin");
+            reject_remaining_admin_options(&args)?;
+            if !should_read_password {
+                return Err(admin_usage().into());
+            }
             migrate_auth_database(&auth_db_path)?;
             let mut password = String::new();
             if password_reader.read_line(&mut password)? == 0 {
@@ -177,20 +163,16 @@ fn run_admin_command_with_reader(
             while password.ends_with(['\r', '\n']) {
                 password.pop();
             }
-            let user = AuthService::new(&auth_db_path)
-                .bootstrap_admin(username.as_deref().unwrap_or_default().trim(), &password)?;
+            let user =
+                AuthService::new(&auth_db_path).bootstrap_admin(username.trim(), &password)?;
             Ok(json!({"status": "created", "user": user}))
         }
-        [group, command]
-            if group == "secrets"
-                && command == "migrate"
-                && secret_key_file.is_some()
-                && username.is_none()
-                && !should_read_password
-                && !has_backup_options =>
-        {
+        [group, command] if group == "secrets" && command == "migrate" => {
+            let secret_key_file =
+                extract_path_option(&mut args, "--secret-key-file")?.ok_or_else(admin_usage)?;
+            reject_remaining_admin_options(&args)?;
             migrate_auth_database(&auth_db_path)?;
-            let codec = SecretCodec::load(secret_key_file.as_ref().expect("checked key path"))?;
+            let codec = SecretCodec::load(&secret_key_file)?;
             let report = migrate_database_secrets(&auth_db_path, &codec)?;
             Ok(json!({
                 "status": "migrated",
@@ -199,16 +181,12 @@ fn run_admin_command_with_reader(
                 "empty": report.empty,
             }))
         }
-        [group, command]
-            if group == "secrets"
-                && command == "verify"
-                && secret_key_file.is_some()
-                && username.is_none()
-                && !should_read_password
-                && !has_backup_options =>
-        {
+        [group, command] if group == "secrets" && command == "verify" => {
+            let secret_key_file =
+                extract_path_option(&mut args, "--secret-key-file")?.ok_or_else(admin_usage)?;
+            reject_remaining_admin_options(&args)?;
             migrate_auth_database(&auth_db_path)?;
-            let codec = SecretCodec::load(secret_key_file.as_ref().expect("checked key path"))?;
+            let codec = SecretCodec::load(&secret_key_file)?;
             let report = verify_database_secrets(&auth_db_path, &codec)?;
             Ok(json!({
                 "status": "verified",
@@ -216,38 +194,24 @@ fn run_admin_command_with_reader(
                 "empty": report.empty,
             }))
         }
-        [group, command]
-            if group == "secrets"
-                && command == "rotate"
-                && old_key_file.is_some()
-                && new_key_file.is_some()
-                && username.is_none()
-                && !should_read_password
-                && !has_backup_options =>
-        {
+        [group, command] if group == "secrets" && command == "rotate" => {
+            let old_key_file =
+                extract_path_option(&mut args, "--old-key-file")?.ok_or_else(admin_usage)?;
+            let new_key_file =
+                extract_path_option(&mut args, "--new-key-file")?.ok_or_else(admin_usage)?;
+            reject_remaining_admin_options(&args)?;
             migrate_auth_database(&auth_db_path)?;
-            let old_codec = SecretCodec::load(old_key_file.as_ref().expect("checked old path"))?;
-            let new_codec = SecretCodec::load(new_key_file.as_ref().expect("checked new path"))?;
+            let old_codec = SecretCodec::load(&old_key_file)?;
+            let new_codec = SecretCodec::load(&new_key_file)?;
             let rotated = rotate_database_secrets(&auth_db_path, &old_codec, &new_codec)?;
             Ok(json!({"status": "rotated", "rotated": rotated}))
         }
-        [group, command]
-            if group == "backup"
-                && command == "create"
-                && output_dir.is_some()
-                && backup_dir.is_none()
-                && !is_restore_confirmed
-                && !is_index_maintenance_confirmed
-                && username.is_none()
-                && !should_read_password
-                && secret_key_file.is_none()
-                && old_key_file.is_none()
-                && new_key_file.is_none() =>
-        {
-            let output_dir = resolve_project_path(
-                &project_root,
-                output_dir.as_ref().expect("checked output path").clone(),
-            );
+        [group, command] if group == "backup" && command == "create" => {
+            let output_dir = extract_path_option(&mut args, "--output")?.ok_or_else(admin_usage)?;
+            let include_index_databases = remove_flag(&mut args, "--include-indexes");
+            let include_push_state = remove_flag(&mut args, "--include-push-state");
+            reject_remaining_admin_options(&args)?;
+            let output_dir = resolve_project_path(&project_root, output_dir);
             let manifest = create_backup(&BackupCreateOptions {
                 storage_config: StorageConfig::from_project_root(&project_root),
                 auth_db_path,
@@ -261,25 +225,10 @@ fn run_admin_command_with_reader(
                 "manifest": manifest,
             }))
         }
-        [group, command]
-            if group == "backup"
-                && command == "verify"
-                && backup_dir.is_some()
-                && output_dir.is_none()
-                && !include_index_databases
-                && !include_push_state
-                && !is_restore_confirmed
-                && !is_index_maintenance_confirmed
-                && username.is_none()
-                && !should_read_password
-                && secret_key_file.is_none()
-                && old_key_file.is_none()
-                && new_key_file.is_none() =>
-        {
-            let backup_dir = resolve_project_path(
-                &project_root,
-                backup_dir.as_ref().expect("checked backup path").clone(),
-            );
+        [group, command] if group == "backup" && command == "verify" => {
+            let backup_dir = extract_path_option(&mut args, "--backup")?.ok_or_else(admin_usage)?;
+            reject_remaining_admin_options(&args)?;
+            let backup_dir = resolve_project_path(&project_root, backup_dir);
             let manifest = verify_backup(&backup_dir)?;
             Ok(json!({
                 "status": "verified",
@@ -287,25 +236,14 @@ fn run_admin_command_with_reader(
                 "manifest": manifest,
             }))
         }
-        [group, command]
-            if group == "backup"
-                && command == "restore"
-                && backup_dir.is_some()
-                && output_dir.is_none()
-                && !include_index_databases
-                && !include_push_state
-                && is_restore_confirmed
-                && !is_index_maintenance_confirmed
-                && username.is_none()
-                && !should_read_password
-                && secret_key_file.is_none()
-                && old_key_file.is_none()
-                && new_key_file.is_none() =>
-        {
-            let backup_dir = resolve_project_path(
-                &project_root,
-                backup_dir.as_ref().expect("checked backup path").clone(),
-            );
+        [group, command] if group == "backup" && command == "restore" => {
+            let backup_dir = extract_path_option(&mut args, "--backup")?.ok_or_else(admin_usage)?;
+            let is_restore_confirmed = remove_flag(&mut args, "--confirm-restore");
+            reject_remaining_admin_options(&args)?;
+            if !is_restore_confirmed {
+                return Err(admin_usage().into());
+            }
+            let backup_dir = resolve_project_path(&project_root, backup_dir);
             let report = restore_backup(&BackupRestoreOptions {
                 storage_config: StorageConfig::from_project_root(&project_root),
                 auth_db_path,
@@ -318,20 +256,11 @@ fn run_admin_command_with_reader(
             }))
         }
         [group, command]
-            if group == "index"
-                && command == "optimize-storage"
-                && !has_explicit_auth_db
-                && username.is_none()
-                && !should_read_password
-                && secret_key_file.is_none()
-                && old_key_file.is_none()
-                && new_key_file.is_none()
-                && output_dir.is_none()
-                && backup_dir.is_none()
-                && !include_index_databases
-                && !include_push_state
-                && !is_restore_confirmed =>
+            if group == "index" && command == "optimize-storage" && !has_explicit_auth_db =>
         {
+            let is_index_maintenance_confirmed =
+                remove_flag(&mut args, "--confirm-index-maintenance");
+            reject_remaining_admin_options(&args)?;
             let report = optimize_index_storage(&IndexStorageOptimizationOptions {
                 storage_config: StorageConfig::from_project_root(&project_root),
                 confirmed: is_index_maintenance_confirmed,
@@ -346,6 +275,40 @@ fn run_admin_command_with_reader(
             }))
         }
         _ => Err(admin_usage().into()),
+    }
+}
+
+fn extract_admin_command(args: &mut Vec<String>) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut command = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        if matches!(
+            args[index].as_str(),
+            "--username"
+                | "--secret-key-file"
+                | "--old-key-file"
+                | "--new-key-file"
+                | "--output"
+                | "--backup"
+        ) {
+            if index + 1 >= args.len() {
+                return Err(format!("{} requires a value", args[index]).into());
+            }
+            index += 2;
+        } else if args[index].starts_with('-') {
+            index += 1;
+        } else {
+            command.push(args.remove(index));
+        }
+    }
+    Ok(command)
+}
+
+fn reject_remaining_admin_options(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.is_empty() {
+        Ok(())
+    } else {
+        Err(admin_usage().into())
     }
 }
 
@@ -1490,6 +1453,133 @@ mod tests {
     }
 
     #[test]
+    fn admin_rejects_unrelated_key_options_before_creating_database() {
+        for option in ["--secret-key-file", "--old-key-file", "--new-key-file"] {
+            let root = temp_root("litradar-cli-unrelated-admin-option");
+            let auth_db_path = root.path().join("auth.sqlite");
+            let error = run_admin_command_with_reader(
+                vec![
+                    "bootstrap".to_string(),
+                    "--username".to_string(),
+                    "fixture_admin".to_string(),
+                    "--password-stdin".to_string(),
+                    option.to_string(),
+                    "unused.key".to_string(),
+                    "--auth-db".to_string(),
+                    auth_db_path.to_string_lossy().into_owned(),
+                ],
+                std::io::Cursor::new("fixture-password\n"),
+            )
+            .expect_err("options from another admin command must be rejected");
+
+            assert_eq!(error.to_string(), admin_usage());
+            assert!(!auth_db_path.exists());
+        }
+    }
+
+    #[test]
+    fn invalid_admin_options_cannot_create_or_restore_data() {
+        let cases: &[&[&str]] = &[
+            &[
+                "secrets",
+                "migrate",
+                "--secret-key-file",
+                "missing.key",
+                "--old-key-file",
+                "other.key",
+            ],
+            &[
+                "secrets",
+                "verify",
+                "--secret-key-file",
+                "missing.key",
+                "--new-key-file",
+                "other.key",
+            ],
+            &[
+                "secrets",
+                "rotate",
+                "--old-key-file",
+                "missing.key",
+                "--new-key-file",
+                "missing.key",
+                "--secret-key-file",
+                "other.key",
+            ],
+            &[
+                "backup",
+                "create",
+                "--output",
+                "backup",
+                "--confirm-restore",
+            ],
+            &[
+                "backup",
+                "verify",
+                "--backup",
+                "missing-backup",
+                "--include-indexes",
+            ],
+            &[
+                "backup",
+                "restore",
+                "--backup",
+                "missing-backup",
+                "--confirm-restore",
+                "--include-push-state",
+            ],
+            &[
+                "index",
+                "optimize-storage",
+                "--confirm-index-maintenance",
+                "--output",
+                "backup",
+            ],
+        ];
+        for arguments in cases {
+            let root = temp_root("litradar-cli-admin-option-boundary");
+            let mut args = arguments
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect::<Vec<_>>();
+            args.extend([
+                "--project-root".to_string(),
+                root.path().to_string_lossy().into_owned(),
+            ]);
+            let error = run_admin_command_with_reader(args, std::io::Cursor::new(Vec::<u8>::new()))
+                .expect_err("irrelevant options must fail before any maintenance operation");
+
+            assert_eq!(error.to_string(), admin_usage());
+            assert_eq!(
+                fs::read_dir(root.path())
+                    .expect("fixture root should exist")
+                    .count(),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn admin_bootstrap_preserves_command_names_as_option_values() {
+        let root = temp_root("litradar-cli-admin-command-value");
+        let auth_db_path = root.path().join("auth.sqlite");
+        let payload = run_admin_command_with_reader(
+            vec![
+                "--username".to_string(),
+                "backup".to_string(),
+                "--password-stdin".to_string(),
+                "bootstrap".to_string(),
+                "--auth-db".to_string(),
+                auth_db_path.to_string_lossy().into_owned(),
+            ],
+            std::io::Cursor::new("fixture-password\n"),
+        )
+        .expect("command names inside flag values must remain values");
+
+        assert_eq!(payload["user"]["username"], "backup");
+    }
+
+    #[test]
     fn admin_bootstrap_reads_password_from_stdin_and_refuses_repeat() {
         let root = temp_root("litradar-cli-admin-bootstrap");
         let auth_db_path = root.path().join("auth.sqlite");
@@ -1793,9 +1883,9 @@ mod tests {
             vec![
                 "--project-root".to_string(),
                 source_root.to_string_lossy().into_owned(),
+                "backup".to_string(),
                 "--output".to_string(),
                 "backups/fixture".to_string(),
-                "backup".to_string(),
                 "create".to_string(),
             ],
             "".as_bytes(),
