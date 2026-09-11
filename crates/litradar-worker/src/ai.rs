@@ -672,33 +672,6 @@ impl<T: AiTransport> AiCompletionClient<T> {
     }
 }
 
-/// Build a live OpenAI-compatible completion client.
-///
-/// # Arguments
-///
-/// * `timeout_seconds` - Request timeout in seconds.
-/// * `retry_attempts` - Retry attempts per response format variant.
-/// * `temperature` - Model temperature.
-/// * `auth_db_path` - Database containing the current AI endpoint catalog.
-///
-/// # Returns
-///
-/// Live completion client.
-pub fn live_ai_client(
-    timeout_seconds: u64,
-    retry_attempts: usize,
-    temperature: f64,
-    auth_db_path: impl AsRef<Path>,
-) -> Result<AiCompletionClient<ReqwestAiTransport>, AiClientError> {
-    live_ai_client_with_control(
-        timeout_seconds,
-        retry_attempts,
-        temperature,
-        auth_db_path,
-        None,
-    )
-}
-
 /// Build a live AI client sharing an optional durable job execution boundary.
 ///
 /// # Arguments

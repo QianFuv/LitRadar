@@ -1951,37 +1951,6 @@ pub fn claim_delivery_run_item(
     Ok(claimed)
 }
 
-/// Renew a claimed or sending item lease with owner and revision CAS.
-pub fn renew_delivery_run_item(
-    auth_db_path: impl AsRef<Path>,
-    item_id: i64,
-    owner_id: &str,
-    expected_revision: i64,
-    now: f64,
-    lease_seconds: f64,
-) -> Result<DeliveryRunItemRecord, DeliveryRepositoryError> {
-    validate_positive_id(item_id, "Delivery item id is invalid")?;
-    validate_identifier(owner_id, "Delivery item owner id is invalid")?;
-    validate_revision_and_lease(expected_revision, now, lease_seconds)?;
-    update_item_with_owner_cas(
-        auth_db_path,
-        item_id,
-        owner_id,
-        expected_revision,
-        "UPDATE delivery_run_items
-         SET lease_expires_at = ?1, updated_at = ?2, revision = revision + 1
-         WHERE id = ?3 AND owner_id = ?4 AND revision = ?5
-           AND status IN ('claimed', 'sending') AND lease_expires_at > ?2",
-        params![
-            now + lease_seconds,
-            now,
-            item_id,
-            owner_id,
-            expected_revision
-        ],
-    )
-}
-
 /// Mark a claimed item as externally sending before the side effect begins.
 pub fn mark_delivery_run_item_sending(
     auth_db_path: impl AsRef<Path>,
@@ -2159,35 +2128,6 @@ pub fn resolve_delivery_dedupe(
         .ok_or(DeliveryRepositoryError::NotFound)?;
     transaction.commit()?;
     Ok(record)
-}
-
-/// Release a pre-send reservation so a future run may reserve the identity.
-pub fn release_delivery_dedupe_reservation(
-    auth_db_path: impl AsRef<Path>,
-    dedupe_id: i64,
-    delivery_run_id: i64,
-    owner_id: &str,
-    expected_revision: i64,
-) -> Result<(), DeliveryRepositoryError> {
-    validate_positive_id(dedupe_id, "Delivery dedupe id is invalid")?;
-    validate_positive_id(delivery_run_id, "Delivery run id is invalid")?;
-    validate_identifier(owner_id, "Delivery dedupe owner id is invalid")?;
-    if expected_revision < 0 {
-        return Err(DeliveryRepositoryError::InvalidInput(
-            "Delivery dedupe revision is invalid",
-        ));
-    }
-    let connection = open_delivery_connection(auth_db_path)?;
-    let deleted = connection.execute(
-        "DELETE FROM delivery_dedupe
-         WHERE id = ?1 AND delivery_run_id = ?2 AND reservation_owner = ?3
-           AND revision = ?4 AND status = 'reserved'",
-        params![dedupe_id, delivery_run_id, owner_id, expected_revision],
-    )?;
-    if deleted != 1 {
-        return Err(DeliveryRepositoryError::Conflict);
-    }
-    Ok(())
 }
 
 /// Atomically release multiple pre-send reservations owned by one run attempt.

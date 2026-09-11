@@ -2,7 +2,7 @@
 
 use std::fmt;
 use std::io;
-use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus};
+use std::process::{ChildStdin, ChildStdout, Command, ExitStatus};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -189,15 +189,6 @@ impl SupervisedChild {
     /// Owned output pipe when the command requested one.
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
         self.child.inner().stdout.take()
-    }
-
-    /// Take the configured standard-error pipe before process polling begins.
-    ///
-    /// # Returns
-    ///
-    /// Owned error pipe when the command requested one.
-    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
-        self.child.inner().stderr.take()
     }
 
     /// Poll the complete process tree and reap it when it has exited.

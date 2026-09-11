@@ -484,67 +484,6 @@ fn run_task_now_with_runner(
     })
 }
 
-/// Execute due scheduled tasks once for the current minute.
-///
-/// # Arguments
-///
-/// * `auth_db_path` - Path to `auth.sqlite`.
-/// * `application_executable` - Canonical application executable used for child processes.
-/// * `secret_key_file` - Raw 32-byte deployment secret key file.
-/// * `worker_id` - Stable worker process identifier.
-/// * `cancellation` - Shared shutdown cancellation signal.
-///
-/// # Returns
-///
-/// Execution tick result.
-pub fn run_due_scheduler_once(
-    auth_db_path: impl AsRef<Path>,
-    application_executable: impl AsRef<Path>,
-    secret_key_file: impl AsRef<Path>,
-    worker_id: &str,
-    cancellation: SchedulerCancellation,
-) -> Result<SchedulerExecutionResult, SchedulerError> {
-    let auth_db_path = auth_db_path.as_ref().to_path_buf();
-    let application_executable = application_executable.as_ref().to_path_buf();
-    let secret_key_file = secret_key_file.as_ref().to_path_buf();
-    let tick_span = tracing::info_span!("scheduler.tick", component = "scheduler", worker_id,);
-    tick_span.in_scope(|| {
-        let (mut result, claims) =
-            prepare_scheduler_tick(&auth_db_path, worker_id, current_unix_time())?;
-        let executed = thread::scope(|scope| -> Result<Vec<_>, SchedulerError> {
-            let handles = claims
-                .into_iter()
-                .map(|claim| {
-                    let auth_db_path = auth_db_path.clone();
-                    let application_executable = application_executable.clone();
-                    let cancellation = cancellation.clone();
-                    let secret_key_file = secret_key_file.clone();
-                    let span = tracing::Span::current();
-                    let subscriber = tracing::dispatcher::get_default(Clone::clone);
-                    scope.spawn(move || {
-                        tracing::dispatcher::with_default(&subscriber, || {
-                            span.in_scope(|| {
-                                let mut runner = ProcessScheduledJobRunner {
-                                    application_executable,
-                                    cancellation,
-                                    secret_key_file,
-                                };
-                                execute_scheduled_claim(&auth_db_path, claim, &mut runner)
-                            })
-                        })
-                    })
-                })
-                .collect::<Vec<_>>();
-            handles
-                .into_iter()
-                .map(|handle| handle.join().map_err(|_| SchedulerError::ExecutionThread)?)
-                .collect()
-        })?;
-        result.executed = executed;
-        Ok(result)
-    })
-}
-
 #[cfg(test)]
 fn run_due_scheduler_once_at_with_runner(
     auth_db_path: &Path,
@@ -619,6 +558,7 @@ pub fn run_scheduled_claim(
     execute_scheduled_claim(auth_db_path.as_ref(), claim, &mut runner)
 }
 
+#[cfg(test)]
 fn prepare_scheduler_tick(
     auth_db_path: &Path,
     worker_id: &str,
@@ -1925,6 +1865,7 @@ mod tests {
         initialize_auth_database(&auth_db_path).expect("auth database should initialize");
         let first = create_index_task(&auth_db_path, "thread-a", "* * * * *", true);
         let second = create_index_task(&auth_db_path, "thread-b", "* * * * *", true);
+        let third = create_index_task(&auth_db_path, "thread-c", "* * * * *", true);
         let now = current_unix_time();
         set_task_created_at(&auth_db_path, now - 3_600.0);
         litradar_storage::record_scheduler_check(&auth_db_path, now - 60.0)
@@ -1934,16 +1875,46 @@ mod tests {
 
         let result = logs
             .capture(|| {
-                run_due_scheduler_once(
-                    &auth_db_path,
-                    executable,
-                    temp_dir.path().join("unused-secret.key"),
-                    "worker-threaded",
-                    SchedulerCancellation::new(),
-                )
+                let (mut result, claims) =
+                    prepare_scheduled_runs(&auth_db_path, "worker-threaded", 2)?;
+                let secret_key_file = temp_dir.path().join("unused-secret.key");
+                let span = tracing::Span::current();
+                let subscriber = tracing::dispatcher::get_default(Clone::clone);
+                result.executed = thread::scope(|scope| {
+                    let handles = claims
+                        .into_iter()
+                        .map(|claim| {
+                            let auth_db_path = auth_db_path.clone();
+                            let executable = executable.clone();
+                            let secret_key_file = secret_key_file.clone();
+                            let span = span.clone();
+                            let subscriber = subscriber.clone();
+                            scope.spawn(move || {
+                                tracing::dispatcher::with_default(&subscriber, || {
+                                    span.in_scope(|| {
+                                        run_scheduled_claim(
+                                            auth_db_path,
+                                            executable,
+                                            secret_key_file,
+                                            claim,
+                                            SchedulerCancellation::new(),
+                                        )
+                                    })
+                                })
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("scheduler claim thread should finish"))
+                        .collect::<Result<Vec<_>, SchedulerError>>()
+                })?;
+                Ok::<_, SchedulerError>(result)
             })
             .expect("threaded scheduler tick should complete");
 
+        assert_eq!(result.jobs, 3);
+        assert_eq!(result.claimed, 2);
         assert_eq!(result.executed.len(), 2);
         let events = logs.events();
         let claims = events
@@ -1964,7 +1935,8 @@ mod tests {
                     .expect("task id should exist")
             })
             .collect::<BTreeSet<_>>();
-        assert_eq!(task_ids, BTreeSet::from([first.id, second.id]));
+        assert_eq!(task_ids.len(), 2);
+        assert!(task_ids.is_subset(&BTreeSet::from([first.id, second.id, third.id])));
         let run_ids = claims
             .iter()
             .map(|event| {

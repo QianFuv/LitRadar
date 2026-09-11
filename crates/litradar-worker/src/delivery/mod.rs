@@ -36,9 +36,7 @@ mod orchestration;
 mod state;
 
 pub use manual_job::run_manual_delivery_job;
-pub use orchestration::{
-    run_manual_weekly_push, run_recommendation_delivery, run_recommendation_delivery_for_user,
-};
+pub use orchestration::{run_manual_weekly_push, run_recommendation_delivery};
 
 /// Total AI HTTP attempts available to one durable manual delivery job.
 pub const MANUAL_DELIVERY_AI_REQUEST_BUDGET: usize = 8;

@@ -897,11 +897,6 @@ impl DomesticCaptchaSession {
         Ok(parsed.to_string())
     }
 
-    /// Clear the retained captcha id after a failed authenticated request.
-    pub fn clear_captcha_id(&mut self) {
-        self.captcha_id = None;
-    }
-
     /// Detect and solve a captcha challenge using a jfbym dual-image solver.
     ///
     /// # Arguments

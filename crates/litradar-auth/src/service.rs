@@ -589,30 +589,6 @@ impl AuthService {
             .collect())
     }
 
-    /// Revoke one token by row id.
-    ///
-    /// # Arguments
-    ///
-    /// * `user_id` - Owner user identifier.
-    /// * `token_id` - Token row identifier.
-    ///
-    /// # Returns
-    ///
-    /// True when a token was revoked.
-    pub fn revoke_access_token(
-        &self,
-        user_id: UserId,
-        token_id: i64,
-    ) -> Result<bool, AuthServiceError> {
-        self.revoke_access_token_with_audit(
-            user_id,
-            token_id,
-            SecurityAuditEvent::new("token_revoke", "completed")
-                .with_actor_id(user_id.value())
-                .with_target_id(token_id),
-        )
-    }
-
     /// Revoke a personal token with an atomic completion audit.
     pub fn revoke_access_token_with_audit(
         &self,
@@ -626,22 +602,6 @@ impl AuthService {
             token_id,
             Some(&audit),
         )?)
-    }
-
-    /// Revoke one token by raw token value.
-    ///
-    /// # Arguments
-    ///
-    /// * `token` - Raw token value.
-    ///
-    /// # Returns
-    ///
-    /// True when a token was revoked.
-    pub fn revoke_access_token_value(&self, token: &str) -> Result<bool, AuthServiceError> {
-        self.revoke_access_token_value_with_audit(
-            token,
-            SecurityAuditEvent::new("logout", "completed"),
-        )
     }
 
     /// Revoke a raw token with an atomic completion audit.

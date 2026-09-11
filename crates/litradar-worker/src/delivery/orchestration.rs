@@ -42,28 +42,6 @@ pub fn run_recommendation_delivery(
     )
 }
 
-/// Run notification or tracking delivery for one user.
-///
-/// # Arguments
-///
-/// * `config` - Worker run configuration.
-/// * `user_id` - User whose subscriber settings should run.
-///
-/// # Returns
-///
-/// Dry-run or execution outcome.
-pub fn run_recommendation_delivery_for_user(
-    config: &RecommendationRunConfig,
-    user_id: UserId,
-) -> Result<RecommendationRunOutcome, DeliveryError> {
-    run_recommendation_delivery_for_user_in_attempt(
-        config,
-        user_id,
-        config.attempt_id.as_deref(),
-        None,
-    )
-}
-
 fn run_recommendation_delivery_for_user_in_attempt(
     config: &RecommendationRunConfig,
     user_id: UserId,

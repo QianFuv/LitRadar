@@ -428,23 +428,6 @@ impl<T: PushPlusTransport> PushPlusClient<T> {
     }
 }
 
-/// Build a live PushPlus delivery client.
-///
-/// # Arguments
-///
-/// * `timeout_seconds` - Request timeout in seconds.
-/// * `retry_attempts` - Retry attempts.
-///
-/// # Returns
-///
-/// Live PushPlus client.
-pub fn live_pushplus_client(
-    timeout_seconds: u64,
-    retry_attempts: usize,
-) -> Result<PushPlusClient<ReqwestPushPlusTransport>, PushPlusError> {
-    live_pushplus_client_with_control(timeout_seconds, retry_attempts, None)
-}
-
 /// Build a live PushPlus client sharing an optional durable execution boundary.
 ///
 /// # Arguments
