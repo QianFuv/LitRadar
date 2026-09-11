@@ -609,8 +609,29 @@ async fn weekly_updates_ignore_article_discovery_filters() {
     .await;
     let mut unfiltered_payload = unfiltered.payload;
     let mut filtered_payload = filtered.payload;
-    replace_json_pointer(&mut unfiltered_payload, "/generated_at", json!("stable"));
-    replace_json_pointer(&mut filtered_payload, "/generated_at", json!("stable"));
+    let clock = Connection::open_in_memory().expect("window validation connection should open");
+    for payload in [&unfiltered_payload, &filtered_payload] {
+        assert_eq!(payload["window_end"], payload["generated_at"]);
+        let window_seconds: i64 = clock
+            .query_row(
+                "SELECT unixepoch(?1) - unixepoch(?2)",
+                [
+                    payload["window_end"]
+                        .as_str()
+                        .expect("window end should be text"),
+                    payload["window_start"]
+                        .as_str()
+                        .expect("window start should be text"),
+                ],
+                |row| row.get(0),
+            )
+            .expect("window timestamps should be valid UTC dates");
+        assert_eq!(window_seconds, 7 * 86_400);
+    }
+    for pointer in ["/generated_at", "/window_start", "/window_end"] {
+        replace_json_pointer(&mut unfiltered_payload, pointer, json!("stable"));
+        replace_json_pointer(&mut filtered_payload, pointer, json!("stable"));
+    }
 
     assert_eq!(unfiltered.status, StatusCode::OK);
     assert_eq!(filtered.status, StatusCode::OK);
