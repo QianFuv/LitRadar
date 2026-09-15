@@ -322,9 +322,13 @@ fn refresh_full_text_source(
             ))
         })?;
     }
-    eprintln!(
-        "CFP full text: {} {} {}/{}",
-        result.catalog_id, result.status, result.recovered, result.notices
+    tracing::info!(
+        event = "cfp.full_text.completed",
+        catalog_id = %result.catalog_id,
+        status = %result.status,
+        recovered = result.recovered,
+        notices = result.notices,
+        "CFP full-text refresh completed"
     );
     Ok(result)
 }
