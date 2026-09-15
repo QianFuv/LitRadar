@@ -420,6 +420,24 @@ pub fn extract_cfp_full_text(
             .ok_or(CfpSourceError::Unrecognized)?;
         visible_html(&Html::parse_fragment(&body.inner_html()))
     } else if Url::parse(&document.final_url).is_ok_and(|url| {
+        url.host_str() == Some("www.jryj.org.cn") && url.path().starts_with("/CN/news/")
+    }) && original.catalog_ids.iter().any(|id| id == "issn-1002-7246")
+    {
+        let title = html
+            .select(&Selector::parse("td.news_biaoti").expect("financial research title selector"))
+            .find(|title| matching_title(&title.text().collect::<String>(), &original.title))
+            .ok_or(CfpSourceError::Unrecognized)?;
+        let table = title
+            .ancestors()
+            .filter_map(scraper::ElementRef::wrap)
+            .find(|element| element.value().name() == "table")
+            .ok_or(CfpSourceError::Unrecognized)?;
+        let body = table
+            .select(&Selector::parse("span.J_WenZhang").expect("financial research body selector"))
+            .next()
+            .ok_or(CfpSourceError::Unrecognized)?;
+        visible_html(&Html::parse_fragment(&body.inner_html()))
+    } else if Url::parse(&document.final_url).is_ok_and(|url| {
         url.host_str() == Some("kxxyj.magtechjournal.com")
             && url.path().starts_with("/kxxyj/CN/news/")
     }) && original.catalog_ids.iter().any(|id| id == "issn-1003-2053")

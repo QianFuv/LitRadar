@@ -326,6 +326,20 @@ fn cfp_poms_full_text_uses_the_verified_call_body() {
 }
 
 #[test]
+fn cfp_financial_research_full_text_uses_the_title_table_without_outer_metadata() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-1002-7246".into()];
+    original.title = "论坛征文启事".into();
+    let mut page = document("<table><tr><td><span class='J_WenZhang'>无关栏目正文。</span><table><tr><td class='news_biaoti'>论坛征文启事</td></tr><tr><td><span class='J_WenZhang'><p>完整的论坛选题。</p><h1>二、投稿要求</h1><p>完整的匿名投稿要求。</p></span></td></tr></table></td></tr><tr><td>发布日期、浏览量和服务器指令错误。</td></tr></table>");
+    page.final_url = "http://www.jryj.org.cn/CN/news/news86.shtml".into();
+    let recovered = extract_cfp_full_text(&original, &page).unwrap();
+    assert_eq!(recovered.scope, "完整的论坛选题。");
+    assert_eq!(recovered.requirements, "二、投稿要求\n完整的匿名投稿要求。");
+    page.text = page.text.replace("论坛征文启事", "另一条征文启事");
+    assert!(extract_cfp_full_text(&original, &page).is_err());
+}
+
+#[test]
 fn cfp_background_security_scripts_do_not_hide_verified_original_content() {
     let page = document("<title>Example Journal calls</title><h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original research scope.</p><p>Submission deadline: 31 December 2026</p><script>window._cf_chl_opt={};load('/cdn-cgi/challenge-platform/scripts/jsd/main.js');</script>");
     assert!(!is_cfp_challenge(&page));
