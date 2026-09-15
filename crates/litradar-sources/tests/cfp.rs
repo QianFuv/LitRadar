@@ -390,6 +390,54 @@ fn cfp_grsl_full_text_keeps_eligibility_and_requirements_after_editor_dates() {
 }
 
 #[test]
+fn cfp_reviewed_pdf_typography_matching_preserves_the_literal_body() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-2327-4662".into()];
+    for (title, printed) in [
+        ("Sensors – Systems", "Sensors -\nSystems"),
+        ("Research & Methods", "Research and Methods"),
+        (
+            "Next Generation Multiple Access for Internet-of-Things",
+            "N EXT G ENERATION M ULTIPLE A CCESS FOR I NTERNET-OF-T HINGS",
+        ),
+    ] {
+        original.title = title.into();
+        let mut page = document(&format!("IEEE Internet of Things Journal\n{printed}\nComplete original scope: energy & sensing.\nProspective authors should submit the original manuscript."));
+        page.final_url = "https://ieee-iotj.org/wp-content/uploads/original.pdf".into();
+        page.format = "pdf_text".into();
+        let recovered = extract_cfp_full_text(&original, &page).unwrap();
+        assert_eq!(recovered.title, title);
+        assert_eq!(
+            recovered.scope,
+            "Complete original scope: energy & sensing."
+        );
+        assert_eq!(
+            recovered.requirements,
+            "Prospective authors should submit the original manuscript."
+        );
+        page.text = format!("{}\n{}", "Unrelated page content. ".repeat(40), page.text);
+        assert!(extract_cfp_full_text(&original, &page).is_err());
+        page.text = "Different original title\nComplete original scope.\nSubmission Guidelines:\nComplete original requirements.".into();
+        assert!(extract_cfp_full_text(&original, &page).is_err());
+    }
+}
+
+#[test]
+fn cfp_reviewed_pdf_manufacturing_sections_exclude_deadlines_and_biographies() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-1059-1478".into()];
+    original.title = "Flexible Manufacturing: Approaches and Reshoring".into();
+    let mut page = document("POM Special Issue\nFlexible Manufacturing: Approaches, and Reshoring\nGuest editors: Editorial names\nManuscript submission deadline: December 1st, 2026\nBackground: Complete original research scope.\nCall for submissions: Original methodological preferences.\nDeadlines\nManuscript submissions: December 1st, 2026\nAuthors are encouraged to contact the editorial team with submission questions.\nPlease follow the original submission guidelines.\nGuest Editors\nLong unrelated editorial biographies.\nReferences\nReference entries.");
+    page.final_url =
+        "https://www.poms.org/sites/default/files/callforpapers/FlexMfgEcosystems-Revised_0.pdf"
+            .into();
+    page.format = "pdf_text".into();
+    let recovered = extract_cfp_full_text(&original, &page).unwrap();
+    assert_eq!(recovered.scope, "Background: Complete original research scope.\nCall for submissions: Original methodological preferences.");
+    assert_eq!(recovered.requirements, "Authors are encouraged to contact the editorial team with submission questions.\nPlease follow the original submission guidelines.");
+}
+
+#[test]
 fn cfp_background_security_scripts_do_not_hide_verified_original_content() {
     let page = document("<title>Example Journal calls</title><h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original research scope.</p><p>Submission deadline: 31 December 2026</p><script>window._cf_chl_opt={};load('/cdn-cgi/challenge-platform/scripts/jsd/main.js');</script>");
     assert!(!is_cfp_challenge(&page));

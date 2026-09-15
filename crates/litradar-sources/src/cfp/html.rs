@@ -343,7 +343,7 @@ fn full_text_sections(body: &str) -> (String, String) {
         .find(&body)
         .map_or(body.as_str(), |boundary| &body[..boundary.start()])
         .trim();
-    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines?|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|all submissions must be formatted|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|投稿渠道|投稿网址|投稿指南|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
+    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines?|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|all submissions must be formatted|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|投稿渠道|投稿网址|投稿指南|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|prospective authors should submit|authors are encouraged to contact the editorial team|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
     match requirements.find(body) {
         Some(boundary) => (
             body[..boundary.start()].trim().to_owned(),
@@ -655,11 +655,74 @@ pub fn extract_cfp_full_text(
             .join(r"\s+");
         let title =
             Regex::new(&format!("(?i){title}")).map_err(|_| CfpSourceError::Unrecognized)?;
-        let matched = title.find(&text).ok_or(CfpSourceError::Unrecognized)?;
+        let matched = title
+            .find(&text)
+            .or_else(|| {
+                let is_reviewed = Url::parse(&document.final_url).is_ok_and(|url| {
+                    (url.host_str() == Some("ieee-iotj.org")
+                        && url.path().starts_with("/wp-content/uploads/")
+                        && original.catalog_ids.iter().any(|id| id == "issn-2327-4662"))
+                        || (url.host_str() == Some("www.poms.org")
+                            && url
+                                .path()
+                                .starts_with("/sites/default/files/callforpapers/")
+                            && original.catalog_ids.iter().any(|id| id == "issn-1059-1478"))
+                });
+                if !is_reviewed {
+                    return None;
+                }
+                let typography = original
+                    .title
+                    .replace('&', "and")
+                    .chars()
+                    .filter(|character| character.is_alphanumeric())
+                    .map(|character| regex::escape(&character.to_string()))
+                    .collect::<Vec<_>>()
+                    .join(r"[\s\p{P}]*");
+                Regex::new(&format!("(?i){typography}")).ok()?.find(&text)
+            })
+            .ok_or(CfpSourceError::Unrecognized)?;
         if text[..matched.start()].chars().count() > 600 {
             return Err(CfpSourceError::Unrecognized);
         }
-        text[matched.end()..].trim().to_owned()
+        let body = text[matched.end()..].trim();
+        if Url::parse(&document.final_url).is_ok_and(|url| {
+            url.host_str() == Some("www.poms.org")
+                && url.path()
+                    == "/sites/default/files/callforpapers/FlexMfgEcosystems-Revised_0.pdf"
+        }) && original.catalog_ids.iter().any(|id| id == "issn-1059-1478")
+        {
+            let scope = Regex::new(r"(?im)^Background:")
+                .expect("POMS background boundary")
+                .find(body)
+                .ok_or(CfpSourceError::Unrecognized)?;
+            let dates = Regex::new(r"(?im)^Deadlines\s*$")
+                .expect("POMS dates boundary")
+                .find(body)
+                .ok_or(CfpSourceError::Unrecognized)?;
+            let requirements =
+                Regex::new(r"(?im)^Authors are encouraged to contact the editorial team")
+                    .expect("POMS submission boundary")
+                    .find(body)
+                    .ok_or(CfpSourceError::Unrecognized)?;
+            let editors = Regex::new(r"(?im)^Guest Editors\s*$")
+                .expect("POMS biography boundary")
+                .find(body)
+                .ok_or(CfpSourceError::Unrecognized)?;
+            if !(scope.start() < dates.start()
+                && dates.end() <= requirements.start()
+                && requirements.start() < editors.start())
+            {
+                return Err(CfpSourceError::Unrecognized);
+            }
+            format!(
+                "{}\n{}",
+                body[scope.start()..dates.start()].trim(),
+                body[requirements.start()..editors.start()].trim()
+            )
+        } else {
+            body.to_owned()
+        }
     } else {
         let has_title = html
             .select(&Selector::parse("h1,h2").expect("article title selector"))
