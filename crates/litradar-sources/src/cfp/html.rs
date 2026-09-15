@@ -206,6 +206,44 @@ pub fn cfp_original_links(source: &CfpSource, document: &CfpDocument) -> Vec<Str
         }
         return details;
     }
+    if base.host_str() == Some("www.ieee-ras.org")
+        && base.path().trim_end_matches('/') == "/publications/t-ase/special-issues-t-ase"
+        && source.catalog_ids.iter().any(|id| id == "issn-1545-5955")
+    {
+        let title_selector = Selector::parse("h3.dynamic-content-for-elementor-acf")
+            .expect("T-ASE card title selector");
+        let link_selector =
+            Selector::parse("a.elementor-button[href]").expect("T-ASE download selector");
+        for card in html.select(
+            &Selector::parse("div[data-elementor-type='container'][data-elementor-id='16977']")
+                .expect("T-ASE card selector"),
+        ) {
+            if !card
+                .select(&title_selector)
+                .any(|title| matching_title(&title.text().collect::<String>(), &source.title))
+            {
+                continue;
+            }
+            for link in card.select(&link_selector) {
+                if let Some(url) = link
+                    .value()
+                    .attr("href")
+                    .and_then(|href| base.join(href).ok())
+                    .filter(|url| {
+                        matches!(url.scheme(), "https" | "http")
+                            && url.host_str() == base.host_str()
+                            && url.path().to_ascii_lowercase().ends_with(".pdf")
+                    })
+                {
+                    let url = url.to_string();
+                    if !details.contains(&url) {
+                        details.push(url);
+                    }
+                }
+            }
+        }
+        return details;
+    }
     let mut indexes = Vec::new();
     let has_title = html
         .select(&Selector::parse("h1,h2,h3,h4,title").expect("original title selector"))

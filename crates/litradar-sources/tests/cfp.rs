@@ -340,6 +340,20 @@ fn cfp_financial_research_full_text_uses_the_title_table_without_outer_metadata(
 }
 
 #[test]
+fn cfp_tase_downloads_are_scoped_to_each_original_title_card() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-1545-5955".into()];
+    let mut page = document("<h1>Special issues</h1><div data-elementor-type='container' data-elementor-id='16977'><h3 class='dynamic-content-for-elementor-acf'>Another topic</h3><a class='elementor-button' href='/another.pdf'>Download (PDF)</a></div><div data-elementor-type='container' data-elementor-id='16977'><h3 class='dynamic-content-for-elementor-acf'>Original topic</h3><a class='elementor-button' href='/original.pdf'>Download (PDF)</a></div><a href='/unrelated.pdf'>Download (PDF)</a>");
+    page.final_url = "https://www.ieee-ras.org/publications/t-ase/special-issues-t-ase/".into();
+    assert_eq!(
+        cfp_original_links(&original, &page),
+        vec!["https://www.ieee-ras.org/original.pdf"]
+    );
+    page.text = page.text.replace("Original topic", "No longer listed");
+    assert!(cfp_original_links(&original, &page).is_empty());
+}
+
+#[test]
 fn cfp_background_security_scripts_do_not_hide_verified_original_content() {
     let page = document("<title>Example Journal calls</title><h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original research scope.</p><p>Submission deadline: 31 December 2026</p><script>window._cf_chl_opt={};load('/cdn-cgi/challenge-platform/scripts/jsd/main.js');</script>");
     assert!(!is_cfp_challenge(&page));
