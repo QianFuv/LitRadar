@@ -152,9 +152,28 @@ impl SupervisedChild {
     ///
     /// Supervised child or a fixed spawn/assignment failure.
     pub fn spawn(command: &mut Command) -> Result<Self, ProcessSupervisorError> {
+        Self::spawn_with_visibility(command, false)
+    }
+
+    /// Spawn an owned helper process tree without opening a Windows console window.
+    pub fn spawn_hidden(command: &mut Command) -> Result<Self, ProcessSupervisorError> {
+        Self::spawn_with_visibility(command, true)
+    }
+
+    fn spawn_with_visibility(
+        command: &mut Command,
+        is_hidden: bool,
+    ) -> Result<Self, ProcessSupervisorError> {
         let mut group = command.group();
         #[cfg(windows)]
-        group.kill_on_drop(true);
+        {
+            group.kill_on_drop(true);
+            if is_hidden {
+                group.creation_flags(0x0800_0000);
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = is_hidden;
         let child = group.spawn().map_err(|error| {
             ProcessSupervisorError::new(ProcessSupervisorErrorKind::SpawnOrAssign, &error)
         })?;
@@ -254,6 +273,11 @@ impl SupervisedChild {
         if self.is_reaped {
             return self.wait();
         }
+        self.force_kill_remaining_tree()
+    }
+
+    /// Terminate remaining owned helper descendants even if the leader was already reaped.
+    pub fn force_kill_remaining_tree(&mut self) -> Result<ExitStatus, ProcessSupervisorError> {
         if let Err(error) = self.child.kill() {
             match self.child.try_wait() {
                 Ok(Some(status)) => {
@@ -433,6 +457,31 @@ mod tests {
     }
 
     #[test]
+    fn process_tree_helper_cleanup_reaps_descendants_after_leader_exit() {
+        let directory = tempdir().expect("temporary process directory should create");
+        let fixture_path = directory.path().join("early-exit.txt");
+        let mut child = spawn_process_tree_with_exit(&fixture_path, true);
+        let fixture = wait_for_process_tree(&fixture_path);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while child
+            .try_wait()
+            .expect("leader status should be readable")
+            .is_none()
+        {
+            assert!(
+                Instant::now() < deadline,
+                "leader should exit within the fixture bound"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(listener_is_reachable(fixture.child_address));
+        child
+            .force_kill_remaining_tree()
+            .expect("remaining helper descendants should be terminated");
+        assert_listeners_stopped(&fixture);
+    }
+
+    #[test]
     fn process_tree_spawn_failure_has_fixed_classification() {
         let mut command = Command::new("missing-process-supervisor-fixture-executable");
         let error = SupervisedChild::spawn(&mut command)
@@ -449,6 +498,10 @@ mod tests {
 
     #[test]
     #[ignore = "helper process for complete process-tree coverage"]
+    #[allow(
+        clippy::zombie_processes,
+        reason = "The fixture deliberately exits first; the outer supervisor must terminate the surviving descendant"
+    )]
     fn process_tree_parent_fixture() {
         let fixture_path = fixture_path();
         let child_path = fixture_path.with_extension("child");
@@ -486,6 +539,10 @@ mod tests {
         )
         .expect("process tree fixture should publish");
 
+        if env::var("LITRADAR_CFP_PARENT_EXIT").as_deref() == Ok("true") {
+            return;
+        }
+
         loop {
             assert!(listener.local_addr().is_ok());
             assert!(grandchild.try_wait().is_ok_and(|status| status.is_none()));
@@ -512,6 +569,10 @@ mod tests {
     }
 
     fn spawn_process_tree(fixture_path: &Path) -> SupervisedChild {
+        spawn_process_tree_with_exit(fixture_path, false)
+    }
+
+    fn spawn_process_tree_with_exit(fixture_path: &Path, should_exit: bool) -> SupervisedChild {
         let mut command =
             Command::new(env::current_exe().expect("current test executable should resolve"));
         command
@@ -522,6 +583,7 @@ mod tests {
                 "--nocapture",
             ])
             .env(FIXTURE_PATH_ENV, fixture_path)
+            .env("LITRADAR_CFP_PARENT_EXIT", should_exit.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
