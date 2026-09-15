@@ -1,0 +1,23 @@
+LitRadar third-party source and license notices
+
+The following unmodified upstream Rust crates are used by the HTML parser and
+are distributed under the Mozilla Public License 2.0 (MPL-2.0). Their complete
+Source Code Form, including upstream copyright and license notices, is available
+from the exact versioned source archives below. The source remains governed by
+MPL-2.0; the accompanying MPL-2.0.txt contains that license.
+
+cssparser 0.37.0
+https://crates.io/api/v1/crates/cssparser/0.37.0/download
+
+cssparser-macros 0.7.1
+https://crates.io/api/v1/crates/cssparser-macros/0.7.1/download
+
+dtoa-short 0.3.5
+https://crates.io/api/v1/crates/dtoa-short/0.3.5/download
+
+selectors 0.38.0
+https://crates.io/api/v1/crates/selectors/0.38.0/download
+
+Exact package checksums are recorded in Cargo.lock. The signed release SPDX SBOM
+records the complete image dependency inventory; this notice covers the pinned
+MPL-2.0 parser dependency exceptions in deny.toml.

@@ -32,6 +32,14 @@ confidence-threshold = 0.93
 # Review by: 2027-01-31
 exceptions = [
     { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots@1.0.8" },
+    # Owner: LitRadar security maintainers
+    # Rationale: scraper's unmodified Servo parser dependencies use MPL-2.0;
+    # the runtime ships their license and exact upstream source locations.
+    # Review by: 2027-01-31
+    { allow = ["MPL-2.0"], crate = "cssparser@0.37.0" },
+    { allow = ["MPL-2.0"], crate = "cssparser-macros@0.7.1" },
+    { allow = ["MPL-2.0"], crate = "dtoa-short@0.3.5" },
+    { allow = ["MPL-2.0"], crate = "selectors@0.38.0" },
 ]
 unused-allowed-license = "allow"
 unused-license-exception = "deny"

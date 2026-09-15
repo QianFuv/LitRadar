@@ -63,6 +63,8 @@ RUN apt-get update \
 
 COPY --from=rust-build /app/litradar /usr/local/bin/litradar
 
+COPY third-party /usr/share/doc/litradar/third-party
+
 COPY data/meta /usr/share/litradar/meta
 COPY --chown=litradar:litradar --from=frontend-build /app/out web
 
