@@ -357,7 +357,7 @@ fn cfp_tase_downloads_are_scoped_to_each_original_title_card() {
 fn cfp_springer_updates_ignore_hidden_title_prefixes_and_follow_only_full_call_links() {
     let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
     original.catalog_ids = vec!["issn-0217-4561".into()];
-    let mut page = document("<div id='updates-content-body'><h1><span class='u-visually-hidden'>Asia Pacific Journal of Management - </span>Original topic</h1><p>Complete original scope.</p><p>Submission Guideline:</p><p>Complete original requirements.</p><h2>References:</h2><p><a href='/unrelated-report.pdf'>Unrelated report</a></p></div><aside>Other journal updates.</aside>");
+    let mut page = document("<div id='updates-content-body'><h1><span class='u-visually-hidden'>Asia Pacific Journal of Management - </span>Original topic</h1><p>Complete original scope.</p><p>Submission Guideline:</p><p>Complete original requirements.</p><h2>Bios of Guest Editors:</h2><p>Unrelated editorial biographies.</p><h2>References:</h2><p><a href='/unrelated-report.pdf'>Unrelated report</a></p></div><aside>Other journal updates.</aside>");
     page.final_url = "https://link.springer.com/journal/10490/updates/26984250".into();
     let recovered = extract_cfp_full_text(&original, &page).unwrap();
     assert_eq!(recovered.scope, "Complete original scope.");
@@ -451,6 +451,21 @@ fn cfp_resources_notice_notes_are_submission_requirements() {
             recovered.requirements,
             format!("{label}\n请提交500字摘要，全文投稿时选择原文指定栏目。")
         );
+    }
+}
+
+#[test]
+fn cfp_full_text_recognizes_numbered_submissions_and_explicit_portal_instructions() {
+    let original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    for instruction in [
+        "III. Submissions\nAll papers are to be submitted through the original portal. Follow the\nsubmission process. Keep the original anonymous format.",
+        "All papers are to be submitted through the original portal. Select the special issue category.",
+    ] {
+        let mut page = document(&format!("Original topic\nComplete original scope.\n{instruction}"));
+        page.format = "pdf_text".into();
+        let recovered = extract_cfp_full_text(&original, &page).unwrap();
+        assert_eq!(recovered.scope, "Complete original scope.");
+        assert_eq!(recovered.requirements, instruction);
     }
 }
 

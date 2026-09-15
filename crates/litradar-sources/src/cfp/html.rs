@@ -343,7 +343,7 @@ fn full_text_sections(body: &str) -> (String, String) {
         .find(&body)
         .map_or(body.as_str(), |boundary| &body[..boundary.start()])
         .trim();
-    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines?|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|all submissions must be formatted|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|投稿渠道|投稿网址|投稿指南|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|prospective authors should submit|authors are encouraged to contact the editorial team|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
+    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+|[IVX]+)[、.．\s]+)?(?:submissions?(?:\s*[:：]|[ \t]*$)|submissions? (?:format|guidelines?|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|all submissions must be formatted|all papers are to be submitted|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|投稿渠道|投稿网址|投稿指南|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|prospective authors should submit|authors are encouraged to contact the editorial team|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
     match requirements.find(body) {
         Some(boundary) => (
             body[..boundary.start()].trim().to_owned(),
@@ -390,7 +390,12 @@ pub fn extract_cfp_full_text(
         if pattern(r"(?i)read the full call for papers", &body) {
             return Err(CfpSourceError::Unrecognized);
         }
-        body
+        let end = Regex::new(r"(?im)^(?:#{1,6} )?bios of guest editors\s*[:：]?\s*$")
+            .expect("Springer update biography boundary");
+        end.find(&body)
+            .map_or(body.as_str(), |boundary| &body[..boundary.start()])
+            .trim()
+            .to_owned()
     } else if Url::parse(&document.final_url).is_ok_and(|url| {
         url.host_str() == Some("www.comsoc.org")
             && [
