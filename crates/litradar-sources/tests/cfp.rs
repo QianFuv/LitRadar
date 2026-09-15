@@ -354,6 +354,27 @@ fn cfp_tase_downloads_are_scoped_to_each_original_title_card() {
 }
 
 #[test]
+fn cfp_springer_updates_ignore_hidden_title_prefixes_and_follow_only_full_call_links() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-0217-4561".into()];
+    let mut page = document("<div id='updates-content-body'><h1><span class='u-visually-hidden'>Asia Pacific Journal of Management - </span>Original topic</h1><p>Complete original scope.</p><p>Submission Guideline:</p><p>Complete original requirements.</p><h2>References:</h2><p><a href='/unrelated-report.pdf'>Unrelated report</a></p></div><aside>Other journal updates.</aside>");
+    page.final_url = "https://link.springer.com/journal/10490/updates/26984250".into();
+    let recovered = extract_cfp_full_text(&original, &page).unwrap();
+    assert_eq!(recovered.scope, "Complete original scope.");
+    assert_eq!(
+        recovered.requirements,
+        "Submission Guideline:\nComplete original requirements."
+    );
+    assert!(cfp_original_links(&original, &page).is_empty());
+    page.text = page.text.replace("<h2>References:</h2>", "<p>Read the full Call for Papers <a href='https://cms-resources.apps.public.k8s.springernature.io/springer-cms/rest/v1/content/27821988/data/v1'>here</a>.</p><h2>References:</h2>");
+    assert!(extract_cfp_full_text(&original, &page).is_err());
+    assert_eq!(cfp_original_links(&original, &page), vec!["https://cms-resources.apps.public.k8s.springernature.io/springer-cms/rest/v1/content/27821988/data/v1"]);
+    page.text = page.text.replace("Original topic", "Another topic");
+    assert!(cfp_original_links(&original, &page).is_empty());
+    assert!(extract_cfp_full_text(&original, &page).is_err());
+}
+
+#[test]
 fn cfp_background_security_scripts_do_not_hide_verified_original_content() {
     let page = document("<title>Example Journal calls</title><h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original research scope.</p><p>Submission deadline: 31 December 2026</p><script>window._cf_chl_opt={};load('/cdn-cgi/challenge-platform/scripts/jsd/main.js');</script>");
     assert!(!is_cfp_challenge(&page));

@@ -163,6 +163,31 @@ fn matching_title(first: &str, second: &str) -> bool {
     !first.is_empty() && first == normalize(second)
 }
 
+fn springer_update_body<'a>(
+    original: &CfpSource,
+    document: &CfpDocument,
+    html: &'a Html,
+) -> Option<scraper::ElementRef<'a>> {
+    let url = Url::parse(&document.final_url).ok()?;
+    if url.host_str() != Some("link.springer.com")
+        || !url.path().starts_with("/journal/10490/updates/")
+        || !original.catalog_ids.iter().any(|id| id == "issn-0217-4561")
+    {
+        return None;
+    }
+    let body = html
+        .select(&Selector::parse("#updates-content-body").expect("Springer update body selector"))
+        .next()?;
+    let title = body
+        .select(&Selector::parse("h1").expect("Springer update title selector"))
+        .next()?;
+    let title = visible_html_excluding(
+        &Html::parse_fragment(&title.inner_html()),
+        Some(&Selector::parse(".u-visually-hidden").expect("Springer hidden title selector")),
+    );
+    matching_title(&title, &original.title).then_some(body)
+}
+
 /// Find original-title detail links and bounded journal-list navigation for an existing notice.
 pub fn cfp_original_links(source: &CfpSource, document: &CfpDocument) -> Vec<String> {
     let html = Html::parse_document(&document.text);
@@ -170,6 +195,31 @@ pub fn cfp_original_links(source: &CfpSource, document: &CfpDocument) -> Vec<Str
         return Vec::new();
     };
     let mut details = Vec::new();
+    if let Some(body) = springer_update_body(source, document, &html) {
+        for paragraph in
+            body.select(&Selector::parse("p").expect("Springer full-call paragraph selector"))
+        {
+            if !pattern(
+                r"(?i)read the full call for papers",
+                &paragraph.text().collect::<String>(),
+            ) {
+                continue;
+            }
+            for link in paragraph
+                .select(&Selector::parse("a[href]").expect("Springer full-call link selector"))
+            {
+                if let Some(url) = link
+                    .value()
+                    .attr("href")
+                    .and_then(|href| base.join(href).ok())
+                    .filter(|url| matches!(url.scheme(), "https" | "http"))
+                {
+                    details.push(url.to_string());
+                }
+            }
+        }
+        return details;
+    }
     if base.host_str() == Some("www.poms.org")
         && base.path().trim_end_matches('/') == "/journal/announcements"
         && source.catalog_ids.iter().any(|id| id == "issn-1059-1478")
@@ -293,7 +343,7 @@ fn full_text_sections(body: &str) -> (String, String) {
         .find(&body)
         .map_or(body.as_str(), |boundary| &body[..boundary.start()])
         .trim();
-    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|投稿渠道|投稿网址|投稿指南|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
+    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines?|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|投稿渠道|投稿网址|投稿指南|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
     match requirements.find(body) {
         Some(boundary) => (
             body[..boundary.start()].trim().to_owned(),
@@ -329,6 +379,18 @@ pub fn extract_cfp_full_text(
             .next()
             .ok_or(CfpSourceError::Unrecognized)?;
         visible_html(&Html::parse_fragment(&description.inner_html()))
+    } else if let Some(body) = springer_update_body(original, document, &html) {
+        let body = visible_html_excluding(
+            &Html::parse_fragment(&body.inner_html()),
+            Some(
+                &Selector::parse("h1, .u-visually-hidden")
+                    .expect("Springer update title exclusion"),
+            ),
+        );
+        if pattern(r"(?i)read the full call for papers", &body) {
+            return Err(CfpSourceError::Unrecognized);
+        }
+        body
     } else if Url::parse(&document.final_url).is_ok_and(|url| {
         url.host_str() == Some("www.comsoc.org")
             && [
