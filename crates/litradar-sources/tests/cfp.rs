@@ -279,6 +279,47 @@ fn cfp_chinese_full_text_preserves_direct_text_and_excludes_page_metadata() {
 }
 
 #[test]
+fn cfp_poms_detail_links_belong_to_the_matching_announcement_card() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-1059-1478".into()];
+    for (field, href) in [
+        (
+            "views-field-field-submission-guidelines-docu",
+            "/sites/default/files/callforpapers/Original%20topic.pdf",
+        ),
+        ("views-field-views-conditional-field", "/node/788"),
+    ] {
+        let mut page = document(&format!("<nav><a href='/colleges/hocm'>Original topic</a></nav><div class='poms-special-issues'><div class='views-field-title'><span class='field-content'>Another topic</span></div><div class='{field}'><a href='/node/999'>See More &gt;</a></div></div><div class='poms-special-issues'><div class='views-field-title'><span class='field-content'>Original topic</span></div><div class='{field}'><a href='{href}'>See More &gt;</a></div></div>"));
+        page.final_url = "https://www.poms.org/journal/announcements".into();
+        assert_eq!(
+            cfp_original_links(&original, &page),
+            vec![format!("https://www.poms.org{href}")]
+        );
+        page.text = page.text.replace(
+            "<span class='field-content'>Original topic</span>",
+            "<span class='field-content'>Different topic</span>",
+        );
+        assert!(cfp_original_links(&original, &page).is_empty());
+    }
+}
+
+#[test]
+fn cfp_poms_full_text_uses_the_verified_call_body() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-1059-1478".into()];
+    let mut page = document("<article class='node--type-call-for-papers node--view-mode-full'><h1 class='node__title'>Original topic</h1><div class='node__content'><div class='field-name-field-submission-date-range'>Raw publication metadata</div><div class='field-name-field-submission-guidelines-summ'><p>Complete original scope.</p><h3>Submission procedure</h3><p>Complete original submission requirements.</p></div></div></article><aside>Unrelated college announcements.</aside>");
+    page.final_url = "https://www.poms.org/node/788".into();
+    let recovered = extract_cfp_full_text(&original, &page).unwrap();
+    assert_eq!(recovered.scope, "Complete original scope.");
+    assert_eq!(
+        recovered.requirements,
+        "Submission procedure\nComplete original submission requirements."
+    );
+    page.text = page.text.replace("Original topic", "Another topic");
+    assert!(extract_cfp_full_text(&original, &page).is_err());
+}
+
+#[test]
 fn cfp_background_security_scripts_do_not_hide_verified_original_content() {
     let page = document("<title>Example Journal calls</title><h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original research scope.</p><p>Submission deadline: 31 December 2026</p><script>window._cf_chl_opt={};load('/cdn-cgi/challenge-platform/scripts/jsd/main.js');</script>");
     assert!(!is_cfp_challenge(&page));

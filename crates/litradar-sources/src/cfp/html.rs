@@ -170,6 +170,42 @@ pub fn cfp_original_links(source: &CfpSource, document: &CfpDocument) -> Vec<Str
         return Vec::new();
     };
     let mut details = Vec::new();
+    if base.host_str() == Some("www.poms.org")
+        && base.path().trim_end_matches('/') == "/journal/announcements"
+        && source.catalog_ids.iter().any(|id| id == "issn-1059-1478")
+    {
+        let title_selector =
+            Selector::parse(".views-field-title .field-content").expect("POMS card title selector");
+        let link_selector = Selector::parse(".views-field-field-submission-guidelines-docu a[href], .views-field-views-conditional-field a[href]")
+            .expect("POMS card detail selector");
+        for card in
+            html.select(&Selector::parse(".poms-special-issues").expect("POMS card selector"))
+        {
+            if !card
+                .select(&title_selector)
+                .any(|title| matching_title(&title.text().collect::<String>(), &source.title))
+            {
+                continue;
+            }
+            for link in card.select(&link_selector) {
+                if let Some(url) = link
+                    .value()
+                    .attr("href")
+                    .and_then(|href| base.join(href).ok())
+                    .filter(|url| {
+                        matches!(url.scheme(), "https" | "http")
+                            && url.host_str() == base.host_str()
+                    })
+                {
+                    let url = url.to_string();
+                    if !details.contains(&url) {
+                        details.push(url);
+                    }
+                }
+            }
+        }
+        return details;
+    }
     let mut indexes = Vec::new();
     let has_title = html
         .select(&Selector::parse("h1,h2,h3,h4,title").expect("original title selector"))
@@ -401,6 +437,30 @@ pub fn extract_cfp_full_text(
             &Html::parse_fragment(&body.inner_html()),
             Some(&title_selector),
         )
+    } else if Url::parse(&document.final_url)
+        .is_ok_and(|url| url.host_str() == Some("www.poms.org") && url.path().starts_with("/node/"))
+        && original.catalog_ids.iter().any(|id| id == "issn-1059-1478")
+    {
+        let title_selector = Selector::parse("h1.node__title").expect("POMS notice title selector");
+        let article = html
+            .select(
+                &Selector::parse("article.node--type-call-for-papers.node--view-mode-full")
+                    .expect("POMS notice container selector"),
+            )
+            .find(|article| {
+                article
+                    .select(&title_selector)
+                    .any(|title| matching_title(&title.text().collect::<String>(), &original.title))
+            })
+            .ok_or(CfpSourceError::Unrecognized)?;
+        let body = article
+            .select(
+                &Selector::parse(".field-name-field-submission-guidelines-summ")
+                    .expect("POMS notice body selector"),
+            )
+            .next()
+            .ok_or(CfpSourceError::Unrecognized)?;
+        visible_html(&Html::parse_fragment(&body.inner_html()))
     } else if document.format == "pdf_text" {
         let text = plain(&document.text);
         if pattern(
