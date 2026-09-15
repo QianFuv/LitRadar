@@ -217,6 +217,26 @@ fn cfp_comsoc_full_text_keeps_leading_dates_out_of_scope_and_requirements() {
 }
 
 #[test]
+fn cfp_tnsm_full_text_keeps_submission_format_with_the_requirements() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-1932-4537".into()];
+    original.requirements = "Previous requirements.".into();
+    let mut page = document("<h1 class='h1--page-title'>Original topic</h1><article class='node--type-call-for-papers node--view-mode-full'><div class='paragraph-anchor-wrapper'><div class='text-long'><h2>Call for Papers</h2><p>Complete original scope.</p><h3>Submission Format</h3><p>Explain how previous conference papers have been extended.</p><h3>Submission Guidelines</h3><p>Submit through the original journal portal.</p><h3>Important Dates</h3><p>Paper submission: 31 December 2026</p><h3>Guest Editors</h3><p>Editorial names.</p></div></div></article>");
+    page.final_url =
+        "https://www.comsoc.org/publications/journals/ieee-tnsm/cfp/original-topic".into();
+    let recovered = extract_cfp_full_text(&original, &page).unwrap();
+    assert_eq!(recovered.scope, "Complete original scope.");
+    assert_eq!(recovered.requirements, "Submission Format\nExplain how previous conference papers have been extended.\nSubmission Guidelines\nSubmit through the original journal portal.");
+    page.final_url =
+        "https://www.comsoc.org/publications/journals/ieee-jsac/cfp/original-topic".into();
+    assert!(extract_cfp_full_text(&original, &page).is_err());
+    page.final_url =
+        "https://www.comsoc.org/publications/journals/ieee-tnsm/cfp/original-topic".into();
+    original.catalog_ids = vec!["issn-0733-8716".into()];
+    assert!(extract_cfp_full_text(&original, &page).is_err());
+}
+
+#[test]
 fn cfp_background_security_scripts_do_not_hide_verified_original_content() {
     let page = document("<title>Example Journal calls</title><h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original research scope.</p><p>Submission deadline: 31 December 2026</p><script>window._cf_chl_opt={};load('/cdn-cgi/challenge-platform/scripts/jsd/main.js');</script>");
     assert!(!is_cfp_challenge(&page));

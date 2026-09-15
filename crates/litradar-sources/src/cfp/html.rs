@@ -208,7 +208,7 @@ fn full_text_sections(body: &str) -> (String, String) {
         .find(&body)
         .map_or(body.as_str(), |boundary| &body[..boundary.start()])
         .trim();
-    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:guidelines|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
+    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
     match requirements.find(body) {
         Some(boundary) => (
             body[..boundary.start()].trim().to_owned(),
@@ -246,11 +246,17 @@ pub fn extract_cfp_full_text(
         visible_html(&Html::parse_fragment(&description.inner_html()))
     } else if Url::parse(&document.final_url).is_ok_and(|url| {
         url.host_str() == Some("www.comsoc.org")
-            && url
-                .path()
-                .starts_with("/publications/journals/ieee-jsac/cfp/")
-    }) && original.catalog_ids.iter().any(|id| id == "issn-0733-8716")
-    {
+            && [
+                ("ieee-jsac", "issn-0733-8716"),
+                ("ieee-tnsm", "issn-1932-4537"),
+            ]
+            .iter()
+            .any(|(journal, catalog_id)| {
+                url.path()
+                    .starts_with(&format!("/publications/journals/{journal}/cfp/"))
+                    && original.catalog_ids.iter().any(|id| id == catalog_id)
+            })
+    }) {
         let has_title = html
             .select(&Selector::parse("h1.h1--page-title").expect("ComSoc title selector"))
             .any(|title| matching_title(&title.text().collect::<String>(), &original.title));
@@ -280,10 +286,11 @@ pub fn extract_cfp_full_text(
         if scope_heading.is_none() && text.to_lowercase().starts_with("important dates") {
             return Err(CfpSourceError::Unrecognized);
         }
-        let requirement_heading = Regex::new(r"(?im)^submissions? guidelines\s*[:：]?\s*$")
-            .expect("ComSoc requirement heading")
-            .find(&text)
-            .ok_or(CfpSourceError::Unrecognized)?;
+        let requirement_heading =
+            Regex::new(r"(?im)^submissions? (?:format|guidelines)\s*[:：]?\s*$")
+                .expect("ComSoc requirement heading")
+                .find(&text)
+                .ok_or(CfpSourceError::Unrecognized)?;
         if scope_start >= requirement_heading.start() {
             return Err(CfpSourceError::Unrecognized);
         }
