@@ -740,7 +740,17 @@ pub fn extract_cfp_full_text(
             .map_or(body.as_str(), |boundary| &body[..boundary.start()]);
         body.trim().to_owned()
     };
-    let (scope, requirements) = full_text_sections(&body);
+    let (mut scope, mut requirements) = full_text_sections(&body);
+    if original.catalog_ids.iter().any(|id| id == "issn-1007-7588") {
+        let notes = Regex::new(r"(?m)^(?:重点注意事项|注意事项|时间节点)\s*[:：]?\s*$")
+            .expect("resources submission notes boundary");
+        if let Some(start) = notes.find(&scope).map(|boundary| boundary.start()) {
+            requirements = format!("{}\n{}", scope[start..].trim(), requirements)
+                .trim()
+                .to_owned();
+            scope = scope[..start].trim().to_owned();
+        }
+    }
     if (scope.is_empty() && requirements.is_empty())
         || (!original.requirements.is_empty() && requirements.is_empty())
         || pattern(r"(?m)(?:\.{3}|…)\s*$", &scope)

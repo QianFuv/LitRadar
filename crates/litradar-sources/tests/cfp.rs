@@ -438,6 +438,23 @@ fn cfp_reviewed_pdf_manufacturing_sections_exclude_deadlines_and_biographies() {
 }
 
 #[test]
+fn cfp_resources_notice_notes_are_submission_requirements() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-1007-7588".into()];
+    original.title = "原文征稿主题".into();
+    for label in ["注意事项", "重点注意事项", "时间节点："] {
+        let mut page = document(&format!("<div class='content_nr'><div class='news-content'><div class='newstitle'>原文征稿主题</div><p>完整的研究范围。</p><p>{label}</p><p>请提交500字摘要，全文投稿时选择原文指定栏目。</p></div></div>"));
+        page.final_url = "https://www.resci.cn/CN/news/news1268.shtml".into();
+        let recovered = extract_cfp_full_text(&original, &page).unwrap();
+        assert_eq!(recovered.scope, "完整的研究范围。");
+        assert_eq!(
+            recovered.requirements,
+            format!("{label}\n请提交500字摘要，全文投稿时选择原文指定栏目。")
+        );
+    }
+}
+
+#[test]
 fn cfp_background_security_scripts_do_not_hide_verified_original_content() {
     let page = document("<title>Example Journal calls</title><h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original research scope.</p><p>Submission deadline: 31 December 2026</p><script>window._cf_chl_opt={};load('/cdn-cgi/challenge-platform/scripts/jsd/main.js');</script>");
     assert!(!is_cfp_challenge(&page));
