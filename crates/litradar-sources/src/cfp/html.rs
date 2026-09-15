@@ -343,7 +343,7 @@ fn full_text_sections(body: &str) -> (String, String) {
         .find(&body)
         .map_or(body.as_str(), |boundary| &body[..boundary.start()])
         .trim();
-    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines?|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|投稿渠道|投稿网址|投稿指南|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
+    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines?|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|all submissions must be formatted|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|投稿渠道|投稿网址|投稿指南|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
     match requirements.find(body) {
         Some(boundary) => (
             body[..boundary.start()].trim().to_owned(),
@@ -582,6 +582,63 @@ pub fn extract_cfp_full_text(
             .next()
             .ok_or(CfpSourceError::Unrecognized)?;
         visible_html(&Html::parse_fragment(&body.inner_html()))
+    } else if Url::parse(&document.final_url).is_ok_and(|url| {
+        url.host_str() == Some("www.grss-ieee.org")
+            && url
+                .path()
+                .starts_with("/publications/author-resources/grsl-special-streams/")
+    }) && original.catalog_ids.iter().any(|id| id == "issn-1545-598x")
+    {
+        let matches_title = |value: &str| {
+            ["", "GRSS Special Stream on ", "GRSS Special Stream of the "]
+                .iter()
+                .any(|prefix| {
+                    value
+                        .trim()
+                        .strip_prefix(prefix)
+                        .is_some_and(|title| matching_title(title, &original.title))
+                })
+        };
+        let title_selector =
+            Selector::parse(".elementor-widget-theme-post-title h1").expect("GRSL title selector");
+        let article = html
+            .select(
+                &Selector::parse(
+                    "[data-elementor-type='single-post'].category-grsl-special-streams",
+                )
+                .expect("GRSL detail selector"),
+            )
+            .find(|article| {
+                article
+                    .select(&title_selector)
+                    .any(|title| matches_title(&title.text().collect::<String>()))
+            })
+            .ok_or(CfpSourceError::Unrecognized)?;
+        let body = article
+            .select(
+                &Selector::parse(
+                    ".elementor-widget-theme-post-content > .elementor-widget-container",
+                )
+                .expect("GRSL body selector"),
+            )
+            .next()
+            .ok_or(CfpSourceError::Unrecognized)?;
+        let text = plain(&visible_html(&Html::parse_fragment(&body.inner_html())));
+        let text = text
+            .split_once('\n')
+            .filter(|(title, _)| matches_title(title))
+            .map_or(text.as_str(), |(_, body)| body);
+        let requirements = Regex::new(r"(?im)^all submissions must be formatted")
+            .expect("GRSL requirements boundary")
+            .find(text)
+            .ok_or(CfpSourceError::Unrecognized)?;
+        let scope = &text[..requirements.start()];
+        let scope_end = Regex::new(r"(?im)^(?:guest editors?|schedule)\s*[:：]?\s*$")
+            .expect("GRSL scope boundary");
+        let scope = scope_end
+            .find(scope)
+            .map_or(scope, |boundary| &scope[..boundary.start()]);
+        format!("{}\n{}", scope.trim(), text[requirements.start()..].trim())
     } else if document.format == "pdf_text" {
         let text = plain(&document.text);
         if pattern(

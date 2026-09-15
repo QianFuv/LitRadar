@@ -375,6 +375,21 @@ fn cfp_springer_updates_ignore_hidden_title_prefixes_and_follow_only_full_call_l
 }
 
 #[test]
+fn cfp_grsl_full_text_keeps_eligibility_and_requirements_after_editor_dates() {
+    let mut original = parse_cfp_page(&config(CfpAdapter::ElsevierCalls), &document("<h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original preview.</p><p>Submission deadline: 31 December 2026</p>"), "2026-09-15", true).unwrap().sources.remove(0);
+    original.catalog_ids = vec!["issn-1545-598x".into()];
+    for prefix in ["", "GRSS Special Stream on ", "GRSS Special Stream of the "] {
+        let mut page = document(&format!("<div data-elementor-type='single-post' class='category-grsl-special-streams'><div class='elementor-widget-theme-post-title'><h1>{prefix}Original topic</h1></div><div class='elementor-widget-theme-post-content'><div class='elementor-widget-container'><p>GRSS Special Stream on Original topic</p><p>Only accepted workshop papers are eligible.</p><p>List of Topics</p><ul><li>Complete original research topic.</li></ul><p>Guest Editors:</p><p>Editorial names.</p><p>Schedule:</p><p>Submission ends: 31 December 2026</p><p>All submissions must be formatted using the IEEE standard format. Complete original review and submission requirements.</p></div></div><aside>More GRSS Publications</aside></div>"));
+        page.final_url = "https://www.grss-ieee.org/publications/author-resources/grsl-special-streams/original-topic/".into();
+        let recovered = extract_cfp_full_text(&original, &page).unwrap();
+        assert_eq!(recovered.scope, "Only accepted workshop papers are eligible.\nList of Topics\nComplete original research topic.");
+        assert_eq!(recovered.requirements, "All submissions must be formatted using the IEEE standard format. Complete original review and submission requirements.");
+        page.text = page.text.replace("Original topic", "Unrelated topic");
+        assert!(extract_cfp_full_text(&original, &page).is_err());
+    }
+}
+
+#[test]
 fn cfp_background_security_scripts_do_not_hide_verified_original_content() {
     let page = document("<title>Example Journal calls</title><h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original research scope.</p><p>Submission deadline: 31 December 2026</p><script>window._cf_chl_opt={};load('/cdn-cgi/challenge-platform/scripts/jsd/main.js');</script>");
     assert!(!is_cfp_challenge(&page));
