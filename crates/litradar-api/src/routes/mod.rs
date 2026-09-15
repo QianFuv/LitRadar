@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod announcements;
 pub mod auth;
+pub mod cfp;
 pub mod cnki;
 pub mod favorites;
 pub mod health;
@@ -25,6 +26,11 @@ pub fn public_routes() -> Router<ApiState> {
             axum::routing::get(announcements::get_announcements),
         )
         .route("/meta/databases", axum::routing::get(index::list_databases))
+        .route("/cfp/journals", axum::routing::get(cfp::list_journals))
+        .route(
+            "/cfp/journals/{catalog_id}/notices",
+            axum::routing::get(cfp::list_notices),
+        )
         .route("/meta/areas", axum::routing::get(index::list_areas))
         .route(
             "/meta/journals",

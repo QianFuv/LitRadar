@@ -777,6 +777,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/cfp/journals': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List every maintained journal, including those with no indexed articles or CFP adapter. */
+    get: operations['list_cfp_journals'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/cfp/journals/{catalog_id}/notices': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read original notices and backend-calculated availability at a cursor's fixed instant. */
+    get: operations['list_cfp_notices'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/cnki/login/poll': {
     parameters: {
       query?: never;
@@ -1886,6 +1920,191 @@ export interface components {
        */
       used_invite_codes: number;
     };
+    /** @description Complete lightweight CFP journal catalog for one database. */
+    CfpCatalogResponse: {
+      /** @description Canonical selected database filename. */
+      database: string;
+      /**
+       * Format: int64
+       * @description UTC Unix instant used to evaluate every state in this response.
+       */
+      evaluatedAt: number;
+      /** @description Lightweight journals matching the optional search, without notice bodies. */
+      items: components['schemas']['CfpJournalSummary'][];
+      /** @description Whole-database summary. */
+      summary: components['schemas']['CfpCatalogSummary'];
+    };
+    /** @description Aggregate counts for the selected database before the journal-name search filter. */
+    CfpCatalogSummary: {
+      /** @description Journals with a reviewed snapshot or scoped empty statement. */
+      adaptedJournals: number;
+      /** @description Notices excluding closed and historical calls. */
+      currentNotices: number;
+      /** @description Complete maintained journal count, including journals without indexed articles. */
+      journals: number;
+      /** @description All stored notices associated with this database. */
+      notices: number;
+    };
+    /**
+     * @description Coverage of a journal's reviewed original-source data.
+     * @enum {string}
+     */
+    CfpCoverage: 'adapted' | 'unadapted';
+    /** @description A valid calendar date and its original clause. */
+    CfpDate: {
+      /** @description ISO calendar date, with no invented time of day. */
+      date: string;
+      /** @description Whether the source says strictly before this date. */
+      isExclusive: boolean;
+      /** @description Whether this milestone is optional. */
+      isOptional: boolean;
+      /** @description Untranslated source clause. */
+      originalText: string;
+      /** @description Purpose of this date. */
+      stage: components['schemas']['CfpDateStage'];
+    };
+    /**
+     * @description Purpose of a dated milestone, independent of whether it is required.
+     * @enum {string}
+     */
+    CfpDateStage:
+      | 'paper'
+      | 'abstract'
+      | 'proposal'
+      | 'opens'
+      | 'revision'
+      | 'decision'
+      | 'publication'
+      | 'event'
+      | 'registration';
+    /** @description Lightweight journal metadata and backend-calculated CFP summary. */
+    CfpJournalSummary: {
+      /** @description All maintained print and electronic ISSNs for display and journal search. */
+      allIssns: string[];
+      /** @description Maintained subject area, if available. */
+      area?: string | null;
+      /** @description Whether a backend discovery adapter can attempt automatic refresh. */
+      canRefresh: boolean;
+      /** @description Maintained historical aliases in the selected catalog. */
+      catalogAliases: string[];
+      /** @description Canonical maintained catalog ID used by the notice endpoint. */
+      catalogId: string;
+      /** @description Last verified original-source date, if adapted. */
+      checkedOn?: string | null;
+      /** @description Reviewed-source coverage. */
+      coverage: components['schemas']['CfpCoverage'];
+      /** @description Notices remaining after the default closed/historical filter. */
+      currentCount: number;
+      /**
+       * Format: int64
+       * @description Latest acquisition attempt Unix timestamp.
+       */
+      lastAttempt?: number | null;
+      /** @description Sanitized latest failure reason. */
+      lastError?: string | null;
+      /**
+       * Format: int64
+       * @description Last successful live acquisition Unix timestamp.
+       */
+      lastSuccess?: number | null;
+      /** @description Total stored notices, including closed and historical calls. */
+      noticeCount: number;
+      /** @description Latest acquisition status, including interrupted lease detection. */
+      refreshStatus: components['schemas']['CfpRefreshStatus'];
+      /** @description Untranslated scoped statement that no matching calls are listed. */
+      sourceStatement?: string | null;
+      /** @description Original source URL associated with a scoped publisher statement. */
+      sourceUrl?: string | null;
+      /** @description Backend-computed counts for each availability state. */
+      stateCounts: {
+        [key: string]: number;
+      };
+      /** @description Journal title from the selected metadata database. */
+      title: string;
+      /** @description Maintained journal title aliases for search. */
+      titleAliases: string[];
+    };
+    /**
+     * @description Submission purpose supported by the original announcement.
+     * @enum {string}
+     */
+    CfpKind: 'special_issue' | 'general' | 'proposal' | 'conference_linked';
+    /** @description Normalized notice persisted by the backend; availability is evaluated on read. */
+    CfpNotice: {
+      /** @description Last verified original-source date. */
+      checkedOn: string;
+      /** @description Validated dates, including non-submission milestones. */
+      dates: components['schemas']['CfpDate'][];
+      /** @description Default initial submission stage. */
+      entryStage: components['schemas']['CfpDateStage'];
+      /** @description Stable legacy-compatible URL/title identity within a journal. */
+      id: string;
+      /** @description Whether this announcement is an archival record. */
+      isHistorical: boolean;
+      /** @description Classified kind of call. */
+      kind: components['schemas']['CfpKind'];
+      /** @description Unresolved original timeline; never interpreted as perpetual availability. */
+      rawDateText: string;
+      /** @description Original instructions, empty if unavailable. */
+      requirements: string;
+      /** @description Original topic excerpt, empty if unavailable. */
+      scope: string;
+      sourceStatus?: null | components['schemas']['CfpState'];
+      /** @description Original public announcement URL. */
+      sourceUrl: string;
+      /** @description Explicit IANA timezone, if supplied by the source. */
+      timeZone?: string | null;
+      /** @description Original announcement title. */
+      title: string;
+      /**
+       * Format: int32
+       * @description Explicit annual topic year, when applicable.
+       */
+      topicYear?: number | null;
+    };
+    /** @description A revision-consistent page of original notices for one maintained catalog member. */
+    CfpNoticePage: {
+      /**
+       * Format: int64
+       * @description Fixed UTC Unix evaluation instant shared across cursor pages.
+       */
+      evaluatedAt: number;
+      /** @description Original notice records in stable source order. */
+      items: components['schemas']['CfpNoticeView'][];
+      /** @description Metadata, coverage and source freshness for the journal. */
+      journal: components['schemas']['CfpJournalSummary'];
+      /** @description Standard API pagination metadata, with a scope-bound next cursor. */
+      page: components['schemas']['PageMeta'];
+    };
+    /** @description One original notice with its authoritative backend-evaluated state and initial gate. */
+    CfpNoticeView: components['schemas']['CfpNotice'] & {
+      entryDeadline?: null | components['schemas']['CfpDate'];
+      /** @description Availability evaluated at the page's fixed instant. */
+      state: components['schemas']['CfpState'];
+    };
+    /**
+     * @description Source refresh freshness, independent of a notice's submission availability.
+     * @enum {string}
+     */
+    CfpRefreshStatus:
+      | 'snapshot'
+      | 'success'
+      | 'failed'
+      | 'refreshing'
+      | 'unsupported'
+      | 'unadapted';
+    /**
+     * @description Availability evaluated at a specified instant, without translating source text.
+     * @enum {string}
+     */
+    CfpState:
+      | 'open'
+      | 'upcoming'
+      | 'closed'
+      | 'historical'
+      | 'invitation_only'
+      | 'undated'
+      | 'uncertain';
     /** @description Password change request. */
     ChangePasswordRequest: {
       /** @description Replacement password. */
@@ -4209,6 +4428,98 @@ export interface operations {
         content: {
           'application/json': components['schemas']['OkResponse'];
         };
+      };
+    };
+  };
+  list_cfp_journals: {
+    parameters: {
+      query: {
+        /** @description Database filename, such as english_journals.sqlite. */
+        db: string;
+        /** @description Case-insensitive journal title, ID or subject search, limited to 256 characters. */
+        q?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Lightweight journal catalog and source coverage. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CfpCatalogResponse'];
+        };
+      };
+      /** @description Authentication required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Database catalog not found. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  list_cfp_notices: {
+    parameters: {
+      query: {
+        /** @description Opaque cursor returned by this journal/filter's previous page. */
+        cursor?: string;
+        /** @description Database filename containing the maintained journal. */
+        db: string;
+        /** @description Include closed and historical records; defaults to false. */
+        include_closed?: boolean;
+        /** @description Page size, default 50 and maximum 200. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Canonical maintained catalog ID or its alias. */
+        catalog_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Original notices, coverage and pagination. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CfpNoticePage'];
+        };
+      };
+      /** @description Authentication required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Database or journal not found. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Stale or incompatible cursor; reload the first page. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

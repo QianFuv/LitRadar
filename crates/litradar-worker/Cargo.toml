@@ -12,10 +12,12 @@ chrono-tz.workspace = true
 command-group.workspace = true
 litradar-domain = { path = "../litradar-domain" }
 litradar-recommend = { path = "../litradar-recommend" }
+litradar-sources = { path = "../litradar-sources" }
 litradar-storage = { path = "../litradar-storage" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

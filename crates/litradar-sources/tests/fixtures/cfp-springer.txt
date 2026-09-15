@@ -1,0 +1,43 @@
+# Acta Informatica
+# Collections and calls for papers
+
+Filter by:
+
+[Input] All
+
+[Input] Upcoming
+
+[Input] Open
+
+[Input] Closed
+
+[Input] Articles available
+
+Update results
+## By Invite only - Selected Extended Papers from Machines, Computations and Universality 2026 (MCU 2026)
+
+This issue will be composed of extended selected communications presented at Machines, Computations and Universality 2026. Submission is by invitation only. This special issue will feature extended versions ...
+
+Submission status
+    Open
+
+Submission deadline
+    01 November 2026
+## By Invite Only - RF70
+
+Authors should prepare their manuscript according to the Instructions for Authors available from the Journal’s submission guidelines: https://link.springer.com/journal/236/submission-guidelines. Submitted pa...
+
+Submission status
+    Open
+
+Submission deadline
+    01 December 2026
+## By Invite Only - 16th International Workshop on Non-Classical Models of Automata and Applications (NCMA 2026)
+
+Proposal for a special issue of Acta Informatica dedicated to selected and extended papers to be presented at the 16th International Workshop on Non-Classical Models of Automata and Applications (NCMA 2026) ...
+
+Submission status
+    Open
+
+Submission deadline
+    31 December 2026

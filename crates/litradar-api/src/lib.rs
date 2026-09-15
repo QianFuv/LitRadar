@@ -216,6 +216,7 @@ fn try_build_router_with_state(
     }
     let secret_codec = litradar_storage::SecretCodec::load(&config.secret_key_file)?;
     litradar_storage::verify_database_secrets(storage_config.auth_db_path(), &secret_codec)?;
+    litradar_worker::cfp::ensure_cfp_seed(storage_config.auth_db_path())?;
     let runtime_settings =
         litradar_storage::load_runtime_settings(storage_config.auth_db_path(), &secret_codec)?;
     config.apply_runtime_settings(&runtime_settings)?;

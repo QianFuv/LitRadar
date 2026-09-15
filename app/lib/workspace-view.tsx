@@ -4,7 +4,12 @@
 
 import { parseAsStringLiteral } from 'nuqs';
 
-export const WORKSPACE_VIEW_IDS = ['search', 'favorites', 'weekly-updates'] as const;
+export const WORKSPACE_VIEW_IDS = [
+  'search',
+  'favorites',
+  'weekly-updates',
+  'cfp-tracking',
+] as const;
 
 export type WorkspaceView = (typeof WORKSPACE_VIEW_IDS)[number];
 
@@ -14,6 +19,7 @@ const WORKSPACE_VIEW_HREFS: Readonly<Record<WorkspaceView, string>> = {
   search: '/',
   favorites: '/?view=favorites',
   'weekly-updates': '/?view=weekly-updates',
+  'cfp-tracking': '/?view=cfp-tracking',
 };
 
 /**

@@ -28,6 +28,10 @@ vi.mock('@/components/weekly/weekly-updates-view', () => ({
   WeeklyUpdatesView: () => <section>每周更新工作区</section>,
 }));
 
+vi.mock('@/components/cfp/cfp-tracking-view', () => ({
+  CfpTrackingView: () => <section>征稿追踪工作区</section>,
+}));
+
 /**
  * Render a deterministic workspace with visible slot labels.
  *
@@ -141,5 +145,9 @@ describe('WorkspaceShell', () => {
   test('renders stable workspace regions and safe-area scrolling', rendersWorkspaceRegions);
   test('opens an accessible mobile sidebar and restores focus', opensAccessibleSidebarDialog);
   test('dispatches legal root workspace views', dispatchesLegalWorkspaceViews);
+  test('dispatches the CFP workspace from its canonical URL', () => {
+    renderHome('?view=cfp-tracking');
+    expect(screen.getByText('征稿追踪工作区')).toBeInTheDocument();
+  });
   test('falls back to search for absent or unknown views', fallsBackToSearchWorkspace);
 });

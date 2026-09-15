@@ -3,6 +3,7 @@
 pub mod announcements;
 pub mod auth;
 pub mod business;
+pub mod cfp;
 pub mod cnki;
 pub mod concurrency;
 pub mod health;

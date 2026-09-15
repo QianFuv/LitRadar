@@ -28,6 +28,8 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         crate::routes::health::ready,
         crate::routes::announcements::get_announcements,
         crate::routes::index::list_databases,
+        crate::routes::cfp::list_journals,
+        crate::routes::cfp::list_notices,
         crate::routes::index::list_areas,
         crate::routes::index::list_journal_options,
         crate::routes::index::list_years,
@@ -163,6 +165,18 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         litradar_domain::JournalId,
         litradar_domain::JournalOption,
         litradar_domain::JournalPage,
+        litradar_domain::cfp::CfpCatalogResponse,
+        litradar_domain::cfp::CfpCatalogSummary,
+        litradar_domain::cfp::CfpCoverage,
+        litradar_domain::cfp::CfpDate,
+        litradar_domain::cfp::CfpDateStage,
+        litradar_domain::cfp::CfpJournalSummary,
+        litradar_domain::cfp::CfpKind,
+        litradar_domain::cfp::CfpNotice,
+        litradar_domain::cfp::CfpNoticePage,
+        litradar_domain::cfp::CfpNoticeView,
+        litradar_domain::cfp::CfpRefreshStatus,
+        litradar_domain::cfp::CfpState,
         litradar_domain::JournalRecord,
         litradar_domain::LoginRequest,
         litradar_domain::LoginResponse,
@@ -269,6 +283,29 @@ pub fn docs_router() -> Router<ApiState> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cfp_operations_have_unique_identifiers_across_the_document() {
+        let document = serde_json::to_value(super::document()).expect("OpenAPI should serialize");
+        let mut identifiers = std::collections::BTreeSet::new();
+        for path in document["paths"]
+            .as_object()
+            .expect("OpenAPI paths")
+            .values()
+        {
+            for operation in path.as_object().expect("path operations").values() {
+                if let Some(identifier) = operation
+                    .get("operationId")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    assert!(
+                        identifiers.insert(identifier.to_owned()),
+                        "duplicate API operation identifier: {identifier}"
+                    );
+                }
+            }
+        }
+    }
+
     use litradar_auth::{
         ACCESS_TOKEN_LIMIT_DETAIL, ACCESS_TOKEN_NAME_LENGTH_DETAIL,
         ACCESS_TOKEN_NAME_MAX_CODE_POINTS, ACCESS_TOKEN_RESERVED_NAME_DETAIL,
@@ -284,6 +321,8 @@ mod tests {
         ("/health/ready", "get"),
         ("/api/announcements", "get"),
         ("/api/meta/databases", "get"),
+        ("/api/cfp/journals", "get"),
+        ("/api/cfp/journals/{catalog_id}/notices", "get"),
         ("/api/meta/areas", "get"),
         ("/api/meta/journals", "get"),
         ("/api/years", "get"),

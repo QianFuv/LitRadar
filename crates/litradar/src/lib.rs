@@ -70,6 +70,7 @@ fn command_name(args: &[String]) -> &'static str {
         None | Some("--help" | "-h") => "help",
         Some("serve") => "serve",
         Some("admin") => "admin",
+        Some("cfp") => "cfp",
         Some("index") => "index",
         Some("notify") => "notify",
         Some("push") => "push",
@@ -139,6 +140,7 @@ fn run_with_executable(
             run_service(config)
         }
         "admin" => litradar_cli::run_admin_command(subcommand_args.to_vec()),
+        "cfp" => litradar_cli::run_cfp_command(subcommand_args.to_vec()),
         "index" => {
             litradar_cli::run_index_command(subcommand_args.to_vec(), application_executable)
         }
@@ -174,7 +176,7 @@ fn run_service(config: config::ServeConfig) -> Result<(), Box<dyn Error>> {
 ///
 /// Help text containing every supported top-level subcommand.
 pub fn application_usage() -> &'static str {
-    "Usage: litradar <COMMAND> [OPTIONS]\n\nCommands:\n  serve      Run HTTP and scheduling as one service\n  admin      Manage administrators, secrets, and backups\n  index      Build or update searchable article indexes\n  notify     Deliver recommendation notifications\n  push       Push tracking updates\n  scheduler  Validate or run scheduled tasks manually\n  openapi    Emit the generated OpenAPI document"
+    "Usage: litradar <COMMAND> [OPTIONS]\n\nCommands:\n  serve      Run HTTP and scheduling as one service\n  admin      Manage administrators, secrets, and backups\n  index      Build or update searchable article indexes\n  cfp        Import or refresh original journal calls for papers\n  notify     Deliver recommendation notifications\n  push       Push tracking updates\n  scheduler  Validate or run scheduled tasks manually\n  openapi    Emit the generated OpenAPI document"
 }
 
 fn has_help(args: &[String]) -> bool {

@@ -19,7 +19,7 @@ use crate::index_maintenance::{interrupted_index_maintenance_state, IndexStorage
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 17;
+pub const AUTH_SCHEMA_VERSION: i64 = 18;
 
 pub use crate::index_schema::{INDEX_SCHEMA_VERSION, MIN_SUPPORTED_INDEX_SCHEMA_VERSION};
 
@@ -402,6 +402,12 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
     while version < AUTH_SCHEMA_VERSION {
         let next_version = version + 1;
         let transaction = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+        let locked_version = schema_version(&transaction)?;
+        if locked_version != version {
+            reject_newer_version(AUTH_DATABASE, locked_version, AUTH_SCHEMA_VERSION)?;
+            version = locked_version;
+            continue;
+        }
         match next_version {
             1 => apply_auth_version_one(&transaction)?,
             2 => apply_auth_version_two(&transaction)?,
@@ -420,6 +426,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             15 => apply_auth_version_fifteen(&transaction)?,
             16 => apply_auth_version_sixteen(&transaction)?,
             17 => apply_auth_version_seventeen(&transaction)?,
+            18 => transaction.execute_batch(crate::business::cfp::SCHEMA_SQL)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;

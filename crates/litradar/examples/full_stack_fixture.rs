@@ -2,16 +2,23 @@
 
 use std::error::Error;
 use std::fs;
-use std::io;
+use std::io::{self, Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use litradar_auth::AuthService;
+use litradar_domain::cfp::CfpSeed;
 use litradar_domain::{
     ArticleAuthorDraft, ArticleDraft, IssueDraft, JournalCatalogEntry, JournalDraft,
     JournalRankings, ProviderBatch, ProviderProgress,
 };
 use litradar_index::schema::{open_content_db, reconcile_catalog_identities, write_content_batch};
+use litradar_index::transforms::CATALOG_CSV_V3_COLUMNS;
+use litradar_sources::cfp::{
+    CfpAdapter, CfpDocument, CfpSourceConfig, CfpSourceError, CfpTransport, CfpUrlRule,
+};
+use litradar_storage::business::cfp::import_cfp_seed;
 use litradar_storage::StorageConfig;
 use serde_json::json;
 
@@ -24,6 +31,7 @@ const FIXTURE_MEMBER_USERNAME: &str = "fullstack_member";
 const FIXTURE_MEMBER_PASSWORD: &str = "FullStackMember!2026";
 const FIXTURE_ARTICLE_TITLE: &str = "Evidence Graphs for Living Literature Reviews";
 const FIXTURE_ARTICLE_DOI: &str = "10.5555/litradar.fullstack";
+const FIXTURE_CFP_URL: &str = "http://cfp-fixture.example/calls";
 
 fn main() {
     if let Err(error) = run(std::env::args().skip(1).collect()) {
@@ -35,12 +43,21 @@ fn main() {
 fn run(mut args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let project_root = extract_path_option(&mut args, "--project-root")?
         .ok_or_else(|| invalid_fixture("--project-root is required"))?;
+    let should_refresh_cfp = args
+        .iter()
+        .position(|argument| argument == "--refresh-cfp")
+        .map(|index| args.remove(index))
+        .is_some();
     if !args.is_empty() {
         return Err(
             invalid_fixture(&format!("unexpected fixture arguments: {}", args.join(" "))).into(),
         );
     }
-    let report = seed_fixture(&project_root)?;
+    let report = if should_refresh_cfp {
+        refresh_cfp_fixture(&project_root)?
+    } else {
+        seed_fixture(&project_root)?
+    };
     println!("{}", serde_json::to_string(&report)?);
     Ok(())
 }
@@ -90,6 +107,7 @@ fn seed_fixture(project_root: &Path) -> Result<serde_json::Value, Box<dyn Error>
     let content_path = storage.index_dir().join(FIXTURE_DATABASE_NAME);
     let connection = open_content_db(&content_path)?;
     let catalog = fixture_catalog();
+    seed_cfp_fixture(&storage, &catalog)?;
     reconcile_catalog_identities(&connection, std::slice::from_ref(&catalog))?;
     let outcome = write_content_batch(
         &connection,
@@ -129,6 +147,155 @@ fn seed_fixture(project_root: &Path) -> Result<serde_json::Value, Box<dyn Error>
         "article_count": outcome.articles_changed,
         "weekly_article_count": 1
     }))
+}
+
+/// Seed one metadata-only CFP catalog and immutable original announcement.
+fn seed_cfp_fixture(
+    storage: &StorageConfig,
+    catalog: &JournalCatalogEntry,
+) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(storage.meta_dir())?;
+    let mut row = vec![String::new(); 16];
+    row[0] = catalog.catalog_id.clone();
+    row[2] = catalog.title.clone();
+    row[3] = catalog.issn.clone().unwrap_or_default();
+    row[5] = catalog.all_issns.join(";");
+    row[7] = catalog.area.clone().unwrap_or_default();
+    fs::write(
+        storage.meta_dir().join("full-stack.csv"),
+        format!("{}\n{}\n", CATALOG_CSV_V3_COLUMNS.join(","), row.join(",")),
+    )?;
+    let source = serde_json::from_value(
+        json!({"catalogIds":[catalog.catalog_id],"journalTitle":catalog.title,"title":"Initial original CFP","scope":"Original research on reproducible evidence synthesis.","requirements":"Original manuscripts are welcome.","typeText":"Special Issue","dateText":"Submission deadline: 30 November 2099","sourceUrl":FIXTURE_CFP_URL,"checkedOn":"2026-09-15"}),
+    )?;
+    let seed = CfpSeed {
+        format_version: 1,
+        sources: vec![source],
+        empty_journals: Vec::new(),
+        expected_journals: Some(1),
+        expected_notices: Some(1),
+    };
+    import_cfp_seed(
+        storage.auth_db_path(),
+        "full-stack-cfp-v1",
+        &serde_json::to_vec(&seed)?,
+    )?;
+    Ok(())
+}
+
+struct FixtureCfpHttpTransport {
+    client: reqwest::blocking::Client,
+}
+
+impl CfpTransport for FixtureCfpHttpTransport {
+    fn fetch(
+        &self,
+        config: &CfpSourceConfig,
+        url: &str,
+        deadline: Instant,
+    ) -> Result<CfpDocument, CfpSourceError> {
+        if url != FIXTURE_CFP_URL
+            || !config
+                .permits_url(&reqwest::Url::parse(url).map_err(|_| CfpSourceError::DisallowedUrl)?)
+        {
+            return Err(CfpSourceError::DisallowedUrl);
+        }
+        let response = self
+            .client
+            .get(url)
+            .timeout(deadline.saturating_duration_since(Instant::now()))
+            .send()
+            .map_err(|_| CfpSourceError::Request)?;
+        if !response.status().is_success() {
+            return Err(CfpSourceError::HttpStatus(response.status().as_u16()));
+        }
+        let final_url = response.url().to_string();
+        let mut text = String::new();
+        response
+            .take(65537)
+            .read_to_string(&mut text)
+            .map_err(|_| CfpSourceError::Encoding)?;
+        if text.len() > 65536 {
+            return Err(CfpSourceError::TooLarge);
+        }
+        Ok(CfpDocument {
+            final_url,
+            text,
+            format: "html".into(),
+        })
+    }
+}
+
+/// Acquire a changed original over an isolated loopback HTTP proxy and publish it atomically.
+fn refresh_cfp_fixture(project_root: &Path) -> Result<serde_json::Value, Box<dyn Error>> {
+    let project_root = validate_fixture_root(project_root)?;
+    let storage = StorageConfig::from_project_root(project_root);
+    let catalog = fixture_catalog();
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let proxy_address = listener.local_addr()?;
+    let server = std::thread::spawn(move || -> io::Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+        let mut request = [0_u8; 4096];
+        let length = stream.read(&mut request)?;
+        if !String::from_utf8_lossy(&request[..length])
+            .starts_with("GET http://cfp-fixture.example/calls ")
+        {
+            return Err(invalid_fixture("unexpected CFP proxy request"));
+        }
+        let body="<h1>Journal of Reproducible Literature</h1><h2>Call for papers</h2><h3>Updated original CFP after backend refresh</h3><p>New original research scope from the HTTP source.</p><p>Submission deadline: 31 December 2099</p><h4>Submission instructions</h4><p>Original manuscripts are welcome.</p>";
+        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body)?;
+        Ok(())
+    });
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .proxy(reqwest::Proxy::http(format!("http://{proxy_address}"))?)
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(3))
+        .build()?;
+    let config = CfpSourceConfig {
+        source_key: format!("journal:{}", catalog.catalog_id),
+        catalog_ids: vec![catalog.catalog_id],
+        journal_title: catalog.title.clone(),
+        discovery_url: FIXTURE_CFP_URL.into(),
+        adapter: CfpAdapter::ElsevierCalls,
+        config_version: 1,
+        allowed_urls: vec![CfpUrlRule {
+            host: "cfp-fixture.example".into(),
+            path_prefix: "/calls".into(),
+        }],
+        identity_texts: vec![catalog.title],
+        empty_statements: Vec::new(),
+        capability_note: None,
+        retains_previous_notices: false,
+    };
+    let result = litradar_worker::cfp::refresh_cfp_source(
+        storage.auth_db_path(),
+        &config,
+        &FixtureCfpHttpTransport { client },
+        Instant::now() + Duration::from_secs(5),
+    );
+    server
+        .join()
+        .map_err(|_| invalid_fixture("CFP source fixture thread failed"))??;
+    let result = result?;
+    if result.status != "success" {
+        return Err(invalid_fixture("CFP source fixture did not publish").into());
+    }
+    Ok(json!({"status":"cfp_updated","notices":result.notices}))
 }
 
 fn current_epoch_seconds_text() -> Result<String, std::time::SystemTimeError> {

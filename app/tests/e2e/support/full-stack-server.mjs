@@ -334,7 +334,12 @@ async function runPlaywright(baseUrl, playwrightArguments) {
     ],
     {
       cwd: APP_ROOT,
-      env: { ...process.env, PLAYWRIGHT_FULL_STACK_BASE_URL: baseUrl },
+      env: {
+        ...process.env,
+        PLAYWRIGHT_FULL_STACK_BASE_URL: baseUrl,
+        LITRADAR_CFP_FIXTURE_ROOT: fixtureRoot,
+        LITRADAR_CFP_FIXTURE_SEEDER: SEEDER_BINARY,
+      },
       shell: false,
       stdio: 'inherit',
     },

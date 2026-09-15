@@ -4,6 +4,9 @@
 
 import { expect, test, type Browser, type Locator, type Page, type Route } from '@playwright/test';
 
+import { CFP_FIXTURE_PAGES } from '../fixtures/cfp-pages';
+import type { CfpJournalSummary } from '../../lib/api';
+
 type ChromeColorProperty = 'backgroundColor' | 'borderColor' | 'color';
 
 /**
@@ -931,7 +934,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
 
   const pageNavigation = page.getByRole('navigation', { name: '页面导航' });
   const currentNavigationLink = pageNavigation.getByRole('link', { name: '文献检索' });
-  await expect(pageNavigation.getByRole('link')).toHaveCount(3);
+  await expect(pageNavigation.getByRole('link')).toHaveCount(4);
   await expect(currentNavigationLink).toHaveAttribute('aria-current', 'page');
   await expect(pageNavigation.getByRole('link', { name: '我的收藏' })).toHaveAttribute(
     'title',
@@ -1043,7 +1046,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   const filterDialog = page.getByRole('dialog', { name: '筛选器' });
   await expect(filterDialog.getByRole('button', { name: '关闭' })).toHaveCount(0);
   const mobileNavigation = filterDialog.getByRole('navigation', { name: '页面导航' });
-  await expect(mobileNavigation.getByRole('link')).toHaveCount(3);
+  await expect(mobileNavigation.getByRole('link')).toHaveCount(4);
   await expect(mobileNavigation.getByRole('link', { name: '文献检索' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -1789,3 +1792,351 @@ test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);
 test('polishes search targets and restrained control feedback', interfacePolishControlsTest);
 test('polishes stable and semantic favorite feedback', interfacePolishFavoriteTest);
+
+/** Return authoritative fixture metadata without any original-text parsing in the browser. */
+function cfpFixtureJournal(catalogId: string, title: string): CfpJournalSummary {
+  return (
+    CFP_FIXTURE_PAGES[catalogId]?.journal ?? {
+      catalogId,
+      catalogAliases: [],
+      title,
+      allIssns: [],
+      titleAliases: [],
+      coverage: 'unadapted',
+      noticeCount: 0,
+      currentCount: 0,
+      stateCounts: {},
+      canRefresh: false,
+      refreshStatus: 'unadapted',
+    }
+  );
+}
+
+/** Build the same lightweight catalog envelope served by the Rust API. */
+function cfpFixtureCatalog(items: CfpJournalSummary[], database: string) {
+  return {
+    database,
+    evaluatedAt: 1789473600,
+    items,
+    summary: {
+      journals: items.length,
+      adaptedJournals: items.filter((journal) => journal.coverage === 'adapted').length,
+      notices: items.reduce((count, journal) => count + journal.noticeCount, 0),
+      currentNotices: items.reduce((count, journal) => count + journal.currentCount, 0),
+    },
+  };
+}
+
+/** Serve the three real catalog names with representative maintained journal identities. */
+async function serveCfpApi(route: Route): Promise<void> {
+  const url = new URL(route.request().url());
+  const catalogs: Record<string, { catalog_id: string; title: string }[]> = {
+    'ccf_computer_journals.sqlite': [
+      { catalog_id: 'issn-1949-3045', title: 'IEEE Transactions on Affective Computing' },
+      { catalog_id: 'issn-1570-8705', title: 'Ad Hoc Networks' },
+    ],
+    'chinese_journals.sqlite': [{ catalog_id: 'issn-1004-4833', title: '审计与经济研究' }],
+    'english_journals.sqlite': [{ catalog_id: 'issn-0022-2429', title: 'Journal of Marketing' }],
+  };
+  if (url.pathname === '/api/meta/databases') {
+    await fulfillJson(route, Object.keys(catalogs));
+    return;
+  }
+  if (url.pathname === '/api/cfp/journals') {
+    const items = (catalogs[url.searchParams.get('db') ?? ''] ?? []).map((journal) =>
+      cfpFixtureJournal(journal.catalog_id, journal.title),
+    );
+    await fulfillJson(route, cfpFixtureCatalog(items, url.searchParams.get('db') ?? ''));
+    return;
+  }
+  const noticeMatch = /^\/api\/cfp\/journals\/([^/]+)\/notices$/.exec(url.pathname);
+  if (noticeMatch) {
+    const catalogId = decodeURIComponent(noticeMatch[1]);
+    const base = CFP_FIXTURE_PAGES[catalogId];
+    const selected = base?.journal ?? cfpFixtureJournal(catalogId, 'Ad Hoc Networks');
+    const items = (base?.items ?? []).filter(
+      (notice) =>
+        url.searchParams.get('include_closed') === 'true' ||
+        !['closed', 'historical'].includes(notice.state),
+    );
+    await fulfillJson(route, {
+      journal: selected,
+      evaluatedAt: 1789473600,
+      items,
+      page: { total: items.length, limit: 50, offset: 0, next_cursor: null, has_more: false },
+    });
+    return;
+  }
+  await serveTrackingApi(route);
+}
+
+/** Verify source-language CFP text, navigation, empty adaptation and mobile access. */
+async function cfpTrackingPageTest({ page }: { page: Page }): Promise<void> {
+  await page.clock.setFixedTime(new Date('2026-09-15T12:00:00Z'));
+  await page.route('**/api/**', serveCfpApi);
+  await page.setViewportSize({ width: 1500, height: 1000 });
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.goto('/?view=cfp-tracking&cfp_journal=issn-1949-3045');
+  await hideDevelopmentIndicator(page);
+  await expect(
+    page.getByRole('heading', { name: /When Affective Computing Meets Multimodal/ }),
+  ).toBeVisible();
+  const navigation = page.getByRole('navigation', { name: '页面导航' });
+  await expect(navigation.getByRole('link')).toHaveCount(4);
+  const searchBox = await navigation.getByRole('link', { name: '文献检索' }).boundingBox();
+  const cfpBox = await navigation.getByRole('link', { name: '征稿追踪' }).boundingBox();
+  expect(searchBox).not.toBeNull();
+  expect(cfpBox).not.toBeNull();
+  expect(Math.abs(cfpBox!.width - searchBox!.width)).toBeLessThan(1);
+  expect(Math.abs(cfpBox!.x - searchBox!.x)).toBeLessThan(1);
+  expect(cfpBox!.y).toBeGreaterThanOrEqual(searchBox!.y + searchBox!.height);
+  await expect(navigation.getByRole('link', { name: '征稿追踪' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.evaluate(() => document.fonts.ready);
+  const journalTitleBox = await page
+    .getByRole('heading', { name: 'IEEE Transactions on Affective Computing', exact: true })
+    .boundingBox();
+  const notice = page.locator('[data-slot="cfp-notice"]').first();
+  const noticeTitleBox = await notice.getByRole('heading', { level: 3 }).boundingBox();
+  expect(journalTitleBox).not.toBeNull();
+  expect(noticeTitleBox).not.toBeNull();
+  expect(Math.abs(journalTitleBox!.x - noticeTitleBox!.x)).toBeLessThanOrEqual(1);
+  const dateValues = await notice
+    .locator('dl dd')
+    .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().x));
+  expect(dateValues.length).toBeGreaterThan(1);
+  expect(Math.max(...dateValues) - Math.min(...dateValues)).toBeLessThanOrEqual(1);
+  const dateRows = await notice.locator('dl > div').evaluateAll((elements) =>
+    elements.map((element) => {
+      const label = element.querySelector('dt')!.getBoundingClientRect();
+      const value = element.querySelector('dd')!.getBoundingClientRect();
+      return { labelX: label.x, labelY: label.y, valueY: value.y };
+    }),
+  );
+  expect(
+    Math.max(...dateRows.map((row) => row.labelX)) - Math.min(...dateRows.map((row) => row.labelX)),
+  ).toBeLessThanOrEqual(1);
+  expect(dateRows.every((row) => Math.abs(row.labelY - row.valueY) <= 4)).toBe(true);
+  const scopeBox = await notice.locator('[data-slot="cfp-scope"]').boundingBox();
+  const requirementsBox = await notice.locator('[data-slot="cfp-requirements"]').boundingBox();
+  const footerTextBox = await notice.getByText(/^核验于/).boundingBox();
+  for (const box of [scopeBox, requirementsBox, footerTextBox]) {
+    expect(box).not.toBeNull();
+    expect(Math.abs(box!.x - noticeTitleBox!.x)).toBeLessThanOrEqual(1);
+  }
+  const sourceActionBox = await notice.getByRole('link', { name: '查看征稿原文' }).boundingBox();
+  expect(
+    Math.abs(
+      sourceActionBox!.y +
+        sourceActionBox!.height / 2 -
+        (footerTextBox!.y + footerTextBox!.height / 2),
+    ),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: '../output/ui/cfp-tracking-desktop.png', fullPage: true });
+
+  await page.getByRole('button', { name: /Ad Hoc Networks/ }).click();
+  await expect(page.getByRole('heading', { name: '暂未适配' })).toBeVisible();
+  await expect(page.locator('[data-slot="cfp-notice"]')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: '查看征稿原文' })).toHaveCount(0);
+  await page.screenshot({ path: '../output/ui/cfp-tracking-unadapted.png', fullPage: true });
+
+  await page.getByRole('combobox', { name: '征稿数据库' }).click();
+  await page.getByRole('option', { name: '中文期刊' }).click();
+  await expect(page.getByRole('heading', { name: '审计与经济研究', exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.has('cfp_journal')).toBe(false);
+  await expect(page.getByText('2026/12/31', { exact: true })).toBeVisible();
+  await page.getByRole('combobox', { name: '征稿数据库' }).click();
+  await page.getByRole('option', { name: '英文期刊' }).click();
+  await expect(
+    page.getByRole('heading', { name: /Special Issue on Organic Marketing Theory/ }),
+  ).toBeVisible();
+  await expect(page.getByText(/What is material is that the theory/)).toBeVisible();
+  await expect(
+    page.getByText(/All submissions will go through Journal of Marketing/),
+  ).toBeVisible();
+  await expect(page.getByText('营销领域原创理论')).toHaveCount(0);
+  await page.reload();
+  await expect(
+    page.getByRole('heading', { name: /Special Issue on Organic Marketing Theory/ }),
+  ).toBeVisible();
+  await navigation.getByRole('link', { name: '我的收藏' }).click();
+  await expect(page).toHaveURL('/?view=favorites');
+  await page.goBack();
+  await expect(
+    page.getByRole('heading', { name: /Special Issue on Organic Marketing Theory/ }),
+  ).toBeVisible();
+  await expect(page.locator('[data-workspace-view="favorites"]')).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await hideDevelopmentIndicator(page);
+  await expect(page.getByRole('heading', { name: '征稿追踪', exact: true })).toBeVisible();
+  expect(
+    await page
+      .locator('#main-content')
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.screenshot({ path: '../output/ui/cfp-tracking-mobile.png', fullPage: true });
+  await page.getByRole('button', { name: '打开征稿筛选' }).click();
+  const dialog = page.getByRole('dialog', { name: '征稿筛选' });
+  await expect(dialog.getByRole('link', { name: '征稿追踪' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(dialog.getByRole('combobox', { name: '征稿数据库' })).toBeVisible();
+  await page.screenshot({ path: '../output/ui/cfp-tracking-mobile-sidebar.png', fullPage: true });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  const mobileNotice = page.locator('[data-slot="cfp-notice"]').first();
+  const mobileTimeline = await mobileNotice.locator('[data-slot="cfp-timeline"]').boundingBox();
+  const mobileScope = await mobileNotice.locator('[data-slot="cfp-scope"]').boundingBox();
+  expect(mobileTimeline!.y + mobileTimeline!.height).toBeLessThanOrEqual(mobileScope!.y);
+  const mobileFooter = mobileNotice.locator('[data-slot="cfp-source-footer"]');
+  await mobileFooter.scrollIntoViewIfNeeded();
+  const mobileVerification = await mobileFooter.getByText(/^核验于/).boundingBox();
+  const mobileAction = await mobileFooter.getByRole('link').boundingBox();
+  expect(mobileAction!.y).toBeGreaterThanOrEqual(
+    mobileVerification!.y + mobileVerification!.height,
+  );
+  expect(Math.abs(mobileAction!.x - mobileVerification!.x)).toBeLessThanOrEqual(1);
+  await page.setViewportSize({ width: 320, height: 844 });
+  for (const selector of [
+    '[data-slot="cfp-notice"]',
+    '[data-slot="cfp-timeline"]',
+    '[data-slot="cfp-source-footer"]',
+  ]) {
+    expect(
+      await page
+        .locator(selector)
+        .evaluateAll((elements) =>
+          elements.every((element) => element.scrollWidth <= element.clientWidth + 1),
+        ),
+    ).toBe(true);
+  }
+  await page.locator('#results-scroll-container').evaluate((element) => element.scrollTo(0, 0));
+  await page.screenshot({ path: '../output/cfp-layout/narrow.png', fullPage: true });
+}
+
+test(
+  'supports structured CFP tracking across three databases and mobile navigation',
+  cfpTrackingPageTest,
+);
+
+/** Keep every original paragraph readable in independent, keyboard-accessible scroll regions. */
+async function cfpFullTextScrollTest({ page }: { page: Page }): Promise<void> {
+  const original = CFP_FIXTURE_PAGES['issn-1949-3045'];
+  const scope = `${'Research topics include multilingual models and reproducible evaluation.\n'.repeat(24)}Final scope paragraph: preserve every research topic.`;
+  const requirements = `${'Authors must describe the complete experimental protocol.\n'.repeat(18)}Final requirement: include all supporting evidence.`;
+  await page.route('**/api/**', async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith('/issn-1949-3045/notices')) {
+      await fulfillJson(route, {
+        ...original,
+        items: [{ ...original.items[0], scope, requirements }],
+      });
+      return;
+    }
+    await serveCfpApi(route);
+  });
+  await page.setViewportSize({ width: 1500, height: 1000 });
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.goto('/?view=cfp-tracking&cfp_journal=issn-1949-3045');
+  await hideDevelopmentIndicator(page);
+  const scopeRegion = page.locator('[data-slot="cfp-scope"] [role="region"]');
+  const requirementsRegion = page.locator('[data-slot="cfp-requirements"] [role="region"]');
+  await expect(scopeRegion).toHaveText(scope);
+  await expect(requirementsRegion).toHaveText(requirements);
+
+  for (const width of [1500, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const [region, otherRegion] of [
+      [scopeRegion, requirementsRegion],
+      [requirementsRegion, scopeRegion],
+    ]) {
+      await region.evaluate((element) => element.scrollTo(0, 0));
+      await region.focus();
+      const outerScroll = await page
+        .locator('#results-scroll-container')
+        .evaluate((element) => element.scrollTop);
+      const otherScroll = await otherRegion.evaluate((element) => element.scrollTop);
+      const dimensions = await region.evaluate((element) => ({
+        height: element.clientHeight,
+        contentHeight: element.scrollHeight,
+        hasHorizontalOverflow: element.scrollWidth > element.clientWidth,
+      }));
+      expect(dimensions.height).toBe(192);
+      expect(dimensions.contentHeight).toBeGreaterThan(dimensions.height);
+      expect(dimensions.hasHorizontalOverflow).toBe(false);
+      await page.keyboard.press('Control+End');
+      await expect
+        .poll(() => region.evaluate((element) => element.scrollTop + element.clientHeight))
+        .toBe(dimensions.contentHeight);
+      expect(await otherRegion.evaluate((element) => element.scrollTop)).toBe(otherScroll);
+      expect(
+        await page.locator('#results-scroll-container').evaluate((element) => element.scrollTop),
+      ).toBe(outerScroll);
+    }
+    await scopeRegion.evaluate((element) => element.scrollTo(0, 0));
+    await requirementsRegion.evaluate((element) => element.scrollTo(0, 0));
+    await page.locator('#results-scroll-container').evaluate((element) => element.scrollTo(0, 0));
+    await page.screenshot({ path: `../output/cfp-layout/full-text-${width}.png`, fullPage: true });
+  }
+}
+
+test('keeps full CFP scope and requirements in independent scroll regions', cfpFullTextScrollTest);
+
+/** Serve representative ambiguous and empty sources while retaining the existing auth fixtures. */
+async function serveExpandedCfpApi(route: Route): Promise<void> {
+  const url = new URL(route.request().url());
+  if (url.pathname === '/api/cfp/journals') {
+    const items = ['issn-0024-6301', 'issn-1067-5027', 'issn-0922-6567'].map(
+      (id) => CFP_FIXTURE_PAGES[id].journal,
+    );
+    await fulfillJson(route, cfpFixtureCatalog(items, url.searchParams.get('db') ?? ''));
+    return;
+  }
+  await serveCfpApi(route);
+}
+
+/** Check original timeline disclosure and the scope of publisher statements on desktop and mobile. */
+async function expandedCfpSourceStatesTest({ page }: { page: Page }): Promise<void> {
+  await page.clock.setFixedTime(new Date('2026-09-15T12:00:00Z'));
+  await page.route('**/api/**', serveExpandedCfpApi);
+  await page.setViewportSize({ width: 1500, height: 1000 });
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.goto('/?view=cfp-tracking&cfp_db=english_journals.sqlite&cfp_journal=issn-0024-6301');
+  await hideDevelopmentIndicator(page);
+  await expect(page.getByText('投稿时间待确认')).toBeVisible();
+  await page.getByText('查看原文时间说明').click();
+  await expect(page.locator('details[open]')).toContainText('October 1st 2026');
+  await expect(page.locator('details[open]')).toContainText('November 1, 2026');
+  await page.screenshot({
+    path: '../output/ui/cfp-tracking-original-timeline.png',
+    fullPage: true,
+  });
+  await page
+    .getByRole('button', { name: /Journal of the American Medical Informatics Association/ })
+    .click();
+  await expect(page.getByRole('heading', { name: '暂无已收录的征稿公告' })).toBeVisible();
+  await expect(page.getByText(/General submissions are still open/)).toBeVisible();
+  await expect(page.getByRole('link', { name: '查看期刊说明' })).toHaveAttribute(
+    'target',
+    '_blank',
+  );
+  await expect(page.locator('[data-slot="cfp-notice"]')).toHaveCount(0);
+  await page.screenshot({ path: '../output/ui/cfp-tracking-known-empty.png', fullPage: true });
+  await page.getByRole('button', { name: /Machine Translation/ }).click();
+  await expect(page.getByText(/no longer receiving submissions with this publisher/)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page
+      .locator('#main-content')
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await page.screenshot({
+    path: '../output/ui/cfp-tracking-known-empty-mobile.png',
+    fullPage: true,
+  });
+}
+
+test('shows original CFP timelines and scoped publisher statements', expandedCfpSourceStatesTest);

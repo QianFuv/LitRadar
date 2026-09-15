@@ -8,6 +8,7 @@ import { useQueryState } from 'nuqs';
 import type { ReactNode } from 'react';
 
 import { SearchWorkspaceView } from '@/components/feature/search-workspace-view';
+import { CfpTrackingView } from '@/components/cfp/cfp-tracking-view';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import {
   FADE_UP_VARIANTS,
@@ -35,6 +36,8 @@ export default function Home() {
     workspaceContent = user ? <FavoritesPageContent userId={user.id} /> : null;
   } else if (view === 'weekly-updates') {
     workspaceContent = <WeeklyUpdatesView />;
+  } else if (view === 'cfp-tracking') {
+    workspaceContent = <CfpTrackingView />;
   } else {
     workspaceContent = <SearchWorkspaceView />;
   }

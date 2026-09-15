@@ -9,8 +9,10 @@ rust-version.workspace = true
 [dependencies]
 axum.workspace = true
 base64.workspace = true
+chrono.workspace = true
 litradar-auth = { path = "../litradar-auth" }
 litradar-domain = { path = "../litradar-domain" }
+litradar-index = { path = "../litradar-index" }
 litradar-provider = { path = "../litradar-provider" }
 litradar-sources = { path = "../litradar-sources" }
 litradar-storage = { path = "../litradar-storage" }

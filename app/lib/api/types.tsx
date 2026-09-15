@@ -38,6 +38,15 @@ export type ValueCount = ApiSchemas['ValueCount'];
 export type YearSummary = ApiSchemas['YearSummary'];
 export type JournalOption = Pick<ApiSchemas['JournalOption'], 'journal_id'> &
   Partial<Pick<ApiSchemas['JournalOption'], 'title'>>;
+export type JournalRecord = ApiSchemas['JournalRecord'];
+export type JournalPage = ApiSchemas['JournalPage'];
+export type CfpCatalogResponse = ApiSchemas['CfpCatalogResponse'];
+export type CfpJournalSummary = ApiSchemas['CfpJournalSummary'];
+export type CfpNoticePage = ApiSchemas['CfpNoticePage'];
+export type CfpNoticeView = ApiSchemas['CfpNoticeView'];
+export type CfpState = ApiSchemas['CfpState'];
+export type CfpKind = ApiSchemas['CfpKind'];
+export type CfpDateStage = ApiSchemas['CfpDateStage'];
 export type WeeklyArticle = Article;
 export type WeeklyJournalSummary = ApiSchemas['WeeklyJournalSummary'];
 export type WeeklyDatabaseSummary = ApiSchemas['WeeklyDatabaseSummary'];

@@ -41,6 +41,7 @@ export {
 } from '@/lib/api/client';
 export * from '@/lib/api/admin';
 export * from '@/lib/api/auth';
+export * from '@/lib/api/cfp';
 export * from '@/lib/api/favorites';
 export * from '@/lib/api/index';
 export * from '@/lib/api/tracking';

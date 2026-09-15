@@ -9,9 +9,11 @@ rust-version.workspace = true
 [dependencies]
 chrono.workspace = true
 chrono-tz.workspace = true
+regex.workspace = true
 serde.workspace = true
 sha2.workspace = true
 unicode-normalization.workspace = true
+url.workspace = true
 utoipa.workspace = true
 
 [dev-dependencies]

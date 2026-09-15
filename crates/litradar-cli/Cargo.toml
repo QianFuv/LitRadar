@@ -10,6 +10,7 @@ rust-version.workspace = true
 litradar-auth = { path = "../litradar-auth" }
 litradar-domain = { path = "../litradar-domain" }
 litradar-index = { path = "../litradar-index" }
+litradar-sources = { path = "../litradar-sources" }
 litradar-storage = { path = "../litradar-storage" }
 litradar-worker = { path = "../litradar-worker" }
 serde_json.workspace = true

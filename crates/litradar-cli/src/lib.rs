@@ -1,5 +1,8 @@
 //! Shared Rust backend command entrypoints.
 
+mod cfp;
+pub use cfp::run_cfp_command;
+
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;

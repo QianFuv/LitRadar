@@ -1,10 +1,10 @@
 'use client';
 
 /**
- * Compact labeled navigation for the three article workspaces.
+ * Compact labeled navigation for the literature workspaces.
  */
 
-import { CalendarDays, Search, Star, type LucideIcon } from 'lucide-react';
+import { CalendarDays, Megaphone, Search, Star, type LucideIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useQueryState } from 'nuqs';
 
@@ -26,10 +26,11 @@ const SIDEBAR_NAVIGATION_ITEMS: readonly SidebarNavigationItem[] = [
   { view: 'search', icon: Search, label: '文献检索', shortLabel: '检索' },
   { view: 'favorites', icon: Star, label: '我的收藏', shortLabel: '收藏' },
   { view: 'weekly-updates', icon: CalendarDays, label: '每周更新', shortLabel: '周报' },
+  { view: 'cfp-tracking', icon: Megaphone, label: '征稿追踪', shortLabel: '征稿追踪' },
 ];
 
 /**
- * Render the three root-workspace views as equal-width labeled links.
+ * Render root-workspace views in three equal columns, wrapping additional links below.
  *
  * @returns Accessible compact sidebar navigation.
  */

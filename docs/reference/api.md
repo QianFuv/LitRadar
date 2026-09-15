@@ -33,6 +33,30 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 
 `/api/admin/*` 需要管理员身份，其余接口需要普通用户或管理员身份。
 
+## CFP tracking
+
+`GET /api/cfp/journals?db=NAME&q=TEXT` returns the complete maintained journal
+catalog, including journals without articles, plus backend-calculated source
+coverage, counts and freshness. It contains no notice bodies.
+
+`GET /api/cfp/journals/{catalog_id}/notices?db=NAME&include_closed=false&limit=50`
+returns original-language notices, server-calculated states and initial submission
+deadlines. `limit` is capped at 200. Here `catalog_id` is the opaque maintained
+catalog identity or an explicit historical alias, and `db` is a required metadata
+catalog database filename. Valid unadapted members return an empty 200 response;
+missing catalogs or members return 404.
+
+The next-page token binds database, canonical journal, closed filter, ordering,
+metadata/source revision and evaluation instant through authenticated encryption.
+Tokens expire after 15 minutes. An altered, foreign or stale token returns 409;
+clients must discard accumulated pages and restart without a cursor. Responses
+use camelCase CFP fields and the existing snake_case `page` pagination fields.
+
+CFP GET requests only read persisted data. Acquisition, original-text parsing,
+Obscura/PDF helpers and SQLite publication belong to the Rust backend. The
+operational entrypoint is `litradar cfp refresh`; see
+[CFP architecture](../architecture/cfp-tracking.md) for commands and limits.
+
 ## 通用约定
 
 ### 索引数据库选择

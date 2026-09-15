@@ -3,6 +3,8 @@
  */
 
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import type { AdminUserInfo, FavoriteArticleItem, Folder, ManualPushStatus } from '@/lib/api';
 
@@ -14,6 +16,48 @@ const ARTICLE_TITLE = 'Evidence Graphs for Living Literature Reviews';
 const CREATED_ANNOUNCEMENT_TITLE_PREFIX = 'Browser-persisted release notice';
 
 test.describe.configure({ mode: 'serial' });
+
+/** Prove a persisted backend refresh reaches an already built browser page. */
+async function cfpBackendRefreshTest({ page }: { page: Page }): Promise<void> {
+  const fixtureRoot = process.env.LITRADAR_CFP_FIXTURE_ROOT;
+  const seeder = process.env.LITRADAR_CFP_FIXTURE_SEEDER;
+  if (!fixtureRoot || !seeder) throw new Error('CFP fixture runtime context is missing');
+  await login(page, MEMBER_USERNAME, MEMBER_PASSWORD);
+  await page.goto('/?view=cfp-tracking&cfp_db=full-stack.sqlite');
+  await expect(
+    page.getByRole('heading', { name: 'Initial original CFP', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('2099/11/30', { exact: true })).toBeVisible();
+  const before = await page.request.get(
+    '/api/cfp/journals/full-stack-journal/notices?db=full-stack.sqlite',
+  );
+  expect(before.ok()).toBe(true);
+  const result = await promisify(execFile)(
+    seeder,
+    ['--project-root', fixtureRoot, '--refresh-cfp'],
+    { windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 },
+  );
+  expect(JSON.parse(result.stdout)).toMatchObject({ status: 'cfp_updated', notices: 1 });
+  await page.reload();
+  await expect(
+    page.getByRole('heading', { name: 'Updated original CFP after backend refresh', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('2099/12/31', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Initial original CFP', exact: true }),
+  ).toHaveCount(0);
+  const after = await page.request.get(
+    '/api/cfp/journals/full-stack-journal/notices?db=full-stack.sqlite',
+  );
+  const payload = await after.json();
+  expect(payload.journal.refreshStatus).toBe('success');
+  expect(payload.items[0].scope).toContain('New original research scope from the HTTP source.');
+}
+
+test(
+  'CFP backend refresh updates persisted originals without rebuilding the frontend',
+  cfpBackendRefreshTest,
+);
 
 /**
  * Authenticate one seeded account through the public login form.

@@ -84,7 +84,8 @@ fn empty_auth_database_migration_creates_current_schema() {
 fn version_seventeen_removes_duplicate_indexes_and_preserves_unique_constraints() {
     let directory = tempdir().expect("temporary directory should exist");
     let path = directory.path().join("auth.sqlite");
-    migrate_auth_database(&path).expect("current auth schema should initialize");
+    initialize_auth_version_seventeen_fixture(&path)
+        .expect("current auth schema should initialize");
     let connection = Connection::open(&path).expect("auth database should open");
     connection
         .execute_batch(
@@ -161,7 +162,7 @@ fn version_seventeen_removes_duplicate_indexes_and_preserves_unique_constraints(
 fn favorite_cursor_migration_preserves_version_fifteen_rows_and_is_idempotent() {
     let directory = tempdir().expect("temporary database should exist");
     let path = directory.path().join("auth.sqlite");
-    migrate_auth_database(&path).expect("fixture schema should initialize");
+    initialize_auth_version_seventeen_fixture(&path).expect("fixture schema should initialize");
     let connection = Connection::open(&path).expect("database should open");
     connection.execute_batch(
         "DROP INDEX idx_favorites_cursor; PRAGMA user_version = 15; \
@@ -193,7 +194,7 @@ fn favorite_cursor_migration_preserves_version_fifteen_rows_and_is_idempotent() 
 fn token_generation_migration_preserves_version_fourteen_users() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("token-generation-v14.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     connection
         .execute_batch(
@@ -248,7 +249,7 @@ fn token_generation_migration_preserves_version_fourteen_users() {
 fn cnki_generation_migration_preserves_version_twelve_session() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("cnki-v12.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     connection
         .execute_batch(
@@ -312,7 +313,7 @@ fn cnki_generation_migration_preserves_version_twelve_session() {
 fn notification_json_migration_preserves_valid_version_thirteen_rows_and_guards_writes() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("notification-v13.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     connection
         .execute_batch(
@@ -454,7 +455,7 @@ fn notification_json_migration_rejects_corrupt_version_thirteen_rows_atomically(
 fn invite_lifecycle_migration_preserves_legacy_rows_and_redemption_history() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("invite-lifecycle-v11.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     replace_invite_lifecycle_with_version_eleven(&connection);
     connection
@@ -569,7 +570,7 @@ fn invite_lifecycle_migration_failure_rolls_back_legacy_schema_and_rows() {
 fn favorite_tracking_migration_keeps_the_lowest_legacy_folder_per_user() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("favorite-tracking-v10.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     connection
         .execute_batch(
@@ -653,7 +654,7 @@ fn favorite_tracking_migration_failure_rolls_back_normalization() {
 fn delivery_migration_upgrades_version_nine_without_changing_audit_rows() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("delivery-v9.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     connection
         .execute(
@@ -779,7 +780,7 @@ fn delivery_schema_rejects_incomplete_owner_and_terminal_state() {
 fn security_audit_migration_upgrades_version_eight_with_append_only_indexes() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("audit-v8.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
@@ -875,7 +876,7 @@ fn security_audit_migration_failure_keeps_version_eight_state() {
 fn managed_meta_migration_preserves_version_five_rows() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("version-five-auth.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
@@ -915,7 +916,7 @@ fn managed_meta_migration_preserves_version_five_rows() {
 fn provider_order_migration_prefers_abstract_and_preserves_empty_fulltext() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("provider-orders.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
@@ -956,7 +957,7 @@ fn provider_order_migration_prefers_abstract_and_preserves_empty_fulltext() {
 fn provider_order_migration_uses_detail_when_abstract_is_absent() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("detail-fallback.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
@@ -1015,7 +1016,7 @@ fn malformed_provider_order_rolls_back_version_six_migration() {
 fn provider_runtime_name_migration_rewrites_cnki_and_zjlib_tokens() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("provider-name-rewrite.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
@@ -1074,7 +1075,7 @@ fn provider_runtime_name_migration_rewrites_cnki_and_zjlib_tokens() {
 fn provider_runtime_name_migration_materializes_implicit_legacy_defaults() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("provider-implicit-defaults.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
@@ -1108,7 +1109,7 @@ fn provider_runtime_name_migration_materializes_implicit_legacy_defaults() {
 fn provider_runtime_name_migration_materializes_only_missing_defaults() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("provider-partial-defaults.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
@@ -1184,7 +1185,7 @@ fn malformed_provider_runtime_name_migration_rolls_back_materialized_defaults() 
 fn service_heartbeat_migration_preserves_version_three_scheduler_rows() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("auth.sqlite");
-    migrate_auth_database(&path).expect("current auth database should migrate");
+    initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
     let connection = Connection::open(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
@@ -2867,4 +2868,19 @@ fn complete_favorite_schema_fixture(path: &Path) {
         );",
         )
         .expect("legacy favorite schema should exist");
+}
+
+/// Build the latest pre-CFP schema before a fixture removes older migration objects.
+fn initialize_auth_version_seventeen_fixture(path: &Path) -> Result<(), MigrationError> {
+    migrate_auth_database(path)?;
+    Connection::open(path)?.execute_batch(
+        "DROP TABLE cfp_notices;
+         DROP TABLE cfp_source_journals;
+         DROP TABLE cfp_sources;
+         DROP TABLE cfp_journal_aliases;
+         DROP TABLE cfp_journals;
+         DROP TABLE cfp_seed_imports;
+         PRAGMA user_version = 17;",
+    )?;
+    Ok(())
 }

@@ -26,6 +26,7 @@ use crate::secrets::{notification_context, runtime_context};
 use crate::{open_sqlite_connection, random_hex, SecretCodec, SecretError, StorageConfig};
 
 mod admin;
+pub mod cfp;
 mod delivery;
 mod favorites;
 mod notifications;

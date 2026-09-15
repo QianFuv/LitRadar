@@ -299,7 +299,11 @@ async function rendersUnavailableYearState(): Promise<void> {
   expect(screen.getByRole('link', { name: 'LitRadar 首页' })).toBeInTheDocument();
   const pageNavigation = screen.getByRole('navigation', { name: '页面导航' });
   const pageLinks = within(pageNavigation).getAllByRole('link');
-  expect(pageLinks).toHaveLength(3);
+  expect(pageLinks).toHaveLength(4);
+  expect(within(pageNavigation).getByRole('link', { name: '征稿追踪' })).toHaveAttribute(
+    'href',
+    '/?view=cfp-tracking',
+  );
   expect(within(pageNavigation).getByRole('link', { name: '文献检索' })).toMatchObject({
     title: '文献检索',
   });

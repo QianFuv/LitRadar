@@ -1,5 +1,6 @@
 //! Source clients used by Rust index migration workflows.
 
+pub mod cfp;
 pub mod cnki_domestic;
 pub mod cnki_oversea;
 mod crossref_workset;

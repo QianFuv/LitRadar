@@ -1665,6 +1665,143 @@
         ]
       }
     },
+    "/api/cfp/journals": {
+      "get": {
+        "tags": ["cfp"],
+        "summary": "List every maintained journal, including those with no indexed articles or CFP adapter.",
+        "operationId": "list_cfp_journals",
+        "parameters": [
+          {
+            "name": "db",
+            "in": "query",
+            "description": "Database filename, such as english_journals.sqlite.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive journal title, ID or subject search, limited to 256 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lightweight journal catalog and source coverage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfpCatalogResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "404": {
+            "description": "Database catalog not found."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/cfp/journals/{catalog_id}/notices": {
+      "get": {
+        "tags": ["cfp"],
+        "summary": "Read original notices and backend-calculated availability at a cursor's fixed instant.",
+        "operationId": "list_cfp_notices",
+        "parameters": [
+          {
+            "name": "catalog_id",
+            "in": "path",
+            "description": "Canonical maintained catalog ID or its alias.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "db",
+            "in": "query",
+            "description": "Database filename containing the maintained journal.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_closed",
+            "in": "query",
+            "description": "Include closed and historical records; defaults to false.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, default 50 and maximum 200.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned by this journal/filter's previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Original notices, coverage and pagination.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CfpNoticePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "404": {
+            "description": "Database or journal not found."
+          },
+          "409": {
+            "description": "Stale or incompatible cursor; reload the first page."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/cnki/login/poll": {
       "post": {
         "tags": ["cnki"],
@@ -4175,6 +4312,394 @@
             "description": "Used invite codes."
           }
         }
+      },
+      "CfpCatalogResponse": {
+        "type": "object",
+        "description": "Complete lightweight CFP journal catalog for one database.",
+        "required": ["database", "evaluatedAt", "summary", "items"],
+        "properties": {
+          "database": {
+            "type": "string",
+            "description": "Canonical selected database filename."
+          },
+          "evaluatedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "UTC Unix instant used to evaluate every state in this response."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfpJournalSummary"
+            },
+            "description": "Lightweight journals matching the optional search, without notice bodies."
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CfpCatalogSummary",
+            "description": "Whole-database summary."
+          }
+        }
+      },
+      "CfpCatalogSummary": {
+        "type": "object",
+        "description": "Aggregate counts for the selected database before the journal-name search filter.",
+        "required": ["journals", "adaptedJournals", "notices", "currentNotices"],
+        "properties": {
+          "adaptedJournals": {
+            "type": "integer",
+            "description": "Journals with a reviewed snapshot or scoped empty statement.",
+            "minimum": 0
+          },
+          "currentNotices": {
+            "type": "integer",
+            "description": "Notices excluding closed and historical calls.",
+            "minimum": 0
+          },
+          "journals": {
+            "type": "integer",
+            "description": "Complete maintained journal count, including journals without indexed articles.",
+            "minimum": 0
+          },
+          "notices": {
+            "type": "integer",
+            "description": "All stored notices associated with this database.",
+            "minimum": 0
+          }
+        }
+      },
+      "CfpCoverage": {
+        "type": "string",
+        "description": "Coverage of a journal's reviewed original-source data.",
+        "enum": ["adapted", "unadapted"]
+      },
+      "CfpDate": {
+        "type": "object",
+        "description": "A valid calendar date and its original clause.",
+        "required": ["date", "stage", "originalText", "isExclusive", "isOptional"],
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "ISO calendar date, with no invented time of day."
+          },
+          "isExclusive": {
+            "type": "boolean",
+            "description": "Whether the source says strictly before this date."
+          },
+          "isOptional": {
+            "type": "boolean",
+            "description": "Whether this milestone is optional."
+          },
+          "originalText": {
+            "type": "string",
+            "description": "Untranslated source clause."
+          },
+          "stage": {
+            "$ref": "#/components/schemas/CfpDateStage",
+            "description": "Purpose of this date."
+          }
+        }
+      },
+      "CfpDateStage": {
+        "type": "string",
+        "description": "Purpose of a dated milestone, independent of whether it is required.",
+        "enum": [
+          "paper",
+          "abstract",
+          "proposal",
+          "opens",
+          "revision",
+          "decision",
+          "publication",
+          "event",
+          "registration"
+        ]
+      },
+      "CfpJournalSummary": {
+        "type": "object",
+        "description": "Lightweight journal metadata and backend-calculated CFP summary.",
+        "required": [
+          "catalogId",
+          "catalogAliases",
+          "allIssns",
+          "titleAliases",
+          "title",
+          "coverage",
+          "noticeCount",
+          "currentCount",
+          "stateCounts",
+          "canRefresh",
+          "refreshStatus"
+        ],
+        "properties": {
+          "allIssns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All maintained print and electronic ISSNs for display and journal search."
+          },
+          "area": {
+            "type": ["string", "null"],
+            "description": "Maintained subject area, if available."
+          },
+          "canRefresh": {
+            "type": "boolean",
+            "description": "Whether a backend discovery adapter can attempt automatic refresh."
+          },
+          "catalogAliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Maintained historical aliases in the selected catalog."
+          },
+          "catalogId": {
+            "type": "string",
+            "description": "Canonical maintained catalog ID used by the notice endpoint."
+          },
+          "checkedOn": {
+            "type": ["string", "null"],
+            "description": "Last verified original-source date, if adapted."
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/CfpCoverage",
+            "description": "Reviewed-source coverage."
+          },
+          "currentCount": {
+            "type": "integer",
+            "description": "Notices remaining after the default closed/historical filter.",
+            "minimum": 0
+          },
+          "lastAttempt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Latest acquisition attempt Unix timestamp."
+          },
+          "lastError": {
+            "type": ["string", "null"],
+            "description": "Sanitized latest failure reason."
+          },
+          "lastSuccess": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Last successful live acquisition Unix timestamp."
+          },
+          "noticeCount": {
+            "type": "integer",
+            "description": "Total stored notices, including closed and historical calls.",
+            "minimum": 0
+          },
+          "refreshStatus": {
+            "$ref": "#/components/schemas/CfpRefreshStatus",
+            "description": "Latest acquisition status, including interrupted lease detection."
+          },
+          "sourceStatement": {
+            "type": ["string", "null"],
+            "description": "Untranslated scoped statement that no matching calls are listed."
+          },
+          "sourceUrl": {
+            "type": ["string", "null"],
+            "description": "Original source URL associated with a scoped publisher statement."
+          },
+          "stateCounts": {
+            "type": "object",
+            "description": "Backend-computed counts for each availability state.",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string",
+              "description": "Availability evaluated at a specified instant, without translating source text.",
+              "enum": [
+                "open",
+                "upcoming",
+                "closed",
+                "historical",
+                "invitation_only",
+                "undated",
+                "uncertain"
+              ]
+            }
+          },
+          "title": {
+            "type": "string",
+            "description": "Journal title from the selected metadata database."
+          },
+          "titleAliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Maintained journal title aliases for search."
+          }
+        }
+      },
+      "CfpKind": {
+        "type": "string",
+        "description": "Submission purpose supported by the original announcement.",
+        "enum": ["special_issue", "general", "proposal", "conference_linked"]
+      },
+      "CfpNotice": {
+        "type": "object",
+        "description": "Normalized notice persisted by the backend; availability is evaluated on read.",
+        "required": [
+          "id",
+          "title",
+          "scope",
+          "requirements",
+          "kind",
+          "sourceUrl",
+          "checkedOn",
+          "dates",
+          "entryStage",
+          "isHistorical",
+          "rawDateText"
+        ],
+        "properties": {
+          "checkedOn": {
+            "type": "string",
+            "description": "Last verified original-source date."
+          },
+          "dates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfpDate"
+            },
+            "description": "Validated dates, including non-submission milestones."
+          },
+          "entryStage": {
+            "$ref": "#/components/schemas/CfpDateStage",
+            "description": "Default initial submission stage."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable legacy-compatible URL/title identity within a journal."
+          },
+          "isHistorical": {
+            "type": "boolean",
+            "description": "Whether this announcement is an archival record."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CfpKind",
+            "description": "Classified kind of call."
+          },
+          "rawDateText": {
+            "type": "string",
+            "description": "Unresolved original timeline; never interpreted as perpetual availability."
+          },
+          "requirements": {
+            "type": "string",
+            "description": "Original instructions, empty if unavailable."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Original topic excerpt, empty if unavailable."
+          },
+          "sourceStatus": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CfpState",
+                "description": "Explicit closed or invitation-only source constraint."
+              }
+            ]
+          },
+          "sourceUrl": {
+            "type": "string",
+            "description": "Original public announcement URL."
+          },
+          "timeZone": {
+            "type": ["string", "null"],
+            "description": "Explicit IANA timezone, if supplied by the source."
+          },
+          "title": {
+            "type": "string",
+            "description": "Original announcement title."
+          },
+          "topicYear": {
+            "type": ["integer", "null"],
+            "format": "int32",
+            "description": "Explicit annual topic year, when applicable."
+          }
+        }
+      },
+      "CfpNoticePage": {
+        "type": "object",
+        "description": "A revision-consistent page of original notices for one maintained catalog member.",
+        "required": ["journal", "evaluatedAt", "items", "page"],
+        "properties": {
+          "evaluatedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fixed UTC Unix evaluation instant shared across cursor pages."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfpNoticeView"
+            },
+            "description": "Original notice records in stable source order."
+          },
+          "journal": {
+            "$ref": "#/components/schemas/CfpJournalSummary",
+            "description": "Metadata, coverage and source freshness for the journal."
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "Standard API pagination metadata, with a scope-bound next cursor."
+          }
+        }
+      },
+      "CfpNoticeView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CfpNotice",
+            "description": "Original normalized notice fields."
+          },
+          {
+            "type": "object",
+            "required": ["state"],
+            "properties": {
+              "entryDeadline": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CfpDate",
+                    "description": "Earliest mandatory initial submission deadline."
+                  }
+                ]
+              },
+              "state": {
+                "$ref": "#/components/schemas/CfpState",
+                "description": "Availability evaluated at the page's fixed instant."
+              }
+            }
+          }
+        ],
+        "description": "One original notice with its authoritative backend-evaluated state and initial gate."
+      },
+      "CfpRefreshStatus": {
+        "type": "string",
+        "description": "Source refresh freshness, independent of a notice's submission availability.",
+        "enum": ["snapshot", "success", "failed", "refreshing", "unsupported", "unadapted"]
+      },
+      "CfpState": {
+        "type": "string",
+        "description": "Availability evaluated at a specified instant, without translating source text.",
+        "enum": [
+          "open",
+          "upcoming",
+          "closed",
+          "historical",
+          "invitation_only",
+          "undated",
+          "uncertain"
+        ]
       },
       "ChangePasswordRequest": {
         "type": "object",
