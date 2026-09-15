@@ -401,14 +401,17 @@ pub fn extract_cfp_full_text(
             && url.path().starts_with("/html/web/tongzhigonggao/")
     }) && original.catalog_ids.iter().any(|id| id == "issn-1006-1029")
     {
-        let title_selector =
-            Selector::parse(".news-title > h1").expect("finance notice title selector");
+        let title_selector = Selector::parse(".news-title > h1, .news-title > h2")
+            .expect("finance notice title selector");
         let container = html
             .select(&Selector::parse(".news-wrap").expect("finance notice container selector"))
             .find(|container| {
-                container
+                let title = container
                     .select(&title_selector)
-                    .any(|title| matching_title(&title.text().collect::<String>(), &original.title))
+                    .map(|title| title.text().collect::<String>())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                matching_title(&title, &original.title)
             })
             .ok_or(CfpSourceError::Unrecognized)?;
         let body = container

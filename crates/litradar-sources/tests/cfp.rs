@@ -255,6 +255,12 @@ fn cfp_chinese_full_text_preserves_direct_text_and_excludes_page_metadata() {
             "投稿指南具体请见期刊原文网站。",
         ),
         (
+            "issn-1006-1029",
+            "https://chinaifs.org.cn/html/web/tongzhigonggao/2031644702554443777.html",
+            "<div class='news-wrap'><div class='news-title'><h1>原文</h1><h2>征稿主题</h2><p>发布日期和浏览量</p></div><div class='news-content'><p>完整的研究范围。</p><p>投稿指南具体请见期刊原文网站。</p></div></div><aside>其他征稿</aside>",
+            "投稿指南具体请见期刊原文网站。",
+        ),
+        (
             "issn-1003-2053",
             "https://kxxyj.magtechjournal.com/kxxyj/CN/news/news55.shtml",
             "<div class='content_nr'><div class='item_con'><ul><div class='item_biaoti'>原文征稿主题</div><li><p>完整的研究范围。</p><p>3. 投稿渠道</p><p>投稿网址：期刊原文网站。</p><p>6. 参考文献</p><p>参考文献条目。</p></li></ul><div class='liulancishu'>发布日期和浏览量</div></div></div><aside>其他征稿</aside>",
@@ -267,7 +273,7 @@ fn cfp_chinese_full_text_preserves_direct_text_and_excludes_page_metadata() {
         let recovered = extract_cfp_full_text(&original, &page).unwrap();
         assert_eq!(recovered.scope, "完整的研究范围。", "{catalog_id}");
         assert_eq!(recovered.requirements, requirements, "{catalog_id}");
-        page.text = html.replace("原文征稿主题", "另一条征稿主题");
+        page.text = html.replace("原文", "另一条");
         assert!(extract_cfp_full_text(&original, &page).is_err());
         page.text = html.into();
         original.catalog_ids = vec!["different-journal".into()];
