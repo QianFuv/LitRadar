@@ -123,6 +123,51 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('CFP tracking', () => {
+  test('defaults to current calls and alphabetizes independently expandable groups', async () => {
+    const user = userEvent.setup();
+    const base = journal('issn-1949-3045', 'IEEE Transactions on Affective Computing');
+    const items: CfpJournalSummary[] = [
+      { ...base, catalogId: 'z-inactive', title: 'Zulu Inactive', currentCount: 0 },
+      journal('z-unadapted', 'Zulu Unadapted'),
+      { ...base, catalogId: 'z-current', title: 'Zulu Current' },
+      { ...base, catalogId: 'a-current', title: 'Alpha Current' },
+      { ...base, catalogId: 'a-inactive', title: 'Alpha Inactive', currentCount: 0 },
+      journal('a-unadapted', 'Alpha Unadapted'),
+    ];
+    server.use(
+      http.get('http://localhost/api/cfp/journals', () =>
+        HttpResponse.json(catalog(items, DATABASES[0])),
+      ),
+    );
+    renderCfp();
+    const current = await screen.findByRole('button', { name: /^正在征稿/ });
+    const inactive = screen.getByRole('button', { name: /^当前未征稿/ });
+    const unadapted = screen.getByRole('button', { name: /^暂未适配/ });
+    expect(current).toHaveAttribute('aria-expanded', 'true');
+    expect(inactive).toHaveAttribute('aria-expanded', 'false');
+    expect(unadapted).toHaveAttribute('aria-expanded', 'false');
+    expect(
+      within(screen.getByRole('region', { name: '正在征稿期刊' }))
+        .getAllByRole('button')
+        .map((button) => button.title),
+    ).toEqual(['Alpha Current', 'Zulu Current']);
+    await user.click(inactive);
+    expect(
+      within(screen.getByRole('region', { name: '当前未征稿期刊' }))
+        .getAllByRole('button')
+        .map((button) => button.title),
+    ).toEqual(['Alpha Inactive', 'Zulu Inactive']);
+    await user.click(unadapted);
+    expect(
+      within(screen.getByRole('region', { name: '暂未适配期刊' }))
+        .getAllByRole('button')
+        .map((button) => button.title),
+    ).toEqual(['Alpha Unadapted', 'Zulu Unadapted']);
+    await user.click(current);
+    expect(current).toHaveAttribute('aria-expanded', 'false');
+    expect(inactive).toHaveAttribute('aria-expanded', 'true');
+  });
+
   test('shows structured requirements for a maintained journal with no articles', async () => {
     renderCfp();
     expect(
@@ -209,6 +254,7 @@ describe('CFP tracking', () => {
   test('leaves an unadapted journal empty and does not show guessed calls or external links', async () => {
     const user = userEvent.setup();
     renderCfp();
+    await user.click(await screen.findByRole('button', { name: /^暂未适配/ }));
     await user.click(await screen.findByRole('button', { name: /未适配示例期刊/ }));
     expect(await screen.findByRole('heading', { name: '暂未适配' })).toBeVisible();
     expect(document.querySelectorAll('[data-slot="cfp-notice"]')).toHaveLength(0);
@@ -326,6 +372,7 @@ describe('CFP tracking', () => {
   });
 
   test('shows notice API failures without bundled data and preserves journal navigation', async () => {
+    const user = userEvent.setup();
     server.use(
       http.get('http://localhost/api/cfp/journals/:catalogId/notices', () =>
         HttpResponse.json({ detail: 'Stored notice read failed' }, { status: 503 }),
@@ -334,6 +381,7 @@ describe('CFP tracking', () => {
     renderCfp();
     expect(await screen.findByRole('heading', { name: '加载征稿需求失败' })).toBeVisible();
     expect(document.querySelectorAll('[data-slot="cfp-notice"]')).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: /^暂未适配/ }));
     expect(screen.getByRole('button', { name: /未适配示例期刊/ })).toBeVisible();
   });
 
@@ -404,6 +452,7 @@ describe('CFP tracking', () => {
     );
     renderCfp();
     await started;
+    await user.click(screen.getByRole('button', { name: /^暂未适配/ }));
     await user.click(screen.getByRole('button', { name: /未适配示例期刊/ }));
     expect(await screen.findByRole('heading', { name: '暂未适配' })).toBeVisible();
     releaseResponse();

@@ -1936,6 +1936,7 @@ async function cfpTrackingPageTest({ page }: { page: Page }): Promise<void> {
   ).toBeLessThanOrEqual(1);
   await page.screenshot({ path: '../output/ui/cfp-tracking-desktop.png', fullPage: true });
 
+  await page.getByRole('button', { name: /^暂未适配/ }).click();
   await page.getByRole('button', { name: /Ad Hoc Networks/ }).click();
   await expect(page.getByRole('heading', { name: '暂未适配' })).toBeVisible();
   await expect(page.locator('[data-slot="cfp-notice"]')).toHaveCount(0);
@@ -2114,6 +2115,7 @@ async function expandedCfpSourceStatesTest({ page }: { page: Page }): Promise<vo
     path: '../output/ui/cfp-tracking-original-timeline.png',
     fullPage: true,
   });
+  await page.getByRole('button', { name: /^当前未征稿/ }).click();
   await page
     .getByRole('button', { name: /Journal of the American Medical Informatics Association/ })
     .click();
@@ -2140,3 +2142,114 @@ async function expandedCfpSourceStatesTest({ page }: { page: Page }): Promise<vo
 }
 
 test('shows original CFP timelines and scoped publisher statements', expandedCfpSourceStatesTest);
+
+/** Keep navigation and filters visible while alphabetized journal groups scroll independently. */
+async function cfpGroupedSidebarTest({ page }: { page: Page }): Promise<void> {
+  const base = CFP_FIXTURE_PAGES['issn-1949-3045'];
+  const journals: CfpJournalSummary[] = [
+    { ...base.journal, catalogId: 'z-inactive', title: 'Zulu Inactive', currentCount: 0 },
+    cfpFixtureJournal('z-unadapted', 'Zulu Unadapted'),
+    { ...base.journal, catalogId: 'a-inactive', title: 'Alpha Inactive', currentCount: 0 },
+    cfpFixtureJournal('a-unadapted', 'Alpha Unadapted'),
+  ];
+  for (let index = 24; index >= 1; index -= 1) {
+    journals.push({
+      ...base.journal,
+      catalogId: `current-${index}`,
+      title: `Current Journal ${String(index).padStart(2, '0')}`,
+    });
+  }
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/cfp/journals') {
+      await fulfillJson(route, cfpFixtureCatalog(journals, url.searchParams.get('db') ?? ''));
+      return;
+    }
+    const match = /^\/api\/cfp\/journals\/([^/]+)\/notices$/.exec(url.pathname);
+    if (match) {
+      await fulfillJson(route, {
+        ...base,
+        journal: journals.find((journal) => journal.catalogId === decodeURIComponent(match[1])),
+      });
+      return;
+    }
+    await serveCfpApi(route);
+  });
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.goto('/?view=cfp-tracking');
+  await hideDevelopmentIndicator(page);
+  await expect(
+    page.getByRole('heading', { name: 'Current Journal 01', exact: true }),
+  ).toBeVisible();
+  const sidebar = page.getByRole('region', { name: '征稿期刊', exact: true });
+  const currentToggle = sidebar.getByRole('button', { name: /^正在征稿/ });
+  const inactiveToggle = sidebar.getByRole('button', { name: /^当前未征稿/ });
+  const unadaptedToggle = sidebar.getByRole('button', { name: /^暂未适配/ });
+  await expect(currentToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(inactiveToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(unadaptedToggle).toHaveAttribute('aria-expanded', 'false');
+  const currentList = sidebar.getByRole('region', { name: '正在征稿期刊' });
+  const names = await currentList
+    .getByRole('button')
+    .evaluateAll((elements) => elements.map((element) => element.getAttribute('title')));
+  expect(names[0]).toBe('Current Journal 01');
+  expect(names.at(-1)).toBe('Current Journal 24');
+  const pinned = [
+    page.getByRole('navigation', { name: '页面导航' }),
+    page.getByRole('combobox', { name: '征稿数据库' }),
+    sidebar.getByRole('textbox'),
+    inactiveToggle,
+    unadaptedToggle,
+  ];
+  const before = await Promise.all(pinned.map((locator) => locator.boundingBox()));
+  await currentList.hover();
+  await page.mouse.wheel(0, 1800);
+  await expect.poll(() => currentList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  for (let index = 0; index < pinned.length; index += 1) {
+    const after = await pinned[index].boundingBox();
+    expect(Math.abs(after!.y - before[index]!.y)).toBeLessThanOrEqual(1);
+  }
+  expect(before.at(-1)!.y + before.at(-1)!.height).toBeGreaterThan(850);
+  expect(before.at(-1)!.y + before.at(-1)!.height).toBeLessThanOrEqual(900);
+  await page.screenshot({
+    path: '../output/cfp-layout/grouped-sidebar-desktop.png',
+    fullPage: true,
+  });
+  await inactiveToggle.click();
+  const inactiveNames = await sidebar
+    .getByRole('region', { name: '当前未征稿期刊' })
+    .getByRole('button')
+    .evaluateAll((elements) => elements.map((element) => element.getAttribute('title')));
+  expect(inactiveNames).toEqual(['Alpha Inactive', 'Zulu Inactive']);
+  await unadaptedToggle.click();
+  const unadaptedNames = await sidebar
+    .getByRole('region', { name: '暂未适配期刊' })
+    .getByRole('button')
+    .evaluateAll((elements) => elements.map((element) => element.getAttribute('title')));
+  expect(unadaptedNames).toEqual(['Alpha Unadapted', 'Zulu Unadapted']);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '打开征稿筛选' }).click();
+  const dialog = page.getByRole('dialog', { name: '征稿筛选' });
+  const mobileList = dialog.getByRole('region', { name: '正在征稿期刊' });
+  const mobileSearch = dialog.getByRole('textbox', { name: '搜索征稿期刊' });
+  const mobileBefore = await mobileSearch.boundingBox();
+  await mobileList.hover();
+  await page.mouse.wheel(0, 1800);
+  await expect.poll(() => mobileList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  const mobileAfter = await mobileSearch.boundingBox();
+  expect(Math.abs(mobileBefore!.y - mobileAfter!.y)).toBeLessThanOrEqual(1);
+  await expect(dialog.getByRole('button', { name: /^当前未征稿/ })).toBeInViewport();
+  await expect(dialog.getByRole('button', { name: /^暂未适配/ })).toBeInViewport();
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({
+    path: '../output/cfp-layout/grouped-sidebar-mobile.png',
+    fullPage: true,
+  });
+}
+
+test(
+  'groups CFP journals and pins sidebar controls above independently scrolling lists',
+  cfpGroupedSidebarTest,
+);

@@ -8,6 +8,7 @@ import { parseAsString, useQueryState } from 'nuqs';
 import { Database, Megaphone, Search } from 'lucide-react';
 
 import { CfpNoticeCard, CfpSourceFooter } from '@/components/cfp/cfp-notice-card';
+import { CfpJournalList, groupCfpJournals } from '@/components/cfp/cfp-journal-list';
 import { WorkspaceSidebar } from '@/components/feature/sidebar';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +26,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { ApiError, getDatabases, getCfpJournals, getCfpNotices } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { cn } from '@/lib/utils';
 
 const DATABASE_LABELS: Readonly<Record<string, string>> = {
   'ccf_computer_journals.sqlite': 'CCF 计算机期刊',
@@ -60,22 +60,26 @@ export function CfpTrackingView() {
     enabled: Boolean(user && database),
   });
   const journals = useMemo(() => journalsQuery.data?.items ?? [], [journalsQuery.data]);
-  const filteredJournals = useMemo(() => {
+  const journalGroups = useMemo(() => groupCfpJournals(journals), [journals]);
+  const filteredGroups = useMemo(() => {
     const query = journalSearch.trim().toLocaleLowerCase();
-    return journals.filter(
-      (journal) =>
-        !query ||
-        [journal.title, ...journal.allIssns, ...journal.titleAliases].some((value) =>
-          value.toLocaleLowerCase().includes(query),
-        ),
-    );
-  }, [journalSearch, journals]);
+    return journalGroups.map((group) => ({
+      ...group,
+      journals: group.journals.filter(
+        (journal) =>
+          !query ||
+          [journal.title, ...journal.allIssns, ...journal.titleAliases].some((value) =>
+            value.toLocaleLowerCase().includes(query),
+          ),
+      ),
+    }));
+  }, [journalSearch, journalGroups]);
   const selectedCatalog =
     journals.find(
       (journal) =>
         journal.catalogId === selectedCatalogId ||
         journal.catalogAliases.includes(selectedCatalogId),
-    ) ?? journals[0];
+    ) ?? journalGroups.find((group) => group.journals.length > 0)?.journals[0];
   const noticeQueryKey = useMemo(
     () => ['cfp', 'notices', database, selectedCatalog?.catalogId ?? '', shouldShowClosed] as const,
     [database, selectedCatalog?.catalogId, shouldShowClosed],
@@ -111,7 +115,6 @@ export function CfpTrackingView() {
     }
   }, [cursorRecoveryKey, noticeQueryKey, noticesQuery.error, noticesQuery.isSuccess, queryClient]);
   const selected = noticesQuery.data?.pages[0]?.journal ?? selectedCatalog;
-  const adaptedCount = journalsQuery.data?.summary.adaptedJournals ?? 0;
   const visibleNotices = noticesQuery.isError
     ? []
     : (noticesQuery.data?.pages.flatMap((page) => page.items) ?? []);
@@ -138,6 +141,7 @@ export function CfpTrackingView() {
       contentClassName="space-y-5 sm:space-y-6"
       sidebar={
         <WorkspaceSidebar
+          hasFixedHeader
           headerContent={
             <div className="space-y-3 border-t border-sidebar-border pt-5">
               <div className="flex items-center gap-2 text-sm font-semibold">
@@ -167,7 +171,7 @@ export function CfpTrackingView() {
             </div>
           }
         >
-          <section className="space-y-3" aria-label="征稿期刊">
+          <section className="flex min-h-0 flex-1 flex-col gap-3" aria-label="征稿期刊">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold">期刊</h2>
               <span className="text-xs tabular-nums text-muted-foreground">
@@ -187,13 +191,6 @@ export function CfpTrackingView() {
                 onChange={(event) => setJournalSearch(event.target.value)}
               />
             </div>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] leading-5 text-muted-foreground">
-              <span>
-                已收录{' '}
-                <span className="font-medium tabular-nums text-foreground">{adaptedCount}</span> 本
-              </span>
-              <span>暂未适配 {journals.length - adaptedCount} 本</span>
-            </div>
             {isLoading ? (
               <div className="space-y-2">
                 <Skeleton className="h-14 w-full" />
@@ -201,44 +198,13 @@ export function CfpTrackingView() {
                 <Skeleton className="h-14 w-full" />
               </div>
             ) : (
-              <div className="space-y-1">
-                {filteredJournals.map((journal) => (
-                  <button
-                    key={journal.catalogId}
-                    type="button"
-                    aria-pressed={selected?.catalogId === journal.catalogId}
-                    title={journal.title}
-                    onClick={() => void setSelectedCatalogId(journal.catalogId)}
-                    className={cn(
-                      'motion-control grid min-h-20 w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 rounded-lg border border-transparent px-3 py-3 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50',
-                      selected?.catalogId === journal.catalogId &&
-                        'border-sidebar-border bg-sidebar-accent',
-                    )}
-                  >
-                    <span className="min-w-0">
-                      <span className="line-clamp-2 text-[13px] font-medium leading-5 [overflow-wrap:anywhere]">
-                        {journal.title}
-                      </span>
-                      <span className="mt-1 block text-[11px] leading-5 text-muted-foreground">
-                        {journal.coverage === 'adapted' ? '已收录征稿' : '暂未适配'}
-                      </span>
-                    </span>
-                    {journal.coverage === 'adapted' && (
-                      <span
-                        className="mt-0.5 inline-flex h-5 min-w-6 items-center justify-center rounded bg-sidebar-accent px-1.5 text-[11px] tabular-nums"
-                        aria-label={`${journal.currentCount} 条征稿信息`}
-                      >
-                        {journal.currentCount}
-                      </span>
-                    )}
-                  </button>
-                ))}
-                {filteredJournals.length === 0 && (
-                  <p className="py-6 text-center text-sm text-muted-foreground">
-                    {journalSearch ? '未找到匹配期刊' : '暂无期刊'}
-                  </p>
-                )}
-              </div>
+              <CfpJournalList
+                key={`${database}:${Boolean(journalSearch.trim())}`}
+                groups={filteredGroups}
+                selectedCatalogId={selected?.catalogId}
+                isSearching={Boolean(journalSearch.trim())}
+                onSelect={(catalogId) => void setSelectedCatalogId(catalogId)}
+              />
             )}
           </section>
         </WorkspaceSidebar>

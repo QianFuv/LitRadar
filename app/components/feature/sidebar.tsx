@@ -56,6 +56,7 @@ type WorkspaceSidebarProps = {
   children?: ReactNode;
   className?: string;
   headerContent?: ReactNode;
+  hasFixedHeader?: boolean;
 };
 
 /**
@@ -122,7 +123,12 @@ function DateSegmentSelect({
  * @param props - Optional classes plus content rendered near and below primary navigation.
  * @returns Shared article-workspace sidebar frame.
  */
-export function WorkspaceSidebar({ children, className, headerContent }: WorkspaceSidebarProps) {
+export function WorkspaceSidebar({
+  children,
+  className,
+  headerContent,
+  hasFixedHeader = false,
+}: WorkspaceSidebarProps) {
   return (
     <aside
       className={cn(
@@ -130,8 +136,15 @@ export function WorkspaceSidebar({ children, className, headerContent }: Workspa
         className,
       )}
     >
-      <div className="min-h-0 flex-1 space-y-8 overflow-y-auto overscroll-contain p-6">
-        <div className="space-y-4">
+      <div
+        className={cn(
+          'min-h-0 flex-1 p-6',
+          hasFixedHeader
+            ? 'flex flex-col gap-6 overflow-hidden'
+            : 'space-y-8 overflow-y-auto overscroll-contain',
+        )}
+      >
+        <div className="shrink-0 space-y-4">
           <Button
             variant="ghost"
             className="h-12 w-full justify-start gap-3 px-1 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
