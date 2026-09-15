@@ -121,13 +121,23 @@ pub fn is_cfp_challenge(document: &CfpDocument) -> bool {
         .map(|element| element.text().collect::<String>())
         .collect::<Vec<_>>()
         .join("\n");
-    pattern(
+    if pattern(
         r"(?i)just a moment|client challenge|access denied|verify (?:that )?you are human|captcha|robot verification",
         &title,
-    ) || pattern(
+    ) {
+        return true;
+    }
+    let has_challenge_scripts = pattern(
         r"(?i)cf-chl-|challenge-platform|enable javascript and cookies to continue|/_fs-ch-",
         &document.text,
-    )
+    );
+    let visible = visible_html(&html);
+    has_challenge_scripts
+        && (visible.trim().is_empty()
+            || pattern(
+                r"(?im)^(?:#{1,6} )?(?:performing security verification|verifying you are human|enable javascript and cookies to continue|checking your browser before accessing|verification successful\. waiting for .+ to respond)[.!]?\s*$",
+                &visible,
+            ))
 }
 
 fn matching_title(first: &str, second: &str) -> bool {
@@ -568,18 +578,7 @@ pub fn parse_cfp_page(
     } else {
         document.text.clone()
     };
-    let title = html
-        .select(&Selector::parse("title,h1").expect("title selector"))
-        .map(|element| element.text().collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
-    if pattern(
-        r"(?i)just a moment|access denied|verify (?:that )?you are human|captcha|robot verification",
-        &title,
-    ) || pattern(
-        r"(?i)cf-chl-|challenge-platform|enable javascript and cookies to continue",
-        &document.text,
-    ) {
+    if is_cfp_challenge(document) {
         return Err(CfpSourceError::Challenge);
     }
     if is_discovery && !has_journal_identity(config, &html, &text) {

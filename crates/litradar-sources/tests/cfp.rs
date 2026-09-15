@@ -217,6 +217,29 @@ fn cfp_comsoc_full_text_keeps_leading_dates_out_of_scope_and_requirements() {
 }
 
 #[test]
+fn cfp_background_security_scripts_do_not_hide_verified_original_content() {
+    let page = document("<title>Example Journal calls</title><h1>Example Journal</h1><h2>Call for papers</h2><h3>Original topic</h3><p>Original research scope.</p><p>Submission deadline: 31 December 2026</p><script>window._cf_chl_opt={};load('/cdn-cgi/challenge-platform/scripts/jsd/main.js');</script>");
+    assert!(!is_cfp_challenge(&page));
+    let parsed = parse_cfp_page(
+        &config(CfpAdapter::ElsevierCalls),
+        &page,
+        "2026-09-16",
+        true,
+    )
+    .unwrap();
+    assert_eq!(parsed.sources[0].scope, "Original research scope.");
+    let challenge = document("<title>example.org</title><h1>example.org</h1><h2>Performing security verification</h2><script src='/cdn-cgi/challenge-platform/check.js'></script>");
+    assert!(is_cfp_challenge(&challenge));
+    assert!(parse_cfp_page(
+        &config(CfpAdapter::ElsevierCalls),
+        &challenge,
+        "2026-09-16",
+        true
+    )
+    .is_err());
+}
+
+#[test]
 fn cfp_springer_keeps_status_separate_from_deadlines_and_event_text() {
     let config = config(CfpAdapter::SpringerCollections);
     let parsed=parse_cfp_page(&config,&document("<h1>Example Journal</h1><h2>Collections</h2><h3>Source-language topic</h3><p>Original topic text.</p><div>Submission status <span>Open</span> Submission deadline <time>01 March 2027</time></div><h3>DISC 2024 (by invitation only)</h3><p>The conference was held October 28-Nov 1, 2024. Submissions are open now. The deadline to ...</p><p>Submission status Open</p>"),"2026-09-15",true).unwrap();
