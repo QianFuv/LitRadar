@@ -44,9 +44,20 @@ fn pattern(pattern: &str, text: &str) -> bool {
 }
 
 fn visible_html(html: &Html) -> String {
+    visible_html_excluding(html, None)
+}
+
+fn visible_html_excluding(html: &Html, exclusions: Option<&Selector>) -> String {
+    let excluded = exclusions
+        .into_iter()
+        .flat_map(|selector| html.select(selector).map(|element| element.id()))
+        .collect::<Vec<_>>();
     let mut text = String::new();
     let mut nodes = vec![(*html.root_element(), false)];
     while let Some((node, is_exiting)) = nodes.pop() {
+        if excluded.contains(&node.id()) {
+            continue;
+        }
         match node.value() {
             Node::Text(value) => text.push_str(value),
             Node::Element(element) => {
@@ -202,13 +213,13 @@ pub fn cfp_original_links(source: &CfpSource, document: &CfpDocument) -> Vec<Str
 
 fn full_text_sections(body: &str) -> (String, String) {
     let body = plain(body);
-    let end = Regex::new(r"(?im)^(?:references|bibliography|参考文献)\s*[:：]?\s*$")
+    let end = Regex::new(r"(?im)^(?:[一二三四五六七八九十\d]+[、.．\s]+)?(?:references|bibliography|参考文献)\s*[:：]?\s*$")
         .expect("reference section boundary");
     let body = end
         .find(&body)
         .map_or(body.as_str(), |boundary| &body[..boundary.start()])
         .trim();
-    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
+    let requirements = Regex::new(r"(?im)^(?:(?:[一二三四五六七八九十\d]+)[、.．\s]+)?(?:submissions?\s*[:：]|submissions? (?:format|guidelines|instructions|information|requirements|procedure|process)|special issue submission and review process|all manuscripts will be reviewed as a cohort|instructions for authors|manuscript (?:preparation|requirements|submission)|author (?:guidelines|instructions)|how to submit|paper submission|稿件要求|投稿要求|征稿要求|投稿方式|投稿渠道|投稿网址|投稿指南|论文要求|提交要求|征文要求|来稿要求|征文投稿说明|收稿形式与评审流程|稿件提交|authors should prepare|submitted papers should|papers must (?:be submitted|follow))").expect("full-text requirements boundary");
     match requirements.find(body) {
         Some(boundary) => (
             body[..boundary.start()].trim().to_owned(),
@@ -326,6 +337,70 @@ pub fn extract_cfp_full_text(
             .next()
             .ok_or(CfpSourceError::Unrecognized)?;
         visible_html(&Html::parse_fragment(&body.inner_html()))
+    } else if Url::parse(&document.final_url).is_ok_and(|url| {
+        url.host_str() == Some("www.resci.cn") && url.path().starts_with("/CN/news/")
+    }) && original.catalog_ids.iter().any(|id| id == "issn-1007-7588")
+    {
+        let title_selector =
+            Selector::parse(".newstitle").expect("resources notice title selector");
+        let body = html
+            .select(
+                &Selector::parse(".content_nr > .news-content")
+                    .expect("resources notice body selector"),
+            )
+            .find(|body| {
+                body.select(&title_selector)
+                    .any(|title| matching_title(&title.text().collect::<String>(), &original.title))
+            })
+            .ok_or(CfpSourceError::Unrecognized)?;
+        visible_html_excluding(
+            &Html::parse_fragment(&body.inner_html()),
+            Some(
+                &Selector::parse(".newstitle, .text-right")
+                    .expect("resources notice metadata selector"),
+            ),
+        )
+    } else if Url::parse(&document.final_url).is_ok_and(|url| {
+        url.host_str() == Some("chinaifs.org.cn")
+            && url.path().starts_with("/html/web/tongzhigonggao/")
+    }) && original.catalog_ids.iter().any(|id| id == "issn-1006-1029")
+    {
+        let title_selector =
+            Selector::parse(".news-title > h1").expect("finance notice title selector");
+        let container = html
+            .select(&Selector::parse(".news-wrap").expect("finance notice container selector"))
+            .find(|container| {
+                container
+                    .select(&title_selector)
+                    .any(|title| matching_title(&title.text().collect::<String>(), &original.title))
+            })
+            .ok_or(CfpSourceError::Unrecognized)?;
+        let body = container
+            .select(&Selector::parse(".news-content").expect("finance notice body selector"))
+            .next()
+            .ok_or(CfpSourceError::Unrecognized)?;
+        visible_html(&Html::parse_fragment(&body.inner_html()))
+    } else if Url::parse(&document.final_url).is_ok_and(|url| {
+        url.host_str() == Some("kxxyj.magtechjournal.com")
+            && url.path().starts_with("/kxxyj/CN/news/")
+    }) && original.catalog_ids.iter().any(|id| id == "issn-1003-2053")
+    {
+        let title_selector =
+            Selector::parse(".item_biaoti").expect("science notice title selector");
+        let body = html
+            .select(
+                &Selector::parse(".content_nr > .item_con > ul")
+                    .expect("science notice body selector"),
+            )
+            .find(|body| {
+                body.select(&title_selector)
+                    .any(|title| matching_title(&title.text().collect::<String>(), &original.title))
+            })
+            .ok_or(CfpSourceError::Unrecognized)?;
+        visible_html_excluding(
+            &Html::parse_fragment(&body.inner_html()),
+            Some(&title_selector),
+        )
     } else if document.format == "pdf_text" {
         let text = plain(&document.text);
         if pattern(
