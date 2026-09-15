@@ -270,7 +270,7 @@ pub fn extract_cfp_full_text(
         if scope_heading.is_none() && text.to_lowercase().starts_with("important dates") {
             return Err(CfpSourceError::Unrecognized);
         }
-        let requirement_heading = Regex::new(r"(?im)^submission guidelines\s*[:：]?\s*$")
+        let requirement_heading = Regex::new(r"(?im)^submissions? guidelines\s*[:：]?\s*$")
             .expect("ComSoc requirement heading")
             .find(&text)
             .ok_or(CfpSourceError::Unrecognized)?;

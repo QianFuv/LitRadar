@@ -203,13 +203,16 @@ fn cfp_comsoc_full_text_keeps_leading_dates_out_of_scope_and_requirements() {
         "<h2>Important Dates</h2><p>Manuscript Submission: 31 December 2026</p><h2>Scope</h2><p>Complete original research scope.</p><h2>Submission Guidelines</h2><p>Complete original submission requirements.</p><h2>Guest Editors</h2><p>Editorial names.</p>",
         "<h2>Call for Papers</h2><p>Complete original research scope.</p><h2>Submission Guidelines</h2><p>Complete original submission requirements.</p><h2>Important Dates</h2><p>Manuscript Submission: 31 December 2026</p><h2>Guest Editors</h2><p>Editorial names.</p>",
     ] {
-        let mut page = document(&format!("<h1 class='h1--page-title'>Original topic</h1><article class='node--type-call-for-papers node--view-mode-full'><div class='paragraph-anchor-wrapper'><div class='text-long'>{body}</div></div></article>"));
-        page.final_url = "https://www.comsoc.org/publications/journals/ieee-jsac/cfp/original-topic".into();
-        let recovered = extract_cfp_full_text(&original, &page).unwrap();
-        assert_eq!(recovered.scope, "Complete original research scope.");
-        assert_eq!(recovered.requirements, "Submission Guidelines\nComplete original submission requirements.");
-        page.final_url = "https://example.org/cfp/original-topic".into();
-        assert!(extract_cfp_full_text(&original, &page).is_err());
+        for label in ["Submission Guidelines", "Submissions Guidelines"] {
+            let body = body.replace("Submission Guidelines", label);
+            let mut page = document(&format!("<h1 class='h1--page-title'>Original topic</h1><article class='node--type-call-for-papers node--view-mode-full'><div class='paragraph-anchor-wrapper'><div class='text-long'>{body}</div></div></article>"));
+            page.final_url = "https://www.comsoc.org/publications/journals/ieee-jsac/cfp/original-topic".into();
+            let recovered = extract_cfp_full_text(&original, &page).unwrap();
+            assert_eq!(recovered.scope, "Complete original research scope.");
+            assert_eq!(recovered.requirements, format!("{label}\nComplete original submission requirements."));
+            page.final_url = "https://example.org/cfp/original-topic".into();
+            assert!(extract_cfp_full_text(&original, &page).is_err());
+        }
     }
 }
 
