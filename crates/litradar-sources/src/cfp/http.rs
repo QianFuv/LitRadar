@@ -342,7 +342,7 @@ mod tests {
             .build()
             .unwrap();
         assert!(client
-            .get("http://cfp-delayed-dns.invalid/")
+            .get("https://cfp-delayed-dns.invalid/")
             .send()
             .unwrap_err()
             .is_timeout());
