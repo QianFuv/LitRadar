@@ -267,14 +267,19 @@ pwsh ./scripts/profile_logging.ps1 `
   -Concurrency 4
 ```
 
-脚本先用正常容器启动完成迁移，通过可配置的 `sqlite3` CLI 快照 `log_format`/`log_filter`，再事务性切换 off/default 两种模式并在结束时恢复原始行。它交错运行两种模式，对 `/api/logging-profile-missing` 发起固定 404 请求，验证每个默认模式应用行都是 JSON 且含必填字段，并检查请求事件数与丢失数。它还分别调用现有 `profile_docker_memory.ps1` 的 warm-idle 场景，复用 20 MiB p95、24 MiB peak 和 160 MiB cgroup 门禁。报告写入已忽略的 `output/logging/`。
+脚本先用正常容器启动完成迁移，通过可配置的 `sqlite3` CLI 快照 `log_format`/`log_filter`，再事务性切换 off/default 两种模式并在结束时恢复原始行。它交错运行两种模式，对 `/api/logging-profile-missing` 发起固定 404 请求，验证每个默认模式应用行都是 JSON 且含必填字段，并检查请求事件数与丢失数。报告写入已忽略的 `output/logging/`。
+
+It also invokes `profile_docker_memory.ps1` for both warm-idle modes. Memory is reported without a default budget or expected container cap.
 
 门禁：
 
 - 预期负载 `dropped_count=0`
 - logging-on p95 延迟增量不超过 `max(2 ms, logging-off p95 × 15%)`
-- 两种模式都通过 20/24 MiB warm-idle 门禁
-- logging-on warm-idle p95 比 logging-off 最多增加 8 MiB
+- Both memory profiles must succeed, including OOM and functional checks.
+- With `-EnforceMemoryBudgets`, both modes enforce 20/24 MiB warm-idle budgets, zero swap/max/PSI pressure and a maximum 8 MiB logging-on p95 increase.
+- Explicit `-P95LimitMiB`, `-PeakLimitMiB` and `-ExpectedMemoryLimitMiB` are forwarded independently; omitted values stay unset and no 160 MiB cap is implied. Expected=0 checks an uncapped container.
+
+Reports expose the active policy and use null for disabled thresholds. Log correctness, dropped-event and latency gates remain mandatory without memory opt-in.
 
 只使用隔离 fixture。脚本会启动迁移并读写传入的数据目录；不要把正在运行或未备份的生产 `data/` 交给画像脚本。
 

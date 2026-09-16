@@ -21,6 +21,14 @@ param(
     [ValidateRange(0, 3600)]
     [int]$MemoryWarmupSeconds = 5,
 
+    [Nullable[double]]$P95LimitMiB,
+
+    [Nullable[double]]$PeakLimitMiB,
+
+    [Nullable[double]]$ExpectedMemoryLimitMiB,
+
+    [switch]$EnforceMemoryBudgets,
+
     [string]$ComposeFile = (Join-Path $PSScriptRoot "..\docker-compose.yml"),
 
     [string]$SqliteExecutable = "sqlite3",
@@ -34,10 +42,7 @@ $ErrorActionPreference = "Stop"
 $MEBIBYTE = 1024 * 1024
 $LATENCY_DELTA_LIMIT_MILLISECONDS = 2.0
 $LATENCY_DELTA_LIMIT_PERCENT = 15.0
-$MEMORY_P95_LIMIT_MIB = 20.0
-$MEMORY_PEAK_LIMIT_MIB = 24.0
 $MEMORY_DELTA_LIMIT_MIB = 8.0
-$EXPECTED_MEMORY_LIMIT_MIB = 160.0
 $PROFILE_PATH = "/api/logging-profile-missing"
 $REQUIRED_EVENT_FIELDS = @("timestamp", "level", "target", "event", "component")
 
@@ -566,6 +571,18 @@ function Invoke-MemoryProfile {
             [Text.UTF8Encoding]::new($false)
         )
         $memoryProfiler = Join-Path $PSScriptRoot "profile_docker_memory.ps1"
+        $memoryOptions = @{
+            EnforceMemoryBudgets = [bool]$EnforceMemoryBudgets
+        }
+        foreach ($option in @("P95LimitMiB", "PeakLimitMiB", "ExpectedMemoryLimitMiB")) {
+            $value = Get-Variable -Name $option -ValueOnly
+            if ($null -ne $value) {
+                $memoryOptions[$option] = [double]$value
+            }
+        }
+        $encodedMemoryOptions = [Convert]::ToBase64String(
+            [Text.Encoding]::UTF8.GetBytes(($memoryOptions | ConvertTo-Json -Compress))
+        )
         $profileRunner = @'
 & {
     param(
@@ -574,22 +591,20 @@ function Invoke-MemoryProfile {
         $DurationSeconds,
         $WarmupSeconds,
         $SampleIntervalMilliseconds,
-        $P95LimitMiB,
-        $PeakLimitMiB,
-        $ExpectedMemoryLimitMiB,
+        $EncodedMemoryOptions,
         $ComposeFile,
         $OutputPath
     )
 
-    & $ProfilerPath `
+    $memoryOptions = ConvertFrom-Json -AsHashtable -InputObject (
+        [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($EncodedMemoryOptions))
+    )
+    & $ProfilerPath @memoryOptions `
         -Scenario "warm-idle" `
         -DataPath $DataPath `
         -DurationSeconds ([int]$DurationSeconds) `
         -WarmupSeconds ([int]$WarmupSeconds) `
         -SampleIntervalMilliseconds ([int]$SampleIntervalMilliseconds) `
-        -P95LimitMiB ([double]$P95LimitMiB) `
-        -PeakLimitMiB ([double]$PeakLimitMiB) `
-        -ExpectedMemoryLimitMiB ([double]$ExpectedMemoryLimitMiB) `
         -TrafficPath @("/health/live", "/health/ready", "/") `
         -ComposeFile $ComposeFile `
         -OutputPath $OutputPath
@@ -603,9 +618,7 @@ function Invoke-MemoryProfile {
             $MemoryDurationSeconds,
             $MemoryWarmupSeconds,
             "1000",
-            $MEMORY_P95_LIMIT_MIB,
-            $MEMORY_PEAK_LIMIT_MIB,
-            $EXPECTED_MEMORY_LIMIT_MIB,
+            $encodedMemoryOptions,
             $renderedComposePath,
             $memoryOutputPath
         )
@@ -624,6 +637,7 @@ function Invoke-MemoryProfile {
             WorkingSetPeakBytes = [long]$summary.Memory.WorkingSetPeakBytes
             GatePassed = [bool]$summary.Gate.Passed
             GateFailures = @($summary.Gate.Failures)
+            Thresholds = $summary.Thresholds
         }
     }
     finally {
@@ -777,7 +791,7 @@ if ($offMemory.ExitCode -ne 0 -or -not $offMemory.GatePassed) {
 if ($defaultMemory.ExitCode -ne 0 -or -not $defaultMemory.GatePassed) {
     $gateFailures.Add("logging-on warm-idle memory profile failed")
 }
-if ($memoryDeltaBytes -gt $MEMORY_DELTA_LIMIT_MIB * $MEBIBYTE) {
+if ($EnforceMemoryBudgets -and $memoryDeltaBytes -gt $MEMORY_DELTA_LIMIT_MIB * $MEBIBYTE) {
     $gateFailures.Add("logging-on p95 memory delta exceeds 8 MiB")
 }
 
@@ -803,10 +817,11 @@ $summary = [ordered]@{
     Thresholds = [ordered]@{
         LatencyDeltaMilliseconds = $LATENCY_DELTA_LIMIT_MILLISECONDS
         LatencyDeltaPercent = $LATENCY_DELTA_LIMIT_PERCENT
-        MemoryP95MiB = $MEMORY_P95_LIMIT_MIB
-        MemoryPeakMiB = $MEMORY_PEAK_LIMIT_MIB
-        MemoryDeltaMiB = $MEMORY_DELTA_LIMIT_MIB
-        ContainerMemoryLimitMiB = $EXPECTED_MEMORY_LIMIT_MIB
+        EnforceMemoryBudgets = [bool]$EnforceMemoryBudgets
+        MemoryP95MiB = $defaultMemory.Thresholds.P95MiB
+        MemoryPeakMiB = $defaultMemory.Thresholds.PeakMiB
+        MemoryDeltaMiB = if ($EnforceMemoryBudgets) { $MEMORY_DELTA_LIMIT_MIB } else { $null }
+        ContainerMemoryLimitMiB = $ExpectedMemoryLimitMiB
     }
     Latency = [ordered]@{
         LoggingOffP95Milliseconds = [Math]::Round($offP95, 3)

@@ -24,6 +24,8 @@ param(
 
     [Nullable[double]]$ExpectedMemoryLimitMiB,
 
+    [switch]$EnforceMemoryBudgets,
+
     [string[]]$TrafficPath = @(),
 
     [string]$ComposeFile = (Join-Path $PSScriptRoot "..\docker-compose.yml"),
@@ -337,19 +339,19 @@ $isDailyScenario = $Scenario -eq "warm-idle"
 $effectiveP95LimitMiB = if ($null -ne $P95LimitMiB) {
     [double]$P95LimitMiB
 }
-elseif ($isDailyScenario) {
+elseif ($EnforceMemoryBudgets -and $isDailyScenario) {
     $DAILY_P95_LIMIT_MIB
 }
-else {
+elseif ($EnforceMemoryBudgets) {
     $JOB_P95_LIMIT_MIB
 }
 $effectivePeakLimitMiB = if ($null -ne $PeakLimitMiB) {
     [double]$PeakLimitMiB
 }
-elseif ($isDailyScenario) {
+elseif ($EnforceMemoryBudgets -and $isDailyScenario) {
     $DAILY_PEAK_LIMIT_MIB
 }
-else {
+elseif ($EnforceMemoryBudgets) {
     $JOB_PEAK_LIMIT_MIB
 }
 
@@ -589,13 +591,13 @@ try {
     )
 
     $gateFailures = [Collections.Generic.List[string]]::new()
-    if ($workingSetP95Bytes -gt $effectiveP95LimitMiB * $MEBIBYTE) {
+    if ($null -ne $effectiveP95LimitMiB -and $workingSetP95Bytes -gt $effectiveP95LimitMiB * $MEBIBYTE) {
         $gateFailures.Add("p95 memory exceeds $effectiveP95LimitMiB MiB")
     }
-    if ($workingSetPeakBytes -gt $effectivePeakLimitMiB * $MEBIBYTE) {
+    if ($null -ne $effectivePeakLimitMiB -and $workingSetPeakBytes -gt $effectivePeakLimitMiB * $MEBIBYTE) {
         $gateFailures.Add("sample peak memory exceeds $effectivePeakLimitMiB MiB")
     }
-    if ($swapPeakBytes -ne 0) {
+    if ($EnforceMemoryBudgets -and $swapPeakBytes -ne 0) {
         $gateFailures.Add("swap usage is nonzero")
     }
     if ($oomEventCount -ne 0) {
@@ -604,7 +606,7 @@ try {
     if ($containerOomKilled) {
         $gateFailures.Add("container OOM-killed state is true")
     }
-    if ($eventDelta.Contains("max") -and [long]$eventDelta["max"] -ne 0) {
+    if ($EnforceMemoryBudgets -and $eventDelta.Contains("max") -and [long]$eventDelta["max"] -ne 0) {
         $gateFailures.Add("memory.max event delta is nonzero")
     }
     if ($commandExitCode -ne 0) {
@@ -613,7 +615,7 @@ try {
     if ($trafficFailureCount -ne 0) {
         $gateFailures.Add("light-traffic request failures total $trafficFailureCount")
     }
-    if ($fullPressureAvg10Max -ne 0.0) {
+    if ($EnforceMemoryBudgets -and $fullPressureAvg10Max -ne 0.0) {
         $gateFailures.Add("memory full-pressure avg10 is nonzero")
     }
     if ($null -ne $ExpectedMemoryLimitMiB) {
@@ -639,8 +641,10 @@ try {
         ContainerMemoryLimitBytes = $containerMemoryLimitBytes
         Thresholds = [ordered]@{
             Metric = "cgroup current minus inactive_file"
+            EnforceMemoryBudgets = [bool]$EnforceMemoryBudgets
             P95MiB = $effectiveP95LimitMiB
             PeakMiB = $effectivePeakLimitMiB
+            ExpectedMemoryLimitMiB = $ExpectedMemoryLimitMiB
         }
         Memory = [ordered]@{
             WorkingSetP50Bytes = $workingSetP50Bytes

@@ -38,7 +38,7 @@ production -> ghcr.io/qianfuv/litradar@sha256:<verified digest>
 | 可写数据   | `./data:/app/data:rw`                                                                              |
 | 运行用户   | 固定 UID/GID `10001:10001`                                                                         |
 | 健康检查   | `GET /health/ready` 后再请求根 Web 文档 `GET /`                                                    |
-| 内存上限   | 160 MiB，覆盖服务进程及同 cgroup 的计划任务子进程                                                  |
+| 内存上限   | No default cap; operators may configure their own container budget                                                  |
 | 日志       | `local` 驱动；每容器五个 10 MiB 文件，启用压缩                                                     |
 
 `litradar serve` 在绑定端口前依次完成数据库迁移、持久 Meta 准备、密钥验证、运行设置加载和 HTTP 准备，然后立即执行第一个调度 tick。默认每 30 秒再次检查计划任务。调度任务通过同一 `/usr/local/bin/litradar` 启动短生命周期的 `index`、`notify` 或 `push` 子进程；这些子进程不是 Compose 服务。
@@ -231,7 +231,6 @@ docker compose ps
 
 - `read_only: true`
 - `restart: unless-stopped`
-- `mem_limit: 160m`
 - `cap_drop: [ALL]`
 - `no-new-privileges:true`
 - 带 `noexec,nosuid,nodev` 的 `/tmp` tmpfs
@@ -239,9 +238,9 @@ docker compose ps
 
 除 `/app/data` 外没有持久写路径。`/app/web` 随镜像只读提供，运行时不生成 Next.js cache。不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
 
-`160m` 由 Compose 渲染为 167,772,160 字节的 cgroup v2 `memory.max`。该限制同时适用于 `docker compose up` 和 `docker compose run`；内嵌调度启动的子进程与 `serve` 共享同一个限制。它是高于 120 MiB 作业峰值门禁的失控保护，不是可用内存目标。触发硬上限可能直接终止作业，因此不能用它替代画像和低内存默认值。自行使用 `docker run` 时必须显式提供等价的 `--memory 160m`。
+Compose does not set a default cgroup memory cap. An operator may set `mem_limit` in a Compose override, or pass `--memory` to `docker run`, when a specific deployment budget is required. The service and scheduler children still share their container cgroup. Profiling reports usage without imposing a memory budget unless explicitly requested.
 
-上游 source 响应在透明解压后使用 endpoint 级字节上限：CNKI/ZJLib 2 MiB、JFBYM 256 KiB、Scholarly 16 MiB，PDF 另有 32 MiB 上限。Content-Length 只是前置快速拒绝，实际还会对解压后流执行 `limit + 1` 读取；这些应用内上限是 160 MiB cgroup 之前的必要资源边界，不能被容器 OOM 代替。
+Upstream responses retain endpoint-specific limits after transparent decompression: CNKI/ZJLib 2 MiB, JFBYM 256 KiB, Scholarly 16 MiB, and PDF 32 MiB. Content-Length is an early check; decompressed streams still use a `limit + 1` read. These application limits, finite queues and durable page acknowledgements remain independent of an optional container cap.
 
 ## 日志收集与轮转
 
@@ -269,24 +268,24 @@ docker compose config --quiet
 
 | JSON 字段/来源                   | 含义                                                                         | 用途                               |
 | -------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------- |
-| `Memory.WorkingSet*`             | `memory.current - memory.stat.inactive_file`，与 Docker working-set 口径一致 | 20/24 和 100/120 MiB 门禁          |
+| `Memory.WorkingSet*`             | `memory.current - memory.stat.inactive_file`，与 Docker working-set 口径一致 | Report usage; enforce only requested budgets          |
 | `Memory.CgroupCurrent*`          | 原始 cgroup 当前用量，包含可回收文件页缓存                                   | 分析页缓存和 cgroup 总占用         |
 | `Memory.CgroupLifetimePeakBytes` | 容器创建以来的原始 `memory.peak`                                             | 诊断启动或作业瞬时峰值             |
 | `PeakProcesses`                  | `docker top` 的进程 RSS、线程数和命令名峰值拆分                              | 区分 `serve`、作业子进程和辅助进程 |
-| `Memory.SwapPeakBytes`           | `memory.swap.current` 的采样峰值                                             | 必须为 0                           |
-| `EventDelta`                     | 新建 cgroup 生命周期内的 `memory.events` 计数                                | `max`、`oom`、`oom_kill` 必须为 0  |
-| `FullPressureAvg10Max`           | `memory.pressure` 的 full `avg10` 采样最大值                                 | 验收窗口应为 0                     |
+| `Memory.SwapPeakBytes`           | `memory.swap.current` 的采样峰值                                             | Zero only with legacy opt-in       |
+| `EventDelta`                     | 新建 cgroup 生命周期内的 `memory.events` 计数                                | OOM always fails; max only with legacy opt-in  |
+| `FullPressureAvg10Max`           | `memory.pressure` 的 full `avg10` 采样最大值                                 | Zero only with legacy opt-in                     |
 
 每个样本还保存选定的 `memory.stat`、PSI、进程 RSS 总和、进程数和线程数。摘要报告 working-set 的 p50、p95、采样峰值、持续时间、场景退出码、OOM 状态和门禁失败原因。采样需要短生命周期的 `docker exec`，因此 cgroup 数值是略偏保守的；进程 RSS 与 cgroup working set 的记账方式不同，不能相加。
 
-默认门禁：
+Legacy budgets enabled by `-EnforceMemoryBudgets`:
 
 | 场景                                 | p95     | 采样峰值 |
 | ------------------------------------ | ------- | -------- |
 | `warm-idle`                          | 20 MiB  | 24 MiB   |
 | `index`、`update`、`scheduled-child` | 100 MiB | 120 MiB  |
 
-所有场景还要求 swap、OOM 和 `memory.events.max` 为 0、业务命令退出 0。`-P95LimitMiB` 和 `-PeakLimitMiB` 可显式覆盖阈值；这用于独立预算或门禁自测，不改变生产目标。`-ExpectedMemoryLimitMiB 160` 会同时校验实际容器限制。任何并发覆盖，尤其是提高 `--processes` 或 `--workers`，都必须使用相同数据和场景重新画像；遗留 `--issue-batch` 不改变当前运行时并发或内存，因此不是画像调优参数。
+By default, profiles fail on actual OOM, a nonzero command exit or failed traffic. `-EnforceMemoryBudgets` enables the legacy p95/peak budgets above and requires zero swap, `memory.events.max` and full PSI `avg10`. Explicit `-P95LimitMiB` or `-PeakLimitMiB` enables only that threshold, overriding its legacy value when both are supplied. `-ExpectedMemoryLimitMiB` independently checks the configured cap without creating one; use `0` to check the uncapped default, or the chosen value for an operator-provided cap. Unset thresholds are reported as null. Compare measurements on the same data when tuning concurrency; legacy `--issue-batch` does not control current memory or concurrency.
 
 ### 场景命令
 
@@ -303,7 +302,6 @@ pwsh ./scripts/profile_docker_memory.ps1 `
     'index',
     '--secret-key-file', '/run/secrets/litradar_key'
   ) `
-  -ExpectedMemoryLimitMiB 160 `
   -OutputPath ./output/memory/final-resume-index.json
 ```
 
@@ -320,7 +318,6 @@ pwsh ./scripts/profile_docker_memory.ps1 `
     '--file', 'ccf_computer_journals.csv',
     '--update'
   ) `
-  -ExpectedMemoryLimitMiB 160 `
   -OutputPath ./output/memory/final-update-ccf.json
 
 pwsh ./scripts/profile_docker_memory.ps1 `
@@ -333,7 +330,6 @@ pwsh ./scripts/profile_docker_memory.ps1 `
     '--file', 'chinese_journals.csv',
     '--update'
   ) `
-  -ExpectedMemoryLimitMiB 160 `
   -OutputPath ./output/memory/final-update-chinese.json
 
 pwsh ./scripts/profile_docker_memory.ps1 `
@@ -346,7 +342,6 @@ pwsh ./scripts/profile_docker_memory.ps1 `
     '--file', 'english_journals.csv',
     '--update'
   ) `
-  -ExpectedMemoryLimitMiB 160 `
   -OutputPath ./output/memory/final-update-english.json
 ```
 
@@ -363,7 +358,6 @@ pwsh ./scripts/profile_docker_memory.ps1 `
     '--file', 'ccf_computer_journals.csv',
     '--update'
   ) `
-  -ExpectedMemoryLimitMiB 160 `
   -OutputPath ./output/memory/final-scheduled-child.json
 ```
 
@@ -376,13 +370,12 @@ pwsh ./scripts/profile_docker_memory.ps1 `
   -WarmupSeconds 300 `
   -DurationSeconds 600 `
   -TrafficPath /health/live,/health/ready,/ `
-  -ExpectedMemoryLimitMiB 160 `
   -OutputPath ./output/memory/final-warm-idle.json
 ```
 
-每份 JSON 只记录 `CommandProvided`，不保存命令参数或密钥值。验收要求 `Gate.Passed=true`，并同时满足：作业 working-set p95 不超过 100 MiB、采样峰值不超过 120 MiB；日常服务分别不超过 20 MiB 和 24 MiB；退出码为 0；swap、OOM、`memory.events.max` 增量和 full PSI `avg10` 都为 0。任一条件失败都不能用其他较低指标抵消。
+Each JSON report records only `CommandProvided`, not command arguments or secrets. Acceptance requires `Gate.Passed=true`: command exit zero, no OOM and successful traffic, plus only the explicitly enabled memory/pressure checks. Default observations do not enforce the legacy 20/24 or 100/120 MiB budgets.
 
-如果 `Gate.Failures` 只有非零/124 退出码或上游错误，这是来源或工作流失败，当前样本不能作为内存验收；先处理来源问题再完整重跑。如果命令退出 0 但 p95、峰值、swap、OOM、max event 或 PSI 失败，这是内存门禁失败。脚本对两类情况都返回 1。可用极小的显式阈值验证门禁确实失败：
+A nonzero/124 exit, upstream error, OOM or traffic failure remains a failed run regardless of memory options. A requested threshold or legacy pressure violation also returns 1; unset budgets do not. The following small explicit thresholds verify that individual memory checks still fail:
 
 ```powershell
 pwsh ./scripts/profile_docker_memory.ps1 `
@@ -390,8 +383,7 @@ pwsh ./scripts/profile_docker_memory.ps1 `
   -DataPath ./isolated-profile-data `
   -DurationSeconds 10 `
   -P95LimitMiB 0.001 `
-  -PeakLimitMiB 0.001 `
-  -ExpectedMemoryLimitMiB 160
+  -PeakLimitMiB 0.001
 ```
 
 该命令预期返回 1，并在 JSON 的 `Gate.Failures` 中同时列出 p95 和峰值超限。中断或失败时 `finally` 仍只按本次唯一名称删除容器和网络；若宿主机或 Docker daemon 被强制终止，可用 `docker ps -a --filter name=litradar-memory-` 检查后按完整名称清理。
