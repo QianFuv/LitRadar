@@ -1,17 +1,18 @@
 //! Scholarly source clients backed by deterministic fixture transports.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use reqwest::{blocking::Client, header::HeaderMap, redirect::Policy, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::http_retry;
 use crate::provider_proxy::ProviderProxy;
 use crate::response_body::{bounded_response_json, ResponseBodyError};
 
@@ -62,6 +63,7 @@ enum OpenAlexHealthOutcome {
     Success,
     AuthenticationFailure,
     RateLimited,
+    DailyQuotaLimited,
     TransientFailure,
     TerminalFailure,
 }
@@ -204,17 +206,7 @@ impl OpenAlexSchedulerState {
                     .map(|ready_at| (index, ready_at))
             })
             .collect::<Vec<_>>();
-        let preferred_waits = waiting_slots
-            .iter()
-            .copied()
-            .filter(|(index, _)| !excluded_slots.contains(index))
-            .collect::<Vec<_>>();
-        let waits = if preferred_waits.is_empty() {
-            &waiting_slots
-        } else {
-            &preferred_waits
-        };
-        if let Some(ready_at) = waits.iter().map(|(_, ready_at)| *ready_at).min() {
+        if let Some(ready_at) = waiting_slots.iter().map(|(_, ready_at)| *ready_at).min() {
             return OpenAlexScheduleDecision::WaitUntil(ready_at);
         }
         if self
@@ -236,15 +228,20 @@ impl OpenAlexSchedulerState {
         retry_delay: Duration,
     ) {
         self.refresh(now);
-        if let Some(credits_used) = headers.credits_used {
-            self.maximum_request_credits = self.maximum_request_credits.max(credits_used);
+        let has_trusted_quota = matches!(
+            outcome,
+            OpenAlexHealthOutcome::Success | OpenAlexHealthOutcome::DailyQuotaLimited
+        );
+        if has_trusted_quota {
+            if let Some(credits_used) = headers.credits_used {
+                self.maximum_request_credits = self.maximum_request_credits.max(credits_used);
+            }
         }
         let Some(slot) = self.slots.get_mut(reservation.slot_index) else {
             return;
         };
         slot.in_flight = slot.in_flight.saturating_sub(1);
-        let has_quota_headers = headers.remaining.is_some() || headers.reset_after.is_some();
-        if has_quota_headers {
+        if has_trusted_quota {
             if let Some(remaining) = headers.remaining {
                 slot.remaining = Some(
                     slot.remaining
@@ -265,19 +262,37 @@ impl OpenAlexSchedulerState {
                 slot.is_disabled = true;
                 slot.cooldown_until = None;
             }
-            OpenAlexHealthOutcome::RateLimited => {
+            OpenAlexHealthOutcome::RateLimited | OpenAlexHealthOutcome::DailyQuotaLimited => {
                 let cooldown = headers
-                    .reset_after
+                    .retry_after
                     .into_iter()
-                    .chain(headers.retry_after)
+                    .chain(
+                        matches!(outcome, OpenAlexHealthOutcome::DailyQuotaLimited)
+                            .then_some(headers.reset_after)
+                            .flatten(),
+                    )
                     .chain((!retry_delay.is_zero()).then_some(retry_delay))
                     .max()
                     .unwrap_or(Duration::from_secs(1));
-                slot.cooldown_until = Some(now.saturating_add(cooldown));
+                slot.cooldown_until = Some(
+                    slot.cooldown_until
+                        .unwrap_or_default()
+                        .max(now.saturating_add(cooldown)),
+                );
+                if matches!(outcome, OpenAlexHealthOutcome::DailyQuotaLimited)
+                    && headers.remaining.is_none()
+                {
+                    slot.remaining = Some(0);
+                }
             }
             OpenAlexHealthOutcome::TransientFailure => {
+                let retry_delay = headers.retry_after.unwrap_or_default().max(retry_delay);
                 if !retry_delay.is_zero() {
-                    slot.cooldown_until = Some(now.saturating_add(retry_delay));
+                    slot.cooldown_until = Some(
+                        slot.cooldown_until
+                            .unwrap_or_default()
+                            .max(now.saturating_add(retry_delay)),
+                    );
                 }
             }
         }
@@ -505,7 +520,10 @@ impl SemanticScholarSchedulerState {
             .slots
             .iter()
             .enumerate()
-            .filter_map(|(index, slot)| (!slot.is_disabled).then_some(index))
+            .filter_map(|(index, slot)| {
+                (!slot.is_disabled && slot.cooldown_until.is_none_or(|until| until <= now))
+                    .then_some(index)
+            })
             .collect::<Vec<_>>();
         let preferred_slots = eligible_slots
             .iter()
@@ -527,9 +545,11 @@ impl SemanticScholarSchedulerState {
             })
             .collect::<Vec<_>>();
         if active_slots.is_empty() {
-            return candidates
+            return self
+                .slots
                 .iter()
-                .filter_map(|index| self.slots[*index].cooldown_until)
+                .filter(|slot| !slot.is_disabled)
+                .filter_map(|slot| slot.cooldown_until)
                 .min()
                 .map_or(SemanticScholarScheduleDecision::Unavailable, |ready_at| {
                     SemanticScholarScheduleDecision::WaitUntil(ready_at)
@@ -579,11 +599,19 @@ impl SemanticScholarSchedulerState {
             }
             SemanticScholarHealthOutcome::RateLimited => {
                 let retry_delay = retry_delay.max(self.start_interval);
-                slot.cooldown_until = Some(now.saturating_add(retry_delay));
+                slot.cooldown_until = Some(
+                    slot.cooldown_until
+                        .unwrap_or_default()
+                        .max(now.saturating_add(retry_delay)),
+                );
             }
             SemanticScholarHealthOutcome::TransientFailure => {
                 if !retry_delay.is_zero() {
-                    slot.cooldown_until = Some(now.saturating_add(retry_delay));
+                    slot.cooldown_until = Some(
+                        slot.cooldown_until
+                            .unwrap_or_default()
+                            .max(now.saturating_add(retry_delay)),
+                    );
                 }
             }
         }
@@ -663,12 +691,17 @@ impl SemanticScholarScheduler {
     fn reserve(
         &mut self,
         excluded_slots: &[usize],
+        deadline: Instant,
     ) -> Result<SemanticScholarReservation, SourceError> {
         loop {
+            http_retry::remaining(deadline)
+                .ok_or_else(|| source_deadline_error(SEMANTIC_SCHOLAR_SOURCE))?;
             let now = unix_time_duration();
             match self.state.reserve_slot(now, excluded_slots) {
                 SemanticScholarScheduleDecision::Reserved(slot) => {
-                    wait_until_unix_start(slot.start_at);
+                    wait_until_unix_start(slot.start_at, deadline)
+                        .then_some(())
+                        .ok_or_else(|| source_deadline_error(SEMANTIC_SCHOLAR_SOURCE))?;
                     if self
                         .state
                         .reservation_is_obsolete(&slot, unix_time_duration())
@@ -681,7 +714,9 @@ impl SemanticScholarScheduler {
                     });
                 }
                 SemanticScholarScheduleDecision::WaitUntil(ready_at) => {
-                    wait_until_unix_start(ready_at);
+                    wait_until_unix_start(ready_at, deadline)
+                        .then_some(())
+                        .ok_or_else(|| source_deadline_error(SEMANTIC_SCHOLAR_SOURCE))?;
                 }
                 SemanticScholarScheduleDecision::Unavailable => {
                     return Err(SourceError::Configuration(
@@ -722,18 +757,31 @@ impl fmt::Debug for SemanticScholarReservation {
     }
 }
 
-struct OpenAlexReservation {
+struct OpenAlexReservation<'a> {
     slot: OpenAlexSlotReservation,
     api_key: String,
+    scheduler: &'a OpenAlexScheduler,
+    is_finished: Cell<bool>,
 }
 
-impl fmt::Debug for OpenAlexReservation {
+impl fmt::Debug for OpenAlexReservation<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("OpenAlexReservation")
             .field("slot_index", &self.slot.slot_index)
             .field("api_key", &"[REDACTED]")
             .finish()
+    }
+}
+
+impl Drop for OpenAlexReservation<'_> {
+    fn drop(&mut self) {
+        if !self.is_finished.replace(true) {
+            if let Ok(mut state) = self.scheduler.state.lock() {
+                state.cancel_slot(&self.slot);
+                self.scheduler.changed.notify_all();
+            }
+        }
     }
 }
 
@@ -778,13 +826,19 @@ impl OpenAlexScheduler {
         self.api_keys.len()
     }
 
-    fn reserve(&self, excluded_slots: &[usize]) -> Result<OpenAlexReservation, SourceError> {
+    fn reserve(
+        &self,
+        excluded_slots: &[usize],
+        deadline: Instant,
+    ) -> Result<OpenAlexReservation<'_>, SourceError> {
         loop {
             let slot = {
                 let mut state = self.state.lock().map_err(|_| {
                     SourceError::Configuration("OpenAlex key scheduler is unavailable.".to_string())
                 })?;
                 loop {
+                    let remaining = http_retry::remaining(deadline)
+                        .ok_or_else(|| source_deadline_error(OPENALEX_SOURCE))?;
                     let now = unix_time_duration();
                     match state.reserve_slot(now, excluded_slots) {
                         OpenAlexScheduleDecision::Reserved(slot) => break slot,
@@ -792,6 +846,9 @@ impl OpenAlexScheduler {
                             let wait = ready_at.saturating_sub(now);
                             if wait.is_zero() {
                                 continue;
+                            }
+                            if wait >= remaining {
+                                return Err(source_deadline_error(OPENALEX_SOURCE));
                             }
                             if wait >= Duration::from_secs(1) {
                                 tracing::info!(
@@ -812,13 +869,23 @@ impl OpenAlexScheduler {
                             state = next_state;
                         }
                         OpenAlexScheduleDecision::WaitForChange => {
-                            state = self.changed.wait(state).map_err(|_| {
-                                SourceError::Configuration(
-                                    "OpenAlex key scheduler is unavailable.".to_string(),
-                                )
-                            })?;
+                            let (next_state, _) =
+                                self.changed.wait_timeout(state, remaining).map_err(|_| {
+                                    SourceError::Configuration(
+                                        "OpenAlex key scheduler is unavailable.".to_string(),
+                                    )
+                                })?;
+                            state = next_state;
                         }
                         OpenAlexScheduleDecision::Unavailable => {
+                            if state.slots.iter().any(|slot| !slot.is_disabled) {
+                                return Err(SourceError::Request {
+                                    service: OPENALEX_SOURCE.to_string(),
+                                    endpoint: "admission".to_string(),
+                                    message: "OpenAlex quota is temporarily unavailable."
+                                        .to_string(),
+                                });
+                            }
                             return Err(SourceError::Configuration(
                                 "No eligible OpenAlex API key is available.".to_string(),
                             ));
@@ -826,29 +893,37 @@ impl OpenAlexScheduler {
                     }
                 }
             };
-            wait_until_unix_start(slot.start_at);
+            let reservation = OpenAlexReservation {
+                api_key: self.api_keys[slot.slot_index].clone(),
+                slot,
+                scheduler: self,
+                is_finished: Cell::new(false),
+            };
+            if !wait_until_unix_start(slot.start_at, deadline) {
+                return Err(source_deadline_error(OPENALEX_SOURCE));
+            }
             let mut state = self.state.lock().map_err(|_| {
                 SourceError::Configuration("OpenAlex key scheduler is unavailable.".to_string())
             })?;
             if !state.reservation_is_eligible(&slot, unix_time_duration()) {
-                state.cancel_slot(&slot);
-                self.changed.notify_all();
+                drop(state);
+                drop(reservation);
                 continue;
             }
-            return Ok(OpenAlexReservation {
-                api_key: self.api_keys[slot.slot_index].clone(),
-                slot,
-            });
+            return Ok(reservation);
         }
     }
 
     fn finish(
         &self,
-        reservation: &OpenAlexReservation,
+        reservation: &OpenAlexReservation<'_>,
         headers: OpenAlexRateHeaders,
         outcome: OpenAlexHealthOutcome,
         retry_delay: Duration,
     ) {
+        if reservation.is_finished.replace(true) {
+            return;
+        }
         if let Ok(mut state) = self.state.lock() {
             state.finish_slot(
                 &reservation.slot,
@@ -860,15 +935,30 @@ impl OpenAlexScheduler {
             self.changed.notify_all();
         }
     }
+
+    fn observe_throttle(&self, reservation: &OpenAlexReservation<'_>, delay: Duration) {
+        if let Ok(mut state) = self.state.lock() {
+            if let Some(slot) = state.slots.get_mut(reservation.slot.slot_index) {
+                slot.cooldown_until = Some(
+                    slot.cooldown_until
+                        .unwrap_or_default()
+                        .max(unix_time_duration().saturating_add(delay)),
+                );
+                self.changed.notify_all();
+            }
+        }
+    }
 }
 
-fn wait_until_unix_start(start_at: Duration) {
+fn wait_until_unix_start(start_at: Duration, deadline: Instant) -> bool {
     loop {
         let wait = start_at.saturating_sub(unix_time_duration());
         if wait.is_zero() {
-            return;
+            return http_retry::remaining(deadline).is_some();
         }
-        thread::sleep(wait);
+        if !http_retry::sleep(wait, deadline) {
+            return false;
+        }
     }
 }
 
@@ -877,7 +967,7 @@ fn openalex_rate_headers(headers: &HeaderMap) -> OpenAlexRateHeaders {
         remaining: header_u64(headers, "x-ratelimit-remaining"),
         credits_used: header_u64(headers, "x-ratelimit-credits-used"),
         reset_after: header_u64(headers, "x-ratelimit-reset").map(Duration::from_secs),
-        retry_after: header_u64(headers, "retry-after").map(Duration::from_secs),
+        retry_after: http_retry::retry_after(headers),
     }
 }
 
@@ -885,15 +975,17 @@ fn header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {
     headers.get(name)?.to_str().ok()?.trim().parse().ok()
 }
 
-fn run_bounded_indexed<T, R, F>(
+fn run_bounded_indexed<T, R, F, S>(
     items: &[T],
     requested_worker_count: usize,
     operation: F,
+    should_stop: S,
 ) -> Result<Vec<R>, SourceError>
 where
     T: Sync,
     R: Send,
     F: Fn(usize, &T) -> R + Sync,
+    S: Fn(&R) -> bool + Sync,
 {
     if items.is_empty() {
         return Ok(Vec::new());
@@ -901,20 +993,34 @@ where
     let worker_count = requested_worker_count
         .clamp(1, OPENALEX_MAX_WORKERS_PER_PROCESS)
         .min(items.len());
-    let next_index = AtomicUsize::new(0);
+    let admission = Mutex::new((0_usize, false));
     let results = Mutex::new(Vec::with_capacity(items.len()));
     let did_panic = thread::scope(|scope| {
         let mut handles = Vec::with_capacity(worker_count);
         for _ in 0..worker_count {
             let operation = &operation;
             let results = &results;
-            let next_index = &next_index;
+            let admission = &admission;
+            let should_stop = &should_stop;
             handles.push(scope.spawn(move || loop {
-                let index = next_index.fetch_add(1, Ordering::Relaxed);
-                let Some(item) = items.get(index) else {
-                    break;
+                let index = {
+                    let mut pending = admission
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if pending.1 || pending.0 >= items.len() {
+                        break;
+                    }
+                    let index = pending.0;
+                    pending.0 += 1;
+                    index
                 };
-                let result = operation(index, item);
+                let result = operation(index, &items[index]);
+                if should_stop(&result) {
+                    admission
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .1 = true;
+                }
                 results
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1683,6 +1789,7 @@ impl LiveScholarlyConfig {
 struct ProviderAttemptSchedule {
     next_slot_unix_millis: u64,
     period_millis: u64,
+    cooldown_until: Duration,
 }
 
 impl ProviderAttemptSchedule {
@@ -1698,6 +1805,7 @@ impl ProviderAttemptSchedule {
             next_slot_unix_millis: epoch_unix_millis
                 .saturating_add(base_interval_millis.saturating_mul(worker_id as u64)),
             period_millis: base_interval_millis.saturating_mul(process_count as u64),
+            cooldown_until: Duration::ZERO,
         }
     }
 
@@ -1716,21 +1824,27 @@ impl ProviderAttemptSchedule {
         slot
     }
 
-    fn wait_for_next(&mut self) {
-        let now_unix_millis = unix_time_millis();
-        let slot_unix_millis = self.reserve_at(now_unix_millis);
-        let wait_millis = slot_unix_millis.saturating_sub(now_unix_millis);
-        if wait_millis > 0 {
-            thread::sleep(Duration::from_millis(wait_millis));
-        }
+    fn wait_for_next(&mut self, deadline: Instant) -> bool {
+        let ready_at = unix_time_duration().max(self.cooldown_until);
+        let ready_millis = ready_at.as_millis().saturating_add(u128::from(
+            !ready_at.subsec_nanos().is_multiple_of(1_000_000),
+        ));
+        let slot = self.reserve_at(u64::try_from(ready_millis).unwrap_or(u64::MAX));
+        wait_until_unix_start(
+            Duration::from_millis(slot).max(self.cooldown_until),
+            deadline,
+        )
+    }
+
+    fn defer_for(&mut self, delay: Duration) {
+        self.cooldown_until = self
+            .cooldown_until
+            .max(unix_time_duration().saturating_add(delay));
     }
 }
 
 fn unix_time_millis() -> u64 {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+    u64::try_from(http_retry::monotonic_time().as_millis()).unwrap_or(u64::MAX)
 }
 
 fn unix_time_duration() -> Duration {
@@ -1747,6 +1861,7 @@ pub struct LiveScholarlyTransport {
     semantic_scholar_scheduler: SemanticScholarScheduler,
     openalex_scheduler: Arc<OpenAlexScheduler>,
     openalex_worker_count: usize,
+    deadline: Option<Instant>,
 }
 
 struct JsonRequest<'a> {
@@ -1803,14 +1918,29 @@ fn execute_openalex_batches(
     worker_count: usize,
     url: &str,
     batches: &[Vec<String>],
+    request_timeout: Duration,
+    caller_deadline: Option<Instant>,
 ) -> Result<Vec<OpenAlexExecution>, SourceError> {
     let client = client.clone();
     let scheduler = Arc::clone(scheduler);
     let url = url.to_string();
-    run_bounded_indexed(batches, worker_count, move |_, batch| {
-        let query = openalex_doi_query(batch, None);
-        execute_openalex_request(&client, scheduler.as_ref(), "works", &url, &query)
-    })
+    run_bounded_indexed(
+        batches,
+        worker_count,
+        move |_, batch| {
+            let query = openalex_doi_query(batch, None);
+            execute_openalex_request(
+                &client,
+                scheduler.as_ref(),
+                "works",
+                &url,
+                &query,
+                request_timeout,
+                caller_deadline,
+            )
+        },
+        |execution| execution.result.is_err(),
+    )
 }
 
 fn execute_openalex_request(
@@ -1819,7 +1949,10 @@ fn execute_openalex_request(
     endpoint: &str,
     url: &str,
     base_query: &[(String, String)],
+    request_timeout: Duration,
+    caller_deadline: Option<Instant>,
 ) -> OpenAlexExecution {
+    let deadline = http_retry::deadline(caller_deadline);
     let maximum_attempts = scheduler
         .key_count()
         .max(1)
@@ -1828,7 +1961,7 @@ fn execute_openalex_request(
     let mut excluded_slots = Vec::new();
     let mut last_error = None;
     for attempt_index in 0..maximum_attempts {
-        let reservation = match scheduler.reserve(&excluded_slots) {
+        let reservation = match scheduler.reserve(&excluded_slots, deadline) {
             Ok(reservation) => reservation,
             Err(error) => {
                 return OpenAlexExecution {
@@ -1841,7 +1974,18 @@ fn execute_openalex_request(
         let retry_delay = Duration::from_secs(1_u64 << attempt_index.min(5));
         let mut query = base_query.to_vec();
         query.push(("api_key".to_string(), reservation.api_key.clone()));
-        let request = match client.get(url).query(&query).build() {
+        let Some(remaining) = http_retry::remaining(deadline) else {
+            return OpenAlexExecution {
+                result: Err(source_deadline_error(OPENALEX_SOURCE)),
+                attempts,
+            };
+        };
+        let request = match client
+            .get(url)
+            .query(&query)
+            .timeout(request_timeout.min(remaining))
+            .build()
+        {
             Ok(request) => request,
             Err(_) => {
                 scheduler.finish(
@@ -1882,7 +2026,14 @@ fn execute_openalex_request(
         match client.execute(request) {
             Ok(response) => {
                 let status_code = response.status().as_u16();
-                let headers = openalex_rate_headers(response.headers());
+                let mut headers = openalex_rate_headers(response.headers());
+                if status_code == 429 {
+                    scheduler.observe_throttle(
+                        &reservation,
+                        headers.retry_after.unwrap_or_default().max(retry_delay),
+                    );
+                    headers.retry_after = None;
+                }
                 let payload =
                     match bounded_response_json(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
                         Ok(payload) => payload,
@@ -1891,7 +2042,9 @@ fn execute_openalex_request(
                         }
                         Err(error) => {
                             let is_too_large = matches!(error, ResponseBodyError::TooLarge);
-                            let health = if is_too_large {
+                            let health = if status_code == 429 {
+                                OpenAlexHealthOutcome::RateLimited
+                            } else if is_too_large {
                                 OpenAlexHealthOutcome::TerminalFailure
                             } else {
                                 OpenAlexHealthOutcome::TransientFailure
@@ -1913,10 +2066,19 @@ fn execute_openalex_request(
                                 },
                                 elapsed_millis(started_at),
                             ));
-                            let error = SourceError::Request {
-                                service: OPENALEX_SOURCE.to_string(),
-                                endpoint: endpoint.to_string(),
-                                message: error.to_string(),
+                            let error = if status_code == 429 {
+                                SourceError::HttpStatus {
+                                    service: OPENALEX_SOURCE.to_string(),
+                                    endpoint: endpoint.to_string(),
+                                    status_code,
+                                    body: json!({ "error": "OpenAlex request failed" }),
+                                }
+                            } else {
+                                SourceError::Request {
+                                    service: OPENALEX_SOURCE.to_string(),
+                                    endpoint: endpoint.to_string(),
+                                    message: error.to_string(),
+                                }
                             };
                             if will_retry {
                                 add_excluded_slot(&mut excluded_slots, reservation.slot.slot_index);
@@ -1952,14 +2114,7 @@ fn execute_openalex_request(
                         attempts,
                     };
                 }
-                let health = match status_code {
-                    401 | 403 => OpenAlexHealthOutcome::AuthenticationFailure,
-                    429 => OpenAlexHealthOutcome::RateLimited,
-                    status if RETRY_STATUS_CODES.contains(&status) => {
-                        OpenAlexHealthOutcome::TransientFailure
-                    }
-                    _ => OpenAlexHealthOutcome::TerminalFailure,
-                };
+                let health = openalex_health_outcome(status_code, &payload);
                 let is_retryable = !matches!(health, OpenAlexHealthOutcome::TerminalFailure);
                 let will_retry = is_retryable && attempt_number < maximum_attempts;
                 scheduler.finish(&reservation, headers, health, retry_delay);
@@ -2104,6 +2259,35 @@ fn add_excluded_slot(excluded_slots: &mut Vec<usize>, slot_index: usize) {
     }
 }
 
+fn source_deadline_error(service: &str) -> SourceError {
+    SourceError::Request {
+        service: service.to_string(),
+        endpoint: "request".to_string(),
+        message: "source request deadline expired".to_string(),
+    }
+}
+
+fn openalex_health_outcome(status_code: u16, payload: &Value) -> OpenAlexHealthOutcome {
+    match status_code {
+        401 | 403 => OpenAlexHealthOutcome::AuthenticationFailure,
+        429 if payload
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| {
+                message
+                    .trim()
+                    .to_ascii_lowercase()
+                    .starts_with("insufficient budget")
+            }) =>
+        {
+            OpenAlexHealthOutcome::DailyQuotaLimited
+        }
+        429 => OpenAlexHealthOutcome::RateLimited,
+        status if RETRY_STATUS_CODES.contains(&status) => OpenAlexHealthOutcome::TransientFailure,
+        _ => OpenAlexHealthOutcome::TerminalFailure,
+    }
+}
+
 fn safe_semantic_scholar_error_body(status_code: u16, payload: &Value) -> Value {
     let is_no_valid_ids = status_code == 400
         && payload
@@ -2137,7 +2321,10 @@ fn semantic_scholar_health_delay(
     retry_after: Option<Duration>,
     retry_delay: Duration,
 ) -> Duration {
-    if matches!(health, SemanticScholarHealthOutcome::RateLimited) {
+    if matches!(
+        health,
+        SemanticScholarHealthOutcome::RateLimited | SemanticScholarHealthOutcome::TransientFailure
+    ) {
         retry_after.unwrap_or(retry_delay).max(retry_delay)
     } else {
         retry_delay
@@ -2323,7 +2510,19 @@ impl LiveScholarlyTransport {
             semantic_scholar_scheduler,
             openalex_scheduler,
             openalex_worker_count,
+            deadline: None,
         })
+    }
+
+    /// Limit subsequent logical requests to an earlier caller-owned deadline.
+    ///
+    /// The per-request 180-second budget still applies when it expires sooner.
+    pub fn with_deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = Some(
+            self.deadline
+                .map_or(deadline, |current| current.min(deadline)),
+        );
+        self
     }
 
     fn crossref_journal_works(
@@ -2435,10 +2634,17 @@ impl LiveScholarlyTransport {
         )
     }
 
-    fn wait_for_provider_attempt(&mut self, service: &str) {
-        if service == CROSSREF_SOURCE {
-            self.crossref_attempt_schedule.wait_for_next();
+    fn wait_for_provider_attempt(
+        &mut self,
+        service: &str,
+        deadline: Instant,
+    ) -> Result<(), SourceError> {
+        if service == CROSSREF_SOURCE && !self.crossref_attempt_schedule.wait_for_next(deadline) {
+            return Err(source_deadline_error(service));
         }
+        http_retry::remaining(deadline)
+            .map(|_| ())
+            .ok_or_else(|| source_deadline_error(service))
     }
 
     fn openalex_get_json(
@@ -2455,6 +2661,8 @@ impl LiveScholarlyTransport {
             endpoint,
             url,
             query,
+            Duration::from_secs(self.config.timeout_seconds.max(1)),
+            self.deadline,
         );
         self.finish_openalex_execution(execution)
     }
@@ -2466,6 +2674,8 @@ impl LiveScholarlyTransport {
             self.openalex_worker_count,
             &format!("{OPENALEX_BASE_URL}/works"),
             batches,
+            Duration::from_secs(self.config.timeout_seconds.max(1)),
+            self.deadline,
         )?;
         let mut payloads = Vec::with_capacity(executions.len());
         let mut first_error = None;
@@ -2527,6 +2737,7 @@ impl LiveScholarlyTransport {
         query: &[(String, String)],
         body: &Value,
     ) -> Result<Value, SourceError> {
+        let deadline = http_retry::deadline(self.deadline);
         let maximum_attempts = self
             .semantic_scholar_scheduler
             .key_count()
@@ -2535,7 +2746,15 @@ impl LiveScholarlyTransport {
         let mut excluded_slots = Vec::new();
         let mut last_error = None;
         for attempt_index in 0..maximum_attempts {
-            let reservation = self.semantic_scholar_scheduler.reserve(&excluded_slots)?;
+            let reservation = match self
+                .semantic_scholar_scheduler
+                .reserve(&excluded_slots, deadline)
+            {
+                Ok(reservation) => reservation,
+                Err(error) => return Err(last_error.unwrap_or(error)),
+            };
+            let remaining = http_retry::remaining(deadline)
+                .ok_or_else(|| source_deadline_error(SEMANTIC_SCHOLAR_SOURCE))?;
             let attempt_number = attempt_index + 1;
             let retry_delay = Duration::from_secs(1_u64 << attempt_index.min(5));
             let request = match self
@@ -2544,6 +2763,7 @@ impl LiveScholarlyTransport {
                 .query(query)
                 .json(body)
                 .header("x-api-key", reservation.api_key.as_str())
+                .timeout(Duration::from_secs(self.config.timeout_seconds.max(1)).min(remaining))
                 .build()
             {
                 Ok(request) => request,
@@ -2565,8 +2785,7 @@ impl LiveScholarlyTransport {
             match self.client.execute(request) {
                 Ok(response) => {
                     let status_code = response.status().as_u16();
-                    let retry_after =
-                        header_u64(response.headers(), "retry-after").map(Duration::from_secs);
+                    let retry_after = http_retry::retry_after(response.headers());
                     let payload =
                         match bounded_response_json(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
                             Ok(payload) => payload,
@@ -2610,7 +2829,9 @@ impl LiveScholarlyTransport {
                             Err(ResponseBodyError::InvalidJson) => json!({}),
                             Err(error) => {
                                 let is_too_large = matches!(error, ResponseBodyError::TooLarge);
-                                let health = if is_too_large {
+                                let health = if status_code == 429 {
+                                    SemanticScholarHealthOutcome::RateLimited
+                                } else if is_too_large {
                                     SemanticScholarHealthOutcome::TerminalFailure
                                 } else if (200..300).contains(&status_code) {
                                     SemanticScholarHealthOutcome::TransientFailure
@@ -2621,7 +2842,9 @@ impl LiveScholarlyTransport {
                                     health,
                                     SemanticScholarHealthOutcome::TerminalFailure
                                 );
-                                let will_retry = is_retryable && attempt_number < maximum_attempts;
+                                let will_retry = !is_too_large
+                                    && is_retryable
+                                    && attempt_number < maximum_attempts;
                                 let health_delay =
                                     semantic_scholar_health_delay(health, retry_after, retry_delay);
                                 self.semantic_scholar_scheduler.finish(
@@ -2840,6 +3063,7 @@ impl LiveScholarlyTransport {
     where
         S: FnMut(Duration),
     {
+        let deadline = http_retry::deadline(self.deadline);
         let has_extended_crossref_transport_retries = live_request.service == CROSSREF_SOURCE
             && live_request.endpoint == "journal_works"
             && live_request.method == "GET";
@@ -2849,12 +3073,16 @@ impl LiveScholarlyTransport {
             DEFAULT_MAX_RETRIES + 1
         };
         for attempt in 0..maximum_transport_attempts {
+            self.wait_for_provider_attempt(live_request.service, deadline)?;
+            let remaining = http_retry::remaining(deadline)
+                .ok_or_else(|| source_deadline_error(live_request.service))?;
             let attempt_number = attempt + 1;
             let mut builder = match live_request.method {
                 "POST" => self.client.post(live_request.url),
                 _ => self.client.get(live_request.url),
             }
-            .query(live_request.query);
+            .query(live_request.query)
+            .timeout(Duration::from_secs(self.config.timeout_seconds.max(1)).min(remaining));
             if let Some(body) = live_request.body {
                 builder = builder.json(body);
             }
@@ -2867,17 +3095,32 @@ impl LiveScholarlyTransport {
                 message: error.to_string(),
             })?;
             let request_url = redact_url(request.url().as_ref());
-            self.wait_for_provider_attempt(live_request.service);
             let started_at = Instant::now();
             match self.client.execute(request) {
                 Ok(response) => {
                     let status_code = response.status().as_u16();
+                    let retry_after = http_retry::retry_after(response.headers());
+                    if live_request.service == CROSSREF_SOURCE
+                        && RETRY_STATUS_CODES.contains(&status_code)
+                    {
+                        if let Some(delay) = retry_after {
+                            self.crossref_attempt_schedule.defer_for(delay);
+                        }
+                    }
+                    let retry_delay = retry_after
+                        .unwrap_or_default()
+                        .max(Duration::from_secs(attempt_number as u64));
+                    let mut is_body_too_large = false;
                     let payload =
                         match bounded_response_json(response, SCHOLARLY_RESPONSE_MAXIMUM_BYTES) {
                             Ok(payload) => payload,
                             Err(ResponseBodyError::InvalidJson) => json!({
                                 "error": ResponseBodyError::InvalidJson.to_string()
                             }),
+                            Err(error) if status_code == 429 => {
+                                is_body_too_large = matches!(error, ResponseBodyError::TooLarge);
+                                json!({ "error": "source rate limited" })
+                            }
                             Err(error) => {
                                 self.record_attempt(LiveAttempt {
                                     service: live_request.service,
@@ -2906,7 +3149,9 @@ impl LiveScholarlyTransport {
                         };
                     if !(200..300).contains(&status_code) {
                         let will_retry = RETRY_STATUS_CODES.contains(&status_code)
-                            && attempt < DEFAULT_MAX_RETRIES;
+                            && attempt < DEFAULT_MAX_RETRIES
+                            && !is_body_too_large
+                            && http_retry::can_wait(retry_delay, deadline);
                         self.record_attempt(LiveAttempt {
                             service: live_request.service,
                             endpoint: live_request.endpoint,
@@ -2925,8 +3170,13 @@ impl LiveScholarlyTransport {
                                 .map(str::to_string),
                         });
                         if will_retry {
-                            sleeper(Duration::from_secs(attempt_number as u64));
+                            sleeper(retry_delay);
                             continue;
+                        }
+                        if live_request.service == CROSSREF_SOURCE
+                            && RETRY_STATUS_CODES.contains(&status_code)
+                        {
+                            self.crossref_attempt_schedule.defer_for(retry_delay);
                         }
                         return Err(SourceError::HttpStatus {
                             service: live_request.service.to_string(),
@@ -2952,7 +3202,13 @@ impl LiveScholarlyTransport {
                     return Ok(payload);
                 }
                 Err(_) => {
-                    let will_retry = attempt_number < maximum_transport_attempts;
+                    let retry_delay = if has_extended_crossref_transport_retries {
+                        crossref_transport_retry_delay(attempt_number)
+                    } else {
+                        Duration::from_secs(attempt_number as u64)
+                    };
+                    let will_retry = attempt_number < maximum_transport_attempts
+                        && http_retry::can_wait(retry_delay, deadline);
                     self.record_attempt(LiveAttempt {
                         service: live_request.service,
                         endpoint: live_request.endpoint,
@@ -2968,11 +3224,6 @@ impl LiveScholarlyTransport {
                         error: Some(TRANSPORT_FAILURE_MESSAGE.to_string()),
                     });
                     if will_retry {
-                        let retry_delay = if has_extended_crossref_transport_retries {
-                            crossref_transport_retry_delay(attempt_number)
-                        } else {
-                            Duration::from_secs(attempt_number as u64)
-                        };
                         sleeper(retry_delay);
                         continue;
                     }
@@ -5623,7 +5874,7 @@ mod tests {
                 reset_after: Some(Duration::from_secs(2)),
                 retry_after: None,
             },
-            OpenAlexHealthOutcome::RateLimited,
+            OpenAlexHealthOutcome::DailyQuotaLimited,
             Duration::from_secs(1),
         );
         assert_eq!(
@@ -5637,6 +5888,488 @@ mod tests {
         };
         assert_ne!(third.slot_index, first.slot_index);
         assert_ne!(third.slot_index, second.slot_index);
+    }
+
+    #[test]
+    fn retry_regression_openalex_throttle_preserves_daily_quota() {
+        let mut state = OpenAlexSchedulerState::with_context(1, 0, 1, Duration::ZERO, 1);
+        state.slots[0].remaining = Some(9_700);
+        state.slots[0].reset_at = Some(Duration::from_secs(50_000));
+        let OpenAlexScheduleDecision::Reserved(reservation) =
+            state.reserve_slot(Duration::ZERO, &[])
+        else {
+            panic!("known quota should admit a request");
+        };
+        state.finish_slot(
+            &reservation,
+            Duration::ZERO,
+            OpenAlexRateHeaders {
+                remaining: Some(0),
+                reset_after: Some(Duration::from_secs(48_000)),
+                retry_after: Some(Duration::from_secs(1)),
+                credits_used: None,
+            },
+            OpenAlexHealthOutcome::RateLimited,
+            Duration::from_secs(1),
+        );
+        assert_eq!(state.slots[0].remaining, Some(9_700));
+        assert_eq!(state.slots[0].reset_at, Some(Duration::from_secs(50_000)));
+        assert_eq!(state.slots[0].cooldown_until, Some(Duration::from_secs(1)));
+        assert_eq!(state.slots[0].in_flight, 0);
+    }
+
+    #[test]
+    fn retry_regression_openalex_cooldown_never_shortens() {
+        let mut state = OpenAlexSchedulerState::with_context(1, 0, 1, Duration::ZERO, 1);
+        state.slots[0].cooldown_until = Some(Duration::from_secs(100));
+        state.finish_slot(
+            &super::OpenAlexSlotReservation {
+                slot_index: 0,
+                start_at: Duration::ZERO,
+            },
+            Duration::from_secs(1),
+            OpenAlexRateHeaders::default(),
+            OpenAlexHealthOutcome::TransientFailure,
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            state.slots[0].cooldown_until,
+            Some(Duration::from_secs(100))
+        );
+    }
+
+    #[test]
+    fn retry_regression_semantic_scholar_cooldown_never_shortens() {
+        let mut state = super::SemanticScholarSchedulerState::with_context(
+            1,
+            0,
+            1,
+            Duration::ZERO,
+            Duration::from_millis(1_100),
+        );
+        state.slots[0].cooldown_until = Some(Duration::from_secs(100));
+        state.finish_slot(
+            &super::SemanticScholarSlotReservation {
+                slot_index: 0,
+                start_at: Duration::ZERO,
+            },
+            Duration::from_secs(1),
+            super::SemanticScholarHealthOutcome::TransientFailure,
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            state.slots[0].cooldown_until,
+            Some(Duration::from_secs(100))
+        );
+    }
+
+    #[test]
+    fn retry_regression_openalex_daily_exhaustion_rejects_stale_success() {
+        let mut state = OpenAlexSchedulerState::with_context(1, 0, 1, Duration::ZERO, 1);
+        state.slots[0].remaining = Some(9_700);
+        let reservation = super::OpenAlexSlotReservation {
+            slot_index: 0,
+            start_at: Duration::ZERO,
+        };
+        state.finish_slot(
+            &reservation,
+            Duration::ZERO,
+            OpenAlexRateHeaders::default(),
+            OpenAlexHealthOutcome::DailyQuotaLimited,
+            Duration::from_secs(1),
+        );
+        state.finish_slot(
+            &reservation,
+            Duration::from_millis(1),
+            OpenAlexRateHeaders {
+                remaining: Some(9_690),
+                ..Default::default()
+            },
+            OpenAlexHealthOutcome::Success,
+            Duration::ZERO,
+        );
+        assert_eq!(state.slots[0].remaining, Some(0));
+        assert_eq!(state.slots[0].cooldown_until, Some(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn retry_regression_openalex_only_explicit_budget_message_is_daily() {
+        for message in ["Too many requests per second", "unknown", ""] {
+            assert_eq!(
+                super::openalex_health_outcome(429, &json!({"message": message})),
+                OpenAlexHealthOutcome::RateLimited
+            );
+        }
+        assert_eq!(
+            super::openalex_health_outcome(
+                429,
+                &json!({"message":"Insufficient budget: wait for reset"})
+            ),
+            OpenAlexHealthOutcome::DailyQuotaLimited
+        );
+        assert_eq!(
+            super::openalex_health_outcome(503, &json!({"message":"Insufficient budget"})),
+            OpenAlexHealthOutcome::TransientFailure
+        );
+    }
+
+    #[test]
+    fn retry_regression_openalex_phase_timeout_releases_reservation() {
+        let scheduler = OpenAlexScheduler::with_context(
+            vec!["test-key".into()],
+            0,
+            1,
+            unix_time_millis() + 60_000,
+            1,
+        );
+        let started_at = Instant::now();
+        assert!(matches!(
+            scheduler.reserve(&[], started_at + Duration::from_secs(1)),
+            Err(SourceError::Request { .. })
+        ));
+        assert!(started_at.elapsed() < Duration::from_millis(500));
+        assert_eq!(scheduler.state.lock().unwrap().slots[0].in_flight, 0);
+    }
+
+    #[test]
+    fn retry_regression_openalex_quota_change_wait_has_a_deadline() {
+        let scheduler = OpenAlexScheduler::with_context(vec!["test-key".into()], 0, 1, 0, 1);
+        let first = scheduler
+            .reserve(&[], Instant::now() + Duration::from_secs(1))
+            .unwrap();
+        let started_at = Instant::now();
+        assert!(scheduler
+            .reserve(&[], started_at + Duration::from_millis(25))
+            .is_err());
+        assert!(started_at.elapsed() < Duration::from_millis(500));
+        assert_eq!(scheduler.state.lock().unwrap().slots[0].in_flight, 1);
+        drop(first);
+        assert_eq!(scheduler.state.lock().unwrap().slots[0].in_flight, 0);
+    }
+
+    #[test]
+    fn retry_regression_openalex_completed_guard_does_not_release_another_request() {
+        let scheduler = OpenAlexScheduler::with_context(vec!["test-key".into()], 0, 1, 0, 2);
+        scheduler.state.lock().unwrap().slots[0].remaining = Some(10_000);
+        let first = scheduler
+            .reserve(&[], Instant::now() + Duration::from_secs(1))
+            .unwrap();
+        let second = scheduler
+            .reserve(&[], Instant::now() + Duration::from_secs(1))
+            .unwrap();
+        scheduler.finish(
+            &first,
+            OpenAlexRateHeaders::default(),
+            OpenAlexHealthOutcome::Success,
+            Duration::ZERO,
+        );
+        drop(first);
+        assert_eq!(scheduler.state.lock().unwrap().slots[0].in_flight, 1);
+        drop(second);
+        assert_eq!(scheduler.state.lock().unwrap().slots[0].in_flight, 0);
+    }
+
+    #[test]
+    fn retry_regression_openalex_quota_without_reset_is_recoverable() {
+        let scheduler = OpenAlexScheduler::with_context(vec!["test-key".into()], 0, 1, 0, 1);
+        scheduler.state.lock().unwrap().slots[0].remaining = Some(0);
+        assert!(matches!(
+            scheduler.reserve(&[], Instant::now() + Duration::from_secs(1)),
+            Err(SourceError::Request { .. })
+        ));
+    }
+
+    #[test]
+    fn retry_regression_failed_workers_stop_unadmitted_batches() {
+        let items = [0, 1, 2, 3];
+        let calls = AtomicUsize::new(0);
+        let one = run_bounded_indexed(
+            &items,
+            1,
+            |_, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Err::<(), _>("failed")
+            },
+            Result::is_err,
+        )
+        .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(one.len(), 1);
+        let barrier = std::sync::Barrier::new(2);
+        let two = run_bounded_indexed(
+            &items,
+            2,
+            |_, _| {
+                barrier.wait();
+                Err::<(), _>("failed")
+            },
+            Result::is_err,
+        )
+        .unwrap();
+        assert_eq!(two.len(), 2);
+    }
+
+    fn serve_retry_responses(responses: Vec<String>) -> (String, thread::JoinHandle<usize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/retry", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let mut count = 0;
+            for response in responses {
+                let deadline = Instant::now() + Duration::from_secs(3);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            if Instant::now() >= deadline {
+                                return count;
+                            }
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("retry server accept failed: {error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = [0_u8; 8192];
+                assert!(stream.read(&mut request).unwrap() > 0);
+                count += 1;
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            count
+        });
+        (url, server)
+    }
+
+    #[test]
+    fn retry_regression_openalex_body_failure_keeps_throttle_headers() {
+        for is_too_large in [false, true] {
+            let length = if is_too_large {
+                SCHOLARLY_RESPONSE_MAXIMUM_BYTES + 1
+            } else {
+                100
+            };
+            let mut responses = vec![format!(
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 7\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 48000\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{{"
+            )];
+            if !is_too_large {
+                responses.push(
+                    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+                );
+            }
+            let (url, server) = serve_retry_responses(responses);
+            let scheduler = OpenAlexScheduler::with_context(
+                vec!["first-key".into(), "second-key".into()],
+                0,
+                1,
+                0,
+                1,
+            );
+            {
+                let mut state = scheduler.state.lock().unwrap();
+                state.slots[0].remaining = Some(9_700);
+                state.slots[1].remaining = Some(9_700);
+            }
+            let execution = super::execute_openalex_request(
+                &reqwest::blocking::Client::new(),
+                &scheduler,
+                "works",
+                &url,
+                &[],
+                Duration::from_secs(1),
+                Some(Instant::now() + Duration::from_secs(1)),
+            );
+            assert_eq!(server.join().unwrap(), if is_too_large { 1 } else { 2 });
+            assert_eq!(execution.attempts[0].source_attempt.status_code, Some(429));
+            assert_eq!(execution.result.is_err(), is_too_large);
+            let state = scheduler.state.lock().unwrap();
+            assert_eq!(state.slots[0].remaining, Some(9_700));
+            assert!(
+                state.slots[0]
+                    .cooldown_until
+                    .unwrap()
+                    .saturating_sub(super::unix_time_duration())
+                    > Duration::from_secs(5)
+            );
+            assert!(state.slots.iter().all(|slot| slot.in_flight == 0));
+        }
+    }
+
+    #[test]
+    fn retry_regression_crossref_honors_server_delay_and_rejects_long_wait() {
+        for retry_after in [
+            "7".to_string(),
+            (chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now())
+                + chrono::Duration::seconds(10))
+            .to_rfc2822(),
+        ] {
+            let (url, server) = serve_retry_responses(vec![format!(
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {retry_after}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            )]);
+            let config = LiveScholarlyConfig::from_value_pools(1, "", "", "");
+            let mut transport = LiveScholarlyTransport::new(config)
+                .unwrap()
+                .with_deadline(Instant::now() + Duration::from_secs(1));
+            let started_at = Instant::now();
+            let result = transport.get_json(CROSSREF_SOURCE, "journal_works", &url, &[]);
+            assert!(matches!(
+                result,
+                Err(SourceError::HttpStatus {
+                    status_code: 429,
+                    ..
+                })
+            ));
+            assert!(started_at.elapsed() < Duration::from_millis(700));
+            assert_eq!(server.join().unwrap(), 1);
+            assert_eq!(transport.attempts().len(), 1);
+            assert!(transport
+                .get_json(CROSSREF_SOURCE, "journal_works", &url, &[])
+                .is_err());
+            assert_eq!(transport.attempts().len(), 1);
+        }
+        let (url, server) = serve_retry_responses(vec![
+            "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 2\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
+        ]);
+        let mut transport =
+            LiveScholarlyTransport::new(LiveScholarlyConfig::from_value_pools(1, "", "", ""))
+                .unwrap();
+        let mut delays = Vec::new();
+        let result = transport.request_json_with_sleeper(
+            JsonRequest {
+                service: CROSSREF_SOURCE,
+                endpoint: "journal_works",
+                method: "GET",
+                url: &url,
+                query: &[],
+                body: None,
+                header: None,
+            },
+            |delay| delays.push(delay),
+        );
+        assert!(result.is_ok());
+        assert_eq!(server.join().unwrap(), 2);
+        assert_eq!(delays, vec![Duration::from_secs(2)]);
+    }
+
+    #[test]
+    fn retry_regression_semantic_scholar_long_http_date_does_not_retry_early() {
+        let date = (chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now())
+            + chrono::Duration::seconds(60))
+        .to_rfc2822();
+        let (url, server) = serve_retry_responses(vec![format!(
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {date}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+        )]);
+        let mut transport = LiveScholarlyTransport::new(LiveScholarlyConfig::from_value_pools(
+            1, "", "test-key", "",
+        ))
+        .unwrap()
+        .with_deadline(Instant::now() + Duration::from_secs(2));
+        let started_at = Instant::now();
+        assert!(matches!(
+            transport.semantic_scholar_post_json("paper_batch", &url, &[], &json!({})),
+            Err(SourceError::HttpStatus {
+                status_code: 429,
+                ..
+            })
+        ));
+        assert!(started_at.elapsed() < Duration::from_millis(1500));
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    #[test]
+    fn retry_regression_key_preference_does_not_hide_earlier_recovery() {
+        let mut openalex = OpenAlexSchedulerState::with_context(2, 0, 1, Duration::ZERO, 1);
+        openalex.slots[0].remaining = Some(9_700);
+        openalex.slots[0].cooldown_until = Some(Duration::from_secs(1));
+        openalex.slots[1].remaining = Some(0);
+        openalex.slots[1].reset_at = Some(Duration::from_secs(48_000));
+        assert_eq!(
+            openalex.reserve_slot(Duration::ZERO, &[0]),
+            OpenAlexScheduleDecision::WaitUntil(Duration::from_secs(1))
+        );
+        let mut semantic = super::SemanticScholarSchedulerState::with_context(
+            2,
+            0,
+            1,
+            Duration::ZERO,
+            Duration::from_millis(1_100),
+        );
+        semantic.slots[0].cooldown_until = Some(Duration::from_secs(1));
+        semantic.slots[1].cooldown_until = Some(Duration::from_secs(100));
+        assert_eq!(
+            semantic.reserve_slot(Duration::ZERO, &[0]),
+            super::SemanticScholarScheduleDecision::WaitUntil(Duration::from_secs(1))
+        );
+        assert!(
+            matches!(semantic.reserve_slot(Duration::from_secs(2), &[0]),
+            super::SemanticScholarScheduleDecision::Reserved(reservation) if reservation.slot_index == 0)
+        );
+    }
+
+    #[test]
+    fn retry_regression_openalex_publishes_throttle_before_reading_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/works", listener.local_addr().unwrap());
+        let (sent_headers, received_headers) = std::sync::mpsc::channel();
+        let (release_body, wait_for_body) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0_u8; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 10\r\nContent-Length: 2\r\nConnection: close\r\n\r\n").unwrap();
+            sent_headers.send(()).unwrap();
+            wait_for_body.recv_timeout(Duration::from_secs(2)).unwrap();
+            stream.write_all(b"{}").unwrap();
+        });
+        let scheduler = Arc::new(OpenAlexScheduler::with_context(
+            vec!["key".into()],
+            0,
+            1,
+            0,
+            2,
+        ));
+        scheduler.state.lock().unwrap().slots[0].remaining = Some(10_000);
+        let worker_scheduler = Arc::clone(&scheduler);
+        let worker = thread::spawn(move || {
+            super::execute_openalex_request(
+                &reqwest::blocking::Client::new(),
+                worker_scheduler.as_ref(),
+                "works",
+                &url,
+                &[],
+                Duration::from_secs(2),
+                Some(Instant::now() + Duration::from_secs(2)),
+            )
+        });
+        received_headers
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_millis(500);
+        let mut state = scheduler.state.lock().unwrap();
+        while state.slots[0].cooldown_until.is_none() && Instant::now() < deadline {
+            state = scheduler
+                .changed
+                .wait_timeout(state, Duration::from_millis(25))
+                .unwrap()
+                .0;
+        }
+        let is_blocked = !state.is_slot_available(&state.slots[0], super::unix_time_duration());
+        let in_flight = state.slots[0].in_flight;
+        drop(state);
+        release_body.send(()).unwrap();
+        let execution = worker.join().unwrap();
+        server.join().unwrap();
+        assert!(is_blocked);
+        assert_eq!(in_flight, 1);
+        assert_eq!(execution.attempts.len(), 1);
+        assert!(execution.result.is_err());
+        assert_eq!(scheduler.state.lock().unwrap().slots[0].in_flight, 0);
     }
 
     #[test]
@@ -5656,7 +6389,7 @@ mod tests {
                 reset_after: Some(Duration::from_secs(2)),
                 retry_after: None,
             },
-            OpenAlexHealthOutcome::RateLimited,
+            OpenAlexHealthOutcome::DailyQuotaLimited,
             Duration::from_secs(1),
         );
         assert_eq!(
@@ -5951,6 +6684,8 @@ mod tests {
             "works",
             &format!("http://{address}/works"),
             &openalex_doi_query(&["10.1/example".to_string()], None),
+            Duration::from_secs(30),
+            None,
         );
         server.join().expect("test server should finish");
 
@@ -6009,6 +6744,8 @@ mod tests {
             "works",
             &format!("http://{address}/works"),
             &openalex_doi_query(&["10.1/example".to_string()], None),
+            Duration::from_secs(30),
+            None,
         );
         server.join().expect("test server should finish");
 
@@ -6055,6 +6792,8 @@ mod tests {
             "works",
             &format!("http://{address}/works"),
             &openalex_doi_query(&[secret_doi.to_string()], None),
+            Duration::from_secs(30),
+            None,
         );
         server.join().expect("test server should finish");
 
@@ -6113,15 +6852,20 @@ mod tests {
         let maximum = AtomicUsize::new(0);
         let items = (0..24).collect::<Vec<_>>();
 
-        let output = run_bounded_indexed(&items, usize::MAX, |index, value| {
-            let current = active.fetch_add(1, Ordering::SeqCst) + 1;
-            maximum.fetch_max(current, Ordering::SeqCst);
-            thread::sleep(Duration::from_millis(
-                u64::try_from(7 - index % 7).expect("delay should fit"),
-            ));
-            active.fetch_sub(1, Ordering::SeqCst);
-            (index, *value)
-        })
+        let output = run_bounded_indexed(
+            &items,
+            usize::MAX,
+            |index, value| {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                maximum.fetch_max(current, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(
+                    u64::try_from(7 - index % 7).expect("delay should fit"),
+                ));
+                active.fetch_sub(1, Ordering::SeqCst);
+                (index, *value)
+            },
+            |_| false,
+        )
         .expect("bounded work should complete");
 
         assert_eq!(
@@ -6188,6 +6932,8 @@ mod tests {
                     OPENALEX_MAX_WORKERS_PER_PROCESS,
                     &format!("http://{address}/works"),
                     &batches,
+                    Duration::from_secs(30),
+                    None,
                 )
                 .expect("bounded OpenAlex batches should execute")
             }));

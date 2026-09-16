@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::{Client, Response};
@@ -12,6 +12,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::http_retry;
 use crate::jfbym::{
     encrypt_point_json, point_x_candidates, strip_data_url_base64, JfbymError, JfbymSolver,
 };
@@ -2401,6 +2402,7 @@ pub struct LiveDomesticCnkiTransport {
 #[derive(Clone)]
 struct SharedDomesticCaptchaSession {
     state: Arc<Mutex<LiveDomesticCaptchaState>>,
+    cooldown_until: Arc<Mutex<Duration>>,
 }
 
 struct LiveDomesticCaptchaState {
@@ -2415,6 +2417,7 @@ impl SharedDomesticCaptchaSession {
                 session: DomesticCaptchaSession::new(),
                 generation: 0,
             })),
+            cooldown_until: Arc::new(Mutex::new(Duration::ZERO)),
         }
     }
 
@@ -2424,12 +2427,70 @@ impl SharedDomesticCaptchaSession {
             .is_ok_and(|state| state.session.has_captcha_id())
     }
 
-    fn request_url(&self, base_url: &str) -> Result<(String, u64), DomesticCnkiSourceError> {
-        let state = self.state.lock().map_err(|_| {
-            DomesticCnkiSourceError::Request(
-                "domestic CNKI captcha session is unavailable".to_string(),
-            )
+    fn lock_state(
+        &self,
+        deadline: Instant,
+    ) -> Result<MutexGuard<'_, LiveDomesticCaptchaState>, DomesticCnkiSourceError> {
+        loop {
+            request_deadline::ensure_deadline(Some(deadline)).map_err(deadline_domestic_error)?;
+            match self.state.try_lock() {
+                Ok(state) => return Ok(state),
+                Err(TryLockError::Poisoned(_)) => {
+                    return Err(DomesticCnkiSourceError::Request(
+                        "domestic CNKI captcha session is unavailable".to_string(),
+                    ))
+                }
+                Err(TryLockError::WouldBlock) => {
+                    sleep_domestic_retry(Duration::from_millis(10), deadline)?;
+                }
+            }
+        }
+    }
+
+    fn wait_for_cooldown(&self, deadline: Instant) -> Result<(), DomesticCnkiSourceError> {
+        loop {
+            request_deadline::ensure_deadline(Some(deadline)).map_err(deadline_domestic_error)?;
+            let delay = self
+                .cooldown_until
+                .lock()
+                .map_err(|_| {
+                    DomesticCnkiSourceError::Request(
+                        "domestic CNKI cooldown is unavailable".to_string(),
+                    )
+                })?
+                .saturating_sub(http_retry::monotonic_time());
+            if delay.is_zero() {
+                return Ok(());
+            }
+            sleep_domestic_retry(delay, deadline)?;
+        }
+    }
+
+    fn rate_limit_delay(
+        &self,
+        status_code: u16,
+        headers: &reqwest::header::HeaderMap,
+        retry_delay: Duration,
+    ) -> Result<Option<Duration>, DomesticCnkiSourceError> {
+        if status_code != 429 {
+            return Ok(None);
+        }
+        let delay = http_retry::retry_after(headers)
+            .unwrap_or_default()
+            .max(retry_delay);
+        let mut cooldown = self.cooldown_until.lock().map_err(|_| {
+            DomesticCnkiSourceError::Request("domestic CNKI cooldown is unavailable".to_string())
         })?;
+        *cooldown = (*cooldown).max(http_retry::monotonic_time().saturating_add(delay));
+        Ok(Some(delay))
+    }
+
+    fn request_url(
+        &self,
+        base_url: &str,
+        deadline: Instant,
+    ) -> Result<(String, u64), DomesticCnkiSourceError> {
+        let state = self.lock_state(deadline)?;
         let request_url = state.session.attach_captcha_id(base_url)?;
         Ok((request_url, state.generation))
     }
@@ -2437,16 +2498,13 @@ impl SharedDomesticCaptchaSession {
     fn refresh<F>(
         &self,
         observed_generation: u64,
+        deadline: Instant,
         refresh: F,
     ) -> Result<bool, DomesticCnkiSourceError>
     where
         F: FnOnce(&mut DomesticCaptchaSession) -> Result<(), DomesticCnkiSourceError>,
     {
-        let mut state = self.state.lock().map_err(|_| {
-            DomesticCnkiSourceError::Request(
-                "domestic CNKI captcha session is unavailable".to_string(),
-            )
-        })?;
+        let mut state = self.lock_state(deadline)?;
         if state.generation != observed_generation {
             return Ok(false);
         }
@@ -2607,16 +2665,18 @@ impl LiveDomesticCnkiTransport {
         referer: Option<&str>,
         endpoint: &str,
     ) -> Result<String, DomesticCnkiSourceError> {
+        let deadline = http_retry::deadline(self.deadline);
         let base_url = absolute_domestic_url(url)?;
         let referer = referer
             .map(parse_domestic_url)
             .transpose()?
             .map(|url| url.to_string());
         let (mut request_url, mut captcha_generation) =
-            self.captcha_session.request_url(&base_url)?;
+            self.captcha_session.request_url(&base_url, deadline)?;
         let mut budget = DomesticRequestBudget::default();
         while budget.next_attempt().is_some() {
-            let timeout = request_deadline::request_timeout(self.request_timeout, self.deadline)
+            self.captcha_session.wait_for_cooldown(deadline)?;
+            let timeout = request_deadline::request_timeout(self.request_timeout, Some(deadline))
                 .map_err(deadline_domestic_error)?;
             let did_retry = budget.did_retry();
             let mut builder = match method {
@@ -2631,7 +2691,7 @@ impl LiveDomesticCnkiTransport {
             if let Some(referer) = referer.as_deref() {
                 builder = builder.header("Referer", referer);
             }
-            request_deadline::ensure_deadline(self.deadline).map_err(deadline_domestic_error)?;
+            request_deadline::ensure_deadline(Some(deadline)).map_err(deadline_domestic_error)?;
             let response = builder.send();
             let response = match response {
                 Ok(response) => response,
@@ -2646,8 +2706,7 @@ impl LiveDomesticCnkiTransport {
                         error: Some("request failed"),
                     });
                     if budget.schedule_transport_retry() {
-                        request_deadline::sleep(budget.transport_retry_delay(), self.deadline)
-                            .map_err(deadline_domestic_error)?;
+                        sleep_domestic_retry(budget.transport_retry_delay(), deadline)?;
                         continue;
                     }
                     return Err(DomesticCnkiSourceError::Request(
@@ -2670,6 +2729,28 @@ impl LiveDomesticCnkiTransport {
                 return Err(DomesticCnkiSourceError::Request(
                     "domestic CNKI redirect URL is not allowed".to_string(),
                 ));
+            }
+            let fallback_delay =
+                Duration::from_secs(1_u64 << budget.ordinary_attempts.saturating_sub(1).min(3));
+            if let Some(delay) = self.captcha_session.rate_limit_delay(
+                status.as_u16(),
+                response.headers(),
+                fallback_delay,
+            )? {
+                self.record_attempt(DomesticAttempt {
+                    endpoint,
+                    method,
+                    request_url: &request_url,
+                    status_code: Some(429),
+                    did_succeed: false,
+                    did_retry,
+                    error: Some("HTTP status"),
+                });
+                if budget.ordinary_retry_delay().is_some() && http_retry::can_wait(delay, deadline)
+                {
+                    continue;
+                }
+                return Err(domestic_http_status_error(429));
             }
             let text = match bounded_response_text(response, DOMESTIC_CNKI_RESPONSE_MAXIMUM_BYTES) {
                 Ok(text) => text,
@@ -2702,8 +2783,9 @@ impl LiveDomesticCnkiTransport {
                     did_retry,
                     error: Some("captcha challenge"),
                 });
-                self.solve_live_captcha(&text, &final_url, captcha_generation)?;
-                (request_url, captcha_generation) = self.captcha_session.request_url(&base_url)?;
+                self.solve_live_captcha(&text, &final_url, captcha_generation, deadline)?;
+                (request_url, captcha_generation) =
+                    self.captcha_session.request_url(&base_url, deadline)?;
                 budget.schedule_captcha_replay()?;
                 continue;
             }
@@ -2733,8 +2815,7 @@ impl LiveDomesticCnkiTransport {
                 });
                 if !matches!(status.as_u16(), 404 | 410) {
                     if let Some(delay) = budget.ordinary_retry_delay() {
-                        request_deadline::sleep(delay, self.deadline)
-                            .map_err(deadline_domestic_error)?;
+                        sleep_domestic_retry(delay, deadline)?;
                         continue;
                     }
                 }
@@ -2751,8 +2832,7 @@ impl LiveDomesticCnkiTransport {
                     error: Some("invalid response"),
                 });
                 if let Some(delay) = invalid_response_retry_delay(&error, &budget) {
-                    request_deadline::sleep(delay, self.deadline)
-                        .map_err(deadline_domestic_error)?;
+                    sleep_domestic_retry(delay, deadline)?;
                     continue;
                 }
                 return Err(error);
@@ -2791,21 +2871,21 @@ impl LiveDomesticCnkiTransport {
         response_text: &str,
         response_url: &str,
         observed_generation: u64,
+        deadline: Instant,
     ) -> Result<(), DomesticCnkiSourceError> {
-        request_deadline::ensure_deadline(self.deadline).map_err(deadline_domestic_error)?;
+        request_deadline::ensure_deadline(Some(deadline)).map_err(deadline_domestic_error)?;
         let token = self.captcha_token.clone().ok_or_else(|| {
             DomesticCnkiSourceError::Request("domestic CNKI captcha token is required".to_string())
         })?;
         let client = self.client.clone();
         let provider_proxy = self.provider_proxy.clone();
         let request_timeout = self.request_timeout;
-        let deadline = self.deadline;
-        self.captcha_session.refresh(observed_generation, |session| {
+        self.captcha_session.refresh(observed_generation, deadline, |session| {
             let mut solver = crate::jfbym::LiveJfbymSolver::new_with_proxy_and_deadline(
                 token,
                 30,
                 provider_proxy,
-                deadline,
+                Some(deadline),
             )
             .map_err(map_jfbym_error)?;
             session.ensure_access(
@@ -2813,7 +2893,8 @@ impl LiveDomesticCnkiTransport {
                 response_url,
                 &mut solver,
                 |challenge_url| {
-                    let timeout = request_deadline::request_timeout(request_timeout, deadline)
+                    self.captcha_session.wait_for_cooldown(deadline)?;
+                    let timeout = request_deadline::request_timeout(request_timeout, Some(deadline))
                         .map_err(deadline_domestic_error)?;
                     let response = client
                         .get(challenge_url)
@@ -2828,9 +2909,10 @@ impl LiveDomesticCnkiTransport {
                                 "domestic CNKI captcha page request failed".to_string(),
                             )
                         })?;
-                    validate_domestic_http_response(&response)?;
+                    self.check_captcha_response(&response)?;
                     let body = captcha_get_request_body(challenge_url)?;
-                    let timeout = request_deadline::request_timeout(request_timeout, deadline)
+                    self.captcha_session.wait_for_cooldown(deadline)?;
+                    let timeout = request_deadline::request_timeout(request_timeout, Some(deadline))
                         .map_err(deadline_domestic_error)?;
                     let response = client
                         .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/get"))
@@ -2846,12 +2928,14 @@ impl LiveDomesticCnkiTransport {
                                 "domestic CNKI captcha puzzle request failed".to_string(),
                             )
                         })?;
+                    self.check_captcha_response(&response)?;
                     let payload = parse_domestic_json_response(response, "captcha puzzle")?;
                     parse_captcha_puzzle(challenge_url, &payload)
                 },
                 |puzzle, point_json| {
                     let body = captcha_check_request_body(puzzle, point_json);
-                    let timeout = request_deadline::request_timeout(request_timeout, deadline)
+                    self.captcha_session.wait_for_cooldown(deadline)?;
+                    let timeout = request_deadline::request_timeout(request_timeout, Some(deadline))
                         .map_err(deadline_domestic_error)?;
                     let response = client
                         .post(format!("{DOMESTIC_KNS_BASE_URL}/verify-api/web/check"))
@@ -2867,12 +2951,38 @@ impl LiveDomesticCnkiTransport {
                                 "domestic CNKI captcha check request failed".to_string(),
                             )
                         })?;
+                    self.check_captcha_response(&response)?;
                     let payload = parse_domestic_json_response(response, "captcha check")?;
                     Ok(captcha_check_succeeded(&payload))
                 },
             )
         })?;
         Ok(())
+    }
+
+    fn check_captcha_response(&self, response: &Response) -> Result<(), DomesticCnkiSourceError> {
+        if self
+            .captcha_session
+            .rate_limit_delay(
+                response.status().as_u16(),
+                response.headers(),
+                Duration::from_secs(1),
+            )?
+            .is_some()
+        {
+            return Err(domestic_http_status_error(429));
+        }
+        validate_domestic_http_response(response)
+    }
+}
+
+fn sleep_domestic_retry(delay: Duration, deadline: Instant) -> Result<(), DomesticCnkiSourceError> {
+    if http_retry::sleep(delay, deadline) {
+        Ok(())
+    } else {
+        Err(deadline_domestic_error(
+            request_deadline::RequestDeadlineError,
+        ))
     }
 }
 
@@ -3754,10 +3864,154 @@ mod tests {
     }
 
     #[test]
+    fn retry_regression_cnki_cooldown_survives_clone_and_reset() {
+        let transport = LiveDomesticCnkiTransport::new(LiveDomesticCnkiConfig {
+            timeout_seconds: 1,
+            captcha_token: None,
+        })
+        .unwrap();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("retry-after", "60".parse().unwrap());
+        transport
+            .captcha_session
+            .rate_limit_delay(429, &headers, Duration::from_secs(1))
+            .unwrap();
+        let expected = *transport.captcha_session.cooldown_until.lock().unwrap();
+        let mut cloned = transport.clone();
+        cloned.reset_transient_state().unwrap();
+        assert_eq!(
+            *cloned.captcha_session.cooldown_until.lock().unwrap(),
+            expected
+        );
+        cloned.deadline = Some(Instant::now() + Duration::from_secs(1));
+        let started_at = Instant::now();
+        assert!(cloned
+            .get_text("https://navi.cnki.net/knavi/", None, "cooldown_test")
+            .is_err());
+        assert!(started_at.elapsed() < Duration::from_millis(500));
+        assert!(cloned.attempts().is_empty());
+    }
+
+    #[test]
+    fn retry_regression_cnki_short_and_success_responses_never_shorten_cooldown() {
+        let session = SharedDomesticCaptchaSession::new();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("retry-after", "60".parse().unwrap());
+        session
+            .rate_limit_delay(429, &headers, Duration::from_secs(1))
+            .unwrap();
+        let expected = *session.cooldown_until.lock().unwrap();
+        headers.insert("retry-after", "1".parse().unwrap());
+        session
+            .rate_limit_delay(429, &headers, Duration::from_secs(1))
+            .unwrap();
+        session
+            .rate_limit_delay(200, &headers, Duration::ZERO)
+            .unwrap();
+        assert_eq!(*session.cooldown_until.lock().unwrap(), expected);
+        headers.insert("retry-after", u64::MAX.to_string().parse().unwrap());
+        session
+            .rate_limit_delay(429, &headers, Duration::from_secs(1))
+            .unwrap();
+        assert!(session
+            .wait_for_cooldown(Instant::now() + Duration::from_secs(1))
+            .is_err());
+    }
+
+    #[test]
+    fn retry_regression_cnki_captcha_lock_wait_is_bounded() {
+        let session = SharedDomesticCaptchaSession::new();
+        let guard = session.state.lock().unwrap();
+        let started_at = Instant::now();
+        assert!(session
+            .request_url(
+                "https://navi.cnki.net/knavi/",
+                started_at + Duration::from_millis(25)
+            )
+            .is_err());
+        assert!(started_at.elapsed() < Duration::from_millis(500));
+        let mut did_refresh = false;
+        assert!(session
+            .refresh(0, Instant::now() + Duration::from_millis(25), |_| {
+                did_refresh = true;
+                Ok(())
+            })
+            .is_err());
+        assert!(!did_refresh);
+        assert_eq!(guard.generation, 0);
+    }
+
+    #[test]
+    fn retry_regression_cnki_captcha_response_429_keeps_budget_and_headers() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        for is_too_large in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = [0_u8; 4096];
+                assert!(stream.read(&mut request).unwrap() > 0);
+                let date = (chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now())
+                    + chrono::Duration::seconds(60))
+                .to_rfc2822();
+                let body = "/verify/home?captchaType=blockPuzzle";
+                let length = if is_too_large {
+                    DOMESTIC_CNKI_RESPONSE_MAXIMUM_BYTES + 1
+                } else {
+                    body.len() + 100
+                };
+                write!(stream,
+                    "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {date}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{body}").unwrap();
+            });
+            let response = Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .get(format!("http://{address}/captcha"))
+                .send()
+                .unwrap();
+            let transport = LiveDomesticCnkiTransport::new(LiveDomesticCnkiConfig {
+                timeout_seconds: 1,
+                captcha_token: None,
+            })
+            .unwrap();
+            let error = transport.check_captcha_response(&response).unwrap_err();
+            assert_eq!(error.http_status(), Some(429));
+            assert!(
+                transport
+                    .captcha_session
+                    .cooldown_until
+                    .lock()
+                    .unwrap()
+                    .saturating_sub(http_retry::monotonic_time())
+                    > Duration::from_secs(55)
+            );
+            assert_eq!(
+                transport
+                    .captcha_session
+                    .state
+                    .lock()
+                    .unwrap()
+                    .session
+                    .remaining_budget(),
+                DOMESTIC_CAPTCHA_SOLVE_BUDGET
+            );
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
     fn cloned_live_transport_sessions_share_one_captcha_refresh() {
         let parent = SharedDomesticCaptchaSession::new();
         let base_url = "https://kns.cnki.net/kcms2/article/abstract";
-        let (_, generation) = parent.request_url(base_url).expect("initial captcha URL");
+        let (_, generation) = parent
+            .request_url(base_url, http_retry::deadline(None))
+            .expect("initial captcha URL");
         let refresh_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let barrier = Arc::new(std::sync::Barrier::new(6));
         let refresh_results = thread::scope(|scope| {
@@ -3769,7 +4023,7 @@ mod tests {
                     scope.spawn(move || {
                         barrier.wait();
                         worker
-                            .refresh(generation, |session| {
+                            .refresh(generation, http_retry::deadline(None), |session| {
                                 refresh_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                                 thread::sleep(Duration::from_millis(25));
                                 session.captcha_id = Some("captcha-id-sentinel".to_string());
@@ -3784,8 +4038,9 @@ mod tests {
                 .map(|handle| handle.join().expect("captcha worker"))
                 .collect::<Vec<_>>()
         });
-        let (attached, refreshed_generation) =
-            parent.request_url(base_url).expect("parent captcha URL");
+        let (attached, refreshed_generation) = parent
+            .request_url(base_url, http_retry::deadline(None))
+            .expect("parent captcha URL");
 
         assert_eq!(refresh_results.iter().filter(|result| **result).count(), 1);
         assert_eq!(refresh_count.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -3794,10 +4049,12 @@ mod tests {
 
         let cloned = parent.clone();
         parent.reset().expect("shared captcha reset");
-        let (parent_url, reset_generation) =
-            parent.request_url(base_url).expect("reset parent URL");
-        let (cloned_url, cloned_generation) =
-            cloned.request_url(base_url).expect("reset cloned URL");
+        let (parent_url, reset_generation) = parent
+            .request_url(base_url, http_retry::deadline(None))
+            .expect("reset parent URL");
+        let (cloned_url, cloned_generation) = cloned
+            .request_url(base_url, http_retry::deadline(None))
+            .expect("reset cloned URL");
         assert_eq!(reset_generation, refreshed_generation.wrapping_add(1));
         assert_eq!(cloned_generation, reset_generation);
         assert!(!parent_url.contains("captchaId="));
@@ -3808,25 +4065,33 @@ mod tests {
     fn resetting_shared_captcha_session_restores_exhausted_solve_budget() {
         let session = SharedDomesticCaptchaSession::new();
         let base_url = "https://kns.cnki.net/kcms2/article/abstract";
-        let (_, generation) = session.request_url(base_url).expect("initial captcha URL");
+        let (_, generation) = session
+            .request_url(base_url, http_retry::deadline(None))
+            .expect("initial captcha URL");
         session
-            .refresh(generation, |captcha_session| {
+            .refresh(generation, http_retry::deadline(None), |captcha_session| {
                 captcha_session.solve_attempts = captcha_session.solve_budget;
                 Ok(())
             })
             .expect("exhaust captcha budget");
 
         session.reset().expect("shared captcha reset");
-        let (_, reset_generation) = session.request_url(base_url).expect("reset captcha URL");
+        let (_, reset_generation) = session
+            .request_url(base_url, http_retry::deadline(None))
+            .expect("reset captcha URL");
         let did_refresh = session
-            .refresh(reset_generation, |captcha_session| {
-                assert!(captcha_session.has_budget());
-                assert_eq!(
-                    captcha_session.remaining_budget(),
-                    DOMESTIC_CAPTCHA_SOLVE_BUDGET
-                );
-                Ok(())
-            })
+            .refresh(
+                reset_generation,
+                http_retry::deadline(None),
+                |captcha_session| {
+                    assert!(captcha_session.has_budget());
+                    assert_eq!(
+                        captcha_session.remaining_budget(),
+                        DOMESTIC_CAPTCHA_SOLVE_BUDGET
+                    );
+                    Ok(())
+                },
+            )
             .expect("refresh after reset");
 
         assert!(did_refresh);

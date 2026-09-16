@@ -159,7 +159,13 @@ Scholarly 在线 adapter 不请求或读取索引时保存的 URL：
 
 ## 重试、日志与秘密
 
-Crossref journal-list GET 收到 HTTP 响应后仍最多尝试三次；`429/500/502/503/504` 沿用 1/2 秒退避，其他非 2xx 直接失败。只有 `Client::execute` 没有产生任何 HTTP 响应的传输失败可以扩展到最多六次，并按 1/2/4/8/16 秒退避。扩展次数依据请求 timeout 选择，新增尝试的模型包络不得超过 180 秒；默认 20 秒 timeout 选择六次和 151 秒包络，较长 timeout 会降为五次、四次或原有三次，但不会低于三次。OpenAlex 和 Semantic Scholar 为了在 key 故障时完成合法 failover，单个逻辑请求最多尝试 `key_count + 2` 次；本次验证覆盖 `1..=3` 个 key，因此该范围最多五次。每个网络尝试（包括 retry）都计入被选 Provider/key 的相位。401/403 只停用被选 key。
+Crossref HTTP-status retries remain bounded to three attempts, and eligible no-response transport failures retain their existing at-most-six-attempt policy. Retryable statuses honor the larger of Retry-After (integer seconds or HTTP date) and local backoff. Every logical Crossref/OpenAlex/Semantic Scholar request now has a 180-second monotonic ceiling covering admission, phase/cooldown waits, HTTP attempts and backoff; an earlier caller deadline wins. A server delay that cannot fit returns a recoverable failure immediately instead of retrying early. OpenAlex/S2 retain at most key_count + 2 attempts and every retry/failover obtains a fresh future phase. Auth failures disable only the selected key.
+
+Crossref retains an observed server cooldown across logical calls, including when a retry is rejected by the request deadline. HTTP dates accept the preferred IMF format and both legacy forms required by [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#name-date-time-formats).
+
+OpenAlex distinguishes confirmed daily-budget exhaustion from per-second or unknown 429 responses. Only successful responses or explicit insufficient-budget responses update daily quota; a transient 429 reporting remaining=0 and a midnight reset cannot poison the trusted balance. Same-period successes retain the smaller balance. Cooldowns advance monotonically and late shorter responses cannot shorten them. A 429 header immediately publishes cooldown without releasing its in-flight reservation while the body is read. Invalid/truncated 429 bodies preserve status and Retry-After; an oversized response still ends the logical request while preserving the throttle for other requests.
+
+Scheduler waits respect the same request deadline and consider the earliest recovering key even when a different key would normally be preferred. A canceled OpenAlex reservation releases exactly its own in-flight claim. A terminal DOI-batch failure stops admission of further batches and joins already-admitted work. Cohort phases are anchored to an initial UTC epoch and then advanced by monotonic elapsed time, so a local wall-clock adjustment cannot shorten a cooldown.
 
 Crossref、OpenAlex 和 Semantic Scholar 共用的 HTTP client 禁止自动重定向。任何 3xx 都在原始上游响应处失败，不会访问 `Location`，也不会把 Semantic Scholar `x-api-key`、DOI batch body 或查询参数转发到其他 origin/协议。
 

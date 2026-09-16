@@ -4,6 +4,7 @@ pub mod cfp;
 pub mod cnki_domestic;
 pub mod cnki_oversea;
 mod crossref_workset;
+mod http_retry;
 pub mod jfbym;
 pub mod provider_proxy;
 pub mod providers;

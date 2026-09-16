@@ -159,7 +159,9 @@ reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的响�
 
 ## 重试和可观测性
 
-单个 CNKI HTTP 操作最多有三次普通响应尝试。没有收到 HTTP 响应的传输失败最多尝试五次，并按 1、2、4、8 秒进行有界指数退避；国内 captcha 另有最多五次 fresh solve/replay 的独立预算。持续失败使当前 Provider 操作明确失败，不写空内容冒充成功；只有上述窄范围永久文章缺失可以在同页继续。
+Domestic CNKI retains five ordinary response attempts and up to eight no-response transport attempts with bounded exponential backoff; captcha recognition/replay retains its existing five-attempt budget. Each logical metadata request uses one 180-second deadline, shortened by any earlier caller deadline, across retries, captcha lock waits, cooldowns and captcha network work. Persistent failure does not produce empty content or a new checkpoint.
+
+HTTP 429 is handled before reading or classifying a captcha body. Retry-After accepts integer seconds and HTTP dates; all cloned domestic clients share the longest observed cooldown, including across transient session reset. A 429 does not trigger a new captcha replay or recognition attempt. Challenge GET and verification POST responses also publish 429 cooldowns before further captcha work. Waits release the cooldown lock and recheck before sending; a required delay that cannot fit fails promptly rather than retrying early. Oversized or unreadable 429 bodies cannot erase the observed status/header. Other response-size and permanent-missing rules remain in force. Overseas CNKI and ZJLib retry behavior is unchanged.
 
 CNKI Overseas、Domestic 和 ZJLib 的 HTML/JSON 响应解压后上限均为 2 MiB，JFBYM JSON 为 256 KiB。读取先检查可用的 Content-Length，再对透明解压后的流最多保留 `limit + 1` 字节；因此 chunked 响应和 gzip 高压缩比都不能绕过上限。超限是固定分类的不可重试无效响应，不保留正文。PDF 仍使用独立的 32 MiB 有界读取。
 
