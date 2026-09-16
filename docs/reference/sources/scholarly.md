@@ -22,7 +22,7 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 | 上游             | 请求时职责                                                | 可进入规范内容的字段                            |
 | ---------------- | --------------------------------------------------------- | ----------------------------------------------- |
 | Crossref         | 按 ISSN 获取主文章清单                                    | DOI、题名、作者、摘要、日期、卷期页码、撤稿关系 |
-| OpenAlex         | DOI 增强；Crossref 整刊查询均为 404 或空结果时提供清单 fallback | 题名、作者、摘要、日期、PMID、OA                |
+| OpenAlex | Conditional DOI enhancement; source-list fallback when every Crossref ISSN is missing/empty | DOI enhancement: title, abstract, OA; source fallback additionally supplies its own authors, dates and PMID |
 | Semantic Scholar | 按 DOI 批量增强                                           | 题名、摘要、OA                                  |
 
 上游 URL、source ID、Crossref cursor、OpenAlex cursor 和 Semantic Scholar PDF/landing-page URL 不进入 `ArticleDraft` 或内容数据库。OpenAlex source ID 与 cursor 只存在于可丢弃 traversal checkpoint；Crossref cursor 可存在于 traversal 和私有工作集。成功 anchor 只使用规范书目信息和日期，不含 Provider/upstream ID 或 URL。
@@ -38,7 +38,7 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 3. 依次探测 Crossref `/journals/{issn}/works` 的完整创建日期范围；整刊 404 或为空时尝试下一个 ISSN。按下述 created 分片规则收集，单步最多消费一个响应，先返回不含文章的 Continue 供 core 确认进度。
 4. 全部 ISSN 均无可用 Crossref 清单时，按 ISSN、再按维护标题/别名解析 OpenAlex source，并沿用其出版日期降序分页。
 5. Crossref 的分片、父子总数和全局唯一数全部通过后，才按本地期次组排序，冻结 candidate 并选择完整的 candidate/base 窗口。
-6. 仅对选中的本地输出页规范化 DOI，按最多 100 个 DOI 请求 OpenAlex 增强，并按最多 500 个 DOI 请求 Semantic Scholar batch；映射为 `JournalDraft`、`IssueDraft` 和 `ArticleDraft`。
+6. Normalize DOI values only for the selected local output page. Request S2 first in batches of at most 500 IDs, then request OA only for works whose current fields still need its fallback. OA batches retain the 100-ID and 1900-byte URL limits. Map the complete results to JournalDraft, IssueDraft and ArticleDraft without changing selected work order.
 7. 返回有界 `ProviderBatch`。Crossref Continue 保存收集状态或本地 keyset 位置；只有完整输出所选期次后才 Complete，由 core 在内容提交后保存成功 anchor。
 
 空的创建日期子分片只表示该片完成，不能触发整刊 fallback 或推进 anchor。已有 anchor 的增量候选为空或找不到 base 时，仍保留同源无 update 过滤重放语义，避免把暂时没有更新误判为需要切换主清单。没有 DOI 的记录仍可在具备充分 bibliographic identity 时进入内容库，但不会进入 DOI 增强。
@@ -48,14 +48,20 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 | 规范字段                          | 顺序/规则                                                            |
 | --------------------------------- | -------------------------------------------------------------------- |
 | `title`                           | Crossref，缺失或空白时按同一 DOI 使用 OpenAlex，再使用 Semantic Scholar |
-| `authors`                         | Crossref，缺失时 OpenAlex；只保留有序 display name                   |
+| `authors` | Crossref ordered display names on the Crossref main-list path |
 | `abstract_text`                   | Crossref 去标记文本，缺失时 OpenAlex，再缺失时 Semantic Scholar      |
-| `publication_year` / `date`       | Crossref 日期链，缺失时 OpenAlex publication date                    |
+| `publication_year` / `date` | Crossref date chain on the Crossref main-list path |
 | `volume` / `issue_number` / pages | Crossref                                                             |
 | `doi`                             | 规范化为小写标识符，不保存 DOI URL                                   |
-| `pmid`                            | OpenAlex `ids.pmid` 的数字形式                                       |
-| `open_access`                     | Semantic Scholar 或 OpenAlex 任一明确为 OA 时为 true                 |
+| `pmid` | Normalized Crossref PMID on the Crossref main-list path |
+| `open_access` | Matching S2 boolean first, including false; otherwise presence of a non-null OA best_oa_location |
 | `retraction_dois`                 | Crossref `updated-by` 中 type 为 retraction 的全部规范 DOI，排序去重 |
+
+This merge table describes Crossref main-list enrichment. The separate OA source-list fallback continues reading its complete work payload, including authorships, publication dates, biblio, ids and open_access.is_oa. No fields or mapping priorities were added to the Crossref path.
+
+A DOI skips OA only when Crossref has a usable title and a nonempty stripped abstract, and matching S2 data has an actual boolean isOpenAccess. Missing or malformed S2 state still needs OA; S2 text cannot suppress higher-priority OA text when Crossref lacks it. Duplicate DOI needs are combined without changing output order or count. A required source failure still fails the page; an unused OA service cannot fail a fully covered page. This is per-page dependency selection, not a cache across updates.
+
+OA DOI requests select only doi,display_name,title,abstract_inverted_index,best_oa_location. Their planner and sender use the same fields; the full source-list projection is unchanged. S2 selects externalIds,title,isOpenAccess,abstract. Narrower fields reduce response bytes and may fit more DOI values per URL; in the representative 32-character-key fixture, 225 DOI values still use five requests, while its 200-value prefix uses four instead of five. These are fixture-specific counts, not a universal percentage.
 
 Provider 不返回 PDF URL、landing page、permalink 或 content location。在线全文不是 Scholarly 当前声明的能力。
 

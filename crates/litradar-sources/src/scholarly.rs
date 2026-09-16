@@ -28,9 +28,10 @@ const OPENALEX_BASE_URL: &str = "https://api.openalex.org";
 const OPENALEX_SOURCE: &str = "openalex";
 const SEMANTIC_SCHOLAR_BASE_URL: &str = "https://api.semanticscholar.org/graph/v1";
 const SEMANTIC_SCHOLAR_SOURCE: &str = "semantic_scholar";
-const SEMANTIC_SCHOLAR_FIELDS: &str = "externalIds,title,url,isOpenAccess,openAccessPdf,abstract";
+const SEMANTIC_SCHOLAR_FIELDS: &str = "externalIds,title,isOpenAccess,abstract";
 const OPENALEX_SOURCE_FIELDS: &str = "id,display_name,issn_l,issn,works_count";
 const OPENALEX_WORK_FIELDS: &str = "id,doi,title,display_name,publication_year,publication_date,language,cited_by_count,is_retracted,primary_location,locations,open_access,best_oa_location,authorships,ids,biblio,abstract_inverted_index,topics,primary_topic,funders,awards";
+const OPENALEX_DOI_FIELDS: &str = "doi,display_name,title,abstract_inverted_index,best_oa_location";
 const DEFAULT_USER_AGENT: &str = "LitRadar/0.1";
 const CROSSREF_ATTEMPT_INTERVAL_MS: u64 = 110;
 const SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS: u64 = 1_100;
@@ -1051,7 +1052,7 @@ fn openalex_doi_query(dois: &[String], api_key: Option<&str>) -> Vec<(String, St
     let mut query = vec![
         ("filter".to_string(), format!("doi:{}", dois.join("|"))),
         ("per-page".to_string(), dois.len().max(1).to_string()),
-        ("select".to_string(), OPENALEX_WORK_FIELDS.to_string()),
+        ("select".to_string(), OPENALEX_DOI_FIELDS.to_string()),
     ];
     if let Some(api_key) = api_key {
         query.push(("api_key".to_string(), api_key.to_string()));
@@ -5663,6 +5664,18 @@ mod tests {
 
         assert_eq!(batches.len(), 5);
         assert_eq!(batches.iter().flatten().cloned().collect::<Vec<_>>(), dois);
+        let prefix_batches = partition_openalex_doi_batches(
+            &dois[..200],
+            OPENALEX_DOI_FILTER_MAX_VALUES,
+            OPENALEX_DOI_REQUEST_URL_BUDGET,
+            Some(&api_key),
+        )
+        .unwrap();
+        assert_eq!(prefix_batches.len(), 4);
+        assert_eq!(
+            prefix_batches.iter().flatten().cloned().collect::<Vec<_>>(),
+            dois[..200]
+        );
         for batch in &batches {
             assert!(batch.len() <= OPENALEX_DOI_FILTER_MAX_VALUES);
             let url =
@@ -5755,6 +5768,45 @@ mod tests {
                 "scholarly worker_count must be between 1 and 6"
             );
         }
+    }
+
+    #[test]
+    fn enrichment_regression_doi_projection_excludes_unused_source_fields() {
+        let query = openalex_doi_query(&["10.1000/a".into()], None);
+        let fields = query
+            .iter()
+            .find(|(name, _)| name == "select")
+            .unwrap()
+            .1
+            .split(',')
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            fields,
+            [
+                "doi",
+                "display_name",
+                "title",
+                "abstract_inverted_index",
+                "best_oa_location"
+            ]
+            .into_iter()
+            .collect()
+        );
+        for field in [
+            "authorships",
+            "publication_date",
+            "ids",
+            "biblio",
+            "open_access",
+        ] {
+            assert!(super::OPENALEX_WORK_FIELDS
+                .split(',')
+                .any(|name| name == field));
+        }
+        assert_eq!(
+            super::SEMANTIC_SCHOLAR_FIELDS,
+            "externalIds,title,isOpenAccess,abstract"
+        );
     }
 
     #[test]

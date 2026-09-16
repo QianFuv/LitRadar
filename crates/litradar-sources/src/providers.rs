@@ -1388,18 +1388,35 @@ where
         .filter_map(|index| works.get(*index))
         .filter_map(|work| normalize_contract_doi(json_text(work.get("DOI"))?.as_str()))
         .collect::<Vec<_>>();
-    let openalex = if dois.is_empty() {
-        BTreeMap::new()
-    } else {
-        client
-            .fetch_openalex_by_dois(&dois, SCHOLARLY_ENRICHMENT_BATCH_SIZE)
-            .map_err(map_scholarly_error)?
-    };
     let semantic_scholar = if dois.is_empty() || !has_semantic_scholar_key {
         BTreeMap::new()
     } else {
         client
             .fetch_semantic_scholar_by_dois(&dois, SEMANTIC_SCHOLAR_BATCH_SIZE)
+            .map_err(map_scholarly_error)?
+    };
+    let openalex_dois = selected_indices
+        .iter()
+        .filter_map(|index| works.get(*index))
+        .filter_map(|work| {
+            let doi = normalize_contract_doi(json_text(work.get("DOI"))?.as_str())?;
+            let has_title = first_text(work.get("title")).is_some();
+            let has_abstract = json_text(work.get("abstract"))
+                .and_then(|value| strip_markup(&value))
+                .is_some();
+            let has_open_access = semantic_scholar
+                .get(&doi)
+                .and_then(|value| value.get("isOpenAccess"))
+                .and_then(Value::as_bool)
+                .is_some();
+            (!(has_title && has_abstract && has_open_access)).then_some(doi)
+        })
+        .collect::<Vec<_>>();
+    let openalex = if openalex_dois.is_empty() {
+        BTreeMap::new()
+    } else {
+        client
+            .fetch_openalex_by_dois(&openalex_dois, SCHOLARLY_ENRICHMENT_BATCH_SIZE)
             .map_err(map_scholarly_error)?
     };
     Ok(selected_indices
@@ -4188,6 +4205,509 @@ mod tests {
         assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
         assert!(error.to_string().contains("frozen candidate is missing"));
         assert_eq!(client.into_transport().journal_work_requests().len(), 2);
+    }
+
+    #[test]
+    fn enrichment_regression_complete_crossref_and_s2_skip_openalex() {
+        for is_open_access in [false, true] {
+            let mut work = dated_crossref_work("4", 4, "covered", 0);
+            work["abstract"] = json!("<p>Crossref abstract</p>");
+            let semantic = json!({
+                "externalIds":{"DOI":"10.1000/COVERED"},
+                "title":"S2 title", "abstract":"S2 abstract", "isOpenAccess":is_open_access,
+            });
+            let expected =
+                scholarly_article_draft(&catalog(), &work, None, Some(&semantic)).unwrap();
+            let mut client = ScholarlyClient::new(
+                FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                    semantic_scholar_by_doi: BTreeMap::from([("10.1000/covered".into(), semantic)]),
+                    ..Default::default()
+                }),
+                true,
+            );
+            let articles =
+                super::enrich_crossref_articles(&mut client, &catalog(), &[work], &[0], true)
+                    .unwrap();
+            assert_eq!(articles, vec![expected]);
+            let transport = client.into_transport();
+            assert!(transport.openalex_doi_batches().is_empty());
+            assert_eq!(
+                transport.semantic_scholar_batches(),
+                &[vec!["10.1000/covered".to_string()]]
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_regression_semantic_failure_does_not_request_openalex() {
+        let work = dated_crossref_work("4", 4, "failure", 0);
+        let mut client = ScholarlyClient::new(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                semantic_scholar_status: Some(503),
+                ..Default::default()
+            }),
+            true,
+        );
+        assert!(
+            super::enrich_crossref_articles(&mut client, &catalog(), &[work], &[0], true).is_err()
+        );
+        let transport = client.into_transport();
+        assert_eq!(transport.semantic_scholar_batches().len(), 1);
+        assert!(transport.openalex_doi_batches().is_empty());
+    }
+
+    #[test]
+    fn enrichment_regression_preserves_missing_field_and_boolean_semantics() {
+        let doi = "10.1000/matrix";
+        let semantic = json!({
+            "externalIds":{"DOI":doi}, "title":"S2 title", "abstract":"S2 abstract",
+            "isOpenAccess":false,
+        });
+        let openalex = json!({
+            "doi":doi, "display_name":"OA title", "abstract_inverted_index":{"OA":[0],"abstract":[1]},
+            "best_oa_location":{}, "authorships":[{"author":{"display_name":"Unused author"}}],
+            "publication_date":"1999-01-01", "ids":{"pmid":"https://pubmed.ncbi.nlm.nih.gov/123"},
+        });
+        let cases = [
+            (
+                json!([null, " ", "Crossref title"]),
+                json!("<p>CR abstract</p>"),
+                semantic.clone(),
+                true,
+                false,
+            ),
+            (json!(3), json!(0), semantic.clone(), true, false),
+            (
+                json!(null),
+                json!("CR abstract"),
+                semantic.clone(),
+                true,
+                true,
+            ),
+            (
+                json!(["CR title"]),
+                json!("<p> </p>"),
+                semantic.clone(),
+                true,
+                true,
+            ),
+            (
+                json!(["CR title"]),
+                json!("CR abstract"),
+                json!({"externalIds":{"DOI":doi},"isOpenAccess":"false"}),
+                true,
+                true,
+            ),
+            (
+                json!(["CR title"]),
+                json!("CR abstract"),
+                json!({"externalIds":{"DOI":doi},"isOpenAccess":0}),
+                true,
+                true,
+            ),
+            (
+                json!(["CR title"]),
+                json!("CR abstract"),
+                json!({"externalIds":{"DOI":doi},"isOpenAccess":null}),
+                true,
+                true,
+            ),
+            (
+                json!(["CR title"]),
+                json!("CR abstract"),
+                json!({"externalIds":{"DOI":"10.1000/other"},"isOpenAccess":false}),
+                true,
+                true,
+            ),
+            (
+                json!(["CR title"]),
+                json!("CR abstract"),
+                Value::Null,
+                true,
+                true,
+            ),
+            (
+                json!(["CR title"]),
+                json!("CR abstract"),
+                semantic,
+                false,
+                true,
+            ),
+        ];
+        for (title, abstract_text, semantic, has_key, needs_openalex) in cases {
+            let mut work = dated_crossref_work("4", 4, "matrix", 0);
+            work["title"] = title;
+            work["abstract"] = abstract_text;
+            let matching_semantic = (has_key
+                && semantic.pointer("/externalIds/DOI").and_then(Value::as_str) == Some(doi))
+            .then_some(&semantic);
+            let expected =
+                scholarly_article_draft(&catalog(), &work, Some(&openalex), matching_semantic)
+                    .unwrap();
+            let mut client = ScholarlyClient::new(
+                FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                    semantic_scholar_by_doi: BTreeMap::from([(doi.into(), semantic)]),
+                    openalex_by_doi: BTreeMap::from([(doi.into(), openalex.clone())]),
+                    ..Default::default()
+                }),
+                has_key,
+            );
+            let actual =
+                super::enrich_crossref_articles(&mut client, &catalog(), &[work], &[0], has_key)
+                    .unwrap();
+            assert_eq!(actual, vec![expected]);
+            let transport = client.into_transport();
+            assert_eq!(
+                transport.openalex_doi_batches().len(),
+                usize::from(needs_openalex)
+            );
+            assert_eq!(
+                transport.semantic_scholar_batches().len(),
+                usize::from(has_key)
+            );
+            if has_key && needs_openalex {
+                assert_eq!(
+                    transport
+                        .attempts()
+                        .iter()
+                        .map(|attempt| attempt.service.as_str())
+                        .collect::<Vec<_>>(),
+                    ["semantic_scholar", "openalex"]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn enrichment_regression_duplicate_needs_form_a_union_without_reordering() {
+        for has_complete_first in [false, true] {
+            let mut complete = dated_crossref_work("4", 4, "shared", 0);
+            complete["abstract"] = json!("CR abstract");
+            let mut missing = complete.clone();
+            missing["title"] = json!([" "]);
+            missing["DOI"] = json!("https://doi.org/10.1000/SHARED");
+            let mut covered = dated_crossref_work("4", 4, "covered", 1);
+            covered["abstract"] = json!("CR covered abstract");
+            let mut without_doi = dated_crossref_work("4", 4, "no-doi", 2);
+            without_doi.as_object_mut().unwrap().remove("DOI");
+            let works = if has_complete_first {
+                vec![complete, covered, missing, without_doi]
+            } else {
+                vec![missing, covered, complete, without_doi]
+            };
+            let semantic = BTreeMap::from([
+                (
+                    "10.1000/shared".to_string(),
+                    json!({"externalIds":{"DOI":"10.1000/shared"},"isOpenAccess":false}),
+                ),
+                (
+                    "10.1000/covered".to_string(),
+                    json!({"externalIds":{"DOI":"10.1000/covered"},"isOpenAccess":true}),
+                ),
+            ]);
+            let openalex = json!({"doi":"10.1000/shared","display_name":"OA fills title","best_oa_location":{}});
+            let expected = works
+                .iter()
+                .map(|work| {
+                    let doi = work
+                        .get("DOI")
+                        .and_then(Value::as_str)
+                        .and_then(litradar_domain::normalize_contract_doi);
+                    scholarly_article_draft(
+                        &catalog(),
+                        work,
+                        (doi.as_deref() == Some("10.1000/shared")).then_some(&openalex),
+                        doi.as_ref().and_then(|doi| semantic.get(doi)),
+                    )
+                    .unwrap()
+                })
+                .collect::<Vec<_>>();
+            let mut client = ScholarlyClient::new(
+                FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                    semantic_scholar_by_doi: semantic,
+                    openalex_by_doi: BTreeMap::from([("10.1000/shared".into(), openalex)]),
+                    ..Default::default()
+                }),
+                true,
+            );
+            let actual = super::enrich_crossref_articles(
+                &mut client,
+                &catalog(),
+                &works,
+                &[0, 1, 2, 3],
+                true,
+            )
+            .unwrap();
+            assert_eq!(actual, expected);
+            let transport = client.into_transport();
+            assert_eq!(
+                transport.openalex_doi_batches(),
+                &[vec!["10.1000/shared".to_string()]]
+            );
+            assert_eq!(
+                transport.semantic_scholar_batches(),
+                &[vec![
+                    "10.1000/shared".to_string(),
+                    "10.1000/covered".to_string()
+                ]]
+            );
+        }
+    }
+
+    struct FailingOpenAlexTransport {
+        inner: FixtureScholarlyTransport,
+        attempts: Vec<SourceAttempt>,
+    }
+
+    impl ScholarlyTransport for FailingOpenAlexTransport {
+        /// Fail DOI enhancement while preserving the actual synthetic request order.
+        fn request(
+            &mut self,
+            request: crate::ScholarlyRequest,
+        ) -> Result<Value, crate::SourceError> {
+            if matches!(
+                &request.kind,
+                crate::ScholarlyRequestKind::OpenAlexWorksByDoi { .. }
+            ) {
+                self.attempts.push(SourceAttempt {
+                    service: request.service.clone(),
+                    endpoint: request.endpoint.clone(),
+                    method: request.method,
+                    url: "https://api.openalex.org/works".into(),
+                    status_code: Some(503),
+                    did_succeed: false,
+                    did_retry: false,
+                    error: Some("fixture unavailable".into()),
+                });
+                return Err(crate::SourceError::HttpStatus {
+                    service: request.service,
+                    endpoint: request.endpoint,
+                    status_code: 503,
+                    body: json!({"error":"fixture unavailable"}),
+                });
+            }
+            let result = self.inner.request(request);
+            self.attempts.extend(self.inner.drain_attempts());
+            result
+        }
+
+        /// Return all captured synthetic attempts, including the injected failure.
+        fn attempts(&self) -> &[SourceAttempt] {
+            &self.attempts
+        }
+
+        /// Drain the captured attempts exactly once.
+        fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+            std::mem::take(&mut self.attempts)
+        }
+    }
+
+    #[test]
+    fn enrichment_regression_unused_failure_does_not_block_a_complete_work() {
+        for has_abstract in [false, true] {
+            let mut work = dated_crossref_work("4", 4, "failure", 0);
+            if has_abstract {
+                work["abstract"] = json!("CR abstract");
+            }
+            let fixture = ScholarlyFixtureData {
+                semantic_scholar_by_doi: BTreeMap::from([(
+                    "10.1000/failure".into(),
+                    json!({"externalIds":{"DOI":"10.1000/failure"},"isOpenAccess":false,"abstract":"S2 abstract"}),
+                )]),
+                ..Default::default()
+            };
+            let mut client = ScholarlyClient::new(
+                FailingOpenAlexTransport {
+                    inner: FixtureScholarlyTransport::new(fixture),
+                    attempts: Vec::new(),
+                },
+                true,
+            );
+            let result =
+                super::enrich_crossref_articles(&mut client, &catalog(), &[work], &[0], true);
+            assert_eq!(result.is_ok(), has_abstract);
+            let transport = client.into_transport();
+            let services = transport
+                .attempts()
+                .iter()
+                .map(|attempt| attempt.service.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                services,
+                if has_abstract {
+                    vec!["semantic_scholar"]
+                } else {
+                    vec!["semantic_scholar", "openalex"]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_regression_no_valid_s2_ids_keeps_openalex_fallback() {
+        let work = dated_crossref_work("4", 4, "missing-s2", 0);
+        let mut client = ScholarlyClient::new(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                semantic_scholar_status: Some(400),
+                semantic_scholar_error: Some("No valid paper ids given".into()),
+                ..Default::default()
+            }),
+            true,
+        );
+        let articles =
+            super::enrich_crossref_articles(&mut client, &catalog(), &[work], &[0], true).unwrap();
+        assert_eq!(articles.len(), 1);
+        assert_eq!(client.into_transport().openalex_doi_batches().len(), 1);
+    }
+
+    #[test]
+    fn enrichment_regression_absent_openalex_and_absent_location_are_distinct() {
+        for row in [
+            None,
+            Some(json!({"doi":"10.1000/oa"})),
+            Some(json!({"doi":"10.1000/oa","best_oa_location":null})),
+        ] {
+            let expected = row.as_ref().map(|_| false);
+            let mut client = ScholarlyClient::new(
+                FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                    openalex_by_doi: row
+                        .into_iter()
+                        .map(|value| ("10.1000/oa".into(), value))
+                        .collect(),
+                    ..Default::default()
+                }),
+                false,
+            );
+            let articles = super::enrich_crossref_articles(
+                &mut client,
+                &catalog(),
+                &[dated_crossref_work("4", 4, "oa", 0)],
+                &[0],
+                false,
+            )
+            .unwrap();
+            assert_eq!(articles[0].open_access, expected);
+        }
+    }
+
+    #[test]
+    fn enrichment_regression_full_and_lean_payloads_produce_equal_drafts() {
+        let mut work = dated_crossref_work("4", 4, "projection", 0);
+        work["title"] = Value::Null;
+        work["PMID"] = json!(12345);
+        let full = json!({
+            "id":"https://openalex.org/W1", "doi":"10.1000/projection",
+            "display_name":"OA title", "title":"Alternate OA title",
+            "abstract_inverted_index":{"OA":[0],"abstract":[1]}, "best_oa_location":{},
+            "authorships":[{"author":{"display_name":"Unused author"}}],
+            "publication_date":"1999-01-01", "ids":{"pmid":"99999"},
+            "biblio":{"volume":"999"}, "topics":[{"display_name":"Unused topic"}],
+            "open_access":{"is_oa":true}, "funders":[{}], "awards":[{}],
+        });
+        let lean = Value::Object(
+            full.as_object()
+                .unwrap()
+                .iter()
+                .filter(|(field, _)| {
+                    [
+                        "doi",
+                        "display_name",
+                        "title",
+                        "abstract_inverted_index",
+                        "best_oa_location",
+                    ]
+                    .contains(&field.as_str())
+                })
+                .map(|(field, value)| (field.clone(), value.clone()))
+                .collect(),
+        );
+        let semantic = json!({"externalIds":{"DOI":"10.1000/projection"},"isOpenAccess":false,"abstract":"S2 abstract"});
+        let expected =
+            scholarly_article_draft(&catalog(), &work, Some(&full), Some(&semantic)).unwrap();
+        let actual =
+            scholarly_article_draft(&catalog(), &work, Some(&lean), Some(&semantic)).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(actual.title, "OA title");
+        assert_eq!(actual.abstract_text.as_deref(), Some("OA abstract"));
+        assert_eq!(actual.pmid.as_deref(), Some("12345"));
+        assert_eq!(actual.open_access, Some(false));
+        assert!(
+            serde_json::to_vec(&lean).unwrap().len() < serde_json::to_vec(&full).unwrap().len()
+        );
+    }
+
+    #[test]
+    fn enrichment_regression_empty_selection_and_invalid_dois_make_no_requests() {
+        for doi in [Value::Null, json!("not a doi")] {
+            let mut work = dated_crossref_work("4", 4, "invalid-doi", 0);
+            work["DOI"] = doi;
+            let mut client = ScholarlyClient::new(
+                FixtureScholarlyTransport::new(ScholarlyFixtureData::default()),
+                true,
+            );
+            assert!(super::enrich_crossref_articles(
+                &mut client,
+                &catalog(),
+                std::slice::from_ref(&work),
+                &[],
+                true
+            )
+            .unwrap()
+            .is_empty());
+            assert_eq!(
+                super::enrich_crossref_articles(&mut client, &catalog(), &[work], &[0], true)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(client.attempts().is_empty());
+        }
+    }
+
+    #[test]
+    fn enrichment_regression_unconvertible_work_never_completes_the_page() {
+        let root = tempfile::tempdir().unwrap();
+        let mut work = dated_crossref_work("4", 4, "unconvertible", 0);
+        work["title"] = Value::Null;
+        let mut client = ScholarlyClient::new(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                crossref_works: vec![work],
+                ..Default::default()
+            }),
+            true,
+        );
+        let mut checkpoint = None;
+        let mut has_failed = false;
+        for _ in 0..6 {
+            match fetch_scholarly_batch_in_workset(
+                &mut client,
+                &catalog(),
+                sync_context(IndexSyncMode::Bootstrap, None, checkpoint.as_deref()),
+                true,
+                root.path(),
+                &mut || Ok(1_800_000_000),
+            ) {
+                Ok(batch) => {
+                    assert!(!batch_is_complete(&batch));
+                    assert!(batch.articles.is_empty());
+                    checkpoint = batch_checkpoint(&batch).map(str::to_string);
+                }
+                Err(error) => {
+                    assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
+                    has_failed = true;
+                    break;
+                }
+            }
+        }
+        assert!(has_failed);
+        let decoded = decode_scholarly_checkpoint(checkpoint.as_deref().unwrap()).unwrap();
+        assert!(
+            matches!(decoded.source, ScholarlySourceCheckpoint::CrossrefWorkset { ref state }
+            if matches!(state.phase, super::CrossrefPhase::Emit { .. }))
+        );
+        let transport = client.into_transport();
+        assert_eq!(transport.openalex_doi_batches().len(), 1);
+        assert_eq!(transport.semantic_scholar_batches().len(), 1);
     }
 
     #[test]
