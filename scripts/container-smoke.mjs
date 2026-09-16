@@ -26,6 +26,9 @@ const COMMAND_TIMEOUT_MS = 60_000;
 const IMAGE_PULL_TIMEOUT_MS = 300_000;
 const READY_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 250;
+const CFP_SMOKE_TEXT = "LitRadar 征稿原文";
+const CFP_PAGE_EVAL =
+  "JSON.stringify({protocol:'litradar.cfp.page.v1',finalUrl:location.href,html:document.documentElement.outerHTML})";
 const DIGEST_REFERENCE_PATTERN =
   /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/[a-z0-9]+(?:[._/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/;
 const REMOVED_APPLICATION_ENVIRONMENT_NAMES = [
@@ -461,6 +464,8 @@ function buildServiceRunArguments(imageReference, areSecureCookiesRequired) {
     "--detach",
     "--name",
     containerName,
+    "--memory",
+    "160m",
     "--read-only",
     "--cap-drop",
     "ALL",
@@ -568,6 +573,151 @@ async function enableSecureCookies(imageReference) {
 }
 
 /**
+ * Create a small PDF using a standard CJK character map and known original text.
+ *
+ * @returns {string} ASCII PDF with byte-accurate object offsets.
+ */
+function createCfpSmokePdf() {
+  const encodedText = Buffer.from(CFP_SMOKE_TEXT, "utf16le")
+    .swap16()
+    .toString("hex");
+  const stream = `BT /F1 12 Tf 72 720 Td <${encodedText}> Tj ET\n`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [6 0 R] >>",
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`,
+    "<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> /FontDescriptor 7 0 R /DW 1000 >>",
+    "<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>",
+  ];
+  let document = "%PDF-1.4\n";
+  const offsets = ["0000000000 65535 f \n"];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(
+      `${String(Buffer.byteLength(document)).padStart(10, "0")} 00000 n \n`,
+    );
+    document += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const crossReferenceOffset = Buffer.byteLength(document);
+  document += `xref\n0 ${offsets.length}\n${offsets.join("")}`;
+  document += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${crossReferenceOffset}\n%%EOF\n`;
+  return document;
+}
+
+/**
+ * Execute the packaged browser protocol and PDF parser inside the hardened service.
+ *
+ * @returns {Promise<Record<string, unknown>>} Tool versions and verified behaviors.
+ */
+async function verifyCfpHelpers() {
+  const browserVersion = await runDocker([
+    "exec",
+    containerName,
+    "obscura",
+    "--version",
+  ]);
+  assertInvariant(
+    browserVersion.stdout === "obscura 0.2.2+litradar.1",
+    "CFP browser is not the pinned build with the TLS dependency fix",
+  );
+  const blockedPrivateFetch = await runDocker(
+    [
+      "exec",
+      containerName,
+      "obscura",
+      "fetch",
+      "http://127.0.0.1:8000/",
+      "--stealth",
+      "--timeout",
+      "5",
+      "--quiet",
+    ],
+    { allowFailure: true },
+  );
+  assertInvariant(
+    blockedPrivateFetch.code !== 0 &&
+      blockedPrivateFetch.stderr.includes(
+        "Access to private/internal IP address 127.0.0.1 is not allowed",
+      ),
+    "CFP browser did not reject the private address by policy",
+  );
+  await runDocker([
+    "exec",
+    "--env",
+    "OBSCURA_ALLOW_PRIVATE_NETWORK=1",
+    containerName,
+    "obscura",
+    "fetch",
+    "http://127.0.0.1:8000/",
+    "--stealth",
+    "--timeout",
+    "30",
+    "--wait-until",
+    "domcontentloaded",
+    "--wait",
+    "0",
+    "--eval",
+    CFP_PAGE_EVAL,
+    "--quiet",
+    "--output",
+    "/tmp/cfp-browser-smoke.json",
+  ]);
+  const page = JSON.parse(
+    (
+      await runDocker([
+        "exec",
+        containerName,
+        "cat",
+        "/tmp/cfp-browser-smoke.json",
+      ])
+    ).stdout,
+  );
+  assertInvariant(
+    page.protocol === "litradar.cfp.page.v1" &&
+      page.finalUrl === "http://127.0.0.1:8000/" &&
+      typeof page.html === "string" &&
+      page.html.includes("LitRadar"),
+    "CFP browser did not evaluate the original-HTML protocol",
+  );
+  await runDocker(["exec", containerName, "rm", "/tmp/cfp-browser-smoke.json"]);
+  const pdfVersion = await runDocker([
+    "exec",
+    containerName,
+    "pdftotext",
+    "-v",
+  ]);
+  const pdfText = await runDocker(
+    [
+      "exec",
+      "--interactive",
+      containerName,
+      "pdftotext",
+      "-enc",
+      "UTF-8",
+      "-eol",
+      "unix",
+      "-nopgbrk",
+      "-",
+      "-",
+    ],
+    { input: createCfpSmokePdf() },
+  );
+  assertInvariant(
+    pdfText.stdout.replace(/\s+/gu, " ").trim() === CFP_SMOKE_TEXT,
+    "CFP PDF parser did not preserve the original text",
+  );
+  return {
+    obscuraVersion: browserVersion.stdout,
+    pdfVersion: (pdfVersion.stderr || pdfVersion.stdout).split("\n")[0],
+    browserJavaScript: true,
+    originalHtmlProtocol: true,
+    privateNetworkDenied: true,
+    originalPdfText: true,
+  };
+}
+
+/**
  * Execute the exact-image security and HTTP probes.
  *
  * @param {string} imageReference - Local tag or immutable registry digest reference.
@@ -645,6 +795,7 @@ async function runSmoke(imageReference, isDigestRequired) {
   const baseUrl = `http://127.0.0.1:${hostPort}`;
   await waitForReadiness(baseUrl);
   await waitForContainerHealth();
+  const cfpHelpers = await verifyCfpHelpers();
 
   await runDocker([
     "exec",
@@ -725,6 +876,18 @@ async function runSmoke(imageReference, isDigestRequired) {
   const portBindings = inspection.HostConfig.PortBindings ?? {};
   const publishedPorts = Object.keys(portBindings);
   const configuredEnvironment = inspection.Config.Env ?? [];
+  assertInvariant(
+    configuredEnvironment.includes(
+      "LITRADAR_OBSCURA_PATH=/usr/local/bin/obscura",
+    ) &&
+      configuredEnvironment.includes(
+        "LITRADAR_PDFTOTEXT_PATH=/usr/bin/pdftotext",
+      ) &&
+      !configuredEnvironment.some((entry) =>
+        entry.startsWith("OBSCURA_ALLOW_PRIVATE_NETWORK="),
+      ),
+    "CFP helper paths or private-network defaults are incorrect",
+  );
   const removedEnvironmentOverrides = configuredEnvironment.filter((entry) =>
     REMOVED_APPLICATION_ENVIRONMENT_NAMES.some((name) =>
       entry.startsWith(`${name}=`),
@@ -819,6 +982,7 @@ async function runSmoke(imageReference, isDigestRequired) {
     containerUser: inspection.Config.User,
     endpoints: ["/", "/health/ready", "/openapi.json", "/api/auth/me"],
     managedMetaPrepared: true,
+    cfpHelpers,
     removedEnvironmentOverrides: [],
     security: {
       readOnlyRoot: true,

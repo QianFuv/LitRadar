@@ -21,3 +21,25 @@ https://crates.io/api/v1/crates/selectors/0.38.0/download
 Exact package checksums are recorded in Cargo.lock. The signed release SPDX SBOM
 records the complete image dependency inventory; this notice covers the pinned
 MPL-2.0 parser dependency exceptions in deny.toml.
+
+Obscura 0.2.2+litradar.1
+Copyright the Obscura contributors. Licensed under Apache-2.0; see
+Obscura-LICENSE.txt. The image builds the native DOM/JavaScript fetch command with
+stealth transport from this exact upstream source:
+https://github.com/h4ckf0r0day/obscura/tree/a1e09de68c7617b8079fbb1661b0548c501971c1
+https://codeload.github.com/h4ckf0r0day/obscura/tar.gz/a1e09de68c7617b8079fbb1661b0548c501971c1
+
+LitRadar modifies only Cargo.lock through the accompanying obscura-rustls.patch:
+rustls 0.23.45 and rustls-webpki 0.103.15 fix GHSA-2mjx-qc3c-rqvc. The build enables
+rendering and stealth and preserves upstream panic unwinding. Dockerfile
+records source and V8 archive checksums. Obscura-dependencies.txt in the image
+records the compiled normal dependency graph; obscura-dependencies/ preserves
+the downloaded Rust crates' license, notice and copying files, together with
+the embedded DejaVu, Liberation and Noto Color Emoji font notices. Complete crate
+sources are available at https://crates.io/api/v1/crates/NAME/VERSION/download,
+substituting the exact names and versions from that dependency graph.
+Vendored path dependencies are included in the pinned Obscura source archive;
+their license notices are preserved under obscura-dependencies/vendor/.
+
+Poppler's pdftotext and its libraries are installed from Debian packages. Their
+copyright and license notices remain under /usr/share/doc in the image.

@@ -52,7 +52,15 @@ SIGINT/SIGTERM 会协调关闭 HTTP 与调度组件。若任务子进程正在�
 1. Node.js 24 Alpine 只复制 `app/package.json` 和 lockfile，使用缓存安装依赖。
 2. 独立前端构建阶段复制 `app/` 源码，生成 `out/`，并为 HTML、CSS、JavaScript、JSON、SVG、TXT、XML 和 source map 保留原文件及确定性 gzip 兄弟文件。
 3. `rust:1.96-bookworm` 只构建 release `litradar` 目标；workspace release profile 执行 symbol stripping，并用 BuildKit cache mount 复用 Cargo registry、git 与 target 产物。
-4. `debian:trixie-slim` 只复制 `/usr/local/bin/litradar`、不可变 Meta bundle 到 `/usr/share/litradar/meta`，以及静态站点到 `/app/web`。
+4. A separate Rust stage builds Obscura `0.2.2+litradar.1` from checksum-pinned source with native JavaScript/DOM, rendering and stealth support. Its lockfile carries the rustls/webpki security fix. The V8 archive is also checksum-pinned; CFP acquisition uses the fetch command, so the parallel scrape worker is omitted.
+5. `debian:trixie-slim` receives `/usr/local/bin/litradar`, `/usr/local/bin/obscura`, the immutable Meta bundle at `/usr/share/litradar/meta`, and the static site at `/app/web`. Debian `poppler-utils` supplies `/usr/bin/pdftotext`; `poppler-data` supplies character maps for Chinese and other CJK PDFs.
+
+The image sets `LITRADAR_OBSCURA_PATH` and `LITRADAR_PDFTOTEXT_PATH` to the packaged
+executables. CFP refresh can acquire HTML and PDFs directly on the server, without
+installing Chromium or downloading a browser at runtime. Release smoke executes
+the original-HTML JavaScript protocol and a real PDF extraction inside the
+unprivileged, read-only service container; it also checks default private-network
+denial. A loopback exception is confined to that disposable test invocation.
 
 运行层安装 CA 证书、`curl` 和非 root 账户所需的最小系统包，随后切换到固定 UID/GID `10001:10001`。当前二进制新建内容 schema v8，并在 rollout 窗口内读写精确 v6/v7/v8；三者都使用 SQLite 内建 `unicode61`，镜像不复制或加载历史 `simple` 原生扩展。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
 

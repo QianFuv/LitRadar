@@ -98,6 +98,16 @@ Executable resolution uses PATH by default, with these backend overrides:
 - `LITRADAR_OBSCURA_PATH` or `--obscura-path PATH`
 - `LITRADAR_PDFTOTEXT_PATH` or `--pdftotext-path PATH`
 
+The Docker image includes `/usr/local/bin/obscura` and `/usr/bin/pdftotext` and
+sets both backend path overrides. Obscura `0.2.2+litradar.1` is built from pinned
+0.2.2 source with the rustls/webpki security update, native JavaScript/DOM support
+and rendering/stealth support matching the locally used browser. The parallel
+`scrape` worker is not packaged because CFP acquisition uses `fetch`. Chromium,
+Node.js and runtime browser downloads are unnecessary. PDF extraction uses Debian's `poppler-utils`
+and `poppler-data` character maps, including the CJK maps used by Chinese PDFs.
+Both helpers run as the existing unprivileged service user; temporary captures
+use `/tmp` without relaxing read-only root or noexec mount settings.
+
 Obscura runs without a shell, with `--stealth`, a finite timeout, and a JSON `--eval`
 envelope containing the final URL and original HTML. Exit zero is insufficient:
 framing, URL, publisher identity, challenges and original call boundaries are still
