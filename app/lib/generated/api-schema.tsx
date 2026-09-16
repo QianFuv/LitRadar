@@ -1852,7 +1852,7 @@ export interface components {
       retraction_dois: string[];
       /** @description Start page. */
       start_page?: string | null;
-      /** @description Article title. */
+      /** @description Source title; an empty string means unavailable title metadata on a DOI-identified record. */
       title: string;
       /** @description Issue volume. */
       volume?: string | null;

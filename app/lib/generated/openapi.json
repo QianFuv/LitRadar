@@ -4226,7 +4226,7 @@
           },
           "title": {
             "type": "string",
-            "description": "Article title."
+            "description": "Source title; an empty string means unavailable title metadata on a DOI-identified record."
           },
           "volume": {
             "type": ["string", "null"],

@@ -371,6 +371,30 @@ mod tests {
     }
 
     #[test]
+    fn missing_title_citations_preserve_empty_metadata_and_doi() {
+        let article = favorite_article(
+            1,
+            Some(""),
+            &["Author"],
+            Some("Journal"),
+            Some("2026"),
+            Some("10.1000/untitled"),
+        );
+        let records = [article];
+        let bibtex = serialize_bibtex(&records);
+        let ris = serialize_ris(&records);
+        let xml = serialize_endnote_xml(&records);
+        assert!(bibtex.contains("title = {}"));
+        assert!(ris.contains("TI  - \n"));
+        assert!(xml.contains("<title></title>"));
+        for output in [&bibtex, &ris, &xml] {
+            assert!(output.contains("10.1000/untitled"));
+            assert!(!output.contains("标题缺失"));
+            assert!(!output.contains("Title unavailable"));
+        }
+    }
+
+    #[test]
     fn bibtex_reserved_characters_and_newlines_stay_inside_one_balanced_record() {
         let article = favorite_article(
             1,

@@ -173,9 +173,11 @@ async function keepsSelectionSeparateFromOpening(): Promise<void> {
   );
 
   const selection = window.getSelection();
+  selection?.removeAllRanges();
   const range = document.createRange();
   range.selectNodeContents(screen.getByText('Selectable title'));
   selection?.addRange(range);
+  expect(selection?.toString()).toBe('Selectable title');
   try {
     fireEvent.click(screen.getByText('Selectable title'), { detail: 1 });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -343,7 +345,44 @@ async function recoversArticleAccessAfterReopening(): Promise<void> {
   expect(requestCount).toBe(2);
 }
 
+/**
+ * Keep unavailable metadata visible without copying a presentation label as a real title.
+ *
+ * @param title - Missing source-title representation.
+ */
+async function showsMissingTitleWithoutCopyingPlaceholder(title: Article['title']): Promise<void> {
+  registerArticleDialogHandlers();
+  const user = userEvent.setup();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText },
+  });
+  const article = { ...SAFE_ARTICLE, title };
+  await renderArticleCard(article);
+  const label = '标题缺失 · DOI: 10.1000/example';
+  const trigger = screen.getByRole('button', { name: `查看文章详情：${label}` });
+  expect(trigger).toHaveTextContent(label);
+  await user.click(trigger);
+  expect(await screen.findByRole('dialog')).toHaveAccessibleName(
+    /^标题缺失 · DOI: 10\.1000\/example/,
+  );
+  expect(screen.getByRole('button', { name: '复制文章标题' })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: '复制信息' }));
+  expect(writeText).toHaveBeenCalledOnce();
+  expect(writeText.mock.calls[0][0]).toContain('标题：缺失');
+  expect(writeText.mock.calls[0][0]).toContain('DOI: 10.1000/example');
+  expect(writeText.mock.calls[0][0]).not.toContain(label);
+  expect(article.title).toBe(title);
+  await user.click(screen.getByRole('button', { name: '关闭' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+}
+
 describe('article dialog workflow', () => {
+  test.each(['', '   ', null])(
+    'shows a missing title without copying a placeholder: %s',
+    showsMissingTitleWithoutCopyingPlaceholder,
+  );
   test(
     'keeps text and checkbox selection separate from opening details',
     keepsSelectionSeparateFromOpening,

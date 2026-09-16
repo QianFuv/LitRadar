@@ -5869,6 +5869,68 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn missing_title_doi_records_remain_readable_and_resolvable() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("untitled_reader", false);
+        let database = backend.create_index_database("fixture.sqlite");
+        let connection = rusqlite::Connection::open(&database.path).unwrap();
+        connection
+            .execute(
+                "UPDATE articles SET title='' WHERE article_id=?1",
+                [database.article_id],
+            )
+            .unwrap();
+        drop(connection);
+        let app = backend.router();
+        let auth = user.authorization_header();
+        let article = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/articles/{}?db=fixture", database.article_id),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(article.status, StatusCode::OK);
+        assert_eq!(article.payload["title"], "");
+        assert_eq!(article.payload["doi"], "10.1234/fixture");
+        let access = json_request(
+            &app,
+            Method::GET,
+            &format!("/api/articles/{}/access?db=fixture", database.article_id),
+            Some(&auth),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(access.status, StatusCode::OK);
+        assert_eq!(access.payload["abstract_page"]["available"], true);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/articles/{}/abstract?db=fixture",
+                        database.article_id
+                    ))
+                    .header(AUTHORIZATION, &auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            response.headers().get(LOCATION).unwrap(),
+            "https://doi.org/10.1234/fixture"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn article_access_routes_hide_inapplicable_providers() {
         let backend = TestBackend::new();
         let user = backend.authenticated_user("locator_reader", false);

@@ -233,7 +233,11 @@ pub fn validate_article_locator(article: &ArticleLocator) -> Result<(), Contract
     }
     validate_catalog_id(&article.catalog_id)?;
     require_canonical_text(&article.journal_title, "locator journal title")?;
-    require_canonical_text(&article.title, "locator article title")?;
+    require_article_title(
+        &article.title,
+        article.doi.as_deref(),
+        "locator article title",
+    )?;
     validate_optional_year(article.publication_year, "locator publication year")?;
     validate_optional_date(article.date.as_deref())?;
     if let (Some(year), Some(date)) = (article.publication_year, article.date.as_deref()) {
@@ -504,7 +508,7 @@ fn validate_article(
             "article must echo the requested catalog_id",
         ));
     }
-    require_canonical_text(&article.title, "article title")?;
+    require_article_title(&article.title, article.doi.as_deref(), "article title")?;
     validate_optional_year(article.publication_year, "article publication year")?;
     validate_optional_date(article.date.as_deref())?;
     if let (Some(year), Some(date)) = (article.publication_year, article.date.as_deref()) {
@@ -554,6 +558,19 @@ fn validate_article(
         ));
     }
     Ok(())
+}
+
+fn require_article_title(
+    title: &str,
+    doi: Option<&str>,
+    field: &str,
+) -> Result<(), ContractViolation> {
+    let has_canonical_doi =
+        doi.is_some_and(|value| normalize_contract_doi(value).as_deref() == Some(value));
+    if title.is_empty() && has_canonical_doi {
+        return Ok(());
+    }
+    require_canonical_text(title, field)
 }
 
 fn validate_issue_identity(
@@ -697,8 +714,8 @@ mod tests {
     };
 
     use super::{
-        validate_abstract_provider_fixture, validate_article_redirect, validate_catalog_entry,
-        validate_full_text_provider_fixture, validate_full_text_resolution,
+        validate_abstract_provider_fixture, validate_article_locator, validate_article_redirect,
+        validate_catalog_entry, validate_full_text_provider_fixture, validate_full_text_resolution,
         validate_index_provider_fixture, validate_provider_batch, MAX_OPAQUE_STATE_BYTES,
     };
     use crate::{
@@ -830,6 +847,36 @@ mod tests {
         let catalog = catalog();
         validate_catalog_entry(&catalog).expect("catalog should pass");
         validate_provider_batch(&catalog, &batch()).expect("batch should pass");
+    }
+
+    #[test]
+    fn accepts_missing_title_only_with_canonical_doi() {
+        let catalog = catalog();
+        let mut provider_batch = batch();
+        provider_batch.articles[0].title.clear();
+        validate_provider_batch(&catalog, &provider_batch)
+            .expect("a canonical DOI preserves an otherwise untitled article");
+        let mut locator = article_locator();
+        locator.title.clear();
+        validate_article_locator(&locator)
+            .expect("stored untitled DOI records must retain DOI-based access");
+
+        for doi in [None, Some("invalid"), Some("10.1000/UPPER")] {
+            provider_batch.articles[0].doi = doi.map(str::to_string);
+            provider_batch.articles[0].pmid = Some("12345".to_string());
+            locator.doi = doi.map(str::to_string);
+            locator.pmid = Some("12345".to_string());
+            assert!(validate_provider_batch(&catalog, &provider_batch).is_err());
+            assert!(validate_article_locator(&locator).is_err());
+        }
+        provider_batch.articles[0].doi = Some("10.1000/canonical".to_string());
+        locator.doi = Some("10.1000/canonical".to_string());
+        for title in [" ", "\u{00a0}"] {
+            provider_batch.articles[0].title = title.to_string();
+            locator.title = title.to_string();
+            assert!(validate_provider_batch(&catalog, &provider_batch).is_err());
+            assert!(validate_article_locator(&locator).is_err());
+        }
     }
 
     #[test]

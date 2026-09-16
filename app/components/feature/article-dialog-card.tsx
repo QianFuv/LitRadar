@@ -10,6 +10,7 @@ import { ArticleDetailDialogContent } from '@/components/feature/article-detail-
 import { ArticleListCard } from '@/components/feature/article-list-card';
 import { Dialog, DialogTrigger } from '@/components/ui/dialog';
 import { type Article } from '@/lib/api';
+import { getArticleDisplayTitle, hasArticleTitle } from '@/lib/article-title';
 import { cn } from '@/lib/utils';
 
 type ArticleDialogCardProps = {
@@ -76,7 +77,8 @@ export function ArticleDialogCard({
   className,
 }: ArticleDialogCardProps) {
   const [open, setOpen] = useState(false);
-  const resolvedTitle = title ?? article.title ?? `文章 #${article.article_id}`;
+  const displayTitle = getArticleDisplayTitle(article);
+  const resolvedTitle = hasArticleTitle(article) ? (title ?? displayTitle) : displayTitle;
   const resolvedPreview = preview ?? article.abstract;
 
   return (
@@ -88,7 +90,7 @@ export function ArticleDialogCard({
             ref={triggerRef}
             role="button"
             tabIndex={0}
-            aria-label={`查看文章详情：${article.title || '未命名文章'}`}
+            aria-label={`查看文章详情：${displayTitle}`}
             className="min-w-0 flex-1 cursor-pointer rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
             onClick={preserveArticleTextSelection}
             onKeyDown={handleArticleTriggerKeyDown}

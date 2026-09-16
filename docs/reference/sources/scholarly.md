@@ -65,7 +65,16 @@ OA DOI requests select only doi,display_name,title,abstract_inverted_index,best_
 
 Provider 不返回 PDF URL、landing page、permalink 或 content location。在线全文不是 Scholarly 当前声明的能力。
 
-题名增强只采用规范化 DOI 与 Crossref 记录一致的响应；正常 Crossref 题名保持优先，补齐题名不改变原 DOI、日期和卷期。Semantic Scholar 的既有 batch 请求同时获取 `title`，不增加单独的题名请求。所有来源题名仍为空或不能确认相同 DOI 时，保留不可转换记录的失败边界，不虚构题名或丢弃该记录以推进检查点。
+Title enrichment uses only responses whose normalized DOI matches the Crossref
+record. Crossref remains preferred, followed by matching OpenAlex and Semantic
+Scholar titles; enrichment does not change the original DOI, date or issue.
+The existing S2 batch already requests `title`, with no extra title request.
+When every usable source title is absent, a work with a valid canonical DOI is
+retained with an empty title. Its identity, page position and metadata are kept;
+no placeholder is stored and the selected-work count check remains enforced.
+An untitled work without a canonical DOI still cannot advance the checkpoint.
+Mismatched enrichment must never supply a title. Presentation may identify the
+missing field, while citation exports retain the empty title and actual DOI.
 
 通用 Crossref `relation` 不表示撤稿，不能填充 `retraction_dois`。`updated-by` 中 correction 等其他 update type、格式不合法的 DOI、source 标签、更新时间和原始 update payload 都会被忽略；多个来源重复报告同一撤稿 DOI 时只保留一条。
 

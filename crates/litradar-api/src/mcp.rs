@@ -961,6 +961,40 @@ mod tests {
         miri,
         ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
     )]
+    async fn mcp_missing_title_doi_records_preserve_source_metadata() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("mcp_untitled_reader", false);
+        let database = backend.create_index_database("fixture.sqlite");
+        let connection = rusqlite::Connection::open(&database.path).unwrap();
+        connection
+            .execute(
+                "UPDATE articles SET title='' WHERE article_id=?1",
+                [database.article_id],
+            )
+            .unwrap();
+        drop(connection);
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let session_id = initialize_mcp_session(&app, &authorization).await;
+        let result = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            19,
+            "get_article",
+            json!({"article_id":"9001","db":"fixture.sqlite"}),
+        )
+        .await;
+        let article = tool_payload(&result);
+        assert_eq!(article["title"], "");
+        assert_eq!(article["doi"], "10.1234/fixture");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
     async fn mcp_index_errors_are_tool_level_results() {
         let backend = TestBackend::new();
         let user = backend.authenticated_user("mcp_index_error_user", false);

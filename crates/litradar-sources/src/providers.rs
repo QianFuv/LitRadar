@@ -2279,7 +2279,8 @@ fn scholarly_article_draft(
                 return None;
             }
             json_text(enrichment.get("title"))
-        })?;
+        })
+        .unwrap_or_default();
     let date = crossref_date(work);
     let publication_year = date
         .as_deref()
@@ -2446,7 +2447,17 @@ fn cnki_article_draft(
 }
 
 fn canonical_article(mut article: ArticleDraft) -> Option<ArticleDraft> {
-    article.title = normalize_contract_text(&article.title)?;
+    article.title = match normalize_contract_text(&article.title) {
+        Some(title) => title,
+        None if article
+            .doi
+            .as_deref()
+            .is_some_and(|doi| normalize_contract_doi(doi).as_deref() == Some(doi)) =>
+        {
+            String::new()
+        }
+        None => return None,
+    };
     article.date = article
         .date
         .as_deref()
@@ -4900,6 +4911,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut work = dated_crossref_work("4", 4, "unconvertible", 0);
         work["title"] = Value::Null;
+        work["DOI"] = Value::Null;
         let mut client = ScholarlyClient::new(
             FixtureScholarlyTransport::new(ScholarlyFixtureData {
                 crossref_works: vec![work],
@@ -4937,8 +4949,8 @@ mod tests {
             if matches!(state.phase, super::CrossrefPhase::Emit { .. }))
         );
         let transport = client.into_transport();
-        assert_eq!(transport.openalex_doi_batches().len(), 1);
-        assert_eq!(transport.semantic_scholar_batches().len(), 1);
+        assert!(transport.openalex_doi_batches().is_empty());
+        assert!(transport.semantic_scholar_batches().is_empty());
     }
 
     #[test]
@@ -5054,6 +5066,57 @@ mod tests {
             .expect("the untitled DOI must not be dropped");
         assert_eq!(editorial.title, "Editorial");
         assert_eq!(editorial.date.as_deref(), Some("2026-07-02"));
+        assert!(batch_is_complete(
+            batches.last().expect("workset should complete")
+        ));
+    }
+
+    #[test]
+    fn crossref_workset_preserves_missing_title_doi_records() {
+        let root = tempfile::tempdir().expect("workset root should be created");
+        let mut untitled = dated_crossref_work("2", 2, "missing-title", 0);
+        untitled["title"] = json!(["\u{00a0}"]);
+        let mut client = ScholarlyClient::new(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                crossref_works: vec![
+                    untitled,
+                    dated_crossref_work("1", 1, "ordinary-article", 10),
+                ],
+                ..Default::default()
+            }),
+            true,
+        );
+        let batches = collect_crossref_batches(
+            &mut client,
+            IndexSyncMode::Bootstrap,
+            None,
+            None,
+            root.path(),
+        );
+        let articles = batches
+            .iter()
+            .flat_map(|batch| &batch.articles)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            articles.len(),
+            2,
+            "missing titles must not drop selected DOI identities"
+        );
+        let article = articles
+            .iter()
+            .find(|article| article.doi.as_deref() == Some("10.1000/missing-title"))
+            .expect("untitled DOI should be retained");
+        assert!(
+            article.title.is_empty(),
+            "unavailable source text must not be invented"
+        );
+        assert_eq!(article.date.as_deref(), Some("2026-07-02"));
+        assert_eq!(article.volume.as_deref(), Some("1"));
+        assert_eq!(article.issue_number.as_deref(), Some("2"));
+        for batch in &batches {
+            litradar_provider::conformance::validate_provider_batch(&catalog(), batch)
+                .expect("the complete canonical page should remain valid");
+        }
         assert!(batch_is_complete(
             batches.last().expect("workset should complete")
         ));
@@ -5651,13 +5714,18 @@ mod tests {
                 json!({"externalIds": {"DOI": "10.1000/expected"}, "title": "\u{00a0}"}),
             ),
         ] {
-            assert!(scholarly_article_draft(
+            let article = scholarly_article_draft(
                 &catalog(),
                 &work,
                 Some(&openalex),
-                Some(&semantic_scholar)
+                Some(&semantic_scholar),
             )
-            .is_none());
+            .expect("the original DOI remains usable without a title");
+            assert!(
+                article.title.is_empty(),
+                "unmatched or blank enrichment is not a title"
+            );
+            assert_eq!(article.doi.as_deref(), Some("10.1000/expected"));
         }
         assert!(scholarly_article_draft(
             &catalog(),

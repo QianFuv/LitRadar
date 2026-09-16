@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/motion';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { getDoiUrl } from '@/lib/citation';
+import { getArticleDisplayTitle, hasArticleTitle } from '@/lib/article-title';
 import { buildSettingsCenterHref } from '@/lib/settings-center';
 
 type ArticleDetailDialogArticle = Article;
@@ -58,7 +59,7 @@ function buildArticleInfoText(article: ArticleDetailDialogArticle): string {
   const doiUrl = getDoiUrl(article.doi);
   const authors = article.authors?.join('; ') ?? '';
   return [
-    `标题：${article.title || '暂无'}`,
+    `标题：${hasArticleTitle(article) ? article.title : '缺失'}`,
     `作者：${authors || '暂无'}`,
     `期刊：${article.journal_title || '暂无'}`,
     `日期：${article.date || '暂无'}`,
@@ -111,6 +112,7 @@ export function ArticleDetailDialogContent({
   const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stateTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
   const isAccessQueryEnabled = !!dbName && !!article.article_id;
+  const canCopyTitle = hasArticleTitle(article);
   const {
     data: access,
     isPending: isAccessPending,
@@ -161,7 +163,9 @@ export function ArticleDetailDialogContent({
 
   /** Copy the article title. */
   const handleCopyTitle = async () => {
-    await handleCopy(article.title || '', 'title');
+    if (hasArticleTitle(article)) {
+      await handleCopy(article.title, 'title');
+    }
   };
 
   /** Copy the plain-text article information summary. */
@@ -186,12 +190,13 @@ export function ArticleDetailDialogContent({
     <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] overflow-y-auto md:max-w-4xl">
       <DialogHeader>
         <DialogTitle className="text-xl leading-snug">
-          {article.title || '未命名文章'}
+          {getArticleDisplayTitle(article)}
           <Button
             variant="ghost"
             size="sm"
             className="ml-2 inline-flex h-6 w-6 p-0 align-middle"
             aria-label="复制文章标题"
+            disabled={!canCopyTitle}
             onClick={handleCopyTitle}
           >
             <span className="grid place-items-center" aria-hidden="true">

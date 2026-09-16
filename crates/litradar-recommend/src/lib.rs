@@ -696,6 +696,11 @@ pub fn build_markdown_content(
             continue;
         };
         let display_doi = candidate.doi.as_deref().unwrap_or("N/A");
+        let display_title = if candidate.title.trim().is_empty() {
+            format!("Title unavailable (DOI: {display_doi})")
+        } else {
+            candidate.title.clone()
+        };
         let date = candidate.date.as_deref().unwrap_or("Unknown");
         let abstract_text = if candidate.abstract_text.trim().is_empty() {
             "N/A"
@@ -705,7 +710,7 @@ pub fn build_markdown_content(
         sections.push(format!(
             "### {}. {}\n- Journal: {}\n- Date: {date}\n- DOI: {display_doi}\n- Abstract: {abstract_text}",
             sections.len() + 1,
-            candidate.title,
+            display_title,
             candidate.journal_title,
         ));
     }
@@ -1391,6 +1396,26 @@ mod tests {
         assert!(content.contains("Selected Articles: 0"));
         assert!(content.contains("summary"));
         assert!(!content.contains("Rust systems"));
+    }
+
+    #[test]
+    fn missing_title_digest_labels_do_not_change_candidate_metadata() {
+        let mut article = candidate(1, "");
+        article.doi = Some("10.1000/untitled".to_string());
+        let candidates = BTreeMap::from([(1, article)]);
+        let content = build_markdown_content(
+            "fixture.sqlite",
+            "run",
+            &subscriber(),
+            "",
+            &[RankedSelectionInfo {
+                article_id: 1,
+                score: 1.0,
+            }],
+            &candidates,
+        );
+        assert!(content.contains("### 1. Title unavailable (DOI: 10.1000/untitled)"));
+        assert!(candidates[&1].title.is_empty());
     }
 
     #[test]

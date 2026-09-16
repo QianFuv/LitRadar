@@ -1392,6 +1392,107 @@ mod tests {
         }
     }
 
+    #[test]
+    fn missing_title_doi_replay_and_later_title_preserve_identity() {
+        let directory = tempfile::tempdir().expect("fixture directory should create");
+        let connection = open_content_db(directory.path().join("untitled.sqlite"))
+            .expect("content fixture should open");
+        let mut untitled = batch();
+        untitled.articles[0].title.clear();
+        let first = write_content_batch(
+            &connection,
+            &catalog(),
+            &untitled,
+            "untitled:first",
+            "2026-09-17",
+        )
+        .expect("identified missing-title article should be stored");
+        assert_eq!(first.articles_changed, 1);
+        let article_id: i64 = connection
+            .query_row("SELECT article_id FROM articles", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT title FROM articles", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            ""
+        );
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM article_identity_keys WHERE identity_kind='bibliographic'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        for query in ["doi:shared", "authors:Lovelace"] {
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM article_search WHERE article_search MATCH ?1",
+                        [query],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                1
+            );
+        }
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM article_search WHERE article_search MATCH 'title:unavailable'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        let replay = write_content_batch(
+            &connection,
+            &catalog(),
+            &untitled,
+            "untitled:replay",
+            "2026-09-17",
+        )
+        .expect("missing-title replay should be idempotent");
+        assert_eq!(replay.articles_changed, 0);
+        let titled = batch();
+        let enriched = write_content_batch(
+            &connection,
+            &catalog(),
+            &titled,
+            "untitled:filled",
+            "2026-09-17",
+        )
+        .expect("a genuine title should enrich the existing DOI");
+        assert_eq!(enriched.articles_changed, 1);
+        let before_events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let replay = write_content_batch(
+            &connection,
+            &catalog(),
+            &untitled,
+            "untitled:blank-again",
+            "2026-09-17",
+        )
+        .expect("a later blank observation must preserve a genuine title");
+        assert_eq!(replay.articles_changed, 0);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM articles", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT article_id,title FROM articles", [], |row| Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?
+                )))
+                .unwrap(),
+            (article_id, "Shared Article".to_string())
+        );
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM article_identity_keys WHERE identity_kind='bibliographic'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM article_change_events", [], |row| row
+                    .get::<_, i64>(
+                    0
+                ))
+                .unwrap(),
+            before_events
+        );
+    }
+
     fn batch_for_catalog(catalog: &JournalCatalogEntry) -> ProviderBatch {
         let mut provider_batch = batch();
         provider_batch.catalog_id.clone_from(&catalog.catalog_id);

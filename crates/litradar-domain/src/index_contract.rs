@@ -322,7 +322,7 @@ pub struct ArticleAuthorDraft {
 pub struct ArticleDraft {
     /// Catalog identifier echoed from the request.
     pub catalog_id: String,
-    /// Article title.
+    /// Canonical source title, or an empty string only when a canonical DOI preserves identity.
     pub title: String,
     /// Publication year.
     pub publication_year: Option<i64>,
@@ -421,7 +421,7 @@ pub struct ArticleLocator {
     pub journal_title: String,
     /// Canonical journal ISSNs.
     pub journal_issns: Vec<String>,
-    /// Article title.
+    /// Canonical source title, or an empty string for an identified DOI record with no source title.
     pub title: String,
     /// Publication year.
     pub publication_year: Option<i64>,

@@ -77,13 +77,22 @@ Provider 对所请求期刊的观察：
 
 | 分组 | 字段                                                                                          |
 | ---- | --------------------------------------------------------------------------------------------- |
-| 必填 | `catalog_id`、非空 `title`                                                                    |
+| 必填 | `catalog_id`, `title` (empty only when a valid canonical DOI preserves identity) |
 | 出版 | `publication_year`、`date`、`issue_title`、`volume`、`issue_number`、`start_page`、`end_page` |
 | 内容 | 有序 `authors[].display_name`、`abstract_text`                                                |
 | 标识 | 规范 DOI、数字 PMID、按字典序排列且无重复的规范 `retraction_dois`                             |
 | 状态 | 可空布尔值 `open_access`、`in_press`                                                          |
 
 文章还必须具有 DOI、PMID，或同时具有出版时间和卷/期/起始页中的至少一个定位字段。禁止 Provider ID、持久 URL、原始响应、权限、订阅、馆藏、会话和传输状态。
+
+A source title may be unavailable even when its DOI and publication metadata are
+valid. Preserve that record with exactly `title=""` and its canonical DOI; do not
+invent a title, drop the identity, or derive a bibliographic alias from empty text.
+Whitespace-only canonical titles, invalid/missing DOI, and PMID-only untitled
+records still fail validation. Request-time article locators use the same rule.
+UI missing-title labels are presentation only and must never enter stored data,
+FTS or exported citations. A later genuine title merges into the same DOI identity,
+and a later missing-title observation must not erase an existing real title.
 
 ### `ProviderBatch`
 

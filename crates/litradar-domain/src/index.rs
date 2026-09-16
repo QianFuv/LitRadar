@@ -104,7 +104,7 @@ pub struct ArticleRecord {
     pub journal_id: JournalId,
     /// Issue identifier.
     pub issue_id: Option<i64>,
-    /// Article title.
+    /// Source title; an empty string means unavailable title metadata on a DOI-identified record.
     pub title: String,
     /// Publication year.
     pub publication_year: Option<i64>,
