@@ -1020,7 +1020,10 @@ fn crossref_replayed_batch(
 ) -> Result<ProviderBatch, ProviderError> {
     window.candidate_anchor = state.candidate.clone();
     prepare_scholarly_replay(&mut window);
-    if matches!(state.phase, CrossrefPhase::Emit { .. }) {
+    if let CrossrefPhase::Emit { lower, .. } = &state.phase {
+        if lower.is_none() {
+            switch_scholarly_window_to_unbounded(&mut window);
+        }
         window.has_reached_candidate = state.candidate.is_some();
         window.has_seen_base = window.phase == ScholarlyScanPhase::Bounded;
     }
@@ -1105,7 +1108,7 @@ fn fetch_crossref_workset<T: ScholarlyTransport>(
                 None => workset.first_group()?,
             };
             if window.candidate_anchor.is_some() && candidate.is_none() {
-                if window.phase == ScholarlyScanPhase::Bounded {
+                if window.phase == ScholarlyScanPhase::Bounded && state.updated_from.is_some() {
                     return crossref_unbounded_replay(catalog, window, state, workset, root);
                 }
                 return Err(ProviderError::new(
@@ -1140,10 +1143,14 @@ fn fetch_crossref_workset<T: ScholarlyTransport>(
                             scholarly_issue_is_older(&candidate.issue, &base.issue)
                         });
                 if is_unsafe {
-                    return crossref_unbounded_replay(catalog, window, state, workset, root);
+                    if state.updated_from.is_some() {
+                        return crossref_unbounded_replay(catalog, window, state, workset, root);
+                    }
+                    switch_scholarly_window_to_unbounded(&mut window);
+                } else {
+                    lower = base.map(|group| group.date);
+                    window.has_seen_base = true;
                 }
-                lower = base.map(|group| group.date);
-                window.has_seen_base = true;
             }
             window.has_reached_candidate = window.candidate_anchor.is_some();
             let next = workset.seal_selection(upper, lower, window.candidate_anchor.clone())?;
@@ -3959,6 +3966,228 @@ mod tests {
             }
         }
         panic!("Crossref fixture exceeded its finite step budget")
+    }
+
+    #[test]
+    fn crossref_reuse_unfiltered_collection_preserves_articles_and_anchor() {
+        let root = tempfile::tempdir().unwrap();
+        let works = vec![
+            dated_crossref_work("4", 4, "head", 0),
+            dated_crossref_work("1", 1, "older", 1),
+        ];
+        let expected = works
+            .iter()
+            .map(|work| scholarly_article_draft(&catalog(), work, None, None).unwrap())
+            .collect::<Vec<_>>();
+        let mut base = decode_scholarly_anchor(&scholarly_volume_anchor("2")).unwrap();
+        base.from_sync_date = Some("2099-01-01".to_string());
+        let base = encode_scholarly_anchor(&base).unwrap();
+        let mut client = ScholarlyClient::new(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                crossref_works: works,
+                ..Default::default()
+            }),
+            true,
+        );
+        let batches = collect_crossref_batches(
+            &mut client,
+            IndexSyncMode::Incremental,
+            Some(&base),
+            None,
+            root.path(),
+        );
+        let articles = batches
+            .iter()
+            .flat_map(|batch| batch.articles.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(articles, expected);
+        assert_eq!(
+            batch_anchor(batches.last().unwrap()),
+            Some(scholarly_volume_anchor("4").as_str())
+        );
+        assert_eq!(client.into_transport().journal_work_requests().len(), 2);
+    }
+
+    #[test]
+    fn crossref_reuse_singleton_discovery_avoids_second_request() {
+        let root = tempfile::tempdir().unwrap();
+        let work = dated_crossref_work("4", 4, "only", 0);
+        let expected = scholarly_article_draft(&catalog(), &work, None, None).unwrap();
+        let mut client = ScholarlyClient::new(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                crossref_works: vec![work],
+                ..Default::default()
+            }),
+            true,
+        );
+        let batches = collect_crossref_batches(
+            &mut client,
+            IndexSyncMode::Bootstrap,
+            None,
+            None,
+            root.path(),
+        );
+        assert_eq!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.articles.clone())
+                .collect::<Vec<_>>(),
+            vec![expected]
+        );
+        assert_eq!(client.into_transport().journal_work_requests().len(), 1);
+    }
+
+    #[test]
+    fn crossref_reuse_sealed_selection_recovers_lost_ack_with_correct_window() {
+        for has_base in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let works = vec![
+                dated_crossref_work("4", 4, "head", 0),
+                dated_crossref_work(if has_base { "2" } else { "1" }, 1, "second", 1),
+            ];
+            let expected = works
+                .iter()
+                .map(|work| scholarly_article_draft(&catalog(), work, None, None).unwrap())
+                .collect::<Vec<_>>();
+            let mut base = decode_scholarly_anchor(&scholarly_volume_anchor("2")).unwrap();
+            base.from_sync_date = Some("2099-01-01".to_string());
+            let base = encode_scholarly_anchor(&base).unwrap();
+            let mut client = ScholarlyClient::new(
+                FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                    crossref_works: works,
+                    ..Default::default()
+                }),
+                true,
+            );
+            let mut checkpoint = None;
+            for _ in 0..4 {
+                let batch = crossref_step(
+                    &mut client,
+                    sync_context(
+                        IndexSyncMode::Incremental,
+                        Some(&base),
+                        checkpoint.as_deref(),
+                    ),
+                    root.path(),
+                );
+                checkpoint = batch_checkpoint(&batch).map(str::to_string);
+                let decoded = decode_scholarly_checkpoint(checkpoint.as_deref().unwrap()).unwrap();
+                if matches!(decoded.source, ScholarlySourceCheckpoint::CrossrefWorkset { ref state }
+                    if matches!(state.phase, super::CrossrefPhase::Ready))
+                {
+                    break;
+                }
+            }
+            let confirmed = checkpoint.unwrap();
+            let sealed = crossref_step(
+                &mut client,
+                sync_context(IndexSyncMode::Incremental, Some(&base), Some(&confirmed)),
+                root.path(),
+            );
+            let decoded = decode_scholarly_checkpoint(batch_checkpoint(&sealed).unwrap()).unwrap();
+            assert_eq!(
+                decoded.window.phase,
+                if has_base {
+                    ScholarlyScanPhase::Bounded
+                } else {
+                    ScholarlyScanPhase::Unbounded
+                }
+            );
+            assert_eq!(decoded.window.has_seen_base, has_base);
+            assert!(
+                matches!(decoded.source, ScholarlySourceCheckpoint::CrossrefWorkset { ref state }
+                if matches!(state.phase, super::CrossrefPhase::Emit { .. }))
+            );
+            let replayed = crossref_step(
+                &mut client,
+                sync_context(IndexSyncMode::Incremental, Some(&base), Some(&confirmed)),
+                root.path(),
+            );
+            assert_eq!(batch_checkpoint(&replayed), batch_checkpoint(&sealed));
+            let batches = collect_crossref_batches(
+                &mut client,
+                IndexSyncMode::Incremental,
+                Some(&base),
+                batch_checkpoint(&replayed).map(str::to_string),
+                root.path(),
+            );
+            assert_eq!(
+                batches
+                    .iter()
+                    .flat_map(|batch| batch.articles.clone())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(
+                batch_anchor(batches.last().unwrap()),
+                Some(scholarly_volume_anchor("4").as_str())
+            );
+            assert_eq!(client.into_transport().journal_work_requests().len(), 2);
+        }
+    }
+
+    #[test]
+    fn crossref_reuse_missing_frozen_candidate_fails_without_recollection() {
+        let root = tempfile::tempdir().unwrap();
+        let mut base = decode_scholarly_anchor(&scholarly_volume_anchor("2")).unwrap();
+        base.from_sync_date = Some("2099-01-01".to_string());
+        let raw_base = encode_scholarly_anchor(&base).unwrap();
+        let window = ScholarlyWindowCheckpoint {
+            sync_mode: IndexSyncMode::Incremental,
+            phase: ScholarlyScanPhase::Bounded,
+            base_anchor: Some(base),
+            candidate_anchor: Some(decode_scholarly_anchor(&scholarly_volume_anchor("9")).unwrap()),
+            has_reached_candidate: false,
+            has_seen_base: false,
+        };
+        let initial = super::start_crossref_workset(
+            &catalog(),
+            window,
+            "1234-5679".into(),
+            root.path(),
+            1_800_000_000,
+            None,
+        )
+        .unwrap();
+        let mut client = ScholarlyClient::new(
+            FixtureScholarlyTransport::new(ScholarlyFixtureData {
+                crossref_works: vec![
+                    dated_crossref_work("4", 4, "head", 0),
+                    dated_crossref_work("1", 1, "older", 1),
+                ],
+                ..Default::default()
+            }),
+            true,
+        );
+        let mut checkpoint = batch_checkpoint(&initial).unwrap().to_string();
+        for _ in 0..2 {
+            let batch = crossref_step(
+                &mut client,
+                sync_context(
+                    IndexSyncMode::Incremental,
+                    Some(&raw_base),
+                    Some(&checkpoint),
+                ),
+                root.path(),
+            );
+            checkpoint = batch_checkpoint(&batch).unwrap().to_string();
+        }
+        let error = fetch_scholarly_batch_in_workset(
+            &mut client,
+            &catalog(),
+            sync_context(
+                IndexSyncMode::Incremental,
+                Some(&raw_base),
+                Some(&checkpoint),
+            ),
+            true,
+            root.path(),
+            &mut || Ok(1_800_000_000),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
+        assert!(error.to_string().contains("frozen candidate is missing"));
+        assert_eq!(client.into_transport().journal_work_requests().len(), 2);
     }
 
     #[test]

@@ -673,6 +673,8 @@ impl CrossrefWorkset {
     }
 
     /// Persist a single response and all its progress counters in one SQLite transaction.
+    ///
+    /// Complete unfiltered singleton discovery uses the same collection validation and transaction.
     pub(crate) fn accept(
         &mut self,
         page: CrossrefWorksPage,
@@ -732,7 +734,11 @@ impl CrossrefWorkset {
                 self.state.created_from = Some(from);
                 self.initialize_root()?;
                 self.state.restart_collection();
-                Ok(())
+                if self.state.updated_from.is_none() && page.total_results == 1 {
+                    self.accept_response(page)
+                } else {
+                    Ok(())
+                }
             }
             CrossrefPhase::Collect {
                 partition,
@@ -1497,6 +1503,106 @@ mod tests {
         let mut cache = CrossrefWorkset::create(directory, "catalog", state).unwrap();
         cache.accept(page(vec![work(0, 1)], 1_001)).unwrap();
         cache
+    }
+
+    #[test]
+    fn crossref_reuse_singleton_discovery_is_one_recoverable_transaction() {
+        let directory = tempfile::tempdir().unwrap();
+        let initial = CrossrefCheckpoint::new("1234-5679".into(), 2, None).unwrap();
+        let mut cache = CrossrefWorkset::create(directory.path(), "catalog", initial).unwrap();
+        let confirmed = cache.checkpoint();
+        let complete = cache.accept(page(vec![work(0, 1)], 1)).unwrap();
+        assert!(matches!(complete.phase, CrossrefPhase::Ready));
+        assert_eq!(complete.sequence, confirmed.sequence + 1);
+        assert_eq!(complete.root_total, Some(1));
+        drop(cache);
+        let (cache, did_replay) =
+            CrossrefWorkset::open(directory.path(), "catalog", &confirmed).unwrap();
+        assert!(did_replay);
+        assert_eq!(cache.checkpoint(), complete);
+        assert_eq!(
+            cache
+                .connection
+                .query_row::<u64, _, _>("SELECT count(*) FROM works", [], |row| row.get(0))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn crossref_reuse_filtered_singleton_and_partial_discovery_still_collect() {
+        for (updated_from, total) in [(Some("1970-01-01".to_string()), 1), (None, 2)] {
+            let directory = tempfile::tempdir().unwrap();
+            let initial = CrossrefCheckpoint::new("1234-5679".into(), 2, updated_from).unwrap();
+            let mut cache = CrossrefWorkset::create(directory.path(), "catalog", initial).unwrap();
+            let state = cache.accept(page(vec![work(0, 1)], total)).unwrap();
+            assert!(matches!(state.phase, CrossrefPhase::Collect { .. }));
+            assert_eq!(state.root_total, None);
+            assert_eq!(
+                cache
+                    .connection
+                    .query_row::<u64, _, _>("SELECT count(*) FROM works", [], |row| row.get(0))
+                    .unwrap(),
+                0
+            );
+            if total == 1 {
+                let empty = cache.accept(page(Vec::new(), 0)).unwrap();
+                assert!(matches!(empty.phase, CrossrefPhase::Ready));
+                assert_eq!(empty.root_total, Some(0));
+            }
+        }
+    }
+
+    #[test]
+    fn crossref_reuse_singleton_rejects_invalid_discovery_without_progress() {
+        for response in [
+            page(Vec::new(), 1),
+            page(vec![work(0, 1), work(1, 1)], 1),
+            page(vec![work(0, 1)], 0),
+            page(vec![json!({"title":["Missing creation date"]})], 1),
+            page(vec![work(0, 3)], 1),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let initial = CrossrefCheckpoint::new("1234-5679".into(), 2, None).unwrap();
+            let mut cache = CrossrefWorkset::create(directory.path(), "catalog", initial).unwrap();
+            let before = cache.checkpoint();
+            assert!(cache.accept(response).is_err());
+            assert_eq!(cache.checkpoint(), before);
+        }
+    }
+
+    #[test]
+    fn crossref_reuse_singleton_write_failure_rolls_back_the_discovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let initial = CrossrefCheckpoint::new("1234-5679".into(), 2, None).unwrap();
+        let mut cache = CrossrefWorkset::create(directory.path(), "catalog", initial).unwrap();
+        let before = cache.checkpoint();
+        cache.connection.execute_batch(
+            "CREATE TRIGGER reject_work BEFORE INSERT ON works BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
+        ).unwrap();
+        assert!(cache.accept(page(vec![work(0, 1)], 1)).is_err());
+        assert_eq!(cache.checkpoint(), before);
+        for table in ["partitions", "works", "groups"] {
+            assert_eq!(
+                cache
+                    .connection
+                    .query_row::<u64, _, _>(&format!("SELECT count(*) FROM {table}"), [], |row| row
+                        .get(0))
+                    .unwrap(),
+                0
+            );
+        }
+        cache
+            .connection
+            .execute_batch("DROP TRIGGER reject_work")
+            .unwrap();
+        drop(cache);
+        let (mut cache, did_replay) =
+            CrossrefWorkset::open(directory.path(), "catalog", &before).unwrap();
+        assert!(!did_replay);
+        let next = cache.accept(page(vec![work(0, 1)], 1)).unwrap();
+        assert!(matches!(next.phase, CrossrefPhase::Ready));
+        assert_eq!(next.sequence, before.sequence + 1);
     }
 
     #[test]

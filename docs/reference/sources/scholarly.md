@@ -79,6 +79,8 @@ LitRadar 采用官方建议的“小窗口、created 条件、小结果单响应
 | 单秒仍大于 225 | 该片从 `cursor=*&rows=225` 完整重取，无 sort/order；后续只改变 cursor，其他参数固定，不使用 offset。 |
 | 完整性校验 | 每片累计条数、唯一数和首响应总数一致；每页总数不得漂移，父片等于子片之和，根总数等于全局唯一数。游标最后一页恰好满 225 条时继续确认终止响应，不能仅凭已达到总数提前完成。 |
 
+An unfiltered discovery reporting exactly one valid complete work reuses that response through the existing collection validation and storage path. Discovery and Ready commit in one transaction with one sequence advance, removing the second Crossref request. Discovery with an update filter or a larger reported total still requires collection; incomplete or invalid responses do not qualify.
+
 225 条沿用既有的单次请求规模。[官方允许的最大 rows 为 1000](https://github.com/CrossRef/rest-api-doc#rows)，无需使用最大值才能采用单响应与计数校验方案。较小阈值可能增加分片和请求数，不新增 `rows=0` 探测或超限回退。已验证的旧版完整叶片可以继续复用，已有游标仍以相同的 225 条参数恢复；新产生的 226–1000 条单秒游标状态不能交给仍要求总数大于 1000 的旧二进制恢复。
 
 日期边界采用官方支持的[包含式 UTC 秒精度](https://community.crossref.org/t/query-the-rest-api-with-hour-minute-second-resolution/13821)。有界 Incremental 在每个分片附加相同的 `from-update-date:<anchor 年份的 1 月 1 日>` 和 `until-update-date:T`，创建日期则始终覆盖整刊历史。因此早年创建、最近修改的 DOI 不会因创建年份早于更新下界而被排除。无 anchor、FullRescan 或同源无界重放去掉全部 update 条件，只保留完整 created 范围和同一 `T`；无界重放还保留已经冻结的 candidate。
@@ -96,6 +98,8 @@ created 不变只能稳定分片归属，不能冻结文章字段或 update 条�
 查询通过持续维护的索引和 keyset 分页，每个输出页最多 225 条、16 MiB payload，不构造整刊 Vec，也不依赖 `/tmp` 大排序文件。工作集使用 4 MiB SQLite page cache、关闭 mmap，主文件上限 4 GiB；page cache 不是进程 RSS 上限，事务日志还需要额外磁盘空间。HTTP 响应仍限 16 MiB，225 条探测也受此限制；单条元数据大小不固定，较少条数不保证永不超限。磁盘满、容量或响应超限都会失败并保留正式内容和旧成功 anchor，不截断结果凑数。
 
 core checkpoint 是确认进度的权威。缓存超前一页时先重放该已暂存步骤；内容已提交而控制事务失败时依靠既有 identity/upsert 重放。工作集缺失或可识别的自有文件损坏时，从同一 `C/T`、update 条件和 candidate 重建，不继续缺少前缀的旧 cursor。Provider 准备返回 Complete 时可清理缓存；若随后 core 提交失败，恢复仍按缺失缓存规则重取。路径或身份不匹配直接失败。
+
+When a complete Ready workset already has no update filter, an unsafe boundary switches selection to Unbounded in that same owned workset instead of downloading the identical range again. A missing frozen candidate still fails. Truly filtered results retain conservative unfiltered recollection. If the selection ACK is lost, replay restores the window phase from the persisted Emit selection; merely seeing an unfiltered Collect checkpoint does not trigger this shortcut. Existing schema, ownership checks and missing/damaged-workset recovery are unchanged.
 
 ### 请求预算
 
