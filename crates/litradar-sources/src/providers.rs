@@ -522,6 +522,13 @@ struct DomesticCnkiJournalSnapshot {
     issue_payloads: Vec<Value>,
 }
 
+struct DomesticCnkiPageRetryCache {
+    catalog_id: String,
+    issue_id: String,
+    page: DomesticIssueArticlePage,
+    articles: BTreeMap<usize, Option<ArticleDraft>>,
+}
+
 impl<T> DomesticCnkiIndexProvider<T>
 where
     T: DomesticCnkiTransport + Clone + Send + 'static,
@@ -587,6 +594,7 @@ where
         })?;
         let mut attempts = Vec::new();
         let mut batch_attempt = 1;
+        let mut retry_cache = None;
         let result = loop {
             let mut detail_attempts = Vec::new();
             let result = {
@@ -602,6 +610,7 @@ where
                     context,
                     detail_pool,
                     &mut detail_attempts,
+                    &mut retry_cache,
                 )
             };
             attempts.append(&mut state.client.drain_attempts());
@@ -3026,6 +3035,7 @@ fn fetch_domestic_cnki_batch<T>(
     context: IndexFetchContext<'_>,
     detail_pool: &DomesticCnkiDetailPool,
     detail_attempts: &mut Vec<SourceAttempt>,
+    retry_cache: &mut Option<DomesticCnkiPageRetryCache>,
 ) -> Result<ProviderBatch, ProviderError>
 where
     T: DomesticCnkiTransport + Clone + Send,
@@ -3171,10 +3181,26 @@ where
         .map_err(map_domestic_cnki_error)?;
     validate_domestic_issue_page(&page, page_index)?;
     let has_next_page = page.has_next_page;
+    if retry_cache.as_ref().is_none_or(|cache| {
+        cache.catalog_id != catalog.catalog_id
+            || cache.issue_id != current_issue_id
+            || cache.page != page
+    }) {
+        *retry_cache = Some(DomesticCnkiPageRetryCache {
+            catalog_id: catalog.catalog_id.clone(),
+            issue_id: current_issue_id.clone(),
+            page: page.clone(),
+            articles: BTreeMap::new(),
+        });
+    }
+    let cache = retry_cache
+        .as_mut()
+        .expect("validated page initializes its retry cache");
     let detail_tasks = page
         .articles
         .into_iter()
         .enumerate()
+        .filter(|(article_index, _)| !cache.articles.contains_key(article_index))
         .map(|(article_index, summary)| {
             let article_url = json_text(summary.get("article_url")).ok_or_else(|| {
                 ProviderError::new(
@@ -3194,7 +3220,7 @@ where
     for outcome in &mut detail_outcomes {
         detail_attempts.append(&mut outcome.attempts);
     }
-    let mut articles = Vec::new();
+    let mut first_error = None;
     for outcome in detail_outcomes {
         let article_index = outcome.article_index;
         let summary = outcome.summary;
@@ -3212,7 +3238,10 @@ where
                 );
                 continue;
             }
-            Err(error) => return Err(map_domestic_cnki_error(error)),
+            Err(error) => {
+                first_error.get_or_insert_with(|| map_domestic_cnki_error(error));
+                continue;
+            }
         };
         if domestic_cnki_lacks_authors_and_doi(&summary, &detail) {
             tracing::info!(
@@ -3222,16 +3251,24 @@ where
                 reason = "missing_authors_and_doi",
                 article_ordinal = article_index + 1,
             );
+            cache.articles.insert(article_index, None);
             continue;
         }
-        let article = cnki_article_draft(catalog, &issue, &summary, &detail).ok_or_else(|| {
-            ProviderError::new(
-                ProviderErrorKind::InvalidResponse,
-                "domestic CNKI article payload could not be converted",
-            )
-        })?;
-        articles.push(article);
+        let Some(article) = cnki_article_draft(catalog, &issue, &summary, &detail) else {
+            first_error.get_or_insert_with(|| {
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "domestic CNKI article payload could not be converted",
+                )
+            });
+            continue;
+        };
+        cache.articles.insert(article_index, Some(article));
     }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    let articles = cache.articles.values().flatten().cloned().collect();
     let next = if has_next_page {
         Some(DomesticCnkiCheckpoint {
             version: crate::DOMESTIC_CNKI_CHECKPOINT_VERSION,
@@ -3750,6 +3787,200 @@ mod tests {
 
         fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
             self.inner.drain_attempts()
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum RetryPageChange {
+        None,
+        Add,
+        Remove,
+        Reorder,
+        Replace,
+        Url,
+        Title,
+        Authors,
+        Pages,
+        Conversion,
+        Filtered,
+    }
+
+    #[derive(Clone)]
+    struct PageRetryDomesticTransport {
+        inner: FixtureDomesticCnkiTransport,
+        failed_id: &'static str,
+        failure_limit: Arc<AtomicUsize>,
+        paper_calls: Arc<AtomicUsize>,
+        detail_calls: Arc<std::sync::Mutex<BTreeMap<String, usize>>>,
+        recorded_details: Arc<AtomicUsize>,
+        reset_count: Arc<AtomicUsize>,
+        change: RetryPageChange,
+        attempts: Vec<SourceAttempt>,
+    }
+
+    impl DomesticCnkiTransport for PageRetryDomesticTransport {
+        fn reset_transient_state(&mut self) -> Result<(), DomesticCnkiSourceError> {
+            self.reset_count.fetch_add(1, Ordering::SeqCst);
+            self.inner.reset_transient_state()
+        }
+
+        fn resolve_journal(
+            &mut self,
+            locator: &DomesticJournalLocator,
+        ) -> Result<Option<Value>, DomesticCnkiSourceError> {
+            let result = self.inner.resolve_journal(locator);
+            self.attempts.extend(self.inner.drain_attempts());
+            result
+        }
+
+        fn year_issues(&mut self, journal: &Value) -> Result<Vec<Value>, DomesticCnkiSourceError> {
+            let result = self.inner.year_issues(journal);
+            self.attempts.extend(self.inner.drain_attempts());
+            result
+        }
+
+        fn issue_articles(
+            &mut self,
+            journal: &Value,
+            issue: &Value,
+            page_index: usize,
+        ) -> Result<DomesticIssueArticlePage, DomesticCnkiSourceError> {
+            let read_index = self.paper_calls.fetch_add(1, Ordering::SeqCst);
+            let result = self.inner.issue_articles(journal, issue, page_index);
+            self.attempts.extend(self.inner.drain_attempts());
+            let mut page = result?;
+            if matches!(self.change, RetryPageChange::Conversion) {
+                for row in &mut page.articles {
+                    if row.get("platform_id").and_then(Value::as_str) == Some(self.failed_id) {
+                        row["title"] = Value::Null;
+                    }
+                }
+            } else if matches!(self.change, RetryPageChange::Filtered) {
+                page.articles[1]["authors"] = Value::Null;
+            } else if read_index > 0 {
+                match self.change {
+                    RetryPageChange::None
+                    | RetryPageChange::Conversion
+                    | RetryPageChange::Filtered => {}
+                    RetryPageChange::Add => {
+                        let mut row = page.articles[1].clone();
+                        row["platform_id"] = json!("EXTRA");
+                        row["article_url"] =
+                            json!("https://kns.cnki.net/kcms2/article/abstract?filename=EXTRA");
+                        row["title"] = json!("Extra article");
+                        page.articles.push(row);
+                    }
+                    RetryPageChange::Remove => {
+                        page.articles.remove(1);
+                    }
+                    RetryPageChange::Reorder => page.articles.reverse(),
+                    RetryPageChange::Replace => {
+                        page.articles[1]["platform_id"] = json!("EXTRA");
+                        page.articles[1]["article_url"] =
+                            json!("https://kns.cnki.net/kcms2/article/abstract?filename=EXTRA");
+                        page.articles[1]["title"] = json!("Extra article");
+                    }
+                    RetryPageChange::Url => {
+                        let url = page.articles[1]["article_url"]
+                            .as_str()
+                            .unwrap()
+                            .to_string();
+                        page.articles[1]["article_url"] = json!(format!("{url}&revision=2"));
+                    }
+                    RetryPageChange::Title => {
+                        page.articles[1]["title"] = json!("Changed summary title")
+                    }
+                    RetryPageChange::Authors => {
+                        page.articles[1]["authors"] = json!("Changed author")
+                    }
+                    RetryPageChange::Pages => page.articles[1]["pages"] = json!("90-99"),
+                }
+            }
+            page.article_count = page.articles.len();
+            page.has_next_page = page.article_count == 10;
+            Ok(page)
+        }
+
+        fn article_detail(
+            &mut self,
+            article_url: &str,
+            platform_id: Option<&str>,
+        ) -> Result<Value, DomesticCnkiSourceError> {
+            let id = platform_id.unwrap_or(article_url);
+            let count = {
+                let mut calls = self.detail_calls.lock().unwrap();
+                let count = calls.entry(id.to_string()).or_default();
+                *count += 1;
+                *count
+            };
+            let mut result = self.inner.article_detail(article_url, platform_id);
+            let mut attempts = self.inner.drain_attempts();
+            self.recorded_details
+                .fetch_add(attempts.len(), Ordering::SeqCst);
+            if matches!(self.change, RetryPageChange::Filtered) && id == "SECOND" {
+                if let Ok(detail) = &mut result {
+                    detail["authors"] = Value::Null;
+                    detail["doi"] = Value::Null;
+                }
+            }
+            if id == self.failed_id && count <= self.failure_limit.load(Ordering::SeqCst) {
+                if matches!(self.change, RetryPageChange::Conversion) {
+                    if let Ok(detail) = &mut result {
+                        detail["title"] = Value::Null;
+                        detail["doi"] = json!("10.1000/conversion");
+                    }
+                } else {
+                    result = Err(DomesticCnkiSourceError::Request(
+                        "domestic CNKI HTTP status 503".into(),
+                    ));
+                    for attempt in &mut attempts {
+                        attempt.status_code = Some(503);
+                        attempt.did_succeed = false;
+                        attempt.error = Some("fixture unavailable".into());
+                    }
+                }
+            }
+            self.attempts.extend(attempts);
+            result
+        }
+
+        fn attempts(&self) -> &[SourceAttempt] {
+            &self.attempts
+        }
+
+        fn drain_attempts(&mut self) -> Vec<SourceAttempt> {
+            std::mem::take(&mut self.attempts)
+        }
+    }
+
+    fn page_retry_transport(
+        failed_id: &'static str,
+        change: RetryPageChange,
+    ) -> PageRetryDomesticTransport {
+        let mut fixture = domestic_paged_fixture(vec![(
+            "202512".into(),
+            vec![vec![
+                ("FIRST".into(), "First article".into()),
+                ("SECOND".into(), "Second article".into()),
+            ]],
+        )]);
+        let extra = domestic_paged_fixture(vec![(
+            "202512".into(),
+            vec![vec![("EXTRA".into(), "Extra article".into())]],
+        )]);
+        fixture
+            .article_detail_html
+            .extend(extra.article_detail_html);
+        PageRetryDomesticTransport {
+            inner: FixtureDomesticCnkiTransport::new(fixture),
+            failed_id,
+            failure_limit: Arc::new(AtomicUsize::new(1)),
+            paper_calls: Arc::new(AtomicUsize::new(0)),
+            detail_calls: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+            recorded_details: Arc::new(AtomicUsize::new(0)),
+            reset_count: Arc::new(AtomicUsize::new(0)),
+            change,
+            attempts: Vec::new(),
         }
     }
 
@@ -6812,6 +7043,194 @@ mod tests {
         assert!(terminal.articles.is_empty());
         assert!(batch_is_complete(&terminal));
         assert!(batch_checkpoint(&terminal).is_none());
+    }
+
+    #[test]
+    fn domestic_cnki_retry_cache_reuses_success_on_either_side_of_failure() {
+        for failed_id in ["FIRST", "SECOND"] {
+            let transport = page_retry_transport(failed_id, RetryPageChange::None);
+            let counters = transport.clone();
+            let provider = DomesticCnkiIndexProvider::with_worker_count(transport, 2).unwrap();
+            let batch = provider
+                .fetch(&domestic_test_catalog(), fetch_context(None))
+                .unwrap();
+            assert!(batch_is_complete(&batch));
+            assert_eq!(
+                batch
+                    .articles
+                    .iter()
+                    .map(|article| article.title.as_str())
+                    .collect::<Vec<_>>(),
+                ["First article", "Second article"]
+            );
+            assert_eq!(counters.paper_calls.load(Ordering::SeqCst), 2);
+            assert_eq!(counters.reset_count.load(Ordering::SeqCst), 1);
+            let details = counters.detail_calls.lock().unwrap();
+            assert_eq!(details[failed_id], 2);
+            assert_eq!(details.values().sum::<usize>(), 3);
+            assert_eq!(counters.recorded_details.load(Ordering::SeqCst), 3);
+        }
+    }
+
+    #[test]
+    fn domestic_cnki_retry_cache_invalidates_the_whole_changed_page() {
+        for (change, request_count, article_count) in [
+            (RetryPageChange::Add, 5, 3),
+            (RetryPageChange::Remove, 3, 1),
+            (RetryPageChange::Reorder, 4, 2),
+            (RetryPageChange::Replace, 4, 2),
+            (RetryPageChange::Url, 4, 2),
+            (RetryPageChange::Title, 4, 2),
+            (RetryPageChange::Authors, 4, 2),
+            (RetryPageChange::Pages, 4, 2),
+        ] {
+            let transport = page_retry_transport("FIRST", change);
+            let counters = transport.clone();
+            let provider = DomesticCnkiIndexProvider::with_worker_count(transport, 2).unwrap();
+            let batch = provider
+                .fetch(&domestic_test_catalog(), fetch_context(None))
+                .unwrap();
+            assert!(batch_is_complete(&batch));
+            assert_eq!(batch.articles.len(), article_count);
+            assert_eq!(counters.paper_calls.load(Ordering::SeqCst), 2);
+            assert_eq!(
+                counters
+                    .detail_calls
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .sum::<usize>(),
+                request_count
+            );
+            assert_eq!(
+                counters.recorded_details.load(Ordering::SeqCst),
+                request_count
+            );
+            let titles = batch
+                .articles
+                .iter()
+                .map(|article| article.title.as_str())
+                .collect::<Vec<_>>();
+            match change {
+                RetryPageChange::Add => {
+                    assert_eq!(titles, ["First article", "Second article", "Extra article"])
+                }
+                RetryPageChange::Remove => assert_eq!(titles, ["First article"]),
+                RetryPageChange::Reorder => assert_eq!(titles, ["Second article", "First article"]),
+                RetryPageChange::Replace => assert_eq!(titles, ["First article", "Extra article"]),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn domestic_cnki_retry_cache_does_not_survive_successful_fetch_calls() {
+        let transport = page_retry_transport("FIRST", RetryPageChange::None);
+        let counters = transport.clone();
+        let provider = DomesticCnkiIndexProvider::with_worker_count(transport, 2).unwrap();
+        let first = provider
+            .fetch(&domestic_test_catalog(), fetch_context(None))
+            .unwrap();
+        let second = provider
+            .fetch(&domestic_test_catalog(), fetch_context(None))
+            .unwrap();
+        assert_eq!(first.articles, second.articles);
+        assert_eq!(counters.paper_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            counters
+                .detail_calls
+                .lock()
+                .unwrap()
+                .values()
+                .sum::<usize>(),
+            5
+        );
+        assert_eq!(counters.recorded_details.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn domestic_cnki_retry_cache_drops_successes_after_final_failure() {
+        let transport = page_retry_transport("FIRST", RetryPageChange::None);
+        let counters = transport.clone();
+        counters.failure_limit.store(usize::MAX, Ordering::SeqCst);
+        let provider = DomesticCnkiIndexProvider::with_worker_count(transport, 2).unwrap();
+        let error = provider
+            .fetch(&domestic_test_catalog(), fetch_context(None))
+            .unwrap_err();
+        assert_eq!(error.kind(), ProviderErrorKind::TemporarilyUnavailable);
+        assert_eq!(counters.paper_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            counters
+                .detail_calls
+                .lock()
+                .unwrap()
+                .values()
+                .sum::<usize>(),
+            4
+        );
+        counters.failure_limit.store(0, Ordering::SeqCst);
+        let recovered = provider
+            .fetch(&domestic_test_catalog(), fetch_context(None))
+            .unwrap();
+        assert_eq!(recovered.articles.len(), 2);
+        assert_eq!(
+            counters
+                .detail_calls
+                .lock()
+                .unwrap()
+                .values()
+                .sum::<usize>(),
+            6
+        );
+        assert_eq!(counters.recorded_details.load(Ordering::SeqCst), 6);
+    }
+
+    #[test]
+    fn domestic_cnki_retry_cache_never_caches_conversion_errors() {
+        let transport = page_retry_transport("FIRST", RetryPageChange::Conversion);
+        let counters = transport.clone();
+        let provider = DomesticCnkiIndexProvider::with_worker_count(transport, 2).unwrap();
+        let batch = provider
+            .fetch(&domestic_test_catalog(), fetch_context(None))
+            .unwrap();
+        assert_eq!(batch.articles.len(), 2);
+        assert_eq!(batch.articles[0].title, "First article");
+        assert_eq!(counters.paper_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(counters.detail_calls.lock().unwrap()["FIRST"], 2);
+        assert_eq!(counters.recorded_details.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn domestic_cnki_retry_cache_reuses_only_successful_filtered_results() {
+        let transport = page_retry_transport("FIRST", RetryPageChange::Filtered);
+        let counters = transport.clone();
+        let provider = DomesticCnkiIndexProvider::with_worker_count(transport, 2).unwrap();
+        let batch = provider
+            .fetch(&domestic_test_catalog(), fetch_context(None))
+            .unwrap();
+        assert_eq!(batch.articles.len(), 1);
+        assert_eq!(counters.recorded_details.load(Ordering::SeqCst), 3);
+
+        let mut transport = page_retry_transport("FIRST", RetryPageChange::None);
+        let mut fixture = domestic_paged_fixture(vec![(
+            "202512".into(),
+            vec![vec![
+                ("FIRST".into(), "First article".into()),
+                ("SECOND".into(), "Second article".into()),
+            ]],
+        )]);
+        fixture
+            .article_detail_status_codes
+            .insert("SECOND".into(), 404);
+        transport.inner = FixtureDomesticCnkiTransport::new(fixture);
+        let counters = transport.clone();
+        let provider = DomesticCnkiIndexProvider::with_worker_count(transport, 2).unwrap();
+        let batch = provider
+            .fetch(&domestic_test_catalog(), fetch_context(None))
+            .unwrap();
+        assert_eq!(batch.articles.len(), 1);
+        assert_eq!(counters.detail_calls.lock().unwrap()["SECOND"], 2);
+        assert_eq!(counters.recorded_details.load(Ordering::SeqCst), 4);
     }
 
     #[test]

@@ -48,7 +48,7 @@ Provider 接收 LitRadar 维护的 `JournalCatalogEntry`，使用 canonical titl
 
 同一索引进程处理一本期刊期间，首次 batch 取得的期刊详情和刊期树作为内存快照复用于后续页面；该刊完成后立即释放。新进程或新一轮已完成期刊索引会重新获取快照，因此 checkpoint 仍只依赖稳定 `year_issue_id`，不持久化上游句柄。
 
-初次刊名与 ISSN 查询全部为空时，客户端先访问带尾斜杠的 HTTPS `/knavi/` 导航入口，使用同一 Cookie 和验证码会话完成必要的验证，再把原查询完整重试一次。导航初始化同样受代理、HTTPS 主机限制、响应校验、总超时和验证码预算约束；初始化失败直接返回错误，重试仍无候选才返回未找到。已有候选的正常解析或 ISSN 冲突不会触发此恢复，也不会放宽期刊身份检查。
+Journal lookup preserves the order of maintained titles, aliases, bracket variants and ISSNs. After each search it validates newly seen detail URLs in order, using the existing identity and ISSN-conflict checks; the first validated match stops later searches. Detail URLs remain deduplicated across all queries. Only a complete pass with no candidate URLs may initialize HTTPS /knavi/ once and retry the ordered queries. Existing but mismatched candidates never trigger navigation recovery, and required request/parse errors propagate.
 
 Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anchor，并完整包含 anchor 期次的全部 papers 页。首次确认的远端头部成为本次冻结 candidate；运行期间新增的更高期次留给下一次 update。只有闭区间全部完成后才返回 candidate 作为新 anchor。committed issue 已从 year list 消失时安全完整扫描；恢复中的 candidate/current 消失则 fail closed。FullRescan 忽略 anchor 停止边界并覆盖完整期次树。
 
@@ -117,6 +117,10 @@ papers 页必须含 `articleCount`，其值必须等于解析出的文章行数�
 国内 CNKI Provider 读取详情页后，合并详情与 papers 行的作者字段，并规范化详情 DOI。仅当作者仍为空且 DOI 也为空时才排除该记录；标题和栏目不参与内容类型判断，因此带 DOI 的征稿启事以及有作者的书评会被保留。被排除的行不生成 `ArticleDraft`，但页面计数与 checkpoint 仍按原始响应推进。已有内容库不会因规则变更自动恢复之前排除的记录，应用新规则时应删除对应内容库和控制库再完整重建。
 
 页面是最小提交和重放单元。边界期次即使跨页或文章数正好是 10 的倍数，也必须读完其有效空终止页后才能 Complete。只有 HTTP 404/410 或明确“记录已删除/文献不存在”的详情页会记录不含 URL/凭据的 ordinal/status 事件并跳过；网络错误、429、5xx、captcha 或结构错误会中止整个 batch，不返回新 checkpoint。控制库删除或更换 Provider 后没有可信 anchor，会从头读取；内容 writer 依靠规范 identity alias 幂等复用已有 ID。Provider 不能把 anchor/checkpoint 嵌入 `ArticleDraft`。
+
+Retryable domestic page failures retain the existing maximum three attempts and session/pool reset. Every retry fetches and validates papers again. Within this one fetch call, successfully converted drafts and valid filtered rows can be reused only when catalog, issue and the complete ordered page are unchanged. Any added, removed, reordered or replaced row, URL/token or metadata change clears the whole cache. All completed successful details are collected before the first page error is propagated, including successes after its ordinal.
+
+Request/conversion errors and permanent 404/410 misses are never cached. Cache hits add no SourceAttempt. Fresh page counts determine pagination; a final failure returns no partial batch or checkpoint. The cache is destroyed on return, so another fetch, page, update or process restart refreshes details normally. The longer-lived journal/year-list snapshot behavior is unchanged. For an identical two-article page with one initial detail failure, papers is still requested twice while detail calls fall from four to three.
 
 ## 在线摘要页
 

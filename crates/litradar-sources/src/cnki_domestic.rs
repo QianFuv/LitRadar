@@ -2319,11 +2319,22 @@ where
                 &format!("{DOMESTIC_NAVI_BASE_URL}/knavi/journals/searchbaseinfo"),
                 &form,
             )?;
+            let first_new_candidate = detail_urls.len();
             append_unique_domestic_detail_urls(
                 &mut detail_urls,
                 &mut seen_detail_urls,
                 parse_domestic_journal_search_results(&text)?,
             );
+            for detail_url in &detail_urls[first_new_candidate..] {
+                let text = request_text("journal_detail", detail_url, &[])?;
+                if input_value(&text, "pykm").is_none() {
+                    continue;
+                }
+                let details = parse_domestic_journal_detail(&text)?;
+                if domestic_journal_detail_matches(&details, locator) {
+                    return Ok(Some(details));
+                }
+            }
         }
         if !detail_urls.is_empty() || queries.is_empty() || pass_index == 1 {
             break;
@@ -2334,16 +2345,6 @@ where
             &[],
         )?;
         validate_domestic_response("navigation", &navigation)?;
-    }
-    for detail_url in detail_urls {
-        let text = request_text("journal_detail", &detail_url, &[])?;
-        if input_value(&text, "pykm").is_none() {
-            continue;
-        }
-        let details = parse_domestic_journal_detail(&text)?;
-        if domestic_journal_detail_matches(&details, locator) {
-            return Ok(Some(details));
-        }
     }
     Ok(None)
 }
@@ -3175,6 +3176,88 @@ mod tests {
     "#;
 
     #[test]
+    fn domestic_cnki_retry_cache_lookup_stops_after_the_first_valid_match() {
+        let locator = DomesticJournalLocator::new(
+            vec!["世界经济".into(), "Alternate journal title".into()],
+            vec!["1002-9621".into()],
+        );
+        let mut calls = Vec::new();
+        let journal = super::resolve_domestic_journal_with_request(&locator, |endpoint, _, _| {
+            calls.push(endpoint.to_string());
+            Ok(match endpoint {
+                "journal_search" => SEARCH_HTML.to_string(),
+                "journal_detail" => DETAIL_HTML.to_string(),
+                _ => panic!("a valid candidate must not need navigation"),
+            })
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(journal["issn"], "1002-9621");
+        assert_eq!(calls, ["journal_search", "journal_detail"]);
+    }
+
+    #[test]
+    fn domestic_cnki_retry_cache_lookup_keeps_identity_and_global_deduplication() {
+        let locator = DomesticJournalLocator::new(
+            vec!["世界经济".into(), "Alternate title".into()],
+            vec!["1002-9621".into()],
+        );
+        let mut search_count = 0;
+        let mut details = Vec::new();
+        let journal = super::resolve_domestic_journal_with_request(&locator, |endpoint, url, _| {
+            Ok(match endpoint {
+                "journal_search" => {
+                    search_count += 1;
+                    match search_count {
+                        1 => SEARCH_HTML.to_string(),
+                        2 => SEARCH_HTML.replace("p=OTHER", "p=MATCH"),
+                        _ => panic!("the second query should resolve a valid candidate"),
+                    }
+                }
+                "journal_detail" => {
+                    if url.contains("p=TOKEN") {
+                        details.push("TOKEN");
+                        DETAIL_HTML.replace("1002-9621", "2049-3630")
+                    } else if url.contains("p=OTHER") {
+                        details.push("OTHER");
+                        "<html><body>Missing journal identity</body></html>".into()
+                    } else {
+                        assert!(url.contains("p=MATCH"));
+                        details.push("MATCH");
+                        DETAIL_HTML.to_string()
+                    }
+                }
+                _ => panic!("existing candidates must not trigger navigation"),
+            })
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(journal["issn"], "1002-9621");
+        assert_eq!(search_count, 2);
+        assert_eq!(details, ["TOKEN", "OTHER", "MATCH"]);
+    }
+
+    #[test]
+    fn domestic_cnki_retry_cache_lookup_propagates_required_detail_failure() {
+        let locator =
+            DomesticJournalLocator::new(vec!["世界经济".into()], vec!["1002-9621".into()]);
+        let mut calls = Vec::new();
+        let error = super::resolve_domestic_journal_with_request(&locator, |endpoint, _, _| {
+            calls.push(endpoint.to_string());
+            match endpoint {
+                "journal_search" => Ok(SEARCH_HTML.to_string()),
+                "journal_detail" => Err(DomesticCnkiSourceError::Request(
+                    "fixture detail unavailable".into(),
+                )),
+                _ => panic!("a required detail error must propagate"),
+            }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("fixture detail unavailable"));
+        assert_eq!(calls, ["journal_search", "journal_detail"]);
+    }
+
+    #[test]
     fn empty_domestic_search_initializes_navigation_and_retries_once() {
         let locator = DomesticJournalLocator::new(
             vec!["世界经济".to_string()],
@@ -3207,7 +3290,6 @@ mod tests {
                 "journal_search",
                 "journal_search",
                 "navigation",
-                "journal_search",
                 "journal_search",
                 "journal_detail"
             ]
