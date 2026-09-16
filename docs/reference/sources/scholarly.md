@@ -119,9 +119,9 @@ OpenAlex `/sources` 以 ISSN 精确查询优先，题名 search 只作为 fallba
 
 某些 OpenAlex 套餐拒绝 `from_created_date`。客户端只对明确的 plan-restriction 错误启用一次 Provider-local fallback：清除日期 filter 和旧 query cursor，从 source 头部重放；核心模式和控制协议不变化。普通 429 仍然失败，不会被误判为套餐 fallback。
 
-当前 [OpenAlex 认证与计费合同](https://developers.openalex.org/api-reference/authentication) 为每个 API key 最多 `100 req/s`，并为每个 key 独立统计每日 credits。Scholarly 为每个健康 key 建立跨进程公共相位：每 11 ms 一个相位，约为 `90.9 req/s/key`。进程 `p` 拥有 `epoch + p × 11 ms + n × process_count × 11 ms` 的相位；改变进程数只改变所有权，不改变单 key 或 key 池的总速率。
+The configured free OpenAlex keys returned a 30 req/s/key limit during the 2026-09-16 live checks. LitRadar uses 40-ms global slots (25 starts/s/key): process p owns epoch + p * 40 ms + n * actual_process_count * 40 ms. Changing the executor count redistributes those slots without multiplying the key budget. Account-specific responses take precedence over generic documentation; this profile does not assume a 100-RPS entitlement.
 
-所有配置的 OpenAlex key 都参与调度。选择会考虑剩余 credits、在途请求、冷却和认证状态；401/403 只禁用对应 slot，429/reset 只冷却对应 slot，失败切换不能绕过另一个 key 的未来相位。调度器解析 remaining、reset 和单次 credits-used，并保留 `workers × processes × 最大已知单次 cost` 的每日 headroom；额度未知时每个 key/进程只允许一个探测请求。每个进程最多六个 OpenAlex DOI 子批在途，三个进程的全局上限为 18。
+All healthy OpenAlex keys participate in scheduling. Only successful responses and confirmed daily-quota responses update quota estimates; per-second 429 headers cannot falsely exhaust a key until midnight. Unknown quota allows one probe per key/process. Default concurrency is 6 workers per executor and 3 journal executors (18 DOI tasks); explicit limits are 32 workers, 3 executors and aggregate 96. Daily headroom is max(total_inflight_capacity * list_cost, actual_process_count * search_cost), initially list_cost=1 and search_cost=10. Thus 6x1 reserves 10, 6x3 reserves 30 and 32x3 reserves 96 credits. Trusted higher costs raise only the corresponding estimate. The internal source_search operation uses the search class; DOI, source ISSN and source works use the list class.
 
 [OpenAlex deprecation 说明](https://developers.openalex.org/guides/deprecations)记录其自 2026 年 2 月起忽略 mailto。LitRadar 的 source、source search、source works 和 DOI 请求均不发送 Crossref mailto，URL 长度预算也只计入 OpenAlex key。
 

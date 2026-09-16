@@ -197,7 +197,7 @@ litradar index --secret-key-file PATH
 | `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件                             |
 | `--stop-after FILE`                       | 关闭     | 指定目录完成保存后暂停，保留原 batch 和后续目录供续跑          |
 | `--workers N`、`-w N`                      | `6`      | 每个期刊子进程内的 CNKI 详情请求和 OpenAlex DOI 增强并发上限 |
-| `--processes N`                            | `1`      | 单个 CSV 的独立期刊子进程数                                  |
+| `--processes N` | Scholarly `3`; others `1` | Maximum journal executors per CSV, resolved for each selected provider |
 | `--issue-batch N`                          | `8`      | 旧 active batch 的恢复兼容值；当前 Provider 不读取该值       |
 | `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                                           |
 | `--resume` / `--no-resume`                 | 开启     | 续跑兼容 active batch，或显式放弃它并从 committed anchor 新建 batch |
@@ -209,24 +209,24 @@ litradar index --secret-key-file PATH
 
 约束：
 
-- `workers` 与 `processes` 的通用范围均为 `1..=32`，并且 `workers × processes` 不得超过 32。遗留的 `issue-batch` 仍必须至少为 1，以保持既有 batch fingerprint 和 ledger 校验；显式传入会在数据库或 Provider 访问前发出一次固定字段警告。
-- 只要选中的目录路由到 Scholarly，`workers` 进一步限制为最多 6、`processes` 最多为 3；超限会在上游请求前失败。国内 CNKI 使用通用 `workers <= 32` 和聚合 32 上限。
+- Explicit workers/processes each accept 1..=32. Provider-specific capacity is checked after freezing all selected catalogs, before batch admission or index database creation. Missing counts are resolved independently; explicit invalid combinations fail without clamping. Legacy issue-batch must remain at least 1 for resume compatibility.
+- Scholarly defaults to 6 workers and 3 processes; explicit limits are 32 workers, 3 processes and aggregate 96. Domestic CNKI defaults to 6 workers and 1 process with aggregate at most 32. Other providers retain defaults 6x1 and aggregate 32. An unused configured route does not constrain the selected catalogs.
 - 国内 CNKI 中，`processes` 并行不同期刊，`workers` 是每个期刊子进程在 Provider 构造时创建一次的固定详情线程池；所有 papers 页复用该池，Provider 释放时关闭并等待全部线程。期刊定位、刊期树、papers 页、checkpoint 和 SQLite 提交仍保持有序。实际详情在途量不超过 `workers × min(processes, 期刊数)`、聚合上限 32 和各当前 papers 页的文章数。
 - 只要选中的目录路由到 Scholarly，OpenAlex key、Semantic Scholar key 和 Crossref mailto 都必须存在；缺少任一类会在创建内容库、控制库或其他索引状态前失败。
 - `--update` 与 `--full-rescan` 互斥；冲突会在数据库迁移、Provider 构造和 worker 启动前失败。
 - `--notify` 必须和 `--update` 同时使用。
 - 单独传 `--notify-dry-run` 不会启动 notify；它只修改 `--notify` handoff 的模式。
 - `--acknowledge-unknown-notify` 必须与默认 `--resume`、`--update` 和 `--notify` 同时使用；它是恢复控制，不进入 batch correctness fingerprint。
-- Scholarly 中的 `--workers` 只扩大每个期刊子进程的 OpenAlex DOI 子批在途容量；`6 × 3` 因此最多同时保留 18 个这类请求。每个 OpenAlex key 跨全部期刊子进程共享一组 11-ms 相位，约暴露 `90.9 req/s/key`；增加进程只改变相位所有权，不把单 key 速率乘以进程数。调度器使用全部健康 key，并按剩余 daily credits、在途、冷却和认证状态负载均衡。每日安全预留按 `workers × processes × 最大已知单次 credit cost` 计算。
+- Scholarly workers bound OpenAlex DOI tasks per executor. The default 6x3 allows 18 such tasks; the explicit 32x3 boundary allows 96. OpenAlex starts are separately paced at 40 ms/key (25 starts/s/key), below the configured keys' measured 30-RPS limit. Daily headroom is max(total_inflight_capacity * list_cost, actual_process_count * search_cost), initially 1 and 10 credits respectively, with independent upward corrections from trusted responses.
 - Crossref 不使用 `--workers`。整个父进程树共享一个 110-ms polite 相位序列，约 `9.09 req/s`，最多由三个期刊子进程各保留一个在途请求。仅第一个稳定 mailto 被发送；增加 mailto 不会增加 10-RPS/并发-3 合同容量。
 - Semantic Scholar 不使用 `--workers`。每个合法 key 各有一个跨进程 1,100-ms 相位序列，约 `0.909 req/s/key`；不同 key 在周期内均匀错开，所以两个或三个 key 可线性增加建模容量。增加 `--processes` 只分配每 key 的相位所有权，不突破 `1 req/s/key`。401/403 只禁用对应 slot，429/Retry-After 只冷却对应 slot，重试同样必须取得未来相位。
 - 这些共同 epoch 只协调同一条 `litradar index` 命令的父进程树，不协调其他命令、主机或应用。实际吞吐受 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)` 约束；低 worker、慢响应或工作不足时不会达到理论 RPS。上游临时降额或其他客户端共享 key 时仍可能返回 429，CLI 不承诺精确 100% 利用率或普遍零限流。
 - 多个 CSV 仍逐个处理。
-- `workers=6`、`processes=1` 是约 100 MiB 索引内存目标下的默认并发。在上述 Provider 约束内显式提高这两个值仍受支持，但可能超过该预算；`issue-batch` 不参与当前运行时并发或内存控制。
+- Concurrency defaults follow upstream budgets; there is no default 100-MiB memory gate. Issue-batch does not control runtime concurrency or memory. Memory profile thresholds are opt-in; OOM and functional failures remain failures.
 
 索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。每个 worker 都在独立的 Unix process group 或 Windows Job Object 中启动，父进程错误、协议失败和清理路径会终止并等待整个进程树。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。手动投递 dispatcher 还会启动私有 `delivery-run --run-id ... --owner-id ...`，child 只从认证 SQLite 和部署密钥加载权威配置。私有命令必须同时携带内部 parent marker，不出现在 `--help`，也不是用户可配置的 CLI。同步公共 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
 
-命令结果保持原有顶层 `status`、`message` 和 `csvs` 字段；不含密钥的 `effective_concurrency` 为 JSON 兼容继续保留 `workers`、`processes` 和遗留 `issue_batch`，并明确给出 configured/effective workers、processes、aggregate capacity 以及固定 aggregate limit。只有 workers/processes 字段描述当前并发；`issue_batch` 是恢复兼容元数据。国内 CNKI 每批还记录 `index.provider.concurrency` 结构化事件，其中包含实际创建线程数和本次运行观测到的详情请求峰值。每个 CSV 结果使用定长的 `written_article_count`；旧的 `written_article_ids` 列表不再返回。内部索引工作进程同样只返回计数，避免结果大小随文章数量增长。
+Command results retain status, message, csvs and numeric effective_concurrency fields. Each csv now includes concurrency with resolved configured_workers/processes/capacity, aggregate_limit, effective_workers, executor_count, child_process_count, inline_executor_count and effective_aggregate_capacity. A single inline executor counts as one executor and zero children. Worker cohorts count only nonempty pending partitions; completed/skipped and manifest-only recovery catalogs report zero active capacity. Top-level configured and effective summaries each select the maximum-capacity catalog tuple, without multiplying maxima from different catalogs. An empty selection reports zero resolved capacity. requested_workers/processes preserve omitted values as null. These are task capacities, not measured physical HTTP overlap. source_attempt_count retains its historical meaning: committed canonical provider pages, including persisted counts on recovery, not HTTP requests or retries. written_article_count remains a fixed-size count.
 
 发布镜像把 bundle 固定放在 `/usr/share/litradar/meta`。普通 `index` 仅在精确的 `bundle-manifest.json` 存在时，于认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。该路径不接受环境变量或 CLI 覆盖；本地构建通常发现不到 manifest，因此执行 no-op。运行目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
 

@@ -50,10 +50,13 @@ pub use cnki::{
     CnkiSessionStatusResponse, CnkiStatus,
 };
 pub use concurrency::{
-    validate_domestic_cnki_worker_count, validate_index_concurrency, IndexConcurrency,
-    IndexConcurrencyError, DOMESTIC_CNKI_WORKER_COUNT_MAX, INDEX_AGGREGATE_CONCURRENCY_MAX,
-    INDEX_PROCESS_COUNT_MAX, INDEX_PROCESS_COUNT_MIN, INDEX_WORKER_COUNT_MAX,
-    INDEX_WORKER_COUNT_MIN, SCHOLARLY_PROCESS_COUNT_MAX, SCHOLARLY_WORKER_COUNT_MAX,
+    resolve_index_concurrency, validate_domestic_cnki_worker_count, validate_index_concurrency,
+    validate_index_concurrency_options, IndexConcurrency, IndexConcurrencyError,
+    IndexConcurrencyProfile, DOMESTIC_CNKI_WORKER_COUNT_DEFAULT, DOMESTIC_CNKI_WORKER_COUNT_MAX,
+    INDEX_AGGREGATE_CONCURRENCY_MAX, INDEX_PROCESS_COUNT_DEFAULT, INDEX_PROCESS_COUNT_MAX,
+    INDEX_PROCESS_COUNT_MIN, INDEX_WORKER_COUNT_DEFAULT, INDEX_WORKER_COUNT_MAX,
+    INDEX_WORKER_COUNT_MIN, SCHOLARLY_AGGREGATE_CONCURRENCY_MAX, SCHOLARLY_PROCESS_COUNT_DEFAULT,
+    SCHOLARLY_PROCESS_COUNT_MAX, SCHOLARLY_WORKER_COUNT_MAX,
 };
 pub use health::{HealthResponse, HealthStatus};
 pub use ids::{stable_sqlite_id, ArticleId, JournalId, UserId};

@@ -125,14 +125,14 @@ URL 与策略在同一个 `PUT /api/admin/runtime-settings` 中按更新后的�
 | 上游             | 当前合同                         | LitRadar 安全相位                                                       | 池的含义                                        |
 | ---------------- | -------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------- |
 | Crossref         | polite `10 req/s`、并发 `3`      | 整个父进程树每 110 ms 一个尝试，约 `9.09 req/s`；最多三个期刊子进程在途 | mailto 是联系身份；数量不乘以容量               |
-| OpenAlex         | 每 key `100 req/s`，另有每日额度 | 每个健康 key 跨进程每 11 ms 一个相位，约 `90.9 req/s/key`               | 每个 key 有独立速率和每日额度                   |
+| OpenAlex | Configured free keys measured at `30 req/s/key`, with daily credits | One start per key every 40 ms across the cohort (`25 req/s/key`) | Independent key quotas; no assumed 100-RPS entitlement |
 | Semantic Scholar | 每 key `1 req/s`                 | 每个健康 key 跨进程每 1,100 ms 一个相位，约 `0.909 req/s/key`           | 每个合法 key 有独立速率；key 间在周期内均匀错相 |
 
 这些相位协调同一个 `litradar index` 父进程启动的最多三个期刊子进程，不协调另一条命令、另一台主机或其他应用。外部客户端共享同一 key、上游临时降额或窗口实现差异仍可能产生 429；LitRadar 会冷却对应 key 并保留安全证据，不承诺精确 100% 利用率或任何环境下都零限流。
 
-Scholarly 的 `workers` 只控制每个期刊子进程内 OpenAlex DOI 子批的在途上限，范围 `1..=6`；`processes` 范围 `1..=3`。OpenAlex 的全局在途上限为 `workers × processes`。调度器根据响应的剩余额度、reset 和单次 credit cost，为所有可能在途响应保留 `workers × processes × 最大已知单次 cost` 的每日 headroom；额度未知时，每个 key/进程只允许一个探测请求。OpenAlex 请求不再发送 Crossref mailto。
+Scholarly defaults to 6 source workers and 3 journal executors, with explicit limits of 32 workers, 3 executors and aggregate 96. Counts are resolved independently for each selected provider after freezing the catalog inputs. Credentials are required only for selected Scholarly catalogs. Validate all selected profiles before opening batch/control/content databases or admitting provider work. Explicit invalid counts fail; they are never clamped. Missing counts remain omitted until this selection step.
 
-索引 CLI 的通用 `workers`、`processes` 范围都是 `1..=32`，且二者乘积不得超过 32；Scholarly 再应用上述 6/3 上限。国内 CNKI 的 `workers` 范围为 `1..=32`，直接 Provider 构造、CLI 和 live runtime 都调用同一组限制。每个国内 CNKI 子进程只在 Provider 构造时创建一个固定、带有界 `sync_channel` 队列的详情池，后续 papers 页和 transient batch replay 复用它；任务按原 article ordinal 排序回收，Provider Drop 会关闭队列并 join 全部线程。结构化并发事件记录 configured/effective workers、创建线程数和观测峰值，不包含 captcha 或请求内容。
+Generic and domestic CNKI counts each accept 1..=32, with configured aggregate at most 32. Domestic CNKI defaults to 6 workers and 1 process; its detail pool is created once per provider and reused across papers pages and retries. Other providers retain defaults 6x1. OpenAlex daily headroom uses max(total_inflight_capacity * list_cost, actual_process_count * search_cost), initially 1 credit for lists and 10 for source search; trusted higher costs update each class independently. Unknown quota admits one probe per key/process.
 
 实际吞吐同时受 Provider 速率、可用在途数、响应延迟和待处理工作量约束，可近似看作 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)`。增加 `workers` 或 `processes` 不能突破每 key 预算；它只在延迟或工作并行度成为瓶颈时提高可达吞吐。
 

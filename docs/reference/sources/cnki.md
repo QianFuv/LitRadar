@@ -171,7 +171,7 @@ CNKI Overseas、Domestic 和 ZJLib 的 HTML/JSON 响应解压后上限均为 2 M
 
 请求尝试只汇总到结构化 `index.provider.attempts` 或文章访问 fallback 事件。内容库没有 API/path statistics 表，也不保存 URL、响应正文、查询参数或解码器样本。
 
-`--workers` 控制每个期刊子进程内当前 papers 页的并发详情请求，`--processes` 控制同一目录的 journal worker；期刊定位、刊期遍历、页面归并、checkpoint 和 SQLite 写入仍保持有序。默认值和内存边界见[CLI 参考](../cli.md)。
+Domestic CNKI defaults to 6 detail workers and 1 journal executor. A bounded production-transport check on 2026-09-17 completed 2/4/8/12 detail tasks at concurrency 1/2/4/6, with no additional 429 or captcha challenge after shared-session setup. This supports the default for the tested account/network, not a universal CNKI rate entitlement. Explicit counts remain 1..=32 with aggregate at most 32. Journal resolution, issue traversal, page assembly, checkpoints and SQLite writes remain ordered. See the [CLI reference](../cli.md) for configured versus actual executor reporting. Detail task overlap is not a measurement of physical HTTP overlap; auxiliary captcha/recognition calls are not included in SourceAttempt counts.
 
 ## 维护测试
 

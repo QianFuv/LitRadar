@@ -39,9 +39,10 @@ const SEMANTIC_SCHOLAR_ATTEMPT_INTERVAL_MS: u64 = 1_100;
 pub(crate) const CROSSREF_ROWS: usize = 225;
 const OPENALEX_DOI_FILTER_MAX_VALUES: usize = 100;
 const OPENALEX_DOI_REQUEST_URL_BUDGET: usize = 1_900;
-const OPENALEX_DEFAULT_REMAINING_CREDITS: u64 = 100_000;
-const OPENALEX_MAX_CREDITS_PER_REQUEST: u64 = 10;
-const OPENALEX_KEY_START_INTERVAL: Duration = Duration::from_millis(11);
+const OPENALEX_DEFAULT_REMAINING_CREDITS: u64 = 10_000;
+const OPENALEX_LIST_CREDITS: u64 = 1;
+const OPENALEX_SEARCH_CREDITS: u64 = 10;
+const OPENALEX_KEY_START_INTERVAL: Duration = Duration::from_millis(40);
 const OPENALEX_SOURCE_WORK_ROWS: usize = 200;
 const OPENALEX_SOURCE_WORK_SORT: &str = "publication_date:desc";
 const DEFAULT_MAX_RETRIES: usize = 2;
@@ -50,6 +51,22 @@ const CROSSREF_TRANSPORT_RETRY_BUDGET_SECONDS: u64 = 180;
 const TRANSPORT_FAILURE_MESSAGE: &str = "transport failure";
 const RETRY_STATUS_CODES: [u16; 5] = [429, 500, 502, 503, 504];
 const SCHOLARLY_RESPONSE_MAXIMUM_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenAlexRequestClass {
+    List,
+    Search,
+}
+
+impl OpenAlexRequestClass {
+    fn for_endpoint(endpoint: &str) -> Self {
+        if endpoint == "source_search" {
+            Self::Search
+        } else {
+            Self::List
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct OpenAlexRateHeaders {
@@ -114,7 +131,9 @@ struct OpenAlexSchedulerState {
     next_tie_slot: usize,
     period: Duration,
     total_inflight_capacity: usize,
-    maximum_request_credits: u64,
+    process_count: u32,
+    maximum_list_credits: u64,
+    maximum_search_credits: u64,
 }
 
 impl OpenAlexSchedulerState {
@@ -144,7 +163,9 @@ impl OpenAlexSchedulerState {
             },
             period,
             total_inflight_capacity: total_inflight_capacity.max(1),
-            maximum_request_credits: OPENALEX_MAX_CREDITS_PER_REQUEST,
+            process_count,
+            maximum_list_credits: OPENALEX_LIST_CREDITS,
+            maximum_search_credits: OPENALEX_SEARCH_CREDITS,
         }
     }
 
@@ -227,6 +248,7 @@ impl OpenAlexSchedulerState {
         headers: OpenAlexRateHeaders,
         outcome: OpenAlexHealthOutcome,
         retry_delay: Duration,
+        request_class: OpenAlexRequestClass,
     ) {
         self.refresh(now);
         let has_trusted_quota = matches!(
@@ -235,7 +257,11 @@ impl OpenAlexSchedulerState {
         );
         if has_trusted_quota {
             if let Some(credits_used) = headers.credits_used {
-                self.maximum_request_credits = self.maximum_request_credits.max(credits_used);
+                let maximum = match request_class {
+                    OpenAlexRequestClass::List => &mut self.maximum_list_credits,
+                    OpenAlexRequestClass::Search => &mut self.maximum_search_credits,
+                };
+                *maximum = (*maximum).max(credits_used);
             }
         }
         let Some(slot) = self.slots.get_mut(reservation.slot_index) else {
@@ -392,7 +418,8 @@ impl OpenAlexSchedulerState {
     fn daily_reserve_credits(&self) -> u64 {
         u64::try_from(self.total_inflight_capacity)
             .unwrap_or(u64::MAX)
-            .saturating_mul(self.maximum_request_credits)
+            .saturating_mul(self.maximum_list_credits)
+            .max(u64::from(self.process_count).saturating_mul(self.maximum_search_credits))
     }
 
     fn best_slot(&mut self, candidates: &[usize]) -> Option<usize> {
@@ -921,6 +948,7 @@ impl OpenAlexScheduler {
         headers: OpenAlexRateHeaders,
         outcome: OpenAlexHealthOutcome,
         retry_delay: Duration,
+        request_class: OpenAlexRequestClass,
     ) {
         if reservation.is_finished.replace(true) {
             return;
@@ -932,6 +960,7 @@ impl OpenAlexScheduler {
                 headers,
                 outcome,
                 retry_delay,
+                request_class,
             );
             self.changed.notify_all();
         }
@@ -1953,6 +1982,7 @@ fn execute_openalex_request(
     request_timeout: Duration,
     caller_deadline: Option<Instant>,
 ) -> OpenAlexExecution {
+    let request_class = OpenAlexRequestClass::for_endpoint(endpoint);
     let deadline = http_retry::deadline(caller_deadline);
     let maximum_attempts = scheduler
         .key_count()
@@ -1994,6 +2024,7 @@ fn execute_openalex_request(
                     OpenAlexRateHeaders::default(),
                     OpenAlexHealthOutcome::TerminalFailure,
                     Duration::ZERO,
+                    request_class,
                 );
                 return OpenAlexExecution {
                     result: Err(SourceError::Request {
@@ -2014,6 +2045,7 @@ fn execute_openalex_request(
                 OpenAlexRateHeaders::default(),
                 OpenAlexHealthOutcome::TerminalFailure,
                 Duration::ZERO,
+                request_class,
             );
             return OpenAlexExecution {
                 result: Err(SourceError::Configuration(
@@ -2051,7 +2083,13 @@ fn execute_openalex_request(
                                 OpenAlexHealthOutcome::TransientFailure
                             };
                             let will_retry = !is_too_large && attempt_number < maximum_attempts;
-                            scheduler.finish(&reservation, headers, health, retry_delay);
+                            scheduler.finish(
+                                &reservation,
+                                headers,
+                                health,
+                                retry_delay,
+                                request_class,
+                            );
                             attempts.push(openalex_attempt_record(
                                 endpoint,
                                 &request_url,
@@ -2098,6 +2136,7 @@ fn execute_openalex_request(
                         headers,
                         OpenAlexHealthOutcome::Success,
                         Duration::ZERO,
+                        request_class,
                     );
                     attempts.push(openalex_attempt_record(
                         endpoint,
@@ -2118,7 +2157,7 @@ fn execute_openalex_request(
                 let health = openalex_health_outcome(status_code, &payload);
                 let is_retryable = !matches!(health, OpenAlexHealthOutcome::TerminalFailure);
                 let will_retry = is_retryable && attempt_number < maximum_attempts;
-                scheduler.finish(&reservation, headers, health, retry_delay);
+                scheduler.finish(&reservation, headers, health, retry_delay, request_class);
                 attempts.push(openalex_attempt_record(
                     endpoint,
                     &request_url,
@@ -2153,6 +2192,7 @@ fn execute_openalex_request(
                     OpenAlexRateHeaders::default(),
                     OpenAlexHealthOutcome::TransientFailure,
                     retry_delay,
+                    request_class,
                 );
                 attempts.push(openalex_attempt_record(
                     endpoint,
@@ -4160,6 +4200,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use super::OpenAlexRequestClass;
     use std::collections::BTreeMap;
     use std::io::{self, Read, Write};
     use std::net::TcpListener;
@@ -4904,6 +4945,7 @@ mod tests {
                                         OpenAlexRateHeaders::default(),
                                         OpenAlexHealthOutcome::Success,
                                         Duration::ZERO,
+                                        OpenAlexRequestClass::List,
                                     );
                                 }
                                 assert_eq!(
@@ -4921,7 +4963,7 @@ mod tests {
                                                 && **start < epoch + Duration::from_secs(1)
                                         })
                                         .count(),
-                                    91
+                                    25
                                 );
                                 assert!(starts.iter().all(|window_start| {
                                     starts
@@ -4931,7 +4973,7 @@ mod tests {
                                                 && **start < *window_start + Duration::from_secs(1)
                                         })
                                         .count()
-                                        <= 91
+                                        <= 25
                                 }));
                             }
 
@@ -4983,7 +5025,7 @@ mod tests {
             }
         }
 
-        assert_eq!(row_count, 486);
+        assert_eq!(row_count, 2_592);
         assert_eq!(
             SemanticScholarSchedulerState::with_context(
                 0,
@@ -5765,7 +5807,7 @@ mod tests {
             };
             assert_eq!(
                 error.to_string(),
-                "scholarly worker_count must be between 1 and 6"
+                "scholarly worker_count must be between 1 and 32"
             );
         }
     }
@@ -5879,6 +5921,7 @@ mod tests {
             },
             OpenAlexHealthOutcome::Success,
             Duration::ZERO,
+            OpenAlexRequestClass::List,
         );
         state.finish_slot(
             &first,
@@ -5891,6 +5934,7 @@ mod tests {
             },
             OpenAlexHealthOutcome::Success,
             Duration::ZERO,
+            OpenAlexRequestClass::List,
         );
 
         assert_eq!(state.slots[0].remaining, Some(10));
@@ -5910,6 +5954,7 @@ mod tests {
             OpenAlexRateHeaders::default(),
             OpenAlexHealthOutcome::AuthenticationFailure,
             Duration::ZERO,
+            OpenAlexRequestClass::List,
         );
         assert!(state.slots[first.slot_index].is_disabled);
 
@@ -5928,6 +5973,7 @@ mod tests {
             },
             OpenAlexHealthOutcome::DailyQuotaLimited,
             Duration::from_secs(1),
+            OpenAlexRequestClass::List,
         );
         assert_eq!(
             state.slots[second.slot_index].cooldown_until,
@@ -5963,6 +6009,7 @@ mod tests {
             },
             OpenAlexHealthOutcome::RateLimited,
             Duration::from_secs(1),
+            OpenAlexRequestClass::List,
         );
         assert_eq!(state.slots[0].remaining, Some(9_700));
         assert_eq!(state.slots[0].reset_at, Some(Duration::from_secs(50_000)));
@@ -5983,6 +6030,7 @@ mod tests {
             OpenAlexRateHeaders::default(),
             OpenAlexHealthOutcome::TransientFailure,
             Duration::from_secs(1),
+            OpenAlexRequestClass::List,
         );
         assert_eq!(
             state.slots[0].cooldown_until,
@@ -6029,6 +6077,7 @@ mod tests {
             OpenAlexRateHeaders::default(),
             OpenAlexHealthOutcome::DailyQuotaLimited,
             Duration::from_secs(1),
+            OpenAlexRequestClass::List,
         );
         state.finish_slot(
             &reservation,
@@ -6039,6 +6088,7 @@ mod tests {
             },
             OpenAlexHealthOutcome::Success,
             Duration::ZERO,
+            OpenAlexRequestClass::List,
         );
         assert_eq!(state.slots[0].remaining, Some(0));
         assert_eq!(state.slots[0].cooldown_until, Some(Duration::from_secs(1)));
@@ -6114,6 +6164,7 @@ mod tests {
             OpenAlexRateHeaders::default(),
             OpenAlexHealthOutcome::Success,
             Duration::ZERO,
+            OpenAlexRequestClass::List,
         );
         drop(first);
         assert_eq!(scheduler.state.lock().unwrap().slots[0].in_flight, 1);
@@ -6443,6 +6494,7 @@ mod tests {
             },
             OpenAlexHealthOutcome::DailyQuotaLimited,
             Duration::from_secs(1),
+            OpenAlexRequestClass::List,
         );
         assert_eq!(
             cooling.reserve_slot(Duration::ZERO, &[]),
@@ -6465,6 +6517,7 @@ mod tests {
             OpenAlexRateHeaders::default(),
             OpenAlexHealthOutcome::AuthenticationFailure,
             Duration::ZERO,
+            OpenAlexRequestClass::List,
         );
         assert_eq!(
             disabled.reserve_slot(Duration::ZERO, &[]),
@@ -6473,12 +6526,12 @@ mod tests {
     }
 
     #[test]
-    fn openalex_pacing_uses_eleven_millisecond_global_slots() {
+    fn openalex_pacing_uses_forty_millisecond_global_slots() {
         let interval_ms = OPENALEX_KEY_START_INTERVAL.as_millis();
 
-        assert_eq!(interval_ms, 11);
-        assert_eq!(1_000_u128.div_ceil(interval_ms), 91);
-        assert!(1_000_u128 < 100_u128.saturating_mul(interval_ms));
+        assert_eq!(interval_ms, 40);
+        assert_eq!(1_000_u128.div_ceil(interval_ms), 25);
+        assert!(1_000_u128 < 30_u128.saturating_mul(interval_ms));
     }
 
     #[test]
@@ -6519,6 +6572,7 @@ mod tests {
                                 OpenAlexRateHeaders::default(),
                                 OpenAlexHealthOutcome::Success,
                                 Duration::ZERO,
+                                OpenAlexRequestClass::List,
                             );
                         }
                         assert_eq!(state.total_inflight_capacity, worker_count * process_count);
@@ -6532,7 +6586,7 @@ mod tests {
                                 .filter(|start| **start >= epoch
                                     && **start < epoch + Duration::from_secs(1))
                                 .count(),
-                            91
+                            25
                         );
                         assert!(starts.windows(2).all(|window| {
                             window[1].saturating_sub(window[0]) == OPENALEX_KEY_START_INTERVAL
@@ -6545,7 +6599,7 @@ mod tests {
                                         && **start < *window_start + Duration::from_secs(1)
                                 })
                                 .count()
-                                <= 91
+                                <= 25
                         }));
                     }
                 }
@@ -6554,10 +6608,79 @@ mod tests {
     }
 
     #[test]
+    fn openalex_cost_classes_preserve_independent_monotonic_credit_headroom() {
+        assert_eq!(
+            OpenAlexRequestClass::for_endpoint("source_search"),
+            OpenAlexRequestClass::Search
+        );
+        for endpoint in ["source_issn", "works", "source_works"] {
+            assert_eq!(
+                OpenAlexRequestClass::for_endpoint(endpoint),
+                OpenAlexRequestClass::List
+            );
+        }
+        for (workers, processes, expected) in [(6, 1, 10), (6, 3, 30), (32, 3, 96)] {
+            let state = OpenAlexSchedulerState::with_context(
+                1,
+                0,
+                processes,
+                Duration::ZERO,
+                workers * processes,
+            );
+            assert_eq!(state.daily_reserve_credits(), expected);
+        }
+        let mut state = OpenAlexSchedulerState::with_context(1, 0, 3, Duration::ZERO, 18);
+        for (class, cost, outcome, expected) in [
+            (
+                OpenAlexRequestClass::Search,
+                11,
+                OpenAlexHealthOutcome::Success,
+                33,
+            ),
+            (
+                OpenAlexRequestClass::List,
+                2,
+                OpenAlexHealthOutcome::Success,
+                36,
+            ),
+            (
+                OpenAlexRequestClass::Search,
+                1,
+                OpenAlexHealthOutcome::Success,
+                36,
+            ),
+            (
+                OpenAlexRequestClass::List,
+                999,
+                OpenAlexHealthOutcome::RateLimited,
+                36,
+            ),
+        ] {
+            let OpenAlexScheduleDecision::Reserved(slot) = state.reserve_slot(Duration::ZERO, &[])
+            else {
+                panic!("test request should reserve");
+            };
+            state.finish_slot(
+                &slot,
+                Duration::ZERO,
+                OpenAlexRateHeaders {
+                    remaining: Some(10_000),
+                    credits_used: Some(cost),
+                    ..OpenAlexRateHeaders::default()
+                },
+                outcome,
+                Duration::ZERO,
+                class,
+            );
+            assert_eq!(state.daily_reserve_credits(), expected);
+        }
+    }
+
+    #[test]
     fn openalex_scheduler_reserves_global_daily_credit_headroom() {
         let epoch = Duration::from_secs(20);
         let mut state = OpenAlexSchedulerState::with_context(1, 0, 3, epoch, 18);
-        assert_eq!(state.daily_reserve_credits(), 180);
+        assert_eq!(state.daily_reserve_credits(), 30);
 
         let OpenAlexScheduleDecision::Reserved(first) = state.reserve_slot(epoch, &[]) else {
             panic!("unknown quota should permit one probe request");
@@ -6577,6 +6700,7 @@ mod tests {
             },
             OpenAlexHealthOutcome::Success,
             Duration::ZERO,
+            OpenAlexRequestClass::List,
         );
         assert_eq!(state.daily_reserve_credits(), 198);
 
@@ -6594,6 +6718,7 @@ mod tests {
             },
             OpenAlexHealthOutcome::Success,
             Duration::ZERO,
+            OpenAlexRequestClass::List,
         );
         let reset_at = second.start_at + Duration::from_secs(100);
         assert_eq!(
@@ -6616,14 +6741,14 @@ mod tests {
             panic!("initial phase should reserve");
         };
 
-        assert!(!state.reservation_is_eligible(&stale, Duration::from_millis(50)));
+        assert!(!state.reservation_is_eligible(&stale, OPENALEX_KEY_START_INTERVAL * 5));
         state.cancel_slot(&stale);
         let OpenAlexScheduleDecision::Reserved(next) =
-            state.reserve_slot(Duration::from_millis(50), &[])
+            state.reserve_slot(OPENALEX_KEY_START_INTERVAL * 5, &[])
         else {
             panic!("future owned phase should reserve");
         };
-        assert_eq!(next.start_at, Duration::from_millis(66));
+        assert_eq!(next.start_at, OPENALEX_KEY_START_INTERVAL * 6);
     }
 
     #[test]
@@ -6647,6 +6772,7 @@ mod tests {
                 OpenAlexRateHeaders::default(),
                 OpenAlexHealthOutcome::Success,
                 Duration::ZERO,
+                OpenAlexRequestClass::List,
             );
         }
 
@@ -6924,7 +7050,8 @@ mod tests {
             output,
             (0..24).map(|value| (value, value)).collect::<Vec<_>>()
         );
-        assert!((2..=6).contains(&maximum.load(Ordering::SeqCst)));
+        assert!((2..=OPENALEX_MAX_WORKERS_PER_PROCESS.min(items.len()))
+            .contains(&maximum.load(Ordering::SeqCst)));
     }
 
     #[test]

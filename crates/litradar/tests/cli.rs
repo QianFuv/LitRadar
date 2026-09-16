@@ -79,6 +79,9 @@ fn index_command_help_exposes_full_rescan_defaults_and_mode_relationships() {
     assert_eq!(payload["defaults"]["resume"], true);
     assert_eq!(payload["defaults"]["update"], false);
     assert_eq!(payload["defaults"]["full_rescan"], false);
+    assert_eq!(payload["provider_defaults"]["scholarly"]["processes"], 3);
+    assert_eq!(payload["provider_defaults"]["cnki"]["processes"], 1);
+    assert_eq!(payload["limits"]["scholarly_aggregate_max"], 96);
     assert!(payload["modes"]["full_rescan"]
         .as_str()
         .is_some_and(|value| value.contains("mutually exclusive with --update")));
@@ -652,6 +655,13 @@ fn index_command_resumes_a_local_catalog_without_network_access() {
     assert_eq!(payload["csvs"][0]["status"], "succeeded");
     assert_eq!(payload["csvs"][0]["journal_count"], 1);
     assert_eq!(payload["csvs"][0]["source_attempt_count"], 0);
+    assert_eq!(payload["csvs"][0]["concurrency"]["configured_processes"], 1);
+    assert_eq!(payload["csvs"][0]["concurrency"]["executor_count"], 0);
+    assert_eq!(payload["csvs"][0]["concurrency"]["child_process_count"], 0);
+    assert_eq!(
+        payload["effective_concurrency"]["effective_aggregate_capacity"],
+        0
+    );
     assert_eq!(payload["effective_concurrency"]["workers"], 1);
     assert_eq!(payload["effective_concurrency"]["processes"], 1);
     assert_eq!(payload["effective_concurrency"]["issue_batch"], 1);

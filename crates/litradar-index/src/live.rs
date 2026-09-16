@@ -85,10 +85,10 @@ pub struct LiveIndexConfig {
     pub file: Option<String>,
     /// Optional selected CSV after which to pause without completing later catalogs.
     pub stop_after: Option<String>,
-    /// Number of bounded source workers, including OpenAlex DOI enrichment requests.
-    pub worker_count: usize,
-    /// Number of journal worker processes.
-    pub process_count: usize,
+    /// Optional source worker count; omission uses the selected provider default.
+    pub worker_count: Option<usize>,
+    /// Optional journal process count; omission uses the selected provider default.
+    pub process_count: Option<usize>,
     /// Number of issues reserved for one provider-side detail batch.
     pub issue_batch_size: usize,
     /// HTTP request timeout in seconds.
@@ -171,12 +171,87 @@ pub struct LiveCsvIndexOutcome {
     pub journal_count: usize,
     /// New or changed canonical article count.
     pub written_article_count: i64,
-    /// Canonical provider page count.
+    /// Committed canonical provider page count, not physical HTTP attempts.
     pub source_attempt_count: usize,
+    /// Configured capacity and executors used during this invocation.
+    pub concurrency: LiveCatalogConcurrency,
     /// Optional provider-neutral update manifest path.
     pub manifest_path: Option<String>,
     /// Optional notify process exit code.
     pub notify_exit_code: Option<i32>,
+}
+
+/// Per-catalog concurrency for this invocation, including skipped recovery work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LiveCatalogConcurrency {
+    /// Selected indexing provider.
+    pub provider: String,
+    /// Resolved source workers per executor.
+    pub configured_workers: usize,
+    /// Resolved maximum journal executors.
+    pub configured_processes: usize,
+    /// Configured process-by-worker capacity.
+    pub configured_aggregate_capacity: usize,
+    /// Provider-specific configured aggregate limit.
+    pub aggregate_limit: usize,
+    /// Source workers per active executor, or zero when none ran.
+    pub effective_workers: usize,
+    /// Actual nonempty journal executors, including inline execution.
+    pub executor_count: usize,
+    /// Actual child processes launched for this catalog.
+    pub child_process_count: usize,
+    /// Actual inline executors used for this catalog.
+    pub inline_executor_count: usize,
+    /// Actual executor-by-source-worker capacity, not measured HTTP overlap.
+    pub effective_aggregate_capacity: usize,
+}
+
+impl LiveCatalogConcurrency {
+    fn record_execution(&mut self, executor_count: usize, child_process_count: usize) {
+        self.executor_count = executor_count;
+        self.child_process_count = child_process_count;
+        self.inline_executor_count = executor_count.saturating_sub(child_process_count);
+        self.effective_workers = if executor_count == 0 {
+            0
+        } else if matches!(
+            self.provider.as_str(),
+            SCHOLARLY_PROVIDER_NAME | CNKI_PROVIDER_NAME
+        ) {
+            self.configured_workers
+        } else {
+            1
+        };
+        self.effective_aggregate_capacity = self.effective_workers.saturating_mul(executor_count);
+    }
+}
+
+fn catalog_concurrency(
+    config: &LiveIndexConfig,
+    provider: &str,
+) -> Result<LiveCatalogConcurrency, LiveIndexError> {
+    let profile = match provider {
+        SCHOLARLY_PROVIDER_NAME => litradar_domain::IndexConcurrencyProfile::Scholarly,
+        CNKI_PROVIDER_NAME => litradar_domain::IndexConcurrencyProfile::DomesticCnki,
+        _ => litradar_domain::IndexConcurrencyProfile::Generic,
+    };
+    let resolved = litradar_domain::resolve_index_concurrency(
+        config.worker_count,
+        config.process_count,
+        profile,
+    )
+    .map_err(|error| LiveIndexError::InvalidConfig(error.to_string()))?;
+    Ok(LiveCatalogConcurrency {
+        provider: provider.to_string(),
+        configured_workers: resolved.worker_count,
+        configured_processes: resolved.process_count,
+        configured_aggregate_capacity: resolved.aggregate_capacity,
+        aggregate_limit: profile.aggregate_limit(),
+        effective_workers: 0,
+        executor_count: 0,
+        child_process_count: 0,
+        inline_executor_count: 0,
+        effective_aggregate_capacity: 0,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -758,6 +833,7 @@ pub fn run_live_index(config: &LiveIndexConfig) -> Result<LiveIndexOutcome, Live
         });
     }
     let inputs = freeze_catalog_inputs(config, paths)?;
+    validate_selected_catalogs(config, &inputs)?;
     let request = IndexBatchRequest::new(
         inputs,
         if config.file.is_some() {
@@ -1027,11 +1103,17 @@ where
             }
             .into());
         }
+        let mut concurrency = catalog_concurrency(config, &input.provider_name)?;
         let mut phase = stored.phase;
         let mut persisted = stored.outcome.clone();
         let mut manifest_intent = stored.manifest_intent.clone();
         if phase == BatchCatalogPhase::Completed {
-            outcomes.push(completed_catalog_outcome(config, stored, input)?);
+            outcomes.push(completed_catalog_outcome(
+                config,
+                stored,
+                input,
+                concurrency,
+            )?);
             tracing::info!(
                 event = "index.batch.catalog_skipped",
                 component = "index",
@@ -1053,6 +1135,7 @@ where
         }
         if phase == BatchCatalogPhase::Indexing && persisted.is_none() {
             let outcome = run(config, input, &batch.batch_id)?;
+            concurrency = outcome.concurrency.clone();
             let outcome = persisted_catalog_outcome(&outcome);
             store_catalog_outcome(
                 batch_connection,
@@ -1086,7 +1169,11 @@ where
             )?;
             trace_catalog_phase(batch, stored, "completed");
             outcomes.push(catalog_outcome_from_persisted(
-                config, input, &persisted, None,
+                config,
+                input,
+                &persisted,
+                None,
+                concurrency,
             ));
             continue;
         }
@@ -1168,7 +1255,11 @@ where
                 )?;
                 trace_catalog_phase(batch, stored, "completed");
                 outcomes.push(catalog_outcome_from_persisted(
-                    config, input, &persisted, None,
+                    config,
+                    input,
+                    &persisted,
+                    None,
+                    concurrency,
                 ));
                 continue;
             }
@@ -1250,6 +1341,7 @@ where
                 input,
                 &persisted,
                 Some(&handoff),
+                concurrency,
             ));
             continue;
         }
@@ -1275,6 +1367,7 @@ fn completed_catalog_outcome(
     config: &LiveIndexConfig,
     stored: &IndexBatchCatalog,
     input: &CatalogInput,
+    concurrency: LiveCatalogConcurrency,
 ) -> Result<LiveCsvIndexOutcome, LiveIndexError> {
     let outcome = stored.outcome.as_ref().ok_or_else(|| {
         LiveIndexError::from(BatchDatabaseError::InvalidState {
@@ -1286,6 +1379,7 @@ fn completed_catalog_outcome(
         input,
         outcome,
         stored.notify_handoff.as_ref(),
+        concurrency,
     ))
 }
 
@@ -1475,6 +1569,7 @@ fn catalog_outcome_from_persisted(
     input: &CatalogInput,
     outcome: &BatchCatalogOutcome,
     notify_handoff: Option<&NotifyHandoffState>,
+    concurrency: LiveCatalogConcurrency,
 ) -> LiveCsvIndexOutcome {
     LiveCsvIndexOutcome {
         csv_path: input.path.display().to_string(),
@@ -1484,6 +1579,7 @@ fn catalog_outcome_from_persisted(
         journal_count: outcome.journal_count,
         written_article_count: outcome.written_article_count,
         source_attempt_count: outcome.source_attempt_count,
+        concurrency,
         manifest_path: outcome
             .manifest_path
             .as_ref()
@@ -1558,16 +1654,8 @@ fn run_live_index_worker_with_io(
 }
 
 fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> {
-    let has_scholarly_route = config
-        .index_provider_routes
-        .values()
-        .any(|provider| provider == SCHOLARLY_PROVIDER_NAME);
-    let concurrency = litradar_domain::validate_index_concurrency(
-        config.worker_count,
-        config.process_count,
-        has_scholarly_route,
-    )
-    .map_err(|error| LiveIndexError::InvalidConfig(error.to_string()))?;
+    litradar_domain::validate_index_concurrency_options(config.worker_count, config.process_count)
+        .map_err(|error| LiveIndexError::InvalidConfig(error.to_string()))?;
     if config.issue_batch_size == 0 {
         return Err(LiveIndexError::InvalidConfig(
             "issue_batch_size must be greater than zero".to_string(),
@@ -1603,32 +1691,36 @@ fn validate_live_config(config: &LiveIndexConfig) -> Result<(), LiveIndexError> 
             "index_provider_routes must not be empty".to_string(),
         ));
     }
-    if has_scholarly_route {
-        if !config.scholarly_config.has_crossref_mailto() {
-            return Err(LiveIndexError::InvalidConfig(
-                "Crossref mailto is required for scholarly indexing".to_string(),
-            ));
-        }
-        if !config.scholarly_config.has_openalex_key() {
-            return Err(LiveIndexError::InvalidConfig(
-                "OpenAlex API key is required for scholarly indexing".to_string(),
-            ));
-        }
-        if !config.scholarly_config.has_semantic_scholar_key() {
-            return Err(LiveIndexError::InvalidConfig(
-                "Semantic Scholar API key is required for scholarly indexing".to_string(),
-            ));
+    Ok(())
+}
+
+fn validate_selected_catalogs(
+    config: &LiveIndexConfig,
+    inputs: &[CatalogInput],
+) -> Result<(), LiveIndexError> {
+    for input in inputs {
+        catalog_concurrency(config, &input.provider_name)?;
+        if input.provider_name == SCHOLARLY_PROVIDER_NAME {
+            for (has_value, message) in [
+                (
+                    config.scholarly_config.has_crossref_mailto(),
+                    "Crossref mailto is required for scholarly indexing",
+                ),
+                (
+                    config.scholarly_config.has_openalex_key(),
+                    "OpenAlex API key is required for scholarly indexing",
+                ),
+                (
+                    config.scholarly_config.has_semantic_scholar_key(),
+                    "Semantic Scholar API key is required for scholarly indexing",
+                ),
+            ] {
+                if !has_value {
+                    return Err(LiveIndexError::InvalidConfig(message.to_string()));
+                }
+            }
         }
     }
-    tracing::info!(
-        event = "index.concurrency.configured",
-        component = "index",
-        configured_workers = concurrency.worker_count,
-        configured_processes = concurrency.process_count,
-        configured_aggregate_capacity = concurrency.aggregate_capacity,
-        aggregate_limit = litradar_domain::INDEX_AGGREGATE_CONCURRENCY_MAX,
-        has_scholarly_route,
-    );
     Ok(())
 }
 
@@ -1663,34 +1755,14 @@ fn run_catalog(
     let catalog_name = input.catalog_name.clone();
     let provider_name = input.provider_name.clone();
     let entries = &input.entries;
-    let effective_process_count = config.process_count.min(entries.len());
-    let effective_source_worker_count = if matches!(
-        provider_name.as_str(),
-        SCHOLARLY_PROVIDER_NAME | CNKI_PROVIDER_NAME
-    ) {
-        config.worker_count
-    } else {
-        1
-    };
-    tracing::info!(
-        event = "index.concurrency.effective",
-        component = "index",
-        provider = provider_name,
-        configured_workers = config.worker_count,
-        configured_processes = config.process_count,
-        effective_source_workers = effective_source_worker_count,
-        effective_processes = effective_process_count,
-        effective_aggregate_capacity =
-            effective_source_worker_count.saturating_mul(effective_process_count),
-        aggregate_limit = litradar_domain::INDEX_AGGREGATE_CONCURRENCY_MAX,
-    );
+    let mut concurrency = catalog_concurrency(config, &provider_name)?;
     let index_dir = config.project_root.join("data").join("index");
     let control_dir = config.project_root.join("data").join("index-control");
     std::fs::create_dir_all(&index_dir)?;
     std::fs::create_dir_all(&control_dir)?;
     let content_path = index_dir.join(format!("{catalog_name}.sqlite"));
     let control_path = control_dir.join(format!("{catalog_name}.sqlite"));
-    let uses_worker_processes = config.process_count > 1 && entries.len() > 1;
+    let uses_worker_processes = concurrency.configured_processes > 1 && entries.len() > 1;
     let control = open_control_db(&control_path)?;
     let run_time = LiveRunTime::now();
     let run_id = run_time.run_id(&catalog_name);
@@ -1734,6 +1806,7 @@ fn run_catalog(
             entries,
         );
         let execution = prepared.and_then(|(requests, metrics)| {
+            concurrency.record_execution(requests.len(), requests.len());
             run_worker_processes(
                 config,
                 &content,
@@ -1805,6 +1878,26 @@ fn run_catalog(
             return Err(error);
         }
     };
+    if !uses_worker_processes {
+        concurrency.record_execution(
+            usize::from(metrics.journals_total > metrics.journals_resumed),
+            0,
+        );
+    }
+    tracing::info!(
+        event = "index.concurrency.effective",
+        component = "index",
+        provider = provider_name,
+        configured_workers = concurrency.configured_workers,
+        configured_processes = concurrency.configured_processes,
+        configured_aggregate_capacity = concurrency.configured_aggregate_capacity,
+        effective_source_workers = concurrency.effective_workers,
+        effective_processes = concurrency.executor_count,
+        child_process_count = concurrency.child_process_count,
+        inline_executor_count = concurrency.inline_executor_count,
+        effective_aggregate_capacity = concurrency.effective_aggregate_capacity,
+        aggregate_limit = concurrency.aggregate_limit,
+    );
     if let Err(error) = heartbeat_result {
         let _ = release_lease(&control, &catalog_name, &provider_name, &run_id);
         return Err(error);
@@ -1822,6 +1915,7 @@ fn run_catalog(
         journal_count: entries.len(),
         written_article_count: i64::try_from(metrics.articles_changed).unwrap_or(i64::MAX),
         source_attempt_count: metrics.pages_committed,
+        concurrency,
         manifest_path: None,
         notify_exit_code: None,
     })
@@ -1928,7 +2022,11 @@ fn prepare_worker_requests(
     if assignments.is_empty() {
         return Ok((Vec::new(), metrics));
     }
-    let process_count = config.process_count.min(assignments.len()).max(1);
+    let concurrency = catalog_concurrency(config, &context.provider_name)?;
+    let process_count = concurrency
+        .configured_processes
+        .min(assignments.len())
+        .max(1);
     let mut partitions = vec![Vec::new(); process_count];
     for (index, assignment) in assignments.into_iter().enumerate() {
         partitions[index % process_count].push(assignment);
@@ -1943,7 +2041,7 @@ fn prepare_worker_requests(
             run_id: context.run_id.clone(),
             worker_id,
             process_count,
-            source_worker_count: config.worker_count,
+            source_worker_count: concurrency.configured_workers,
             schedule_epoch_unix_millis,
             timeout_seconds: config.timeout_seconds,
             assignments,
@@ -2808,7 +2906,7 @@ fn run_direct_request(
             .clone()
             .with_worker_context(request.worker_id, 1)
             .with_schedule_epoch(schedule_epoch_unix_millis),
-        config.worker_count,
+        catalog_concurrency(config, &request.provider_name)?.configured_workers,
         config.timeout_seconds,
         config.cnki_captcha_token.clone(),
         config
@@ -4321,6 +4419,62 @@ mod tests {
         ));
     }
 
+    fn write_preflight_catalog(root: &Path, stem: &str) {
+        let meta = root.join("data/meta");
+        std::fs::create_dir_all(&meta).expect("test metadata should create");
+        std::fs::write(meta.join(format!("{stem}.csv")),
+            "catalog_id,catalog_aliases,title,issn,eissn,all_issns,title_aliases,area,utd_rank,utd_rating,abs_rank,abs_rating,fms_rank,fms_rating,fmscn_rank,fmscn_rating\nissn-0001-3072,,Abacus,0001-3072,1467-6281,0001-3072;1467-6281,,Accounting & Auditing,,,7,3,7,B,,\n")
+            .expect("test catalog should write");
+    }
+
+    #[test]
+    fn concurrency_selected_catalogs_use_independent_defaults_and_validate_all_before_admission() {
+        let directory = tempdir().expect("temporary project should create");
+        let mut config = worker_test_config(CNKI_PROVIDER_NAME, None);
+        config.project_root = directory.path().into();
+        config.worker_count = None;
+        config.process_count = None;
+        config.index_provider_routes = BTreeMap::from([
+            ("a-domestic".into(), CNKI_PROVIDER_NAME.into()),
+            ("z-scholarly".into(), "scholarly".into()),
+        ]);
+        write_preflight_catalog(directory.path(), "a-domestic");
+        write_preflight_catalog(directory.path(), "z-scholarly");
+        let meta = directory.path().join("data/meta");
+        let domestic = super::freeze_catalog_inputs(
+            &config,
+            catalog_paths(&meta, Some("a-domestic.csv")).unwrap(),
+        )
+        .unwrap();
+        assert!(super::validate_selected_catalogs(&config, &domestic).is_ok());
+        let domestic_capacity = super::catalog_concurrency(&config, CNKI_PROVIDER_NAME).unwrap();
+        assert_eq!(domestic_capacity.configured_processes, 1);
+        let scholarly = super::catalog_concurrency(&config, "scholarly").unwrap();
+        assert_eq!(
+            (scholarly.configured_workers, scholarly.configured_processes),
+            (6, 3)
+        );
+        let error = run_live_index(&config)
+            .expect_err("a later selected provider must be validated before any catalog starts");
+        assert!(error.to_string().contains("Crossref mailto"));
+        assert!(!directory.path().join("data/index-control").exists());
+        assert!(!directory.path().join("data/index").exists());
+        config.worker_count = Some(32);
+        config.process_count = Some(3);
+        assert!(super::catalog_concurrency(&config, "scholarly").is_ok());
+        assert!(super::validate_selected_catalogs(&config, &domestic).is_err());
+    }
+
+    #[test]
+    fn concurrency_regression_unused_scholarly_route_does_not_require_credentials() {
+        let mut config = worker_test_config(CNKI_PROVIDER_NAME, None);
+        config.file = Some("chinese_journals.csv".into());
+        config
+            .index_provider_routes
+            .insert("unused".into(), super::SCHOLARLY_PROVIDER_NAME.into());
+        assert!(validate_live_config(&config).is_ok());
+    }
+
     #[test]
     fn live_config_selects_exact_sync_modes_and_rejects_conflicts() {
         let mut config = worker_test_config("provider-a", None);
@@ -4491,8 +4645,11 @@ mod tests {
                         "later provider must not run"
                     );
                     calls.push(input.catalog_name.clone());
+                    let mut capacity =
+                        super::catalog_concurrency(config, &input.provider_name).unwrap();
+                    capacity.record_execution(1, 0);
                     Ok(super::catalog_outcome_from_persisted(
-                        config, input, &outcome, None,
+                        config, input, &outcome, None, capacity,
                     ))
                 },
                 |_, _, _, _| panic!("notifications are disabled"),
@@ -4500,6 +4657,13 @@ mod tests {
             .expect("requested catalog boundary should succeed");
             assert_eq!(calls.len(), 2 - completed_before);
             assert_eq!(outcomes.len(), 2);
+            for (ordinal, outcome) in outcomes.iter().enumerate() {
+                assert_eq!(
+                    outcome.concurrency.executor_count,
+                    usize::from(ordinal >= completed_before)
+                );
+                assert_eq!(outcome.concurrency.child_process_count, 0);
+            }
             let stored = read_batch_catalogs(&connection, &batch.batch_id)
                 .expect("catalog phases should read");
             assert_eq!(stored[0].phase, BatchCatalogPhase::Completed);
@@ -4534,8 +4698,11 @@ mod tests {
                         input.file_name, "english.csv",
                         "completed catalogs must not rerun"
                     );
+                    let mut capacity =
+                        super::catalog_concurrency(config, &input.provider_name).unwrap();
+                    capacity.record_execution(1, 0);
                     Ok(super::catalog_outcome_from_persisted(
-                        config, input, &outcome, None,
+                        config, input, &outcome, None, capacity,
                     ))
                 },
                 |_, _, _, _| panic!("notifications are disabled"),
@@ -5880,8 +6047,8 @@ mod tests {
             secret_key_file: "secret.key".into(),
             file: None,
             stop_after: None,
-            worker_count: 1,
-            process_count: 1,
+            worker_count: Some(1),
+            process_count: Some(1),
             issue_batch_size: 1,
             timeout_seconds: 10,
             resume: true,
@@ -6262,8 +6429,8 @@ mod tests {
             secret_key_file: "secret.key".into(),
             file: None,
             stop_after: None,
-            worker_count: 2,
-            process_count: 3,
+            worker_count: Some(2),
+            process_count: Some(3),
             issue_batch_size: 2,
             timeout_seconds: 10,
             resume: true,
@@ -6308,34 +6475,36 @@ mod tests {
             .iter()
             .all(|request| request.schedule_epoch_unix_millis == 123_456));
         let mut excessive_workers = config.clone();
-        excessive_workers.worker_count = SCHOLARLY_WORKER_COUNT_MAX + 1;
+        excessive_workers.worker_count = Some(SCHOLARLY_WORKER_COUNT_MAX + 1);
         assert!(matches!(
             validate_live_config(&excessive_workers),
             Err(LiveIndexError::InvalidConfig(message))
-                if message == "worker_count must be at most 6 for scholarly indexing"
+                if message == "worker_count must be between 1 and 32"
         ));
         let mut excessive_processes = config.clone();
-        excessive_processes.process_count = 4;
+        excessive_processes.process_count = Some(4);
         assert!(matches!(
-            validate_live_config(&excessive_processes),
+            super::catalog_concurrency(&excessive_processes, "scholarly"),
             Err(LiveIndexError::InvalidConfig(message))
                 if message == "process_count must be at most 3 for scholarly indexing"
         ));
         let directory = tempdir().expect("temporary directory should create");
         excessive_processes.project_root = directory.path().to_path_buf();
+        write_preflight_catalog(directory.path(), "catalog");
         assert!(matches!(
             run_live_index(&excessive_processes),
             Err(LiveIndexError::InvalidConfig(message))
                 if message == "process_count must be at most 3 for scholarly indexing"
         ));
-        assert!(!directory.path().join("data").exists());
+        assert!(!directory.path().join("data/index-control").exists());
+        assert!(!directory.path().join("data/index").exists());
         let mut excessive_aggregate = config.clone();
-        excessive_aggregate.worker_count = INDEX_AGGREGATE_CONCURRENCY_MAX / 2 + 1;
-        excessive_aggregate.process_count = 2;
+        excessive_aggregate.worker_count = Some(INDEX_AGGREGATE_CONCURRENCY_MAX / 2 + 1);
+        excessive_aggregate.process_count = Some(2);
         excessive_aggregate.index_provider_routes =
             BTreeMap::from([("catalog".to_string(), CNKI_PROVIDER_NAME.to_string())]);
         assert!(matches!(
-            validate_live_config(&excessive_aggregate),
+            super::catalog_concurrency(&excessive_aggregate, CNKI_PROVIDER_NAME),
             Err(LiveIndexError::InvalidConfig(message))
                 if message == "process_count * worker_count must be at most 32"
         ));
@@ -6402,8 +6571,8 @@ mod tests {
                 secret_key_file: "secret.key".into(),
                 file: None,
                 stop_after: None,
-                worker_count: 1,
-                process_count: 1,
+                worker_count: Some(1),
+                process_count: Some(1),
                 issue_batch_size: 1,
                 timeout_seconds: 10,
                 resume: true,
@@ -6426,6 +6595,7 @@ mod tests {
                 )]),
             };
 
+            write_preflight_catalog(directory.path(), "catalog");
             let error = run_live_index(&config).expect_err("missing credential should fail");
             let LiveIndexError::InvalidConfig(message) = error else {
                 panic!("missing credential returned unexpected error: {error:?}");
@@ -6434,7 +6604,8 @@ mod tests {
             for secret in [openalex_keys, semantic_scholar_keys, crossref_mailtos] {
                 assert!(secret.is_empty() || !message.contains(secret));
             }
-            assert!(!directory.path().join("data").exists());
+            assert!(!directory.path().join("data/index-control").exists());
+            assert!(!directory.path().join("data/index").exists());
         }
     }
 
@@ -6446,8 +6617,8 @@ mod tests {
             secret_key_file: "secret.key".into(),
             file: None,
             stop_after: None,
-            worker_count: 2,
-            process_count: 3,
+            worker_count: Some(2),
+            process_count: Some(3),
             issue_batch_size: 2,
             timeout_seconds: 10,
             resume: true,
@@ -6516,6 +6687,7 @@ mod tests {
         assert_eq!(metrics.journals_total, 2);
         assert_eq!(metrics.journals_resumed, 1);
         assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].process_count, 1);
         assert_eq!(requests[0].assignments.len(), 1);
         assert_eq!(requests[0].assignments[0].entry.catalog_id, "resumable");
         assert_eq!(
@@ -6523,6 +6695,58 @@ mod tests {
             Some("cursor-resume")
         );
         assert_eq!(requests[0].assignments[0].mode, IndexSyncMode::Bootstrap);
+    }
+
+    #[test]
+    fn concurrency_completed_journals_admit_no_executor_and_recovery_reports_zero() {
+        let directory = tempdir().expect("temporary state should create");
+        let control = open_control_db(directory.path().join("control.sqlite")).unwrap();
+        let mut config = worker_test_config("scholarly", None);
+        config.worker_count = None;
+        config.process_count = None;
+        let context = ParentWriterContext {
+            catalog_name: "catalog".into(),
+            provider_name: "scholarly".into(),
+            batch_id: TEST_BATCH_ID.into(),
+            run_id: "current".into(),
+            timestamp: "time".into(),
+        };
+        let entries = vec![catalog("complete")];
+        seed_completed_sync_for_batch(
+            &control,
+            "catalog",
+            "scholarly",
+            "complete",
+            TEST_BATCH_ID,
+            None,
+            "time",
+        );
+        let (requests, metrics) =
+            prepare_worker_requests(&config, &control, &context, 123, &entries).unwrap();
+        assert!(requests.is_empty());
+        assert_eq!(metrics.journals_resumed, 1);
+        let mut capacity = super::catalog_concurrency(&config, "scholarly").unwrap();
+        capacity.record_execution(requests.len(), requests.len());
+        assert_eq!(
+            (
+                capacity.executor_count,
+                capacity.child_process_count,
+                capacity.effective_aggregate_capacity
+            ),
+            (0, 0, 0)
+        );
+        let input = batch_input("catalog.csv", "scholarly", 1);
+        let persisted = BatchCatalogOutcome {
+            run_id: "old".into(),
+            journal_count: 20,
+            written_article_count: 0,
+            source_attempt_count: 99,
+            manifest_path: None,
+        };
+        let recovered =
+            super::catalog_outcome_from_persisted(&config, &input, &persisted, None, capacity);
+        assert_eq!(recovered.source_attempt_count, 99);
+        assert_eq!(recovered.concurrency.effective_aggregate_capacity, 0);
     }
 
     #[test]

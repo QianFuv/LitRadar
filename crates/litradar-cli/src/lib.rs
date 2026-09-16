@@ -32,8 +32,6 @@ use litradar_worker::delivery::{
 use litradar_worker::scheduler::{load_scheduler_jobs, run_task_now, SchedulerMode};
 use serde_json::json;
 
-const DEFAULT_INDEX_WORKER_COUNT: usize = 6;
-const DEFAULT_INDEX_PROCESS_COUNT: usize = 1;
 const DEFAULT_INDEX_ISSUE_BATCH_SIZE: usize = 8;
 
 #[derive(Debug)]
@@ -374,14 +372,6 @@ fn run_index_command_with_bundled_meta_dir(
     verify_database_secrets(&auth_db_path, &secret_codec)?;
     let (scholarly_config, index_provider_routes, cnki_captcha_token, provider_proxy_selection) =
         live_index_runtime_config(&auth_db_path, &secret_codec, options.timeout_seconds)?;
-    let has_scholarly_route = index_provider_routes
-        .values()
-        .any(|provider| provider == "scholarly");
-    let concurrency = litradar_domain::validate_index_concurrency(
-        options.worker_count,
-        options.process_count,
-        has_scholarly_route,
-    )?;
     let outcome = run_live_index(&LiveIndexConfig {
         application_executable: application_executable.to_path_buf(),
         project_root: project_root.clone(),
@@ -403,8 +393,7 @@ fn run_index_command_with_bundled_meta_dir(
         provider_proxy_selection,
         index_provider_routes: index_provider_routes.clone(),
     })?;
-    let effective_concurrency =
-        index_concurrency_payload(&options, concurrency, &index_provider_routes, &outcome);
+    let effective_concurrency = index_concurrency_payload(&options, &outcome);
     print_result(&serialize_index_outcome(&outcome, effective_concurrency)?);
     Ok(())
 }
@@ -461,8 +450,8 @@ fn prepare_index_managed_meta(
 struct IndexOptions {
     file: Option<String>,
     stop_after: Option<String>,
-    worker_count: usize,
-    process_count: usize,
+    worker_count: Option<usize>,
+    process_count: Option<usize>,
     issue_batch_size: usize,
     is_issue_batch_explicit: bool,
     timeout_seconds: u64,
@@ -480,16 +469,14 @@ fn parse_index_options(args: &mut Vec<String>) -> Result<IndexOptions, Box<dyn E
     let worker_count = positive_usize(
         "--workers",
         extract_usize_option_any(args, &["--workers", "-w"])?,
-    )?
-    .unwrap_or(DEFAULT_INDEX_WORKER_COUNT);
+    )?;
     let issue_batch_size = extract_usize_option(args, "--issue-batch")?;
     let is_issue_batch_explicit = issue_batch_size.is_some();
     let issue_batch_size = positive_usize("--issue-batch", issue_batch_size)?
         .unwrap_or(DEFAULT_INDEX_ISSUE_BATCH_SIZE);
     let timeout_seconds = extract_u64_option(args, "--timeout")?.unwrap_or(20);
-    let process_count = positive_usize("--processes", extract_usize_option(args, "--processes")?)?
-        .unwrap_or(DEFAULT_INDEX_PROCESS_COUNT);
-    litradar_domain::validate_index_concurrency(worker_count, process_count, false)?;
+    let process_count = positive_usize("--processes", extract_usize_option(args, "--processes")?)?;
+    litradar_domain::validate_index_concurrency_options(worker_count, process_count)?;
     let resume = extract_bool_pair(args, "--resume", "--no-resume", true);
     let update = extract_bool_pair(args, "--update", "--no-update", false);
     let full_rescan = extract_bool_pair(args, "--full-rescan", "--no-full-rescan", false);
@@ -539,42 +526,33 @@ fn emit_legacy_issue_batch_warning(options: &IndexOptions) {
 
 fn index_concurrency_payload(
     options: &IndexOptions,
-    concurrency: litradar_domain::IndexConcurrency,
-    index_provider_routes: &BTreeMap<String, String>,
     outcome: &LiveIndexOutcome,
 ) -> serde_json::Value {
-    let (effective_worker_count, effective_process_count, effective_aggregate_capacity) = outcome
+    let configured = outcome
         .csvs
         .iter()
-        .map(|csv| {
-            let catalog = Path::new(&csv.csv_path)
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default();
-            let worker_count = match index_provider_routes.get(catalog).map(String::as_str) {
-                Some("scholarly" | "cnki") => options.worker_count,
-                _ => usize::from(csv.journal_count > 0),
-            };
-            let process_count = options.process_count.min(csv.journal_count);
-            (
-                worker_count,
-                process_count,
-                worker_count.saturating_mul(process_count),
-            )
-        })
-        .max_by_key(|(_, _, aggregate_capacity)| *aggregate_capacity)
-        .unwrap_or((0, 0, 0));
+        .map(|csv| &csv.concurrency)
+        .max_by_key(|capacity| capacity.configured_aggregate_capacity);
+    let effective = outcome
+        .csvs
+        .iter()
+        .map(|csv| &csv.concurrency)
+        .max_by_key(|capacity| capacity.effective_aggregate_capacity);
+    let configured_workers = configured.map_or(0, |capacity| capacity.configured_workers);
+    let configured_processes = configured.map_or(0, |capacity| capacity.configured_processes);
     json!({
-        "workers": options.worker_count,
-        "processes": options.process_count,
+        "workers": configured_workers,
+        "processes": configured_processes,
+        "requested_workers": options.worker_count,
+        "requested_processes": options.process_count,
         "issue_batch": options.issue_batch_size,
-        "configured_workers": concurrency.worker_count,
-        "configured_processes": concurrency.process_count,
-        "configured_aggregate_capacity": concurrency.aggregate_capacity,
-        "effective_workers": effective_worker_count,
-        "effective_processes": effective_process_count,
-        "effective_aggregate_capacity": effective_aggregate_capacity,
-        "aggregate_limit": litradar_domain::INDEX_AGGREGATE_CONCURRENCY_MAX,
+        "configured_workers": configured_workers,
+        "configured_processes": configured_processes,
+        "configured_aggregate_capacity": configured.map_or(0, |capacity| capacity.configured_aggregate_capacity),
+        "effective_workers": effective.map_or(0, |capacity| capacity.effective_workers),
+        "effective_processes": effective.map_or(0, |capacity| capacity.executor_count),
+        "effective_aggregate_capacity": effective.map_or(0, |capacity| capacity.effective_aggregate_capacity),
+        "aggregate_limit": configured.map_or(0, |capacity| capacity.aggregate_limit),
     })
 }
 
@@ -1234,14 +1212,20 @@ fn index_usage() -> String {
     let payload = json!({
         "usage": "litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--stop-after FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--full-rescan|--no-full-rescan] [--notify] [--notify-dry-run] [--acknowledge-unknown-notify]",
         "defaults": {
-            "workers": DEFAULT_INDEX_WORKER_COUNT,
-            "processes": DEFAULT_INDEX_PROCESS_COUNT,
+            "workers": litradar_domain::INDEX_WORKER_COUNT_DEFAULT,
+            "processes": litradar_domain::SCHOLARLY_PROCESS_COUNT_DEFAULT,
             "issue_batch": DEFAULT_INDEX_ISSUE_BATCH_SIZE,
             "resume": true,
             "update": false,
             "full_rescan": false,
         },
+        "provider_defaults": {
+            "scholarly": {"workers": litradar_domain::INDEX_WORKER_COUNT_DEFAULT, "processes": litradar_domain::SCHOLARLY_PROCESS_COUNT_DEFAULT},
+            "cnki": {"workers": litradar_domain::DOMESTIC_CNKI_WORKER_COUNT_DEFAULT, "processes": litradar_domain::INDEX_PROCESS_COUNT_DEFAULT},
+            "generic": {"workers": litradar_domain::INDEX_WORKER_COUNT_DEFAULT, "processes": litradar_domain::INDEX_PROCESS_COUNT_DEFAULT},
+        },
         "modes": {
+            "concurrency": "each omitted count is resolved per selected provider; provider_defaults is authoritative; explicit invalid counts are rejected",
             "update": "incremental synchronization that publishes a change manifest",
             "full_rescan": "complete historical synchronization without a change manifest; mutually exclusive with --update",
             "resume": "continue only a compatible active project batch; completed batches always start a new independent update",
@@ -1259,6 +1243,7 @@ fn index_usage() -> String {
             "aggregate_max": litradar_domain::INDEX_AGGREGATE_CONCURRENCY_MAX,
             "scholarly_workers_max": litradar_domain::SCHOLARLY_WORKER_COUNT_MAX,
             "scholarly_processes_max": litradar_domain::SCHOLARLY_PROCESS_COUNT_MAX,
+            "scholarly_aggregate_max": litradar_domain::SCHOLARLY_AGGREGATE_CONCURRENCY_MAX,
         }
     });
     payload.to_string()
@@ -1409,7 +1394,9 @@ mod tests {
         let index_payload: serde_json::Value =
             serde_json::from_str(&index).expect("index usage should be JSON");
         assert_eq!(index_payload["defaults"]["workers"], 6);
-        assert_eq!(index_payload["defaults"]["processes"], 1);
+        assert_eq!(index_payload["defaults"]["processes"], 3);
+        assert_eq!(index_payload["provider_defaults"]["cnki"]["processes"], 1);
+        assert_eq!(index_payload["limits"]["scholarly_aggregate_max"], 96);
         assert_eq!(index_payload["defaults"]["issue_batch"], 8);
         assert_eq!(index_payload["defaults"]["resume"], true);
         assert_eq!(index_payload["defaults"]["update"], false);
@@ -1434,7 +1421,7 @@ mod tests {
             .is_some_and(|value| value.contains("ambiguous notify attempt")));
         assert_eq!(index_payload["limits"]["workers_max"], 32);
         assert_eq!(index_payload["limits"]["aggregate_max"], 32);
-        assert_eq!(index_payload["limits"]["scholarly_workers_max"], 6);
+        assert_eq!(index_payload["limits"]["scholarly_workers_max"], 32);
         assert!(notify.contains("notify --secret-key-file PATH"));
         assert!(push.contains("push --secret-key-file PATH"));
         assert!(scheduler.contains("scheduler validate"));
@@ -2063,8 +2050,8 @@ mod tests {
 
         assert!(args.is_empty());
         assert_eq!(options.file.as_deref(), Some("selected.csv"));
-        assert_eq!(options.worker_count, 4);
-        assert_eq!(options.process_count, 3);
+        assert_eq!(options.worker_count, Some(4));
+        assert_eq!(options.process_count, Some(3));
         assert_eq!(options.issue_batch_size, 2);
         assert!(options.is_issue_batch_explicit);
         assert_eq!(options.timeout_seconds, 7);
@@ -2204,22 +2191,33 @@ mod tests {
 
         let options = parse_index_options(&mut args).expect("index options should parse");
 
-        assert_eq!(options.worker_count, 5);
-        assert_eq!(options.process_count, 1);
+        assert_eq!(options.worker_count, Some(5));
+        assert_eq!(options.process_count, None);
         assert_eq!(options.issue_batch_size, 8);
         assert!(!options.is_issue_batch_explicit);
 
         let mut default_args = Vec::new();
         let defaults =
             parse_index_options(&mut default_args).expect("default index options should parse");
-        assert_eq!(defaults.worker_count, 6);
-        assert_eq!(defaults.process_count, 1);
+        assert_eq!(defaults.worker_count, None);
+        assert_eq!(defaults.process_count, None);
         assert_eq!(defaults.issue_batch_size, 8);
         assert!(!defaults.is_issue_batch_explicit);
     }
 
     #[test]
-    fn index_workers_reject_generic_and_aggregate_overcommitment() {
+    fn concurrency_regression_parsing_defers_provider_specific_product_limits() {
+        let mut args = vec![
+            "--workers".into(),
+            "32".into(),
+            "--processes".into(),
+            "3".into(),
+        ];
+        assert!(parse_index_options(&mut args).is_ok());
+    }
+
+    #[test]
+    fn index_workers_reject_invalid_individual_counts() {
         for (mut args, detail) in [
             (
                 vec!["--workers".to_string(), "33".to_string()],
@@ -2228,15 +2226,6 @@ mod tests {
             (
                 vec!["--processes".to_string(), "33".to_string()],
                 "process_count must be between 1 and 32",
-            ),
-            (
-                vec![
-                    "--workers".to_string(),
-                    "17".to_string(),
-                    "--processes".to_string(),
-                    "2".to_string(),
-                ],
-                "process_count * worker_count must be at most 32",
             ),
         ] {
             assert_eq!(
@@ -2251,7 +2240,7 @@ mod tests {
             parse_index_options(&mut boundary)
                 .expect("the generic worker boundary should pass")
                 .worker_count,
-            32
+            Some(32)
         );
     }
 
@@ -2265,8 +2254,8 @@ mod tests {
         let options = IndexOptions {
             file: None,
             stop_after: None,
-            worker_count: 4,
-            process_count: 2,
+            worker_count: Some(4),
+            process_count: Some(2),
             issue_batch_size: 3,
             is_issue_batch_explicit: true,
             timeout_seconds: 20,
@@ -2277,31 +2266,26 @@ mod tests {
             notify_dry_run: false,
             acknowledge_unknown_notify: false,
         };
-        let concurrency = litradar_domain::validate_index_concurrency(4, 2, false)
-            .expect("test concurrency should validate");
-
         let payload: serde_json::Value = serde_json::from_str(
-            &serialize_index_outcome(
-                &outcome,
-                index_concurrency_payload(&options, concurrency, &BTreeMap::new(), &outcome),
-            )
-            .expect("index outcome should serialize"),
+            &serialize_index_outcome(&outcome, index_concurrency_payload(&options, &outcome))
+                .expect("index outcome should serialize"),
         )
         .expect("serialized index outcome should be JSON");
 
         assert_eq!(payload["status"], "succeeded");
         assert_eq!(payload["message"], serde_json::Value::Null);
         assert_eq!(payload["csvs"], serde_json::json!([]));
-        assert_eq!(payload["effective_concurrency"]["workers"], 4);
-        assert_eq!(payload["effective_concurrency"]["processes"], 2);
+        assert_eq!(payload["effective_concurrency"]["workers"], 0);
+        assert_eq!(payload["effective_concurrency"]["requested_workers"], 4);
+        assert_eq!(payload["effective_concurrency"]["processes"], 0);
         assert_eq!(payload["effective_concurrency"]["issue_batch"], 3);
         assert_eq!(
             payload["effective_concurrency"]["configured_aggregate_capacity"],
-            8
+            0
         );
         assert_eq!(payload["effective_concurrency"]["effective_workers"], 0);
         assert_eq!(payload["effective_concurrency"]["effective_processes"], 0);
-        assert_eq!(payload["effective_concurrency"]["aggregate_limit"], 32);
+        assert_eq!(payload["effective_concurrency"]["aggregate_limit"], 0);
         assert!(payload.get("secret_key_file").is_none());
 
         let active_outcome = LiveIndexOutcome {
@@ -2315,15 +2299,56 @@ mod tests {
                 journal_count: 2,
                 written_article_count: 0,
                 source_attempt_count: 0,
+                concurrency: litradar_index::live::LiveCatalogConcurrency {
+                    provider: "cnki".to_string(),
+                    configured_workers: 4,
+                    configured_processes: 2,
+                    configured_aggregate_capacity: 8,
+                    aggregate_limit: 32,
+                    effective_workers: 4,
+                    executor_count: 2,
+                    child_process_count: 2,
+                    inline_executor_count: 0,
+                    effective_aggregate_capacity: 8,
+                },
                 manifest_path: None,
                 notify_exit_code: None,
             }],
         };
-        let routes = BTreeMap::from([("catalog".to_string(), "cnki".to_string())]);
-        let active = index_concurrency_payload(&options, concurrency, &routes, &active_outcome);
+        let active = index_concurrency_payload(&options, &active_outcome);
         assert_eq!(active["effective_workers"], 4);
         assert_eq!(active["effective_processes"], 2);
         assert_eq!(active["effective_aggregate_capacity"], 8);
+
+        let mut domestic = active_outcome.csvs[0].clone();
+        domestic.concurrency.configured_workers = 32;
+        domestic.concurrency.configured_processes = 1;
+        domestic.concurrency.configured_aggregate_capacity = 32;
+        domestic.concurrency.effective_workers = 0;
+        domestic.concurrency.executor_count = 0;
+        domestic.concurrency.child_process_count = 0;
+        domestic.concurrency.effective_aggregate_capacity = 0;
+        let mut scholarly = active_outcome.csvs[0].clone();
+        scholarly.concurrency.provider = "scholarly".into();
+        scholarly.concurrency.configured_workers = 6;
+        scholarly.concurrency.configured_processes = 3;
+        scholarly.concurrency.configured_aggregate_capacity = 18;
+        scholarly.concurrency.aggregate_limit = 96;
+        scholarly.concurrency.effective_workers = 6;
+        scholarly.concurrency.executor_count = 3;
+        scholarly.concurrency.child_process_count = 3;
+        scholarly.concurrency.effective_aggregate_capacity = 18;
+        let mixed = LiveIndexOutcome {
+            csvs: vec![domestic, scholarly],
+            ..active_outcome
+        };
+        let summary = index_concurrency_payload(&options, &mixed);
+        assert_eq!(summary["configured_workers"], 32);
+        assert_eq!(summary["configured_processes"], 1);
+        assert_eq!(summary["configured_aggregate_capacity"], 32);
+        assert_eq!(summary["effective_workers"], 6);
+        assert_eq!(summary["effective_processes"], 3);
+        assert_eq!(summary["effective_aggregate_capacity"], 18);
     }
 
     #[test]
