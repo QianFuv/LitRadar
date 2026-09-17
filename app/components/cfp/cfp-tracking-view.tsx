@@ -141,9 +141,8 @@ export function CfpTrackingView() {
       contentClassName="space-y-5 sm:space-y-6"
       sidebar={
         <WorkspaceSidebar
-          hasFixedHeader
           headerContent={
-            <div className="space-y-3 border-t border-sidebar-border pt-5">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-t border-sidebar-border pt-3">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <Database className="size-4" aria-hidden="true" />
                 数据库
@@ -156,7 +155,7 @@ export function CfpTrackingView() {
                   onValueChange={handleDatabaseChange}
                   disabled={databases.length === 0}
                 >
-                  <SelectTrigger aria-label="征稿数据库" className="w-full bg-sidebar">
+                  <SelectTrigger aria-label="征稿数据库" className="h-9 w-full bg-sidebar">
                     <SelectValue placeholder="选择数据库" />
                   </SelectTrigger>
                   <SelectContent>
@@ -172,13 +171,13 @@ export function CfpTrackingView() {
           }
         >
           <section className="flex min-h-0 flex-1 flex-col gap-3" aria-label="征稿期刊">
-            <div className="flex items-center justify-between">
+            <div className="flex shrink-0 items-center justify-between">
               <h2 className="text-sm font-semibold">期刊</h2>
               <span className="text-xs tabular-nums text-muted-foreground">
                 {journals.length} 本
               </span>
             </div>
-            <div className="relative">
+            <div className="relative shrink-0">
               <Search
                 className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground"
                 aria-hidden="true"

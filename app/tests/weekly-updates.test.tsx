@@ -276,7 +276,7 @@ async function resetsForDatabaseSelection(): Promise<void> {
   expect(databaseSelect).toBeDefined();
   (databaseSelect as HTMLElement).focus();
   await user.keyboard('{ArrowDown}');
-  expect(await screen.findByRole('option', { name: 'other.sqlite' })).toBeInTheDocument();
+  expect(await screen.findByRole('option', { name: 'other' })).toBeInTheDocument();
   await user.keyboard('{ArrowDown}{Enter}');
 
   await waitFor(() => expect(screen.getByTestId('weekly-db')).toHaveTextContent('other.sqlite'));

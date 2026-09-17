@@ -26,11 +26,11 @@ const SIDEBAR_NAVIGATION_ITEMS: readonly SidebarNavigationItem[] = [
   { view: 'search', icon: Search, label: '文献检索', shortLabel: '检索' },
   { view: 'favorites', icon: Star, label: '我的收藏', shortLabel: '收藏' },
   { view: 'weekly-updates', icon: CalendarDays, label: '每周更新', shortLabel: '周报' },
-  { view: 'cfp-tracking', icon: Megaphone, label: '征稿追踪', shortLabel: '征稿追踪' },
+  { view: 'cfp-tracking', icon: Megaphone, label: '征稿', shortLabel: '征稿' },
 ];
 
 /**
- * Render root-workspace views in three equal columns, wrapping additional links below.
+ * Render the four root-workspace views in one compact row of equal columns.
  *
  * @returns Accessible compact sidebar navigation.
  */
@@ -38,7 +38,7 @@ export function SidebarNavigation() {
   const [view] = useQueryState('view', WORKSPACE_VIEW_PARSER);
 
   return (
-    <nav aria-label="页面导航" data-slot="sidebar-navigation" className="grid grid-cols-3 gap-2">
+    <nav aria-label="页面导航" data-slot="sidebar-navigation" className="grid grid-cols-4 gap-1">
       {SIDEBAR_NAVIGATION_ITEMS.map((item) => {
         const Icon = item.icon;
         const isCurrent = item.view === view;

@@ -208,66 +208,66 @@ function WeeklySidebar({
   return (
     <WorkspaceSidebar
       headerContent={
-        <div className="space-y-4 border-t border-sidebar-border pt-4">
-          <div className="space-y-1.5">
+        <div className="space-y-4 border-t border-sidebar-border pt-3">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
               <Database className="size-4" aria-hidden="true" />
               <span>数据库</span>
             </div>
             <Select value={effectiveSelectedDb} onValueChange={onDatabaseChange}>
-              <SelectTrigger className="w-full bg-sidebar">
+              <SelectTrigger aria-label="周报数据库" className="h-9 w-full bg-sidebar">
                 <SelectValue placeholder="选择数据库" />
               </SelectTrigger>
               <SelectContent>
                 {availableDatabases.map((dbName) => (
                   <SelectItem key={dbName} value={dbName}>
-                    {dbName}
+                    {dbName.replace(/\.sqlite$/, '')}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              期刊
-            </h2>
-            {journals.length === 0 && (
-              <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                当前时间窗口内没有新增期刊。
-              </div>
-            )}
-
-            {journals.map((journal) => {
-              const active = effectiveSelectedJournalId === journal.journal_id;
-              return (
-                <button
-                  key={journal.journal_id}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => onSelectJournal(journal.journal_id)}
-                  className={cn(
-                    'motion-control w-full rounded-md border p-3 text-left transition-[background-color,border-color,color,box-shadow]',
-                    active
-                      ? 'border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground shadow-vercel-ring'
-                      : 'border-transparent text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="line-clamp-2 min-w-0 break-words text-sm font-medium">
-                      {getJournalLabel(journal)}
-                    </p>
-                    <Badge variant={active ? 'default' : 'outline'}>
-                      {journal.new_article_count}
-                    </Badge>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          <h2 className="text-sm font-semibold text-sidebar-foreground">期刊</h2>
         </div>
       }
-    />
+    >
+      <div
+        data-slot="sidebar-scroll-region"
+        className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain"
+      >
+        {journals.length === 0 && (
+          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+            当前时间窗口内没有新增期刊。
+          </div>
+        )}
+
+        {journals.map((journal) => {
+          const isActive = effectiveSelectedJournalId === journal.journal_id;
+          return (
+            <button
+              key={journal.journal_id}
+              type="button"
+              aria-pressed={isActive}
+              onClick={() => onSelectJournal(journal.journal_id)}
+              className={cn(
+                'motion-control min-h-11 w-full rounded-md border border-transparent px-2 py-2 text-left text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 focus-visible:ring-inset',
+                isActive && 'border-sidebar-border bg-sidebar-accent',
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="line-clamp-2 min-w-0 break-words text-sm font-medium">
+                  {getJournalLabel(journal)}
+                </p>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {journal.new_article_count}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </WorkspaceSidebar>
   );
 }
 

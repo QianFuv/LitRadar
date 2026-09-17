@@ -171,6 +171,7 @@ fenced publication, backup recovery, source boundaries, helper cleanup and DNS
 teardown. API tests cover auth, catalogs without articles, cursor consistency,
 refresh visibility and restart persistence. Frontend tests cover source-language
 rendering, server-owned state, pagination, failed reads and late selection results.
-Browser checks retain the second-row navigation geometry and mobile layout. The
+Browser checks verify four equal navigation columns, fixed sidebar controls,
+independently scrolling journal groups, and the mobile layout. The
 marker-guarded full-stack fixture proves a real HTTP-source refresh changes the
 already built page without rebuilding the frontend.

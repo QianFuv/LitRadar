@@ -196,182 +196,181 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
         sidebar={
           <WorkspaceSidebar
             headerContent={
-              <div className="space-y-3 border-t border-sidebar-border pt-4">
+              <div className="border-t border-sidebar-border pt-3">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                    收藏夹
-                  </h2>
+                  <h2 className="text-sm font-semibold text-sidebar-foreground">收藏夹</h2>
                   <Button
                     variant="outline"
                     size="icon"
-                    className="h-7 w-7"
+                    className="size-9"
                     aria-label="新建收藏夹"
                     onClick={() => setDialogOpen(true)}
                   >
                     <FolderPlus className="h-4 w-4" />
                   </Button>
                 </div>
-
-                <div className="space-y-1">
-                  <MotionPresence>
-                    {isLoading ? (
-                      <MotionDiv
-                        key="folder-list-loading"
-                        aria-hidden="true"
-                        className="text-sm text-muted-foreground"
-                        variants={FADE_VARIANTS}
-                        initial="hidden"
-                        animate="visible"
-                        exit={{ opacity: 0, pointerEvents: 'none' }}
-                        transition={stateTransition}
-                      >
-                        加载中…
-                      </MotionDiv>
-                    ) : folders.length === 0 ? (
-                      <MotionDiv
-                        key="folder-list-empty"
-                        className="text-sm text-muted-foreground"
-                        variants={FADE_UP_VARIANTS}
-                        initial="hidden"
-                        animate="visible"
-                        exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
-                        transition={stateTransition}
-                      >
-                        暂无收藏夹，点击 + 创建
-                      </MotionDiv>
-                    ) : (
-                      folders.map((folder) => (
-                        <MotionDiv
-                          key={folder.id}
-                          data-motion-folder-key={folder.id}
-                          className={cn(
-                            'motion-control flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-[background-color,color,box-shadow]',
-                            activeFolderId === folder.id
-                              ? 'bg-accent text-accent-foreground shadow-vercel-ring'
-                              : 'hover:bg-accent/50',
-                          )}
-                          variants={FADE_UP_VARIANTS}
-                          initial="hidden"
-                          animate="visible"
-                          exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
-                          transition={itemTransition}
-                        >
-                          <div className="grid min-w-0 flex-1">
-                            <MotionPresence>
-                              {editingId === folder.id ? (
-                                <MotionDiv
-                                  key={`folder-${folder.id}-edit`}
-                                  data-motion-folder-mode="edit"
-                                  className="col-start-1 row-start-1"
-                                  variants={FADE_VARIANTS}
-                                  initial="hidden"
-                                  animate="visible"
-                                  exit={{ opacity: 0, pointerEvents: 'none' }}
-                                  transition={itemTransition}
-                                >
-                                  <form
-                                    className="flex gap-1"
-                                    onSubmit={(event) => {
-                                      event.preventDefault();
-                                      if (editName.trim()) {
-                                        renameMut.mutate({ id: folder.id, name: editName.trim() });
-                                      }
-                                    }}
-                                    onClick={(event) => event.stopPropagation()}
-                                  >
-                                    <Input
-                                      ref={editInputRef}
-                                      aria-label={`重命名收藏夹 ${folder.name}`}
-                                      name="favorite_folder_rename"
-                                      autoComplete="off"
-                                      value={editName}
-                                      onChange={(event) => setEditName(event.target.value)}
-                                      className="h-6 text-sm"
-                                    />
-                                  </form>
-                                </MotionDiv>
-                              ) : (
-                                <MotionDiv
-                                  key={`folder-${folder.id}-display`}
-                                  data-motion-folder-mode="display"
-                                  className="col-start-1 row-start-1 min-w-0"
-                                  variants={FADE_VARIANTS}
-                                  initial="hidden"
-                                  animate="visible"
-                                  exit={{ opacity: 0, pointerEvents: 'none' }}
-                                  transition={itemTransition}
-                                >
-                                  <button
-                                    type="button"
-                                    className="flex w-full min-w-0 items-center gap-2 text-left outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                                    aria-pressed={activeFolderId === folder.id}
-                                    onClick={() => handleSelectFolder(folder.id)}
-                                  >
-                                    <Star className="h-4 w-4 shrink-0" aria-hidden="true" />
-                                    <span className="min-w-0 flex-1 truncate">{folder.name}</span>
-                                    {folder.is_tracking && (
-                                      <Badge variant="secondary" className="px-1.5 text-[10px]">
-                                        追踪
-                                      </Badge>
-                                    )}
-                                    <span className="text-xs text-muted-foreground">
-                                      {folder.article_count}
-                                    </span>
-                                  </button>
-                                </MotionDiv>
-                              )}
-                            </MotionPresence>
-                          </div>
-                          <div className="flex gap-0.5">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6"
-                              title="设为追踪文件夹"
-                              aria-label={`设 ${folder.name} 为追踪文件夹`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                trackMut.mutate(folder.id);
-                              }}
-                            >
-                              <Radar className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6"
-                              aria-label={`重命名收藏夹 ${folder.name}`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setEditingId(folder.id);
-                                setEditName(folder.name);
-                              }}
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 text-destructive"
-                              aria-label={`删除收藏夹 ${folder.name}`}
-                              disabled={deleteMut.isPending}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                deleteMut.reset();
-                                setFolderToDelete({ id: folder.id, name: folder.name });
-                              }}
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </MotionDiv>
-                      ))
-                    )}
-                  </MotionPresence>
-                </div>
               </div>
             }
-          />
+          >
+            <div
+              data-slot="sidebar-scroll-region"
+              className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain"
+            >
+              <MotionPresence>
+                {isLoading ? (
+                  <MotionDiv
+                    key="folder-list-loading"
+                    aria-hidden="true"
+                    className="text-sm text-muted-foreground"
+                    variants={FADE_VARIANTS}
+                    initial="hidden"
+                    animate="visible"
+                    exit={{ opacity: 0, pointerEvents: 'none' }}
+                    transition={stateTransition}
+                  >
+                    加载中…
+                  </MotionDiv>
+                ) : folders.length === 0 ? (
+                  <MotionDiv
+                    key="folder-list-empty"
+                    className="text-sm text-muted-foreground"
+                    variants={FADE_UP_VARIANTS}
+                    initial="hidden"
+                    animate="visible"
+                    exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
+                    transition={stateTransition}
+                  >
+                    暂无收藏夹，点击 + 创建
+                  </MotionDiv>
+                ) : (
+                  folders.map((folder) => (
+                    <MotionDiv
+                      key={folder.id}
+                      data-motion-folder-key={folder.id}
+                      className={cn(
+                        'motion-control flex min-h-11 items-center gap-2 rounded-md border border-transparent px-2 py-2 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent',
+                        activeFolderId === folder.id && 'border-sidebar-border bg-sidebar-accent',
+                      )}
+                      variants={FADE_UP_VARIANTS}
+                      initial="hidden"
+                      animate="visible"
+                      exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
+                      transition={itemTransition}
+                    >
+                      <div className="grid min-w-0 flex-1">
+                        <MotionPresence>
+                          {editingId === folder.id ? (
+                            <MotionDiv
+                              key={`folder-${folder.id}-edit`}
+                              data-motion-folder-mode="edit"
+                              className="col-start-1 row-start-1"
+                              variants={FADE_VARIANTS}
+                              initial="hidden"
+                              animate="visible"
+                              exit={{ opacity: 0, pointerEvents: 'none' }}
+                              transition={itemTransition}
+                            >
+                              <form
+                                className="flex gap-1"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  if (editName.trim()) {
+                                    renameMut.mutate({ id: folder.id, name: editName.trim() });
+                                  }
+                                }}
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <Input
+                                  ref={editInputRef}
+                                  aria-label={`重命名收藏夹 ${folder.name}`}
+                                  name="favorite_folder_rename"
+                                  autoComplete="off"
+                                  value={editName}
+                                  onChange={(event) => setEditName(event.target.value)}
+                                  className="h-6 text-sm"
+                                />
+                              </form>
+                            </MotionDiv>
+                          ) : (
+                            <MotionDiv
+                              key={`folder-${folder.id}-display`}
+                              data-motion-folder-mode="display"
+                              className="col-start-1 row-start-1 min-w-0"
+                              variants={FADE_VARIANTS}
+                              initial="hidden"
+                              animate="visible"
+                              exit={{ opacity: 0, pointerEvents: 'none' }}
+                              transition={itemTransition}
+                            >
+                              <button
+                                type="button"
+                                className="flex w-full min-w-0 items-center gap-2 text-left outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                                aria-pressed={activeFolderId === folder.id}
+                                onClick={() => handleSelectFolder(folder.id)}
+                              >
+                                <Star className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+                                {folder.is_tracking && (
+                                  <Badge variant="secondary" className="px-1.5 text-[10px]">
+                                    追踪
+                                  </Badge>
+                                )}
+                                <span className="text-xs text-muted-foreground">
+                                  {folder.article_count}
+                                </span>
+                              </button>
+                            </MotionDiv>
+                          )}
+                        </MotionPresence>
+                      </div>
+                      <div className="flex gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          title="设为追踪文件夹"
+                          aria-label={`设 ${folder.name} 为追踪文件夹`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            trackMut.mutate(folder.id);
+                          }}
+                        >
+                          <Radar className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          aria-label={`重命名收藏夹 ${folder.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setEditingId(folder.id);
+                            setEditName(folder.name);
+                          }}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-destructive"
+                          aria-label={`删除收藏夹 ${folder.name}`}
+                          disabled={deleteMut.isPending}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            deleteMut.reset();
+                            setFolderToDelete({ id: folder.id, name: folder.name });
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </MotionDiv>
+                  ))
+                )}
+              </MotionPresence>
+            </div>
+          </WorkspaceSidebar>
         }
         sidebarOpenLabel="打开收藏夹"
         sidebarDialogTitle="收藏夹"

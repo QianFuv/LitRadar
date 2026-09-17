@@ -68,7 +68,7 @@ export function CfpJournalList({
             key={group.id}
             data-cfp-group={group.id}
             className={cn(
-              'flex min-h-0 flex-col overflow-hidden rounded-lg border border-sidebar-border',
+              'flex min-h-0 flex-col overflow-hidden border-t border-sidebar-border',
               group.id === 'current' && 'mb-auto',
               isExpanded ? 'flex-1' : 'shrink-0',
             )}
@@ -80,7 +80,7 @@ export function CfpJournalList({
               onClick={() =>
                 setExpandedGroups((previous) => ({ ...previous, [group.id]: !isExpanded }))
               }
-              className="flex min-h-11 w-full shrink-0 items-center gap-2 px-3 py-2 text-left text-xs font-semibold hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 focus-visible:ring-inset"
+              className="flex min-h-11 w-full shrink-0 items-center gap-2 px-2 py-2 text-left text-xs font-semibold hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 focus-visible:ring-inset"
             >
               <ChevronDown
                 className={cn(
@@ -100,10 +100,10 @@ export function CfpJournalList({
               aria-label={`${group.label}期刊`}
               hidden={!isExpanded}
               data-slot="cfp-journal-list"
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-1"
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
             >
               {group.journals.length === 0 ? (
-                <p className="px-3 py-4 text-xs leading-5 text-muted-foreground">
+                <p className="px-2 py-3 text-xs leading-5 text-muted-foreground">
                   暂无符合条件的期刊
                 </p>
               ) : (
@@ -115,13 +115,13 @@ export function CfpJournalList({
                     title={journal.title}
                     onClick={() => onSelect(journal.catalogId)}
                     className={cn(
-                      'motion-control grid min-h-20 w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 rounded-md border border-transparent px-3 py-3 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50',
+                      'motion-control grid min-h-16 w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 focus-visible:ring-inset',
                       selectedCatalogId === journal.catalogId &&
                         'border-sidebar-border bg-sidebar-accent',
                     )}
                   >
                     <span className="min-w-0 space-y-1">
-                      <span className="line-clamp-2 text-xs font-medium leading-5 [overflow-wrap:anywhere]">
+                      <span className="line-clamp-2 text-sm font-medium leading-5 [overflow-wrap:anywhere]">
                         {journal.title}
                       </span>
                       <span className="block text-[11px] leading-4 text-muted-foreground">

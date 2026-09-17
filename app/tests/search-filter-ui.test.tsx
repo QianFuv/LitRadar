@@ -313,7 +313,7 @@ async function rendersUnavailableYearState(): Promise<void> {
   const pageNavigation = screen.getByRole('navigation', { name: '页面导航' });
   const pageLinks = within(pageNavigation).getAllByRole('link');
   expect(pageLinks).toHaveLength(4);
-  expect(within(pageNavigation).getByRole('link', { name: '征稿追踪' })).toHaveAttribute(
+  expect(within(pageNavigation).getByRole('link', { name: '征稿' })).toHaveAttribute(
     'href',
     '/?view=cfp-tracking',
   );

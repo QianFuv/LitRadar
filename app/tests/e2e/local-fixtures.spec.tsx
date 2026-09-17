@@ -1638,12 +1638,13 @@ async function nativeThemeDocumentTest({
 }
 
 /**
- * Serve enough area filters to require scrolling inside a mobile sidebar.
+ * Serve enough filters, folders, and journals to exercise independent sidebar scrolling.
  *
  * @param route - Intercepted fixture API request.
  */
 async function serveLongSidebarApi(route: Route): Promise<void> {
-  if (new URL(route.request().url()).pathname === '/api/meta/areas') {
+  const pathname = new URL(route.request().url()).pathname;
+  if (pathname === '/api/meta/areas') {
     await fulfillJson(
       route,
       Array.from(Array<number>(24).keys(), (index) => ({
@@ -1653,7 +1654,110 @@ async function serveLongSidebarApi(route: Route): Promise<void> {
     );
     return;
   }
+  if (pathname === '/api/favorites/folders') {
+    await fulfillJson(
+      route,
+      Array.from({ length: 24 }, (_, index) => ({
+        id: index + 4,
+        name: `Folder ${index + 1}`,
+        is_tracking: index === 0,
+        article_count: 1,
+        created_at: 1,
+      })),
+    );
+    return;
+  }
+  if (pathname === '/api/weekly-updates/summary') {
+    await fulfillJson(route, {
+      generated_at: '2026-07-17T09:00:00Z',
+      window_start: '2026-07-10T00:00:00Z',
+      window_end: '2026-07-17T23:59:59Z',
+      databases: [
+        {
+          db_name: 'fixture.sqlite',
+          run_id: 'weekly-fixture-run',
+          generated_at: '2026-07-17T09:00:00Z',
+          new_article_count: 48,
+          journals: Array.from({ length: 24 }, (_, index) => ({
+            journal_id: index === 0 ? 'fixture-journal' : `fixture-journal-${index + 1}`,
+            journal_title: `Journal ${index + 1}`,
+            new_article_count: 2,
+          })),
+        },
+      ],
+    });
+    return;
+  }
   await serveTrackingApi(route);
+}
+
+/**
+ * Keep branding, navigation, and controls stationary while long sidebar lists scroll.
+ *
+ * @param page - Production workspace page backed by local API fixtures.
+ * @param href - Workspace URL.
+ * @param openLabel - Accessible mobile sidebar trigger label.
+ * @param lastLabel - Last list entry expected after scrolling to the bottom.
+ */
+async function fixedWorkspaceSidebarTest(
+  page: Page,
+  href: string,
+  openLabel: string,
+  lastLabel: string,
+): Promise<void> {
+  await page.route('**/api/**', serveLongSidebarApi);
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(href);
+    await hideDevelopmentIndicator(page);
+    if (width < 768) await page.getByRole('button', { name: openLabel, exact: true }).click();
+    const sidebar = page.locator('aside:visible');
+    const list = sidebar.locator('[data-slot="sidebar-scroll-region"]');
+    const lastEntry = list.getByText(lastLabel, { exact: true });
+    await expect(lastEntry).toBeAttached();
+    const navigation = sidebar.getByRole('navigation', { name: '页面导航' });
+    const links = navigation.getByRole('link');
+    await expect(links).toHaveText(['检索', '收藏', '周报', '征稿']);
+    const linkBoxes = await links.evaluateAll((elements) =>
+      elements.map((element) => {
+        const { x, y, width } = element.getBoundingClientRect();
+        return { x, y, width };
+      }),
+    );
+    for (const box of linkBoxes) {
+      expect(Math.abs(box.y - linkBoxes[0].y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(box.width - linkBoxes[0].width)).toBeLessThanOrEqual(1);
+    }
+    const header = sidebar.locator(':scope > div').first();
+    const headerBefore = await header.boundingBox();
+    const results = page.locator('#results-scroll-container');
+    const resultsScroll = await results.evaluate((element) => element.scrollTop);
+    const listBefore = await list.boundingBox();
+    expect(listBefore!.width).toBeGreaterThan(270);
+    await list.hover();
+    await page.mouse.wheel(0, 3000);
+    await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect(lastEntry).toBeInViewport();
+    await expect(navigation).toBeInViewport();
+    const headerAfter = await header.boundingBox();
+    expect(Math.abs(headerAfter!.y - headerBefore!.y)).toBeLessThanOrEqual(1);
+    expect(await results.evaluate((element) => element.scrollTop)).toBe(resultsScroll);
+    expect(await sidebar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: test.info().outputPath(`sidebar-${width}.png`) });
+  }
+}
+
+for (const [workspace, href, openLabel, lastLabel] of [
+  ['search', '/', '打开筛选器', 'field_24'],
+  ['favorites', '/?view=favorites', '打开收藏夹', 'Folder 24'],
+  ['weekly', '/?view=weekly-updates', '打开期刊筛选', 'Journal 24'],
+]) {
+  test(`keeps ${workspace} navigation fixed while its sidebar list scrolls`, async ({ page }) => {
+    await fixedWorkspaceSidebarTest(page, href, openLabel, lastLabel);
+  });
 }
 
 /** Serve distinct rating groups and their filtered article membership for browser interactions. */
@@ -1752,7 +1856,7 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
   await trigger.click();
   const drawer = page.getByRole('dialog', { name: '筛选器' });
   await expect(drawer.getByText('field_24', { exact: true })).toBeAttached();
-  const scrollContainer = drawer.locator('aside > div').first();
+  const scrollContainer = drawer.locator('[data-slot="sidebar-scroll-region"]');
   const lastSection = drawer.getByText('暂无可用发表年份');
   await expect(lastSection).not.toBeInViewport();
   await page.screenshot({ path: '../output/ui/mobile-sidebar-top.png', animations: 'disabled' });
@@ -1763,6 +1867,7 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
     .poll(() => scrollContainer.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
   await expect(lastSection).toBeInViewport();
+  await expect(drawer.getByRole('navigation', { name: '页面导航' })).toBeInViewport();
   await expect(drawer.getByRole('button', { name: '关闭', exact: true })).toHaveCount(0);
   await page.screenshot({ path: '../output/ui/mobile-sidebar-bottom.png', animations: 'disabled' });
 
@@ -1793,12 +1898,15 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
       await touchSession.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     }
     const initialScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
-    await swipeSidebar(120, 500);
+    const scrollBox = await scrollContainer.boundingBox();
+    const swipeStart = scrollBox!.y + 30;
+    const swipeDistance = scrollBox!.height - 60;
+    await swipeSidebar(swipeStart, swipeDistance);
     await expect
       .poll(() => scrollContainer.evaluate((element) => element.scrollTop))
       .toBeLessThan(initialScrollTop);
     const upperScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
-    await swipeSidebar(640, -400);
+    await swipeSidebar(swipeStart + swipeDistance, -swipeDistance);
     await expect
       .poll(() => scrollContainer.evaluate((element) => element.scrollTop))
       .toBeGreaterThan(upperScrollTop);
@@ -2071,13 +2179,13 @@ async function cfpTrackingPageTest({ page }: { page: Page }): Promise<void> {
   const navigation = page.getByRole('navigation', { name: '页面导航' });
   await expect(navigation.getByRole('link')).toHaveCount(4);
   const searchBox = await navigation.getByRole('link', { name: '文献检索' }).boundingBox();
-  const cfpBox = await navigation.getByRole('link', { name: '征稿追踪' }).boundingBox();
+  const cfpBox = await navigation.getByRole('link', { name: '征稿', exact: true }).boundingBox();
   expect(searchBox).not.toBeNull();
   expect(cfpBox).not.toBeNull();
   expect(Math.abs(cfpBox!.width - searchBox!.width)).toBeLessThan(1);
-  expect(Math.abs(cfpBox!.x - searchBox!.x)).toBeLessThan(1);
-  expect(cfpBox!.y).toBeGreaterThanOrEqual(searchBox!.y + searchBox!.height);
-  await expect(navigation.getByRole('link', { name: '征稿追踪' })).toHaveAttribute(
+  expect(Math.abs(cfpBox!.y - searchBox!.y)).toBeLessThan(1);
+  expect(cfpBox!.x).toBeGreaterThan(searchBox!.x + searchBox!.width);
+  await expect(navigation.getByRole('link', { name: '征稿', exact: true })).toHaveAttribute(
     'aria-current',
     'page',
   );
@@ -2168,7 +2276,7 @@ async function cfpTrackingPageTest({ page }: { page: Page }): Promise<void> {
   await page.screenshot({ path: '../output/ui/cfp-tracking-mobile.png', fullPage: true });
   await page.getByRole('button', { name: '打开征稿筛选' }).click();
   const dialog = page.getByRole('dialog', { name: '征稿筛选' });
-  await expect(dialog.getByRole('link', { name: '征稿追踪' })).toHaveAttribute(
+  await expect(dialog.getByRole('link', { name: '征稿', exact: true })).toHaveAttribute(
     'aria-current',
     'page',
   );
