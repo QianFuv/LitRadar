@@ -65,6 +65,7 @@ jobs:
               - "compose.production.yaml"
               - "app/**"
               - "scripts/container-smoke.mjs"
+              - "scripts/build-simple-tokenizer.mjs"
               - ".github/workflows/docker.yaml"
             backend_workflow:
               - ".config/nextest.toml"

@@ -12,6 +12,7 @@ pub mod index_maintenance;
 pub mod index_schema;
 pub mod meta;
 pub mod migrations;
+pub mod search_text;
 pub mod secrets;
 pub mod sqlite;
 pub mod weekly_manifest;

@@ -62,7 +62,7 @@ the original-HTML JavaScript protocol and a real PDF extraction inside the
 unprivileged, read-only service container; it also checks default private-network
 denial. A loopback exception is confined to that disposable test invocation.
 
-运行层安装 CA 证书、`curl` 和非 root 账户所需的最小系统包，随后切换到固定 UID/GID `10001:10001`。当前二进制新建内容 schema v8，并在 rollout 窗口内读写精确 v6/v7/v8；三者都使用 SQLite 内建 `unicode61`，镜像不复制或加载历史 `simple` 原生扩展。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
+运行层安装 CA 证书、`curl` 和非 root 账户所需的最小系统包，随后切换到固定 UID/GID `10001:10001`。当前二进制新建内容 schema v9，并在 rollout 窗口内读写精确 v6/v7/v8/v9；旧 v6/v7/v8 仍使用 SQLite 内建 `unicode61`，v9 使用固定打包的 `simple 0` 分词库并禁用拼音别名。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
 
 release profile 没有设置 LTO、codegen unit 或 `panic = "abort"`，保留 Cargo 默认 codegen/链接并使用 unwind，使现有任务监管和清理路径不因发布优化而改变。T22 实测的 Thin LTO + 单 codegen unit 冷容器构建在 30 分钟硬上限内没有产出镜像，因此被拒绝；不能仅凭理论体积收益接受不可执行的构建成本，也不能牺牲进程树、任务取消或容器 smoke 门禁。当前只保留 symbol stripping，最终时长和体积证据记录在同任务验证结果中。
 
@@ -165,7 +165,7 @@ Scholarly 增量使用成功期次 anchor 年份的 1 月 1 日作为日期下�
 
 CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
 
-当前 v6/v7/v8 备份与恢复验证不依赖平台原生 tokenizer。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前内容库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向生产镜像临时复制 DLL/SO 绕过版本边界。
+旧 v6/v7/v8 备份与恢复验证不依赖平台原生 tokenizer；v9 验证会按固定打包路径注册 simple，以读取其 FTS 表。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前内容库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向生产镜像临时复制 DLL/SO 绕过版本边界。
 
 ## 数据和秘密
 
@@ -489,7 +489,7 @@ MCP 端点内置于统一应用的 `/mcp`，不需要单独服务：
 
 ## 离线索引存储优化
 
-`admin index optimize-storage` 会整目录重建 `data/index`，必须在停机窗口运行。普通容器启动只 preflight 精确 v6/v7/v8，不会自动改写现有 v6/v7 文件。不支持 v8 的旧镜像不能打开优化后的文件；生产降级必须先恢复优化前已验证、包含索引且受目标镜像支持的 v6/v7 备份。
+`admin index optimize-storage` 会整目录重建 `data/index`，必须在停机窗口运行。普通容器启动只 preflight 精确 v6/v7/v8/v9，不会自动改写现有 v6/v7/v8 文件。不支持 v9 的旧镜像不能打开优化后的文件；生产降级必须先恢复优化前已验证、包含索引且受目标镜像支持的旧版备份。
 
 先停止服务和所有一次性 `index`/投递容器，等待 API/worker/调度心跳超过 90 秒；若任务被强制终止，还要等待最长 300 秒的 batch/catalog lease 过期。创建和验证的备份必须通过独立 `/backups` bind mount 保存：
 
@@ -503,14 +503,14 @@ docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:rw" \
   litradar admin backup create \
     --project-root /app \
-    --output /backups/litradar-before-index-v8 \
+    --output /backups/litradar-before-index-v9 \
     --include-indexes \
     --include-push-state
 
 docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:ro" \
   litradar admin backup verify \
-    --backup /backups/litradar-before-index-v8
+    --backup /backups/litradar-before-index-v9
 ```
 
 在宿主机统计 `data/index/*.sqlite` 总字节数，并用 `df -B1 data` 确认可用空间至少为 `2 × source_bytes + 64 MiB`。保留备份目录为只读，然后运行当前镜像中的维护命令：
@@ -523,7 +523,7 @@ docker compose run --rm --no-deps \
     --confirm-index-maintenance
 ```
 
-保存完整 stdout JSON 和容器日志。成功必须返回 `status=optimized`（空目录为 `noop`），并核对 `source_bytes`、`temporary_bytes_required`、`optimized_bytes`、`reclaimed_bytes`，以及每库 v8、`has_content_shadow=false`、freelist 不超过 1%、FTS 分配和权威行计数。失败若返回 `error.recovery_paths`，不要删除 marker、staging 或 rollback，也不要启动服务；保留这些精确路径、日志和已验证备份处理恢复。
+保存完整 stdout JSON 和容器日志。成功必须返回 `status=optimized`（空目录为 `noop`），并核对 `source_bytes`、`temporary_bytes_required`、`optimized_bytes`、`reclaimed_bytes`，以及每库 v9、`has_content_shadow=false`、freelist 不超过 1%、FTS 分配和权威行计数。失败若返回 `error.recovery_paths`，不要删除 marker、staging 或 rollback，也不要启动服务；保留这些精确路径、日志和已验证备份处理恢复。
 
 成功退出后启动同一镜像并做 smoke：
 
@@ -555,8 +555,12 @@ curl --fail http://localhost:8000/openapi.json
 
 ### 历史 `simple` tokenizer 索引
 
-当前 v6/v7/v8 内容库的 `article_search` 固定使用内建 `unicode61`；v7/v8 另外固定使用 `content=''` 和 `contentless_delete=1`。生产镜像故意不包含 `libsimple.so`，查询连接也不会按固定路径加载扩展。若恢复数据仍声明 `tokenize='simple'`，先停止服务并按数据库版本执行受支持的迁移或重建；迁移后必须复核 schema 版本和 FTS 定义，再运行只读完整性与查询检查。不要把复制历史扩展进容器当作修复，固定路径上偶然存在或损坏的原生文件不得影响合法 v6/v7/v8 查询。
+当前 v6/v7/v8/v9 内容库的 `article_search` 固定使用内建 `unicode61`；v7/v8 另外固定使用 `content=''` 和 `contentless_delete=1`。生产镜像故意不包含 `libsimple.so`，查询连接也不会按固定路径加载扩展。若恢复数据仍声明 `tokenize='simple'`，先停止服务并按数据库版本执行受支持的迁移或重建；迁移后必须复核 schema 版本和 FTS 定义，再运行只读完整性与查询检查。不要把复制历史扩展进容器当作修复，固定路径上偶然存在或损坏的原生文件不得影响合法 v6/v7/v8/v9 查询。
 
 ### 通知没有结果
 
 检查 `.changes.json`、用户偏好、AI/PushPlus 凭据，以及认证库中的 `delivery_runs`、`delivery_run_items`、`delivery_dedupe` 和 `delivery_leases`。不要通过修改旧状态 JSON 来清除 busy/unknown；详见[通知与追踪](../guides/notifications.md)。
+
+### Native Chinese search runtime
+
+The image builds the pinned `simple` SQLite extension for its target architecture, installs it at `/usr/lib/litradar/libsimple.so`, and includes `libstdc++6` and the selected MIT notice. No Jieba dictionaries or query expansion are enabled. New v9 indexes declare `simple 0`; old supported indexes continue using unicode61 until explicit offline optimization. The container smoke test creates a legacy index, runs the image's offline migration, and checks authenticated Chinese, Latin and no-pinyin queries before accepting the image. See [tokenizer provenance](../../libs/simple/README.md).

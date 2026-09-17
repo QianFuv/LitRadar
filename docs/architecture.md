@@ -138,7 +138,7 @@ freeze ordered CSV selection -> validate catalog contracts
         |
         +-- catalog stem -> runtime index_provider_routes -> registered IndexContentProvider
         |
-        +-- data/index/<stem>.sqlite         (content v8; v6/v7 compatible)
+        +-- data/index/<stem>.sqlite         (content v9; v6/v7/v8 compatible)
         +-- data/index-control/<stem>.sqlite (disposable control v4)
                     |
                     v
@@ -166,7 +166,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 
 ### 索引数据库
 
-每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v8 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v8 沿用 v7 的 contentless FTS 布局，仅删除与 outbox 主键重复的索引；运行时仍支持精确 v6/v7 内容库。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
+每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v9 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v9 沿用 contentless FTS 布局，使用关闭拼音的 `simple 0` 分词；检索仍走全字段 FTS MATCH，并仅在检索投影和查询参数上规范化拉丁重音及大小写，原始元数据保持不变。运行时仍支持精确 v6/v7/v8 内容库，其 unicode61 索引只在显式离线维护时升级。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
 
 `data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v2；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v4 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent、typed notify handoff/Unknown acknowledgement 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。v1 active Notifying 行迁移为保守 Unknown，不丢弃 manifest。删除全部控制状态后没有可信 batch、成功边界、handoff 或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章；operator 也同时承担失去待完成 handoff 证明的风险。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](reference/database.md)。
 

@@ -1,26 +1,26 @@
-# Historical SQLite `simple` tokenizer assets
+# SQLite simple tokenizer
 
-This directory retains the previously bundled SQLite FTS5 `simple` extension artifacts and their license boundary for historical reproduction. They are not dependencies of the current LitRadar content schema or runtime.
+Content schema v9 uses FTS5 `tokenize = 'simple 0'`. Chinese text is indexed as character sequences, so ordinary phrase MATCH can find a short phrase inside a longer title or abstract. The `0` explicitly disables pinyin aliases, including initials. LitRadar never invokes `simple_query()` or `jieba_query()` and does not install Jieba dictionaries.
 
-## Retained files
+Search still uses parameterized, table-wide `article_search MATCH ?`; simple/advanced query modes, filters, ordering and pagination are unchanged. Search-only Unicode normalization preserves covered Latin accent/case behavior and punctuation word boundaries. Advanced query operands are normalized without changing FTS operators or column names. Native simple segmentation may split alphanumeric terms differently from unicode61; migration validates the new search contract rather than requiring all old result sets to be identical. Canonical article text and identifiers are not normalized or rewritten.
 
-| Platform    | Historical extension                                               |
-| ----------- | ------------------------------------------------------------------ |
-| Windows x64 | `libs/simple-windows/libsimple-windows-x64/simple.dll`             |
-| Linux       | `libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so`     |
+## Native builds and locations
 
-The platform directories also retain the dictionaries used by those artifacts.
+- Windows x64 development uses `libs/simple-windows/libsimple-windows-x64/simple.dll` (SHA256 `89cd063db0c01ba97bb78f61fb500488b8c14f7cd162962a728dc20836ef0108`).
+- Linux development and CI run `node scripts/build-simple-tokenizer.mjs`, producing `target/simple-tokenizer/libsimple.so`. CMake and a C++14 compiler are required.
+- Docker builds the library for its actual amd64/arm64 target and installs `/usr/lib/litradar/libsimple.so` plus the C++ runtime.
+- Packaged native executables may carry the matching library beside the executable. Only fixed executable/package/build locations are searched; database contents and the configured data directory cannot select an extension.
 
-## Current runtime boundary
+Linux source is pinned to upstream commit `45db071ba8043ffe8a2e5dfe41f9d68fb477576c`, with source archive SHA256 `d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61`. Builds set `SIMPLE_WITH_JIEBA=OFF`, `BUILD_SQLITE3=OFF`, `BUILD_TEST_EXAMPLE=OFF` and `BUILD_STATIC=OFF`. The bundled pinyin resource remains part of upstream's library but is not used by `simple 0`.
 
-Supported content schemas v6, v7, and v8 define `article_search` with SQLite's built-in `unicode61` tokenizer. Index creation, migration validation, REST/MCP queries, and the production container do not load or require these native assets. Merely placing a DLL or shared object at a historical fixed path must not change current database behavior.
+## Existing databases
 
-Any future importer for a database that actually declares `tokenize='simple'` must detect that schema explicitly and isolate the compatibility operation from current query connections. It must not restore path-based auto-loading for every database.
+Exact v6/v7/v8 content schemas retain `unicode61` and remain readable without the native extension. Startup does not silently rebuild them. To enable Chinese matching in an existing database, stop writers and run the documented offline `admin index optimize-storage --confirm-index-maintenance` operation. It streams canonical rows into a v9 candidate and validates identities before replacement. Backups and old binaries must be paired with the corresponding old index files for rollback.
 
-LitRadar does not add pinyin query expansion to the current `unicode61` search path.
+Missing or incompatible native code is an explicit error for v9; there is no fallback to unicode61. SQLite extension loading is enabled only while registering the trusted library, then disabled again.
 
-## Upstream and license
+## License
 
-The retained extension came from [wangfenjin/simple](https://github.com/wangfenjin/simple), which supports Chinese and pinyin tokenization. Upstream uses the `MIT OR GPL-3.0-or-later` dual license; the retained project artifacts use the MIT option.
+Upstream: https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c
 
-The upstream license is available at [LICENSE](https://github.com/wangfenjin/simple/blob/master/LICENSE).
+LitRadar selects the MIT option from upstream's MIT OR GPL-3.0-or-later licensing. Copyright and permission text are distributed in `third-party/Simple-LICENSE.txt`.

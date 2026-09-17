@@ -831,7 +831,8 @@ fn weekly_timestamp_days_ago(days: u64) -> String {
 }
 
 fn insert_additional_weekly_articles(path: &Path) {
-    let connection = Connection::open(path).expect("index database should open");
+    let connection =
+        litradar_storage::open_sqlite_connection(path).expect("index database should open");
     connection
         .execute_batch(
             r#"

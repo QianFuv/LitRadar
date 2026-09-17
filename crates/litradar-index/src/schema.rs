@@ -34,6 +34,7 @@ use litradar_storage::index_schema::{
     validate_index_schema_structure, IndexSchemaError, INDEX_CONTENT_TABLES_SQL,
     MIN_SUPPORTED_INDEX_SCHEMA_VERSION as MIN_SUPPORTED_CONTENT_SCHEMA_VERSION,
 };
+use litradar_storage::search_text::{prepare_search_text, uses_simple_search};
 
 /// Provider-neutral content database initialization or write failure.
 #[derive(Debug)]
@@ -203,6 +204,7 @@ pub fn optimize_content_db(connection: &Connection) -> Result<(), ContentDatabas
 ///
 /// Success only for an empty database or an exact current schema.
 pub fn init_content_db(connection: &Connection) -> Result<(), ContentDatabaseError> {
+    litradar_storage::sqlite::load_index_tokenizer(connection)?;
     configure_content_connection(connection)?;
     let version = connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
     let object_count = content_schema_object_count(connection)?;
@@ -215,6 +217,7 @@ pub fn init_content_db(connection: &Connection) -> Result<(), ContentDatabaseErr
         });
     }
 
+    litradar_storage::sqlite::load_simple_tokenizer(connection)?;
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     transaction.execute_batch(INDEX_CONTENT_TABLES_SQL)?;
     transaction.pragma_update(None, "user_version", CONTENT_SCHEMA_VERSION)?;
@@ -697,6 +700,7 @@ fn upsert_canonical_journal_with_statements(
 
 struct CanonicalContentWriter<'connection> {
     connection: &'connection Connection,
+    uses_simple_search: bool,
     should_record_change_events: bool,
     observed_issue_ids: BTreeSet<i64>,
     journal_projection: CachedStatement<'connection>,
@@ -722,6 +726,7 @@ impl<'connection> CanonicalContentWriter<'connection> {
     ) -> Result<Self, ContentDatabaseError> {
         Ok(Self {
             connection,
+            uses_simple_search: uses_simple_search(connection)?,
             should_record_change_events,
             observed_issue_ids: BTreeSet::new(),
             journal_projection: connection.prepare_cached(JOURNAL_PROJECTION_SQL)?,
@@ -1176,12 +1181,21 @@ impl<'connection> CanonicalContentWriter<'connection> {
             .join("; ");
         self.search_insert.execute(params![
             article_id,
-            article.title,
-            article.abstract_text.as_deref().unwrap_or_default(),
-            article.doi.as_deref().unwrap_or_default(),
-            article.pmid.as_deref().unwrap_or_default(),
-            authors,
-            catalog.title,
+            prepare_search_text(&article.title, self.uses_simple_search),
+            prepare_search_text(
+                article.abstract_text.as_deref().unwrap_or_default(),
+                self.uses_simple_search
+            ),
+            prepare_search_text(
+                article.doi.as_deref().unwrap_or_default(),
+                self.uses_simple_search
+            ),
+            prepare_search_text(
+                article.pmid.as_deref().unwrap_or_default(),
+                self.uses_simple_search
+            ),
+            prepare_search_text(&authors, self.uses_simple_search),
+            prepare_search_text(&catalog.title, self.uses_simple_search),
         ])?;
         Ok(())
     }
@@ -1267,16 +1281,17 @@ fn refresh_journal_projections(
                  rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
              ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
+        let uses_simple = uses_simple_search(connection)?;
         for (article_id, title, abstract_text, doi, pmid, authors) in projections {
             search_delete.execute([article_id])?;
             search_insert.execute(params![
                 article_id,
-                title,
-                abstract_text,
-                doi,
-                pmid,
-                authors,
-                catalog.title,
+                prepare_search_text(&title, uses_simple),
+                prepare_search_text(abstract_text.as_deref().unwrap_or_default(), uses_simple),
+                prepare_search_text(doi.as_deref().unwrap_or_default(), uses_simple),
+                prepare_search_text(pmid.as_deref().unwrap_or_default(), uses_simple),
+                prepare_search_text(&authors, uses_simple),
+                prepare_search_text(&catalog.title, uses_simple),
             ])?;
         }
     }
@@ -1606,6 +1621,11 @@ mod tests {
         expected_count: i64,
     ) {
         let journal_query = format!("journal_title:\"{}\"", catalog.title.replace('"', "\"\""));
+        let journal_query = litradar_storage::search_text::prepare_search_query(
+            &journal_query,
+            litradar_storage::search_text::uses_simple_search(connection).unwrap(),
+            litradar_domain::ArticleSearchMode::Advanced,
+        );
         let counts = connection
             .query_row(
                 "SELECT
@@ -1712,12 +1732,57 @@ mod tests {
     }
 
     #[test]
+    fn simple_projection_matches_chinese_and_latin_without_changing_source_text() {
+        let connection = Connection::open_in_memory().unwrap();
+        init_content_db(&connection).unwrap();
+        let mut incoming = batch();
+        let title = "Café 科技金融如何赋能企业新质生产力";
+        incoming.articles[0].title = title.to_string();
+        incoming.articles[0].abstract_text =
+            Some("Résumé 气候风险如何重塑企业地理格局".to_string());
+        write_test_batch(&connection, &catalog(), &incoming, "simple-regression");
+        let (article_id, stored_title, stored_abstract): (i64, String, String) = connection
+            .query_row(
+                "SELECT article_id,title,abstract_text FROM articles WHERE title=?1",
+                [title],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(stored_title, title);
+        assert_eq!(
+            stored_abstract,
+            incoming.articles[0].abstract_text.as_deref().unwrap()
+        );
+        for (query, expected) in [
+            ("科技金融", 1),
+            ("赋能企业新质生产力", 1),
+            ("气候风险", 1),
+            ("cafe", 1),
+            ("resume", 1),
+            ("ke ji jin rong", 0),
+            ("ke", 0),
+            ("k", 0),
+        ] {
+            let matches: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM article_search WHERE rowid=?1 AND article_search MATCH ?2",
+                rusqlite::params![article_id, format!("\"{query}\"")],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(matches, expected, "query: {query}");
+        }
+    }
+
+    #[test]
     fn version_seven_content_schema_remains_runtime_readable_and_writable() {
         let connection = Connection::open_in_memory().expect("database should open");
         init_content_db(&connection).expect("current content schema should initialize");
         connection
             .execute_batch(
-                "CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
+                "DROP TABLE article_search;
+                 CREATE VIRTUAL TABLE article_search USING fts5(
+                     article_id UNINDEXED,title,abstract_text,doi,pmid,authors,journal_title,
+                     content='',contentless_delete=1,tokenize='unicode61 remove_diacritics 2');
+                 CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
                  PRAGMA user_version = 7;",
             )
             .expect("version seven index inventory should install");

@@ -14,7 +14,6 @@ use litradar_storage::{
     admin_create_invite_code, count_users, list_all_users, migrate_storage, set_user_admin,
     SecretCodec, StorageConfig,
 };
-use rusqlite::Connection;
 use serde_json::Value;
 use tempfile::{tempdir, TempDir};
 use tower::ServiceExt;
@@ -202,7 +201,7 @@ impl TestBackend {
     /// Fixture identity containing separate journal grades and equal-date article rows.
     pub(crate) fn create_rated_index_database(&self, db_name: &str) -> FixtureIndexDatabase {
         let database = self.create_index_database(db_name);
-        let connection = Connection::open(&database.path).unwrap();
+        let connection = litradar_storage::open_sqlite_connection(&database.path).unwrap();
         connection.execute_batch(
             "UPDATE journals SET utd_rating='UTD24',abs_rating='4*',fms_rating='A',fmscn_rating='T1' WHERE journal_id=101;
              INSERT INTO journals (journal_id,catalog_id,title,title_aliases_json,issns_json,area,abs_rating,fms_rating,fmscn_rating) VALUES
@@ -405,7 +404,7 @@ fn create_fixture_index_database(path: &Path) {
         fs::create_dir_all(parent).expect("index db parent should be created");
     }
     litradar_storage::migrate_index_database(path).expect("fixture index schema should migrate");
-    let connection = Connection::open(path).expect("index db should open");
+    let connection = litradar_storage::open_sqlite_connection(path).expect("index db should open");
     connection
         .execute_batch(
             r#"
@@ -462,4 +461,6 @@ fn create_fixture_index_database(path: &Path) {
             "#,
         )
         .expect("fixture index schema and data should be created");
+    litradar_storage::search_text::rebuild_article_search(&connection)
+        .expect("fixture search projection should normalize");
 }

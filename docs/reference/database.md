@@ -21,7 +21,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 | 数据库             | `PRAGMA user_version` | 升级策略                                              |
 | ------------------ | --------------------: | ----------------------------------------------------- |
 | 认证/业务库        |                    17 | 版本化 migration                                      |
-| 内容索引库         |                     8 | 新建精确 v8；运行时读写精确 v6/v7/v8；精确 v4/v5 原子迁移到 v8 |
+| 内容索引库         |                     9 | 新建精确 v9；运行时读写精确 v6/v7/v8/v9；精确 v4/v5 原子迁移到 v9 |
 | 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建 |
 | catalog 索引控制库 |                     4 | v0/v1/v2/v3 安全事务迁移；可删除后按 v4 重建          |
 
@@ -45,12 +45,12 @@ core 仍以内容事务和控制事务确认进度。工作集超前一页时重
 
 - 不存在的新文件；
 - 没有任何 schema object 的空 v0 SQLite；
-- 表、列、索引和 `user_version` 精确匹配的 v4 或 v5，随后在一个事务内迁移到 v8；
-- 表、列、索引和 `user_version` 精确匹配的 v6、v7 或 v8。
+- 表、列、索引和 `user_version` 精确匹配的 v4 或 v5，随后在一个事务内迁移到 v9；
+- 表、列、索引和 `user_version` 精确匹配的 v6、v7、v8 或 v9。
 
-非空 v0 以及 v1–v3 返回 `IndexRebuildRequired`，文件保持字节不变。未来版本也在业务访问前拒绝。v4 会先新增期刊身份键，再与 v5 一样迁移到 v8。迁移保留期刊、期次、文章、投影、outbox、身份键和稳定 ID；唯一有意丢弃的是旧 `articles.retraction_doi`，因为旧适配器无法区分真正撤稿与通用 Crossref relation。不要手工修改 `user_version` 或拼接表结构。
+非空 v0 以及 v1–v3 返回 `IndexRebuildRequired`，文件保持字节不变。未来版本也在业务访问前拒绝。v4 会先新增期刊身份键，再与 v5 一样迁移到 v9。迁移保留期刊、期次、文章、投影、outbox、身份键和稳定 ID；唯一有意丢弃的是旧 `articles.retraction_doi`，因为旧适配器无法区分真正撤稿与通用 Crossref relation。不要手工修改 `user_version` 或拼接表结构。
 
-普通服务启动和业务访问对精确 v6/v7/v8 只做只读 schema preflight，不会在启动时改写现有 v6/v7 文件。新建内容库使用 v8；现有 v6/v7 只有在停机并显式运行 `litradar admin index optimize-storage --confirm-index-maintenance` 时才重建为 v8。该离线命令的门禁和恢复路径见 [CLI 参考](cli.md#索引存储优化)。
+普通服务启动和业务访问对精确 v6/v7/v8/v9 只做只读 schema preflight，不会在启动时改写现有旧版文件。新建内容库使用 v9；现有 v6/v7/v8 只有在停机并显式运行 `litradar admin index optimize-storage --confirm-index-maintenance` 时才重建为 v9。该离线命令的门禁和恢复路径见 [CLI 参考](cli.md#索引存储优化)。
 
 处理步骤：
 
@@ -59,9 +59,9 @@ core 仍以内容事务和控制事务确认进度。工作集超前一页时重
 3. 按错误信息移动或删除那个确切的 `data/index/*.sqlite` 文件；系统不会代为删除。
 4. 用当前维护目录重新运行 `litradar index`。
 
-旧 v1–v3 文章 ID、收藏和 tracking 引用不会迁移或重映射；精确 v4/v5 到 v8 的迁移不重映射这些 ID。
+旧 v1–v3 文章 ID、收藏和 tracking 引用不会迁移或重映射；精确 v4/v5 到 v9 的迁移不重映射这些 ID。
 
-## v6/v7/v8 内容索引库
+## v6/v7/v8/v9 内容索引库
 
 ### 关系
 
@@ -170,9 +170,9 @@ contentless_delete = 1,
 tokenize = 'unicode61 remove_diacritics 2'
 ```
 
-v7/v8 不创建 `article_search_content`，详情和列表字段继续以 `articles`、`journals` 和 `article_listing` 为权威来源；全文查询只依赖 FTS `rowid`/`MATCH` 结果，因此短语、布尔、否定、前缀和列限定语义不变。三种版本都不依赖外部 `simple` tokenizer。
+v7/v8 不创建 `article_search_content`，详情和列表字段继续以 `articles`、`journals` 和 `article_listing` 为权威来源；全文查询只依赖 FTS `rowid`/`MATCH` 结果，因此短语、布尔、否定、前缀和列限定语义不变。这三种旧版本不依赖外部 `simple` tokenizer。v9 保留 contentless 布局，但使用 `tokenize = 'simple 0'`，明确禁用拼音别名。检索投影和查询操作数使用一致的重音、大小写及标点边界规范化；规范标题、摘要和身份不变。
 
-内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7 的只读 preflight 保留原文件和历史索引；显式迁移或离线优化才升级到 v8。当前 DDL、版本和公共结构验证统一由 `litradar-storage::index_schema` 提供。
+内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7 的只读 preflight 保留原文件和历史索引；显式迁移或离线优化才升级到当前 v9。当前 DDL、版本和公共结构验证统一由 `litradar-storage::index_schema` 提供。
 
 当前二进制读写精确 v6/v7/v8；不支持 v8 的旧二进制不能打开新库。需要降级时必须停机并恢复优化前已验证、且受目标二进制支持的 v6/v7 备份；不得降低 `user_version`、直接复制 v8 文件给旧二进制或手工重建影子表。
 
@@ -298,7 +298,7 @@ v11 升级保留旧 ID、code、创建者、首位使用者和使用时间；已
 
 创建 tracking folder、切换 tracking folder、单条幂等收藏以及批量添加/删除/移动都使用 `BEGIN IMMEDIATE`。重复收藏由 `ON CONFLICT DO NOTHING RETURNING id` 与精确既有行查询返回真实 ID；批量中途失败会整体回滚。动态 favorite `IN` 查询每块最多 500 个 ID。
 
-v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4/v5 到 v8 的迁移保留 ID。无法解析的旧引用由运维人员或用户清理。
+v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4/v5 到 v9 的迁移保留 ID。无法解析的旧引用由运维人员或用户清理。
 
 ### 用户通知配置
 

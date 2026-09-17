@@ -1386,6 +1386,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
+ "unicode-normalization",
  "url",
  "zeroize",
 ]

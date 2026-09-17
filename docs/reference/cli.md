@@ -432,3 +432,7 @@ litradar openapi [--output PATH]
 - 错误写入 stderr，并以非零状态退出。
 - 不支持的位置参数或未知选项会 fail loud，不会静默忽略。
 - 密文和密码不会出现在结构化输出。
+
+### Search tokenizer upgrade
+
+Content schema v9 uses `simple 0` with no pinyin aliases or expansion. Existing v6/v7/v8 indexes remain readable as unicode61 until explicitly converted. With all service/index writers stopped and a verified recovery copy available, run `litradar admin index optimize-storage --confirm-index-maintenance --project-root PATH` to stream canonical records into the current schema. This preserves source titles, abstracts, IDs, listing and outbox records; only the search projection and storage layout change. Review reported disk requirements before running. Pair old binaries with retained old index files when rolling back.

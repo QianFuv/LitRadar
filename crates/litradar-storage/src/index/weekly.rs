@@ -390,13 +390,18 @@ fn fetch_weekly_article_page(
     connection: &Connection,
     params: &WeeklyArticlePageParams,
 ) -> Result<WeeklyArticlePage, IndexRepositoryError> {
+    let uses_simple = crate::search_text::uses_simple_search(connection)?;
+    let query = params.q.as_deref().map(|query| {
+        crate::search_text::prepare_search_query(query, uses_simple, ArticleSearchMode::Simple)
+            .into_owned()
+    });
     let mut clauses = vec!["l.journal_id = ?".to_string()];
     let mut values = vec![SqlValue::Integer(params.journal_id)];
     push_fts_filter(
         &mut clauses,
         &mut values,
         "l.article_id",
-        &params.q,
+        &query,
         ArticleSearchMode::Simple,
     );
     push_cursor_filter(

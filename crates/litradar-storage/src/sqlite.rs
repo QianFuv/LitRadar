@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, LoadExtensionGuard, OpenFlags};
 
 /// Result of a best-effort SQLite WAL sidecar cleanup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +31,7 @@ pub enum SqliteSidecarCleanup {
 pub fn open_sqlite_connection(path: impl AsRef<Path>) -> rusqlite::Result<Connection> {
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(30))?;
+    load_index_tokenizer(&connection)?;
     connection.execute_batch(
         "
         PRAGMA foreign_keys = ON;
@@ -39,6 +40,72 @@ pub fn open_sqlite_connection(path: impl AsRef<Path>) -> rusqlite::Result<Connec
         ",
     )?;
     Ok(connection)
+}
+
+/// Register the required tokenizer only when this connection owns a simple search table.
+///
+/// Inspecting sqlite_schema does not initialize the virtual table and does not confuse
+/// auth/control database version numbers with content database versions.
+pub fn load_index_tokenizer(connection: &Connection) -> rusqlite::Result<()> {
+    if crate::search_text::uses_simple_search(connection)? {
+        load_simple_tokenizer(connection)?;
+    }
+    Ok(())
+}
+
+/// Load the packaged simple extension before creating or opening a v9 search table.
+///
+/// Only fixed package/development locations are eligible; the selected database and project
+/// data path cannot provide executable extensions. Loading is disabled again by the guard.
+pub fn load_simple_tokenizer(connection: &Connection) -> rusqlite::Result<()> {
+    let is_loaded = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_function_list WHERE name='simple_highlight')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if is_loaded {
+        return Ok(());
+    }
+    let library_name = if cfg!(windows) {
+        "simple.dll"
+    } else if cfg!(target_os = "macos") {
+        "libsimple.dylib"
+    } else {
+        "libsimple.so"
+    };
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut candidates = Vec::new();
+    if cfg!(target_os = "linux") {
+        candidates.push(PathBuf::from("/usr/lib/litradar/libsimple.so"));
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            candidates.push(directory.join(library_name));
+        }
+    }
+    candidates.push(workspace.join("target/simple-tokenizer").join(library_name));
+    if cfg!(all(windows, target_arch = "x86_64")) {
+        candidates.push(workspace.join("libs/simple-windows/libsimple-windows-x64/simple.dll"));
+    }
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        candidates
+            .push(workspace.join("libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so"));
+    }
+    let path = candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                Some(
+                    "required simple tokenizer is unavailable; build or package the native library"
+                        .to_string(),
+                ),
+            )
+        })?;
+    let _guard = unsafe { LoadExtensionGuard::new(connection)? };
+    unsafe { connection.load_extension(path, Some("sqlite3_simple_init")) }?;
+    Ok(())
 }
 
 /// Ask SQLite to checkpoint and remove idle WAL sidecars without deleting active state.
@@ -97,8 +164,33 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::{
-        cleanup_sqlite_sidecars, open_sqlite_connection, sqlite_sidecar_paths, SqliteSidecarCleanup,
+        cleanup_sqlite_sidecars, load_index_tokenizer, open_sqlite_connection,
+        sqlite_sidecar_paths, SqliteSidecarCleanup,
     };
+
+    #[test]
+    fn old_content_and_auth_versions_do_not_register_native_search_functions() {
+        for version in [6, 7, 8, 9] {
+            let connection = rusqlite::Connection::open_in_memory().unwrap();
+            connection
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+            if version < 9 {
+                connection.execute_batch(
+                    "CREATE VIRTUAL TABLE article_search USING fts5(title,tokenize='unicode61 remove_diacritics 2')"
+                ).unwrap();
+            }
+            load_index_tokenizer(&connection).unwrap();
+            let native_functions: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_function_list WHERE name='simple_highlight'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(native_functions, 0);
+        }
+    }
 
     #[test]
     fn opens_connection_and_executes_queries() {

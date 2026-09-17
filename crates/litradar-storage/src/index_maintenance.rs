@@ -8,12 +8,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::article_authors::decode_article_author_names;
 use crate::backup::{has_recent_service_heartbeat, ACTIVE_HEARTBEAT_MAX_AGE_SECONDS};
 use crate::migrations::{
     migrate_index_database, preflight_index_database, INDEX_SCHEMA_VERSION,
@@ -921,6 +920,7 @@ fn build_staged_database(
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI,
     )?;
     connection.busy_timeout(Duration::from_secs(BUSY_TIMEOUT_SECONDS))?;
+    crate::sqlite::load_index_tokenizer(&connection)?;
     connection.execute_batch(
         "PRAGMA foreign_keys = ON;
          PRAGMA journal_mode = OFF;
@@ -942,47 +942,7 @@ fn build_staged_database(
             columns = table.columns,
         ))?;
     }
-    {
-        let mut rows_statement = transaction.prepare(
-            "SELECT
-                 articles.article_id,
-                 articles.title,
-                 articles.abstract_text,
-                 articles.doi,
-                 articles.pmid,
-                 articles.authors_json,
-                 journals.title
-             FROM source.articles AS articles
-             JOIN source.journals AS journals
-               ON journals.journal_id = articles.journal_id
-             ORDER BY articles.article_id",
-        )?;
-        let mut rows = rows_statement.query([])?;
-        let mut insert = transaction.prepare(
-            "INSERT INTO main.article_search (
-                 rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
-             ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        )?;
-        while let Some(row) = rows.next()? {
-            let article_id = row.get::<_, i64>(0)?;
-            let authors_json = row.get::<_, String>(5)?;
-            let authors = decode_article_author_names(&authors_json)
-                .map_err(|_| IndexStorageOptimizationError::Validation {
-                    database: source.name.clone(),
-                    check: "canonical author JSON decoding".to_string(),
-                })?
-                .join("; ");
-            insert.execute(params![
-                article_id,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                authors,
-                row.get::<_, String>(6)?,
-            ])?;
-        }
-    }
+    crate::search_text::rebuild_article_search(&transaction)?;
     transaction.commit()?;
     connection.execute_batch("DETACH DATABASE source")?;
     for (_, sql) in indexes {
@@ -1097,9 +1057,9 @@ fn validate_rebuilt_database(
     let source_connection = open_read_only(&source.path)?;
     let candidate_connection = open_read_only(candidate_path)?;
     for query in SEARCH_CORPUS {
-        if search_result_digest(&source_connection, query)?
-            != search_result_digest(&candidate_connection, query)?
-        {
+        let before_results = search_result_digest(&source_connection, query)?;
+        let after_results = search_result_digest(&candidate_connection, query)?;
+        if source.schema_version == INDEX_SCHEMA_VERSION && before_results != after_results {
             return Err(IndexStorageOptimizationError::Validation {
                 database: source.name.clone(),
                 check: "deterministic FTS result equivalence".to_string(),
@@ -1223,12 +1183,17 @@ fn search_result_digest(
     connection: &Connection,
     query: &str,
 ) -> Result<(u64, [u8; 32]), IndexStorageOptimizationError> {
+    let query = crate::search_text::prepare_search_query(
+        query,
+        crate::search_text::uses_simple_search(connection)?,
+        litradar_domain::ArticleSearchMode::Advanced,
+    );
     let mut statement = connection.prepare(
         "SELECT rowid FROM article_search
          WHERE article_search MATCH ?1
          ORDER BY rowid",
     )?;
-    let mut rows = statement.query([query])?;
+    let mut rows = statement.query([query.as_ref()])?;
     let mut count = 0_u64;
     let mut digest = Sha256::new();
     while let Some(row) = rows.next()? {
@@ -1398,6 +1363,7 @@ fn open_read_only(path: &Path) -> Result<Connection, IndexStorageOptimizationErr
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
     )?;
     connection.busy_timeout(Duration::from_secs(BUSY_TIMEOUT_SECONDS))?;
+    crate::sqlite::load_index_tokenizer(&connection)?;
     connection.execute_batch("PRAGMA temp_store = FILE")?;
     Ok(connection)
 }

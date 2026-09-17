@@ -1042,6 +1042,7 @@ fn backup_sqlite_database(source: &Path, destination: &Path) -> Result<(), Backu
             None,
         )?;
         drop(backup);
+        crate::sqlite::load_index_tokenizer(&destination_connection)?;
         destination_connection.execute_batch("PRAGMA journal_mode = DELETE;")?;
     }
     remove_sqlite_sidecars(destination)?;
@@ -1080,6 +1081,7 @@ fn open_read_only_connection(path: &Path) -> Result<Connection, BackupError> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     connection.busy_timeout(Duration::from_secs(30))?;
+    crate::sqlite::load_index_tokenizer(&connection)?;
     Ok(connection)
 }
 

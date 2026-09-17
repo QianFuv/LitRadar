@@ -43,3 +43,11 @@ their license notices are preserved under obscura-dependencies/vendor/.
 
 Poppler's pdftotext and its libraries are installed from Debian packages. Their
 copyright and license notices remain under /usr/share/doc in the image.
+
+SQLite simple tokenizer
+-----------------------
+Source: https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c
+Source archive SHA256: d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61
+License: MIT (selected from the upstream MIT OR GPL-3.0-or-later options).
+Copyright and permission text: Simple-LICENSE.txt.
+Linux builds disable Jieba. LitRadar uses simple 0, with no pinyin aliases or query expansion.

@@ -24,7 +24,7 @@ struct StorageMeasurement {
 }
 
 fn measure_database(path: &Path) -> StorageMeasurement {
-    let connection = Connection::open(path).expect("measurement database should open");
+    let connection = open_fixture_connection(path).expect("measurement database should open");
     let page_size = connection
         .query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
         .expect("page size should read");
@@ -173,6 +173,73 @@ fn confirmed_optimizer_rebuilds_v6_from_canonical_rows_and_is_repeatable_on_curr
 }
 
 #[test]
+fn optimizer_restores_chinese_matches_without_pinyin_and_preserves_canonical_text() {
+    let root = tempdir().unwrap();
+    let config = StorageConfig::from_project_root(root.path());
+    fs::create_dir_all(config.index_dir()).unwrap();
+    let path = config.index_dir().join("fixture.sqlite");
+    migrate_index_database(&path).unwrap();
+    let connection = open_fixture_connection(&path).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE article_search;
+         CREATE VIRTUAL TABLE article_search USING fts5(
+             article_id UNINDEXED,title,abstract_text,doi,pmid,authors,journal_title,
+             content='',contentless_delete=1,tokenize='unicode61 remove_diacritics 2');
+         PRAGMA user_version=8;
+         INSERT INTO journals(journal_id,catalog_id,title,title_aliases_json,issns_json)
+             VALUES(1,'fixture','Fixture','[]','[]');
+         INSERT INTO journal_identity_keys VALUES('catalog_id','fixture','fixture');
+         INSERT INTO articles(article_id,journal_id,title,abstract_text,authors_json,date)
+             VALUES(1,1,'科技金融如何赋能企业新质生产力','Café résumé Genome-sequencing methods genome preview2','[]','2026-09-16'),
+                   (2,1,'免签政策与外商直接投资','气候风险如何重塑企业地理格局','[]','2026-09-15');
+         INSERT INTO article_listing(article_id,journal_id,date)
+             SELECT article_id,journal_id,date FROM articles;",
+        )
+        .unwrap();
+    litradar_storage::search_text::rebuild_article_search(&connection).unwrap();
+    let old_matches: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM article_search WHERE article_search MATCH '科技金融'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(old_matches, 0);
+    drop(connection);
+    let canonical_before = canonical_snapshot(&path);
+    optimize_index_storage(&IndexStorageOptimizationOptions {
+        storage_config: config,
+        confirmed: true,
+    })
+    .unwrap();
+    assert_eq!(canonical_snapshot(&path), canonical_before);
+    let connection = open_fixture_connection(&path).unwrap();
+    for (query, expected) in [
+        ("科技金融", 1),
+        ("赋能企业新质生产力", 1),
+        ("免签政策", 1),
+        ("气候风险", 1),
+        ("cafe", 1),
+        ("Genome sequencing", 1),
+        ("resume", 1),
+        ("ke ji jin rong", 0),
+        ("ke", 0),
+        ("k", 0),
+    ] {
+        let matches: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM article_search WHERE article_search MATCH ?1",
+                [format!("\"{query}\"")],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(matches, expected, "query: {query}");
+    }
+    assert_eq!(user_version(&path), INDEX_SCHEMA_VERSION);
+}
+
+#[test]
 fn optimizer_confirmation_noop_and_unsupported_schema_gates_precede_source_mutation() {
     let root = tempdir().expect("temporary root should create");
     let config = StorageConfig::from_project_root(root.path());
@@ -194,7 +261,7 @@ fn optimizer_confirmation_noop_and_unsupported_schema_gates_precede_source_mutat
 
     fs::create_dir_all(config.index_dir()).expect("index directory should create");
     let unsupported_path = config.index_dir().join("unsupported.sqlite");
-    let connection = Connection::open(&unsupported_path).expect("fixture should open");
+    let connection = open_fixture_connection(&unsupported_path).expect("fixture should open");
     connection
         .pragma_update(None, "user_version", INDEX_SCHEMA_VERSION + 1)
         .expect("fixture version should write");
@@ -253,7 +320,7 @@ fn optimizer_refuses_recent_heartbeats_and_unexpired_index_leases() {
     let lease_index = lease_config.index_dir().join("fixture.sqlite");
     create_version_six_fixture(&lease_index);
     fs::create_dir_all(lease_config.index_control_dir()).expect("control directory should create");
-    let control = Connection::open(
+    let control = open_fixture_connection(
         lease_config
             .index_control_dir()
             .join("index-batches.sqlite"),
@@ -289,7 +356,7 @@ fn optimizer_refuses_recent_heartbeats_and_unexpired_index_leases() {
     );
     assert_no_maintenance_artifacts(lease_root.path());
 
-    let control = Connection::open(
+    let control = open_fixture_connection(
         lease_config
             .index_control_dir()
             .join("index-batches.sqlite"),
@@ -519,7 +586,12 @@ fn search_snapshot(path: &Path) -> Vec<Vec<i64>> {
     ]
     .into_iter()
     .map(|query| {
-        let connection = Connection::open(path).expect("database should open for search");
+        let connection = open_fixture_connection(path).expect("database should open for search");
+        let query = litradar_storage::search_text::prepare_search_query(
+            query,
+            litradar_storage::search_text::uses_simple_search(&connection).unwrap(),
+            litradar_domain::ArticleSearchMode::Advanced,
+        );
         let mut statement = connection
             .prepare(
                 "SELECT rowid FROM article_search
@@ -528,7 +600,7 @@ fn search_snapshot(path: &Path) -> Vec<Vec<i64>> {
             )
             .expect("search query should prepare");
         statement
-            .query_map([query], |row| row.get::<_, i64>(0))
+            .query_map([query.as_ref()], |row| row.get::<_, i64>(0))
             .expect("search rows should query")
             .collect::<rusqlite::Result<Vec<_>>>()
             .expect("search rows should collect")
@@ -537,7 +609,7 @@ fn search_snapshot(path: &Path) -> Vec<Vec<i64>> {
 }
 
 fn query_text_rows(path: &Path, query: &str) -> Vec<String> {
-    let connection = Connection::open(path).expect("database should open for snapshot");
+    let connection = open_fixture_connection(path).expect("database should open for snapshot");
     let mut statement = connection
         .prepare(query)
         .expect("snapshot query should prepare");
@@ -549,7 +621,7 @@ fn query_text_rows(path: &Path, query: &str) -> Vec<String> {
 }
 
 fn user_version(path: &Path) -> i64 {
-    Connection::open(path)
+    open_fixture_connection(path)
         .expect("database should open for version")
         .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
         .expect("schema version should read")
@@ -572,4 +644,11 @@ fn assert_no_maintenance_artifacts(project_root: &Path) {
     ] {
         assert!(!project_root.join("data").join(name).exists(), "{name}");
     }
+}
+
+/// Open test databases with connection-local registration for an existing simple FTS table.
+fn open_fixture_connection(path: impl AsRef<std::path::Path>) -> rusqlite::Result<Connection> {
+    let connection = Connection::open(path)?;
+    litradar_storage::sqlite::load_index_tokenizer(&connection)?;
+    Ok(connection)
 }

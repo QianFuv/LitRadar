@@ -98,12 +98,29 @@ RUN --mount=type=cache,id=litradar-obscura-registry,target=/usr/local/cargo/regi
         -exec cp --parents --target-directory=/obscura/licenses {} +
 
 
+FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS simple-tokenizer-build
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends cmake g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+ADD --checksum=sha256:d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61 \
+    https://codeload.github.com/wangfenjin/simple/tar.gz/45db071ba8043ffe8a2e5dfe41f9d68fb477576c /tmp/simple.tar.gz
+
+RUN mkdir /simple \
+    && tar -xzf /tmp/simple.tar.gz -C /simple --strip-components=1 \
+    && cmake -S /simple -B /simple/build -DCMAKE_BUILD_TYPE=Release \
+        -DSIMPLE_WITH_JIEBA=OFF -DBUILD_SQLITE3=OFF -DBUILD_TEST_EXAMPLE=OFF \
+        -DBUILD_STATIC=OFF -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/simple/output \
+    && cmake --build /simple/build --target simple --parallel 2
+
+
 FROM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd AS runtime-base
 
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl libgcc-s1 passwd poppler-data poppler-utils \
+    && apt-get install --yes --no-install-recommends ca-certificates curl libgcc-s1 libstdc++6 passwd poppler-data poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 litradar \
     && useradd --uid 10001 --gid litradar --no-create-home --home-dir /app --shell /usr/sbin/nologin litradar \
@@ -111,6 +128,7 @@ RUN apt-get update \
     && chown -R litradar:litradar /app
 
 COPY --from=obscura-build /usr/local/bin/obscura /usr/local/bin/obscura
+COPY --from=simple-tokenizer-build /simple/output/libsimple.so /usr/lib/litradar/libsimple.so
 
 COPY third-party /usr/share/doc/litradar/third-party
 COPY --from=obscura-build /obscura/licenses /usr/share/doc/litradar/third-party/obscura-dependencies

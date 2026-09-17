@@ -7,7 +7,7 @@ use std::fmt;
 use rusqlite::Connection;
 
 /// Current provider-neutral content database schema version.
-pub const INDEX_SCHEMA_VERSION: i64 = 8;
+pub const INDEX_SCHEMA_VERSION: i64 = 9;
 
 /// Oldest content database schema accepted without an explicit migration.
 pub const MIN_SUPPORTED_INDEX_SCHEMA_VERSION: i64 = 6;
@@ -18,6 +18,9 @@ const VERSION_SIX_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingft
 const VERSION_SEVEN_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
     article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
     content='',contentless_delete=1,tokenize='unicode61remove_diacritics2')";
+const VERSION_NINE_SEARCH_SCHEMA: &str = "createvirtualtablearticle_searchusingfts5(\
+    article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title,\
+    content='',contentless_delete=1,tokenize='simple0')";
 
 /// Current content tables, projections, and required indexes for a new database.
 pub const INDEX_CONTENT_TABLES_SQL: &str = "
@@ -119,7 +122,7 @@ pub const INDEX_CONTENT_TABLES_SQL: &str = "
         journal_title,
         content = '',
         contentless_delete = 1,
-        tokenize = 'unicode61 remove_diacritics 2'
+        tokenize = 'simple 0'
     );
 
     CREATE TABLE article_change_events (
@@ -207,6 +210,7 @@ pub fn validate_index_schema_structure(
     connection: &Connection,
     version: i64,
 ) -> Result<(), IndexSchemaError> {
+    crate::sqlite::load_index_tokenizer(connection)?;
     if !(4..=INDEX_SCHEMA_VERSION).contains(&version) {
         return Err(IndexSchemaError::InvalidStructure(format!(
             "unsupported content schema version {version}"
@@ -438,9 +442,8 @@ fn validate_search_storage(connection: &Connection, version: i64) -> Result<(), 
     )?;
     let is_valid_storage = match version {
         4..=6 => has_content_shadow && compact_sql == VERSION_SIX_SEARCH_SCHEMA,
-        7..=INDEX_SCHEMA_VERSION => {
-            !has_content_shadow && compact_sql == VERSION_SEVEN_SEARCH_SCHEMA
-        }
+        7..=8 => !has_content_shadow && compact_sql == VERSION_SEVEN_SEARCH_SCHEMA,
+        9 => !has_content_shadow && compact_sql == VERSION_NINE_SEARCH_SCHEMA,
         _ => false,
     };
     if !is_valid_storage {

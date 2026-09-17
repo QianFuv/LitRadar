@@ -86,7 +86,7 @@ fn version_seventeen_removes_duplicate_indexes_and_preserves_unique_constraints(
     let path = directory.path().join("auth.sqlite");
     initialize_auth_version_seventeen_fixture(&path)
         .expect("current auth schema should initialize");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     connection
         .execute_batch(
             r#"CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
@@ -135,7 +135,7 @@ fn version_seventeen_removes_duplicate_indexes_and_preserves_unique_constraints(
         ),
         notification_before
     );
-    let connection = Connection::open(&path).expect("migrated auth database should open");
+    let connection = open_fixture_connection(&path).expect("migrated auth database should open");
     let invite_error = connection
         .execute(
             "INSERT INTO invite_codes (code, created_at, expires_at, max_uses, use_count)
@@ -163,7 +163,7 @@ fn favorite_cursor_migration_preserves_version_fifteen_rows_and_is_idempotent() 
     let directory = tempdir().expect("temporary database should exist");
     let path = directory.path().join("auth.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("fixture schema should initialize");
-    let connection = Connection::open(&path).expect("database should open");
+    let connection = open_fixture_connection(&path).expect("database should open");
     connection.execute_batch(
         "DROP INDEX idx_favorites_cursor; PRAGMA user_version = 15; \
          INSERT INTO users (id, username, password_hash, salt, created_at, updated_at) VALUES (1, 'cursor-owner', 'hash', 'salt', 1, 1); \
@@ -195,7 +195,7 @@ fn token_generation_migration_preserves_version_fourteen_users() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("token-generation-v14.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     connection
         .execute_batch(
             "INSERT INTO users (
@@ -210,7 +210,7 @@ fn token_generation_migration_preserves_version_fourteen_users() {
     migrate_auth_database(&path).expect("version fourteen auth database should migrate");
 
     assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
-    let row = Connection::open(&path)
+    let row = open_fixture_connection(&path)
         .expect("migrated auth database should open")
         .query_row(
             "SELECT username, password_hash, salt, is_admin, created_at, updated_at,
@@ -250,7 +250,7 @@ fn cnki_generation_migration_preserves_version_twelve_session() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("cnki-v12.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     connection
         .execute_batch(
             r#"
@@ -275,7 +275,7 @@ fn cnki_generation_migration_preserves_version_twelve_session() {
 
     assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
     assert!(table_columns(&path, "cnki_sessions").contains(&"generation".to_string()));
-    let row = Connection::open(&path)
+    let row = open_fixture_connection(&path)
         .expect("migrated auth database should open")
         .query_row(
             "SELECT session_json, qr_uuid, status, created_at, updated_at, last_used_at, generation
@@ -314,7 +314,7 @@ fn notification_json_migration_preserves_valid_version_thirteen_rows_and_guards_
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("notification-v13.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     connection
         .execute_batch(
             r#"
@@ -337,7 +337,7 @@ fn notification_json_migration_preserves_valid_version_thirteen_rows_and_guards_
     migrate_auth_database(&path).expect("version thirteen notification state should migrate");
 
     assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
-    let connection = Connection::open(&path).expect("migrated database should open");
+    let connection = open_fixture_connection(&path).expect("migrated database should open");
     let row = connection
         .query_row(
             "SELECT id, keywords, directions, selected_databases, delivery_method,
@@ -404,7 +404,7 @@ fn notification_json_migration_rejects_corrupt_version_thirteen_rows_atomically(
             .path()
             .join(format!("notification-corrupt-{fixture_index}.sqlite"));
         migrate_auth_database(&path).expect("current auth database should migrate");
-        let connection = Connection::open(&path).expect("auth database should open");
+        let connection = open_fixture_connection(&path).expect("auth database should open");
         connection
             .execute_batch(
                 "INSERT INTO users (
@@ -438,7 +438,7 @@ fn notification_json_migration_rejects_corrupt_version_thirteen_rows_atomically(
         assert_eq!(user_version(&path), 13);
         assert!(table_exists(&path, "notification_settings"));
         assert!(!table_exists(&path, "notification_settings_v14"));
-        let preserved: String = Connection::open(&path)
+        let preserved: String = open_fixture_connection(&path)
             .expect("failed migration database should reopen")
             .query_row(
                 &format!("SELECT {column} FROM notification_settings WHERE id = 7"),
@@ -456,7 +456,7 @@ fn invite_lifecycle_migration_preserves_legacy_rows_and_redemption_history() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("invite-lifecycle-v11.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     replace_invite_lifecycle_with_version_eleven(&connection);
     connection
         .execute_batch(
@@ -479,7 +479,7 @@ fn invite_lifecycle_migration_preserves_legacy_rows_and_redemption_history() {
     migrate_auth_database(&path).expect("version eleven invite state should migrate");
 
     assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
-    let connection = Connection::open(&path).expect("migrated database should open");
+    let connection = open_fixture_connection(&path).expect("migrated database should open");
     let rows = connection
         .prepare(
             "SELECT id, use_count, max_uses, revoked_at IS NOT NULL, expires_at > created_at
@@ -531,7 +531,7 @@ fn invite_lifecycle_migration_failure_rolls_back_legacy_schema_and_rows() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("invite-lifecycle-v11-conflict.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     replace_invite_lifecycle_with_version_eleven(&connection);
     connection
         .execute_batch(
@@ -571,7 +571,7 @@ fn favorite_tracking_migration_keeps_the_lowest_legacy_folder_per_user() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("favorite-tracking-v10.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     connection
         .execute_batch(
             "DROP INDEX idx_folders_one_tracking_per_user;
@@ -596,7 +596,7 @@ fn favorite_tracking_migration_keeps_the_lowest_legacy_folder_per_user() {
 
     assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
     assert!(index_exists(&path, "idx_folders_one_tracking_per_user"));
-    let connection = Connection::open(&path).expect("migrated database should open");
+    let connection = open_fixture_connection(&path).expect("migrated database should open");
     let tracked = connection
         .prepare("SELECT user_id, id FROM folders WHERE is_tracking = 1 ORDER BY user_id")
         .expect("tracking query should prepare")
@@ -617,7 +617,7 @@ fn favorite_tracking_migration_failure_rolls_back_normalization() {
         .path()
         .join("favorite-tracking-v10-conflict.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     connection
         .execute_batch(
             "DROP INDEX idx_folders_one_tracking_per_user;
@@ -638,7 +638,8 @@ fn favorite_tracking_migration_failure_rolls_back_normalization() {
     migrate_auth_database(&path).expect_err("conflicting favorite index should fail migration");
 
     assert_eq!(user_version(&path), 10);
-    let connection = Connection::open(&path).expect("failed migration database should reopen");
+    let connection =
+        open_fixture_connection(&path).expect("failed migration database should reopen");
     let tracked_count = connection
         .query_row(
             "SELECT COUNT(*) FROM folders WHERE user_id = 1 AND is_tracking = 1",
@@ -655,7 +656,7 @@ fn delivery_migration_upgrades_version_nine_without_changing_audit_rows() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("delivery-v9.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     connection
         .execute(
             "INSERT INTO security_audit_events
@@ -674,7 +675,7 @@ fn delivery_migration_upgrades_version_nine_without_changing_audit_rows() {
 
     assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
     assert!(table_exists(&path, "delivery_runs"));
-    let connection = Connection::open(&path).expect("migrated database should open");
+    let connection = open_fixture_connection(&path).expect("migrated database should open");
     let audit_row: (i64, String, String, f64) = connection
         .query_row(
             "SELECT actor_id, action, outcome, occurred_at
@@ -694,7 +695,7 @@ fn delivery_migration_failure_keeps_version_nine_state() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("delivery-v9-conflict.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_delivery_schema(&connection);
     connection
         .execute_batch(
@@ -709,7 +710,7 @@ fn delivery_migration_failure_keeps_version_nine_state() {
 
     assert_eq!(user_version(&path), 9);
     assert_eq!(table_columns(&path, "delivery_runs"), ["sentinel"]);
-    let sentinel: String = Connection::open(&path)
+    let sentinel: String = open_fixture_connection(&path)
         .expect("failed migration database should reopen")
         .query_row("SELECT sentinel FROM delivery_runs", [], |row| row.get(0))
         .expect("preexisting sentinel should remain");
@@ -725,7 +726,7 @@ fn delivery_schema_rejects_incomplete_owner_and_terminal_state() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("delivery-checks.sqlite");
     migrate_auth_database(&path).expect("auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
 
     connection
         .execute(
@@ -781,7 +782,7 @@ fn security_audit_migration_upgrades_version_eight_with_append_only_indexes() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("audit-v8.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch("PRAGMA user_version = 8;")
@@ -821,7 +822,7 @@ fn security_audit_migration_upgrades_version_eight_with_append_only_indexes() {
         "trigger",
         "security_audit_events_no_update"
     ));
-    let connection = Connection::open(&path).expect("migrated audit database should open");
+    let connection = open_fixture_connection(&path).expect("migrated audit database should open");
     connection
         .execute(
             "INSERT INTO security_audit_events (action, outcome, occurred_at) VALUES ('login', 'completed', 1.0)",
@@ -847,7 +848,7 @@ fn security_audit_migration_failure_keeps_version_eight_state() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("audit-v8-conflict.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
@@ -862,7 +863,7 @@ fn security_audit_migration_failure_keeps_version_eight_state() {
 
     assert_eq!(user_version(&path), 8);
     assert_eq!(table_columns(&path, "security_audit_events"), ["sentinel"]);
-    let sentinel: String = Connection::open(&path)
+    let sentinel: String = open_fixture_connection(&path)
         .expect("failed migration database should reopen")
         .query_row("SELECT sentinel FROM security_audit_events", [], |row| {
             row.get(0)
@@ -877,7 +878,7 @@ fn managed_meta_migration_preserves_version_five_rows() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("version-five-auth.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
@@ -897,7 +898,7 @@ fn managed_meta_migration_preserves_version_five_rows() {
 
     migrate_auth_database(&path).expect("version five database should migrate");
 
-    let connection = Connection::open(&path).expect("migrated database should open");
+    let connection = open_fixture_connection(&path).expect("migrated database should open");
     let username: String = connection
         .query_row("SELECT username FROM users WHERE id = 71", [], |row| {
             row.get(0)
@@ -917,7 +918,7 @@ fn provider_order_migration_prefers_abstract_and_preserves_empty_fulltext() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("provider-orders.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
@@ -958,7 +959,7 @@ fn provider_order_migration_uses_detail_when_abstract_is_absent() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("detail-fallback.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
@@ -985,7 +986,7 @@ fn malformed_provider_order_rolls_back_version_six_migration() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("invalid-provider-orders.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
@@ -1017,7 +1018,7 @@ fn provider_runtime_name_migration_rewrites_cnki_and_zjlib_tokens() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("provider-name-rewrite.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
@@ -1076,7 +1077,7 @@ fn provider_runtime_name_migration_materializes_implicit_legacy_defaults() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("provider-implicit-defaults.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .pragma_update(None, "user_version", 7)
@@ -1110,7 +1111,7 @@ fn provider_runtime_name_migration_materializes_only_missing_defaults() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("provider-partial-defaults.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
@@ -1155,7 +1156,7 @@ fn malformed_provider_runtime_name_migration_rolls_back_materialized_defaults() 
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("provider-invalid-v8.sqlite");
     migrate_auth_database(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
@@ -1186,7 +1187,7 @@ fn service_heartbeat_migration_preserves_version_three_scheduler_rows() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("auth.sqlite");
     initialize_auth_version_seventeen_fixture(&path).expect("current auth database should migrate");
-    let connection = Connection::open(&path).expect("auth database should open");
+    let connection = open_fixture_connection(&path).expect("auth database should open");
     remove_current_security_audit_schema(&connection);
     connection
         .execute_batch(
@@ -1203,7 +1204,7 @@ fn service_heartbeat_migration_preserves_version_three_scheduler_rows() {
 
     assert_eq!(user_version(&path), AUTH_SCHEMA_VERSION);
     assert!(table_exists(&path, "service_heartbeats"));
-    let worker_count: i64 = Connection::open(&path)
+    let worker_count: i64 = open_fixture_connection(&path)
         .expect("migrated database should open")
         .query_row(
             "SELECT COUNT(*) FROM scheduler_workers WHERE worker_id = 'worker-v3'",
@@ -1218,7 +1219,7 @@ fn service_heartbeat_migration_preserves_version_three_scheduler_rows() {
 fn cancellation_status_migration_preserves_version_four_runs() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("version-four-auth.sqlite");
-    let connection = Connection::open(&path).expect("version four database should open");
+    let connection = open_fixture_connection(&path).expect("version four database should open");
     create_version_one_auth_prerequisites(&connection);
     connection
         .execute_batch(
@@ -1270,7 +1271,7 @@ fn cancellation_status_migration_preserves_version_four_runs() {
     complete_favorite_schema_fixture(&path);
     migrate_auth_database(&path).expect("version four database should migrate");
 
-    let connection = Connection::open(&path).expect("migrated database should open");
+    let connection = open_fixture_connection(&path).expect("migrated database should open");
     let rows = connection
         .prepare(
             "SELECT id, task_id, task_name, scheduled_for, status, worker_id,
@@ -1355,7 +1356,7 @@ fn cancellation_status_migration_preserves_version_four_runs() {
 fn scheduler_migration_disables_and_preserves_legacy_commands() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("auth.sqlite");
-    let connection = Connection::open(&path).expect("version one database should open");
+    let connection = open_fixture_connection(&path).expect("version one database should open");
     create_version_one_auth_prerequisites(&connection);
     connection
         .execute_batch(
@@ -1395,7 +1396,7 @@ fn scheduler_migration_disables_and_preserves_legacy_commands() {
     complete_favorite_schema_fixture(&path);
     migrate_auth_database(&path).expect("version one database should migrate");
 
-    let connection = Connection::open(&path).expect("migrated database should open");
+    let connection = open_fixture_connection(&path).expect("migrated database should open");
     let task: (Option<String>, Option<String>, i64, Option<f64>, String) = connection
         .query_row(
             "SELECT job_spec, legacy_command, enabled, last_run_at, last_status
@@ -1430,7 +1431,7 @@ fn scheduler_migration_disables_and_preserves_legacy_commands() {
 fn scheduler_durable_migration_preserves_tasks_and_adds_safe_defaults() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("auth.sqlite");
-    let connection = Connection::open(&path).expect("version two database should open");
+    let connection = open_fixture_connection(&path).expect("version two database should open");
     create_version_one_auth_prerequisites(&connection);
     connection
         .execute_batch(
@@ -1471,7 +1472,7 @@ fn scheduler_durable_migration_preserves_tasks_and_adds_safe_defaults() {
     complete_favorite_schema_fixture(&path);
     migrate_auth_database(&path).expect("version two database should migrate");
 
-    let connection = Connection::open(&path).expect("migrated database should open");
+    let connection = open_fixture_connection(&path).expect("migrated database should open");
     let defaults: (String, i64, i64) = connection
         .query_row(
             "SELECT timezone, timeout_seconds, coalesce FROM scheduled_tasks WHERE id = 12",
@@ -1504,7 +1505,7 @@ fn scheduler_durable_migration_preserves_tasks_and_adds_safe_defaults() {
 fn legacy_auth_database_migration_preserves_rows_and_adds_columns() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("auth.sqlite");
-    let connection = Connection::open(&path).expect("legacy auth database should open");
+    let connection = open_fixture_connection(&path).expect("legacy auth database should open");
     connection
         .execute_batch(
             "
@@ -1560,7 +1561,7 @@ fn legacy_auth_database_migration_preserves_rows_and_adds_columns() {
 
     migrate_auth_database(&path).expect("legacy auth database should migrate");
 
-    let connection = Connection::open(&path).expect("migrated auth database should open");
+    let connection = open_fixture_connection(&path).expect("migrated auth database should open");
     let user: (String, String, i64) = connection
         .query_row(
             "SELECT username, password_hash, is_admin FROM users WHERE id = 7",
@@ -1808,7 +1809,12 @@ fn version_six_preflight_is_read_only_and_explicit_migration_builds_current_sche
 #[test]
 fn index_preflight_rejects_search_storage_that_mismatches_declared_version() {
     let temp_dir = tempdir().expect("temp directory should be created");
-    let search_schema = |options: &str| {
+    let search_schema = |options: &str, version: i64| {
+        let tokenizer = if version >= 9 {
+            "simple 0"
+        } else {
+            "unicode61 remove_diacritics 2"
+        };
         format!(
             "DROP TABLE article_search;
              CREATE VIRTUAL TABLE article_search
@@ -1821,7 +1827,7 @@ fn index_preflight_rejects_search_storage_that_mismatches_declared_version() {
                  authors,
                  journal_title,
                  {options}
-                 tokenize = 'unicode61 remove_diacritics 2'
+                 tokenize = '{tokenizer}'
              );"
         )
     };
@@ -1841,9 +1847,9 @@ fn index_preflight_rejects_search_storage_that_mismatches_declared_version() {
         ] {
             let path = temp_dir.path().join(format!("v{version}-{case}.sqlite"));
             migrate_index_database(&path).expect("current index should initialize");
-            let connection = Connection::open(&path).expect("index should open");
+            let connection = open_fixture_connection(&path).expect("index should open");
             connection
-                .execute_batch(&search_schema(expected_options))
+                .execute_batch(&search_schema(expected_options, version))
                 .expect("declared search storage should install");
             if version < 8 {
                 connection
@@ -1868,9 +1874,9 @@ fn index_preflight_rejects_search_storage_that_mismatches_declared_version() {
                 valid_bytes
             );
 
-            let connection = Connection::open(&path).expect("validated index should open");
+            let connection = open_fixture_connection(&path).expect("validated index should open");
             connection
-                .execute_batch(&search_schema(&invalid_options))
+                .execute_batch(&search_schema(&invalid_options, version))
                 .expect("invalid FTS storage or options should install");
             drop(connection);
             let invalid_bytes = fs::read(&path).expect("invalid fixture bytes should read");
@@ -1890,20 +1896,23 @@ fn index_preflight_rejects_search_storage_that_mismatches_declared_version() {
 }
 
 #[test]
-fn version_seven_preflight_is_read_only_and_migration_only_removes_redundant_index() {
+fn version_seven_preflight_is_read_only_and_explicit_migration_preserves_content() {
     let directory = tempdir().expect("temporary directory should exist");
     let path = directory.path().join("version-seven.sqlite");
     create_version_six_index_database(&path);
     migrate_index_database(&path).expect("content fixture should migrate");
-    let connection = Connection::open(&path).expect("content database should open");
+    let connection = open_fixture_connection(&path).expect("content database should open");
     connection
         .execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
+            "DROP TABLE article_search;
+             CREATE VIRTUAL TABLE article_search USING fts5(article_id UNINDEXED,title,abstract_text,doi,pmid,authors,journal_title,content='',contentless_delete=1,tokenize='unicode61 remove_diacritics 2');
+             CREATE INDEX IF NOT EXISTS idx_article_change_events_order ON article_change_events(event_id);
              PRAGMA user_version = 7;
              PRAGMA wal_checkpoint(TRUNCATE);
              PRAGMA journal_mode = DELETE;",
         )
         .expect("version seven fixture should initialize");
+    litradar_storage::search_text::rebuild_article_search(&connection).unwrap();
     drop(connection);
     let content_before = index_content_snapshot(&path);
     let search_before = index_search_snapshot(&path);
@@ -1926,7 +1935,7 @@ fn version_seven_preflight_is_read_only_and_migration_only_removes_redundant_ind
     assert_eq!(index_content_snapshot(&path), content_before);
     assert_eq!(index_search_snapshot(&path), search_before);
     assert!(!table_exists(&path, "article_search_content"));
-    let query_plan = Connection::open(&path)
+    let query_plan = open_fixture_connection(&path)
         .expect("migrated content should open")
         .query_row(
             "EXPLAIN QUERY PLAN
@@ -1953,7 +1962,7 @@ fn index_preflight_enforces_versioned_index_inventory_without_modifying_invalid_
     ] {
         let path = directory.path().join(format!("{name}.sqlite"));
         migrate_index_database(&path).expect("current schema should initialize");
-        let connection = Connection::open(&path).expect("fixture should open");
+        let connection = open_fixture_connection(&path).expect("fixture should open");
         connection
             .execute_batch(mutation)
             .expect("fixture mutation should succeed");
@@ -1990,7 +1999,7 @@ fn version_four_identity_conflict_rolls_back_atomically() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("conflicting-version-four.sqlite");
     create_version_four_index_database(&path, true);
-    let connection = Connection::open(&path).expect("conflict fixture should open");
+    let connection = open_fixture_connection(&path).expect("conflict fixture should open");
     connection
         .execute(
             "UPDATE journals
@@ -2053,7 +2062,7 @@ fn malformed_current_index_schema_is_rejected_by_preflight_without_modifying_fil
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("malformed-current.sqlite");
     migrate_index_database(&path).expect("current index database should initialize");
-    let connection = Connection::open(&path).expect("current index database should open");
+    let connection = open_fixture_connection(&path).expect("current index database should open");
     connection
         .execute("ALTER TABLE articles ADD COLUMN provider TEXT", [])
         .expect("forbidden fixture column should be added");
@@ -2074,7 +2083,7 @@ fn current_index_preflight_defers_foreign_key_validation() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("current-with-orphan.sqlite");
     migrate_index_database(&path).expect("current index database should initialize");
-    let connection = Connection::open(&path).expect("current index database should open");
+    let connection = open_fixture_connection(&path).expect("current index database should open");
     connection
         .pragma_update(None, "foreign_keys", false)
         .expect("foreign key enforcement should be disabled for the corruption fixture");
@@ -2104,7 +2113,8 @@ fn index_preflight_runs_full_validation_after_a_real_migration() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("version-five-with-orphan.sqlite");
     create_version_five_index_database(&path);
-    let connection = Connection::open(&path).expect("version five index database should open");
+    let connection =
+        open_fixture_connection(&path).expect("version five index database should open");
     connection
         .pragma_update(None, "foreign_keys", false)
         .expect("foreign key enforcement should be disabled for the corruption fixture");
@@ -2160,7 +2170,7 @@ fn current_database_migrations_are_idempotent() {
 fn failed_auth_migration_rolls_back_schema_changes() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("broken-auth.sqlite");
-    let connection = Connection::open(&path).expect("broken auth database should open");
+    let connection = open_fixture_connection(&path).expect("broken auth database should open");
     connection
         .execute_batch(
             "
@@ -2187,7 +2197,7 @@ fn failed_auth_migration_rolls_back_schema_changes() {
     assert_eq!(user_version(&path), 0);
     assert!(!table_columns(&path, "users").contains(&"is_admin".to_string()));
     assert!(!table_exists(&path, "folders"));
-    let connection = Connection::open(&path).expect("rolled back auth database should open");
+    let connection = open_fixture_connection(&path).expect("rolled back auth database should open");
     let username: String = connection
         .query_row("SELECT username FROM users WHERE id = 1", [], |row| {
             row.get(0)
@@ -2269,7 +2279,7 @@ fn storage_migration_discovers_existing_index_databases() {
     let config = StorageConfig::from_project_root(temp_dir.path());
     fs::create_dir_all(config.index_dir()).expect("index directory should be created");
     let index_path = config.index_dir().join("fixture.sqlite");
-    Connection::open(&index_path).expect("empty index database should be created");
+    open_fixture_connection(&index_path).expect("empty index database should be created");
 
     migrate_storage(&config).expect("configured databases should migrate");
 
@@ -2283,7 +2293,8 @@ fn storage_preflight_defers_current_index_foreign_key_validation() {
     let config = StorageConfig::from_project_root(temp_dir.path());
     let index_path = config.index_dir().join("current-with-orphan.sqlite");
     migrate_index_database(&index_path).expect("current index database should initialize");
-    let connection = Connection::open(&index_path).expect("current index database should open");
+    let connection =
+        open_fixture_connection(&index_path).expect("current index database should open");
     connection
         .pragma_update(None, "foreign_keys", false)
         .expect("foreign key enforcement should be disabled for the corruption fixture");
@@ -2383,7 +2394,8 @@ fn repository_reads_do_not_run_migrations() {
 
     fs::create_dir_all(config.index_dir()).expect("index directory should be created");
     let index_path = config.index_dir().join("legacy.sqlite");
-    let connection = Connection::open(&index_path).expect("legacy index database should open");
+    let connection =
+        open_fixture_connection(&index_path).expect("legacy index database should open");
     connection
         .execute_batch(
             "
@@ -2419,7 +2431,7 @@ fn repository_reads_do_not_run_migrations() {
 }
 
 fn create_future_database(path: &Path, version: i64) {
-    let connection = Connection::open(path).expect("future database should open");
+    let connection = open_fixture_connection(path).expect("future database should open");
     connection
         .execute_batch(
             "CREATE TABLE sentinel (value TEXT NOT NULL); INSERT INTO sentinel VALUES ('keep');",
@@ -2431,14 +2443,14 @@ fn create_future_database(path: &Path, version: i64) {
 }
 
 fn user_version(path: &Path) -> i64 {
-    let connection = Connection::open(path).expect("database should open for version query");
+    let connection = open_fixture_connection(path).expect("database should open for version query");
     connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("schema version should be readable")
 }
 
 fn table_exists(path: &Path, table_name: &str) -> bool {
-    let connection = Connection::open(path).expect("database should open for table query");
+    let connection = open_fixture_connection(path).expect("database should open for table query");
     connection
         .query_row(
             "SELECT EXISTS(
@@ -2451,7 +2463,7 @@ fn table_exists(path: &Path, table_name: &str) -> bool {
 }
 
 fn index_exists(path: &Path, index_name: &str) -> bool {
-    let connection = Connection::open(path).expect("database should open for index query");
+    let connection = open_fixture_connection(path).expect("database should open for index query");
     connection
         .query_row(
             "SELECT EXISTS(
@@ -2464,7 +2476,7 @@ fn index_exists(path: &Path, index_name: &str) -> bool {
 }
 
 fn schema_object_exists(path: &Path, object_type: &str, object_name: &str) -> bool {
-    let connection = Connection::open(path).expect("database should open for schema query");
+    let connection = open_fixture_connection(path).expect("database should open for schema query");
     connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2)",
@@ -2544,7 +2556,7 @@ fn create_version_one_auth_prerequisites(connection: &Connection) {
 }
 
 fn table_columns(path: &Path, table_name: &str) -> Vec<String> {
-    let connection = Connection::open(path).expect("database should open for column query");
+    let connection = open_fixture_connection(path).expect("database should open for column query");
     let mut statement = connection
         .prepare(&format!("PRAGMA table_info({table_name})"))
         .expect("table columns should prepare");
@@ -2556,7 +2568,8 @@ fn table_columns(path: &Path, table_name: &str) -> Vec<String> {
 }
 
 fn content_table_names(path: &Path) -> Vec<String> {
-    let connection = Connection::open(path).expect("database should open for table inventory");
+    let connection =
+        open_fixture_connection(path).expect("database should open for table inventory");
     let mut statement = connection
         .prepare(
             "SELECT name FROM sqlite_schema
@@ -2573,7 +2586,7 @@ fn content_table_names(path: &Path) -> Vec<String> {
 }
 
 fn sqlite_schema_sql(path: &Path) -> String {
-    Connection::open(path)
+    open_fixture_connection(path)
         .expect("database should open for schema SQL")
         .query_row(
             "SELECT group_concat(sql, '\n') FROM sqlite_schema WHERE sql IS NOT NULL",
@@ -2586,7 +2599,7 @@ fn sqlite_schema_sql(path: &Path) -> String {
 
 fn create_version_four_index_database(path: &Path, has_content: bool) {
     migrate_index_database(path).expect("current index fixture should initialize");
-    let connection = Connection::open(path).expect("version four fixture should open");
+    let connection = open_fixture_connection(path).expect("version four fixture should open");
     connection
         .execute_batch(
             "DROP TABLE article_search;
@@ -2673,7 +2686,7 @@ fn create_version_four_index_database(path: &Path, has_content: bool) {
 
 fn create_version_five_index_database(path: &Path) {
     create_version_four_index_database(path, true);
-    let connection = Connection::open(path).expect("version five fixture should open");
+    let connection = open_fixture_connection(path).expect("version five fixture should open");
     connection
         .execute_batch(
             "CREATE TABLE journal_identity_keys (
@@ -2701,7 +2714,7 @@ fn create_version_five_index_database(path: &Path) {
 fn create_version_six_index_database(path: &Path) {
     create_version_five_index_database(path);
     migrate_index_database(path).expect("fixture should migrate to current version");
-    let connection = Connection::open(path).expect("version six fixture should open");
+    let connection = open_fixture_connection(path).expect("version six fixture should open");
     connection
         .execute_batch(
             "DROP TABLE article_search;
@@ -2770,7 +2783,12 @@ fn index_search_snapshot(path: &Path) -> Vec<Vec<String>> {
     ]
     .into_iter()
     .map(|query| {
-        let connection = Connection::open(path).expect("database should open for FTS query");
+        let connection = open_fixture_connection(path).expect("database should open for FTS query");
+        let query = litradar_storage::search_text::prepare_search_query(
+            query,
+            litradar_storage::search_text::uses_simple_search(&connection).unwrap(),
+            litradar_domain::ArticleSearchMode::Advanced,
+        );
         let mut statement = connection
             .prepare(
                 "SELECT CAST(rowid AS TEXT) FROM article_search
@@ -2779,7 +2797,7 @@ fn index_search_snapshot(path: &Path) -> Vec<Vec<String>> {
             )
             .expect("FTS snapshot query should prepare");
         statement
-            .query_map([query], |row| row.get::<_, String>(0))
+            .query_map([query.as_ref()], |row| row.get::<_, String>(0))
             .expect("FTS snapshot rows should query")
             .collect::<rusqlite::Result<Vec<_>>>()
             .expect("FTS snapshot rows should collect")
@@ -2788,7 +2806,7 @@ fn index_search_snapshot(path: &Path) -> Vec<Vec<String>> {
 }
 
 fn query_text_rows(path: &Path, query: &str) -> Vec<String> {
-    let connection = Connection::open(path).expect("database should open for text query");
+    let connection = open_fixture_connection(path).expect("database should open for text query");
     let mut statement = connection
         .prepare(query)
         .expect("text query should prepare");
@@ -2800,7 +2818,7 @@ fn query_text_rows(path: &Path, query: &str) -> Vec<String> {
 }
 
 fn runtime_setting(path: &Path, field: &str) -> Option<(String, f64)> {
-    Connection::open(path)
+    open_fixture_connection(path)
         .expect("auth database should open for runtime setting query")
         .query_row(
             "SELECT value, updated_at FROM runtime_settings WHERE key = ?1",
@@ -2812,7 +2830,7 @@ fn runtime_setting(path: &Path, field: &str) -> Option<(String, f64)> {
 }
 
 fn foreign_key_count(path: &Path, table_name: &str) -> i64 {
-    Connection::open(path)
+    open_fixture_connection(path)
         .expect("database should open for foreign key query")
         .query_row(
             &format!("SELECT COUNT(*) FROM pragma_foreign_key_list('{table_name}')"),
@@ -2823,7 +2841,7 @@ fn foreign_key_count(path: &Path, table_name: &str) -> i64 {
 }
 
 fn foreign_key_violation_count(path: &Path) -> i64 {
-    Connection::open(path)
+    open_fixture_connection(path)
         .expect("database should open for foreign key check")
         .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
             row.get(0)
@@ -2832,7 +2850,7 @@ fn foreign_key_violation_count(path: &Path) -> i64 {
 }
 
 fn table_row_count(path: &Path, table_name: &str) -> i64 {
-    Connection::open(path)
+    open_fixture_connection(path)
         .expect("database should open for row count")
         .query_row(&format!("SELECT COUNT(*) FROM {table_name}"), [], |row| {
             row.get(0)
@@ -2841,7 +2859,7 @@ fn table_row_count(path: &Path, table_name: &str) -> i64 {
 }
 
 fn create_nonempty_index_database(path: &Path, version: i64) {
-    let connection = Connection::open(path).expect("legacy index database should open");
+    let connection = open_fixture_connection(path).expect("legacy index database should open");
     connection
         .execute_batch(
             "CREATE TABLE legacy_articles (
@@ -2858,7 +2876,7 @@ fn create_nonempty_index_database(path: &Path, version: i64) {
 
 /// Complete the unrelated favorites table omitted by scheduler-only legacy fixtures.
 fn complete_favorite_schema_fixture(path: &Path) {
-    Connection::open(path)
+    open_fixture_connection(path)
         .expect("fixture should open")
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS favorites (
@@ -2873,7 +2891,7 @@ fn complete_favorite_schema_fixture(path: &Path) {
 /// Build the latest pre-CFP schema before a fixture removes older migration objects.
 fn initialize_auth_version_seventeen_fixture(path: &Path) -> Result<(), MigrationError> {
     migrate_auth_database(path)?;
-    Connection::open(path)?.execute_batch(
+    open_fixture_connection(path)?.execute_batch(
         "DROP TABLE cfp_notices;
          DROP TABLE cfp_source_journals;
          DROP TABLE cfp_sources;
@@ -2883,4 +2901,11 @@ fn initialize_auth_version_seventeen_fixture(path: &Path) -> Result<(), Migratio
          PRAGMA user_version = 17;",
     )?;
     Ok(())
+}
+
+/// Open test databases with connection-local registration for an existing simple FTS table.
+fn open_fixture_connection(path: impl AsRef<std::path::Path>) -> rusqlite::Result<Connection> {
+    let connection = Connection::open(path)?;
+    litradar_storage::sqlite::load_index_tokenizer(&connection)?;
+    Ok(connection)
 }

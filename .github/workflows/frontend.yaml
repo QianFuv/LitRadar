@@ -15,6 +15,7 @@ on:
       - "crates/litradar-storage/**"
       - "app/**"
       - "scripts/test.mjs"
+      - "scripts/build-simple-tokenizer.mjs"
       - ".github/workflows/frontend.yaml"
   pull_request:
     paths:
@@ -27,6 +28,7 @@ on:
       - "crates/litradar-storage/**"
       - "app/**"
       - "scripts/test.mjs"
+      - "scripts/build-simple-tokenizer.mjs"
       - ".github/workflows/frontend.yaml"
 
 concurrency:
@@ -70,6 +72,10 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build pinned search tokenizer
+        run: node scripts/build-simple-tokenizer.mjs
+        working-directory: .
 
       - name: Check frontend contracts and static quality
         id: frontend_static

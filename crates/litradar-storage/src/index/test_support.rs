@@ -109,6 +109,7 @@ pub(super) fn create_fixture_user(config: &StorageConfig) {
 }
 
 pub(super) fn create_fixture_schema(connection: &Connection) {
+    crate::sqlite::load_simple_tokenizer(connection).expect("simple tokenizer should load");
     connection
         .execute_batch(crate::index_schema::INDEX_CONTENT_TABLES_SQL)
         .expect("exact content schema should be created");
@@ -179,14 +180,14 @@ pub(super) fn create_fixture_schema(connection: &Connection) {
                 rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
             ) VALUES
                 (1001, 1001, 'Genome Methods', 'Genome sequencing precision study',
-                 '10.1000/genome', '1001', 'Alice Bob', 'Alpha Journal'),
+                 '10 1000 genome', '1001', 'Alice Bob', 'Alpha Journal'),
                 (1002, 1002, 'Clinical Data Mining', 'indexedonly token stored in FTS',
-                 '10.1000/clinical', '1002', 'Carol', 'Alpha Journal'),
+                 '10 1000 clinical', '1002', 'Carol', 'Alpha Journal'),
                 (1003, 1003, 'Canonical Knowledge', 'Canonical article', '', '', 'Dan', 'Beta Journal'),
                 (1004, 1004, 'Accepted Genome Preview', 'Genome in press preview',
-                 '10.1000/preview', '', 'Eve', 'Alpha Journal'),
+                 '10 1000 preview', '', 'Eve', 'Alpha Journal'),
                 (1005, 1005, 'DOI Only Article', 'DOI fallback study',
-                 '10.1000/doi-only', '1005', 'Frank', 'Alpha Journal'),
+                 '10 1000 doi only', '1005', 'Frank', 'Alpha Journal'),
                 (1008, 1008, 'Bibliographic Article', 'Article without an external identifier',
                  '', '', 'Heidi', 'Alpha Journal');
             "#,

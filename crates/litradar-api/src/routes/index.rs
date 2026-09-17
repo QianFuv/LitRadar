@@ -1196,6 +1196,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn article_route_matches_chinese_phrases_without_pinyin_expansion() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("chinese_search_user", false);
+        let fixture = backend.create_index_database("fixture.sqlite");
+        let connection = litradar_storage::open_sqlite_connection(&fixture.path).unwrap();
+        let title = "Café 科技金融如何赋能企业新质生产力";
+        connection
+            .execute(
+                "UPDATE articles SET title=?1,abstract_text='Résumé' WHERE article_id=9001",
+                [title],
+            )
+            .unwrap();
+        litradar_storage::search_text::rebuild_article_search(&connection).unwrap();
+        drop(connection);
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        for (query, expected_count) in [
+            ("科技金融", 1),
+            ("赋能企业新质生产力", 1),
+            ("cafe", 1),
+            ("Café", 1),
+            ("résumé", 1),
+            ("ke ji jin rong", 0),
+            ("ke", 0),
+            ("k", 0),
+        ] {
+            let encoded_query = query
+                .bytes()
+                .map(|byte| format!("%{byte:02X}"))
+                .collect::<String>();
+            let response = json_request(
+                &app,
+                Method::GET,
+                &format!("/api/articles?db=fixture.sqlite&q={encoded_query}"),
+                Some(&authorization),
+                None,
+                None,
+            )
+            .await;
+            assert_eq!(response.status, StatusCode::OK);
+            let items = response.payload["items"].as_array().unwrap();
+            assert_eq!(items.len(), expected_count, "query: {query}");
+            if expected_count == 1 {
+                assert_eq!(items[0]["article_id"], "9001");
+                assert_eq!(items[0]["title"], title);
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn article_route_maps_advanced_fts_errors_to_bad_request() {
         let backend = TestBackend::new();
         let user = backend.authenticated_user("advanced_search_user", false);

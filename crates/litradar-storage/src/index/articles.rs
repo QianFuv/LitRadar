@@ -221,6 +221,14 @@ pub fn list_articles(
     validate_limit_offset(params.limit, params.offset)?;
     validate_article_list_input(db_name, params)?;
     let connection = open_index_connection(config, db_name)?;
+    let uses_simple = crate::search_text::uses_simple_search(&connection)?;
+    let params = &ArticleListParams {
+        q: params.q.as_deref().map(|query| {
+            crate::search_text::prepare_search_query(query, uses_simple, params.search_mode)
+                .into_owned()
+        }),
+        ..params.clone()
+    };
     let mut base_clauses = Vec::new();
     let mut base_values = Vec::new();
     let mut rating_clauses = Vec::new();
@@ -707,6 +715,80 @@ mod tests {
         IndexFixture,
     };
 
+    #[test]
+    fn chinese_short_phrases_match_without_pinyin_aliases() {
+        for (title, query) in [
+            ("科技金融如何赋能企业新质生产力", "科技金融"),
+            ("科技金融如何赋能企业新质生产力", "赋能企业新质生产力"),
+            ("气候风险如何重塑企业地理格局", "气候风险"),
+            ("免签政策与外商直接投资", "免签政策"),
+            ("区域与双边经贸规则演变及其对我国经济的影响研究", "经贸规则"),
+        ] {
+            let fixture = IndexFixture::new(true);
+            let connection = crate::open_sqlite_connection(fixture_db_path(&fixture)).unwrap();
+            connection
+                .execute(
+                    "UPDATE articles SET title=?1 WHERE article_id=1001",
+                    [title],
+                )
+                .unwrap();
+            connection
+                .execute("DELETE FROM article_search WHERE rowid=1001", [])
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO article_search(rowid,article_id,title) VALUES(1001,1001,?1)",
+                    [title],
+                )
+                .unwrap();
+            for (text, expected) in [
+                (query, vec![1001]),
+                ("ke ji jin rong", vec![]),
+                ("kejijinrong", vec![]),
+                ("ke", vec![]),
+                ("k", vec![]),
+            ] {
+                let page = list_articles(
+                    &fixture.config,
+                    Some(&fixture.db_name),
+                    &ArticleListParams {
+                        q: Some(text.to_string()),
+                        ..article_filter_params()
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    article_ids(&page),
+                    expected,
+                    "query: {text}; title: {title}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn normalized_queries_keep_literals_and_never_drop_empty_search_filters() {
+        let fixture = IndexFixture::new(true);
+        for (query, mode) in [
+            ("genome ÓR missing", ArticleSearchMode::Advanced),
+            ("ÀND", ArticleSearchMode::Advanced),
+            ("\u{301}", ArticleSearchMode::Advanced),
+            ("\u{301}", ArticleSearchMode::Simple),
+        ] {
+            let page = list_articles(
+                &fixture.config,
+                Some(&fixture.db_name),
+                &ArticleListParams {
+                    q: Some(query.to_string()),
+                    search_mode: mode,
+                    ..article_filter_params()
+                },
+            )
+            .unwrap();
+            assert!(page.items.is_empty(), "query: {query}");
+        }
+    }
+
     #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn article_queries_ignore_obsolete_simple_extension_assets() {
@@ -745,7 +827,7 @@ mod tests {
                 ..article_filter_params()
             },
         )
-        .expect("current unicode61 index should ignore unrelated native assets");
+        .expect("data-directory native assets must not select tokenizer code");
 
         assert_eq!(article_ids(&page), [1004, 1001]);
     }
@@ -1339,7 +1421,7 @@ mod tests {
                      rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
                  ) VALUES (
                      1008, 1008, 'Bibliographic Article',
-                     'Résumé article without an external identifier', '', '', 'Heidi',
+                     'Resume article without an external identifier', '', '', 'Heidi',
                      'Alpha Journal'
                  );",
             )
@@ -1386,6 +1468,12 @@ mod tests {
             (
                 "diacritic folding",
                 "resume",
+                ArticleSearchMode::Simple,
+                vec![1008],
+            ),
+            (
+                "query diacritic folding",
+                "résumé",
                 ArticleSearchMode::Simple,
                 vec![1008],
             ),

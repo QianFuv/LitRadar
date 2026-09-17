@@ -13,6 +13,7 @@ on:
       - "libs/**"
       - "data/meta/**"
       - "scripts/test.mjs"
+      - "scripts/build-simple-tokenizer.mjs"
       - ".github/workflows/backend.yaml"
   pull_request:
     paths:
@@ -23,6 +24,7 @@ on:
       - "libs/**"
       - "data/meta/**"
       - "scripts/test.mjs"
+      - "scripts/build-simple-tokenizer.mjs"
       - ".github/workflows/backend.yaml"
 
 concurrency:
@@ -50,6 +52,9 @@ jobs:
 
       - name: Install cargo-sort
         run: cargo install cargo-sort --version 2.1.4 --locked
+
+      - name: Build pinned search tokenizer
+        run: node scripts/build-simple-tokenizer.mjs
 
       - name: Install pinned nextest
         uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2

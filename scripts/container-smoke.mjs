@@ -8,6 +8,7 @@ import net from "node:net";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
 const WORKSPACE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -27,6 +28,12 @@ const IMAGE_PULL_TIMEOUT_MS = 300_000;
 const READY_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 250;
 const CFP_SMOKE_TEXT = "LitRadar 征稿原文";
+const SEARCH_SMOKE_TITLES = [
+  "科技金融如何赋能企业新质生产力",
+  "气候风险如何重塑企业地理格局",
+  "免签政策与外商直接投资",
+  "区域与双边经贸规则演变及其对我国经济的影响研究",
+];
 const CFP_PAGE_EVAL =
   "JSON.stringify({protocol:'litradar.cfp.page.v1',finalUrl:location.href,html:document.documentElement.outerHTML})";
 const DIGEST_REFERENCE_PATTERN =
@@ -500,7 +507,7 @@ function buildServiceRunArguments(imageReference, areSecureCookiesRequired) {
  * Bootstrap an isolated administrator and persist the secure-cookie setting.
  *
  * @param {string} imageReference - Exact image reference under test.
- * @returns {Promise<void>} Promise resolved after the setting is committed and the setup service is removed.
+ * @returns {Promise<Record<string, boolean>>} Verified search behaviors after setup completes.
  */
 async function enableSecureCookies(imageReference) {
   const username = "container_smoke_admin";
@@ -550,6 +557,7 @@ async function enableSecureCookies(imageReference) {
     Boolean(sessionCookie),
     "smoke login omitted the session cookie",
   );
+  const search = await verifySearchQueries(baseUrl, sessionCookie);
   const updateResponse = await fetch(`${baseUrl}/api/admin/runtime-settings`, {
     body: JSON.stringify({ values: { secure_cookies: "true" } }),
     headers: {
@@ -570,6 +578,151 @@ async function enableSecureCookies(imageReference) {
   );
   assertInvariant(await waitForPortClosure(), "setup listener remained open");
   hostPort = undefined;
+  return search;
+}
+
+/**
+ * Rebuild a legacy search fixture through the packaged offline maintenance command.
+ *
+ * @param {string} imageReference - Exact image under test.
+ * @returns {Promise<void>} Resolves after the isolated volume contains the migrated index.
+ */
+async function installLegacySearchFixture(imageReference) {
+  const schemaSource = await fs.readFile(
+    path.join(WORKSPACE_ROOT, "crates/litradar-storage/src/index_schema.rs"),
+    "utf8",
+  );
+  const schema = schemaSource.match(
+    /pub const INDEX_CONTENT_TABLES_SQL: &str = "([\s\S]*?)";/,
+  )?.[1];
+  assertInvariant(
+    schema?.includes("tokenize = 'simple 0'"),
+    "current search schema is unavailable",
+  );
+  const fixturePath = path.join(REPORT_ROOT, "search-fixture.sqlite");
+  await fs.rm(fixturePath, { force: true });
+  const database = new DatabaseSync(fixturePath);
+  try {
+    database.exec(
+      schema.replace(
+        "tokenize = 'simple 0'",
+        "tokenize = 'unicode61 remove_diacritics 2'",
+      ),
+    );
+    database.exec(
+      "PRAGMA user_version=8; INSERT INTO journals(journal_id,catalog_id,title,title_aliases_json,issns_json) VALUES(1,'smoke','Smoke Journal','[]','[]'); INSERT INTO journal_identity_keys VALUES('catalog_id','smoke','smoke');",
+    );
+    const insert = database.prepare(
+      "INSERT INTO articles(article_id,journal_id,title,abstract_text,authors_json,date) VALUES(?,1,?,?,'[]','2026-09-16')",
+    );
+    SEARCH_SMOKE_TITLES.forEach((title, index) =>
+      insert.run(index + 1, title, index === 0 ? "Café résumé" : ""),
+    );
+    database.exec(
+      "INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journal_id,date FROM articles; INSERT INTO article_search(rowid,article_id,title,abstract_text,journal_title) SELECT article_id,article_id,title,abstract_text,'Smoke Journal' FROM articles;",
+    );
+    assertInvariant(
+      database
+        .prepare(
+          "SELECT COUNT(*) AS total FROM article_search WHERE article_search MATCH '科技金融'",
+        )
+        .get().total === 0,
+      "legacy fixture should reproduce the Chinese miss",
+    );
+  } finally {
+    database.close();
+  }
+  const isolatedArguments = [
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,nodev,size=64m",
+    "--mount",
+    `type=volume,source=${volumeName},target=/app/data`,
+  ];
+  await runDocker(
+    [
+      ...isolatedArguments,
+      "--interactive",
+      "--entrypoint",
+      "/bin/sh",
+      imageReference,
+      "-c",
+      "mkdir -p /app/data/index && base64 -d > /app/data/index/smoke.sqlite",
+    ],
+    { input: (await fs.readFile(fixturePath)).toString("base64") },
+  );
+  const migration = await runDocker([
+    ...isolatedArguments,
+    imageReference,
+    "admin",
+    "index",
+    "optimize-storage",
+    "--confirm-index-maintenance",
+    "--project-root",
+    "/app",
+  ]);
+  assertInvariant(migration.code === 0, "packaged search migration failed");
+}
+
+/**
+ * Verify Chinese phrases, Latin folding and disabled pinyin through the real authenticated API.
+ *
+ * @param {string} baseUrl - Isolated loopback service URL.
+ * @param {string} sessionCookie - Disposable smoke administrator session.
+ * @returns {Promise<Record<string, boolean>>} Verified search contract.
+ */
+async function verifySearchQueries(baseUrl, sessionCookie) {
+  for (const [query, expectedId] of [
+    ["科技金融", 1],
+    ["赋能企业新质生产力", 1],
+    ["气候风险", 2],
+    ["免签政策", 3],
+    ["经贸规则", 4],
+    ["cafe", 1],
+    ["résumé", 1],
+    ["ke ji jin rong", null],
+    ["kejijinrong", null],
+    ["ke", null],
+    ["k", null],
+  ]) {
+    const queryParameters = new URLSearchParams({
+      db: "smoke.sqlite",
+      q: query,
+    });
+    const response = await fetch(`${baseUrl}/api/articles?${queryParameters}`, {
+      headers: { cookie: sessionCookie },
+      signal: AbortSignal.timeout(10000),
+    });
+    assertInvariant(response.ok, "search fixture API request failed");
+    const page = await response.json();
+    const expectedIds = expectedId === null ? [] : [String(expectedId)];
+    assertInvariant(
+      JSON.stringify(
+        page.items.map((article) => String(article.article_id)),
+      ) === JSON.stringify(expectedIds),
+      `search fixture mismatch for ${query}`,
+    );
+    if (expectedId !== null) {
+      assertInvariant(
+        page.items[0].title === SEARCH_SMOKE_TITLES[expectedId - 1],
+        "canonical title changed during search migration",
+      );
+    }
+  }
+  return {
+    chinesePhrases: true,
+    noPinyinAliases: true,
+    latinFolding: true,
+    canonicalTitles: true,
+  };
 }
 
 /**
@@ -788,7 +941,8 @@ async function runSmoke(imageReference, isDigestRequired) {
     "-c",
     'umask 077; head -c 32 /dev/urandom > /app/data/litradar_key; test "$(wc -c < /app/data/litradar_key)" -eq 32',
   ]);
-  await enableSecureCookies(imageReference);
+  await installLegacySearchFixture(imageReference);
+  const search = await enableSecureCookies(imageReference);
   await runDocker(buildServiceRunArguments(imageReference, true));
 
   hostPort = await resolvePublishedPort();
@@ -983,6 +1137,7 @@ async function runSmoke(imageReference, isDigestRequired) {
     endpoints: ["/", "/health/ready", "/openapi.json", "/api/auth/me"],
     managedMetaPrepared: true,
     cfpHelpers,
+    search,
     removedEnvironmentOverrides: [],
     security: {
       readOnlyRoot: true,

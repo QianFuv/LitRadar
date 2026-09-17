@@ -13,7 +13,6 @@ use rusqlite::{
 
 use litradar_domain::{normalize_contract_issn, ProviderOrderConfiguration};
 
-use crate::article_authors::decode_article_author_names;
 use crate::business::{import_legacy_delivery_state_files, DeliveryRepositoryError};
 use crate::index_maintenance::{interrupted_index_maintenance_state, IndexStorageRecoveryPaths};
 use crate::{DatabaseResolutionError, StorageConfig};
@@ -542,7 +541,13 @@ fn migrate_index_database_inner(path: &Path) -> Result<MigrationSummary, Migrati
             if version <= 6 {
                 apply_index_version_seven(&transaction)?;
             }
-            transaction.execute_batch("DROP INDEX idx_article_change_events_order;")?;
+            if version < 8 {
+                transaction.execute_batch("DROP INDEX idx_article_change_events_order;")?;
+            }
+            if version < 9 {
+                crate::sqlite::load_simple_tokenizer(&transaction)?;
+                apply_index_version_nine(&transaction)?;
+            }
             transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
             transaction.commit()?;
             connection.pragma_update(None, "foreign_keys", true)?;
@@ -566,6 +571,7 @@ fn migrate_index_database_inner(path: &Path) -> Result<MigrationSummary, Migrati
     let from_version = version;
     configure_writable_connection(&connection)?;
     let transaction = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+    crate::sqlite::load_simple_tokenizer(&transaction)?;
     transaction.execute_batch(INDEX_CONTENT_TABLES_SQL)?;
     transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -680,7 +686,20 @@ fn inspect_existing_index_database(path: &Path) -> Result<Option<(i64, i64)>, Mi
 fn open_read_only_index_connection(path: &Path) -> Result<Connection, MigrationError> {
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     connection.busy_timeout(Duration::from_secs(BUSY_TIMEOUT_SECONDS))?;
+    crate::sqlite::load_index_tokenizer(&connection)?;
     Ok(connection)
+}
+
+fn apply_index_version_nine(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    transaction.execute_batch(
+        "DROP TABLE article_search;
+         CREATE VIRTUAL TABLE article_search USING fts5(
+             article_id UNINDEXED, title, abstract_text, doi, pmid, authors, journal_title,
+             content = '', contentless_delete = 1, tokenize = 'simple 0'
+         );",
+    )?;
+    crate::search_text::rebuild_article_search(transaction)?;
+    Ok(())
 }
 
 fn validate_index_structure(connection: &Connection, version: i64) -> Result<(), MigrationError> {
@@ -782,55 +801,7 @@ fn apply_index_version_seven(transaction: &Transaction<'_>) -> Result<(), Migrat
              tokenize = 'unicode61 remove_diacritics 2'
          );",
     )?;
-    let projections = {
-        let mut statement = transaction.prepare(
-            "SELECT
-                 articles.article_id,
-                 articles.title,
-                 articles.abstract_text,
-                 articles.doi,
-                 articles.pmid,
-                 articles.authors_json,
-                 journals.title
-             FROM articles
-             JOIN journals ON journals.journal_id = articles.journal_id
-             ORDER BY articles.article_id",
-        )?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                ))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows
-    };
-    let mut insert = transaction.prepare(
-        "INSERT INTO article_search (
-             rowid, article_id, title, abstract_text, doi, pmid, authors, journal_title
-         ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-    )?;
-    for (article_id, title, abstract_text, doi, pmid, authors_json, journal_title) in projections {
-        let authors = decode_article_author_names(&authors_json)
-            .map_err(|_| MigrationError::Sqlite(rusqlite::Error::InvalidQuery))?
-            .join("; ");
-        insert.execute(params![
-            article_id,
-            title,
-            abstract_text,
-            doi,
-            pmid,
-            authors,
-            journal_title,
-        ])?;
-    }
-    drop(insert);
+    crate::search_text::rebuild_article_search(transaction)?;
     transaction.execute(
         "INSERT INTO article_search(article_search) VALUES('optimize')",
         [],
