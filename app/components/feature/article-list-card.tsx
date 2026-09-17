@@ -82,7 +82,7 @@ export function ArticleListCard({
     >
       <CardHeader className="gap-2 px-4 py-4 sm:px-5 sm:py-5">
         <div className="flex flex-col items-start gap-2 sm:flex-row sm:justify-between sm:gap-3">
-          <CardTitle className="min-w-0 text-balance break-words text-base leading-snug text-foreground sm:text-lg">
+          <CardTitle className="min-w-0 text-wrap break-words text-base leading-snug text-foreground sm:text-lg">
             {title}
           </CardTitle>
           {hasBadges && (

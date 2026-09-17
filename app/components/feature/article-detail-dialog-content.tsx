@@ -189,7 +189,7 @@ export function ArticleDetailDialogContent({
   return (
     <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] overflow-y-auto md:max-w-4xl">
       <DialogHeader>
-        <DialogTitle className="text-xl leading-snug">
+        <DialogTitle className="text-wrap break-words text-xl leading-snug">
           {getArticleDisplayTitle(article)}
           <Button
             variant="ghost"

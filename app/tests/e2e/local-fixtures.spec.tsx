@@ -1257,6 +1257,107 @@ async function serveInterfacePolishApi(route: Route): Promise<void> {
 }
 
 /**
+ * Verify a multiline title fills its first line without overflowing its container.
+ *
+ * @param title - Article card or dialog heading with source text as its first child.
+ */
+async function expectArticleTitleToFillFirstLine(title: Locator): Promise<void> {
+  const layout = await title.evaluate(async (element) => {
+    await document.fonts.ready;
+    const range = document.createRange();
+    range.selectNodeContents(element.firstChild!);
+    const lines = Array.from(range.getClientRects());
+    return {
+      lineCount: lines.length,
+      firstLineWidth: lines[0].width,
+      availableWidth: element.clientWidth,
+      hasOverflow: element.scrollWidth > element.clientWidth,
+    };
+  });
+
+  expect.soft(layout.lineCount).toBeGreaterThan(1);
+  expect.soft(layout.firstLineWidth).toBeGreaterThan(layout.availableWidth * 0.85);
+  expect.soft(layout.hasOverflow).toBe(false);
+}
+
+/**
+ * Check real article title layout on desktop and narrow screens.
+ *
+ * @param page - Browser page rendering the production article components.
+ * @param titleText - English or Chinese source title to render unchanged.
+ */
+async function articleTitleWrappingTest(page: Page, titleText: string): Promise<void> {
+  await page.route('**/api/**', async (route) => {
+    if (new URL(route.request().url()).pathname === '/api/articles') {
+      await fulfillJson(route, {
+        items: [
+          {
+            article_id: 'polish-fixture',
+            title: titleText,
+            journal_title: 'Statistica Sinica',
+            date: '2027',
+            authors: ['Bibi Cai', 'Mengya Liu', 'Shiqing Ling'],
+            abstract: 'Article title wrapping regression fixture.',
+            open_access: 1,
+            in_press: 1,
+          },
+        ],
+        page: { total: null, limit: 50, offset: 0, next_cursor: null, has_more: false },
+      });
+      return;
+    }
+    await serveInterfacePolishApi(route);
+  });
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  await hideDevelopmentIndicator(page);
+
+  const card = page.getByRole('button', { name: `查看文章详情：${titleText}`, exact: true });
+  const cardTitle = card.getByRole('heading', { name: titleText, exact: true });
+  await expect(cardTitle).toBeVisible();
+  await expectArticleTitleToFillFirstLine(cardTitle);
+  await card.click();
+
+  const dialog = page.getByRole('dialog');
+  const dialogTitle = dialog.locator('[data-slot="dialog-title"]');
+  await expect(dialogTitle).toBeVisible();
+  await expect(dialogTitle).toHaveText(titleText);
+  await expectArticleTitleToFillFirstLine(dialogTitle);
+  await page.screenshot({ path: test.info().outputPath('title-desktop.png') });
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(cardTitle).toBeVisible();
+    expect(await cardTitle.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    await card.click();
+    await expect(dialogTitle).toBeVisible();
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    await expect(dialog.getByRole('button', { name: '复制文章标题' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '关闭', exact: true })).toBeInViewport();
+    await page.screenshot({ path: test.info().outputPath(`title-${width}.png`) });
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  }
+}
+
+for (const [language, titleText] of [
+  ['English', 'Statistical Inference for Heavy-tailed Vector Arma-gacrh/Igarch Models'],
+  [
+    'Chinese',
+    '重尾向量自回归移动平均模型的统计推断方法及其在复杂金融时间序列波动性分析中的应用研究',
+  ],
+]) {
+  test(`article titles use available width in ${language}`, async ({ page }) => {
+    await articleTitleWrappingTest(page, titleText);
+  });
+}
+
+/**
  * Verify an actual control box is large enough without relying on overlapping pseudo-elements.
  *
  * @param control - Interactive element to measure.
@@ -1367,7 +1468,7 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   const titleBox = await title.boundingBox();
   const badgeBox = await card.getByText('开放获取', { exact: true }).boundingBox();
   expect(badgeBox?.y ?? 0).toBeGreaterThanOrEqual((titleBox?.y ?? 0) + (titleBox?.height ?? 0));
-  await expect(title).toHaveCSS('text-wrap-style', 'balance');
+  await expect(title).toHaveCSS('text-wrap-style', 'auto');
   await page.screenshot({ path: '../output/ui/polish-search-mobile.png', fullPage: true });
 
   const details = page.getByRole('button', { name: /^查看文章详情：/ });
