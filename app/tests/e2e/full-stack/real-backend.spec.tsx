@@ -13,6 +13,7 @@ const ADMIN_PASSWORD = 'FullStackAdmin!2026';
 const MEMBER_USERNAME = 'fullstack_member';
 const MEMBER_PASSWORD = 'FullStackMember!2026';
 const ARTICLE_TITLE = 'Evidence Graphs for Living Literature Reviews';
+const SECOND_RATED_ARTICLE_TITLE = 'Statistical Methods for Evidence Synthesis';
 const CREATED_ANNOUNCEMENT_TITLE_PREFIX = 'Browser-persisted release notice';
 
 test.describe.configure({ mode: 'serial' });
@@ -388,6 +389,39 @@ async function durableManualPushJourney({ page }: { page: Page }): Promise<void>
   expect(((await persisted.json()) as ManualPushStatus).status).toBe('completed');
 }
 
+/** Verify rating unions/intersections, persisted URL state and reset through the real API. */
+async function journalRatingJourney({ page }: { page: Page }): Promise<void> {
+  await login(page, MEMBER_USERNAME, MEMBER_PASSWORD);
+  await page.goto('/');
+  await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await page.getByRole('checkbox', { name: 'ABS 4*', exact: true }).check();
+  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
+  await page.getByRole('checkbox', { name: 'ABS 4', exact: true }).check();
+  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await page.getByRole('checkbox', { name: 'FMS A', exact: true }).check();
+  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  const response = await page.request.get(
+    '/api/articles?db=full-stack.sqlite&abs_rating=4&abs_rating=4%2A&fms_rating=A',
+  );
+  expect(response.ok()).toBe(true);
+  const payload = await response.json();
+  expect(payload.page.total).toBe(1);
+  expect(payload.items[0].title).toBe(ARTICLE_TITLE);
+  await page.reload();
+  await expect(page.getByRole('checkbox', { name: 'FMS A', exact: true })).toBeChecked();
+  await expect(page.getByRole('button', { name: '移除评级 ABS 4*', exact: true })).toBeVisible();
+  await page.getByRole('checkbox', { name: 'ABS 4*', exact: true }).uncheck();
+  await expect(page.getByText('未找到文章。', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '重置筛选', exact: true }).click();
+  await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  expect(new URL(page.url()).searchParams.has('abs_rating')).toBe(false);
+  expect(new URL(page.url()).searchParams.has('fms_rating')).toBe(false);
+}
+
+test('filters journal ratings with real database intersections and reset', journalRatingJourney);
 test('searches and persists a favorite through the real backend', searchAndFavoriteJourney);
 test('persists administrator mutations through the real backend', administratorMutationJourney);
 test('enforces authenticated and administrator route boundaries', protectedRouteJourney);

@@ -199,6 +199,10 @@ async function serveTrackingApi(route: Route): Promise<void> {
     await fulfillJson(route, []);
     return;
   }
+  if (pathname === '/api/meta/ratings') {
+    await fulfillJson(route, { utd_rating: [], abs_rating: [], fms_rating: [], fmscn_rating: [] });
+    return;
+  }
   if (pathname === '/api/years') {
     await fulfillJson(route, []);
     return;
@@ -1550,6 +1554,88 @@ async function serveLongSidebarApi(route: Route): Promise<void> {
   }
   await serveTrackingApi(route);
 }
+
+/** Serve distinct rating groups and their filtered article membership for browser interactions. */
+async function serveJournalRatingApi(route: Route): Promise<void> {
+  const url = new URL(route.request().url());
+  if (url.pathname === '/api/meta/databases') {
+    await fulfillJson(route, ['fixture.sqlite', 'ccf.sqlite']);
+    return;
+  }
+  if (url.pathname === '/api/meta/ratings') {
+    await fulfillJson(
+      route,
+      url.searchParams.get('db') === 'ccf.sqlite'
+        ? { utd_rating: [], abs_rating: [], fms_rating: [], fmscn_rating: [] }
+        : {
+            utd_rating: [],
+            abs_rating: [
+              { value: '4', count: 1 },
+              { value: '4*', count: 1 },
+            ],
+            fms_rating: [
+              { value: 'A', count: 1 },
+              { value: 'B', count: 1 },
+            ],
+            fmscn_rating: [],
+          },
+    );
+    return;
+  }
+  if (url.pathname === '/api/articles') {
+    const grades = url.searchParams.getAll('abs_rating');
+    const fms = url.searchParams.getAll('fms_rating');
+    const items = [
+      { article_id: 'rated-a', title: 'Rating combination article A', grade: '4*', fms: 'A' },
+      { article_id: 'rated-b', title: 'Rating combination article B', grade: '4', fms: 'B' },
+    ].filter(
+      (article) =>
+        (!grades.length || grades.includes(article.grade)) &&
+        (!fms.length || fms.includes(article.fms)),
+    );
+    await fulfillJson(route, {
+      items,
+      page: { total: null, limit: 50, offset: 0, next_cursor: null, has_more: false },
+    });
+    return;
+  }
+  await serveTrackingApi(route);
+}
+
+/** Verify real desktop/mobile controls, chip removal and clearing ratings on database change. */
+async function journalRatingBrowserTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveJournalRatingApi);
+  await page.goto('/');
+  await hideDevelopmentIndicator(page);
+  await page.getByRole('checkbox', { name: 'ABS 4*', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'ABS 4', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'FMS A', exact: true }).check();
+  await expect(page.getByText('Rating combination article A', { exact: true })).toBeVisible();
+  await expect(page.getByText('Rating combination article B', { exact: true })).toHaveCount(0);
+  await page.screenshot({
+    path: '../output/ui/journal-rating-desktop.png',
+    fullPage: true,
+    animations: 'disabled',
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '打开筛选器' }).click();
+  const drawer = page.getByRole('dialog', { name: '筛选器' });
+  await expect(drawer.getByRole('checkbox', { name: 'ABS 4*', exact: true })).toBeChecked();
+  await drawer.getByRole('checkbox', { name: 'FMS A', exact: true }).uncheck();
+  await page.screenshot({ path: '../output/ui/journal-rating-mobile.png', animations: 'disabled' });
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Rating combination article B', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '移除评级 ABS 4*', exact: true }).click();
+  await expect(page.getByText('Rating combination article A', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '打开筛选器' }).click();
+  await drawer.getByRole('combobox').click();
+  await page.getByRole('option', { name: 'ccf', exact: true }).click();
+  await expect(drawer.getByText('当前数据库暂无期刊评级信息。')).toBeVisible();
+  expect(new URL(page.url()).searchParams.has('abs_rating')).toBe(false);
+  expect(new URL(page.url()).searchParams.has('fms_rating')).toBe(false);
+}
+
+test('combines journal ratings across desktop and mobile filters', journalRatingBrowserTest);
 
 /**
  * Verify long drawers scroll with real wheel and touch input and dismiss without a close button.

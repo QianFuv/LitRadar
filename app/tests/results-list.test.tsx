@@ -4,6 +4,7 @@
 
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { act, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -75,6 +76,7 @@ vi.mock('@/components/feature/article-dialog-card', () => ({
 import { ResultsList } from '@/components/feature/results-list';
 import type { Article, ArticlePage } from '@/lib/api';
 import { setSelectedDatabase } from '@/lib/selected-database';
+import { useJournalRatingFilters } from '@/lib/journal-ratings';
 import { createArticlePageScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
@@ -85,6 +87,65 @@ const FILTER_SUMMARY = (
     已应用
   </section>
 );
+
+/** Change only one rating system to exercise the real query-key transition. */
+function RatingChangeControl() {
+  const [, setRatings] = useJournalRatingFilters();
+  return (
+    <button type="button" onClick={() => void setRatings({ abs_rating: ['4'] })}>
+      Change rating
+    </button>
+  );
+}
+
+/** Verify every continuation retains ratings and a changed grade starts a clean first page. */
+async function retainsRatingsAcrossPagesAndResetsTheirCache(): Promise<void> {
+  const requests: URL[] = [];
+  server.use(
+    http.get('http://localhost/api/articles', ({ request }) => {
+      const url = new URL(request.url);
+      requests.push(url);
+      if (url.searchParams.get('abs_rating') === '4') {
+        return HttpResponse.json(
+          createArticlePage([{ ...SHARED_ARTICLE, article_id: 'rated-new', title: 'New grade' }]),
+        );
+      }
+      return url.searchParams.has('cursor')
+        ? HttpResponse.json(createArticlePage([{ ...SHARED_ARTICLE, article_id: 'rated-next' }]))
+        : HttpResponse.json(
+            createArticlePage([SHARED_ARTICLE], { hasMore: true, nextCursor: 'rating-page-two' }),
+          );
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(
+    <NuqsTestingAdapter
+      searchParams="?abs_rating=4*&fms_rating=A&area=Medicine&q=Fixture"
+      hasMemory
+    >
+      <ResultsList />
+      <RatingChangeControl />
+    </NuqsTestingAdapter>,
+  );
+  await waitFor(() => expect(screen.getByTestId('result-9001')).toBeVisible());
+  await act(async () => {
+    resultsListMocks.onFetchNextPage?.();
+  });
+  await waitFor(() => expect(screen.getByTestId('result-rated-next')).toBeVisible());
+  for (const url of requests) {
+    expect(url.searchParams.getAll('abs_rating')).toEqual(['4*']);
+    expect(url.searchParams.getAll('fms_rating')).toEqual(['A']);
+    expect(url.searchParams.getAll('area')).toEqual(['Medicine']);
+  }
+  expect(requests[1].searchParams.get('cursor')).toBe('rating-page-two');
+  await user.click(screen.getByRole('button', { name: 'Change rating' }));
+  await waitFor(() => expect(screen.getByTestId('result-rated-new')).toBeVisible());
+  expect(screen.queryByTestId('result-9001')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('result-rated-next')).not.toBeInTheDocument();
+  expect(requests.at(-1)?.searchParams.has('cursor')).toBe(false);
+  expect(requests.at(-1)?.searchParams.getAll('fms_rating')).toEqual(['A']);
+  expect(requests.at(-1)?.searchParams.get('q')).toBe('Fixture');
+}
 
 /**
  * Build one deterministic article page.
@@ -359,6 +420,10 @@ beforeEach(() => {
 });
 
 describe('results list', () => {
+  test(
+    'keeps ratings on later pages and resets results when a grade changes',
+    retainsRatingsAcrossPagesAndResetsTheirCache,
+  );
   test('renders typed result content and favorite state', rendersTypedResultContent);
   test('recovers a first-page failure to an empty state', recoversFirstPageFailureToEmptyState);
   test('omits an empty filter summary slot', omitsEmptyFilterSummarySlot);

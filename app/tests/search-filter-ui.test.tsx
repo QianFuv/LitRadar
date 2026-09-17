@@ -9,7 +9,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import type { ReactNode } from 'react';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { ActiveFilterChips } from '@/components/feature/active-filter-chips';
 import { SearchBar } from '@/components/feature/search-bar';
@@ -81,6 +81,11 @@ function QuerySetter({ parameter, value }: { parameter: string; value: string })
  */
 function currentUserResponse(): Response {
   return HttpResponse.json({ id: 21, username: 'filter_user', is_admin: false });
+}
+
+/** Return an explicit empty rating response for unrelated sidebar scenarios. */
+function emptyRatingsResponse(): Response {
+  return HttpResponse.json({ utd_rating: [], abs_rating: [], fms_rating: [], fmscn_rating: [] });
 }
 
 /**
@@ -240,7 +245,7 @@ async function resetsVisibleFilterChips(): Promise<void> {
   const user = userEvent.setup();
   renderWithQuery(
     <NuqsTestingAdapter
-      searchParams="?q=systems&area=Information%20Systems&journal_id=journal-1&month_range=2024-01..2024-12"
+      searchParams="?q=systems&area=Information%20Systems&journal_id=journal-1&month_range=2024-01..2024-12&abs_rating=4,4*&fms_rating=A"
       hasMemory
     >
       <ActiveFilterChips />
@@ -253,6 +258,13 @@ async function resetsVisibleFilterChips(): Promise<void> {
     expect(screen.getByTestId('active-filter-chips')).toHaveTextContent('Journal One'),
   );
   expect(screen.getByTestId('active-filter-chips')).toHaveTextContent('2024年01月 - 2024年12月');
+  expect(screen.getByRole('button', { name: '移除评级 ABS 4*' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '移除评级 ABS 4' }));
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: '移除评级 ABS 4' })).not.toBeInTheDocument(),
+  );
+  expect(screen.getByRole('button', { name: '移除评级 ABS 4*' })).toBeVisible();
+  expect(screen.getByRole('button', { name: '移除评级 FMS A' })).toBeVisible();
   expect(screen.getByRole('button', { name: '移除领域 信息系统' }).parentElement).toHaveAttribute(
     'data-motion-filter-key',
     'area-Information Systems',
@@ -275,6 +287,7 @@ async function resetsVisibleFilterChips(): Promise<void> {
 async function rendersUnavailableYearState(): Promise<void> {
   setSelectedDatabase('fixture.sqlite');
   server.use(
+    http.get('http://localhost/api/meta/ratings', emptyRatingsResponse),
     http.get('http://localhost/api/auth/me', currentUserResponse),
     http.get('http://localhost/api/meta/databases', () => HttpResponse.json(['fixture.sqlite'])),
     http.get('http://localhost/api/meta/areas', () => HttpResponse.json([])),
@@ -333,6 +346,7 @@ async function rendersUnavailableYearState(): Promise<void> {
 async function rendersRecentRangeShortcuts(): Promise<void> {
   setSelectedDatabase('fixture.sqlite');
   server.use(
+    http.get('http://localhost/api/meta/ratings', emptyRatingsResponse),
     http.get('http://localhost/api/auth/me', currentUserResponse),
     http.get('http://localhost/api/meta/databases', () => HttpResponse.json(['fixture.sqlite'])),
     http.get('http://localhost/api/meta/areas', () => HttpResponse.json([])),
@@ -359,7 +373,89 @@ async function rendersRecentRangeShortcuts(): Promise<void> {
   expect(screen.getByRole('button', { name: '近 5 年' })).toBeInTheDocument();
 }
 
+/** Verify rating unions, intersections, reset scopes and database-specific choices. */
+async function selectsRatingsAndClearsThemWhenChangingDatabase(): Promise<void> {
+  setSelectedDatabase('fixture.sqlite');
+  const requestedDatabases: string[] = [];
+  server.use(
+    http.get('http://localhost/api/auth/me', currentUserResponse),
+    http.get('http://localhost/api/meta/databases', () =>
+      HttpResponse.json(['fixture.sqlite', 'ccf.sqlite']),
+    ),
+    http.get('http://localhost/api/meta/areas', () =>
+      HttpResponse.json([{ value: 'Medicine', count: 2 }]),
+    ),
+    http.get('http://localhost/api/meta/journals', () =>
+      HttpResponse.json([{ journal_id: '101', title: 'Journal One' }]),
+    ),
+    http.get('http://localhost/api/years', () => HttpResponse.json([])),
+    http.get('http://localhost/api/meta/ratings', ({ request }) => {
+      const database = new URL(request.url).searchParams.get('db') ?? '';
+      requestedDatabases.push(database);
+      return database === 'ccf.sqlite'
+        ? emptyRatingsResponse()
+        : HttpResponse.json({
+            utd_rating: [{ value: 'UTD24', count: 1 }],
+            abs_rating: [
+              { value: '4', count: 2 },
+              { value: '4*', count: 1 },
+            ],
+            fms_rating: [{ value: 'A', count: 1 }],
+            fmscn_rating: [{ value: 'T1', count: 1 }],
+          });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(
+    <ThemeProvider attribute="class">
+      <AuthProvider>
+        <NuqsTestingAdapter searchParams="?q=retained&area=Medicine&journal_id=101" hasMemory>
+          <Sidebar />
+          <ActiveFilterChips />
+          <QueryProbe parameter="q" testId="retained-query" />
+        </NuqsTestingAdapter>
+      </AuthProvider>
+    </ThemeProvider>,
+  );
+  await user.click(await screen.findByRole('checkbox', { name: 'ABS 4' }));
+  await user.click(screen.getByRole('checkbox', { name: 'ABS 4*' }));
+  await user.click(screen.getByRole('checkbox', { name: 'FMS A' }));
+  await user.click(screen.getByRole('checkbox', { name: 'FMS 中国 T1' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: '移除评级 FMS A' })).toBeVisible());
+  expect(screen.getByRole('checkbox', { name: 'ABS 4' })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: 'ABS 4*' })).toBeChecked();
+  expect(screen.getByRole('button', { name: '移除领域 Medicine' })).toBeVisible();
+  expect(screen.getByRole('button', { name: '移除期刊 Journal One' })).toBeVisible();
+  expect(screen.getByTestId('retained-query')).toHaveTextContent('retained');
+  await user.click(screen.getByTitle('清空期刊筛选'));
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: /移除评级/ })).not.toBeInTheDocument(),
+  );
+  expect(screen.getByTestId('retained-query')).toHaveTextContent('retained');
+  await user.click(screen.getByRole('checkbox', { name: 'UTD UTD24' }));
+  screen.getByRole('combobox').focus();
+  await user.keyboard('{ArrowDown}');
+  await user.keyboard('{End}{Enter}');
+  await waitFor(() => expect(readSelectedDatabase()).toBe('ccf.sqlite'));
+  expect(await screen.findByText('当前数据库暂无期刊评级信息。')).toBeVisible();
+  expect(screen.queryByRole('checkbox', { name: 'UTD UTD24' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /移除评级/ })).not.toBeInTheDocument();
+  expect(requestedDatabases).toContain('fixture.sqlite');
+  expect(requestedDatabases).toContain('ccf.sqlite');
+}
+
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+
 describe('search and filter UI', () => {
+  test(
+    'combines rating groups and clears their state on database changes',
+    selectsRatingsAndClearsThemWhenChangingDatabase,
+  );
   test('normalizes month range values and recent shortcuts', normalizesMonthRanges);
   test('keeps draft clearing separate from query submission', keepsSearchDraftSeparate);
   test('synchronizes external query changes without an effect', synchronizesExternalSearchQuery);

@@ -5,7 +5,12 @@ import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { getAreas, getYears, getJournalOptions, getDatabases } from '@/lib/api';
+import { getAreas, getYears, getJournalOptions, getJournalRatings, getDatabases } from '@/lib/api';
+import {
+  JOURNAL_RATING_SYSTEMS,
+  useJournalRatingFilters,
+  type JournalRatingKey,
+} from '@/lib/journal-ratings';
 import { useAuth } from '@/lib/auth-context';
 import { SidebarNavigation } from '@/components/feature/sidebar-navigation';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -195,6 +200,7 @@ export function Sidebar({ className }: { className?: string }) {
     parseAsArrayOf(parseAsString).withDefault([]),
   );
   const [monthRange, setMonthRange] = useQueryState('month_range', parseAsString);
+  const [ratings, setRatings] = useJournalRatingFilters();
 
   const { data: databases, isLoading: loadingDatabases } = useQuery({
     queryKey: ['meta', 'databases'],
@@ -225,12 +231,24 @@ export function Sidebar({ className }: { className?: string }) {
     enabled: !!user,
   });
 
+  const {
+    data: ratingOptions,
+    isLoading: isLoadingRatings,
+    isError: isRatingError,
+    refetch: refetchRatings,
+  } = useQuery({
+    queryKey: ['meta', 'ratings', activeDb],
+    queryFn: () => getJournalRatings(activeDb),
+    enabled: !!user && !!activeDb,
+  });
+
   const handleDatabaseChange = (dbName: string) => {
     setSelectedDatabase(dbName);
     setQ(null);
     setAreas([]);
     setJournalIds([]);
     setMonthRange(null);
+    void setRatings(null);
     router.replace(pathname);
     router.refresh();
   };
@@ -238,6 +256,16 @@ export function Sidebar({ className }: { className?: string }) {
   const handleClearJournalFilters = () => {
     setAreas([]);
     setJournalIds([]);
+    void setRatings(null);
+  };
+
+  /** Update one rating group without discarding other journal or area selections. */
+  const handleRatingChange = (key: JournalRatingKey, value: string, isChecked: boolean) => {
+    void setRatings((current) => ({
+      [key]: isChecked
+        ? [...new Set([...current[key], value])].sort()
+        : current[key].filter((item) => item !== value),
+    }));
   };
 
   const handleClearTimeFilters = () => {
@@ -385,6 +413,56 @@ export function Sidebar({ className }: { className?: string }) {
           >
             清空
           </Button>
+        </div>
+
+        <div className="space-y-3">
+          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            期刊评级
+          </h4>
+          <p className="text-xs text-muted-foreground">同一体系可多选，不同体系共同筛选。</p>
+          {isLoadingRatings ? (
+            <Skeleton className="h-16 w-full" />
+          ) : isRatingError ? (
+            <div className="text-xs text-muted-foreground" role="status">
+              无法加载期刊评级
+              <Button variant="ghost" size="sm" onClick={() => void refetchRatings()}>
+                重试
+              </Button>
+            </div>
+          ) : JOURNAL_RATING_SYSTEMS.some(({ key }) => (ratingOptions?.[key].length ?? 0) > 0) ? (
+            JOURNAL_RATING_SYSTEMS.map(({ key, label }) => {
+              const options = ratingOptions?.[key] ?? [];
+              return options.length > 0 ? (
+                <fieldset key={key} className="space-y-2">
+                  <legend className="text-xs font-medium">{label}</legend>
+                  {options.map((option) => (
+                    <div key={option.value} className="flex min-w-0 items-start gap-2">
+                      <Checkbox
+                        id={`rating-${key}-${option.value}`}
+                        aria-label={`${label} ${option.value}`}
+                        className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
+                        checked={ratings[key].includes(option.value)}
+                        onCheckedChange={(isChecked) =>
+                          handleRatingChange(key, option.value, isChecked === true)
+                        }
+                      />
+                      <Label
+                        htmlFor={`rating-${key}-${option.value}`}
+                        className="min-w-0 flex-1 cursor-pointer break-words text-sm font-normal"
+                      >
+                        {option.value}
+                      </Label>
+                      <span className="text-xs text-muted-foreground" title="期刊数量">
+                        {option.count}
+                      </span>
+                    </div>
+                  ))}
+                </fieldset>
+              ) : null;
+            })
+          ) : (
+            <p className="text-xs text-muted-foreground">当前数据库暂无期刊评级信息。</p>
+          )}
         </div>
 
         <div className="space-y-3">

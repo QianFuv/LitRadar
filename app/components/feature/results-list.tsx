@@ -23,6 +23,7 @@ import { getMonthRangeDateBounds } from '@/lib/article-filters';
 import { createFtsHighlightPattern, parseFtsHighlightTerms } from '@/lib/fts-highlight';
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
+import { appendJournalRatingParams, useJournalRatingFilters } from '@/lib/journal-ratings';
 
 type ResultsListProps = {
   filterSummary?: ReactNode;
@@ -83,6 +84,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
   const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
   const [journalIds] = useQueryState('journal_id', parseAsArrayOf(parseAsString));
   const [monthRange] = useQueryState('month_range', parseAsString);
+  const [ratings] = useJournalRatingFilters();
   const searchParams = useSearchParams();
   const searchKey = searchParams.toString();
 
@@ -95,6 +97,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
   if (journalIds && journalIds.length > 0) {
     journalIds.forEach((id) => params.append('journal_id', id));
   }
+  appendJournalRatingParams(params, ratings);
 
   const dateBounds = getMonthRangeDateBounds(monthRange);
   if (dateBounds) {

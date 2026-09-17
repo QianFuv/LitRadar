@@ -22,6 +22,7 @@ import { getAreaDisplayName } from '@/lib/area-labels';
 import { getJournalOptions } from '@/lib/api';
 import { formatMonthRangeLabel } from '@/lib/article-filters';
 import { useSelectedDatabase } from '@/lib/selected-database';
+import { JOURNAL_RATING_SYSTEMS, useJournalRatingFilters } from '@/lib/journal-ratings';
 
 type FilterChipProps = {
   label: string;
@@ -76,6 +77,7 @@ export function ActiveFilterChips() {
     parseAsArrayOf(parseAsString).withDefault([]),
   );
   const [monthRange, setMonthRange] = useQueryState('month_range', parseAsString);
+  const [ratings, setRatings] = useJournalRatingFilters();
   const currentDatabase = useSelectedDatabase();
   const { data: journalOptions = [] } = useQuery({
     queryKey: ['meta', 'journals', currentDatabase],
@@ -122,6 +124,16 @@ export function ActiveFilterChips() {
       removeLabel: `移除期刊 ${label}`,
       onRemove: () => void setJournalIds((current) => current.filter((item) => item !== journalId)),
     });
+  }
+  for (const { key, label } of JOURNAL_RATING_SYSTEMS) {
+    for (const value of ratings[key]) {
+      appliedFilters.push({
+        id: `${key}-${value}`,
+        label: `${label}：${value}`,
+        removeLabel: `移除评级 ${label} ${value}`,
+        onRemove: () => void setRatings({ [key]: ratings[key].filter((item) => item !== value) }),
+      });
+    }
   }
   if (monthRangeLabel) {
     appliedFilters.push({
@@ -180,6 +192,7 @@ export function ActiveFilterChips() {
               void setAreas([]);
               void setJournalIds([]);
               void setMonthRange(null);
+              void setRatings(null);
             }}
           >
             重置筛选

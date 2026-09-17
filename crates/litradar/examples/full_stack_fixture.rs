@@ -116,6 +116,42 @@ fn seed_fixture(project_root: &Path) -> Result<serde_json::Value, Box<dyn Error>
         "full-stack-seed-v1",
         "2026-07-22T00:00:00Z",
     )?;
+    let mut second_catalog = fixture_catalog();
+    second_catalog.catalog_id = "full-stack-rating-second".to_string();
+    second_catalog.title = "Complementary Methods Journal".to_string();
+    second_catalog.issn = None;
+    second_catalog.all_issns.clear();
+    second_catalog.rankings = JournalRankings {
+        abs_rating: Some("4".into()),
+        fms_rating: Some("B".into()),
+        ..Default::default()
+    };
+    reconcile_catalog_identities(&connection, std::slice::from_ref(&second_catalog))?;
+    let mut second_batch = fixture_batch();
+    second_batch
+        .catalog_id
+        .clone_from(&second_catalog.catalog_id);
+    second_batch
+        .journal
+        .catalog_id
+        .clone_from(&second_catalog.catalog_id);
+    second_batch.journal.observed_title = Some(second_catalog.title.clone());
+    second_batch.journal.observed_issns.clear();
+    for issue in &mut second_batch.issues {
+        issue.catalog_id.clone_from(&second_catalog.catalog_id);
+    }
+    for article in &mut second_batch.articles {
+        article.catalog_id.clone_from(&second_catalog.catalog_id);
+        article.title = "Statistical Methods for Evidence Synthesis".to_string();
+        article.doi = Some("10.1234/full-stack-rating-second".to_string());
+    }
+    let second_outcome = write_content_batch(
+        &connection,
+        &second_catalog,
+        &second_batch,
+        "full-stack-rating-seed-v1",
+        "2026-07-22T00:00:00Z",
+    )?;
     let article_id: i64 = connection.query_row(
         "SELECT article_id FROM articles WHERE doi = ?1",
         [FIXTURE_ARTICLE_DOI],
@@ -144,7 +180,7 @@ fn seed_fixture(project_root: &Path) -> Result<serde_json::Value, Box<dyn Error>
         "status": "seeded",
         "database": FIXTURE_DATABASE_NAME,
         "user_count": 2,
-        "article_count": outcome.articles_changed,
+        "article_count": outcome.articles_changed + second_outcome.articles_changed,
         "weekly_article_count": 1
     }))
 }
@@ -161,6 +197,10 @@ fn seed_cfp_fixture(
     row[3] = catalog.issn.clone().unwrap_or_default();
     row[5] = catalog.all_issns.join(";");
     row[7] = catalog.area.clone().unwrap_or_default();
+    row[9] = catalog.rankings.utd_rating.clone().unwrap_or_default();
+    row[11] = catalog.rankings.abs_rating.clone().unwrap_or_default();
+    row[13] = catalog.rankings.fms_rating.clone().unwrap_or_default();
+    row[15] = catalog.rankings.fmscn_rating.clone().unwrap_or_default();
     fs::write(
         storage.meta_dir().join("full-stack.csv"),
         format!("{}\n{}\n", CATALOG_CSV_V3_COLUMNS.join(","), row.join(",")),
@@ -345,7 +385,12 @@ fn fixture_catalog() -> JournalCatalogEntry {
         all_issns: vec!["1234-5679".to_string()],
         title_aliases: Vec::new(),
         area: Some("Information Science".to_string()),
-        rankings: JournalRankings::default(),
+        rankings: JournalRankings {
+            utd_rating: Some("UTD24".into()),
+            abs_rating: Some("4*".into()),
+            fms_rating: Some("A".into()),
+            ..Default::default()
+        },
     }
 }
 
@@ -410,7 +455,6 @@ mod tests {
     use tempfile::tempdir;
 
     use super::configure_fixture_stream;
-
     use super::{seed_fixture, FIXTURE_ARTICLE_TITLE, FIXTURE_MARKER_CONTENT, FIXTURE_MARKER_FILE};
 
     #[test]
@@ -468,7 +512,7 @@ mod tests {
             .expect("seeded weekly updates should load");
 
         assert_eq!(report["status"], "seeded");
-        assert_eq!(report["article_count"], 1);
+        assert_eq!(report["article_count"], 2);
         assert_eq!(users.len(), 2);
         assert_eq!(weekly.databases.len(), 1);
         assert_eq!(weekly.databases[0].new_article_count, 1);

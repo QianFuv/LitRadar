@@ -35,6 +35,7 @@ export type ArticlePage = Omit<ApiSchemas['ArticlePage'], 'items' | 'page'> & {
 export type ArticleAccessAction = ApiSchemas['ArticleAccessAction'];
 export type ArticleAccessResponse = ApiSchemas['ArticleAccessResponse'];
 export type ValueCount = ApiSchemas['ValueCount'];
+export type JournalRatingOptions = ApiSchemas['JournalRatingOptions'];
 export type YearSummary = ApiSchemas['YearSummary'];
 export type JournalOption = Pick<ApiSchemas['JournalOption'], 'journal_id'> &
   Partial<Pick<ApiSchemas['JournalOption'], 'title'>>;

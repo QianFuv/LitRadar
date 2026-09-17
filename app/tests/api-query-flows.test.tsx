@@ -115,12 +115,17 @@ async function serializesArticleQuery(): Promise<void> {
   const filters = new URLSearchParams();
   filters.append('area', 'systems');
   filters.append('area', 'security');
+  filters.append('abs_rating', '4');
+  filters.append('abs_rating', '4*');
+  filters.append('fms_rating', 'A');
   filters.set('q', 'rust async');
 
   await getArticles(filters, 'cursor-token', true, 'fixture.sqlite');
 
   const url = new URL(capturedArticleUrl);
   expect(url.searchParams.getAll('area')).toEqual(['systems', 'security']);
+  expect(url.searchParams.getAll('abs_rating')).toEqual(['4', '4*']);
+  expect(url.searchParams.getAll('fms_rating')).toEqual(['A']);
   expect(url.searchParams.get('q')).toBe('rust async');
   expect(url.searchParams.get('search_mode')).toBe('simple');
   expect(url.searchParams.get('cursor')).toBe('cursor-token');

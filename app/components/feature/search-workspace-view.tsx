@@ -22,7 +22,7 @@ export function SearchWorkspaceView() {
       sidebar={<Sidebar />}
       sidebarOpenLabel="打开筛选器"
       sidebarDialogTitle="筛选器"
-      sidebarDialogDescription="选择数据库、领域、期刊和发表时间筛选文章。"
+      sidebarDialogDescription="选择数据库、领域、期刊评级、期刊和发表时间筛选文章。"
       toolbar={<SearchBar className="min-w-0 flex-1 md:mx-auto md:max-w-4xl" />}
     >
       <AnnouncementsDialog />

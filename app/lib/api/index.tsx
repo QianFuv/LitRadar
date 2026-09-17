@@ -17,6 +17,7 @@ import type {
   ArticleSearchMode,
   JournalId,
   JournalOption,
+  JournalRatingOptions,
   ValueCount,
   WeeklyArticlePage,
   WeeklyUpdatesSummaryResponse,
@@ -45,6 +46,20 @@ export function getAreas(dbName = readSelectedDatabase()): Promise<ValueCount[]>
     buildDatabaseUrl('/api/meta/areas', dbName),
     undefined,
     '获取领域失败',
+  );
+}
+
+/**
+ * Fetch available exact journal grades and journal counts for one database.
+ *
+ * @param dbName - Database name. Defaults to the selected database.
+ * @returns Rating groups, including empty groups when no grades are available.
+ */
+export function getJournalRatings(dbName = readSelectedDatabase()): Promise<JournalRatingOptions> {
+  return requestJson<JournalRatingOptions>(
+    buildDatabaseUrl('/api/meta/ratings', dbName),
+    undefined,
+    '获取期刊评级失败',
   );
 }
 

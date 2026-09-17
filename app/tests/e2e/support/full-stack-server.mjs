@@ -381,7 +381,7 @@ async function main(playwrightArguments) {
     'fixture seeder',
   );
   const seedReport = JSON.parse(seedOutput);
-  if (seedReport.status !== 'seeded' || seedReport.article_count !== 1) {
+  if (seedReport.status !== 'seeded' || seedReport.article_count !== 2) {
     throw new Error('fixture seeder returned an unexpected report');
   }
 
