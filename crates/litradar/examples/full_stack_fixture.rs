@@ -247,8 +247,7 @@ fn refresh_cfp_fixture(project_root: &Path) -> Result<serde_json::Value, Box<dyn
                 Err(error) => return Err(error),
             }
         };
-        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+        configure_fixture_stream(&stream)?;
         let mut request = [0_u8; 4096];
         let length = stream.read(&mut request)?;
         if !String::from_utf8_lossy(&request[..length])
@@ -296,6 +295,13 @@ fn refresh_cfp_fixture(project_root: &Path) -> Result<serde_json::Value, Box<dyn
         return Err(invalid_fixture("CFP source fixture did not publish").into());
     }
     Ok(json!({"status":"cfp_updated","notices":result.notices}))
+}
+
+/// Configure an accepted fixture connection with bounded blocking I/O.
+fn configure_fixture_stream(stream: &std::net::TcpStream) -> io::Result<()> {
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))
 }
 
 fn current_epoch_seconds_text() -> Result<String, std::time::SystemTimeError> {
@@ -399,10 +405,35 @@ fn invalid_fixture(message: &str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::{Read, Write};
 
     use tempfile::tempdir;
 
+    use super::configure_fixture_stream;
+
     use super::{seed_fixture, FIXTURE_ARTICLE_TITLE, FIXTURE_MARKER_CONTENT, FIXTURE_MARKER_FILE};
+
+    #[test]
+    fn accepted_fixture_stream_waits_for_delayed_request_bytes() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (start, ready) = std::sync::mpsc::channel();
+        let client = std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(address).unwrap();
+            ready.recv().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            stream.write_all(b"GET /").unwrap();
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        configure_fixture_stream(&stream).unwrap();
+        start.send(()).unwrap();
+        let mut request = [0_u8; 5];
+        let result = stream.read_exact(&mut request);
+        client.join().unwrap();
+        result.expect("fixture reads must wait for the client within their timeout");
+        assert_eq!(&request, b"GET /");
+    }
 
     #[test]
     fn unmarked_existing_root_is_rejected_without_changes() {
