@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,25 +39,35 @@ async function main() {
   await mkdir(BUILD_ROOT, { recursive: true });
   await mkdir(OUTPUT_ROOT, { recursive: true });
   const archivePath = path.join(BUILD_ROOT, "simple-source.tar.gz");
+  const downloadPath = `${archivePath}.download`;
+  let shouldPublishArchive = false;
   let archive;
   try {
     archive = await readFile(archivePath);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    const response = await fetch(
+    await run("curl", [
+      "--fail",
+      "--location",
+      "--silent",
+      "--show-error",
+      "--retry",
+      "2",
+      "--connect-timeout",
+      "15",
+      "--max-time",
+      "60",
+      "--output",
+      downloadPath,
       `https://codeload.github.com/wangfenjin/simple/tar.gz/${REVISION}`,
-      {
-        signal: AbortSignal.timeout(60000),
-      },
-    );
-    if (!response.ok)
-      throw new Error(`Tokenizer source download returned ${response.status}`);
-    archive = Buffer.from(await response.arrayBuffer());
+    ]);
+    archive = await readFile(downloadPath);
+    shouldPublishArchive = true;
   }
   if (createHash("sha256").update(archive).digest("hex") !== SOURCE_SHA256) {
     throw new Error("Tokenizer source checksum mismatch");
   }
-  await writeFile(archivePath, archive);
+  if (shouldPublishArchive) await rename(downloadPath, archivePath);
   await run("tar", ["-xzf", archivePath, "-C", BUILD_ROOT]);
   const buildDirectory = path.join(BUILD_ROOT, "build");
   await run("cmake", [
