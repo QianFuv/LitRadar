@@ -62,10 +62,10 @@ pub use health::{HealthResponse, HealthStatus};
 pub use ids::{stable_sqlite_id, ArticleId, JournalId, UserId};
 pub use index::{
     ArticleAccessAction, ArticleAccessResponse, ArticlePage, ArticleRecord, ArticleSearchMode,
-    IssuePage, IssueRecord, JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount,
-    WeeklyArticlePage, WeeklyArticleRecord, WeeklyDatabaseSummary, WeeklyDatabaseUpdate,
-    WeeklyJournalSummary, WeeklyJournalUpdate, WeeklyUpdatesResponse, WeeklyUpdatesSummaryResponse,
-    YearSummary,
+    IssuePage, IssueRecord, JournalOption, JournalPage, JournalRatingFilters, JournalRatingOptions,
+    JournalRecord, PageMeta, ValueCount, WeeklyArticlePage, WeeklyArticleRecord,
+    WeeklyDatabaseSummary, WeeklyDatabaseUpdate, WeeklyJournalSummary, WeeklyJournalUpdate,
+    WeeklyUpdatesResponse, WeeklyUpdatesSummaryResponse, YearSummary,
 };
 pub use index_contract::{
     date_precision, normalize_bibliographic_label, normalize_bibliographic_text,

@@ -14,6 +14,8 @@ pub struct ArticleListParams {
     pub year: Option<i64>,
     /// Journal areas.
     pub area: Vec<String>,
+    /// Exact journal grades, intersected with the other article filters.
+    pub ratings: JournalRatingFilters,
     /// In-press filter.
     pub in_press: Option<bool>,
     /// Open-access filter.
@@ -50,6 +52,7 @@ impl Default for ArticleListParams {
             issue_id: None,
             year: None,
             area: Vec::new(),
+            ratings: JournalRatingFilters::default(),
             in_press: None,
             open_access: None,
             date_from: None,
@@ -220,6 +223,9 @@ pub fn list_articles(
     let connection = open_index_connection(config, db_name)?;
     let mut base_clauses = Vec::new();
     let mut base_values = Vec::new();
+    let mut rating_clauses = Vec::new();
+    let mut rating_values = Vec::new();
+    push_rating_filters(&mut rating_clauses, &mut rating_values, &params.ratings)?;
     push_int_list_filter(
         &mut base_clauses,
         &mut base_values,
@@ -232,7 +238,22 @@ pub fn list_articles(
         "l.issue_id = ?",
         params.issue_id,
     );
-    push_string_list_filter(&mut base_clauses, &mut base_values, "l.area", &params.area);
+    if rating_clauses.is_empty() {
+        push_string_list_filter(&mut base_clauses, &mut base_values, "l.area", &params.area);
+    } else {
+        push_string_list_filter(
+            &mut rating_clauses,
+            &mut rating_values,
+            "j.area",
+            &params.area,
+        );
+        push_int_list_filter(
+            &mut rating_clauses,
+            &mut rating_values,
+            "j.journal_id",
+            &params.journal_id,
+        );
+    }
     push_optional_bool_filter(
         &mut base_clauses,
         &mut base_values,
@@ -283,6 +304,48 @@ pub fn list_articles(
         params.search_mode,
     );
     let direction = article_sort_direction(params.sort.as_deref().unwrap_or("date:desc"))?;
+    if !rating_clauses.is_empty() {
+        let rating_where = where_sql(&rating_clauses);
+        let has_rated_articles: bool = connection.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM journals j {rating_where} AND EXISTS \
+                (SELECT 1 FROM article_listing eligible WHERE eligible.journal_id=j.journal_id))"
+            ),
+            params_from_iter(rating_values.iter()),
+            |row| row.get(0),
+        )?;
+        if !has_rated_articles {
+            if let Some(cursor) = params.cursor.as_deref() {
+                parse_article_cursor(cursor)?;
+            }
+            if let Some(query) = nonempty(params.q.as_deref()) {
+                let query = match params.search_mode {
+                    ArticleSearchMode::Simple => quote_fts_phrase(query),
+                    ArticleSearchMode::Advanced => query.to_string(),
+                };
+                connection
+                    .query_row(
+                        "SELECT rowid FROM article_search WHERE article_search MATCH ? LIMIT 1",
+                        [query],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()
+                    .map_err(IndexRepositoryError::from)
+                    .map_err(|error| classify_article_query_error(error, params))?;
+            }
+            return article_page_from_ids(
+                &connection,
+                Vec::new(),
+                should_include_total(params).then_some(0),
+                params,
+            );
+        }
+        base_clauses.push(format!(
+            "l.journal_id IN (SELECT j.journal_id FROM journals j {})",
+            rating_where
+        ));
+        base_values.extend(rating_values);
+    }
     let base_where_sql = where_sql(&base_clauses);
     let total = if should_include_total(params) {
         Some(article_total(
@@ -324,7 +387,11 @@ fn validate_article_list_input(
         }
         validate_item_count(
             "search filters",
-            params.journal_id.len().saturating_add(params.area.len()),
+            params
+                .journal_id
+                .len()
+                .saturating_add(params.area.len())
+                .saturating_add(rating_filter_count(&params.ratings)),
             MAX_SEARCH_FILTER_ITEMS,
         )?;
         for area in &params.area {
@@ -636,7 +703,8 @@ fn parse_issue_key(key: &str) -> Result<(i64, i64), IndexRepositoryError> {
 mod tests {
     use super::*;
     use crate::index::test_support::{
-        article_filter_params, article_ids, candidate_ids, fixture_db_path, IndexFixture,
+        article_filter_params, article_ids, candidate_ids, fixture_db_path, set_rating_fixture,
+        IndexFixture,
     };
 
     #[cfg(any(windows, target_os = "linux"))]
@@ -685,6 +753,7 @@ mod tests {
     #[test]
     fn article_listing_filters_cover_fts5_and_canonical_expressions() {
         let fixture = IndexFixture::new(true);
+        set_rating_fixture(&fixture);
         let cases = vec![
             (
                 "journal ids",
@@ -793,7 +862,195 @@ mod tests {
             assert_eq!(article_ids(&page), expected_ids, "{name}");
             assert_eq!(page.page.total, Some(expected_ids.len() as i64), "{name}");
             assert!(page.items.iter().all(|article| !article.authors.is_empty()));
+            let mut rated = params.clone();
+            rated.ratings.abs_rating = vec!["4".to_string(), "4*".to_string()];
+            rated.ratings.fms_rating = vec!["A".to_string()];
+            let rated_page =
+                list_articles(&fixture.config, Some(&fixture.db_name), &rated).unwrap();
+            let expected_rated = expected_ids
+                .iter()
+                .copied()
+                .filter(|id| *id != 1003)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                article_ids(&rated_page),
+                expected_rated,
+                "{name} with ratings"
+            );
+            assert_eq!(rated_page.page.total, Some(expected_rated.len() as i64));
         }
+    }
+
+    #[test]
+    fn rating_filters_preserve_exact_grades_and_live_journal_metadata() {
+        let fixture = IndexFixture::new(true);
+        set_rating_fixture(&fixture);
+        for (ratings, expected) in [
+            (
+                JournalRatingFilters {
+                    abs_rating: vec!["4".into()],
+                    ..Default::default()
+                },
+                vec![1003],
+            ),
+            (
+                JournalRatingFilters {
+                    abs_rating: vec![" 4* ".into(), "4*".into()],
+                    ..Default::default()
+                },
+                vec![1004, 1001, 1002, 1005, 1008],
+            ),
+            (
+                JournalRatingFilters {
+                    abs_rating: vec!["4".into(), "4*".into()],
+                    ..Default::default()
+                },
+                vec![1003, 1004, 1001, 1002, 1005, 1008],
+            ),
+            (
+                JournalRatingFilters {
+                    utd_rating: vec!["UTD24".into()],
+                    fmscn_rating: vec!["T1".into()],
+                    ..Default::default()
+                },
+                vec![1004, 1001, 1002, 1005, 1008],
+            ),
+            (
+                JournalRatingFilters {
+                    abs_rating: vec!["4*".into()],
+                    fms_rating: vec!["B".into()],
+                    ..Default::default()
+                },
+                vec![],
+            ),
+            (
+                JournalRatingFilters {
+                    abs_rating: vec!["4%' OR 1=1 --".into()],
+                    ..Default::default()
+                },
+                vec![],
+            ),
+        ] {
+            let page = list_articles(
+                &fixture.config,
+                Some(&fixture.db_name),
+                &ArticleListParams {
+                    ratings,
+                    ..article_filter_params()
+                },
+            )
+            .unwrap();
+            assert_eq!(article_ids(&page), expected);
+            assert_eq!(page.page.total, Some(expected.len() as i64));
+        }
+        let mut params = ArticleListParams {
+            ratings: JournalRatingFilters {
+                fms_rating: vec!["A".into()],
+                ..Default::default()
+            },
+            q: Some("title:Genome OR title:missing".into()),
+            search_mode: ArticleSearchMode::Advanced,
+            ..article_filter_params()
+        };
+        assert_eq!(
+            article_ids(&list_articles(&fixture.config, Some(&fixture.db_name), &params).unwrap()),
+            [1004, 1001]
+        );
+        let connection = Connection::open(fixture_db_path(&fixture)).unwrap();
+        connection
+            .execute("UPDATE journals SET fms_rating='B' WHERE journal_id=1", [])
+            .unwrap();
+        assert!(
+            list_articles(&fixture.config, Some(&fixture.db_name), &params)
+                .unwrap()
+                .items
+                .is_empty()
+        );
+        params.sort = Some("title:asc".into());
+        assert!(matches!(
+            list_articles(&fixture.config, Some(&fixture.db_name), &params),
+            Err(IndexRepositoryError::UnsupportedSortField(field)) if field == "title"
+        ));
+        params.sort = None;
+        params.cursor = Some("invalid".into());
+        assert!(matches!(
+            list_articles(&fixture.config, Some(&fixture.db_name), &params),
+            Err(IndexRepositoryError::InvalidCursor)
+        ));
+        params.cursor = None;
+        params.q = Some("\"".into());
+        assert!(matches!(
+            list_articles(&fixture.config, Some(&fixture.db_name), &params),
+            Err(IndexRepositoryError::InvalidSearchExpression)
+        ));
+    }
+
+    #[test]
+    fn empty_rating_selection_skips_article_scans_and_honors_total_mode() {
+        let fixture = IndexFixture::new(true);
+        set_rating_fixture(&fixture);
+        for grade in ["3", "unknown"] {
+            for include_total in [true, false] {
+                ARTICLE_TOTAL_QUERY_COUNT.with(|count| count.set(0));
+                let page = list_articles(
+                    &fixture.config,
+                    Some(&fixture.db_name),
+                    &ArticleListParams {
+                        ratings: JournalRatingFilters {
+                            abs_rating: vec![grade.into()],
+                            ..Default::default()
+                        },
+                        q: Some("Genome".into()),
+                        date_from: Some("2026-01-01".into()),
+                        include_total: Some(include_total),
+                        ..article_filter_params()
+                    },
+                )
+                .unwrap();
+                assert!(page.items.is_empty());
+                assert_eq!(page.page.total, include_total.then_some(0));
+                assert_eq!(page.page.next_cursor, None);
+                assert_eq!(page.page.has_more, Some(false));
+                assert_eq!(ARTICLE_TOTAL_QUERY_COUNT.with(std::cell::Cell::get), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn rating_filters_validate_raw_aggregate_bounds_before_deduplication() {
+        let fixture = IndexFixture::new(true);
+        for values in [
+            vec!["".into()],
+            vec!["\u{00a0}".into()],
+            vec!["文".repeat(2049)],
+            vec!["4".into(); 501],
+        ] {
+            let params = ArticleListParams {
+                ratings: JournalRatingFilters {
+                    abs_rating: values,
+                    ..Default::default()
+                },
+                ..article_filter_params()
+            };
+            assert!(matches!(
+                list_articles(&fixture.config, Some(&fixture.db_name), &params),
+                Err(IndexRepositoryError::InvalidInput(_))
+            ));
+        }
+        let mut params = ArticleListParams {
+            journal_id: vec![1; 499],
+            ratings: JournalRatingFilters {
+                abs_rating: vec!["A".into()],
+                ..Default::default()
+            },
+            ..article_filter_params()
+        };
+        assert!(list_articles(&fixture.config, Some(&fixture.db_name), &params).is_ok());
+        params.ratings.fms_rating.push("A".into());
+        assert!(matches!(
+            list_articles(&fixture.config, Some(&fixture.db_name), &params),
+            Err(IndexRepositoryError::InvalidInput(_))
+        ));
     }
 
     #[test]
@@ -918,44 +1175,70 @@ mod tests {
     #[test]
     fn article_cursor_pages_cover_null_dates_in_both_directions() {
         let fixture = IndexFixture::new(true);
+        set_rating_fixture(&fixture);
         let connection = open_sqlite_connection(fixture_db_path(&fixture))
             .expect("fixture database should open");
         connection
             .execute_batch(
                 "UPDATE articles SET date = NULL WHERE article_id IN (1005, 1008);
-                 UPDATE article_listing SET date = NULL WHERE article_id IN (1005, 1008);",
+                 UPDATE article_listing SET date = NULL WHERE article_id IN (1005, 1008);
+                 UPDATE articles SET date='2026-01-05' WHERE article_id=1002;
+                 UPDATE article_listing SET date='2026-01-05' WHERE article_id=1002;",
             )
             .expect("NULL date fixtures should update");
         drop(connection);
 
-        for (sort, expected_ids) in [
-            ("date:desc", vec![1003, 1004, 1001, 1002, 1008, 1005]),
-            ("date:asc", vec![1005, 1008, 1002, 1001, 1004, 1003]),
+        for (ratings, has_beta_journal) in [
+            (JournalRatingFilters::default(), true),
+            (
+                JournalRatingFilters {
+                    abs_rating: vec!["4*".into(), "4".into()],
+                    ..Default::default()
+                },
+                true,
+            ),
+            (
+                JournalRatingFilters {
+                    abs_rating: vec!["4*".into()],
+                    ..Default::default()
+                },
+                false,
+            ),
         ] {
-            let mut cursor = None;
-            let mut collected_ids = Vec::new();
-            for _ in 0..10 {
-                let page = list_articles(
-                    &fixture.config,
-                    Some(&fixture.db_name),
-                    &ArticleListParams {
-                        cursor,
-                        include_total: Some(false),
-                        limit: 1,
-                        sort: Some(sort.to_string()),
-                        ..article_filter_params()
-                    },
-                )
-                .unwrap_or_else(|error| panic!("{sort} cursor page should query: {error}"));
-                collected_ids.extend(article_ids(&page));
-                if page.page.has_more != Some(true) {
-                    break;
+            for (sort, expected_ids) in [
+                ("date:desc", vec![1003, 1004, 1002, 1001, 1008, 1005]),
+                ("date:asc", vec![1005, 1008, 1001, 1002, 1004, 1003]),
+            ] {
+                let expected_ids = expected_ids
+                    .into_iter()
+                    .filter(|id| has_beta_journal || *id != 1003)
+                    .collect::<Vec<_>>();
+                let mut cursor = None;
+                let mut collected_ids = Vec::new();
+                for _ in 0..10 {
+                    let page = list_articles(
+                        &fixture.config,
+                        Some(&fixture.db_name),
+                        &ArticleListParams {
+                            ratings: ratings.clone(),
+                            cursor,
+                            include_total: Some(false),
+                            limit: 1,
+                            sort: Some(sort.to_string()),
+                            ..article_filter_params()
+                        },
+                    )
+                    .unwrap_or_else(|error| panic!("{sort} cursor page should query: {error}"));
+                    collected_ids.extend(article_ids(&page));
+                    if page.page.has_more != Some(true) {
+                        break;
+                    }
+                    cursor = page.page.next_cursor;
                 }
-                cursor = page.page.next_cursor;
+                assert_eq!(collected_ids, expected_ids, "{sort}");
+                let unique_ids = collected_ids.iter().copied().collect::<HashSet<_>>();
+                assert_eq!(unique_ids.len(), collected_ids.len(), "{sort}");
             }
-            assert_eq!(collected_ids, expected_ids, "{sort}");
-            let unique_ids = collected_ids.iter().copied().collect::<HashSet<_>>();
-            assert_eq!(unique_ids.len(), collected_ids.len(), "{sort}");
         }
     }
 

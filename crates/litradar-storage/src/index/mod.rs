@@ -8,10 +8,11 @@ use std::path::Path;
 use litradar_domain::{
     validate_characters, validate_item_count, ArticleCandidateInfo, ArticleId, ArticleLocator,
     ArticlePage, ArticleRecord, ArticleSearchMode, IssuePage, IssueRecord, JournalId,
-    JournalOption, JournalPage, JournalRecord, PageMeta, ValueCount, WeeklyArticlePage,
-    WeeklyArticleRecord, WeeklyDatabaseSummary, WeeklyDatabaseUpdate, WeeklyJournalSummary,
-    WeeklyJournalUpdate, WeeklyUpdatesResponse, WeeklyUpdatesSummaryResponse, YearSummary,
-    MAX_DATABASE_NAME_CHARS, MAX_SEARCH_FILTER_ITEMS, MAX_SEARCH_TEXT_CHARS,
+    JournalOption, JournalPage, JournalRatingFilters, JournalRatingOptions, JournalRecord,
+    PageMeta, ValueCount, WeeklyArticlePage, WeeklyArticleRecord, WeeklyDatabaseSummary,
+    WeeklyDatabaseUpdate, WeeklyJournalSummary, WeeklyJournalUpdate, WeeklyUpdatesResponse,
+    WeeklyUpdatesSummaryResponse, YearSummary, MAX_DATABASE_NAME_CHARS, MAX_SEARCH_FILTER_ITEMS,
+    MAX_SEARCH_TEXT_CHARS,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params_from_iter, Connection, OptionalExtension};
@@ -130,7 +131,8 @@ pub use articles::{
 pub use fulltext::get_article_locator;
 pub use metadata::{
     get_issue, get_journal, list_areas, list_index_database_names, list_issues,
-    list_journal_options, list_journals, list_years, IssueListParams, JournalListParams,
+    list_journal_options, list_journal_ratings, list_journals, list_years, IssueListParams,
+    JournalListParams,
 };
 pub use weekly::{
     get_weekly_update_articles, get_weekly_update_articles_with_cache, get_weekly_updates,

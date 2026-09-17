@@ -33,6 +33,10 @@ pub fn public_routes() -> Router<ApiState> {
         )
         .route("/meta/areas", axum::routing::get(index::list_areas))
         .route(
+            "/meta/ratings",
+            axum::routing::get(index::list_journal_ratings),
+        )
+        .route(
             "/meta/journals",
             axum::routing::get(index::list_journal_options),
         )

@@ -212,6 +212,45 @@ pub struct ValueCount {
     pub count: i64,
 }
 
+/// Exact journal grades, combined with OR within each system and AND across systems.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JournalRatingFilters {
+    /// Accepted UTD grades; an empty list leaves this system unrestricted.
+    pub utd_rating: Vec<String>,
+    /// Accepted ABS grades, including the literal value `4*`.
+    pub abs_rating: Vec<String>,
+    /// Accepted FMS grades.
+    pub fms_rating: Vec<String>,
+    /// Accepted FMS China grades.
+    pub fmscn_rating: Vec<String>,
+}
+
+impl JournalRatingFilters {
+    /// Return fixed public field names with their submitted values in a stable order.
+    pub fn groups(&self) -> [(&'static str, &[String]); 4] {
+        [
+            ("utd_rating", &self.utd_rating),
+            ("abs_rating", &self.abs_rating),
+            ("fms_rating", &self.fms_rating),
+            ("fmscn_rating", &self.fmscn_rating),
+        ]
+    }
+}
+
+/// Available exact grades and database-wide journal counts for each rating system.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct JournalRatingOptions {
+    /// UTD grade choices, excluding unrated journals.
+    pub utd_rating: Vec<ValueCount>,
+    /// ABS grade choices; `4*` is an exact label rather than a wildcard.
+    pub abs_rating: Vec<ValueCount>,
+    /// FMS grade choices.
+    pub fms_rating: Vec<ValueCount>,
+    /// FMS China grade choices.
+    pub fmscn_rating: Vec<ValueCount>,
+}
+
 /// Publication year summary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct YearSummary {

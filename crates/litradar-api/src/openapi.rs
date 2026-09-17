@@ -31,6 +31,7 @@ pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
         crate::routes::cfp::list_journals,
         crate::routes::cfp::list_notices,
         crate::routes::index::list_areas,
+        crate::routes::index::list_journal_ratings,
         crate::routes::index::list_journal_options,
         crate::routes::index::list_years,
         crate::routes::index::list_journals,
@@ -324,6 +325,7 @@ mod tests {
         ("/api/cfp/journals", "get"),
         ("/api/cfp/journals/{catalog_id}/notices", "get"),
         ("/api/meta/areas", "get"),
+        ("/api/meta/ratings", "get"),
         ("/api/meta/journals", "get"),
         ("/api/years", "get"),
         ("/api/journals", "get"),
@@ -566,6 +568,25 @@ mod tests {
             serde_json::json!(litradar_domain::MAX_SEARCH_FILTER_ITEMS)
         );
         assert_eq!(parameter("area")["required"], false);
+        for path in ["/api/articles", "/api/journals"] {
+            let parameters = document["paths"][path]["get"]["parameters"]
+                .as_array()
+                .unwrap();
+            for field in ["utd_rating", "abs_rating", "fms_rating", "fmscn_rating"] {
+                let parameter = parameters
+                    .iter()
+                    .find(|parameter| parameter["name"] == field)
+                    .unwrap();
+                assert_eq!(parameter["schema"]["maxItems"], 500);
+                assert_eq!(parameter["required"], false);
+                assert_eq!(parameter["schema"]["items"]["type"], "string");
+            }
+        }
+        assert_eq!(
+            document["paths"]["/api/meta/ratings"]["get"]["responses"]["200"]["content"]
+                ["application/json"]["schema"]["$ref"],
+            "#/components/schemas/JournalRatingOptions"
+        );
         assert!(parameter("include_total")["description"]
             .as_str()
             .expect("include_total description should exist")

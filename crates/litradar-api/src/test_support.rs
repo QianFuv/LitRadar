@@ -191,6 +191,33 @@ impl TestBackend {
         }
     }
 
+    /// Create two independently rated article journals and one rated journal without articles.
+    ///
+    /// # Arguments
+    ///
+    /// * `db_name` - Fixture database filename under the temporary index directory.
+    ///
+    /// # Returns
+    ///
+    /// Fixture identity containing separate journal grades and equal-date article rows.
+    pub(crate) fn create_rated_index_database(&self, db_name: &str) -> FixtureIndexDatabase {
+        let database = self.create_index_database(db_name);
+        let connection = Connection::open(&database.path).unwrap();
+        connection.execute_batch(
+            "UPDATE journals SET utd_rating='UTD24',abs_rating='4*',fms_rating='A',fmscn_rating='T1' WHERE journal_id=101;
+             INSERT INTO journals (journal_id,catalog_id,title,title_aliases_json,issns_json,area,abs_rating,fms_rating,fmscn_rating) VALUES
+                (102,'rated-second','Second Journal','[]','[]','Engineering','4','B','T2'),
+                (103,'rated-empty','Empty Journal','[]','[]','Medicine','3',NULL,'T1');
+             INSERT INTO issues (issue_id,journal_id,publication_year,date) VALUES (202402,102,2024,'2024-01-16');
+             INSERT INTO articles (article_id,journal_id,issue_id,title,publication_year,date,authors_json,doi,open_access,in_press)
+                VALUES (9002,102,202402,'Second Fixture Article',2024,'2024-01-16','[]','10.1234/second',0,0);
+             INSERT INTO article_listing (article_id,journal_id,issue_id,publication_year,date,open_access,in_press,doi,area)
+                VALUES (9002,102,202402,2024,'2024-01-16',0,0,'10.1234/second','Engineering');
+             INSERT INTO article_search (rowid,article_id,title,journal_title) VALUES (9002,9002,'Second Fixture Article','Second Journal');"
+        ).unwrap();
+        database
+    }
+
     /// Write one current-window weekly-update manifest for an index fixture.
     ///
     /// # Arguments

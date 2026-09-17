@@ -808,6 +808,58 @@
             }
           },
           {
+            "name": "utd_rating",
+            "in": "query",
+            "description": "Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 500
+            }
+          },
+          {
+            "name": "abs_rating",
+            "in": "query",
+            "description": "Repeated exact ABS grades, including literal 4*.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 500
+            }
+          },
+          {
+            "name": "fms_rating",
+            "in": "query",
+            "description": "Repeated exact FMS grades.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 500
+            }
+          },
+          {
+            "name": "fmscn_rating",
+            "in": "query",
+            "description": "Repeated exact FMS China grades.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 500
+            }
+          },
+          {
             "name": "issue_id",
             "in": "query",
             "description": "Issue identifier filter.",
@@ -2896,7 +2948,7 @@
       "get": {
         "tags": ["index"],
         "summary": "List journals with filters and offset pagination.",
-        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Journal list filters.\n\n# Returns\n\nPaginated journals.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Journal list filters.\n* `raw_query` - Repeated rating fields; scalar parsing retains its existing contract.\n\n# Returns\n\nPaginated journals.",
         "operationId": "list_journals",
         "parameters": [
           {
@@ -2963,6 +3015,58 @@
             "schema": {
               "type": "integer",
               "format": "int64"
+            }
+          },
+          {
+            "name": "utd_rating",
+            "in": "query",
+            "description": "Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 500
+            }
+          },
+          {
+            "name": "abs_rating",
+            "in": "query",
+            "description": "Repeated exact ABS grades, including literal 4*.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 500
+            }
+          },
+          {
+            "name": "fms_rating",
+            "in": "query",
+            "description": "Repeated exact FMS grades.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 500
+            }
+          },
+          {
+            "name": "fmscn_rating",
+            "in": "query",
+            "description": "Repeated exact FMS China grades.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 500
             }
           }
         ],
@@ -3137,6 +3241,45 @@
                   "items": {
                     "$ref": "#/components/schemas/JournalOption"
                   }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/meta/ratings": {
+      "get": {
+        "tags": ["index"],
+        "summary": "List available journal grades with database-wide journal counts.",
+        "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Database selector.\n\n# Returns\n\nFour exact rating groups, excluding unrated journals and counting journals without articles.",
+        "operationId": "list_journal_ratings",
+        "parameters": [
+          {
+            "name": "db",
+            "in": "query",
+            "description": "Database name or filename under `data/index`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exact grade options and journal counts per system.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalRatingOptions"
                 }
               }
             }
@@ -5522,6 +5665,41 @@
           "page": {
             "$ref": "#/components/schemas/PageMeta",
             "description": "Pagination metadata."
+          }
+        }
+      },
+      "JournalRatingOptions": {
+        "type": "object",
+        "description": "Available exact grades and database-wide journal counts for each rating system.",
+        "required": ["utd_rating", "abs_rating", "fms_rating", "fmscn_rating"],
+        "properties": {
+          "abs_rating": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValueCount"
+            },
+            "description": "ABS grade choices; `4*` is an exact label rather than a wildcard."
+          },
+          "fms_rating": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValueCount"
+            },
+            "description": "FMS grade choices."
+          },
+          "fmscn_rating": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValueCount"
+            },
+            "description": "FMS China grade choices."
+          },
+          "utd_rating": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValueCount"
+            },
+            "description": "UTD grade choices, excluding unrated journals."
           }
         }
       },

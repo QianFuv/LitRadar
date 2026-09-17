@@ -130,6 +130,39 @@ pub(crate) async fn list_areas(
     Ok(Json(rows))
 }
 
+/// List available journal grades with database-wide journal counts.
+///
+/// # Arguments
+///
+/// * `state` - Shared API state.
+/// * `headers` - Request headers.
+/// * `query` - Database selector.
+///
+/// # Returns
+///
+/// Four exact rating groups, excluding unrated journals and counting journals without articles.
+#[utoipa::path(
+    get,
+    path = "/api/meta/ratings",
+    tag = "index",
+    params(DbQuery),
+    responses((status = 200, description = "Exact grade options and journal counts per system.", body = litradar_domain::JournalRatingOptions)),
+    security(("bearer_auth" = []), ("session_cookie" = []))
+)]
+pub(crate) async fn list_journal_ratings(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Query(query): Query<DbQuery>,
+) -> Result<Json<litradar_domain::JournalRatingOptions>, ApiError> {
+    require_current_user(&state, &headers).await?;
+    let db = query.db.and_then(nonempty_owned);
+    let options = run_index(&state, move |storage| {
+        litradar_storage::list_journal_ratings(&storage, db.as_deref())
+    })
+    .await?;
+    Ok(Json(options))
+}
+
 /// List journal selector options.
 ///
 /// # Arguments
@@ -203,6 +236,7 @@ pub(crate) async fn list_years(
 /// * `state` - Shared API state.
 /// * `headers` - Request headers.
 /// * `query` - Journal list filters.
+/// * `raw_query` - Repeated rating fields; scalar parsing retains its existing contract.
 ///
 /// # Returns
 ///
@@ -211,7 +245,13 @@ pub(crate) async fn list_years(
     get,
     path = "/api/journals",
     tag = "index",
-    params(JournalQuery),
+    params(
+        JournalQuery,
+        ("utd_rating" = Option<Vec<String>>, Query, description = "Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound.", max_items = 500),
+        ("abs_rating" = Option<Vec<String>>, Query, description = "Repeated exact ABS grades, including literal 4*.", max_items = 500),
+        ("fms_rating" = Option<Vec<String>>, Query, description = "Repeated exact FMS grades.", max_items = 500),
+        ("fmscn_rating" = Option<Vec<String>>, Query, description = "Repeated exact FMS China grades.", max_items = 500)
+    ),
     responses((status = 200, description = "Paginated journals.", body = litradar_domain::JournalPage)),
     security(("bearer_auth" = []), ("session_cookie" = []))
 )]
@@ -219,10 +259,12 @@ pub(crate) async fn list_journals(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Query(query): Query<JournalQuery>,
+    RawQuery(raw_query): RawQuery,
 ) -> Result<Json<litradar_domain::JournalPage>, ApiError> {
     require_current_user(&state, &headers).await?;
     let params = JournalListParams {
         area: query.area,
+        ratings: parse_rating_filters(&parse_query_pairs(raw_query.as_deref())?),
         has_articles: query.has_articles,
         year: query.year,
         sort: query.sort,
@@ -479,6 +521,10 @@ pub(crate) async fn get_weekly_update_articles(
         ("db" = Option<String>, Query, description = "Database name or filename under data/index.", max_length = 255),
         ("journal_id" = Option<Vec<i64>>, Query, description = "Repeated journal identifier filters.", max_items = 500),
         ("area" = Option<Vec<String>>, Query, description = "Repeated area filters.", max_items = 500),
+        ("utd_rating" = Option<Vec<String>>, Query, description = "Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound.", max_items = 500),
+        ("abs_rating" = Option<Vec<String>>, Query, description = "Repeated exact ABS grades, including literal 4*.", max_items = 500),
+        ("fms_rating" = Option<Vec<String>>, Query, description = "Repeated exact FMS grades.", max_items = 500),
+        ("fmscn_rating" = Option<Vec<String>>, Query, description = "Repeated exact FMS China grades.", max_items = 500),
         ("issue_id" = Option<i64>, Query, description = "Issue identifier filter."),
         ("year" = Option<i64>, Query, description = "Publication year filter."),
         ("in_press" = Option<bool>, Query, description = "In-press filter."),
@@ -736,6 +782,7 @@ fn parse_article_query(
     let mut params = ArticleListParams::default();
     params.journal_id = parse_i64_values(&pairs, "journal_id")?;
     params.area = query_values(&pairs, "area");
+    params.ratings = parse_rating_filters(&pairs);
     params.issue_id = parse_optional_i64(&pairs, "issue_id")?;
     params.year = parse_optional_i64(&pairs, "year")?;
     params.in_press = parse_optional_bool(&pairs, "in_press")?;
@@ -813,7 +860,12 @@ fn parse_weekly_article_query(
 fn validate_article_query_pairs(pairs: &[(String, String)]) -> Result<(), ApiError> {
     let repeated_filter_count = pairs
         .iter()
-        .filter(|(name, _)| matches!(name.as_str(), "journal_id" | "area"))
+        .filter(|(name, _)| {
+            matches!(
+                name.as_str(),
+                "journal_id" | "area" | "utd_rating" | "abs_rating" | "fms_rating" | "fmscn_rating"
+            )
+        })
         .count();
     litradar_domain::validate_item_count(
         "search filters",
@@ -824,14 +876,24 @@ fn validate_article_query_pairs(pairs: &[(String, String)]) -> Result<(), ApiErr
     for (name, value) in pairs {
         let maximum = match name.as_str() {
             "db" => litradar_domain::MAX_DATABASE_NAME_CHARS,
-            "journal_id" | "area" | "date_from" | "date_to" | "doi" | "pmid" | "q"
-            | "search_mode" | "sort" | "cursor" => litradar_domain::MAX_SEARCH_TEXT_CHARS,
+            "journal_id" | "area" | "utd_rating" | "abs_rating" | "fms_rating" | "fmscn_rating"
+            | "date_from" | "date_to" | "doi" | "pmid" | "q" | "search_mode" | "sort"
+            | "cursor" => litradar_domain::MAX_SEARCH_TEXT_CHARS,
             _ => continue,
         };
         litradar_domain::validate_characters(name, value, maximum)
             .map_err(|error| ApiError::bad_request(error.to_string()))?;
     }
     Ok(())
+}
+
+fn parse_rating_filters(pairs: &[(String, String)]) -> litradar_domain::JournalRatingFilters {
+    litradar_domain::JournalRatingFilters {
+        utd_rating: query_values(pairs, "utd_rating"),
+        abs_rating: query_values(pairs, "abs_rating"),
+        fms_rating: query_values(pairs, "fms_rating"),
+        fmscn_rating: query_values(pairs, "fmscn_rating"),
+    }
 }
 
 fn parse_query_pairs(raw_query: Option<&str>) -> Result<Vec<(String, String)>, ApiError> {
@@ -1003,6 +1065,7 @@ mod tests {
 
     use axum::http::{Method, StatusCode};
     use rusqlite::Error as SqliteError;
+    use tower::ServiceExt;
 
     use super::*;
     use crate::test_support::{json_request, TestBackend};
@@ -1066,6 +1129,70 @@ mod tests {
                 .expect_err("one search character over the boundary should fail"),
             "q must be at most 2048 characters",
         );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn rating_article_pages_keep_fts_totals_cursors_and_journal_scalar_contracts() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("rated_pages", false);
+        backend.create_rated_index_database("fixture.sqlite");
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let base="/api/articles?db=fixture&abs_rating=4&abs_rating=4%2A&q=Fixture&search_mode=advanced&limit=1";
+        let first = json_request(&app, Method::GET, base, Some(&authorization), None, None).await;
+        assert_eq!(first.status, StatusCode::OK);
+        assert_eq!(first.payload["page"]["total"], 2);
+        assert_eq!(first.payload["items"][0]["article_id"], "9002");
+        let cursor = first.payload["page"]["next_cursor"]
+            .as_str()
+            .unwrap()
+            .replace('|', "%7C");
+        let next = json_request(
+            &app,
+            Method::GET,
+            &format!("{base}&cursor={cursor}"),
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(next.status, StatusCode::OK);
+        assert_eq!(next.payload["page"]["total"], serde_json::Value::Null);
+        assert_eq!(next.payload["items"][0]["article_id"], "9001");
+        assert_eq!(next.payload["page"]["has_more"], false);
+        let offset = json_request(
+            &app,
+            Method::GET,
+            &format!("{base}&offset=1"),
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(offset.payload["items"], next.payload["items"]);
+        for suffix in [
+            "limit=1&limit=2",
+            "limit=",
+            "has_articles=yes",
+            "has_articles=1",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri(format!("/api/journals?db=fixture&abs_rating=4&{suffix}"))
+                        .header("authorization", &authorization)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{suffix}");
+        }
     }
 
     #[tokio::test]

@@ -104,8 +104,9 @@ pub use index::{
     collect_inpress_article_counts, collect_issue_article_counts, fetch_candidates_for_article_ids,
     fetch_candidates_for_inpress_keys, fetch_candidates_for_issue_keys, get_article,
     get_article_locator, get_issue, get_journal, get_weekly_updates, list_areas, list_articles,
-    list_index_database_names, list_issues, list_journal_options, list_journals, list_years,
-    ArticleListParams, IndexRepositoryError, IssueListParams, JournalListParams,
+    list_index_database_names, list_issues, list_journal_options, list_journal_ratings,
+    list_journals, list_years, ArticleListParams, IndexRepositoryError, IssueListParams,
+    JournalListParams,
 };
 pub use index_maintenance::{
     optimize_index_storage, IndexDatabaseOptimizationReport, IndexDatabaseStorageMeasurement,

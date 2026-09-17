@@ -79,7 +79,31 @@ operational entrypoint is `litradar cfp refresh`; see
 - cursor 请求显式传 `include_total=true` 时，`total` 是不含 cursor/offset 条件的完整过滤结果总数。
 - 精确的默认值、上限和过滤字段以 OpenAPI schema 为准。
 
-全文查询 `q` 默认使用 `search_mode=simple`，把完整输入转义为一个 FTS5 字面短语，引号和 `OR` 等符号不会被解释为运算符。只有显式设置 `search_mode=advanced` 才启用 FTS5 查询语法；非法高级表达式返回 `400 Invalid search expression`。REST、MCP 与 storage 均限制搜索文本最多 2048 个 Unicode 字符、重复 `journal_id`/`area` 过滤值合计最多 500 项。
+全文查询 `q` 默认使用 `search_mode=simple`，把完整输入转义为一个 FTS5 字面短语，引号和 `OR` 等符号不会被解释为运算符。只有显式设置 `search_mode=advanced` 才启用 FTS5 查询语法；非法高级表达式返回 `400 Invalid search expression`。REST、MCP 与 storage 均限制搜索文本最多 2048 个 Unicode 字符、重复 `journal_id`/`area` 与期刊评级过滤值合计最多 500 项。
+
+### Journal rating filters
+
+`GET /api/articles` and `GET /api/journals` accept repeated `utd_rating`,
+`abs_rating`, `fms_rating` and `fmscn_rating` parameters. The corresponding MCP
+tools, `search_articles` and `list_journals`, accept arrays with the same names.
+Values within one system are combined with OR; systems and other applicable
+filters are combined with AND. For example, `abs_rating=4&abs_rating=4%2A&fms_rating=A`
+means `(ABS 4 OR ABS 4*) AND FMS A`. `4*` is an exact grade, not a wildcard or threshold.
+
+Values are trimmed and deduplicated. Omitted parameters and empty MCP arrays leave
+a system unrestricted; a supplied blank string is invalid. Unknown nonblank grades
+and conflicting filters return no matches. All submitted filter items count toward
+the shared 500-item limit before deduplication, and each grade is limited to 2,048
+Unicode characters. Ratings apply to both page membership and the full filtered total;
+clients must retain filters on subsequent pages and reset cursors when filters change.
+
+`GET /api/meta/ratings?db=NAME` and MCP `list_journal_ratings` return four groups
+named after the parameters, each containing `{ "value": "4*", "count": 47 }`-shaped
+choices. Counts describe journals, including journals without articles, across the
+selected database. Unrated journals are excluded from choices and cannot match a
+selected grade. A database with no ratings returns four empty arrays. Choices follow
+the stored journal metadata without rebuilding article projections. Homepage ratings
+do not implicitly filter the independent favorites, weekly-update or CFP endpoints.
 
 ### 错误
 
@@ -123,6 +147,7 @@ operational entrypoint is `litradar cfp refresh`; see
 | `GET` | `/api/announcements`                  | 当前启用的公告                   |
 | `GET` | `/api/meta/databases`                 | 可用索引库                       |
 | `GET` | `/api/meta/areas`                     | 领域与数量                       |
+| `GET` | `/api/meta/ratings`                   | Journal grades and journal counts |
 | `GET` | `/api/meta/journals`                  | 期刊筛选选项                     |
 | `GET` | `/api/years`                          | 出版年份汇总                     |
 | `GET` | `/api/journals`                       | 期刊列表                         |
@@ -339,7 +364,7 @@ Pragma: no-cache
 
 | 领域   | 工具                                                                 |
 | ------ | -------------------------------------------------------------------- |
-| 元数据 | `list_databases`、`list_areas`、`list_years`、`list_journal_options` |
+| 元数据 | `list_databases`、`list_areas`、`list_years`、`list_journal_options`、`list_journal_ratings` |
 | 期刊   | `list_journals`、`get_journal`                                       |
 | 文章   | `search_articles`、`get_article`                                     |
 | 更新   | `get_weekly_updates`                                                 |

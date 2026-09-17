@@ -137,6 +137,24 @@ impl LitRadarMcp {
     }
 
     #[tool(
+        name = "list_journal_ratings",
+        description = "List exact UTD, ABS, FMS and FMS China grades with journal counts for the selected database. Empty groups mean no rating information."
+    )]
+    async fn list_journal_ratings(
+        &self,
+        Parameters(input): Parameters<DatabaseInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let db = match optional_text("db", input.db) {
+            Ok(value) => value,
+            Err(message) => return Ok(tool_error(message)),
+        };
+        self.run_index_tool(move |storage| {
+            litradar_storage::list_journal_ratings(&storage, db.as_deref())
+        })
+        .await
+    }
+
+    #[tool(
         name = "list_years",
         description = "List publication years for the selected LitRadar database."
     )]
@@ -399,6 +417,14 @@ struct DatabaseInput {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ListJournalsInput {
     area: Option<String>,
+    /// Exact UTD grades; OR within a system, AND across systems and other filters.
+    utd_rating: Option<Vec<String>>,
+    /// Exact ABS grades; 4* is a literal grade, not a wildcard.
+    abs_rating: Option<Vec<String>>,
+    /// Exact FMS grades.
+    fms_rating: Option<Vec<String>>,
+    /// Exact FMS China grades.
+    fmscn_rating: Option<Vec<String>>,
     db: Option<String>,
     has_articles: Option<bool>,
     limit: Option<i64>,
@@ -416,6 +442,14 @@ struct GetJournalInput {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SearchArticlesInput {
     area: Option<StringOrStrings>,
+    /// Exact UTD grades; OR within a system, AND across systems and other filters.
+    utd_rating: Option<Vec<String>>,
+    /// Exact ABS grades; 4* is a literal grade, not a wildcard.
+    abs_rating: Option<Vec<String>>,
+    /// Exact FMS grades.
+    fms_rating: Option<Vec<String>>,
+    /// Exact FMS China grades.
+    fmscn_rating: Option<Vec<String>>,
     cursor: Option<String>,
     date_from: Option<String>,
     date_to: Option<String>,
@@ -476,6 +510,12 @@ fn journal_list_params(
         optional_text("db", input.db)?,
         JournalListParams {
             area: optional_text("area", input.area)?,
+            ratings: litradar_domain::JournalRatingFilters {
+                utd_rating: input.utd_rating.unwrap_or_default(),
+                abs_rating: input.abs_rating.unwrap_or_default(),
+                fms_rating: input.fms_rating.unwrap_or_default(),
+                fmscn_rating: input.fmscn_rating.unwrap_or_default(),
+            },
             has_articles: input.has_articles,
             year: optional_nonnegative_i64("year", input.year)?,
             sort: optional_text("sort", input.sort)?,
@@ -491,6 +531,12 @@ fn article_list_params(
     let mut params = ArticleListParams::default();
     params.journal_id = positive_id_vec("journal_id", input.journal_id)?;
     params.area = text_vec("area", input.area)?;
+    params.ratings = litradar_domain::JournalRatingFilters {
+        utd_rating: input.utd_rating.unwrap_or_default(),
+        abs_rating: input.abs_rating.unwrap_or_default(),
+        fms_rating: input.fms_rating.unwrap_or_default(),
+        fmscn_rating: input.fmscn_rating.unwrap_or_default(),
+    };
     params.issue_id = optional_nonnegative_i64("issue_id", input.issue_id)?;
     params.year = optional_nonnegative_i64("year", input.year)?;
     params.in_press = input.in_press;
@@ -849,6 +895,7 @@ mod tests {
         for name in [
             "list_databases",
             "list_areas",
+            "list_journal_ratings",
             "list_years",
             "list_journal_options",
             "list_journals",
@@ -988,6 +1035,221 @@ mod tests {
         let article = tool_payload(&result);
         assert_eq!(article["title"], "");
         assert_eq!(article["doi"], "10.1234/fixture");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn rating_filters_match_http_and_mcp_membership_and_metadata() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("rating_reader", false);
+        backend.create_rated_index_database("fixture.sqlite");
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let session_id = initialize_mcp_session(&app, &authorization).await;
+        for (mut arguments, query, article_ids, journal_ids) in [
+            (
+                json!({"abs_rating":["4","4*"]}),
+                "abs_rating=4&abs_rating=4%2A",
+                json!(["9002", "9001"]),
+                json!(["101", "102"]),
+            ),
+            (
+                json!({"abs_rating":["4","4*"],"fms_rating":["A"]}),
+                "abs_rating=4&abs_rating=4%2A&fms_rating=A",
+                json!(["9001"]),
+                json!(["101"]),
+            ),
+            (
+                json!({"utd_rating":["UTD24"],"fmscn_rating":["T1"],"area":"Medicine"}),
+                "utd_rating=UTD24&fmscn_rating=T1&area=Medicine",
+                json!(["9001"]),
+                json!(["101"]),
+            ),
+            (
+                json!({"abs_rating":[" 4* ","4*"]}),
+                "abs_rating=+4%2A+&abs_rating=4%2A",
+                json!(["9001"]),
+                json!(["101"]),
+            ),
+            (
+                json!({"abs_rating":["4"]}),
+                "abs_rating=4",
+                json!(["9002"]),
+                json!(["102"]),
+            ),
+            (
+                json!({"abs_rating":["3"]}),
+                "abs_rating=3",
+                json!([]),
+                json!(["103"]),
+            ),
+            (
+                json!({"abs_rating":["unknown"]}),
+                "abs_rating=unknown",
+                json!([]),
+                json!([]),
+            ),
+            (
+                json!({"abs_rating":[]}),
+                "",
+                json!(["9002", "9001"]),
+                json!(["103", "101", "102"]),
+            ),
+        ] {
+            arguments["db"] = json!("fixture");
+            for (endpoint, tool, id_field, expected) in [
+                ("articles", "search_articles", "article_id", article_ids),
+                ("journals", "list_journals", "journal_id", journal_ids),
+            ] {
+                let http = crate::test_support::json_request(
+                    &app,
+                    axum::http::Method::GET,
+                    &format!("/api/{endpoint}?db=fixture&{query}"),
+                    Some(&authorization),
+                    None,
+                    None,
+                )
+                .await;
+                assert_eq!(http.status, StatusCode::OK, "{endpoint}: {query}");
+                let identifiers = http.payload["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|item| item[id_field].clone())
+                    .collect::<Vec<_>>();
+                assert_eq!(json!(identifiers), expected);
+                let mcp = call_mcp_tool(
+                    &app,
+                    &authorization,
+                    &session_id,
+                    40,
+                    tool,
+                    arguments.clone(),
+                )
+                .await;
+                assert_eq!(tool_payload(&mcp), http.payload, "{tool}: {query}");
+            }
+        }
+        let metadata = crate::test_support::json_request(
+            &app,
+            axum::http::Method::GET,
+            "/api/meta/ratings?db=fixture",
+            Some(&authorization),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(metadata.status, StatusCode::OK);
+        assert_eq!(
+            metadata.payload["utd_rating"],
+            json!([{"value":"UTD24","count":1}])
+        );
+        assert_eq!(
+            metadata.payload["fmscn_rating"],
+            json!([{"value":"T1","count":2},{"value":"T2","count":1}])
+        );
+        let mcp = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            41,
+            "list_journal_ratings",
+            json!({"db":"fixture"}),
+        )
+        .await;
+        assert_eq!(tool_payload(&mcp), metadata.payload);
+        let unauthenticated = crate::test_support::json_request(
+            &app,
+            axum::http::Method::GET,
+            "/api/meta/ratings?db=fixture",
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(unauthenticated.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(
+        miri,
+        ignore = "Miri does not support Tokio's Windows IOCP runtime initialization"
+    )]
+    async fn rating_filter_validation_is_shared_by_http_and_mcp() {
+        let backend = TestBackend::new();
+        let user = backend.authenticated_user("rating_validation", false);
+        backend.create_rated_index_database("fixture.sqlite");
+        let app = backend.router();
+        let authorization = user.authorization_header();
+        let session_id = initialize_mcp_session(&app, &authorization).await;
+        for (arguments, query) in [
+            (
+                json!({"db":"fixture","abs_rating":[""]}),
+                "abs_rating=".to_string(),
+            ),
+            (
+                json!({"db":"fixture","abs_rating":["\u{00a0}"]}),
+                "abs_rating=%C2%A0".to_string(),
+            ),
+            (
+                json!({"db":"fixture","abs_rating":["文".repeat(2049)]}),
+                format!("abs_rating={}", "%E6%96%87".repeat(2049)),
+            ),
+            (
+                json!({"db":"fixture","abs_rating":vec!["4";501]}),
+                std::iter::repeat_n("abs_rating=4", 501)
+                    .collect::<Vec<_>>()
+                    .join("&"),
+            ),
+            (
+                json!({"db":"fixture","abs_rating":vec!["4";499],"fms_rating":["A"],"area":"Medicine"}),
+                format!(
+                    "{}&fms_rating=A&area=Medicine",
+                    std::iter::repeat_n("abs_rating=4", 499)
+                        .collect::<Vec<_>>()
+                        .join("&")
+                ),
+            ),
+        ] {
+            for (endpoint, tool) in [
+                ("articles", "search_articles"),
+                ("journals", "list_journals"),
+            ] {
+                let http = crate::test_support::json_request(
+                    &app,
+                    axum::http::Method::GET,
+                    &format!("/api/{endpoint}?db=fixture&{query}"),
+                    Some(&authorization),
+                    None,
+                    None,
+                )
+                .await;
+                assert_eq!(http.status, StatusCode::BAD_REQUEST);
+                let mcp = call_mcp_tool(
+                    &app,
+                    &authorization,
+                    &session_id,
+                    42,
+                    tool,
+                    arguments.clone(),
+                )
+                .await;
+                assert_eq!(mcp["result"]["isError"], true);
+            }
+        }
+        let result = call_mcp_tool(
+            &app,
+            &authorization,
+            &session_id,
+            43,
+            "search_articles",
+            json!({"db":"fixture","abs_rating":["文".repeat(2048)]}),
+        )
+        .await;
+        assert_eq!(tool_payload(&result)["page"]["total"], 0);
     }
 
     #[tokio::test]

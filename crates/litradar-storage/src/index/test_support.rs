@@ -42,6 +42,16 @@ pub(super) fn article_filter_params() -> ArticleListParams {
     }
 }
 
+/// Populate independent rating systems without changing article projections.
+pub(super) fn set_rating_fixture(fixture: &IndexFixture) {
+    let connection = Connection::open(fixture_db_path(fixture)).unwrap();
+    connection.execute_batch(
+        "UPDATE journals SET utd_rating='UTD24',abs_rating='4*',fms_rating='A',fmscn_rating='T1' WHERE journal_id=1;
+         UPDATE journals SET abs_rating='4',fms_rating='B',fmscn_rating='T2' WHERE journal_id=2;
+         UPDATE journals SET utd_rating='',abs_rating='3',fmscn_rating='T1' WHERE journal_id=3;"
+    ).unwrap();
+}
+
 pub(super) fn article_ids(page: &ArticlePage) -> Vec<i64> {
     page.items
         .iter()

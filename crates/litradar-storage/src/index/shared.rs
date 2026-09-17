@@ -181,6 +181,40 @@ pub(super) fn push_string_list_filter(
     values.extend(items.iter().cloned().map(SqlValue::Text));
 }
 
+pub(super) fn rating_filter_count(ratings: &JournalRatingFilters) -> usize {
+    ratings
+        .groups()
+        .iter()
+        .map(|(_, values)| values.len())
+        .sum()
+}
+
+pub(super) fn push_rating_filters(
+    clauses: &mut Vec<String>,
+    values: &mut Vec<SqlValue>,
+    ratings: &JournalRatingFilters,
+) -> Result<(), IndexRepositoryError> {
+    for (field, submitted) in ratings.groups() {
+        let mut normalized = Vec::new();
+        for value in submitted {
+            validate_characters(field, value, MAX_SEARCH_TEXT_CHARS)
+                .and_then(|()| {
+                    litradar_domain::validate_required_characters(
+                        field,
+                        value.trim(),
+                        MAX_SEARCH_TEXT_CHARS,
+                    )
+                })
+                .map_err(|error| IndexRepositoryError::InvalidInput(error.to_string()))?;
+            normalized.push(value.trim().to_string());
+        }
+        normalized.sort_unstable();
+        normalized.dedup();
+        push_string_list_filter(clauses, values, &format!("j.{field}"), &normalized);
+    }
+    Ok(())
+}
+
 pub(super) fn push_optional_int_filter(
     clauses: &mut Vec<String>,
     values: &mut Vec<SqlValue>,

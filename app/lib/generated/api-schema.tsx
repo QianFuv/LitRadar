@@ -1200,6 +1200,7 @@ export interface paths {
      *     * `state` - Shared API state.
      *     * `headers` - Request headers.
      *     * `query` - Journal list filters.
+     *     * `raw_query` - Repeated rating fields; scalar parsing retains its existing contract.
      *
      *     # Returns
      *
@@ -1318,6 +1319,34 @@ export interface paths {
      *     Journal option records.
      */
     get: operations['list_journal_options'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/meta/ratings': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List available journal grades with database-wide journal counts.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `query` - Database selector.
+     *
+     *     # Returns
+     *
+     *     Four exact rating groups, excluding unrated journals and counting journals without articles.
+     */
+    get: operations['list_journal_ratings'];
     put?: never;
     post?: never;
     delete?: never;
@@ -2558,6 +2587,17 @@ export interface components {
       items: components['schemas']['JournalRecord'][];
       /** @description Pagination metadata. */
       page: components['schemas']['PageMeta'];
+    };
+    /** @description Available exact grades and database-wide journal counts for each rating system. */
+    JournalRatingOptions: {
+      /** @description ABS grade choices; `4*` is an exact label rather than a wildcard. */
+      abs_rating: components['schemas']['ValueCount'][];
+      /** @description FMS grade choices. */
+      fms_rating: components['schemas']['ValueCount'][];
+      /** @description FMS China grade choices. */
+      fmscn_rating: components['schemas']['ValueCount'][];
+      /** @description UTD grade choices, excluding unrated journals. */
+      utd_rating: components['schemas']['ValueCount'][];
     };
     /** @description Provider-neutral journal record. */
     JournalRecord: {
@@ -3899,6 +3939,8 @@ export interface operations {
   list_articles: {
     parameters: {
       query?: {
+        /** @description Repeated exact ABS grades, including literal 4*. */
+        abs_rating?: string[];
         /** @description Repeated area filters. */
         area?: string[];
         /** @description Keyset cursor. */
@@ -3911,6 +3953,10 @@ export interface operations {
         db?: string;
         /** @description DOI filter. */
         doi?: string;
+        /** @description Repeated exact FMS grades. */
+        fms_rating?: string[];
+        /** @description Repeated exact FMS China grades. */
+        fmscn_rating?: string[];
         /** @description In-press filter. */
         in_press?: boolean;
         /** @description Whether to include the full filtered row count; defaults to true without a cursor and false with a cursor. */
@@ -3933,6 +3979,8 @@ export interface operations {
         search_mode?: components['schemas']['ArticleSearchMode'];
         /** @description Sort expression. */
         sort?: string;
+        /** @description Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound. */
+        utd_rating?: string[];
         /** @description Publication year filter. */
         year?: number;
       };
@@ -5172,10 +5220,16 @@ export interface operations {
   list_journals: {
     parameters: {
       query?: {
+        /** @description Repeated exact ABS grades, including literal 4*. */
+        abs_rating?: string[];
         /** @description Area filter. */
         area?: string;
         /** @description Database name or filename under `data/index`. */
         db?: string;
+        /** @description Repeated exact FMS grades. */
+        fms_rating?: string[];
+        /** @description Repeated exact FMS China grades. */
+        fmscn_rating?: string[];
         /** @description Has-articles filter. */
         has_articles?: boolean;
         /** @description Page size. */
@@ -5184,6 +5238,8 @@ export interface operations {
         offset?: number;
         /** @description Sort expression. */
         sort?: string;
+        /** @description Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound. */
+        utd_rating?: string[];
         /** @description Publication year filter. */
         year?: number;
       };
@@ -5292,6 +5348,29 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['JournalOption'][];
+        };
+      };
+    };
+  };
+  list_journal_ratings: {
+    parameters: {
+      query?: {
+        /** @description Database name or filename under `data/index`. */
+        db?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Exact grade options and journal counts per system. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['JournalRatingOptions'];
         };
       };
     };
