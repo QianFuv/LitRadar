@@ -72,6 +72,8 @@
 
 ## AI 配置和选择
 
+The official DeepSeek endpoint (`api.deepseek.com`) starts selection and summary requests with `json_object`, because its Chat Completions API does not support `json_schema`. Other endpoints continue to try `json_schema` first. This does not change HTTP error retry or fallback rules.
+
 投递不读取进程环境变量中的 AI 或 PushPlus 凭据。有效 AI 配置来自用户设置：
 
 - base URL 未填写时考虑代码默认 `https://api.siliconflow.cn/v1/`，但只有管理员已把它加入 Endpoint 目录时才可用

@@ -569,8 +569,8 @@ impl<T: AiTransport> AiCompletionClient<T> {
         payload_kind: AiPayloadKind,
     ) -> Result<Value, AiClientError> {
         let mut last_error = AiClientError::InvalidResponse("AI request was not attempted".into());
-        let response_formats = response_format_variants(schema_name, &schema);
         let completion_url = chat_completions_url(&config.base_url)?;
+        let response_formats = response_format_variants(&completion_url, schema_name, &schema);
         for (format_index, response_format) in response_formats.iter().enumerate() {
             if format_index > 0 {
                 tracing::warn!(
@@ -747,9 +747,16 @@ fn completion_body(
     body
 }
 
-fn response_format_variants(schema_name: &str, schema: &Value) -> Vec<ResponseFormatVariant> {
-    vec![
-        ResponseFormatVariant {
+fn response_format_variants(
+    completion_url: &str,
+    schema_name: &str,
+    schema: &Value,
+) -> Vec<ResponseFormatVariant> {
+    let is_deepseek =
+        Url::parse(completion_url).is_ok_and(|url| url.host_str() == Some("api.deepseek.com"));
+    let mut formats = Vec::new();
+    if !is_deepseek {
+        formats.push(ResponseFormatVariant {
             kind: "json_schema",
             value: Some(json!({
                 "type": "json_schema",
@@ -759,7 +766,9 @@ fn response_format_variants(schema_name: &str, schema: &Value) -> Vec<ResponseFo
                     "schema": schema
                 }
             })),
-        },
+        });
+    }
+    formats.extend([
         ResponseFormatVariant {
             kind: "json_object",
             value: Some(json!({ "type": "json_object" })),
@@ -768,7 +777,8 @@ fn response_format_variants(schema_name: &str, schema: &Value) -> Vec<ResponseFo
             kind: "plain_json",
             value: None,
         },
-    ]
+    ]);
+    formats
 }
 
 fn emit_ai_request_failure(
@@ -1248,6 +1258,67 @@ mod tests {
             request.body["response_format"]["json_schema"]["name"],
             "paper_selection"
         );
+    }
+
+    #[test]
+    fn deepseek_selection_and_summary_use_supported_json_output() {
+        for base_url in ["https://api.deepseek.com/", "https://api.deepseek.com/v1/"] {
+            let responses = vec![
+                ok_response(json!({"choices": [{"message": {"content":
+                    "{\"summary\":\"Rust systems\",\"selected\":[{\"article_id\":101,\"score\":91}]}"
+                }}]})),
+                ok_response(json!({"choices": [{"message": {"content":
+                    "{\"summary\":\"Ownership improves memory safety.\"}"
+                }}]})),
+            ];
+            let mut config = ai_config();
+            config.base_url = base_url.to_string();
+            config.model = "deepseek-chat".to_string();
+            let mut client = AiCompletionClient::new(FixtureAiTransport::new(responses), 0, 0.2);
+
+            let selection = client
+                .select_articles(&config, &subscriber(), &defaults(), &[candidate(101)])
+                .expect("DeepSeek selection should succeed");
+            let summary = client
+                .summarize_selected_articles(&config, &subscriber(), &[candidate(101)])
+                .expect("DeepSeek summary should succeed");
+
+            assert_eq!(selection.selections[0].article_id, 101);
+            assert_eq!(summary, "Ownership improves memory safety.");
+            assert_eq!(client.transport().requests.len(), 2);
+            for request in &client.transport().requests {
+                assert_eq!(
+                    request.body["response_format"],
+                    json!({"type": "json_object"})
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deepseek_model_on_other_hosts_preserves_schema_output() {
+        for base_url in [
+            "https://api.siliconflow.cn/v1/",
+            "https://api.deepseek.com.example/v1/",
+        ] {
+            let response = ok_response(json!({"choices": [{"message": {"content":
+                "{\"summary\":\"Rust systems\",\"selected\":[{\"article_id\":101,\"score\":91}]}"
+            }}]}));
+            let mut config = ai_config();
+            config.base_url = base_url.to_string();
+            config.model = "deepseek-chat".to_string();
+            let mut client =
+                AiCompletionClient::new(FixtureAiTransport::new(vec![response]), 0, 0.2);
+
+            client
+                .select_articles(&config, &subscriber(), &defaults(), &[candidate(101)])
+                .expect("OpenAI-compatible selection should succeed");
+
+            assert_eq!(
+                client.transport().requests[0].body["response_format"]["type"],
+                "json_schema"
+            );
+        }
     }
 
     #[test]
