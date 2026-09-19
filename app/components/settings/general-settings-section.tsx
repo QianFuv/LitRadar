@@ -99,8 +99,8 @@ export function GeneralSettingsSection() {
                   role="radio"
                   aria-checked={isSelected}
                   className={cn(
-                    'relative flex min-h-24 flex-col items-start gap-2 rounded-md border p-4 text-left transition-colors outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                    isSelected && 'bg-accent text-accent-foreground',
+                    'relative flex min-h-24 flex-col items-start gap-2 rounded-md border p-4 text-left motion-control transition-colors outline-none hover:bg-accent active:bg-accent-pressed focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                    isSelected && 'bg-secondary text-accent-foreground hover:bg-accent-pressed',
                   )}
                   onClick={() => setTheme(option.value)}
                 >

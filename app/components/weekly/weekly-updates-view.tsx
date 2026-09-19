@@ -234,7 +234,7 @@ function WeeklySidebar({
     >
       <div
         data-slot="sidebar-scroll-region"
-        className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain"
+        className="sidebar-scroll-gutter min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain"
       >
         {journals.length === 0 && (
           <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">

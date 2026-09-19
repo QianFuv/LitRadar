@@ -102,7 +102,7 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
                           keywords: current.keywords.filter((item) => item !== keyword),
                         }))
                       }
-                      className="rounded-full p-0.5 hover:bg-muted"
+                      className="motion-control rounded-full p-0.5 transition-colors hover:bg-accent-pressed active:bg-accent-pressed focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -167,7 +167,7 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
                           directions: current.directions.filter((item) => item !== direction),
                         }))
                       }
-                      className="rounded-full p-0.5 hover:bg-muted"
+                      className="motion-control rounded-full p-0.5 transition-colors hover:bg-accent-pressed active:bg-accent-pressed focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -267,7 +267,7 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
                   return (
                     <label
                       key={databaseName}
-                      className="content-visibility-row flex items-start gap-3 rounded-md border px-3 py-2 text-sm"
+                      className="motion-control content-visibility-row flex items-start gap-3 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-accent focus-within:bg-accent"
                     >
                       <Checkbox
                         checked={isChecked}

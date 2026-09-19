@@ -76,7 +76,7 @@ export function ArticleListCard({
   return (
     <Card
       className={cn(
-        'motion-control content-visibility-card gap-0 overflow-hidden py-0 transition-[background-color] hover:bg-accent/30',
+        'motion-control content-visibility-card gap-0 overflow-hidden py-0 transition-[background-color] hover:bg-accent',
         className,
       )}
     >

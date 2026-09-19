@@ -117,8 +117,8 @@ function SectionedDialogNavigation<SectionId extends string>({
             className={cn(
               'motion-control flex shrink-0 items-center gap-3 rounded-md border px-3 py-2.5 text-left text-sm font-medium outline-none transition-[background-color,border-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
               isActive
-                ? 'border-foreground/15 bg-foreground text-background shadow-sm hover:bg-foreground/90'
-                : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground',
+                ? 'border-border bg-secondary text-foreground shadow-sm hover:bg-accent-pressed active:bg-accent-pressed'
+                : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent-pressed',
             )}
             onClick={() => onSelect(section.id)}
           >
@@ -219,10 +219,10 @@ export function SectionedDialogFrame<SectionId extends string>({
           <header className="shrink-0 border-b bg-background px-5 pb-4 pt-6 md:px-8 md:py-6">
             <div className="md:hidden">
               <div className="pr-12 text-lg font-semibold">{centerTitle}</div>
-              <div className="relative mt-4" data-mobile-overflow-cue="true">
+              <div className="relative -mx-1 mt-4" data-mobile-overflow-cue="true">
                 <SectionedDialogNavigation
                   activeSection={activeSection}
-                  className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 pr-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  className="flex gap-1 overflow-x-auto px-1 pb-1 pr-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                   isDisabled={isNavigationDisabled}
                   label={navigationLabel}
                   onSelect={onSelectSection}
@@ -230,7 +230,7 @@ export function SectionedDialogFrame<SectionId extends string>({
                 />
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent"
+                  className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background from-25% to-transparent"
                 />
               </div>
             </div>

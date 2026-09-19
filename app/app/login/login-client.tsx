@@ -258,7 +258,7 @@ export default function LoginClient() {
                 >
                   <div
                     role="status"
-                    className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground"
+                    className="rounded-md border border-success-border bg-success px-3 py-2 text-sm text-foreground"
                   >
                     全部会话和个人访问令牌已撤销。现在可以重新登录。
                   </div>
@@ -364,7 +364,7 @@ export default function LoginClient() {
                       key="bootstrap-required"
                       role="status"
                       data-auth-feedback="bootstrap-required"
-                      className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
+                      className="rounded-md border border-warning-border bg-warning px-3 py-2 text-sm text-foreground"
                       variants={FADE_UP_VARIANTS}
                       initial="hidden"
                       animate="visible"

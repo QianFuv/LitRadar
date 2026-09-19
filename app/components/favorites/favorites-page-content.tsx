@@ -83,7 +83,7 @@ function AnimatedFeedback({ feedback, scope }: AnimatedFeedbackProps) {
             aria-hidden="true"
             className={cn(
               'text-sm',
-              feedback.tone === 'error' ? 'text-destructive' : 'text-emerald-700',
+              feedback.tone === 'error' ? 'text-destructive' : 'text-success-foreground',
             )}
             variants={FADE_UP_VARIANTS}
             initial="hidden"
@@ -214,7 +214,7 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
           >
             <div
               data-slot="sidebar-scroll-region"
-              className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain"
+              className="sidebar-scroll-gutter min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain"
             >
               <MotionPresence>
                 {isLoading ? (
@@ -667,7 +667,7 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
                                 initialFolderIds={[favorite.folder_id]}
                                 preview={
                                   favorite.metadata_status === 'missing' ? (
-                                    <span className="text-amber-700">
+                                    <span className="text-warning-foreground">
                                       来源数据库或文章已不存在。收藏仍保留；可移动、移除，导出时会保留空元数据条目。
                                     </span>
                                   ) : favorite.metadata_status === 'unavailable' ? (

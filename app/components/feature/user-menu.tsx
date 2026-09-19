@@ -44,7 +44,7 @@ const THEME_ITEMS: readonly ThemeItem[] = [
 ];
 
 const MENU_ITEM_CLASS =
-  "motion-control focus:bg-accent focus:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-[background-color,color] outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+  "motion-control focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent active:bg-accent-pressed data-[highlighted]:active:bg-accent-pressed [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-[background-color,color] outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
 
 const MENU_CONTENT_CLASS =
   'motion-popover bg-popover text-popover-foreground z-50 origin-(--radix-dropdown-menu-content-transform-origin) rounded-md border p-1 shadow-md outline-hidden';

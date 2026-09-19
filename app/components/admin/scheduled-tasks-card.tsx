@@ -484,9 +484,9 @@ export function ScheduledTasksCard() {
             </DialogHeader>
             <div className="space-y-4 py-2">
               {editingTask?.job === null && (
-                <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 p-3">
+                <div role="alert" className="space-y-2 rounded-md border border-warning-border p-3">
                   <div className="flex items-center gap-2 text-sm font-medium">
-                    <AlertTriangle className="h-4 w-4 text-amber-600" />
+                    <AlertTriangle className="h-4 w-4 text-warning-foreground" />
                     旧任务已自动停用
                   </div>
                   <p className="text-sm text-muted-foreground">
@@ -814,7 +814,7 @@ export function ScheduledTasksCard() {
                           {describeJob(task.job)}
                         </div>
                         {task.legacy_command && (
-                          <div className="rounded border border-amber-500/40 px-2 py-1 text-xs text-muted-foreground break-all">
+                          <div className="rounded border border-warning-border px-2 py-1 text-xs text-muted-foreground break-all">
                             旧命令（只读）：{task.legacy_command}
                           </div>
                         )}

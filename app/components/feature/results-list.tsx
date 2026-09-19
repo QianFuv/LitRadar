@@ -164,10 +164,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
       try {
         return text.split(highlightPattern).map((part, index) =>
           index % 2 === 1 ? (
-            <span
-              key={index}
-              className="text-blue-600 font-bold bg-blue-50 dark:text-blue-400 dark:bg-blue-950/30 rounded-xs"
-            >
+            <span key={index} className="text-info-foreground font-bold bg-info rounded-xs">
               {part}
             </span>
           ) : (

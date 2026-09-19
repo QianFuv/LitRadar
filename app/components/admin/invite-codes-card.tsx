@@ -332,7 +332,7 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
                       <button
                         type="button"
                         onClick={() => void handleCopyInviteCode(inviteCode.code)}
-                        className="p-0.5 rounded hover:bg-muted"
+                        className="motion-control p-0.5 rounded transition-colors hover:bg-accent active:bg-accent-pressed focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
                         title="复制"
                         aria-label="复制邀请码"
                         disabled={inviteCode.status !== 'active'}

@@ -212,7 +212,7 @@ export function ArticleDetailDialogContent({
                   transition={stateTransition}
                 >
                   {copyStatus === 'title' ? (
-                    <Check className="h-3 w-3 text-green-600" aria-hidden="true" />
+                    <Check className="h-3 w-3 text-success-foreground" aria-hidden="true" />
                   ) : (
                     <Copy className="h-3 w-3" aria-hidden="true" />
                   )}
@@ -286,7 +286,7 @@ export function ArticleDetailDialogContent({
                     transition={stateTransition}
                   >
                     {copyStatus === 'info' ? (
-                      <Check className="h-4 w-4 text-green-600" aria-hidden="true" />
+                      <Check className="h-4 w-4 text-success-foreground" aria-hidden="true" />
                     ) : (
                       <Copy className="h-4 w-4" aria-hidden="true" />
                     )}

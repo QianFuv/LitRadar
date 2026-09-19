@@ -101,18 +101,21 @@ async function expectElementChromeToBeGrayscale(
 }
 
 /**
- * Assert global focus-ring tokens are grayscale in the active theme.
+ * Assert the active theme uses its approved Indigo keyboard-focus color.
  *
  * @param page - Playwright browser page.
  */
-async function expectThemeChromeTokensToBeGrayscale(page: Page): Promise<void> {
+async function expectThemeFocusTokensToUseIndigo(page: Page): Promise<void> {
   const values = await page.locator('html').evaluate((element) => {
     const styles = window.getComputedStyle(element);
     return ['--ring', '--sidebar-ring'].map((token) => styles.getPropertyValue(token).trim());
   });
 
   for (const value of values) {
-    expectColorToBeGrayscale(value, 'focus ring token');
+    const isDark = await page
+      .locator('html')
+      .evaluate((element) => element.classList.contains('dark'));
+    expect(value).toBe(isDark ? '#9eb1ff' : '#8da4ef');
   }
 }
 
@@ -584,6 +587,31 @@ async function completesFixtureTrackingPush(page: Page): Promise<void> {
   );
 }
 
+/** Cover the full scroll viewport so trailing category text cannot escape the fade. */
+async function expectMobileCategoryFadeCoverage(dialog: Locator): Promise<void> {
+  const bounds = await dialog.locator('[data-mobile-overflow-cue="true"]').evaluate((element) => {
+    const navigation = element.querySelector('nav')!;
+    const fade = element.querySelector(':scope > div[aria-hidden="true"]')!;
+    const navigationBounds = navigation.getBoundingClientRect();
+    const fadeBounds = fade.getBoundingClientRect();
+    const fadeStyle = getComputedStyle(fade);
+    return {
+      navigationRight: navigationBounds.right,
+      fadeRight: fadeBounds.right,
+      fadeWidth: fadeBounds.width,
+      backgroundImage: fadeStyle.backgroundImage,
+      pointerEvents: fadeStyle.pointerEvents,
+    };
+  });
+  expect(
+    bounds.fadeRight,
+    'the fade must reach the navigation clipping edge',
+  ).toBeGreaterThanOrEqual(bounds.navigationRight);
+  expect(bounds.fadeWidth).toBeGreaterThanOrEqual(16);
+  expect(bounds.backgroundImage).not.toBe('none');
+  expect(bounds.pointerEvents).toBe('none');
+}
+
 /**
  * Verify desktop and mobile settings layouts, guarded history, and query preservation.
  *
@@ -648,6 +676,7 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   });
   expect(navigationInsets.right).toBe(navigationInsets.left);
   await expect(mobileDialog.locator('[data-mobile-overflow-cue="true"]')).toBeVisible();
+  await expectMobileCategoryFadeCoverage(mobileDialog);
   await expect(mobileCategories.getByRole('button', { name: '常规' })).toHaveAttribute(
     'data-section-active',
     'true',
@@ -804,6 +833,7 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   });
   expect(navigationInsets.right).toBe(navigationInsets.left);
   await expect(mobileDialog.locator('[data-mobile-overflow-cue="true"]')).toBeVisible();
+  await expectMobileCategoryFadeCoverage(mobileDialog);
   await expect(mobileCategories.getByRole('button', { name: '概览' })).toHaveAttribute(
     'data-section-active',
     'true',
@@ -960,7 +990,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
     'color',
   ]);
   await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
-  await expectThemeChromeTokensToBeGrayscale(page);
+  await expectThemeFocusTokensToUseIndigo(page);
   await page.screenshot({ path: '../output/ui/default-chrome-dark.png', fullPage: true });
 
   await trigger.click();
@@ -1031,7 +1061,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
     'color',
   ]);
   await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
-  await expectThemeChromeTokensToBeGrayscale(page);
+  await expectThemeFocusTokensToUseIndigo(page);
   await page.screenshot({ path: '../output/ui/default-chrome-light.png', fullPage: true });
 
   await trigger.click();
@@ -1691,6 +1721,30 @@ async function serveLongSidebarApi(route: Route): Promise<void> {
   await serveTrackingApi(route);
 }
 
+/** Keep outer focus rings and trailing counts inside the sidebar scroll viewport. */
+async function expectSidebarScrollClearance(list: Locator): Promise<void> {
+  const clearance = await list.evaluate((element) => {
+    const viewport = element.getBoundingClientRect();
+    const left = viewport.left + element.clientLeft;
+    const right = left + element.clientWidth;
+    const children = Array.from(element.children)
+      .map((child) => child.getBoundingClientRect())
+      .filter((child) => child.width > 0 && child.height > 0);
+    return {
+      childCount: children.length,
+      left: Math.min(...children.map((child) => child.left - left)),
+      right: Math.min(...children.map((child) => right - child.right)),
+      hasHorizontalOverflow: element.scrollWidth > element.clientWidth,
+    };
+  });
+  expect(clearance.childCount).toBeGreaterThan(0);
+  expect(clearance.left, 'leave room for the outer 3px focus ring').toBeGreaterThanOrEqual(3);
+  expect(clearance.right, 'keep counts and actions away from the scrollbar').toBeGreaterThanOrEqual(
+    8,
+  );
+  expect(clearance.hasHorizontalOverflow).toBe(false);
+}
+
 /**
  * Keep branding, navigation, and controls stationary while long sidebar lists scroll.
  *
@@ -1716,6 +1770,7 @@ async function fixedWorkspaceSidebarTest(
     const list = sidebar.locator('[data-slot="sidebar-scroll-region"]');
     const lastEntry = list.getByText(lastLabel, { exact: true });
     await expect(lastEntry).toBeAttached();
+    await expectSidebarScrollClearance(list);
     const navigation = sidebar.getByRole('navigation', { name: '页面导航' });
     const links = navigation.getByRole('link');
     await expect(links).toHaveText(['检索', '收藏', '周报', '征稿']);
@@ -2066,6 +2121,7 @@ async function articleDataSourceSettingsTest({ page }: { page: Page }): Promise<
 }
 
 test('opens usable data-source settings from article details', articleDataSourceSettingsTest);
+
 test('synchronizes logout and account changes across browser tabs', crossTabSessionTest);
 
 test('scrolls a long mobile sidebar and dismisses without a close button', mobileSidebarScrollTest);
@@ -2087,6 +2143,132 @@ test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);
 test('polishes search targets and restrained control feedback', interfacePolishControlsTest);
 test('polishes stable and semantic favorite feedback', interfacePolishFavoriteTest);
+
+/** Verify color feedback without moving controls or changing category selection. */
+async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveTrackingApi);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme });
+    await page.goto('/?q=graph&settings=tracking');
+    const dialog = page.getByRole('dialog', { name: '设置中心' });
+    await expect(dialog).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    const navigation = page.getByRole('navigation', { name: '设置分类' });
+    const inactiveCategory = navigation.getByRole('button', { name: '数据源' });
+    const currentCategory = navigation.getByRole('button', { name: '文献追踪' });
+    const initialBox = await inactiveCategory.boundingBox();
+    await inactiveCategory.hover();
+    await expect(inactiveCategory).toHaveCSS(
+      'background-color',
+      colorScheme === 'light' ? 'rgb(240, 240, 240)' : 'rgb(34, 34, 34)',
+    );
+    await expect(currentCategory).toHaveAttribute('aria-current', 'page');
+    expect(await inactiveCategory.boundingBox()).toEqual(initialBox);
+    await page.mouse.down();
+    await expect(inactiveCategory).toHaveCSS(
+      'background-color',
+      colorScheme === 'light' ? 'rgb(232, 232, 232)' : 'rgb(49, 49, 49)',
+    );
+    await page.mouse.move(1, 1);
+    await page.mouse.up();
+    await expect(currentCategory).toHaveAttribute('aria-current', 'page');
+
+    const modelInput = page.locator('#ai-model');
+    await modelInput.scrollIntoViewIfNeeded();
+    const inputBox = await modelInput.boundingBox();
+    const inputColor = await modelInput.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    );
+    await modelInput.hover();
+    await expect(modelInput).not.toHaveCSS('background-color', inputColor);
+    expect(await modelInput.boundingBox()).toEqual(inputBox);
+    const restingShadow = await modelInput.evaluate(
+      (element) => getComputedStyle(element).boxShadow,
+    );
+    await modelInput.focus();
+    await expect(modelInput).toBeFocused();
+    await expect(modelInput).not.toHaveCSS('box-shadow', restingShadow);
+    await expect(modelInput).toHaveCSS('box-shadow', /0px 0px 0px 3px/);
+
+    const endpoint = page.locator('#ai-base-url');
+    await endpoint.hover();
+    await expect(endpoint).toHaveCSS(
+      'background-color',
+      colorScheme === 'light' ? 'rgb(240, 240, 240)' : 'rgb(34, 34, 34)',
+    );
+    await endpoint.click();
+    const option = page.getByRole('option').first();
+    await option.hover();
+    await page.mouse.down();
+    await expect(option).toHaveCSS(
+      'background-color',
+      colorScheme === 'light' ? 'rgb(232, 232, 232)' : 'rgb(49, 49, 49)',
+    );
+    await page.mouse.move(1, 1);
+    await page.mouse.up();
+    await page.keyboard.press('Escape');
+    const checkedDatabase = dialog.locator('[data-slot="checkbox"][data-state="checked"]').first();
+    await checkedDatabase.hover();
+    await expect(checkedDatabase).toHaveCSS('background-color', 'rgb(51, 88, 212)');
+    const recommendationSwitch = page.locator('#notify-enabled');
+    await expect(recommendationSwitch).toHaveAttribute('data-state', 'checked');
+    await recommendationSwitch.hover();
+    await expect(recommendationSwitch).toHaveCSS('background-color', 'rgb(51, 88, 212)');
+    await expect(recommendationSwitch).toHaveAttribute('data-state', 'checked');
+    await page.screenshot({
+      path: `../output/ui/visual-settings-${colorScheme}.png`,
+      animations: 'disabled',
+    });
+  }
+}
+
+test(
+  'shows theme-aware pointer feedback without moving settings controls',
+  themeInteractionFeedbackTest,
+);
+
+/** Keep checkbox borders and focus feedback visible inside paint-contained filter rows. */
+async function containedCheckboxPaintTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveLongSidebarApi);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 1280, height: 844 });
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme });
+    await page.goto('/');
+    const checkbox = page.locator('#area-field_1');
+    await checkbox.scrollIntoViewIfNeeded();
+    await expect(checkbox).toHaveAttribute('data-state', 'unchecked');
+    await expect(checkbox.locator('..')).toHaveCSS('content-visibility', 'auto');
+    await expect(checkbox).toHaveCSS('box-shadow', /inset/);
+    const bounds = await checkbox.boundingBox();
+    await checkbox.focus();
+    await expect(checkbox).toBeFocused();
+    const focusShadows = await checkbox.evaluate((element) => getComputedStyle(element).boxShadow);
+    expect(focusShadows).toMatch(/0px 0px 0px 3px/);
+    const shadows = focusShadows
+      .split(/,(?![^()]*\))/)
+      .filter((shadow) => !shadow.includes('0px 0px 0px 0px'));
+    expect(shadows.length).toBeGreaterThan(0);
+    expect(shadows.every((shadow) => shadow.includes('inset'))).toBe(true);
+    expect(await checkbox.boundingBox()).toEqual(bounds);
+    await page.screenshot({
+      path: `../output/ui/filter-checkbox-${colorScheme}-focused.png`,
+      animations: 'disabled',
+      clip: { x: bounds!.x - 6, y: bounds!.y - 6, width: 110, height: 36 },
+    });
+    await checkbox.press('Space');
+    await expect(checkbox).toHaveAttribute('data-state', 'checked');
+    expect(await checkbox.boundingBox()).toEqual(bounds);
+  }
+}
+
+test.describe('paint-contained filter checkboxes', () => {
+  test.use({ deviceScaleFactor: 3 });
+  test('keeps every border and focus edge inside the control', containedCheckboxPaintTest);
+});
 
 /** Return authoritative fixture metadata without any original-text parsing in the browser. */
 function cfpFixtureJournal(catalogId: string, title: string): CfpJournalSummary {
@@ -2485,6 +2667,7 @@ async function cfpGroupedSidebarTest({ page }: { page: Page }): Promise<void> {
   await expect(inactiveToggle).toHaveAttribute('aria-expanded', 'false');
   await expect(unadaptedToggle).toHaveAttribute('aria-expanded', 'false');
   const currentList = sidebar.getByRole('region', { name: '正在征稿期刊' });
+  await expectSidebarScrollClearance(currentList);
   const names = await currentList
     .getByRole('button')
     .evaluateAll((elements) => elements.map((element) => element.getAttribute('title')));
@@ -2528,6 +2711,7 @@ async function cfpGroupedSidebarTest({ page }: { page: Page }): Promise<void> {
   await page.getByRole('button', { name: '打开征稿筛选' }).click();
   const dialog = page.getByRole('dialog', { name: '征稿筛选' });
   const mobileList = dialog.getByRole('region', { name: '正在征稿期刊' });
+  await expectSidebarScrollClearance(mobileList);
   const mobileSearch = dialog.getByRole('textbox', { name: '搜索征稿期刊' });
   const mobileBefore = await mobileSearch.boundingBox();
   await mobileList.hover();

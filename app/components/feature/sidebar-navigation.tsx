@@ -51,9 +51,9 @@ export function SidebarNavigation() {
             aria-current={isCurrent ? 'page' : undefined}
             title={item.label}
             className={cn(
-              'motion-control flex min-h-12 flex-col items-center justify-center gap-1 rounded-md border border-transparent px-1 py-2 text-muted-foreground outline-none transition-[background-color,border-color,color,box-shadow] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50',
+              'motion-control flex min-h-12 flex-col items-center justify-center gap-1 rounded-md border border-transparent px-1 py-2 text-muted-foreground outline-none transition-[background-color,border-color,color,box-shadow] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-accent-pressed focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50',
               isCurrent &&
-                'border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground shadow-vercel-ring',
+                'border-sidebar-border bg-secondary text-sidebar-accent-foreground shadow-vercel-ring hover:bg-accent-pressed',
             )}
           >
             <Icon className="size-4" aria-hidden="true" />

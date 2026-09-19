@@ -15,7 +15,6 @@ const DEFAULT_CHROME_TOKENS = [
   '--card-foreground',
   '--popover',
   '--popover-foreground',
-  '--primary',
   '--primary-foreground',
   '--secondary',
   '--secondary-foreground',
@@ -25,15 +24,12 @@ const DEFAULT_CHROME_TOKENS = [
   '--accent-foreground',
   '--border',
   '--input',
-  '--ring',
   '--sidebar',
   '--sidebar-foreground',
-  '--sidebar-primary',
   '--sidebar-primary-foreground',
   '--sidebar-accent',
   '--sidebar-accent-foreground',
   '--sidebar-border',
-  '--sidebar-ring',
   '--scrollbar-thumb',
   '--scrollbar-thumb-hover',
 ] as const;
@@ -55,23 +51,23 @@ const CHROMATIC_UTILITY_PATTERN =
 const SEMANTIC_COLOR_FIXTURES = [
   {
     path: 'components/feature/results-list.tsx',
-    utilities: ['text-blue-600'],
+    utilities: ['text-info-foreground', 'bg-info'],
   },
   {
     path: 'components/ui/state-message.tsx',
-    utilities: ['text-destructive', 'text-green-700', 'text-amber-700'],
+    utilities: ['text-destructive', 'text-success-foreground', 'text-warning-foreground'],
   },
   {
     path: 'components/feature/favorite-button.tsx',
-    utilities: ['text-amber-700', 'dark:text-amber-400', 'fill-current'],
+    utilities: ['text-warning-foreground', 'fill-current'],
   },
   {
     path: 'components/admin/scheduled-tasks-card.tsx',
-    utilities: ['border-amber-500', 'text-amber-600'],
+    utilities: ['border-warning-border', 'text-warning-foreground'],
   },
   {
     path: 'components/tracking/tracking-settings-content.tsx',
-    utilities: ['text-green-600', 'text-green-400'],
+    utilities: ['text-success-foreground'],
   },
 ] as const;
 
@@ -152,7 +148,7 @@ function expectGrayscaleHex(value: string, context: string): void {
 }
 
 /**
- * Verify all ordinary chrome tokens are grayscale in both themes.
+ * Verify structural surfaces and text stay neutral while interaction colors use Indigo.
  */
 function keepsDefaultChromeTokensGrayscale(): void {
   const stylesheet = readProjectFile('app/globals.css');
@@ -167,8 +163,8 @@ function keepsDefaultChromeTokensGrayscale(): void {
   }
 
   const darkVariables = parseCustomProperties(extractDeclarationBlock(stylesheet, '.dark'));
-  expect(darkVariables.get('--sidebar-primary')).toBe('#ededed');
-  expect(darkVariables.get('--sidebar-primary-foreground')).toBe('#000000');
+  expect(darkVariables.get('--sidebar-primary')).toBe('#3e63dd');
+  expect(darkVariables.get('--sidebar-primary-foreground')).toBe('#ffffff');
 }
 
 /**
@@ -209,12 +205,12 @@ function retainsSemanticColorsAndRasterAssets(): void {
     destructive: lightVariables.get('--destructive'),
     info: lightVariables.get('--info'),
     infoForeground: lightVariables.get('--info-foreground'),
-  }).toEqual({ destructive: '#ff5b4f', info: '#ebf5ff', infoForeground: '#0068d6' });
+  }).toEqual({ destructive: '#ce2c31', info: '#edf2fe', infoForeground: '#3a5bc7' });
   expect({
     destructive: darkVariables.get('--destructive'),
     info: darkVariables.get('--info'),
     infoForeground: darkVariables.get('--info-foreground'),
-  }).toEqual({ destructive: '#ff5b4f', info: '#00152b', infoForeground: '#ebf5ff' });
+  }).toEqual({ destructive: '#ff9592', info: '#182449', infoForeground: '#9eb1ff' });
 
   for (const fixture of SEMANTIC_COLOR_FIXTURES) {
     const source = readProjectFile(fixture.path);
@@ -228,7 +224,51 @@ function retainsSemanticColorsAndRasterAssets(): void {
   expect(readProjectFile('components/feature/user-menu.tsx')).toContain('/litradar-logo.png');
 }
 
+/** Calculate relative luminance for a six-digit sRGB token. */
+function colorLuminance(value: string): number {
+  const channels = [1, 3, 5].map((offset) => {
+    const channel = Number.parseInt(value.slice(offset, offset + 2), 16) / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
+/** Keep small text legible on both neutral and semantic surfaces. */
+function keepsThemeTextLegible(): void {
+  const stylesheet = readProjectFile('app/globals.css');
+  const pairs = [
+    ['--foreground', '--background'],
+    ['--muted-foreground', '--card'],
+    ['--primary-foreground', '--primary'],
+    ['--primary-foreground', '--primary-hover'],
+    ['--primary-foreground', '--primary-pressed'],
+    ['--primary-text', '--background'],
+    ['--destructive', '--card'],
+    ['--destructive-foreground', '--destructive'],
+    ['--destructive-foreground', '--destructive-hover'],
+    ['--info-foreground', '--info'],
+    ['--success-foreground', '--success'],
+    ['--warning-foreground', '--warning'],
+  ];
+  for (const selector of [':root', '.dark'] as const) {
+    const variables = parseCustomProperties(extractDeclarationBlock(stylesheet, selector));
+    for (const [foreground, background] of pairs) {
+      const luminances = [foreground, background].map((token) => {
+        const value = variables.get(token);
+        expect(value, `${selector} ${token}`).toMatch(/^#[0-9a-f]{6}$/i);
+        return colorLuminance(value!);
+      });
+      const contrast = (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
+      expect(contrast, `${selector} ${foreground} on ${background}`).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+}
+
 describe('default chrome theme contract', () => {
+  test(
+    'keeps neutral, interactive, and status text readable in both themes',
+    keepsThemeTextLegible,
+  );
   test('keeps ordinary light and dark tokens grayscale', keepsDefaultChromeTokensGrayscale);
   test(
     'keeps shell component utilities free of palette hues',

@@ -18,13 +18,13 @@ const STATE_LABELS: Readonly<Record<CfpState, string>> = {
   uncertain: '投稿时间待确认',
 };
 const STATE_CLASSES: Readonly<Record<CfpState, string>> = {
-  open: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
-  upcoming: 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300',
+  open: 'bg-success text-success-foreground',
+  upcoming: 'bg-info text-info-foreground',
   closed: 'bg-muted text-muted-foreground',
   historical: 'bg-muted text-muted-foreground',
-  invitation_only: 'bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300',
-  undated: 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
-  uncertain: 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
+  invitation_only: 'bg-info text-info-foreground',
+  undated: 'bg-warning text-warning-foreground',
+  uncertain: 'bg-warning text-warning-foreground',
 };
 const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',

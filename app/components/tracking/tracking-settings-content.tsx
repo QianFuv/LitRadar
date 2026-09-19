@@ -112,7 +112,7 @@ export function TrackingSettingsContent({
               </span>
             )}
             {recommendation.save.didSave && (
-              <span role="status" className="text-green-600 dark:text-green-400">
+              <span role="status" className="text-success-foreground">
                 已保存
               </span>
             )}

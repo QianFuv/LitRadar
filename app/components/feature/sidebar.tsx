@@ -390,7 +390,7 @@ export function Sidebar({ className }: { className?: string }) {
     >
       <div
         data-slot="sidebar-scroll-region"
-        className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain"
+        className="sidebar-scroll-gutter min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain"
       >
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -427,7 +427,10 @@ export function Sidebar({ className }: { className?: string }) {
                   <fieldset key={key} className="space-y-2">
                     <legend className="text-xs font-medium">{label}</legend>
                     {options.map((option) => (
-                      <div key={option.value} className="flex min-w-0 items-start gap-2">
+                      <div
+                        key={option.value}
+                        className="motion-control flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
+                      >
                         <Checkbox
                           id={`rating-${key}-${option.value}`}
                           aria-label={`${label} ${option.value}`}
@@ -472,7 +475,7 @@ export function Sidebar({ className }: { className?: string }) {
                   return (
                     <div
                       key={opt.value}
-                      className="content-visibility-filter-row flex min-w-0 items-start gap-2"
+                      className="motion-control content-visibility-filter-row flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
                     >
                       <Checkbox
                         id={`area-${opt.value}`}
@@ -539,7 +542,7 @@ export function Sidebar({ className }: { className?: string }) {
                         return (
                           <div
                             key={id}
-                            className="content-visibility-filter-row flex min-w-0 items-start gap-2"
+                            className="motion-control content-visibility-filter-row flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
                           >
                             <Checkbox
                               id={`journal-${id}`}

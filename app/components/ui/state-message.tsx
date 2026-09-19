@@ -29,8 +29,8 @@ const STATE_MESSAGE_ICONS: Readonly<Record<StateMessageTone, LucideIcon>> = {
 const STATE_MESSAGE_TONE_CLASSES: Readonly<Record<StateMessageTone, string>> = {
   danger: 'text-destructive',
   neutral: 'text-muted-foreground',
-  success: 'text-green-700 dark:text-green-400',
-  warning: 'text-amber-700 dark:text-amber-400',
+  success: 'text-success-foreground',
+  warning: 'text-warning-foreground',
 };
 
 /**

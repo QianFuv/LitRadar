@@ -15,8 +15,8 @@ type GlobalErrorProps = {
 
 const GLOBAL_BODY_STYLE: CSSProperties = {
   alignItems: 'center',
-  background: '#0a0a0a',
-  color: '#f5f5f5',
+  background: '#111111',
+  color: '#eeeeee',
   colorScheme: 'dark',
   display: 'flex',
   fontFamily: 'ui-sans-serif, system-ui, sans-serif',
@@ -27,8 +27,8 @@ const GLOBAL_BODY_STYLE: CSSProperties = {
 };
 
 const GLOBAL_CARD_STYLE: CSSProperties = {
-  background: '#111111',
-  border: '1px solid #333333',
+  background: '#191919',
+  border: '1px solid #3a3a3a',
   borderRadius: '12px',
   boxSizing: 'border-box',
   maxWidth: '448px',
@@ -44,10 +44,10 @@ const GLOBAL_ACTIONS_STYLE: CSSProperties = {
 };
 
 const GLOBAL_BUTTON_STYLE: CSSProperties = {
-  background: '#f5f5f5',
-  border: '1px solid #f5f5f5',
+  background: 'var(--recovery-action-background, #3e63dd)',
+  border: '1px solid #3e63dd',
   borderRadius: '6px',
-  color: '#111111',
+  color: '#ffffff',
   cursor: 'pointer',
   font: 'inherit',
   fontWeight: 600,
@@ -56,8 +56,9 @@ const GLOBAL_BUTTON_STYLE: CSSProperties = {
 
 const GLOBAL_SECONDARY_BUTTON_STYLE: CSSProperties = {
   ...GLOBAL_BUTTON_STYLE,
-  background: 'transparent',
-  color: '#f5f5f5',
+  background: 'var(--recovery-action-background, transparent)',
+  borderColor: '#484848',
+  color: '#eeeeee',
 };
 
 /**
@@ -81,19 +82,39 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
     <html lang="zh-CN">
       <head>
         <title>页面错误 | LitRadar</title>
+        <style>{`
+          [data-recovery-action] { transition: background-color 120ms ease; }
+          [data-recovery-action='primary']:hover { --recovery-action-background: #3358d4; }
+          [data-recovery-action='secondary']:hover { --recovery-action-background: #222222; }
+          [data-recovery-action]:active { --recovery-action-background: #435db1; }
+          [data-recovery-action='secondary']:active { --recovery-action-background: #313131; }
+          [data-recovery-action]:focus-visible { outline: 3px solid #9eb1ff; outline-offset: 2px; }
+          @media (prefers-reduced-motion: reduce) {
+            [data-recovery-action] { transition: none; }
+          }
+        `}</style>
       </head>
       <body style={GLOBAL_BODY_STYLE}>
         <main id="main-content" role="alert" style={GLOBAL_CARD_STYLE}>
           <h1 style={{ fontSize: '24px', margin: 0 }}>应用加载失败</h1>
-          <p style={{ color: '#b3b3b3', lineHeight: 1.6, margin: '12px 0 0' }}>
+          <p style={{ color: '#b4b4b4', lineHeight: 1.6, margin: '12px 0 0' }}>
             LitRadar 暂时无法加载。请重新加载，或返回首页后再试。
           </p>
           <div style={GLOBAL_ACTIONS_STYLE}>
-            <button type="button" style={GLOBAL_BUTTON_STYLE} onClick={reset}>
+            <button
+              type="button"
+              data-recovery-action="primary"
+              style={GLOBAL_BUTTON_STYLE}
+              onClick={reset}
+            >
               重新加载
             </button>
             <form action="/" style={{ margin: 0 }}>
-              <button type="submit" style={GLOBAL_SECONDARY_BUTTON_STYLE}>
+              <button
+                type="submit"
+                data-recovery-action="secondary"
+                style={GLOBAL_SECONDARY_BUTTON_STYLE}
+              >
                 返回首页
               </button>
             </form>

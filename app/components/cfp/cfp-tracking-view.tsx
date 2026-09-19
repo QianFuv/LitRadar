@@ -326,7 +326,7 @@ export function CfpTrackingView() {
               {selected.refreshStatus === 'failed' && (
                 <p
                   role="status"
-                  className="rounded-lg border border-amber-200/70 bg-amber-50/50 px-5 py-3 text-xs leading-6 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300 sm:px-6"
+                  className="rounded-lg border border-warning-border bg-warning px-5 py-3 text-xs leading-6 text-warning-foreground sm:px-6"
                 >
                   最近一次更新未成功，当前显示上次核验的内容。
                 </p>

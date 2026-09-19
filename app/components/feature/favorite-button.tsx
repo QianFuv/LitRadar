@@ -159,8 +159,7 @@ export function FavoriteButton({
             static
             className={cn(
               'size-11 p-0 md:h-10 md:w-auto md:px-3',
-              isFav &&
-                'text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400',
+              isFav && 'text-warning-foreground hover:text-warning-foreground',
             )}
             aria-label={favoriteLabel}
             title={favoriteLabel}
@@ -221,8 +220,8 @@ export function FavoriteButton({
                     className={cn(
                       'motion-control flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 md:min-h-10',
                       isInFolder
-                        ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                        : 'hover:bg-accent',
+                        ? 'bg-warning text-warning-foreground hover:bg-warning/70 active:bg-warning/50'
+                        : 'hover:bg-accent active:bg-accent-pressed',
                     )}
                     disabled={
                       addMut.isPending ||

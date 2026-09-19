@@ -18,7 +18,7 @@
 | UI primitives       | Button、Card、Dialog、Input、Select 等可复用外观和交互                           |
 | 业务组件            | 搜索、文章、收藏、追踪和管理页面的组合与少量场景色                               |
 
-优先复用语义 token 和 UI primitive。业务层只有搜索高亮、成功、警告和错误等局部状态可以使用明确的 Tailwind palette，而且必须同时处理深色主题；结构文字、背景、边框和 hover 不得使用 slate 或十六进制场景色。
+优先复用语义 token 和 UI primitive。业务层统一使用 info、success、warning 和 destructive 语义 token 表达状态；结构文字、背景、边框和 hover 同样使用语义 token，不在页面中硬编码色阶。
 
 ## 字体
 
@@ -41,29 +41,38 @@ ThemeProvider 使用 `attribute="class"`、`defaultTheme="system"` 和 `enableSy
 - 认证后的全局用户菜单提供 system/light/dark 单选项。
 - light/dark 是持久化的显式选择；system 会继续响应系统偏好变化。
 - 依赖当前主题的控件必须在客户端快照可用后渲染，避免 hydration 差异。
-- 根 viewport 声明 `colorScheme: light dark`，并分别给出白色与黑色 theme color。
+- 根 viewport 声明 `colorScheme: light dark`，并分别给出浅灰与炭黑 theme color。
 
 ### 核心颜色
 
-| Token                                  | Light                 | Dark                  | 用途              |
-| -------------------------------------- | --------------------- | --------------------- | ----------------- |
-| `--background`                         | `#ffffff`             | `#000000`             | 页面背景          |
-| `--foreground`                         | `#171717`             | `#ededed`             | 主文字            |
-| `--card` / `--popover`                 | `#ffffff`             | `#000000`             | 浮层与卡片        |
-| `--primary`                            | `#171717`             | `#ededed`             | 主操作            |
-| `--primary-foreground`                 | `#ffffff`             | `#000000`             | 主操作文字        |
-| `--secondary` / `--muted` / `--accent` | `#fafafa`             | `#111111`             | 次级和 hover 表面 |
-| `--muted-foreground`                   | `#666666`             | `#888888`             | 辅助文字          |
-| `--destructive`                        | `#ff5b4f`             | `#ff5b4f`             | 破坏性操作        |
-| `--info` / `--info-foreground`         | `#ebf5ff` / `#0068d6` | `#00152b` / `#ebf5ff` | 信息 Badge        |
-| `--border` / `--input`                 | `#ebebeb`             | `#333333`             | 边框和输入轮廓    |
-| `--ring` / `--sidebar-ring`            | `#171717`             | `#ededed`             | 普通键盘焦点      |
-| `--sidebar-primary`                    | `#171717`             | `#ededed`             | 侧栏选中状态      |
-| `--sidebar-primary-foreground`         | `#ffffff`             | `#000000`             | 侧栏主状态文字    |
+配色采用 [Radix Colors](https://www.radix-ui.com/colors/docs/palette-composition/composing-a-palette) 的 Gray 与 Indigo 色阶。中性灰用于结构，Indigo 用于主操作与焦点；保持现有字体、布局、尺寸、间距与控件类型。浅色成功/警告文字使用较深的第 12 阶，深色使用第 11 阶；主按钮各状态保留白色文字的可读对比度。
 
-默认 UI chrome 包括页面/浮层表面、结构文字、边框、普通焦点环、默认或选中控件和导航状态；这些值在 light/dark 下都必须是黑、白或中性灰。侧栏的 background、foreground、primary、accent、border 和 ring 使用独立语义 token；滚动条也使用灰阶 light/dark token。
+| Token                                        | Light                 | Dark                  | 用途                     |
+| -------------------------------------------- | --------------------- | --------------------- | ------------------------ |
+| `--background`                               | `#f9f9f9`             | `#111111`             | 页面背景                 |
+| `--foreground`                               | `#202020`             | `#eeeeee`             | 主文字                   |
+| `--card` / `--popover`                       | `#ffffff`             | `#191919`             | 内容与浮层表面           |
+| `--primary`                                  | `#3e63dd`             | `#3e63dd`             | 主按钮、选中开关与复选框 |
+| `--primary-foreground`                       | `#ffffff`             | `#ffffff`             | 主操作文字               |
+| `--primary-hover`                            | `#3358d4`             | `#3358d4`             | 主操作悬停               |
+| `--primary-pressed`                          | `#3a5bc7`             | `#435db1`             | 主操作按下               |
+| `--primary-text`                             | `#3a5bc7`             | `#9eb1ff`             | 链接文字                 |
+| `--secondary`                                | `#f0f0f0`             | `#2a2a2a`             | 次级表面与导航选中态     |
+| `--muted`                                    | `#f9f9f9`             | `#191919`             | 弱表面                   |
+| `--muted-foreground`                         | `#646464`             | `#b4b4b4`             | 辅助文字                 |
+| `--accent`                                   | `#f0f0f0`             | `#222222`             | 悬停与键盘高亮           |
+| `--accent-pressed`                           | `#e8e8e8`             | `#313131`             | 中性控件按下态           |
+| `--border`                                   | `#d9d9d9`             | `#3a3a3a`             | 分隔线                   |
+| `--input` / `--input-hover`                  | `#cecece` / `#bbbbbb` | `#484848` / `#606060` | 控件轮廓与悬停           |
+| `--ring` / `--sidebar-ring`                  | `#8da4ef`             | `#9eb1ff`             | 键盘焦点                 |
+| `--info` / `--info-foreground`               | `#edf2fe` / `#3a5bc7` | `#182449` / `#9eb1ff` | 信息与搜索高亮           |
+| `--success` / `--success-foreground`         | `#e6f6eb` / `#193b2d` | `#132d21` / `#3dd68c` | 成功                     |
+| `--warning` / `--warning-foreground`         | `#fff7c2` / `#4f3422` | `#302008` / `#ffca16` | 收藏与警告               |
+| `--destructive` / `--destructive-foreground` | `#ce2c31` / `#ffffff` | `#ff9592` / `#3b1219` | 错误文字与危险按钮       |
 
-色相只用于有明确业务含义的状态：蓝色用于信息和搜索命中，红色用于错误与危险操作，黄/琥珀用于收藏和警告，绿色用于成功。每个状态还必须有文字、图标、边框差异或 ARIA role，颜色不能成为唯一信号。`litradar-logo.png` 及账号头像属于位图内容资产，不受 chrome 灰阶约束。当前没有图表组件，因此不保留未使用的 chart token；新增颜色时必须先归入上述语义边界。
+`success-border` 和 `warning-border` 提供配套状态边框。侧栏保留独立语义 token；导航选中态使用中性 secondary，侧栏 primary 只用于选中复选框等主交互。滚动条保持中性灰。状态始终配合文字、图标或 ARIA 语义；Logo、账号头像和 CNKI 二维码属于内容资产，保持原色与必要的白底。
+
+独立根错误页不能依赖失效的根样式，使用对应深色值作为内联后备；不会改变其原有布局或后备字体。
 
 ## 圆角
 
@@ -85,10 +94,10 @@ Badge 和滚动条使用全圆角；个别紧凑控件使用 Tailwind 自带的 
 
 项目保留两个历史命名的 shadow token：
 
-| Token                  | Light                                  | Dark                                   |
-| ---------------------- | -------------------------------------- | -------------------------------------- |
-| `--shadow-vercel-ring` | `rgba(0, 0, 0, 0.08) 0 0 0 1px`        | `rgba(255, 255, 255, 0.14) 0 0 0 1px`  |
-| `--shadow-vercel-card` | 外环 + 2px/8px 轻阴影 + `#fafafa` 内环 | 亮外环 + 两层黑色阴影 + 半透明白色内环 |
+| Token                  | Light                           | Dark                            |
+| ---------------------- | ------------------------------- | ------------------------------- |
+| `--shadow-vercel-ring` | `#cecece 0 0 0 1px`             | `#484848 0 0 0 1px`             |
+| `--shadow-vercel-card` | `#d9d9d9` 外环 + 2px/4px 轻阴影 | `#3a3a3a` 外环 + 2px/4px 轻阴影 |
 
 `shadow-vercel-ring` 用于 outline Button、Badge、Input、Select 等紧凑控件；`shadow-vercel-card` 用于 Card 和可见的 skip link。
 
@@ -119,7 +128,7 @@ Sizes：
 - `xs`、`sm`、`default`、`lg`
 - `icon-xs`、`icon-sm`、`icon`、`icon-lg`
 
-Button 统一使用 `rounded-md`、禁用态 opacity、有限属性 transition 和 3px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、筛选移除、收藏等高频或需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
+Button 的 default、outline、secondary、ghost variants 提供配套 hover/active 底色，link 使用 primary-text。Button 统一使用 `rounded-md`、禁用态 opacity、有限属性 transition 和 3px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、筛选移除、收藏等高频或需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
 
 ### Badge
 
@@ -142,6 +151,10 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 | StateMessage      | 紧凑的空态/错误/成功/警告表面；色彩始终配合图标、标题与 live-region role    |
 | Label             | 与原生表单关联；禁用状态随 peer/group 传播                                  |
 
+Input/Textarea 使用 card 表面，悬停时改变底色与轮廓；Select、Checkbox、Switch 与分类项提供对应状态底色。现有筛选和数据库多选行在悬停或内部键盘焦点时显示背景，不改变点击范围、几何尺寸或事件处理。
+
+Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制，避免领域和期刊列表的 `content-visibility: auto` 绘制裁剪截断边缘；控件外部尺寸与选中逻辑保持不变。
+
 复杂表单应组合现有 primitive，不要重新实现键盘导航、焦点管理或 portal 行为。
 
 ### 聚合设置与管理中心
@@ -158,7 +171,7 @@ Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向
 
 ### 页面导航与账号菜单
 
-首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行四列导航：“检索”“收藏”“周报”“征稿”。品牌、导航和数据库或收藏夹管理控件固定，下方筛选项、收藏夹和期刊列表独立滚动；征稿分组继续各自滚动。侧栏统一保留一层 16px 外层留白，数据库标签与选择器同行，列表不叠加外框或额外水平 padding，期刊和收藏夹条目使用 8px 水平内边距及一致的选中状态。短标签始终可见，链接同时保留 `aria-label`、`title` 和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
+首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行四列导航：“检索”“收藏”“周报”“征稿”。品牌、导航和数据库或收藏夹管理控件固定，下方筛选项、收藏夹和期刊列表独立滚动；征稿分组继续各自滚动。侧栏统一保留一层 16px 外层留白，数据库标签与选择器同行，列表不叠加外框；四个工作区的独立滚动列表共用 `sidebar-scroll-gutter`，左侧及上下各预留 4px、右侧预留 12px，并使用 `scrollbar-gutter: stable`，保护外侧边框和 3px 焦点环，期刊和收藏夹条目使用 8px 水平内边距及一致的选中状态。短标签始终可见，链接同时保留 `aria-label`、`title` 和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
 
 所有受保护页面右下角使用带圆形头像、用户名和展开提示的账号 pill。账号菜单只承载四类账号级动作：打开聚合设置中心、在“外观主题”右侧通过 Monitor / Sun / Moon 三个图标直接选择 system/light/dark 主题、向管理员显示管理面板入口，以及使用 destructive 语义退出登录。主题选项使用同一行的 radio items、明确的可访问名称与选中态，不再展开子菜单。页面级导航不应在账号菜单中重复；设置与管理链接必须保留当前 pathname 和现有 query，并用一次性标记让 Dialog 关闭后把焦点归还给账号按钮。菜单复用 Radix Dropdown Menu 的键盘导航、Escape、点击外部关闭与焦点归还行为，并避开设备 safe area。退出登录的红色属于明确的危险操作语义，不受普通 UI chrome 的中性色约束。
 

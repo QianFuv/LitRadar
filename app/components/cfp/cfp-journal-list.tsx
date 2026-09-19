@@ -100,7 +100,7 @@ export function CfpJournalList({
               aria-label={`${group.label}期刊`}
               hidden={!isExpanded}
               data-slot="cfp-journal-list"
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+              className="sidebar-scroll-gutter min-h-0 flex-1 overflow-y-auto overscroll-contain"
             >
               {group.journals.length === 0 ? (
                 <p className="px-2 py-3 text-xs leading-5 text-muted-foreground">

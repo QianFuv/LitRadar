@@ -22,6 +22,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-hover: var(--destructive-hover);
   --color-info-foreground: var(--info-foreground);
   --color-info: var(--info);
   --color-accent-foreground: var(--accent-foreground);
@@ -32,6 +33,18 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-pressed: var(--primary-pressed);
+  --color-primary-text: var(--primary-text);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-input-hover: var(--input-hover);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-border: var(--warning-border);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -49,36 +62,49 @@
 
 :root {
   --radius: 6px;
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f9f9f9;
+  --foreground: #202020;
   --card: #ffffff;
-  --card-foreground: #171717;
+  --card-foreground: #202020;
   --popover: #ffffff;
-  --popover-foreground: #171717;
-  --primary: #171717;
+  --popover-foreground: #202020;
+  --primary: #3e63dd;
+  --primary-hover: #3358d4;
+  --primary-pressed: #3a5bc7;
+  --primary-text: #3a5bc7;
   --primary-foreground: #ffffff;
-  --secondary: #fafafa;
-  --secondary-foreground: #171717;
-  --muted: #fafafa;
-  --muted-foreground: #666666;
-  --accent: #fafafa;
-  --accent-foreground: #171717;
-  --destructive: #ff5b4f;
-  --info: #ebf5ff;
-  --info-foreground: #0068d6;
-  --border: #ebebeb;
-  --input: #ebebeb;
-  --ring: #171717;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #171717;
-  --sidebar-primary: #171717;
+  --secondary: #f0f0f0;
+  --secondary-foreground: #202020;
+  --muted: #f9f9f9;
+  --muted-foreground: #646464;
+  --accent: #f0f0f0;
+  --accent-pressed: #e8e8e8;
+  --accent-foreground: #202020;
+  --destructive: #ce2c31;
+  --destructive-hover: #641723;
+  --destructive-foreground: #ffffff;
+  --info: #edf2fe;
+  --info-foreground: #3a5bc7;
+  --success: #e6f6eb;
+  --success-foreground: #193b2d;
+  --success-border: #adddc0;
+  --warning: #fff7c2;
+  --warning-foreground: #4f3422;
+  --warning-border: #f3d673;
+  --border: #d9d9d9;
+  --input: #cecece;
+  --input-hover: #bbbbbb;
+  --ring: #8da4ef;
+  --sidebar: #f9f9f9;
+  --sidebar-foreground: #202020;
+  --sidebar-primary: #3e63dd;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #fafafa;
-  --sidebar-accent-foreground: #171717;
-  --sidebar-border: #ebebeb;
-  --sidebar-ring: #171717;
-  --scrollbar-thumb: #c7c7c7;
-  --scrollbar-thumb-hover: #8f8f8f;
+  --sidebar-accent: #f0f0f0;
+  --sidebar-accent-foreground: #202020;
+  --sidebar-border: #d9d9d9;
+  --sidebar-ring: #8da4ef;
+  --scrollbar-thumb: #bbbbbb;
+  --scrollbar-thumb-hover: #8d8d8d;
 
   --motion-duration-fast: 120ms;
   --motion-duration-base: 180ms;
@@ -95,48 +121,57 @@
   --motion-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
 
-  --shadow-vercel-ring: rgba(0, 0, 0, 0.08) 0px 0px 0px 1px;
-  --shadow-vercel-card:
-    rgba(0, 0, 0, 0.08) 0px 0px 0px 1px, rgba(0, 0, 0, 0.04) 0px 2px 2px,
-    rgba(0, 0, 0, 0.04) 0px 8px 8px -8px, #fafafa 0px 0px 0px 1px inset;
+  --shadow-vercel-ring: #cecece 0px 0px 0px 1px;
+  --shadow-vercel-card: #d9d9d9 0px 0px 0px 1px, rgba(0, 0, 0, 0.03) 0px 2px 4px;
 }
 
 .dark {
-  --background: #000000;
-  --foreground: #ededed;
-  --card: #000000;
-  --card-foreground: #ededed;
-  --popover: #000000;
-  --popover-foreground: #ededed;
-  --primary: #ededed;
-  --primary-foreground: #000000;
-  --secondary: #111111;
-  --secondary-foreground: #ededed;
-  --muted: #111111;
-  --muted-foreground: #888888;
-  --accent: #111111;
-  --accent-foreground: #ededed;
-  --destructive: #ff5b4f;
-  --info: #00152b;
-  --info-foreground: #ebf5ff;
-  --border: #333333;
-  --input: #333333;
-  --ring: #ededed;
-  --sidebar: #000000;
-  --sidebar-foreground: #ededed;
-  --sidebar-primary: #ededed;
-  --sidebar-primary-foreground: #000000;
-  --sidebar-accent: #111111;
-  --sidebar-accent-foreground: #ededed;
-  --sidebar-border: #333333;
-  --sidebar-ring: #ededed;
-  --scrollbar-thumb: #4a4a4a;
-  --scrollbar-thumb-hover: #777777;
+  --background: #111111;
+  --foreground: #eeeeee;
+  --card: #191919;
+  --card-foreground: #eeeeee;
+  --popover: #191919;
+  --popover-foreground: #eeeeee;
+  --primary: #3e63dd;
+  --primary-hover: #3358d4;
+  --primary-pressed: #435db1;
+  --primary-text: #9eb1ff;
+  --primary-foreground: #ffffff;
+  --secondary: #2a2a2a;
+  --secondary-foreground: #eeeeee;
+  --muted: #191919;
+  --muted-foreground: #b4b4b4;
+  --accent: #222222;
+  --accent-pressed: #313131;
+  --accent-foreground: #eeeeee;
+  --destructive: #ff9592;
+  --destructive-hover: #ffd1d9;
+  --destructive-foreground: #3b1219;
+  --info: #182449;
+  --info-foreground: #9eb1ff;
+  --success: #132d21;
+  --success-foreground: #3dd68c;
+  --success-border: #20573e;
+  --warning: #302008;
+  --warning-foreground: #ffca16;
+  --warning-border: #5c3d05;
+  --border: #3a3a3a;
+  --input: #484848;
+  --input-hover: #606060;
+  --ring: #9eb1ff;
+  --sidebar: #191919;
+  --sidebar-foreground: #eeeeee;
+  --sidebar-primary: #3e63dd;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #222222;
+  --sidebar-accent-foreground: #eeeeee;
+  --sidebar-border: #3a3a3a;
+  --sidebar-ring: #9eb1ff;
+  --scrollbar-thumb: #606060;
+  --scrollbar-thumb-hover: #7b7b7b;
 
-  --shadow-vercel-ring: rgba(255, 255, 255, 0.14) 0px 0px 0px 1px;
-  --shadow-vercel-card:
-    rgba(255, 255, 255, 0.14) 0px 0px 0px 1px, rgba(0, 0, 0, 0.5) 0px 2px 2px,
-    rgba(0, 0, 0, 0.5) 0px 8px 8px -8px, rgba(255, 255, 255, 0.05) 0px 0px 0px 1px inset;
+  --shadow-vercel-ring: #484848 0px 0px 0px 1px;
+  --shadow-vercel-card: #3a3a3a 0px 0px 0px 1px, rgba(0, 0, 0, 0.16) 0px 2px 4px;
 }
 
 @layer base {
@@ -209,6 +244,12 @@
 .content-visibility-filter-row {
   content-visibility: auto;
   contain-intrinsic-size: 0 32px;
+}
+
+.sidebar-scroll-gutter {
+  padding-block: 4px;
+  padding-inline: 4px 12px;
+  scrollbar-gutter: stable;
 }
 
 .search-input::-webkit-search-cancel-button {

@@ -132,7 +132,7 @@ function getCnkiMessageClassName(tone: CnkiMessageTone): string {
     return 'text-sm text-destructive';
   }
   if (tone === 'warning') {
-    return 'text-sm text-amber-700 dark:text-amber-400';
+    return 'text-sm text-warning-foreground';
   }
   return 'text-sm text-muted-foreground';
 }
