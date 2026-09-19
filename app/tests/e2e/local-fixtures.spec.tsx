@@ -2122,6 +2122,116 @@ async function articleDataSourceSettingsTest({ page }: { page: Page }): Promise<
 
 test('opens usable data-source settings from article details', articleDataSourceSettingsTest);
 
+/** Exercise modal-to-settings navigation with real touch events and normal exit animations. */
+async function mobileSettingsNavigationTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  for (const workspace of ['/?q=graph', '/?view=favorites&folder=4', '/?view=weekly-updates']) {
+    await page.goto(workspace);
+    const accountTrigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
+    await accountTrigger.tap();
+    await page.getByRole('menuitem', { name: '打开设置中心' }).tap();
+    const settings = page.getByRole('dialog', { name: '设置中心' });
+    await expect(settings).toBeVisible();
+    await settings.getByRole('button', { name: '账号与安全', exact: true }).tap();
+    await expect(settings.getByRole('region', { name: '账号与安全设置内容' })).toBeVisible();
+    await settings.getByRole('button', { name: '关闭', exact: true }).tap();
+    await expect(settings).toHaveCount(0);
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(page.locator('body')).not.toHaveCSS('pointer-events', 'none');
+
+    await page
+      .getByRole('button', { name: /^查看文章详情：/ })
+      .first()
+      .tap();
+    await page.getByRole('link', { name: '去设置登录' }).tap();
+    await expect(settings).toBeVisible();
+    await expect(settings.getByText('未配置', { exact: true })).toBeVisible();
+    await settings.getByRole('button', { name: '刷新 CNKI 登录状态' }).tap();
+    await expect(page.getByRole('dialog')).toHaveCount(1);
+    await settings.getByRole('button', { name: '常规', exact: true }).tap();
+    await expect(settings.getByRole('region', { name: '常规设置内容' })).toBeVisible();
+    await settings.getByRole('button', { name: '关闭', exact: true }).tap();
+    await expect(settings).toHaveCount(0);
+    await expect(page.locator('body')).not.toHaveCSS('pointer-events', 'none');
+  }
+}
+
+test.describe('mobile settings navigation', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  test('opens article abstract and fulltext destinations in a new tab', async ({
+    page,
+    context,
+  }) => {
+    await context.route('**/api/**', async (route) => {
+      const url = new URL(route.request().url());
+      const action = /^\/api\/articles\/polish-fixture\/(abstract|fulltext)$/.exec(url.pathname);
+      if (action) {
+        expect(url.searchParams.get('db')).toBe('fixture.sqlite');
+        await route.fulfill({
+          contentType: 'text/html',
+          body: '<h1>Article destination</h1>',
+        });
+        return;
+      }
+      await serveInterfacePolishApi(route);
+    });
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.goto('/?q=graph');
+    await page
+      .getByRole('button', { name: /^查看文章详情：/ })
+      .first()
+      .tap();
+    const article = page.getByRole('dialog');
+    for (const [label, action] of [
+      ['查看摘要页', 'abstract'],
+      ['获取全文', 'fulltext'],
+    ]) {
+      const popupPromise = page.waitForEvent('popup');
+      await article.getByRole('link', { name: label }).tap();
+      const popup = await popupPromise;
+      await expect(popup).toHaveURL(
+        new RegExp(`/api/articles/polish-fixture/${action}\\?db=fixture\\.sqlite$`),
+      );
+      await expect(popup.getByRole('heading', { name: 'Article destination' })).toBeVisible();
+      await popup.close();
+      await expect(article).toBeVisible();
+    }
+  });
+  test(
+    'opens settings from the account menu and article details with touch',
+    mobileSettingsNavigationTest,
+  );
+  test('reopens settings when forward navigation interrupts the exit animation', async ({
+    page,
+  }) => {
+    await page.route('**/api/**', serveArticleSettingsApi);
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.goto('/?q=graph');
+    await page.getByRole('button', { name: '打开账号菜单：browser_user' }).tap();
+    await page.getByRole('menuitem', { name: '打开设置中心' }).tap();
+    const settings = page.getByRole('dialog', { name: '设置中心' });
+    await expect(settings).toHaveAttribute('data-state', 'open');
+    await settings.evaluate(
+      (dialog) =>
+        new Promise<void>((resolve) => {
+          const observer = new MutationObserver(() => {
+            if (dialog.getAttribute('data-state') !== 'closed') return;
+            observer.disconnect();
+            window.addEventListener('popstate', () => resolve(), { once: true });
+            window.history.forward();
+          });
+          observer.observe(dialog, { attributes: true, attributeFilter: ['data-state'] });
+          window.history.back();
+        }),
+    );
+    await expect(page).toHaveURL(/settings=general/);
+    await expect(settings).toHaveAttribute('data-state', 'open');
+    await settings.getByRole('button', { name: '数据源', exact: true }).tap();
+    await expect(settings.getByText('未配置', { exact: true })).toBeVisible();
+  });
+});
+
 test('synchronizes logout and account changes across browser tabs', crossTabSessionTest);
 
 test('scrolls a long mobile sidebar and dismisses without a close button', mobileSidebarScrollTest);

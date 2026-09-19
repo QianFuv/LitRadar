@@ -189,7 +189,7 @@ function synchronizeSessionState(
       },
     };
   }
-  return { ...observedState, activeSection: requestedSection };
+  return { ...observedState, activeSection: requestedSection, isDialogOpen: true };
 }
 
 /**
@@ -473,10 +473,9 @@ export function SettingsCenterDialog() {
       onReplaceSection={replaceSection}
       onRemoveSection={removeSection}
       onCloseSession={() =>
-        setMountState((state) => ({
-          ...state,
-          isSessionOpen: false,
-        }))
+        setMountState((state) =>
+          state.observedRequestedSection === null ? { ...state, isSessionOpen: false } : state,
+        )
       }
     />
   );
