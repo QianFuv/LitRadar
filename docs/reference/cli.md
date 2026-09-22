@@ -142,6 +142,22 @@ litradar admin backup restore
 
 备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限。通过这些检查的历史数据库可以保留在备份中；恢复后的内容库仍须满足运行时精确 v6/v7/v8 结构或受支持的迁移、重建要求。
 
+### CNKI author repair
+
+`admin index repair-cnki-authors` repairs only `data/index/chinese_journals.sqlite`, retaining its v7 or v9 schema and tokenizer. It accepts a reviewed JSON array of corrections, each with `article_id` (decimal string), `before` (exact original author JSON string), `after` (replacement JSON string in the original string-array or object-array shape), and `reason` (evidence or classification). It does not infer exceptional names or fetch sources. Prepare the corrections separately from a read-only inspection of the target database.
+
+```text
+litradar admin index repair-cnki-authors --project-root PATH --corrections corrections.json --output plan.json
+litradar admin index repair-cnki-authors --project-root PATH --corrections plan.json --apply --backup before.sqlite
+litradar admin index repair-cnki-authors --project-root PATH --corrections plan.json --verify --backup before.sqlite
+```
+
+The first command is a read-only dry run; it creates a new manifest bound to the complete source schema, authoritative non-author values, all article IDs and author values, and the search tokens of unaffected articles. Review that manifest before applying it. Output and backup parent directories must already exist; existing files are never overwritten. Put both outside managed database directories. Stop all writers and wait for service heartbeats and index leases to expire before applying. The command uses the shared index maintenance marker, a SQLite write transaction, and a consistent SQLite backup before any mutation. The backup must also match the dry-run snapshot.
+
+Only `authors_json` and the corresponding complete FTS rows change. Article IDs, identity aliases, listing, notifications, and all other canonical fields remain unchanged. Verification compares the persisted database and backup with the bound digests, checks integrity and FTS membership, and independently reconstructs the affected rows to compare their tokenizer-generated terms, columns and positions. Repeating the dry run with the original correction array reports zero pending corrections. A changed source snapshot requires a new dry run; do not edit manifest digests manually.
+
+Keep the backup and manifest together. A failed operation rolls back; an uncertain commit or rollback retains the maintenance marker and blocks normal startup. Inspect the actual database and verify the retained backup before recovery. Restore while all writers are stopped, preserving the original schema; never lower `user_version` manually. This command does not accept `--auth-db` and does not migrate runtime provider settings.
+
 ### 索引存储优化
 
 ```text

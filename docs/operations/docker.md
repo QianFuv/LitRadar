@@ -564,3 +564,10 @@ curl --fail http://localhost:8000/openapi.json
 ### Native Chinese search runtime
 
 The image builds the pinned `simple` SQLite extension for its target architecture, installs it at `/usr/lib/litradar/libsimple.so`, and includes `libstdc++6` and the selected MIT notice. No Jieba dictionaries or query expansion are enabled. New v9 indexes declare `simple 0`; old supported indexes continue using unicode61 until explicit offline optimization. The container smoke test creates a legacy index, runs the image's offline migration, and checks authenticated Chinese, Latin and no-pinyin queries before accepting the image. See [tokenizer provenance](../../libs/simple/README.md).
+
+
+### Offline CNKI author repair
+
+Use the [author repair CLI](../reference/cli.md#cnki-author-repair) from the verified release image against the existing data volume. Stop every service/index writer and allow active heartbeat and lease guards to expire. Mount a separate repair directory for reviewed corrections, the generated manifest and the retained SQLite backup; do not place backups inside `data/index`, `data/index-control` or `data/meta`. Run the read-only planning command first, then apply its exact manifest, then run persisted verification and a repeated dry run. No content schema migration is performed: v7 keeps unicode61 and v9 keeps `simple 0` from the image's packaged extension.
+
+For a Zeabur update, preserve the existing service and PVC identities. Run maintenance as a single one-shot process with the service stopped; do not launch a second application server against the same volume. Keep the previous image digest and independently verified auth/control backups for the separate provider-settings migration. Restart only after author repair verification and the supported settings migrations succeed, then check readiness and representative author searches. Retain all backups until the release rollback window closes.

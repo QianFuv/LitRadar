@@ -6,6 +6,7 @@ pub mod auth;
 pub mod backup;
 pub mod business;
 pub mod cnki;
+pub mod cnki_author_repair;
 pub mod config;
 pub mod index;
 pub mod index_maintenance;

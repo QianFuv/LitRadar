@@ -601,7 +601,10 @@ fn run_marked_optimization(
     })
 }
 
-fn maintenance_paths(config: &StorageConfig) -> Result<IndexStorageRecoveryPaths, std::io::Error> {
+/// Resolve the shared index maintenance recovery paths.
+pub(crate) fn maintenance_paths(
+    config: &StorageConfig,
+) -> Result<IndexStorageRecoveryPaths, std::io::Error> {
     let data_dir = std::path::absolute(config.project_root().join("data"))?;
     Ok(IndexStorageRecoveryPaths {
         marker: data_dir.join(MAINTENANCE_MARKER_NAME),
@@ -757,7 +760,8 @@ fn validate_supported_source_schema(
     Ok(version)
 }
 
-fn ensure_target_inactive(
+/// Reject maintenance while service heartbeats or index leases remain active.
+pub(crate) fn ensure_target_inactive(
     config: &StorageConfig,
     current_time: i64,
 ) -> Result<(), IndexStorageOptimizationError> {
@@ -849,7 +853,8 @@ fn ensure_no_active_index_leases(
     Ok(())
 }
 
-fn acquire_maintenance_marker(
+/// Exclusively create and persist the shared maintenance marker.
+pub(crate) fn acquire_maintenance_marker(
     paths: &IndexStorageRecoveryPaths,
     current_time: i64,
 ) -> Result<(), IndexStorageOptimizationError> {
@@ -1090,7 +1095,8 @@ fn validate_rebuilt_database(
     })
 }
 
-fn validate_sqlite_integrity(
+/// Check SQLite integrity and all declared foreign keys.
+pub(crate) fn validate_sqlite_integrity(
     connection: &Connection,
     database: &str,
 ) -> Result<(), IndexStorageOptimizationError> {
@@ -1115,7 +1121,8 @@ fn validate_sqlite_integrity(
     Ok(())
 }
 
-fn validate_fts_membership(
+/// Require an exact correspondence between article IDs and search rowids.
+pub(crate) fn validate_fts_membership(
     connection: &Connection,
     database: &str,
 ) -> Result<(), IndexStorageOptimizationError> {
