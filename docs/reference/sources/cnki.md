@@ -2,15 +2,14 @@
 
 CNKI 元数据索引、CNKI 在线摘要页和浙江图书馆全文是独立运行时边界。它们共享[规范文章契约](../index-provider-contract.md)，不通过索引 provenance 或持久 URL 互相绑定。
 
-当前有两套 CNKI 元数据实现：
+CNKI metadata uses only the domestic NZKPT implementation:
 
 | 运行时名称     | 角色                       | 主机/平台                                             | 能力                                 |
 | -------------- | -------------------------- | ----------------------------------------------------- | ------------------------------------ |
 | `cnki`         | 国内 NZKPT（默认中文索引） | `navi.cnki.net` / `kns.cnki.net`，`uniplatform=NZKPT` | `index_content` + `article_abstract` |
-| `cnki_oversea` | 海外 CNKI                  | `oversea.cnki.net`                                    | `index_content` + `article_abstract` |
 | `zjlib`        | 浙江图书馆全文             | 用户会话                                              | `article_full_text` only             |
 
-国内与海外页面和内部接口都不是 LitRadar 控制的稳定公共 API。上游页面变化应通过 fixture 和 parser 测试确认，不能通过在内容库新增 transport 字段规避。
+国内页面和内部接口都不是 LitRadar 控制的稳定公共 API。上游页面变化应通过 fixture 和 parser 测试确认，不能通过在内容库新增 transport 字段规避。
 
 ## 能力声明
 
@@ -18,18 +17,15 @@ CNKI 元数据索引、CNKI 在线摘要页和浙江图书馆全文是独立运�
 | ------------------------------------------------------ | ------------------------- | --------------------------------------------------------------------------------------- |
 | `cnki_index_registration` / live domestic transport    | `IndexContentProvider`    | `index` 父进程加载 `cnki_captcha_token`；多进程时只通过 stdin bootstrap 交给国内 worker |
 | `cnki_access_registration` / API live domestic adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；读取同一加密 runtime secret                               |
-| `cnki_oversea_index_registration`                      | `IndexContentProvider`    | `index` 进程按 `cnki_oversea` 代理开关连接；不使用用户会话                              |
-| `cnki_oversea_access_registration` / API live adapter  | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；不使用 ZJLib 会话                                         |
 | `zjlib` API registration                               | `ArticleFullTextProvider` | `serve` API 只读取当前用户已有的 active ZJLib CNKI 会话                                 |
 
-逻辑名称 `cnki` 与 `cnki_oversea` 在索引与 API 进程分别注册实现，管理端把它们聚合为 `index_content + article_abstract`。国内 `cnki` **没有** fulltext。`zjlib` 是唯一内置全文 Provider。默认 `chinese_journals` 路由到 `cnki`；摘要默认 `scholarly → cnki`；全文默认 `zjlib`。
+The `cnki` provider registers domestic indexing and abstract access; the admin catalog reports `index_content + article_abstract`. 国内 `cnki` **没有** fulltext。`zjlib` 是唯一内置全文 Provider。默认 `chinese_journals` 路由到 `cnki`；摘要默认 `scholarly → cnki`；全文默认 `zjlib`。
 
 ## 托管代理归属
 
 [运行配置](../configuration.md)中的一个共用 `provider_proxy_url` 由三个逻辑开关覆盖本文的全部出站 HTTP：
 
 - `cnki`：国内索引、在线摘要定位、challenge/verify 流程，以及 JFBYM 双图识别请求。JFBYM 是国内 CNKI 的 captcha 子流程，没有独立 policy key。
-- `cnki_oversea`：海外索引和在线摘要定位，包括年期、文章清单与详情。
 - `zjlib`：扫码开始、扫码状态轮询、会话预热、BFF/Share SSO、搜索、候选验证和 PDF 下载；重定向与禁止重定向的两个 client 使用同一个决定。
 
 每个开关缺省为关闭。关闭时客户端明确忽略系统代理变量并直连；打开时对应流程只走显式代理，代理不可达不会静默直连。保存代理设置不会热加载：`serve` 必须重启，索引由下一条新命令读取。代理 URL 和凭据不会进入 API 响应、CNKI session、内容/控制库、worker request JSON、日志或 Debug。
@@ -66,11 +62,9 @@ Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anch
 
 密钥通过加密 runtime secret `cnki_captcha_token` 配置；数据库值为空时，单次索引探测可用 `LITRADAR_CNKI_CAPTCHA_TOKEN`。父进程解析该值后会从 child 环境移除变量；worker request JSON 不含 token 或代理 URL，只有 `provider_name=cnki` 的 worker 在构造 Provider 前通过版本化 stdin bootstrap 收到 captcha token，只有当前 Provider 开关启用的 worker 才在同一 bootstrap 收到代理 URL。后续同一管道继续传输 durable ACK。token、代理 URL、secretKey、captchaId 与图片不得进入 request 文件、参数、环境、日志、Debug、内容库或控制库。
 
-## 海外 CNKI 索引流程
+## Retired overseas provider
 
-海外实现保持 `oversea.cnki.net` 流程：题名优先、ISSN fallback、year tree、articles、详情映射。它当前不声明增量窗口能力，也不接受 traversal checkpoint：Bootstrap、Incremental 和 FullRescan 都安全完整扫描，Complete 返回 NULL anchor。海外路径不使用 jfbym captcha secret。
-
-搜索和 papers HTML 中的详情链接不是可信目的地。每次真实发送前都会重新解析，只允许 `https://oversea.cnki.net` 默认端口、无 userinfo/fragment，并精确匹配当前 journal search/detail/year/papers 或 article detail path family。跨源绝对链接、HTTP、自定义端口和其他路径会在构建请求前拒绝，不会连接 loopback、link-local 或容器内网。
+The overseas runtime implementation has been removed. Auth schema v19 migrates stored `cnki_oversea` selections to `cnki`, preserving order, explicit empty overrides and existing domestic proxy choices. Control schema v5 discards overseas leases, anchors and checkpoints; they cannot resume through the domestic transport. Historical batch ledgers remain unchanged.
 
 ## 规范字段映射
 
@@ -132,7 +126,6 @@ Request/conversion errors and permanent 404/410 misses are never cached. Cache h
 4. 只把本次匹配的 HTTPS 目的地返回给 API。
 
 国内 allowlist：`navi.cnki.net`、`kns.cnki.net`、`www.cnki.net`。  
-海外 allowlist：`oversea.cnki.net`、`kns.cnki.net`、`www.cnki.net`。
 
 API 会再次执行统一 HTTPS/host 校验，返回 `Cache-Control: private, no-store` 的 307；目的地不写入内容、控制或认证库。
 
@@ -165,9 +158,9 @@ reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的响�
 
 Domestic CNKI retains five ordinary response attempts and up to eight no-response transport attempts with bounded exponential backoff; captcha recognition/replay retains its existing five-attempt budget. Each logical metadata request uses one 180-second deadline, shortened by any earlier caller deadline, across retries, captcha lock waits, cooldowns and captcha network work. Persistent failure does not produce empty content or a new checkpoint.
 
-HTTP 429 is handled before reading or classifying a captcha body. Retry-After accepts integer seconds and HTTP dates; all cloned domestic clients share the longest observed cooldown, including across transient session reset. A 429 does not trigger a new captcha replay or recognition attempt. Challenge GET and verification POST responses also publish 429 cooldowns before further captcha work. Waits release the cooldown lock and recheck before sending; a required delay that cannot fit fails promptly rather than retrying early. Oversized or unreadable 429 bodies cannot erase the observed status/header. Other response-size and permanent-missing rules remain in force. Overseas CNKI and ZJLib retry behavior is unchanged.
+HTTP 429 is handled before reading or classifying a captcha body. Retry-After accepts integer seconds and HTTP dates; all cloned domestic clients share the longest observed cooldown, including across transient session reset. A 429 does not trigger a new captcha replay or recognition attempt. Challenge GET and verification POST responses also publish 429 cooldowns before further captcha work. Waits release the cooldown lock and recheck before sending; a required delay that cannot fit fails promptly rather than retrying early. Oversized or unreadable 429 bodies cannot erase the observed status/header. Other response-size and permanent-missing rules remain in force. ZJLib retry behavior is unchanged.
 
-CNKI Overseas、Domestic 和 ZJLib 的 HTML/JSON 响应解压后上限均为 2 MiB，JFBYM JSON 为 256 KiB。读取先检查可用的 Content-Length，再对透明解压后的流最多保留 `limit + 1` 字节；因此 chunked 响应和 gzip 高压缩比都不能绕过上限。超限是固定分类的不可重试无效响应，不保留正文。PDF 仍使用独立的 32 MiB 有界读取。
+CNKI Domestic 和 ZJLib 的 HTML/JSON 响应解压后上限均为 2 MiB，JFBYM JSON 为 256 KiB。读取先检查可用的 Content-Length，再对透明解压后的流最多保留 `limit + 1` 字节；因此 chunked 响应和 gzip 高压缩比都不能绕过上限。超限是固定分类的不可重试无效响应，不保留正文。PDF 仍使用独立的 32 MiB 有界读取。
 
 请求尝试只汇总到结构化 `index.provider.attempts` 或文章访问 fallback 事件。内容库没有 API/path statistics 表，也不保存 URL、响应正文、查询参数或解码器样本。
 
@@ -177,7 +170,7 @@ Domestic CNKI defaults to 6 detail workers and 1 journal executor. A bounded pro
 
 修改 CNKI/ZJLib adapter 时至少覆盖：
 
-- 题名优先、ISSN fallback 和候选期刊验证（国内与海外）；
+- 题名优先、ISSN fallback 和候选期刊验证（国内）；
 - `pykm`/`pCode`、年期树、10+2 与 10+0 papers 分页、计数不一致和详情变体；
 - captcha/验证页、非 2xx 和 decode retry；预算与 secret 脱敏；
 - 稳定 `year_issue_id + page_index` 恢复、期次重排/消失、永久详情跳过和临时错误整页重放；
@@ -186,4 +179,4 @@ Domestic CNKI defaults to 6 detail workers and 1 journal executor. A bounded pro
 - ZJLib 用户隔离、题名/作者/期刊三项精确匹配和 32 MiB 上限；
 - 成功、无匹配和 fallback 后索引/control/auth 行与文件系统均不变；
 - zyproxy 协议、主机、跳数、循环和 URL 脱敏；
-- `cnki`、`cnki_oversea`、`zjlib` 代理归属，受管直连，以及多进程秘密只走 stdin bootstrap。
+- `cnki`、`zjlib` 代理归属，受管直连，以及多进程秘密只走 stdin bootstrap。

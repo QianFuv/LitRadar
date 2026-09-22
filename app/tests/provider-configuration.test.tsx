@@ -348,12 +348,6 @@ function providerCatalogFixture(): ProviderCatalogResponse {
         article_full_text: false,
       },
       {
-        name: 'cnki_oversea',
-        index_content: true,
-        article_abstract: true,
-        article_full_text: false,
-      },
-      {
         name: 'scholarly',
         index_content: true,
         article_abstract: true,
@@ -577,7 +571,9 @@ async function serializesProviderProxyUrlAndPolicyAtomically(): Promise<void> {
     name: 'cnki 使用 Provider 代理',
   });
   expect(cnkiSwitch).toBeChecked();
-  expect(screen.getByRole('switch', { name: 'cnki_oversea 使用 Provider 代理' })).not.toBeChecked();
+  expect(
+    screen.queryByRole('switch', { name: 'cnki_oversea 使用 Provider 代理' }),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole('switch', { name: 'scholarly 使用 Provider 代理' })).not.toBeChecked();
   expect(screen.getByRole('switch', { name: 'zjlib 使用 Provider 代理' })).not.toBeChecked();
 
@@ -599,7 +595,7 @@ async function serializesProviderProxyUrlAndPolicyAtomically(): Promise<void> {
     expect(updatePayload).toEqual({
       values: {
         provider_proxy_url: PROXY_SECRET_SENTINEL,
-        provider_proxy_policy: '{"cnki":true,"cnki_oversea":false,"scholarly":false,"zjlib":true}',
+        provider_proxy_policy: '{"cnki":true,"scholarly":false,"zjlib":true}',
       },
       secret_pool_updates: {},
     }),
@@ -619,7 +615,7 @@ async function defaultsProviderProxySwitchesOffIndependently(): Promise<void> {
   const user = userEvent.setup();
 
   const switches = await Promise.all(
-    ['cnki', 'cnki_oversea', 'scholarly', 'zjlib'].map((provider) =>
+    ['cnki', 'scholarly', 'zjlib'].map((provider) =>
       screen.findByRole('switch', { name: `${provider} 使用 Provider 代理` }),
     ),
   );
@@ -663,7 +659,8 @@ async function filtersProviderCandidatesByCapability(): Promise<void> {
   });
   indexSelect.focus();
   await user.keyboard('{Enter}');
-  expect(screen.getByRole('option', { name: 'cnki_oversea' })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: 'cnki' })).toBeInTheDocument();
+  expect(screen.queryByRole('option', { name: 'cnki_oversea' })).not.toBeInTheDocument();
   expect(screen.getByRole('option', { name: 'scholarly' })).toBeInTheDocument();
   expect(screen.queryByRole('option', { name: 'zjlib' })).not.toBeInTheDocument();
   await user.keyboard('{Escape}');

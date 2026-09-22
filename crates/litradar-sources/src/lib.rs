@@ -2,7 +2,6 @@
 
 pub mod cfp;
 pub mod cnki_domestic;
-pub mod cnki_oversea;
 mod crossref_workset;
 mod http_retry;
 pub mod jfbym;
@@ -25,10 +24,6 @@ pub use cnki_domestic::{
     DOMESTIC_CAPTCHA_SOLVE_BUDGET, DOMESTIC_CNKI_CHECKPOINT_VERSION, DOMESTIC_KNS_BASE_URL,
     DOMESTIC_NAVI_BASE_URL,
 };
-pub use cnki_oversea::{
-    CnkiClient, CnkiFixtureData, CnkiSourceError, CnkiTransport, FixtureCnkiTransport,
-    LiveCnkiConfig, LiveCnkiTransport,
-};
 pub use jfbym::{
     encrypt_point_json, parse_slider_distance, point_x_candidates, strip_data_url_base64,
     FixtureJfbymSolver, JfbymError, JfbymSolver, LiveJfbymSolver, JFBYM_API_URL,
@@ -37,11 +32,9 @@ pub use jfbym::{
 pub use provider_proxy::{ProviderProxy, ProviderProxyError, ProviderProxySelection};
 pub use providers::{
     built_in_provider_capabilities, cnki_access_registration, cnki_index_registration,
-    cnki_index_registration_with_workers, cnki_oversea_access_registration,
-    cnki_oversea_index_registration, scholarly_access_registration, scholarly_index_registration,
-    CnkiArticleAccessProvider, CnkiIndexProvider, DomesticCnkiArticleAccessProvider,
-    DomesticCnkiIndexProvider, ScholarlyArticleAccessProvider, ScholarlyIndexProvider,
-    CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, CNKI_REDIRECT_HOSTS,
+    cnki_index_registration_with_workers, scholarly_access_registration,
+    scholarly_index_registration, DomesticCnkiArticleAccessProvider, DomesticCnkiIndexProvider,
+    ScholarlyArticleAccessProvider, ScholarlyIndexProvider, CNKI_PROVIDER_NAME,
     DOMESTIC_CNKI_REDIRECT_HOSTS, SCHOLARLY_PROVIDER_NAME, SCHOLARLY_REDIRECT_HOSTS,
     ZJLIB_PROVIDER_NAME,
 };

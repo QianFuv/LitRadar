@@ -12,7 +12,7 @@ use serde::Deserialize;
 use crate::schema::ContentDatabaseError;
 
 /// Current disposable control database schema version.
-pub const CONTROL_SCHEMA_VERSION: i64 = 4;
+pub const CONTROL_SCHEMA_VERSION: i64 = 5;
 
 const CONTROL_BUSY_TIMEOUT_SECONDS: u64 = 30;
 const LEASE_DURATION_SECONDS: i64 = 300;
@@ -482,6 +482,11 @@ pub fn init_control_db(connection: &Connection) -> Result<(), ControlDatabaseErr
         migrate_legacy_completed_anchors(&transaction)?;
         transaction.execute_batch("DROP TABLE provider_checkpoints;")?;
     }
+    transaction.execute_batch(
+        "DELETE FROM provider_leases WHERE provider_name='cnki_oversea';
+         DELETE FROM provider_sync_anchors WHERE provider_name='cnki_oversea';
+         DELETE FROM provider_run_checkpoints WHERE provider_name='cnki_oversea';",
+    )?;
     transaction.pragma_update(None, "user_version", CONTROL_SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -1825,7 +1830,7 @@ mod tests {
     }
 
     #[test]
-    fn v0_and_v1_migrations_rewrite_retired_provider_names() {
+    fn v0_and_v1_migrations_discard_retired_provider_state() {
         for version in [0, 1] {
             let directory = tempdir().expect("temporary directory should create");
             let path = directory.path().join(format!("v{version}.control.sqlite"));
@@ -1849,12 +1854,56 @@ mod tests {
             );
             assert!(
                 read_sync_anchor(&migrated, CATALOG_NAME, "cnki_oversea", CATALOG_ID)
-                    .expect("rewritten state should read")
-                    .is_some()
+                    .expect("retired overseas state should read")
+                    .is_none()
             );
-            heartbeat_lease(&migrated, CATALOG_NAME, "cnki_oversea", "legacy-run", 101)
-                .expect("rewritten lease should remain owned");
+            assert_eq!(table_count(&migrated, "provider_leases"), 0);
         }
+    }
+
+    #[test]
+    fn overseas_retirement_preserves_domestic_control_state() {
+        let connection = Connection::open_in_memory().unwrap();
+        init_control_db(&connection).unwrap();
+        for provider in ["cnki", "cnki_oversea", "scholarly"] {
+            acquire_lease(&connection, CATALOG_NAME, provider, "run", 100).unwrap();
+            connection.execute(
+                "INSERT INTO provider_sync_anchors(catalog_name,provider_name,catalog_id,committed_anchor,completed_at) VALUES(?1,?2,?3,'opaque',?4)",
+                [CATALOG_NAME, provider, CATALOG_ID, TIMESTAMP],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO provider_run_checkpoints(catalog_name,provider_name,catalog_id,run_id,sync_mode,traversal_checkpoint,started_at,updated_at) VALUES(?1,?2,?3,'run','incremental','opaque',?4,?4)",
+                [CATALOG_NAME, provider, CATALOG_ID, TIMESTAMP],
+            ).unwrap();
+        }
+        connection.pragma_update(None, "user_version", 4).unwrap();
+        init_control_db(&connection).unwrap();
+        for table in [
+            "provider_leases",
+            "provider_sync_anchors",
+            "provider_run_checkpoints",
+        ] {
+            assert_eq!(table_count(&connection, table), 2);
+            let retired: i64 = connection
+                .query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE provider_name='cnki_oversea'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(retired, 0);
+        }
+        assert_eq!(
+            read_sync_anchor(&connection, CATALOG_NAME, "cnki", CATALOG_ID)
+                .unwrap()
+                .unwrap()
+                .committed_anchor
+                .as_deref(),
+            Some("opaque")
+        );
+        heartbeat_lease(&connection, CATALOG_NAME, "cnki", "run", 101).unwrap();
+        init_control_db(&connection).unwrap();
+        assert_eq!(table_count(&connection, "provider_run_checkpoints"), 2);
     }
 
     #[test]
@@ -1957,7 +2006,7 @@ mod tests {
             connection
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .expect("schema version should read"),
-            4
+            CONTROL_SCHEMA_VERSION
         );
     }
 

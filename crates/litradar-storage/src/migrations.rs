@@ -18,7 +18,7 @@ use crate::index_maintenance::{interrupted_index_maintenance_state, IndexStorage
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 18;
+pub const AUTH_SCHEMA_VERSION: i64 = 19;
 
 pub use crate::index_schema::{INDEX_SCHEMA_VERSION, MIN_SUPPORTED_INDEX_SCHEMA_VERSION};
 
@@ -426,6 +426,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             16 => apply_auth_version_sixteen(&transaction)?,
             17 => apply_auth_version_seventeen(&transaction)?,
             18 => transaction.execute_batch(crate::business::cfp::SCHEMA_SQL)?,
+            19 => retire_overseas_provider(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1600,6 +1601,83 @@ fn validate_notification_string_lists(transaction: &Transaction<'_>) -> Result<(
         for value in [keywords, directions, selected_databases] {
             serde_json::from_str::<Vec<String>>(&value)
                 .map_err(|_| MigrationError::InvalidNotificationSettingsState)?;
+        }
+    }
+    Ok(())
+}
+
+fn retire_overseas_provider(transaction: &Transaction<'_>) -> Result<(), MigrationError> {
+    let mut statement = transaction.prepare(
+        "SELECT key,value FROM runtime_settings WHERE key IN (
+            'index_provider_routes','article_abstract_provider_orders',
+            'article_fulltext_provider_orders','provider_proxy_policy')",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (key, original) in rows {
+        let mut value: serde_json::Value = serde_json::from_str(&original)
+            .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)?;
+        match key.as_str() {
+            "index_provider_routes" => {
+                let routes = value
+                    .as_object_mut()
+                    .ok_or(MigrationError::InvalidRuntimeProviderOrderState)?;
+                for provider in routes.values_mut() {
+                    let name = provider
+                        .as_str()
+                        .ok_or(MigrationError::InvalidRuntimeProviderOrderState)?;
+                    if name == "cnki_oversea" {
+                        *provider = serde_json::json!("cnki");
+                    }
+                }
+            }
+            "provider_proxy_policy" => {
+                let policy = value
+                    .as_object_mut()
+                    .ok_or(MigrationError::InvalidRuntimeProviderOrderState)?;
+                if policy.values().any(|enabled| !enabled.is_boolean()) {
+                    return Err(MigrationError::InvalidRuntimeProviderOrderState);
+                }
+                if let Some(enabled) = policy.remove("cnki_oversea") {
+                    policy.entry("cnki").or_insert(enabled);
+                }
+            }
+            _ => {
+                let mut orders: ProviderOrderConfiguration = serde_json::from_value(value.clone())
+                    .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)?;
+                for providers in
+                    std::iter::once(&mut orders.default).chain(orders.catalogs.values_mut())
+                {
+                    let mut seen = BTreeSet::new();
+                    for name in providers.iter_mut() {
+                        if name == "cnki_oversea" {
+                            *name = "cnki".to_string();
+                        }
+                    }
+                    providers.retain(|name| seen.insert(name.clone()));
+                }
+                value = serde_json::to_value(orders)
+                    .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)?;
+            }
+        }
+        let before: serde_json::Value = serde_json::from_str(&original)
+            .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)?;
+        if before != value {
+            let rewritten = if key.ends_with("_provider_orders") {
+                let orders: ProviderOrderConfiguration = serde_json::from_value(value)
+                    .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)?;
+                serde_json::to_string(&orders)
+            } else {
+                serde_json::to_string(&value)
+            }
+            .map_err(|_| MigrationError::InvalidRuntimeProviderOrderState)?;
+            transaction.execute(
+                "UPDATE runtime_settings SET value=?1 WHERE key=?2",
+                params![rewritten, key],
+            )?;
         }
     }
     Ok(())

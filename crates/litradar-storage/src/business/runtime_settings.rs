@@ -350,7 +350,7 @@ pub const DEFAULT_AUTH_RATE_LIMIT_POLICY_JSON: &str = concat!(
 const BOOLEAN_ALLOWED_VALUES: [&str; 2] = ["true", "false"];
 const LOG_FORMAT_ALLOWED_VALUES: [&str; 2] = ["json", "compact"];
 const DEFAULT_PROVIDER_PROXY_POLICY_JSON: &str =
-    "{\"cnki\":false,\"cnki_oversea\":false,\"scholarly\":false,\"zjlib\":false}";
+    "{\"cnki\":false,\"scholarly\":false,\"zjlib\":false}";
 
 /// Non-secret logging settings loaded before database migrations or command dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1742,8 +1742,8 @@ fn normalize_provider_order_configuration(
 }
 
 fn rewrite_legacy_provider_runtime_name(name: &str) -> String {
-    // Auth migration v8 rewrote stored `cnki` -> `cnki_oversea` once. After domestic
-    // registration, bare `cnki` is the NZKPT product name and must not be rewritten.
+    // The domestic runtime name is already canonical; legacy persisted overseas
+    // selections are handled transactionally by the auth migration.
     match name {
         "zjlib_cnki" => "zjlib".to_string(),
         other => other.to_string(),

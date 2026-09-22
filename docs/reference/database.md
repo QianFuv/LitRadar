@@ -8,7 +8,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 | ----------------------------------------- | ---------------: | ------------------------------------------------------------------ |
 | `data/index/<catalog>.sqlite`             |     每个目录一个 | 需要备份的 Provider-neutral 内容库                                 |
 | `data/index-control/index-batches.sqlite` |         项目一个 | 可删除的 batch/catalog phase、manifest intent 和全局 lease ledger  |
-| `data/index-control/<catalog>.sqlite`     | 每个活动目录一个 | 可删除的 v4 Provider anchor/run checkpoint/lease 控制库            |
+| `data/index-control/<catalog>.sqlite`     | 每个活动目录一个 | 可删除的 v5 Provider anchor/run checkpoint/lease 控制库            |
 | `data/index-work/scholarly/`              | 每个遍历一个工作集 | 可丢弃的 Crossref SQLite、归属记录及事务文件，不是内容库或控制库 |
 | `data/auth.sqlite`                        |             一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
 | `data/push_state/`                        |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源                  |
@@ -20,10 +20,10 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 | 数据库             | `PRAGMA user_version` | 升级策略                                              |
 | ------------------ | --------------------: | ----------------------------------------------------- |
-| 认证/业务库        |                    17 | 版本化 migration                                      |
+| 认证/业务库        |                    19 | 版本化 migration                                      |
 | 内容索引库         |                     9 | 新建精确 v9；运行时读写精确 v6/v7/v8/v9；精确 v4/v5 原子迁移到 v9 |
 | 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建 |
-| catalog 索引控制库 |                     4 | v0/v1/v2/v3 安全事务迁移；可删除后按 v4 重建          |
+| catalog 索引控制库 |                     5 | v0/v1/v2/v3/v4 安全事务迁移；可删除后按 v5 重建          |
 
 上述内容、业务和控制库的可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。Crossref 私有工作集使用下面单独说明的连接策略，不改变这些正式 schema 版本。
 
@@ -207,9 +207,9 @@ fingerprint 包含 CSV selection、顺序和精确内容、Provider route、sync
 
 notify status 只允许 `running/idle/completed/skipped/failed/cancelled/timed_out/unknown`。父进程在 child 启动前把 attempt 写为 Running，结果以当前 attempt ID 做 CAS；只有 `idle/completed/skipped` 且 exit code 为 0 时 `notifying` catalog 才能进入 completed。Unknown acknowledgement 的 ID 与时间必须成对出现，并与新 Running attempt 在同一 immediate transaction 中写入。v1 ledger 原位迁移；active Notifying 无论旧 exit code 为何都转为带 legacy attempt ID 的 Unknown，防止未经 typed protocol 证明就自动重发。
 
-`--no-resume` 先把 active batch 置为 abandoning；调用方从各 catalog v4 控制库删除仅属于该 batch 的 run checkpoint 后，事务性标记旧 batch abandoned 并创建 replacement。committed anchor、内容和 outbox 不属于清理范围。若未完成 catalog 已有 `outcome_manifest_path` 且原 batch 启用了 notify，admission 会拒绝 abandonment，避免把已经发布或可能已发布的 handoff 静默丢弃；必须先恢复原 batch。
+`--no-resume` 先把 active batch 置为 abandoning；调用方从各 catalog v5 控制库删除仅属于该 batch 的 run checkpoint 后，事务性标记旧 batch abandoned 并创建 replacement。committed anchor、内容和 outbox 不属于清理范围。若未完成 catalog 已有 `outcome_manifest_path` 且原 batch 启用了 notify，admission 会拒绝 abandonment，避免把已经发布或可能已发布的 handoff 静默丢弃；必须先恢复原 batch。
 
-## v4 catalog 索引控制库
+## v5 catalog 索引控制库
 
 控制库位于 `data/index-control`，与内容发现、REST 查询和备份完全分离。所有键都包含 `catalog_name`、`provider_name` 和规范 `catalog_id`；opaque 值非空时最多 65,536 字节，核心从不解析其 Provider 私有结构。
 
@@ -360,7 +360,7 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 ## 备份边界
 
-v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 包含创建时发现的全部 `data/index/*.sqlite` 文件，不按内容 schema 筛选；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v4 controls，`data/index-work` 的 Crossref 工作集也始终排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
+v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 包含创建时发现的全部 `data/index/*.sqlite` 文件，不按内容 schema 筛选；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v5 controls，`data/index-work` 的 Crossref 工作集也始终排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
 
 备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限，因此也能保留通过这些检查的历史数据库。它不执行内容结构预检或迁移；恢复后能否服务仍取决于上文的精确内容 schema、迁移或重建要求。
 
@@ -375,3 +375,7 @@ A manual job fixes the window end to its durable creation time. It passes parsed
 Auth schema v16 adds idx_favorites_cursor on (user_id, folder_id, created_at DESC, id DESC). The new GET /api/favorites/folders/{folder_id}/articles/page endpoint seeks from an opaque, versioned user/folder-bound cursor and reads limit + 1 rows without an exact total. Cursor timestamps preserve their original floating-point bits. The existing /articles array endpoint retains its limit/offset contract for older clients.
 
 Auth schema v17 removes the redundant `idx_invite_codes_code` and `idx_notification_settings_user` indexes. The existing `UNIQUE` constraints on `invite_codes.code` and `notification_settings.user_id` continue to enforce the same invariants; migration does not change application data.
+
+### Retired CNKI provider migration
+
+Auth schema v19 migrates stored overseas provider routes and access orders to domestic `cnki`, preserving custom providers, empty overrides and setting timestamps. Explicit domestic proxy settings win over the removed overseas setting. Control schema v5 removes only overseas leases, anchors and checkpoints; domestic state and historical batch identities remain unchanged.

@@ -20,12 +20,11 @@ use litradar_provider::{
     ProviderRegistry, ProviderRegistryError,
 };
 use litradar_sources::{
-    cnki_access_registration, cnki_oversea_access_registration, scholarly_access_registration,
-    CnkiArticleAccessProvider, DomesticCnkiArticleAccessProvider, LiveCnkiConfig,
-    LiveCnkiTransport, LiveDomesticCnkiConfig, LiveDomesticCnkiTransport, LiveZjlibCnkiConfig,
-    LiveZjlibCnkiTransport, ProviderProxy, ProviderProxySelection, ZhejiangLibraryCnkiClient,
-    ZjlibCnkiArticleIdentity, ZjlibCnkiDownloadedPdf, ZjlibCnkiError, CNKI_OVERSEA_PROVIDER_NAME,
-    CNKI_PROVIDER_NAME, DEFAULT_FULL_TEXT_MAXIMUM_BYTES, ZJLIB_PROVIDER_NAME,
+    cnki_access_registration, scholarly_access_registration, DomesticCnkiArticleAccessProvider,
+    LiveDomesticCnkiConfig, LiveDomesticCnkiTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
+    ProviderProxy, ProviderProxySelection, ZhejiangLibraryCnkiClient, ZjlibCnkiArticleIdentity,
+    ZjlibCnkiDownloadedPdf, ZjlibCnkiError, CNKI_PROVIDER_NAME, DEFAULT_FULL_TEXT_MAXIMUM_BYTES,
+    ZJLIB_PROVIDER_NAME,
 };
 #[cfg(test)]
 use litradar_sources::{FixtureZjlibCnkiMode, FixtureZjlibCnkiTransport};
@@ -154,9 +153,6 @@ pub(crate) fn build_article_provider_registry(
     let captcha_token = load_cnki_captcha_token(&storage_config, &secret_codec);
     let mut registry = ProviderRegistry::default();
     registry.register(scholarly_access_registration()?)?;
-    registry.register(live_cnki_oversea_access_registration(
-        provider_proxy_selection.for_provider(CNKI_OVERSEA_PROVIDER_NAME),
-    )?)?;
     registry.register(live_cnki_access_registration(
         captcha_token,
         provider_proxy_selection.for_provider(CNKI_PROVIDER_NAME),
@@ -607,57 +603,6 @@ struct ZjlibCnkiFullTextProvider {
     storage_config: litradar_storage::StorageConfig,
     secret_codec: litradar_storage::SecretCodec,
     provider_proxy: ProviderProxy,
-}
-
-struct LiveCnkiAccessProvider {
-    config: LiveCnkiConfig,
-    provider_proxy: ProviderProxy,
-}
-
-impl LiveCnkiAccessProvider {
-    fn resolve(
-        &self,
-        article: &ArticleLocator,
-        context: ArticleAccessContext,
-    ) -> Result<ArticleRedirect, ProviderError> {
-        let transport = LiveCnkiTransport::new_with_proxy_and_deadline(
-            self.config.clone(),
-            self.provider_proxy.clone(),
-            context.deadline,
-        )
-        .map_err(|_| {
-            ProviderError::new(
-                ProviderErrorKind::TemporarilyUnavailable,
-                "CNKI transport is unavailable",
-            )
-        })?;
-        CnkiArticleAccessProvider::new(transport).resolve_abstract(article, context)
-    }
-}
-
-impl ArticleAbstractProvider for LiveCnkiAccessProvider {
-    fn supports_abstract(&self, article: &ArticleLocator) -> bool {
-        CnkiArticleAccessProvider::<LiveCnkiTransport>::supports_article(article)
-    }
-
-    fn resolve_abstract(
-        &self,
-        article: &ArticleLocator,
-        context: ArticleAccessContext,
-    ) -> Result<ArticleRedirect, ProviderError> {
-        self.resolve(article, context)
-    }
-}
-
-fn live_cnki_oversea_access_registration(
-    provider_proxy: ProviderProxy,
-) -> Result<ProviderRegistration, ProviderRegistryError> {
-    cnki_oversea_access_registration(LiveCnkiAccessProvider {
-        config: LiveCnkiConfig {
-            timeout_seconds: ARTICLE_TRANSPORT_TIMEOUT_SECONDS,
-        },
-        provider_proxy,
-    })
 }
 
 struct LiveDomesticCnkiAccessProvider {
@@ -1285,19 +1230,19 @@ mod tests {
     #[test]
     fn provider_order_selection_distinguishes_inherit_override_and_disable() {
         let configuration = ProviderOrderConfiguration {
-            default: vec!["scholarly".to_string(), "cnki_oversea".to_string()],
+            default: vec!["scholarly".to_string(), "cnki".to_string()],
             catalogs: std::collections::BTreeMap::from([
                 ("disabled".to_string(), Vec::new()),
-                ("reverse".to_string(), vec!["cnki_oversea".to_string()]),
+                ("reverse".to_string(), vec!["cnki".to_string()]),
             ]),
         };
         assert_eq!(
             provider_order_for_catalog(&configuration, "inherited"),
-            ["scholarly", "cnki_oversea"]
+            ["scholarly", "cnki"]
         );
         assert_eq!(
             provider_order_for_catalog(&configuration, "reverse"),
-            ["cnki_oversea"]
+            ["cnki"]
         );
         assert!(provider_order_for_catalog(&configuration, "disabled").is_empty());
     }
@@ -1528,7 +1473,7 @@ mod tests {
             .expect("Scholarly fixture should register");
         registry
             .register(abstract_registration(
-                "cnki_oversea",
+                "cnki",
                 RedirectFixtureOutcome::Redirect("https://oversea.cnki.net/kcms/detail/cnki"),
             ))
             .expect("CNKI fixture should register");
@@ -1540,8 +1485,8 @@ mod tests {
                 "article_abstract_provider_orders".to_string(),
                 Some(
                     json!({
-                        "default": ["scholarly", "cnki_oversea"],
-                        "catalogs": {"reverse": ["cnki_oversea", "scholarly"], "disabled": []}
+                        "default": ["scholarly", "cnki"],
+                        "catalogs": {"reverse": ["cnki", "scholarly"], "disabled": []}
                     })
                     .to_string(),
                 ),
@@ -1666,12 +1611,12 @@ mod tests {
             .expect("unsupported fixture should register");
         registry
             .register(abstract_registration(
-                "cnki_oversea",
+                "cnki",
                 RedirectFixtureOutcome::Redirect("https://oversea.cnki.net/supported"),
             ))
             .expect("fallback fixture should register");
         let (_directory, state) = test_state(registry, None);
-        set_abstract_order(&state, &["scholarly", "cnki_oversea"]);
+        set_abstract_order(&state, &["scholarly", "cnki"]);
         let article = article_locator();
 
         let response = article_access_response(&state, &article, UserId(1), "fixture")

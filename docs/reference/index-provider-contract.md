@@ -145,7 +145,6 @@ Crossref 私有工作集不是 core ACK 的替代品：缓存超前时先重放�
 
 - 国内 `cnki` 使用稳定期次树：从 candidate head 到 base issue 的闭区间，处理完 base 的全部 papers 页后 Complete。
 - `scholarly` 使用规范字段生成 issue fingerprint。Crossref 保留 anchor 年份下界和固定 update 上界，按完整 created 历史分片，计数通过后本地归并期次并完整输出 candidate/base 日期闭区间及同日平局组；OpenAlex 保持既有有序分页。无法证明边界时在 Provider 内无过滤重放并保留 candidate，详见 [Scholarly](sources/scholarly.md)。同次恢复可以复用进度，下一次 update 仍须新查询并补查整个 base 期次，不能复用终点 cursor。
-- `cnki_oversea` 当前明确不支持增量边界；三种模式都完整扫描，成功返回 NULL anchor。核心不会为它解释海外期次句柄。
 
 ## 规范化与稳定身份
 

@@ -16,10 +16,9 @@ use litradar_provider::{
 };
 pub use litradar_sources::ProviderProxySelection;
 use litradar_sources::{
-    cnki_index_registration_with_workers, cnki_oversea_index_registration,
-    scholarly_index_registration, LiveCnkiConfig, LiveCnkiTransport, LiveDomesticCnkiConfig,
+    cnki_index_registration_with_workers, scholarly_index_registration, LiveDomesticCnkiConfig,
     LiveDomesticCnkiTransport, LiveScholarlyConfig, LiveScholarlyTransport, ProviderProxy,
-    CNKI_OVERSEA_PROVIDER_NAME, CNKI_PROVIDER_NAME, SCHOLARLY_PROVIDER_NAME,
+    CNKI_PROVIDER_NAME, SCHOLARLY_PROVIDER_NAME,
 };
 use litradar_worker::process_supervisor::SupervisedChild;
 use rusqlite::{Connection, ErrorCode};
@@ -3183,18 +3182,6 @@ fn build_index_registration(
                 })?,
             )?)
         }
-        CNKI_OVERSEA_PROVIDER_NAME => {
-            let transport = LiveCnkiTransport::new_with_proxy(
-                LiveCnkiConfig { timeout_seconds },
-                provider_proxy,
-            )
-            .map_err(|_| {
-                LiveIndexError::ProviderSetup(
-                    "CNKI indexing provider could not initialize".to_string(),
-                )
-            })?;
-            Ok(cnki_oversea_index_registration(transport)?)
-        }
         CNKI_PROVIDER_NAME => {
             let transport = LiveDomesticCnkiTransport::new_with_proxy(
                 LiveDomesticCnkiConfig {
@@ -6106,17 +6093,6 @@ mod tests {
             Some(sentinel),
             scholarly_proxy_url.as_deref(),
         );
-        let overseas_request = fetch_worker_request("cnki_oversea", "run-overseas-bootstrap");
-        let overseas_proxy_url = config
-            .provider_proxy_selection
-            .proxy_url_for_provider(&overseas_request.provider_name);
-        let overseas_bootstrap = worker_bootstrap(
-            &overseas_request,
-            &config.scholarly_config,
-            Some(sentinel),
-            overseas_proxy_url.as_deref(),
-        );
-
         let debug = format!("{config:?}");
         let bootstrap_debug = format!("{cnki_bootstrap:?}");
 
@@ -6143,10 +6119,7 @@ mod tests {
             scholarly_bootstrap.scholarly_config.as_ref(),
             Some(&config.scholarly_config)
         );
-        assert!(overseas_bootstrap.cnki_captcha_token.is_none());
-        assert!(overseas_bootstrap.provider_proxy_url.is_none());
         assert!(cnki_bootstrap.scholarly_config.is_none());
-        assert!(overseas_bootstrap.scholarly_config.is_none());
     }
 
     #[test]
@@ -6156,7 +6129,7 @@ mod tests {
             ProviderProxySelection::new(proxy_sentinel, r#"{"cnki":true,"scholarly":false}"#)
                 .expect("worker proxy selection should validate");
 
-        for provider_name in ["cnki", "scholarly", "cnki_oversea"] {
+        for provider_name in ["cnki", "scholarly"] {
             let request = fetch_worker_request(provider_name, "run-proxy-equivalence");
             let direct_proxy = selection.for_provider(provider_name);
             let proxy_url = selection.proxy_url_for_provider(provider_name);

@@ -102,10 +102,10 @@ key/mailto 池按逗号、分号或换行拆分，去除空项并按首次出现
 默认策略为：
 
 ```json
-{ "cnki": false, "cnki_oversea": false, "scholarly": false, "zjlib": false }
+{ "cnki": false, "scholarly": false, "zjlib": false }
 ```
 
-策略必须是 Provider 名称到布尔值的严格 JSON object。缺少的当前或未来 Provider 一律视为 `false`；管理 API 拒绝未知名称、非布尔值和不安全名称，管理页按当前 Provider capability 目录呈现四个独立开关并以稳定名称顺序保存。
+策略必须是 Provider 名称到布尔值的严格 JSON object。缺少的当前或未来 Provider 一律视为 `false`；管理 API 拒绝未知名称、非布尔值和不安全名称，管理页按当前 Provider capability 目录呈现三个独立开关并以稳定名称顺序保存。
 
 URL 与策略在同一个 `PUT /api/admin/runtime-settings` 中按更新后的有效状态一起校验和提交。任何开关为 `true` 时 URL 必须存在；要清除 URL，必须在同一请求中先把所有开关关闭并对 URL 提交 JSON `null`。空白秘密输入保留已有密文，非空输入加密替换。任一字段或同一请求中的其他运行设置无效时，全部设置和必需审计写入一起回滚。
 
@@ -115,7 +115,6 @@ URL 与策略在同一个 `PUT /api/admin/runtime-settings` 中按更新后的�
 
 - `scholarly`：索引中的 Crossref、OpenAlex 和 Semantic Scholar HTTP；在线摘要只是本地生成受限 DOI/PubMed redirect，不发出 Provider HTTP。
 - `cnki`：国内 CNKI 索引和在线摘要的全部 HTTP，以及其 JFBYM captcha 请求；JFBYM 没有独立开关。
-- `cnki_oversea`：海外 CNKI 索引和在线摘要的全部 HTTP。
 - `zjlib`：扫码开始/轮询、会话预热、BFF/Share SSO、搜索和全文下载的全部 HTTP，包括重定向与非重定向客户端。
 
 这两个设置不影响 AI、通知、PushPlus、MCP、浏览器访问返回的 redirect，也不替代 `trusted_proxy_cidrs` 的入站反向代理信任策略。旧 `proxy_pool` 不是兼容别名，提交时仍按未知字段拒绝。代理 URL、userinfo 和 worker bootstrap 都是秘密数据，不得放入参数、环境变量、请求文件、日志、Debug、API 响应或运维工单。
@@ -158,7 +157,7 @@ Generic and domestic CNKI counts each accept 1..=32, with configured aggregate a
 - 顺序中的名称不得重复，且只能使用安全的小写 ASCII 运行时名称；未知 JSON 字段被拒绝。
 - 保存时 catalog key 确定性排序并压缩为规范 JSON。
 
-默认摘要配置是 `{"default":["scholarly","cnki"],"catalogs":{}}`，默认全文配置是 `{"default":["zjlib"],"catalogs":{}}`。`scholarly → cnki` 明确表示请求时先尝试 scholarly，失败后再尝试国内 CNKI；它不是索引来源或静态绑定。海外 `cnki_oversea` 仍可手动加入顺序。
+默认摘要配置是 `{"default":["scholarly","cnki"],"catalogs":{}}`，默认全文配置是 `{"default":["zjlib"],"catalogs":{}}`。`scholarly → cnki` 明确表示请求时先尝试 scholarly，失败后再尝试国内 CNKI；它不是索引来源或静态绑定。The retired overseas provider is no longer available.
 
 管理页调用 `GET /api/admin/provider-catalog`，把 `data/meta/*.csv` 与 `data/index/*.sqlite` 按安全 stem 合并为 catalog 列表，并按 `index_content`、`article_abstract`、`article_full_text` capability 过滤每个控件的候选项。索引 Provider 每个 catalog 单选；摘要页和全文各自支持默认排序、catalog 继承、覆盖与禁用。粒度止于 CSV/database stem，不细化到 CSV 内的期刊。
 
@@ -173,7 +172,7 @@ Generic and domestic CNKI counts each accept 1..=32, with configured aggregate a
 3. 旧顺序成为 `default`，`catalogs` 初始为空；旧空值保留为显式空 default。
 4. 成功后删除三个旧字段。重复或非法 Provider 名称会使整个迁移回滚并保留 v6 状态。
 
-认证库 v8 同时完成运行时 Provider 名称迁移。由 v1-v7 升级且缺少 Provider 配置行的旧安装，会先物化旧版有效默认值，再把 `cnki` 重写为 `cnki_oversea`、把 `zjlib_cnki` 重写为 `zjlib`；因此“从未保存默认值”和“显式保存旧默认值”的升级结果一致。已有自定义 JSON 只重写其中的旧运行时 token。
+认证库 v8 同时完成运行时 Provider 名称迁移。由 v1-v7 升级且缺少 Provider 配置行的旧安装，会先物化旧版有效默认值，再把 `cnki` 重写为 `cnki_oversea`、把 `zjlib_cnki` 重写为 `zjlib`；因此“从未保存默认值”和“显式保存旧默认值”的升级结果一致。Auth v19 subsequently replaces `cnki_oversea` with `cnki`, deduplicates provider orders, preserves empty overrides, and removes the retired proxy key. An explicit domestic proxy choice takes precedence; otherwise the overseas choice is inherited.
 
 全新 v0 数据库不会物化这些 legacy 行，继续从当前代码默认值读取国内语义：中文索引为 `cnki`，摘要为 `scholarly → cnki`，全文为 `zjlib`。这一区分只保护升级语义，不改变管理员以后显式保存的配置。
 
@@ -290,7 +289,6 @@ Generic and domestic CNKI counts each accept 1..=32, with configured aggregate a
 - Semantic Scholar key：`x-api-key` 请求头
 - Crossref mailto：只作为 Crossref query 参数；不传给 OpenAlex
 
-CNKI overseas 元数据索引不使用这三个 scholarly key/mailto 设置；它根据 `cnki_oversea` 代理开关使用共用代理或受管直连。
 
 ## 用户通知配置
 

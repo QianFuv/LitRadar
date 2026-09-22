@@ -7,10 +7,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use litradar_sources::{
-    DomesticCnkiTransport, LiveCnkiConfig, LiveCnkiTransport, LiveDomesticCnkiConfig,
-    LiveDomesticCnkiTransport, LiveJfbymSolver, LiveScholarlyConfig, LiveScholarlyTransport,
-    LiveZjlibCnkiConfig, LiveZjlibCnkiTransport, ProviderProxy, ProviderProxyError,
-    ProviderProxySelection,
+    DomesticCnkiTransport, LiveDomesticCnkiConfig, LiveDomesticCnkiTransport, LiveJfbymSolver,
+    LiveScholarlyConfig, LiveScholarlyTransport, LiveZjlibCnkiConfig, LiveZjlibCnkiTransport,
+    ProviderProxy, ProviderProxyError, ProviderProxySelection,
 };
 use reqwest::blocking::{Client, ClientBuilder};
 
@@ -206,8 +205,6 @@ fn provider_proxy_constructs_every_live_provider_client_and_rebuilds_domestic() 
         proxy.clone(),
     )
     .expect("Scholarly client should accept the managed proxy");
-    LiveCnkiTransport::new_with_proxy(LiveCnkiConfig { timeout_seconds: 1 }, proxy.clone())
-        .expect("CNKI Overseas client should accept the managed proxy");
     let mut domestic = LiveDomesticCnkiTransport::new_with_proxy(
         LiveDomesticCnkiConfig {
             timeout_seconds: 1,

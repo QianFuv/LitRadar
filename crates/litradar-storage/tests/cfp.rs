@@ -9,7 +9,7 @@ use litradar_storage::business::cfp::{
 };
 use litradar_storage::{
     create_backup, migrate_auth_database, restore_backup, verify_backup, BackupCreateOptions,
-    BackupRestoreOptions, StorageConfig,
+    BackupRestoreOptions, StorageConfig, AUTH_SCHEMA_VERSION,
 };
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -250,7 +250,7 @@ fn cfp_version_seventeen_concurrent_startup_preserves_business_rows_and_imports_
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        18
+        AUTH_SCHEMA_VERSION
     );
     assert_eq!(
         connection

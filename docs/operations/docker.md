@@ -149,7 +149,7 @@ docker compose run --rm litradar index \
 
 ### 6. 中断恢复和更新
 
-每条实时索引或更新命令先在 `data/index-control/index-batches.sqlite` 的 batch ledger schema v2 中取得固定单行项目租约 `index_batch_lease`，因此同一项目跨全部目录只允许一个 active invocation。进入某个目录后，命令还会在该目录的 catalog 控制库 v4 中取得 `(catalog_name, provider_name)` 的 `provider_leases` 次级租约；它保护 Provider traversal 和内容提交，但不替代项目级串行化。父进程每 30 秒把两级租约续到未来 300 秒。普通上游、worker 或清单错误保留 active batch、catalog phase 和待发布事件并释放当前所有权；容器或 Docker daemon 被强制终止时，后续命令只能在确认旧进程消失且租约过期后接管兼容 batch。
+每条实时索引或更新命令先在 `data/index-control/index-batches.sqlite` 的 batch ledger schema v2 中取得固定单行项目租约 `index_batch_lease`，因此同一项目跨全部目录只允许一个 active invocation。进入某个目录后，命令还会在该目录的 catalog 控制库 v5 中取得 `(catalog_name, provider_name)` 的 `provider_leases` 次级租约；它保护 Provider traversal 和内容提交，但不替代项目级串行化。父进程每 30 秒把两级租约续到未来 300 秒。普通上游、worker 或清单错误保留 active batch、catalog phase 和待发布事件并释放当前所有权；容器或 Docker daemon 被强制终止时，后续命令只能在确认旧进程消失且租约过期后接管兼容 batch。
 
 恢复时按以下顺序操作：
 

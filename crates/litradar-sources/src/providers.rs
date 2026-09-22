@@ -27,17 +27,13 @@ use serde_json::Value;
 use crate::cnki_domestic::{DomesticCnkiAnchor, DOMESTIC_CNKI_ANCHOR_VERSION};
 use crate::crossref_workset::{CrossrefCheckpoint, CrossrefPhase, CrossrefWorkset};
 use crate::{
-    CnkiClient, CnkiSourceError, CnkiTransport, DomesticCnkiCheckpoint, DomesticCnkiClient,
-    DomesticCnkiSourceError, DomesticCnkiTransport, DomesticIssueArticlePage,
-    DomesticJournalLocator, ScholarlyClient, ScholarlyTransport, ScholarlyWorksPage, SourceAttempt,
-    SourceError, SEMANTIC_SCHOLAR_BATCH_SIZE,
+    DomesticCnkiCheckpoint, DomesticCnkiClient, DomesticCnkiSourceError, DomesticCnkiTransport,
+    DomesticIssueArticlePage, DomesticJournalLocator, ScholarlyClient, ScholarlyTransport,
+    ScholarlyWorksPage, SourceAttempt, SourceError, SEMANTIC_SCHOLAR_BATCH_SIZE,
 };
 
 /// Stable runtime name for the built-in Scholarly indexing provider.
 pub const SCHOLARLY_PROVIDER_NAME: &str = "scholarly";
-
-/// Stable runtime name for the built-in overseas CNKI indexing provider.
-pub const CNKI_OVERSEA_PROVIDER_NAME: &str = "cnki_oversea";
 
 /// Stable runtime name for the built-in domestic NZKPT CNKI provider.
 pub const CNKI_PROVIDER_NAME: &str = "cnki";
@@ -49,9 +45,6 @@ pub const ZJLIB_PROVIDER_NAME: &str = "zjlib";
 
 /// Exact HTTPS hosts emitted by the Scholarly online access provider.
 pub const SCHOLARLY_REDIRECT_HOSTS: &[&str] = &["doi.org", "pubmed.ncbi.nlm.nih.gov"];
-
-/// Exact HTTPS hosts emitted by the overseas CNKI online access provider.
-pub const CNKI_REDIRECT_HOSTS: &[&str] = &["oversea.cnki.net", "kns.cnki.net", "www.cnki.net"];
 
 /// Exact HTTPS hosts emitted by the domestic CNKI online access provider.
 pub const DOMESTIC_CNKI_REDIRECT_HOSTS: &[&str] =
@@ -66,12 +59,6 @@ pub fn built_in_provider_capabilities() -> Vec<ProviderCapabilityInfo> {
     vec![
         ProviderCapabilityInfo {
             name: CNKI_PROVIDER_NAME.to_string(),
-            index_content: true,
-            article_abstract: true,
-            article_full_text: false,
-        },
-        ProviderCapabilityInfo {
-            name: CNKI_OVERSEA_PROVIDER_NAME.to_string(),
             index_content: true,
             article_abstract: true,
             article_full_text: false,
@@ -130,73 +117,6 @@ impl ArticleAbstractProvider for ScholarlyArticleAccessProvider {
         _context: ArticleAccessContext,
     ) -> Result<ArticleRedirect, ProviderError> {
         scholarly_article_redirect(article)
-    }
-}
-
-/// CNKI access provider that locates an article from canonical metadata on every request.
-pub struct CnkiArticleAccessProvider<T> {
-    client: Mutex<CnkiClient<T>>,
-}
-
-impl<T> CnkiArticleAccessProvider<T>
-where
-    T: CnkiTransport,
-{
-    /// Build a request-time CNKI access provider.
-    ///
-    /// # Arguments
-    ///
-    /// * `transport` - CNKI source transport.
-    ///
-    /// # Returns
-    ///
-    /// Provider that retains upstream handles only inside one invocation.
-    pub fn new(transport: T) -> Self {
-        Self {
-            client: Mutex::new(CnkiClient::new(transport)),
-        }
-    }
-
-    /// Return whether a locator contains enough bibliographic metadata for CNKI lookup.
-    ///
-    /// # Arguments
-    ///
-    /// * `article` - Provider-neutral article locator.
-    ///
-    /// # Returns
-    ///
-    /// True when the article and its journal can be searched without guaranteed failure.
-    pub fn supports_article(article: &ArticleLocator) -> bool {
-        has_cnki_article_locator(article)
-    }
-
-    fn resolve(&self, article: &ArticleLocator) -> Result<ArticleRedirect, ProviderError> {
-        let mut client = self.client.lock().map_err(|_| {
-            ProviderError::new(
-                ProviderErrorKind::Internal,
-                "CNKI access provider state is unavailable",
-            )
-        })?;
-        let result = resolve_cnki_article_redirect(&mut client, article);
-        emit_source_attempt_summary(CNKI_OVERSEA_PROVIDER_NAME, &client.drain_attempts());
-        result
-    }
-}
-
-impl<T> ArticleAbstractProvider for CnkiArticleAccessProvider<T>
-where
-    T: CnkiTransport + Send,
-{
-    fn supports_abstract(&self, article: &ArticleLocator) -> bool {
-        Self::supports_article(article)
-    }
-
-    fn resolve_abstract(
-        &self,
-        article: &ArticleLocator,
-        _context: ArticleAccessContext,
-    ) -> Result<ArticleRedirect, ProviderError> {
-        self.resolve(article)
     }
 }
 
@@ -259,58 +179,6 @@ where
     }
 }
 
-/// Canonical CNKI indexing provider backed by one source transport.
-pub struct CnkiIndexProvider<T> {
-    client: Mutex<CnkiClient<T>>,
-}
-
-impl<T> CnkiIndexProvider<T>
-where
-    T: CnkiTransport,
-{
-    /// Build a canonical CNKI provider.
-    ///
-    /// # Arguments
-    ///
-    /// * `transport` - CNKI source transport.
-    ///
-    /// # Returns
-    ///
-    /// Provider adapter that discards all transport identifiers and links.
-    pub fn new(transport: T) -> Self {
-        Self {
-            client: Mutex::new(CnkiClient::new(transport)),
-        }
-    }
-}
-
-impl<T> IndexContentProvider for CnkiIndexProvider<T>
-where
-    T: CnkiTransport + Send,
-{
-    fn fetch(
-        &self,
-        catalog: &JournalCatalogEntry,
-        context: IndexFetchContext<'_>,
-    ) -> Result<ProviderBatch, ProviderError> {
-        if context.traversal_checkpoint.is_some() {
-            return Err(ProviderError::new(
-                ProviderErrorKind::InvalidResponse,
-                "CNKI provider received an unsupported checkpoint",
-            ));
-        }
-        let mut client = self.client.lock().map_err(|_| {
-            ProviderError::new(
-                ProviderErrorKind::Internal,
-                "CNKI provider state is unavailable",
-            )
-        })?;
-        let result = fetch_cnki_batch(&mut client, catalog);
-        emit_source_attempt_summary(CNKI_OVERSEA_PROVIDER_NAME, &client.drain_attempts());
-        result
-    }
-}
-
 /// Register one built-in Scholarly indexing capability.
 ///
 /// # Arguments
@@ -350,37 +218,6 @@ where
     )
 }
 
-/// Register one built-in CNKI indexing capability.
-///
-/// # Arguments
-///
-/// * `transport` - CNKI source transport.
-///
-/// # Returns
-///
-/// Registration declaring exactly the canonical indexing capability.
-pub fn cnki_oversea_index_registration<T>(
-    transport: T,
-) -> Result<ProviderRegistration, ProviderRegistryError>
-where
-    T: CnkiTransport + Send + 'static,
-{
-    ProviderRegistration::try_new(
-        ProviderDescriptor {
-            name: CNKI_OVERSEA_PROVIDER_NAME.to_string(),
-            capabilities: ProviderCapabilities {
-                index_content: true,
-                ..ProviderCapabilities::default()
-            },
-            allowed_redirect_hosts: Vec::new(),
-        },
-        ProviderImplementations {
-            index_content: Some(Arc::new(CnkiIndexProvider::new(transport))),
-            ..ProviderImplementations::default()
-        },
-    )
-}
-
 /// Register the Scholarly abstract-page access capability.
 ///
 /// # Returns
@@ -396,38 +233,6 @@ pub fn scholarly_access_registration() -> Result<ProviderRegistration, ProviderR
                 ..ProviderCapabilities::default()
             },
             allowed_redirect_hosts: SCHOLARLY_REDIRECT_HOSTS
-                .iter()
-                .map(|host| (*host).to_string())
-                .collect(),
-        },
-        ProviderImplementations {
-            article_abstract: Some(provider),
-            ..ProviderImplementations::default()
-        },
-    )
-}
-
-/// Register the CNKI abstract-page access capability.
-///
-/// # Arguments
-///
-/// * `provider` - CNKI abstract provider preserving its request-time transport policy.
-///
-/// # Returns
-///
-/// Access-only CNKI registration.
-pub fn cnki_oversea_access_registration(
-    provider: impl ArticleAbstractProvider + 'static,
-) -> Result<ProviderRegistration, ProviderRegistryError> {
-    let provider = Arc::new(provider);
-    ProviderRegistration::try_new(
-        ProviderDescriptor {
-            name: CNKI_OVERSEA_PROVIDER_NAME.to_string(),
-            capabilities: ProviderCapabilities {
-                article_abstract: true,
-                ..ProviderCapabilities::default()
-            },
-            allowed_redirect_hosts: CNKI_REDIRECT_HOSTS
                 .iter()
                 .map(|host| (*host).to_string())
                 .collect(),
@@ -2144,60 +1949,6 @@ fn normalize_empty_unbounded_replay_checkpoint_at(
     }
 }
 
-fn fetch_cnki_batch<T>(
-    client: &mut CnkiClient<T>,
-    catalog: &JournalCatalogEntry,
-) -> Result<ProviderBatch, ProviderError>
-where
-    T: CnkiTransport,
-{
-    let row = BTreeMap::from([
-        ("catalog_id".to_string(), catalog.catalog_id.clone()),
-        ("title".to_string(), catalog.title.clone()),
-        ("issn".to_string(), catalog.issn.clone().unwrap_or_default()),
-    ]);
-    let journal = client
-        .resolve_journal(&row)
-        .map_err(map_cnki_error)?
-        .ok_or_else(|| {
-            ProviderError::new(
-                ProviderErrorKind::NotFound,
-                "CNKI provider could not resolve the journal",
-            )
-        })?;
-    let issue_payloads = client.year_issues(&journal).map_err(map_cnki_error)?;
-    let mut issues = Vec::new();
-    let mut articles = Vec::new();
-    for issue_payload in issue_payloads {
-        let Some(issue) = cnki_issue_draft(catalog, &issue_payload) else {
-            continue;
-        };
-        for summary in client
-            .issue_articles(&journal, &issue_payload)
-            .map_err(map_cnki_error)?
-        {
-            let Some(article_url) = json_text(summary.get("article_url")) else {
-                continue;
-            };
-            let platform_id = json_text(summary.get("platform_id"));
-            let detail = client
-                .article_detail(&article_url, platform_id.as_deref())
-                .map_err(map_cnki_error)?;
-            if let Some(article) = cnki_article_draft(catalog, &issue, &summary, &detail) {
-                articles.push(article);
-            }
-        }
-        issues.push(issue);
-    }
-    Ok(ProviderBatch {
-        catalog_id: catalog.catalog_id.clone(),
-        journal: journal_observation(catalog),
-        issues,
-        articles,
-        progress: ProviderProgress::Complete { next_anchor: None },
-    })
-}
-
 fn batch_from_articles(
     catalog: &JournalCatalogEntry,
     articles: Vec<ArticleDraft>,
@@ -2688,71 +2439,6 @@ fn encode_doi_path(doi: &str) -> String {
         }
     }
     encoded
-}
-
-fn resolve_cnki_article_redirect<T>(
-    client: &mut CnkiClient<T>,
-    article: &ArticleLocator,
-) -> Result<ArticleRedirect, ProviderError>
-where
-    T: CnkiTransport,
-{
-    let row = BTreeMap::from([
-        ("title".to_string(), article.journal_title.clone()),
-        (
-            "issn".to_string(),
-            article.journal_issns.first().cloned().unwrap_or_default(),
-        ),
-    ]);
-    let journal = client
-        .resolve_journal(&row)
-        .map_err(map_cnki_error)?
-        .ok_or_else(|| {
-            ProviderError::new(
-                ProviderErrorKind::NotFound,
-                "CNKI provider could not resolve the journal",
-            )
-        })?;
-    let issue_payloads = client.year_issues(&journal).map_err(map_cnki_error)?;
-    for issue_payload in issue_payloads {
-        if !cnki_issue_matches_locator(&issue_payload, article) {
-            continue;
-        }
-        for summary in client
-            .issue_articles(&journal, &issue_payload)
-            .map_err(map_cnki_error)?
-        {
-            let Some(summary_title) = json_text(summary.get("title")) else {
-                continue;
-            };
-            if normalize_bibliographic_text(&summary_title)
-                != normalize_bibliographic_text(&article.title)
-            {
-                continue;
-            }
-            let Some(article_url) = json_text(summary.get("article_url")) else {
-                continue;
-            };
-            let platform_id = json_text(summary.get("platform_id"));
-            let detail = client
-                .article_detail(&article_url, platform_id.as_deref())
-                .map_err(map_cnki_error)?;
-            if !cnki_detail_matches_locator(&detail, article) {
-                continue;
-            }
-            let location = json_text(detail.get("permalink")).ok_or_else(|| {
-                ProviderError::new(
-                    ProviderErrorKind::InvalidResponse,
-                    "CNKI detail response omitted its request-time destination",
-                )
-            })?;
-            return Ok(ArticleRedirect { location });
-        }
-    }
-    Err(ProviderError::new(
-        ProviderErrorKind::NotFound,
-        "CNKI provider could not find an exact article match",
-    ))
 }
 
 fn cnki_issue_matches_locator(issue: &Value, article: &ArticleLocator) -> bool {
@@ -3555,18 +3241,6 @@ fn map_domestic_cnki_error(error: DomesticCnkiSourceError) -> ProviderError {
     };
     ProviderError::new(kind, "domestic CNKI provider request failed")
 }
-fn map_cnki_error(error: CnkiSourceError) -> ProviderError {
-    let kind = match error {
-        CnkiSourceError::Request(_) | CnkiSourceError::Source(_) => {
-            ProviderErrorKind::TemporarilyUnavailable
-        }
-        CnkiSourceError::Parse(_) | CnkiSourceError::MissingFixture(_) => {
-            ProviderErrorKind::InvalidResponse
-        }
-    };
-    ProviderError::new(kind, "CNKI provider request failed")
-}
-
 fn emit_source_attempt_summary(provider: &str, attempts: &[SourceAttempt]) {
     let failures = attempts
         .iter()
@@ -3604,7 +3278,6 @@ mod tests {
     use super::{
         built_in_provider_capabilities, cnki_access_registration, cnki_article_draft,
         cnki_index_registration, cnki_index_registration_with_workers, cnki_issue_draft,
-        cnki_oversea_access_registration, cnki_oversea_index_registration,
         crossref_work_issue_anchor, decode_scholarly_anchor, decode_scholarly_checkpoint,
         encode_scholarly_anchor, encode_scholarly_checkpoint,
         fetch_scholarly_batch_for_context_with_clock_and_restart, fetch_scholarly_batch_in_workset,
@@ -3612,18 +3285,17 @@ mod tests {
         openalex_article_draft, scholarly_access_registration, scholarly_article_draft,
         scholarly_index_registration as registration_with_workset, scholarly_issue_anchor,
         scholarly_window_filter_at, scholarly_window_from_context, test_workset_root,
-        CnkiArticleAccessProvider, CnkiIndexProvider, DomesticCnkiArticleAccessProvider,
-        DomesticCnkiIndexProvider, ScholarlyAnchor, ScholarlyArticleAccessProvider,
-        ScholarlyCheckpoint, ScholarlyIndexProvider, ScholarlyIssueFingerprint, ScholarlyScanPhase,
-        ScholarlySourceCheckpoint, ScholarlyWindowCheckpoint, CNKI_PROVIDER_NAME,
-        CNKI_REDIRECT_HOSTS, DOMESTIC_CNKI_REDIRECT_HOSTS, SCHOLARLY_ANCHOR_VERSION,
-        SCHOLARLY_REDIRECT_HOSTS,
+        DomesticCnkiArticleAccessProvider, DomesticCnkiIndexProvider, ScholarlyAnchor,
+        ScholarlyArticleAccessProvider, ScholarlyCheckpoint, ScholarlyIndexProvider,
+        ScholarlyIssueFingerprint, ScholarlyScanPhase, ScholarlySourceCheckpoint,
+        ScholarlyWindowCheckpoint, CNKI_PROVIDER_NAME, DOMESTIC_CNKI_REDIRECT_HOSTS,
+        SCHOLARLY_ANCHOR_VERSION, SCHOLARLY_REDIRECT_HOSTS,
     };
     use crate::{
-        CnkiFixtureData, DomesticCnkiFixtureData, DomesticCnkiSourceError, DomesticCnkiTransport,
-        DomesticIssueArticlePage, DomesticJournalLocator, FixtureCnkiTransport,
-        FixtureDomesticCnkiTransport, FixtureScholarlyTransport, ScholarlyClient,
-        ScholarlyFixtureData, ScholarlyTransport, SourceAttempt,
+        DomesticCnkiFixtureData, DomesticCnkiSourceError, DomesticCnkiTransport,
+        DomesticIssueArticlePage, DomesticJournalLocator, FixtureDomesticCnkiTransport,
+        FixtureScholarlyTransport, ScholarlyClient, ScholarlyFixtureData, ScholarlyTransport,
+        SourceAttempt,
     };
 
     struct ConcurrentDomesticTransport {
@@ -5529,9 +5201,10 @@ mod tests {
             true,
         )
         .expect("Scholarly registration should pass");
-        let cnki =
-            cnki_oversea_index_registration(FixtureCnkiTransport::new(CnkiFixtureData::default()))
-                .expect("CNKI registration should pass");
+        let cnki = cnki_index_registration(FixtureDomesticCnkiTransport::new(
+            DomesticCnkiFixtureData::default(),
+        ))
+        .expect("CNKI registration should pass");
         let mut registry = ProviderRegistry::default();
         registry
             .register(scholarly)
@@ -5572,67 +5245,6 @@ mod tests {
             scholarly_redirect.location,
             "https://doi.org/10.1000/article"
         );
-        let fixture = CnkiFixtureData {
-            journal_detail_html: r#"
-                <html><head><title>CNKI Test Journal - 中国知网</title></head>
-                <body>
-                  <input id="pykm" value="TEST" />
-                  <input id="pCode" value="CJFD" />
-                  <input id="shareChName" value="CNKI Test Journal" />
-                  <input id="issn" value="1234-5679" />
-                </body></html>
-            "#
-            .to_string(),
-            year_issues_html:
-                r#"<div id="YearIssueTree"><a id="yq202601" value="202601">2026 No.01</a></div>"#
-                    .to_string(),
-            issue_articles_html: BTreeMap::from([(
-                "202601".to_string(),
-                r#"
-                <dt class="tit">Articles</dt>
-                <dd class="row">
-                  <a href="/kcms2/article/abstract?v=1&filename=CNKI202601001">CNKI article</a>
-                  <b name="encrypt" id="CNKI202601001"></b>
-                </dd>
-                "#
-                .to_string(),
-            )]),
-            article_detail_html: BTreeMap::from([(
-                "CNKI202601001".to_string(),
-                r#"
-                <html><head><title>CNKI article</title></head>
-                <body>
-                  <input id="paramfilename" value="CNKI202601001" />
-                  <input id="paramdbcode" value="CJFD" />
-                  <input id="paramdbname" value="CJFDLAST2026" />
-                  <p class="title-one">CNKI article</p>
-                </body></html>
-                "#
-                .to_string(),
-            )]),
-            fail_endpoint: None,
-        };
-        let cnki = cnki_oversea_access_registration(CnkiArticleAccessProvider::new(
-            FixtureCnkiTransport::new(fixture),
-        ))
-        .expect("CNKI access should register");
-        assert!(cnki.index_content().is_none());
-        assert!(cnki.article_full_text().is_none());
-        assert_eq!(
-            cnki.descriptor().allowed_redirect_hosts,
-            CNKI_REDIRECT_HOSTS
-        );
-        let cnki_redirect = cnki
-            .article_abstract()
-            .expect("abstract capability should exist")
-            .resolve_abstract(
-                &article_locator("CNKI article", "CNKI Test Journal"),
-                ArticleAccessContext::default(),
-            )
-            .expect("CNKI abstract should resolve online");
-        assert!(cnki_redirect
-            .location
-            .starts_with("https://oversea.cnki.net/"));
     }
 
     #[test]
@@ -5640,7 +5252,6 @@ mod tests {
         let mut article = article_locator("Article", "Canonical Journal");
 
         assert!(!ScholarlyArticleAccessProvider::supports_article(&article));
-        assert!(CnkiArticleAccessProvider::<FixtureCnkiTransport>::supports_article(&article));
         assert!(DomesticCnkiArticleAccessProvider::<
             FixtureDomesticCnkiTransport,
         >::supports_article(&article));
@@ -5654,7 +5265,6 @@ mod tests {
         article.title = " ".to_string();
         article.journal_title = " ".to_string();
         article.journal_issns = vec![" ".to_string()];
-        assert!(!CnkiArticleAccessProvider::<FixtureCnkiTransport>::supports_article(&article));
         assert!(!DomesticCnkiArticleAccessProvider::<
             FixtureDomesticCnkiTransport,
         >::supports_article(&article));
@@ -5869,7 +5479,9 @@ mod tests {
             true,
             test_workset_root().to_path_buf(),
         );
-        let _ = CnkiIndexProvider::new(FixtureCnkiTransport::new(CnkiFixtureData::default()));
+        let _ = DomesticCnkiIndexProvider::new(FixtureDomesticCnkiTransport::new(
+            DomesticCnkiFixtureData::default(),
+        ));
     }
 
     #[test]
@@ -6280,110 +5892,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cnki_registration_keeps_transport_handles_inside_the_adapter() {
-        let fixture = CnkiFixtureData {
-            journal_detail_html: r#"
-                <html><head><title>CNKI Test Journal - 中国知网</title></head>
-                <body>
-                  <input id="pykm" value="TEST" />
-                  <input id="pCode" value="CJFD" />
-                  <input id="shareChName" value="CNKI Test Journal" />
-                </body></html>
-            "#
-            .to_string(),
-            year_issues_html:
-                r#"<div id="YearIssueTree"><a id="yq202601" value="202601">2026 No.01</a></div>"#
-                    .to_string(),
-            issue_articles_html: BTreeMap::from([(
-                "202601".to_string(),
-                r#"
-                <dt class="tit">Articles</dt>
-                <dd class="row">
-                  <a href="/kcms2/article/abstract?v=1&filename=CNKI202601001">CNKI article</a>
-                  <b name="encrypt" id="CNKI202601001"></b>
-                </dd>
-                "#
-                .to_string(),
-            )]),
-            article_detail_html: BTreeMap::from([(
-                "CNKI202601001".to_string(),
-                r#"
-                <html><head><title>CNKI article</title></head>
-                <body>
-                  <input id="paramfilename" value="CNKI202601001" />
-                  <input id="paramdbcode" value="CJFD" />
-                  <input id="paramdbname" value="CJFDLAST2026" />
-                  <p class="title-one">CNKI article</p>
-                </body></html>
-                "#
-                .to_string(),
-            )]),
-            fail_endpoint: None,
-        };
-        let registration = cnki_oversea_index_registration(FixtureCnkiTransport::new(fixture))
-            .expect("CNKI registration should pass");
-        let mut cnki_catalog = catalog();
-        cnki_catalog.title = "CNKI Test Journal".to_string();
-        let batch = registration
-            .index_content()
-            .expect("indexing capability should exist")
-            .fetch(&cnki_catalog, fetch_context(None))
-            .expect("CNKI fixture should fetch");
-
-        assert!(batch_is_complete(&batch));
-        assert_eq!(batch.articles.len(), 1);
-        let serialized = serde_json::to_string(&batch).expect("batch should serialize");
-        assert!(!serialized.contains("CNKI202601001"));
-        assert!(!serialized.contains("/kcms"));
-        assert!(!serialized.contains("http"));
-    }
-
-    #[test]
-    fn cnki_oversea_all_modes_full_scan_and_return_no_incremental_anchor() {
-        for mode in [
-            IndexSyncMode::Bootstrap,
-            IndexSyncMode::Incremental,
-            IndexSyncMode::FullRescan,
-        ] {
-            let registration =
-                cnki_oversea_index_registration(FixtureCnkiTransport::new(overseas_cnki_fixture()))
-                    .expect("overseas registration");
-            let mut cnki_catalog = catalog();
-            cnki_catalog.title = "CNKI Test Journal".to_string();
-            let batch = registration
-                .index_content()
-                .expect("overseas provider")
-                .fetch(
-                    &cnki_catalog,
-                    sync_context(mode, Some("opaque-ignored-anchor"), None),
-                )
-                .expect("overseas full scan");
-
-            assert!(batch_is_complete(&batch));
-            assert_eq!(batch_anchor(&batch), None);
-            assert_eq!(batch.articles.len(), 1);
-        }
-
-        let registration =
-            cnki_oversea_index_registration(FixtureCnkiTransport::new(overseas_cnki_fixture()))
-                .expect("overseas traversal rejection registration");
-        let mut cnki_catalog = catalog();
-        cnki_catalog.title = "CNKI Test Journal".to_string();
-        let error = registration
-            .index_content()
-            .expect("overseas provider")
-            .fetch(
-                &cnki_catalog,
-                sync_context(
-                    IndexSyncMode::Incremental,
-                    Some("opaque-ignored-anchor"),
-                    Some("unsupported-traversal"),
-                ),
-            )
-            .expect_err("overseas traversal should be rejected");
-        assert_eq!(error.kind(), ProviderErrorKind::InvalidResponse);
-    }
     #[test]
     fn domestic_cnki_journal_locators_keep_all_catalog_and_article_identities() {
         let catalog = JournalCatalogEntry {
@@ -7600,48 +7108,6 @@ mod tests {
             title_aliases: Vec::new(),
             area: None,
             rankings: JournalRankings::default(),
-        }
-    }
-
-    fn overseas_cnki_fixture() -> CnkiFixtureData {
-        CnkiFixtureData {
-            journal_detail_html: r#"
-                <html><head><title>CNKI Test Journal - 中国知网</title></head>
-                <body>
-                  <input id="pykm" value="TEST" />
-                  <input id="pCode" value="CJFD" />
-                  <input id="shareChName" value="CNKI Test Journal" />
-                </body></html>
-            "#
-            .to_string(),
-            year_issues_html:
-                r#"<div id="YearIssueTree"><a id="yq202601" value="202601">2026 No.01</a></div>"#
-                    .to_string(),
-            issue_articles_html: BTreeMap::from([(
-                "202601".to_string(),
-                r#"
-                <dt class="tit">Articles</dt>
-                <dd class="row">
-                  <a href="/kcms2/article/abstract?v=1&filename=CNKI202601001">CNKI article</a>
-                  <b name="encrypt" id="CNKI202601001"></b>
-                </dd>
-                "#
-                .to_string(),
-            )]),
-            article_detail_html: BTreeMap::from([(
-                "CNKI202601001".to_string(),
-                r#"
-                <html><head><title>CNKI article</title></head>
-                <body>
-                  <input id="paramfilename" value="CNKI202601001" />
-                  <input id="paramdbcode" value="CJFD" />
-                  <input id="paramdbname" value="CJFDLAST2026" />
-                  <p class="title-one">CNKI article</p>
-                </body></html>
-                "#
-                .to_string(),
-            )]),
-            fail_endpoint: None,
         }
     }
 

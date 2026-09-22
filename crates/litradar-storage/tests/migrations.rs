@@ -12,6 +12,106 @@ use rusqlite::{Connection, OptionalExtension};
 use tempfile::tempdir;
 
 #[test]
+fn overseas_retirement_preserves_domestic_choices_and_empty_overrides() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("auth.sqlite");
+    migrate_auth_database(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.pragma_update(None, "user_version", 18).unwrap();
+    for (key, value) in [
+        (
+            "index_provider_routes",
+            r#"{"chinese":"cnki_oversea","custom":"custom"}"#,
+        ),
+        (
+            "article_abstract_provider_orders",
+            r#"{"default":["cnki_oversea","scholarly","cnki"],"catalogs":{"disabled":[],"custom":["custom","cnki_oversea"]}}"#,
+        ),
+        (
+            "provider_proxy_policy",
+            r#"{"cnki":false,"cnki_oversea":true,"scholarly":true}"#,
+        ),
+        (
+            "article_fulltext_provider_orders",
+            r#"{"default":["cnki_oversea","cnki","zjlib"],"catalogs":{"disabled":[]}}"#,
+        ),
+    ] {
+        connection
+            .execute(
+                "INSERT OR REPLACE INTO runtime_settings(key,value,updated_at) VALUES(?1,?2,123)",
+                [key, value],
+            )
+            .unwrap();
+    }
+    migrate_auth_database(&path).unwrap();
+    let read = |key: &str| -> serde_json::Value {
+        let (value, timestamp): (String, f64) = connection
+            .query_row(
+                "SELECT value,updated_at FROM runtime_settings WHERE key=?1",
+                [key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(timestamp, 123.0);
+        serde_json::from_str(&value).unwrap()
+    };
+    assert_eq!(
+        read("index_provider_routes"),
+        serde_json::json!({"chinese":"cnki","custom":"custom"})
+    );
+    assert_eq!(
+        read("article_abstract_provider_orders"),
+        serde_json::json!({"default":["cnki","scholarly"],"catalogs":{"disabled":[],"custom":["custom","cnki"]}})
+    );
+    assert_eq!(
+        read("provider_proxy_policy"),
+        serde_json::json!({"cnki":false,"scholarly":true})
+    );
+    assert_eq!(
+        read("article_fulltext_provider_orders"),
+        serde_json::json!({"default":["cnki","zjlib"],"catalogs":{"disabled":[]}})
+    );
+    migrate_auth_database(&path).unwrap();
+    assert_eq!(
+        read("provider_proxy_policy"),
+        serde_json::json!({"cnki":false,"scholarly":true})
+    );
+}
+
+#[test]
+fn overseas_retirement_rejects_malformed_configuration_atomically() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("auth.sqlite");
+    migrate_auth_database(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.pragma_update(None, "user_version", 18).unwrap();
+    connection.execute("INSERT OR REPLACE INTO runtime_settings(key,value,updated_at) VALUES('index_provider_routes','{\"chinese\":\"cnki_oversea\"}',99)", []).unwrap();
+    connection.execute("INSERT OR REPLACE INTO runtime_settings(key,value,updated_at) VALUES('provider_proxy_policy','{broken',123)", []).unwrap();
+    assert!(migrate_auth_database(&path).is_err());
+    assert_eq!(user_version(&path), 18);
+    assert_eq!(
+        runtime_setting(&path, "index_provider_routes"),
+        Some((r#"{"chinese":"cnki_oversea"}"#.to_string(), 99.0))
+    );
+}
+
+#[test]
+fn overseas_retirement_inherits_proxy_only_without_a_domestic_choice() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("auth.sqlite");
+    migrate_auth_database(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.pragma_update(None, "user_version", 18).unwrap();
+    connection.execute("INSERT INTO runtime_settings(key,value,updated_at) VALUES('provider_proxy_policy','{\"cnki_oversea\":true}',123)", []).unwrap();
+    migrate_auth_database(&path).unwrap();
+    assert_eq!(
+        runtime_setting(&path, "provider_proxy_policy"),
+        Some((r#"{"cnki":true}"#.to_string(), 123.0))
+    );
+    assert!(runtime_setting(&path, "index_provider_routes").is_none());
+}
+
+#[test]
 fn empty_auth_database_migration_creates_current_schema() {
     let temp_dir = tempdir().expect("temp directory should be created");
     let path = temp_dir.path().join("data/auth.sqlite");
@@ -937,7 +1037,7 @@ fn provider_order_migration_prefers_abstract_and_preserves_empty_fulltext() {
     assert_eq!(
         runtime_setting(&path, "article_abstract_provider_orders"),
         Some((
-            "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{}}".to_string(),
+            "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{}}".to_string(),
             20.0,
         ))
     );
@@ -975,7 +1075,7 @@ fn provider_order_migration_uses_detail_when_abstract_is_absent() {
     assert_eq!(
         runtime_setting(&path, "article_abstract_provider_orders"),
         Some((
-            "{\"default\":[\"cnki_oversea\",\"scholarly\"],\"catalogs\":{}}".to_string(),
+            "{\"default\":[\"cnki\",\"scholarly\"],\"catalogs\":{}}".to_string(),
             11.0,
         ))
     );
@@ -1051,15 +1151,14 @@ fn provider_runtime_name_migration_rewrites_cnki_and_zjlib_tokens() {
     assert_eq!(
         runtime_setting(&path, "index_provider_routes"),
         Some((
-            "{\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}"
-                .to_string(),
+            "{\"chinese_journals\":\"cnki\",\"english_journals\":\"scholarly\"}".to_string(),
             40.0,
         ))
     );
     assert_eq!(
         runtime_setting(&path, "article_abstract_provider_orders"),
         Some((
-            "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{\"chinese_journals\":[\"cnki_oversea\",\"scholarly\"]}}".to_string(),
+            "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{\"chinese_journals\":[\"cnki\",\"scholarly\"]}}".to_string(),
             41.0,
         ))
     );
@@ -1094,11 +1193,11 @@ fn provider_runtime_name_migration_materializes_implicit_legacy_defaults() {
         .expect("legacy fulltext default should materialize");
     assert_eq!(
         index.0,
-        "{\"ccf_computer_journals\":\"scholarly\",\"chinese_journals\":\"cnki_oversea\",\"english_journals\":\"scholarly\"}"
+        "{\"ccf_computer_journals\":\"scholarly\",\"chinese_journals\":\"cnki\",\"english_journals\":\"scholarly\"}"
     );
     assert_eq!(
         abstracts.0,
-        "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{}}"
+        "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{}}"
     );
     assert_eq!(fulltext.0, "{\"default\":[\"zjlib\"],\"catalogs\":{}}");
     assert!(index.1 > 0.0);
@@ -1132,8 +1231,7 @@ fn provider_runtime_name_migration_materializes_only_missing_defaults() {
     assert_eq!(
         runtime_setting(&path, "index_provider_routes"),
         Some((
-            "{\"chinese_journals\":\"cnki_oversea\",\"custom_catalog\":\"custom_provider\"}"
-                .to_string(),
+            "{\"chinese_journals\":\"cnki\",\"custom_catalog\":\"custom_provider\"}".to_string(),
             55.0,
         ))
     );
@@ -1141,7 +1239,7 @@ fn provider_runtime_name_migration_materializes_only_missing_defaults() {
         runtime_setting(&path, "article_abstract_provider_orders")
             .expect("missing abstract default should materialize")
             .0,
-        "{\"default\":[\"scholarly\",\"cnki_oversea\"],\"catalogs\":{}}"
+        "{\"default\":[\"scholarly\",\"cnki\"],\"catalogs\":{}}"
     );
     assert_eq!(
         runtime_setting(&path, "article_fulltext_provider_orders")
