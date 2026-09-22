@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use reqwest::blocking::{Client, Response};
 use reqwest::redirect::Policy;
 use reqwest::Url;
+use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -1503,6 +1504,16 @@ fn start_tags(text: &str, tag_name: &str) -> Vec<String> {
 }
 
 fn span_title(text: &str, class_name: &str) -> Option<String> {
+    if class_name == "author" {
+        let fragment = Html::parse_fragment(text);
+        let selector = Selector::parse("span.author").expect("valid author selector");
+        return fragment.select(&selector).find_map(|element| {
+            element
+                .attr("title")
+                .and_then(non_empty)
+                .or_else(|| author_element_text(element))
+        });
+    }
     tags(text, "span").into_iter().find_map(|tag| {
         let tag_attrs = attrs(&tag);
         tag_attrs
@@ -1520,20 +1531,39 @@ fn span_title(text: &str, class_name: &str) -> Option<String> {
 }
 
 fn author_text(text: &str) -> Option<String> {
-    let block = tags(text, "h3").into_iter().find(|tag| {
-        let tag_attrs = attrs(tag);
-        tag_attrs
-            .get("id")
-            .is_some_and(|value| value == "authorpart")
-            && tag_attrs
-                .get("class")
-                .is_some_and(|value| value.split_whitespace().any(|item| item == "author"))
-    })?;
-    let names = tags(&block, "span")
-        .into_iter()
-        .filter_map(|tag| non_empty(&strip_tags(&tag)))
+    let fragment = Html::parse_fragment(text);
+    let selector = Selector::parse("h3.author#authorpart").expect("valid author block selector");
+    let block = fragment.select(&selector).next()?;
+    let spans = Selector::parse("span").expect("valid author span selector");
+    let names = block
+        .select(&spans)
+        .filter(|element| {
+            !element
+                .ancestors()
+                .take_while(|ancestor| ancestor.id() != block.id())
+                .filter_map(ElementRef::wrap)
+                .any(|ancestor| matches!(ancestor.value().name(), "span" | "sup"))
+        })
+        .filter_map(author_element_text)
         .collect::<Vec<_>>();
     (!names.is_empty()).then(|| names.join("; "))
+}
+
+fn author_element_text(element: ElementRef<'_>) -> Option<String> {
+    fn append_text(element: ElementRef<'_>, output: &mut String) {
+        for child in element.children() {
+            if let Some(text) = child.value().as_text() {
+                output.push_str(text);
+            } else if let Some(child) = ElementRef::wrap(child) {
+                if !matches!(child.value().name(), "sup" | "script" | "style") {
+                    append_text(child, output);
+                }
+            }
+        }
+    }
+    let mut text = String::new();
+    append_text(element, &mut text);
+    non_empty(&text.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
 fn row_value(text: &str, label: &str) -> Option<String> {
@@ -3174,6 +3204,38 @@ mod tests {
           <span class="rowtit">DOI：</span><p>10.1000/domestic.sample</p>
         </body></html>
     "#;
+
+    #[test]
+    fn author_affiliations_are_not_part_of_names() {
+        let html = r#"<h3 class="author" id="authorpart"><span><a>张<span>三</span></a><sup><span>1,2</span></sup></span><span>李四<sup>1，4*</sup></span><span><sup>3</sup></span><span>Team 2 &amp; Henry VIII</span></h3>"#;
+        assert_eq!(
+            super::author_text(html).as_deref(),
+            Some("张三; 李四; Team 2 & Henry VIII")
+        );
+        let detail = parse_domestic_article_detail(
+            &format!("{ABSTRACT_HTML}{html}"),
+            "https://kns.cnki.net/kcms2/article/abstract?v=test",
+        )
+        .unwrap();
+        assert_eq!(detail["authors"], "张三; 李四; Team 2 & Henry VIII");
+        assert_eq!(
+            super::author_text("<h3 class='author' id='authorpart'><span><sup>1</sup></span></h3>"),
+            None
+        );
+    }
+
+    #[test]
+    fn author_list_fallback_excludes_superscripts_and_preserves_title_priority() {
+        assert_eq!(super::span_title("<span class='author'>张<b>三</b><sup>1</sup>; Élodie&#32;Martin<sup>2</sup></span>", "author").as_deref(), Some("张三; Élodie Martin"));
+        assert_eq!(
+            super::span_title(
+                "<span class='author' title='Team 2'>Other<sup>1</sup></span>",
+                "author"
+            )
+            .as_deref(),
+            Some("Team 2")
+        );
+    }
 
     #[test]
     fn domestic_cnki_retry_cache_lookup_stops_after_the_first_valid_match() {

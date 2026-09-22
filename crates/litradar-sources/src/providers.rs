@@ -2306,10 +2306,35 @@ fn crossref_authors(value: Option<&Value>) -> Vec<ArticleAuthorDraft> {
 }
 
 fn split_authors(value: &str) -> Vec<ArticleAuthorDraft> {
+    static PERSONAL_MARKER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let personal_marker = PERSONAL_MARKER.get_or_init(|| {
+        regex::Regex::new(r"^(?:[0-9]+[.]?)?([\p{Han}·]{2,8})(?:[0-9]+[a-c]?|[a-c]|[①-⑳†‡*]+)?$")
+            .expect("valid CNKI personal author marker pattern")
+    });
     value
-        .split([';', '；', ','])
+        .split([';', '；', ',', '，'])
         .filter_map(normalize_contract_text)
-        .map(|display_name| ArticleAuthorDraft { display_name })
+        .filter(|name| {
+            !name.chars().all(|character| {
+                character.is_ascii_digit()
+                    || ('①'..='⑳').contains(&character)
+                    || "abc†‡*".contains(character)
+            })
+        })
+        .map(|name| {
+            let is_organization = ["组", "委员会", "研究院", "科学院", "研究所", "大学", "中心"]
+                .iter()
+                .any(|word| name.contains(word));
+            let display_name = if is_organization {
+                name
+            } else {
+                personal_marker
+                    .captures(&name)
+                    .map(|captures| captures[1].to_string())
+                    .unwrap_or(name)
+            };
+            ArticleAuthorDraft { display_name }
+        })
         .collect()
 }
 
@@ -5344,6 +5369,53 @@ mod tests {
             Some(&json!({"title": "Unidentified article"})),
         )
         .is_none());
+    }
+
+    #[test]
+    fn cnki_author_mapping_removes_source_markers_but_preserves_real_digits() {
+        let authors = super::split_authors(
+            "张三1;2;李四1a;王五b;b;赵六①;②;2王春峰;3.林健枝;Team 2;《报告2010》课题组;Henry VIII;课题组2020;2020中国科学院;张三⑪;⑪;李四⑳;⑳",
+        );
+        assert_eq!(
+            authors
+                .into_iter()
+                .map(|author| author.display_name)
+                .collect::<Vec<_>>(),
+            [
+                "张三",
+                "李四",
+                "王五",
+                "赵六",
+                "王春峰",
+                "林健枝",
+                "Team 2",
+                "《报告2010》课题组",
+                "Henry VIII",
+                "课题组2020",
+                "2020中国科学院",
+                "张三",
+                "李四"
+            ]
+        );
+        let detail = crate::cnki_domestic::parse_domestic_article_detail(
+            r#"<h1 class="title">Author test</h1><input id="param-filename" value="TEST202601001"><h3 class="author" id="authorpart"><span>张三<sup>1,2</sup></span><span>李四<sup>2</sup></span></h3>"#,
+            "https://kns.cnki.net/kcms2/article/abstract?v=test").unwrap();
+        let issue = cnki_issue_draft(&catalog(), &json!({"year": 2026, "number": "1"})).unwrap();
+        let article = cnki_article_draft(
+            &catalog(),
+            &issue,
+            &json!({"title": "Author test", "pages": "1-2"}),
+            &detail,
+        )
+        .unwrap();
+        assert_eq!(
+            article
+                .authors
+                .into_iter()
+                .map(|author| author.display_name)
+                .collect::<Vec<_>>(),
+            ["张三", "李四"]
+        );
     }
 
     #[test]
