@@ -1,6 +1,6 @@
 # 日志运维
 
-本文档是 LitRadar 服务端和浏览器错误日志的唯一运维说明。它定义当前日志契约、配置、关联方式、保留边界、隐私规则、查询方法和事故处理流程。进程与数据流见[系统架构](../architecture.md)，日志字段的安全边界同时受[安全说明](security.md)约束。
+本文档是 LitRadar 服务端和浏览器错误日志的唯一运维说明。它定义当前日志契约、配置、关联方式、保留边界、隐私规则、查询方法和事故处理流程。进程与数据流见[系统架构](../architecture.md)，日志字段的安全边界同时受[安全说明](security.md)约束。以下 Bash 查询在部署目录执行，Docker 筛选示例需要 jq，审计查询需要 sqlite3；PowerShell 示例单独标注。
 
 ## 输出边界
 
@@ -269,17 +269,17 @@ pwsh ./scripts/profile_logging.ps1 `
 
 脚本先用正常容器启动完成迁移，通过可配置的 `sqlite3` CLI 快照 `log_format`/`log_filter`，再事务性切换 off/default 两种模式并在结束时恢复原始行。它交错运行两种模式，对 `/api/logging-profile-missing` 发起固定 404 请求，验证每个默认模式应用行都是 JSON 且含必填字段，并检查请求事件数与丢失数。报告写入已忽略的 `output/logging/`。
 
-It also invokes `profile_docker_memory.ps1` for both warm-idle modes. Memory is reported without a default budget or expected container cap.
+脚本还会为两种 warm-idle 模式调用 `profile_docker_memory.ps1`。默认报告内存用量，不设置预算，也不假定容器已有内存上限。
 
 门禁：
 
 - 预期负载 `dropped_count=0`
 - logging-on p95 延迟增量不超过 `max(2 ms, logging-off p95 × 15%)`
-- Both memory profiles must succeed, including OOM and functional checks.
-- With `-EnforceMemoryBudgets`, both modes enforce 20/24 MiB warm-idle budgets, zero swap/max/PSI pressure and a maximum 8 MiB logging-on p95 increase.
-- Explicit `-P95LimitMiB`, `-PeakLimitMiB` and `-ExpectedMemoryLimitMiB` are forwarded independently; omitted values stay unset and no 160 MiB cap is implied. Expected=0 checks an uncapped container.
+- 两次内存画像都必须通过，包括 OOM 与功能检查。
+- 启用 `-EnforceMemoryBudgets` 时，两种模式都检查 warm-idle 的 20/24 MiB 预算、零 swap/max/PSI 压力，以及 logging-on p95 内存增量不超过 8 MiB。
+- 显式提供的 `-P95LimitMiB`、`-PeakLimitMiB` 和 `-ExpectedMemoryLimitMiB` 分别转发；省略的值保持未设置，不隐含 160 MiB 上限。`-ExpectedMemoryLimitMiB 0` 表示核对容器未设上限。
 
-Reports expose the active policy and use null for disabled thresholds. Log correctness, dropped-event and latency gates remain mandatory without memory opt-in.
+报告列出实际生效的策略，禁用的阈值为 `null`。即使不启用内存预算，日志正确性、丢失事件和延迟门禁仍必须通过。
 
 只使用隔离 fixture。脚本会启动迁移并读写传入的数据目录；不要把正在运行或未备份的生产 `data/` 交给画像脚本。
 

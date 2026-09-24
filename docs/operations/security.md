@@ -2,18 +2,21 @@
 
 本文档记录当前实现的密钥、凭据、认证、限流、网络和容器安全边界。备份恢复的操作顺序见[备份与恢复](backup.md)。
 
+首次部署先确认密钥与管理员初始化要求；升级时重点核对凭据迁移、镜像验证和网络边界。以下 Bash 示例从部署项目根目录执行，`litradar` 应为待部署版本的可执行文件；容器内命令使用 [Docker 部署](docker.md)中的入口。
+
 ## 部署密钥
 
-后端使用一个 32 字节原始文件认证和解密数据库中的秘密值。它不是口令、十六进制文本或 Base64：
+后端使用一个 32 字节原始文件认证和解密数据库中的秘密值。它不是口令、十六进制文本或 Base64。仅在首次部署且尚无密钥时生成，已有数据库继续使用匹配的密钥：
 
 ```bash
 mkdir -p secrets
-openssl rand -out secrets/litradar.key 32
-chmod 600 secrets/litradar.key
+if [ ! -e secrets/litradar.key ]; then
+  (umask 077; openssl rand -out secrets/litradar.key 32)
+fi
 wc -c secrets/litradar.key
 ```
 
-`wc` 必须输出 `32`。
+确认 `wc` 输出的字节数为 `32`；命令同时输出文件名。密钥应只允许运行账号读取；Linux 容器的 UID/GID 与挂载权限见 [Docker 目录准备](docker.md#1-目录权限和密钥)。
 
 密钥必须：
 
@@ -34,9 +37,11 @@ wc -c secrets/litradar.key
 
 ## 持久安全审计
 
-安全审计的权威记录是认证库 v9 的 append-only `security_audit_events`，不是可能丢弃的普通 tracing 队列。认证成功/失败、限流样本、密码和令牌操作、管理员权限与用户操作、邀请码、调度任务、运行设置和公告变更均使用固定 action/outcome/reason 分类；记录内部 actor/target ID、服务器 request ID 和必要的限流元数据，不记录密码、用户名、token、邀请码、原始 IP、请求体或业务内容。
+安全审计的权威记录是认证库 v9 引入的只追加表 `security_audit_events`，不是可能丢弃的普通 tracing 队列。认证成功/失败、限流样本、密码和令牌操作、管理员权限与用户操作、邀请码、调度任务、运行设置和公告变更均使用固定 action/outcome/reason 分类；记录内部 actor/target ID、服务器 request ID 和必要的限流元数据，不记录密码、用户名、token、邀请码、原始 IP、请求体或业务内容。
 
 业务安全变更与必需审计行在同一个 immediate transaction 中提交。审计插入失败时变更整体回滚，API 返回 `503`；通过公开认证限流器的认证拒绝会在返回前同步追加。被限流的请求全部写入安全 tracing，但持久审计按认证操作与限流桶分类，每 60 秒最多同步写入一个代表性样本；样本携带该进程内单调增长的 `rejected_count`，未命中采样窗口的请求不会占用 blocking executor 或写 SQLite。失败路径只向 `stderr` 输出固定 `audit.persistence_failed` 分类和进程内计数，不输出 SQLite 原始错误。普通日志过载不会影响已提交审计行。
+
+默认保留 180 天，可通过 `audit_retention_days` 设置 1–3650 天。启动后立即检查；有积压时每 60 秒继续一批，清空后才推进跨实例每日完成窗口并恢复每 24 小时检查。每个事务最多删除 10,000 行，失败回滚且不推进完成时间。系统不暴露远程审计 API，查询、导出和取证只能使用受控的只读数据库副本；具体 SQL 与告警规则见[日志运维](logging.md)。`auth.sqlite` 固定备份范围包含审计历史和 maintenance 标记。
 
 ## 子进程树隔离
 
@@ -45,8 +50,6 @@ wc -c secrets/litradar.key
 Unix 取消和超时先向整个 group 发送 SIGTERM，等待 250 ms grace period，再对仍存活的 group 发送 SIGKILL；Windows 原子终止整个 Job Object。所有路径都等待直接子进程完成，Drop/shutdown 也执行强制兜底。spawn/assignment、TERM、force-kill 和 wait 失败只进入固定分类，不把可执行路径或操作系统自由文本写入调度状态与普通日志。Linux 和 Windows CI 都运行真实“子进程派生孙进程”夹具，并以两级监听端口或心跳停止作为回收证据。
 
 手动投递使用相同监管器和私有类型化 `delivery-run` child。SQLite 保存每用户唯一 active run、owner/revision lease、10 分钟绝对 deadline 与取消标志；实例池默认并发 2。child 每个业务边界轮询取消，所有 HTTP timeout 受剩余 deadline 限制。dispatcher 在取消 grace 后回收完整树；deadline 到达时直接强制回收。若强制回收时不能证明外部副作用未发生，任务固定为 `unknown` 且不允许自动重试。
-
-默认保留 180 天，可通过 `audit_retention_days` 设置 1–3650 天。启动后立即检查；有积压时每 60 秒继续一批，清空后才推进跨实例每日完成窗口并恢复每 24 小时检查。每个事务最多删除 10,000 行，失败回滚且不推进完成时间。系统不暴露远程审计 API，查询、导出和取证只能使用受控的只读数据库副本；具体 SQL 与告警规则见[日志运维](logging.md)。`auth.sqlite` 固定备份范围包含审计历史和 maintenance 标记。
 
 ## 数据库凭据加密
 
@@ -57,6 +60,8 @@ Unix 取消和超时先向整个 group 发送 SIGTERM，等待 250 ms grace peri
 - `notification_settings.ai_backup_api_key`
 - `runtime_settings.openalex_api_key_pool`
 - `runtime_settings.semantic_scholar_api_key_pool`
+- `runtime_settings.cnki_captcha_token`
+- `runtime_settings.provider_proxy_url`
 - `cnki_sessions.session_json`
 
 每次写入生成随机 24 字节 nonce，并把表、行/配置键和字段名作为关联数据。密文复制到其他用户或字段后无法通过认证。
@@ -105,10 +110,13 @@ OpenAlex 和 Semantic Scholar 密钥池的每个 `secret_items` 元素包含：
 管理员只能在能访问 `data/auth.sqlite` 的本机维护环境创建：
 
 ```bash
+IFS= read -r -s -p 'Admin password: ' ADMIN_PASSWORD
+printf '\n'
 printf '%s\n' "$ADMIN_PASSWORD" |
   litradar admin bootstrap \
     --username admin \
     --password-stdin
+unset ADMIN_PASSWORD
 ```
 
 约束：
@@ -130,7 +138,7 @@ printf '%s\n' "$ADMIN_PASSWORD" |
 - 用户名长度 `3..32`，只允许字母、数字和下划线。
 - bootstrap、注册、改密和管理员重置的新密码至少 12 个 Unicode 字符。
 - 既有短密码哈希仍可登录，直到下次改密。
-- 新密码使用 PHC 格式 Argon2id（`m=19456 KiB,t=2,p=1`）；API 的密码 KDF 使用独立并发 2 gate，避免 160 MiB 容器内出现不受限的并行内存消耗。
+- 新密码使用 PHC 格式 Argon2id（`m=19456 KiB,t=2,p=1`）；API 的密码 KDF 使用独立并发 2 gate，限制密码验证的并行内存消耗。
 - 旧 PBKDF2-HMAC-SHA256 hex+salt 行继续验证；正确登录后以原 hash+salt 为 CAS 条件升级为 Argon2id，错误密码不会升级，并且升级不撤销现有 token。
 - 用户名不存在时仍对固定有效 dummy PHC 执行同参数 Argon2id 验证，再返回统一认证失败。
 - 密码变更和管理员重置在一个 `BEGIN IMMEDIATE` 事务内更新 hash/salt、递增该用户的令牌代际并撤销全部令牌；任一步失败都会整体回滚。
@@ -270,7 +278,7 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 唯一的 `litradar` 常驻容器使用无后缀镜像：
 
-- 使用 UID/GID `10001:10001`；最终镜像只有 `/usr/local/bin/litradar`，没有 Node.js 运行时
+- 使用 UID/GID `10001:10001`；应用入口为 `/usr/local/bin/litradar`，并打包 Obscura、`pdftotext` 和原生分词库，没有 Node.js 运行时
 - 根文件系统只读
 - `/tmp` 使用 `noexec,nosuid,nodev` tmpfs
 - 只允许 `/app/data` 持久写入；`/app/web` 保持只读
@@ -319,7 +327,7 @@ litradar admin secrets verify \
   --project-root .
 ```
 
-先验证新密钥并更新应用密钥挂载，再销毁旧密钥。回滚数据库备份时必须同时恢复与该备份匹配的旧密钥，但两者仍要分开保存。
+先验证新密钥，再更新应用密钥挂载。只要仍保留需要旧密钥解密的数据库备份，就必须单独保管旧密钥；相关回滚窗口关闭、旧备份退役后再按秘密销毁流程处理。回滚时恢复匹配的数据库和密钥，两者仍分开保存。
 
 ## 密钥丢失
 

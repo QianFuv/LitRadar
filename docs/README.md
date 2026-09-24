@@ -15,6 +15,9 @@
 | 查找 REST API 或 MCP 行为    | [API 参考](reference/api.md)                                 |
 | 理解数据库和状态文件         | [数据库参考](reference/database.md)                          |
 | 接入或更换索引 Provider      | [索引与 Provider 契约](reference/index-provider-contract.md) |
+| 配置文献筛选与投递           | [通知与追踪](guides/notifications.md)                        |
+| 理解征稿来源、刷新与原文保存 | [征稿追踪架构](architecture/cfp-tracking.md)                 |
+| 修改或新增项目文档           | [中文技术写作指南](style-guide.md)                           |
 
 ## 指南
 
@@ -36,15 +39,19 @@
 ## 参考
 
 - [API 参考](reference/api.md)：认证、数据库选择、分页、缓存、端点目录、MCP 和业务约束
-- [CLI 参考](reference/cli.md)：唯一可执行文件 `litradar` 的 `serve`、`admin`、`index`、`notify`、`push`、`scheduler`、`openapi`
-- [运行配置](reference/configuration.md)：配置层次、11 个全局运行设置、密钥文件和前端变量
+- [CLI 参考](reference/cli.md)：`litradar` 的 `serve`、`admin`、`index`、`cfp`、`notify`、`push`、`scheduler` 和 `openapi` 子命令
+- [运行配置](reference/configuration.md)：配置层次、全局运行设置、密钥文件和固定路径
 - [数据库参考](reference/database.md)：当前 schema、表关系、迁移版本和外部状态文件
 - [索引与 Provider 契约](reference/index-provider-contract.md)：规范期刊/文章模型、稳定身份、可选在线能力和 Provider 更换流程
 - [Scholarly 数据源](reference/sources/scholarly.md)：Crossref、OpenAlex、Semantic Scholar
-- [CNKI 数据源](reference/sources/cnki.md)：CNKI overseas 元数据和浙江图书馆全文边界
+- [CNKI 数据源](reference/sources/cnki.md)：CNKI 国内接口、验证码、旧 Provider 迁移和浙江图书馆全文边界
 - [前端设计系统](reference/design-system.md)：字体、主题 token、组件 variants、响应式与无障碍约定
 
 参考文档回答“系统当前是什么”。请求/响应 schema 以运行时生成的 OpenAPI 为准，Markdown 只补充跨接口和业务语义。
+
+## 架构专题
+
+[系统架构](architecture.md)说明进程、模块和数据流；[征稿追踪架构](architecture/cfp-tracking.md)进一步说明 CFP 来源、证据保存、刷新边界与测试。导入和刷新步骤以 [CLI 参考](reference/cli.md#cfp)为准。
 
 ## 包级文档
 
@@ -64,21 +71,23 @@
 
 主要映射：
 
-| 事实               | 实现来源                                                                                        | 文档所有者                                                   |
-| ------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| 进程与服务生命周期 | `crates/litradar/src/`                                                                          | [系统架构](architecture.md)                                  |
-| CLI 参数和默认值   | `crates/litradar/src/config.rs`、`crates/litradar/src/lib.rs`、`crates/litradar-cli/src/lib.rs` | [CLI 参考](reference/cli.md)                                 |
-| 全局运行配置       | `crates/litradar-storage/src/business/runtime_settings.rs`                                      | [运行配置](reference/configuration.md)                       |
-| REST schema        | `app/lib/generated/openapi.json`                                                                | OpenAPI；[API 参考](reference/api.md)补充语义                |
-| SQLite schema      | `crates/litradar-storage/src/migrations.rs`、`crates/litradar-index/src/schema.rs`              | [数据库参考](reference/database.md)                          |
-| Provider 内容契约  | `crates/litradar-domain/src/index_contract.rs`、`crates/litradar-provider/src/`                 | [索引与 Provider 契约](reference/index-provider-contract.md) |
-| Docker 行为        | `Dockerfile`、`docker-compose.yml`                                                              | [Docker 部署](operations/docker.md)                          |
-| 结构化日志         | `crates/litradar/src/observability.rs`、各组件 tracing 事件、`app/lib/client-logger.tsx`        | [日志运维](operations/logging.md)                            |
-| 前端结构           | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                                   | [前端包说明](../app/README.md)                               |
-| 测试分层与诊断     | `scripts/test.mjs`、测试配置、`.github/workflows/`                                              | [测试系统](testing.md)                                       |
-| UI token 与组件    | `app/app/globals.css`、`app/components/ui/`                                                     | [前端设计系统](reference/design-system.md)                   |
+| 事实               | 实现来源                                                                                                                           | 文档所有者                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 进程与服务生命周期 | `crates/litradar/src/`                                                                                                             | [系统架构](architecture.md)                                  |
+| CLI 参数和默认值   | `crates/litradar/src/config.rs`、`crates/litradar/src/lib.rs`、`crates/litradar-cli/src/`                                          | [CLI 参考](reference/cli.md)                                 |
+| 全局运行配置       | `crates/litradar-storage/src/business/runtime_settings.rs`                                                                         | [运行配置](reference/configuration.md)                       |
+| REST schema        | `app/lib/generated/openapi.json`                                                                                                   | OpenAPI；[API 参考](reference/api.md)补充语义                |
+| SQLite schema      | `crates/litradar-storage/src/migrations.rs`、`crates/litradar-storage/src/index_schema.rs`、`crates/litradar-index/src/control.rs` | [数据库参考](reference/database.md)                          |
+| Provider 内容契约  | `crates/litradar-domain/src/index_contract.rs`、`crates/litradar-provider/src/`                                                    | [索引与 Provider 契约](reference/index-provider-contract.md) |
+| Docker 行为        | `Dockerfile`、`docker-compose.yml`                                                                                                 | [Docker 部署](operations/docker.md)                          |
+| 结构化日志         | `crates/litradar/src/observability.rs`、各组件 tracing 事件、`app/lib/client-logger.tsx`                                           | [日志运维](operations/logging.md)                            |
+| 前端结构           | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                                                                      | [前端包说明](../app/README.md)                               |
+| 测试分层与诊断     | `scripts/test.mjs`、测试配置、`.github/workflows/`                                                                                 | [测试系统](testing.md)                                       |
+| UI token 与组件    | `app/app/globals.css`、`app/components/ui/`                                                                                        | [前端设计系统](reference/design-system.md)                   |
 
 ## 维护原则
+
+编辑前先阅读[中文技术写作指南](style-guide.md)。优先保留技术事实、适用条件和代码语法，再调整段落、术语与排版；README、指南和参考文档分别围绕各自的读者任务组织内容。
 
 - 一个事实只保留一个完整说明，其他文档使用链接。
 - 示例必须能由当前命令、路由、schema 或配置验证。

@@ -1,82 +1,74 @@
 # LitRadar
 
-LitRadar 是一个面向学术期刊的自托管检索与订阅平台。它从 Crossref、OpenAlex、Semantic Scholar 和 CNKI 获取元数据，构建 SQLite 全文检索库，并通过 Web 界面提供检索、收藏、每周更新、文献追踪和后台管理。
+LitRadar 是面向学术期刊的自托管检索与订阅平台。它从 Crossref、OpenAlex、Semantic Scholar 和 CNKI 获取元数据，构建本地 SQLite 全文索引，通过 Web 界面提供检索、收藏、每周更新、文献追踪和期刊征稿追踪。
 
 ## 能力概览
 
-- 多数据源索引：英文期刊使用 scholarly 流程，中文期刊使用 CNKI 流程
-- SQLite 检索：基于 FTS5，使用内建 `unicode61` 分词器，无需外部分词扩展
-- 用户工作区：账号、邀请码、访问令牌、收藏夹和引用导出
-- 文献追踪：OpenAI 兼容模型筛选、PushPlus 通知或追踪文件夹写入
-- 管理后台：用户、运行配置、类型化定时任务、服务状态和公告
-- 外部接入：REST API、OpenAPI/Swagger UI 和 Streamable HTTP MCP
+- 多源索引：英文期刊使用 Scholarly 流程，中文期刊使用 CNKI 流程。
+- 本地检索：基于 FTS5；新建 v9 索引使用随项目提供的 `simple 0` 分词器，支持中文短语检索。
+- 用户工作区：账号、邀请码、访问令牌、收藏夹和引用导出。
+- 文献追踪：通过 OpenAI 兼容模型筛选文章，再发送 PushPlus 通知或写入追踪文件夹。
+- 征稿追踪：查看期刊征稿信息，并通过命令导入或刷新来源记录。
+- 管理与接入：运行配置、定时任务、服务状态、公告，以及 REST API、OpenAPI 和 Streamable HTTP MCP。
 
 ## 运行组成
 
-LitRadar 只发布一个可执行文件 `litradar`。`litradar serve` 是应用组合根：一个常驻进程同时承载 Web、REST、Swagger/OpenAPI、MCP 和持久化调度。计划任务需要隔离时，由该进程使用当前 `litradar` 可执行文件启动短生命周期的 `index`、`notify` 或 `push` 子进程；这些子进程不是独立服务。
-
-| 组件                 | 职责                                                                 |
-| -------------------- | -------------------------------------------------------------------- |
-| `crates/litradar/`   | 唯一二进制、命令分发、HTTP/调度生命周期、信号和失败耦合              |
-| `litradar serve`     | 唯一常驻应用进程                                                     |
-| `litradar <command>` | 管理、索引、投递、手动调度和 OpenAPI 等按需命令                      |
-| `app/`               | Next.js 前端源码；构建为静态资源后由同一 Rust 进程提供，不是运行服务 |
-
-完整的模块边界和数据流见[系统架构](docs/architecture.md)。
+应用入口是唯一的 `litradar` 可执行文件。`litradar serve` 同时承载静态 Web、REST、Swagger/OpenAPI、MCP 和持久化调度；任务需要隔离时，由它启动短生命周期的同名子命令。Next.js 前端构建后由 Rust 提供静态资源，部署时不需要单独运行 Node.js 服务。模块边界和数据流见[系统架构](docs/architecture.md)。
 
 ## Docker 快速开始
 
-前提：
-
-- Docker Engine 或 Docker Desktop
-- Docker Compose
-- 可生成 32 字节随机文件的 `openssl`
+以下步骤用于首次本机部署，在仓库根目录的 **Bash** 中执行，需要 Docker Engine 或 Docker Desktop、Docker Compose、OpenSSL 和 curl。Windows 用户可使用 WSL Bash；不要直接把 Bash 的续行和输入语法粘贴到 PowerShell。已有数据的升级或公网部署请使用 [Docker 部署](docs/operations/docker.md)中的对应流程。
 
 ### 1. 准备数据目录和部署密钥
 
+仅在尚无部署密钥时生成新文件；已有数据库必须继续使用与它匹配的密钥。
+
 ```bash
-mkdir -p secrets
-openssl rand -out secrets/litradar.key 32
-chmod 600 secrets/litradar.key
+mkdir -p data secrets
+if [ ! -e secrets/litradar.key ]; then
+  (umask 077; openssl rand -out secrets/litradar.key 32)
+fi
 ```
 
-Linux 原生 Docker Engine 还需要让容器内固定账号 `10001:10001` 读写数据目录：
+Linux 原生 Docker Engine 需要让容器账号 `10001:10001` 读写数据目录、读取密钥。下面命令针对本次专用部署目录：
 
 ```bash
 sudo chown -R 10001:10001 data
+sudo chown 10001:10001 secrets/litradar.key
+sudo chmod 600 secrets/litradar.key
 ```
 
-密钥必须恰好为 32 个原始字节，并与数据库备份分开保管。已有明文集成凭据的部署应先阅读[安全说明](docs/operations/security.md)，不要直接启动。
+Docker Desktop 通常由虚拟化层处理挂载权限，不照搬上述 `chown`。密钥必须恰好为 32 个原始字节，与数据库备份分开保管。已有明文集成凭据的部署先按[安全说明](docs/operations/security.md)迁移。
 
 ### 2. 启动服务
-
-Compose 只运行一个名为 `litradar` 的容器，镜像为 `ghcr.io/qianfuv/litradar:latest`。使用已发布镜像：
 
 ```bash
 docker compose pull
 docker compose up -d --remove-orphans
+docker compose ps
 ```
 
-需要从当前源码构建时，改用 `docker compose up -d --build --remove-orphans`。
-
-镜像把官方期刊目录作为不可变 bundle 放在 `/usr/share/litradar/meta`，持久副本位于挂载卷的 `/app/data/meta`。Docker bind mount 和 Kubernetes PVC 都不会把镜像目录与挂载目录合并；`serve` 和普通 `index` 会在数据库迁移后自动准备持久副本，因此不需要手工首次复制。空卷会获得官方文件，已知旧版官方文件会升级，内容相同的当前文件会被接管；同名自定义文件和清单之外的文件会保留，并产生汇总的 `storage.managed_meta.prepared` 事件。完整生命周期、镜像回滚限制和退役文件清理要求见 [Docker 部署](docs/operations/docker.md)。
+Compose 运行一个 `litradar` 服务，本机示例使用 `ghcr.io/qianfuv/litradar:latest`。从当前源码构建时，改用 `docker compose up -d --build --remove-orphans`。镜像自带官方期刊目录，首次运行会准备 `data/meta/`，后续升级保留自定义文件；完整规则见 [Meta 与持久卷](docs/operations/docker.md#meta-bundle-与持久卷)。
 
 ### 3. 初始化首个管理员
 
-公开注册不能创建首个管理员。请从安全输入或密码管理器向 stdin 提供密码：
+公开注册不能创建首个管理员。在交互式 Bash 中读取密码后，通过 stdin 传给命令：
 
 ```bash
+IFS= read -r -s -p 'Admin password: ' ADMIN_PASSWORD
+printf '\n'
 printf '%s\n' "$ADMIN_PASSWORD" |
   docker compose run --rm -T litradar admin bootstrap \
     --username admin \
     --password-stdin
+unset ADMIN_PASSWORD
 ```
 
-密码至少需要 12 个 Unicode 字符，不要把实际值写入参数、Compose 文件或命令历史。
+密码至少需要 12 个 Unicode 字符，不把实际值写入参数、Compose 文件或命令历史。命令只在用户表为空时成功。
 
 ### 4. 准备索引
 
-发布镜像自带上述官方 bundle，并在命令开始时同步到持久的 `data/meta/*.csv`。CNKI 元数据索引不需要 scholarly API key，可先执行日常增量更新：
+CNKI 元数据索引不需要 Scholarly API key，可先运行：
 
 ```bash
 docker compose run --rm litradar index \
@@ -85,50 +77,36 @@ docker compose run --rm litradar index \
   --update
 ```
 
-`--update` 从远端当前头部扫描到上一次整刊成功的期次边界，并完整包含该边界期次；首次运行、Provider 切换或没有可复用 anchor 时会安全执行完整覆盖。只有 `--update` 发布 `data/push_state/*.changes.json`。周期性核对历史回填或旧元数据时使用独立的全量模式：
+`--update` 执行增量更新并发布每周更新所需的变更清单；首次运行或没有可复用的成功边界时会完整扫描。遇到验证码时，按 [CNKI 数据源说明](docs/reference/sources/cnki.md)配置验证码服务。
+
+索引 `english_journals.csv` 或 `ccf_computer_journals.csv` 前，先登录管理后台，在运行配置中填写 Crossref 联系邮箱、OpenAlex 和 Semantic Scholar API key。全量核对、中断恢复与并发参数见 [CLI 参考](docs/reference/cli.md)，配额与默认值见[运行配置参考](docs/reference/configuration.md)。
+
+<a id="5-访问服务"></a>
+
+### 5. 验证并访问
 
 ```bash
-docker compose run --rm litradar index \
-  --secret-key-file /run/secrets/litradar_key \
-  --file chinese_journals.csv \
-  --full-rescan
+curl --fail http://localhost:8000/health/ready
+curl --fail --output /dev/null http://localhost:8000/
 ```
 
-`--update` 与 `--full-rescan` 互斥。两种模式默认都恢复同一模式下的冻结运行窗口；`--no-resume` 只清除本次 traversal checkpoint，保留上一次完整成功 anchor。删除可丢弃的 `data/index-control` 会失去 anchor 和恢复进度，下一次运行安全退回完整扫描，但不会改变内容 ID。
-
-Compose and profiling scripts impose no default memory budget. Operators can opt into profiling limits or configure an explicit container cap; response-size limits, bounded work queues and durable page acknowledgements remain. See [Docker operations](docs/operations/docker.md).
-
-Index concurrency defaults are resolved per selected provider: Scholarly uses 3 journal executors with 6 source workers each; domestic CNKI uses 1 executor with 6 workers. Scholarly accepts up to 32 workers and 3 executors (aggregate 96); other profiles retain aggregate 32. Crossref, OpenAlex and Semantic Scholar separately pace physical requests at 110 ms/cohort, 40 ms/key and 1,100 ms/key. Increasing task capacity does not increase those API budgets. Missing counts resolve independently; explicit invalid counts fail before batch admission. Per-catalog concurrency reports actual pending executors, including zero for skipped recovery work. source_attempt_count counts committed provider pages, not physical HTTP attempts. The legacy issue-batch default remains 8 for resume compatibility and does not control concurrency or memory. Synchronous CLI commands do not create Tokio worker pools.
-
-索引 `english_journals.csv` 或 `ccf_computer_journals.csv` 前，先登录管理后台，在“运行配置”中填写 OpenAlex 和 Semantic Scholar API key。所有命令和参数见 [CLI 参考](docs/reference/cli.md)，配置来源与默认值见[运行配置参考](docs/reference/configuration.md)。
-
-### 5. 访问服务
-
-- Web：`http://localhost:8000/`
-- REST API：`http://localhost:8000/api`
-- Swagger UI：`http://localhost:8000/docs/`
-- OpenAPI JSON：`http://localhost:8000/openapi.json`
-- Streamable HTTP MCP：`http://localhost:8000/mcp`
-
-生产发布、反向代理、健康检查和权限要求见 [Docker 部署](docs/operations/docker.md)。
+两个请求都应成功。打开 `http://localhost:8000/` 登录，选择已完成索引的数据库并检索一篇已知文章。接口入口为 `/api`，Swagger UI 为 `/docs/`，OpenAPI JSON 为 `/openapi.json`，MCP 为 `/mcp`；MCP 客户端需要会话或访问令牌。
 
 ## 本地开发
 
-项目使用 Rust 1.96、Node.js 24 和 pnpm 10.32.0。开发环境、代码生成和检查命令统一记录在[开发指南](docs/guides/development.md)，前端包的内部结构见[前端说明](app/README.md)。
+项目使用 Rust 1.96、Node.js 24 和 pnpm 10.32.0。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
 
 ## 文档
 
-从[文档中心](docs/README.md)按目标查找资料：
+从[文档中心](docs/README.md)选择阅读路径：
 
-- 理解系统：[系统架构](docs/architecture.md)
-- 参与开发：[开发指南](docs/guides/development.md)
-- 部署与运维：[Docker 部署](docs/operations/docker.md)
-- 日志与排障：[日志运维](docs/operations/logging.md)
-- 调用接口：[API 参考](docs/reference/api.md)
-- 查询命令：[CLI 参考](docs/reference/cli.md)
-- 理解存储：[数据库参考](docs/reference/database.md)
-- 配置追踪：[通知与追踪](docs/guides/notifications.md)
+- 开发：[系统架构](docs/architecture.md)、[开发指南](docs/guides/development.md)、[测试系统](docs/testing.md)。
+- 运维：[Docker 部署](docs/operations/docker.md)、[备份与恢复](docs/operations/backup.md)、[日志运维](docs/operations/logging.md)。
+- 使用与接入：[通知与追踪](docs/guides/notifications.md)、[API 参考](docs/reference/api.md)、[CLI 参考](docs/reference/cli.md)。
+- 文档维护：[中文技术写作指南](docs/style-guide.md)。
 
-## License
+<a id="license"></a>
+
+## 许可证
 
 本项目使用 [MIT License](LICENSE)。

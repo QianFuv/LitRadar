@@ -17,17 +17,31 @@ Rust 依赖由 `Cargo.lock` 锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定
 
 ## 初始准备
 
+以下 Bash 命令在仓库根目录执行，除非步骤明确要求进入 `app/`。Windows 可使用 WSL Bash，或把命令改为当前 PowerShell 的等价语法；标为 PowerShell 的画像命令需要 PowerShell 7。
+
 ### 部署密钥
 
-本地后端也要求一个 32 字节原始密钥文件。`secrets/` 已被 Git 忽略：
+本地后端要求一个 32 字节原始密钥文件。`secrets/` 已被 Git 忽略；已有数据必须使用原密钥，不能重新生成并覆盖：
 
 ```bash
 mkdir -p secrets
-openssl rand -out secrets/litradar.key 32
+if [ ! -e secrets/litradar.key ]; then
+  (umask 077; openssl rand -out secrets/litradar.key 32)
+fi
 wc -c secrets/litradar.key
 ```
 
-最后一条命令应输出 `32`。测试使用临时密钥和临时数据库，不应读取本机 `secrets/` 或仓库中的真实 `data/auth.sqlite`。
+最后一条命令输出的字节数应为 `32`，后面还会显示文件名。测试使用临时密钥和临时数据库，不应读取本机 `secrets/` 或仓库中的真实 `data/auth.sqlite`。
+
+### 原生分词器
+
+新建 v9 内容库需要 `simple` 扩展。Linux 先安装 curl、tar、CMake 和支持 C++14 的编译器，再在仓库根运行：
+
+```bash
+node scripts/build-simple-tokenizer.mjs
+```
+
+脚本输出 `target/simple-tokenizer/libsimple.so`，不适用于非 Linux 系统。Windows x64 使用仓库提供的 DLL；其他原生部署的打包与发现规则见 [simple 分词器](../../libs/simple/README.md#原生构建与发现路径)。开发启动脚本只构建 Rust 应用，不代为准备扩展。
 
 ### 前端依赖
 
@@ -80,10 +94,13 @@ cargo run --bin litradar -- serve \
 空用户库只能通过本机命令创建管理员：
 
 ```bash
+IFS= read -r -s -p 'Admin password: ' ADMIN_PASSWORD
+printf '\n'
 printf '%s\n' "$ADMIN_PASSWORD" |
   cargo run --bin litradar -- admin bootstrap \
     --username admin \
     --password-stdin
+unset ADMIN_PASSWORD
 ```
 
 该命令只在用户表为空时成功，不接受 `--password VALUE`。
@@ -120,23 +137,25 @@ cargo run --bin litradar -- notify \
   --dry-run
 ```
 
-Scholarly 索引需要先在 `data/auth.sqlite` 的运行配置中保存 OpenAlex 和 Semantic Scholar key。管理员页还会按每个已发现 CSV/database stem 显示索引 Provider 单选，以及摘要页/全文的继承、排序和显式禁用控件；选项由后端 capability 目录过滤，不需要编辑 JSON。通知 dry-run 仍会调用配置的 AI endpoint，但不会发送 PushPlus或写入收藏；完全确定性的开发检查应使用现有 fixture 测试。
+Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 和 Semantic Scholar 密钥池，字段说明见[运行配置](../reference/configuration.md)。管理员页按已发现的 CSV 或数据库名称提供索引 Provider 单选，以及摘要页、全文的继承、排序和显式禁用控件；选项由后端能力目录过滤。
+
+通知 dry-run 仍会调用配置的 AI Endpoint，但不会发送 PushPlus 或写入收藏；完全确定性的开发检查应使用现有 fixture 测试。
 
 ## 修改位置
 
-| 任务                | 主要位置                                                                |
-| ------------------- | ----------------------------------------------------------------------- |
-| 进程入口与生命周期  | `crates/litradar/src/`                                                  |
-| REST 路由或 OpenAPI | `crates/litradar-api/src/routes/`、`crates/litradar-api/src/openapi.rs` |
-| 认证                | `crates/litradar-auth/`、`crates/litradar-storage/src/auth.rs`          |
-| 业务存储            | `crates/litradar-storage/src/business/`                                 |
-| 数据库迁移          | `crates/litradar-storage/src/migrations.rs`                             |
-| 索引和 schema       | `crates/litradar-index/`                                                |
-| 上游数据源          | `crates/litradar-sources/`                                              |
-| 推荐、通知和调度    | `crates/litradar-recommend/`、`crates/litradar-worker/`                 |
-| 前端 API facade     | `app/lib/api/`、`app/lib/api.tsx`                                       |
-| 前端页面和组件      | `app/app/`、`app/components/`                                           |
-| 前端测试            | `app/tests/`                                                            |
+| 任务                 | 主要位置                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| 进程入口与生命周期   | `crates/litradar/src/`                                                                     |
+| REST 路由或 OpenAPI  | `crates/litradar-api/src/routes/`、`crates/litradar-api/src/openapi.rs`                    |
+| 认证                 | `crates/litradar-auth/`、`crates/litradar-storage/src/auth.rs`                             |
+| 业务存储             | `crates/litradar-storage/src/business/`                                                    |
+| 数据库迁移与内容定义 | `crates/litradar-storage/src/migrations.rs`、`crates/litradar-storage/src/index_schema.rs` |
+| 索引执行与控制状态   | `crates/litradar-index/`                                                                   |
+| 上游数据源           | `crates/litradar-sources/`                                                                 |
+| 推荐、通知和调度     | `crates/litradar-recommend/`、`crates/litradar-worker/`                                    |
+| 前端 API facade      | `app/lib/api/`、`app/lib/api.tsx`                                                          |
+| 前端页面和组件       | `app/app/`、`app/components/`                                                              |
+| 前端测试             | `app/tests/`                                                                               |
 
 ## OpenAPI 与前端类型
 
@@ -163,15 +182,11 @@ pnpm generate:api:check
 
 ## 数据库变更
 
-认证库和索引库分别使用 `PRAGMA user_version`。修改 schema 时：
+认证库和内容库分别使用 `PRAGMA user_version`，但迁移事务的组织方式不同。认证库在 `migrations.rs` 按有序版本逐个执行，每个版本独立提交，并在同一事务末尾更新版本号；内容库由 `index_schema.rs` 统一定义 DDL、版本和校验规则，迁移可在一个事务中完成多步转换，最后更新到目标版本。
 
-1. 在 `migrations.rs` 增加下一个有序版本。
-2. 每个版本在独立事务内执行 DDL 和数据迁移。
-3. 在同一事务末尾更新 `user_version`。
-4. 覆盖空库、代表性旧库、当前版本幂等、失败回滚和未来版本拒绝。
-5. 不在 repository 查询函数或连接 helper 中执行迁移。
+修改前先确定数据库类型，再更新相应定义与迁移路径。测试应覆盖空库、代表性旧库、当前版本幂等、失败回滚和未来版本拒绝；不要在查询函数或连接辅助函数中隐式执行迁移。
 
-索引新库的当前 schema 由 `litradar-index` 创建；storage migration 负责既有库升级。逻辑模型见[数据库参考](../reference/database.md)。
+`litradar-index` 使用共享内容定义初始化和写入新库，storage 负责既有库的迁移与预检。兼容版本、显式离线优化和控制库边界见[数据库参考](../reference/database.md)。
 
 ## 调度变更
 
@@ -223,7 +238,7 @@ pnpm test:e2e:full-stack
 pnpm build
 ```
 
-Vitest/jsdom 使用显式 MSW 场景；Browser Mode 只验证焦点、Clipboard 和 IntersectionObserver 等原生语义。Playwright fixture 项目保留 7 条拦截式 UI smoke；full-stack 项目构建前端并通过实际 Rust listener、HttpOnly Cookie 和临时 SQLite 运行 3 条无请求拦截的关键旅程。CI 最多重试 Playwright 一次以取得 trace/video，但 retry-pass 仍按 flaky 失败。
+Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Rust 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](../testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
 
 ## 部署检查
 
@@ -236,7 +251,7 @@ docker build --tag litradar:test .
 node scripts/container-smoke.mjs litradar:test
 ```
 
-根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Debian 层。最终镜像只复制 release `litradar`，必须没有其他应用可执行文件、Node.js/standalone 运行时并保持非 root；根 Compose 只能声明一个 `litradar` 服务。只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略都是部署契约。
+根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Debian 层。应用入口只有 release `litradar`；镜像还提供征稿抓取使用的 Obscura、`pdftotext` 和原生分词库，不包含 Node.js 或 Next.js standalone 运行时。根 Compose 只声明一个 `litradar` 服务，使用非 root 账号、只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略。
 
 日志或请求路径变更还应使用隔离 fixture 运行 off/on 门禁：
 
@@ -265,10 +280,23 @@ pwsh ./scripts/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 
 - 前端 API 始终同源；本地 Rust 服务需要监听固定的 `127.0.0.1:8001` 才能被 `pnpm dev` 代理。
 - 全局 scholarly key 池与用户级 AI/PushPlus 设置是两套不同配置。
 
-### Weekly manifest cache verification
+<a id="weekly-manifest-cache-verification"></a>
 
-The API shares parsed weekly manifests across summary and article-page requests. The cache holds at most 64 publications and 1,000,000 article IDs, expires entries after 60 seconds, and checks canonical paths plus file length and timestamps before reuse. Changed or malformed files are not served from a prior cache entry. Oversized publications are read normally but not retained. The cache contains source metadata only, with no account credentials.
+## 每周更新缓存验证
 
-Run correctness checks with `cargo test -p litradar-storage --test weekly_manifest_cache --locked` and the deterministic expiry test with `cargo test -p litradar-storage weekly_manifest_cache_expires --locked`. Run the opt-in comparison with `cargo test -p litradar-storage --test weekly_manifest_cache --release --locked -- --ignored --nocapture`.
+API 在汇总与文章分页请求之间共享解析后的每周更新清单。缓存最多保存 64 份发布清单和 1,000,000 个文章 ID，条目在 60 秒后过期，复用前核对规范路径、文件长度和时间戳。文件变化或损坏时不会返回旧缓存；超大清单仍可读取，但不会驻留缓存。缓存只含来源元数据，不含账号凭据。
 
-One local Windows release run on 2026-09-05 used eight catalogs with 10,000 articles each. Ten uncached continuation pages took 267.83 ms total, versus 198.03 ms with a warm cache; the warm series added zero parse attempts after the initial eight. This is a synthetic single-run result, not a production latency guarantee. Directory metadata checks, membership grouping, and each query's temporary SQLite membership table remain part of the cost.
+修改相关逻辑时，在仓库根运行正确性与确定性过期测试：
+
+```bash
+cargo test -p litradar-storage --test weekly_manifest_cache --locked
+cargo test -p litradar-storage weekly_manifest_cache_expires --locked
+```
+
+性能比较需要显式启用：
+
+```bash
+cargo test -p litradar-storage --test weekly_manifest_cache --release --locked -- --ignored --nocapture
+```
+
+历史记录中，2026-09-05 的一次本地 Windows release 测试使用 8 个目录、每个目录 10,000 篇文章。10 次未缓存的续页请求总计 267.83 ms，预热缓存后为 198.03 ms；预热后的系列在初始 8 次解析之外没有新增解析。这是单次合成测试结果，仅说明当时的测试表现，不构成生产延迟承诺。目录元数据检查、成员分组和每次查询的临时 SQLite 成员表仍有开销。

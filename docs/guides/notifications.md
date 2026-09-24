@@ -2,6 +2,16 @@
 
 本文档说明新增文章如何进入 AI 选择、PushPlus 通知和追踪文件夹。完整命令参数见 [CLI 参考](../reference/cli.md)，设置字段的存储结构见[数据库参考](../reference/database.md)。
 
+## 配置并验证订阅
+
+1. 管理员在运行配置中加入允许访问的 AI HTTPS Endpoint。目录默认为空，未配置时不能执行 AI 投递。
+2. 用户在文献追踪设置中填写关键词或研究方向、选择数据库，并配置 AI Endpoint、密钥和模型。
+3. 选择投递方式：写入文件夹时先指定追踪文件夹；使用 PushPlus 时填写 token，需要同步收藏时再启用文件夹同步。
+4. 保存并启用订阅，确认所选数据库已通过 `index --update` 生成变更清单。
+5. 在维护环境先运行对应 CLI 的 `--dry-run`，核对候选与筛选结果，再执行实际投递。手动推送直接产生所选投递方式的副作用，应通过状态接口查看结果。
+
+`--dry-run` 仍会向配置的 AI 服务发送请求并可能产生费用，但不会发送 PushPlus、写收藏或写去重状态。没有候选时不代表配置失败，可按文末的[排障步骤](#排障)定位。
+
 ## 三个入口
 
 | 入口                             | 用户范围                                     | 投递                         |
@@ -9,8 +19,6 @@
 | `litradar notify`                | 所有启用且 `delivery_method=pushplus` 的用户 | PushPlus；可选同步追踪文件夹 |
 | `litradar push`                  | 所有启用且 `delivery_method=folder` 的用户   | 追踪文件夹                   |
 | `POST /api/tracking/push-weekly` | 当前登录用户                                 | 按该用户的投递方式执行       |
-
-`--dry-run` 不发送 PushPlus，也不写收藏或去重状态；AI 请求仍会执行。
 
 ## 输入：变更清单
 
@@ -23,23 +31,6 @@
 - `summary`：仅用于计数和诊断
 
 `summary` 中的明细不是运行输入。没有可用变更清单或状态快照差异时，每周更新、CLI 投递和手动推送可能返回空或 `idle`。
-
-### 索引侧 manifest 与 notify 恢复
-
-`index --update` 的 catalog finalization 是项目 batch 的持久 phase，而不是 Provider 成功后的单次尾调用：
-
-1. 从内容库 outbox 构造确定性的 JSON，并把精确 UTF-8 payload、相对目标路径和 inclusive through-event cursor 写入 `index-batches.sqlite` 的 `manifest_prepared` 状态。
-2. 通过同目录临时文件、flush/fsync 和 rename 发布精确 payload。
-3. 幂等删除 `article_change_events.event_id <= cursor`，再进入 `manifest_published`。
-4. 配置了 `index --notify` 时先进入 `notifying`，在 child 启动前持久化 attempt ID；只有 compact handoff JSON 的 typed success 与 exit 0 一致时才把 catalog 标为 completed。
-
-因此在 payload 持久化、rename、outbox acknowledgement 或 phase 写入任一点中止，默认 resume 都会重放相同 manifest 字节，不再次访问已经完成的 Provider journal。notify attempt 是 32 位十六进制稳定 ID，并进入 scheduled delivery run 身份：父进程在 attempt 落盘后、结果落盘前中止时，恢复复用同一 ID，已终态的内层 run 只返回状态，仍 active 的 run 走既有 lease 恢复。
-
-父进程最多保留并解析 64 KiB child stdout，同时继续排空管道；只接受字段集合、protocol version、attempt、workflow、mode、status 和 db 全部匹配的一份 JSON。`idle/completed/skipped + exit 0` 是成功；`failed/cancelled/timed_out + nonzero` 在下一次调用创建新 attempt；`running + nonzero` 保留并复用当前 attempt。`unknown`、缺失/畸形/超大输出、上下文不匹配、无退出码或 status/exit 不一致一律持久化为 Unknown，默认 resume 不再启动 child。
-
-审核认证库中的 delivery run、subscriber item 与 dedupe 后，operator 可在原 `--resume --update --notify` 命令上增加 `--acknowledge-unknown-notify`。batch ledger 在一个 transaction 中记录被确认的 Unknown attempt 与时间，再建立一个新 attempt；文章级 Confirmed/Unknown dedupe 不变，所以旧副作用不会自动重发，而 manifest 中尚未处理的新文章仍可执行。每次父进程 invocation 对每个 catalog 至多启动一个 notify child。若已存在待完成的已发布 notify manifest，`--no-resume` 会失败，不允许通过放弃 batch 静默跳过 handoff。
-
-如果新 batch 的 outbox 为空，而目标已有一个大小受限、可解析且 `db_name` 匹配的 manifest，索引会保留现有文件、返回无新 manifest，并跳过内联 notify；不会用空 payload 覆盖尚待消费的候选。删除项目 batch ledger 会失去这些 phase/intent 证明，文件与 SQLite 的通用边界仍按至少一次对待。
 
 ## 用户设置
 
@@ -72,7 +63,7 @@
 
 ## AI 配置和选择
 
-The official DeepSeek endpoint (`api.deepseek.com`) starts selection and summary requests with `json_object`, because its Chat Completions API does not support `json_schema`. Other endpoints continue to try `json_schema` first. This does not change HTTP error retry or fallback rules.
+针对官方 DeepSeek Endpoint（`api.deepseek.com`），当前实现从 `json_object` 开始请求选择和摘要，以适配其 Chat Completions 输出格式；其他 Endpoint 先尝试 `json_schema`。这一格式选择不改变 HTTP 错误重试或备用配置规则。
 
 投递不读取进程环境变量中的 AI 或 PushPlus 凭据。有效 AI 配置来自用户设置：
 
@@ -97,6 +88,8 @@ CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attemp
 6. 对最终文章再次请求摘要；失败时保留选择阶段摘要。
 
 ## CLI 示例
+
+以下 Bash 示例从仓库根目录执行，需要已准备部署密钥、用户设置和所选数据库的变更清单。把 `utd24.sqlite` 与相应清单路径替换为实际数据库；`--no-dry-run` 会执行真实投递。
 
 ### PushPlus
 
@@ -160,17 +153,34 @@ runtime dispatcher 从 SQLite 认领任务，通过隐藏的类型化 `delivery-
 
 Unknown 确认在一个 `BEGIN IMMEDIATE` 中复核目标属于当前用户、仍是最新手动任务且状态仍为 `unknown`，随后创建一个 queued replacement 并写入固定 schema 的 `manual_push_unknown_acknowledge` 安全审计。并发重复、过期或非 Unknown 确认不会创建第二个任务；管理员也不能代替 owner 确认。确认不会修改旧外层/内层 run、item 或 `unknown`/`confirmed` dedupe，因此不确定文章不会重发，而后续 manifest 中未出现过的新文章仍可正常投递。
 
+## 索引侧 manifest 与 notify 恢复
+
+`index --update` 的 catalog finalization 是项目 batch 的持久 phase，而不是 Provider 成功后的单次尾调用：
+
+1. 从内容库 outbox 构造确定性的 JSON，并把精确 UTF-8 payload、相对目标路径和 inclusive through-event cursor 写入 `index-batches.sqlite` 的 `manifest_prepared` 状态。
+2. 通过同目录临时文件、flush/fsync 和 rename 发布精确 payload。
+3. 幂等删除 `article_change_events.event_id <= cursor`，再进入 `manifest_published`。
+4. 配置了 `index --notify` 时先进入 `notifying`，在 child 启动前持久化 attempt ID；只有 compact handoff JSON 的 typed success 与 exit 0 一致时才把 catalog 标为 completed。
+
+因此在 payload 持久化、rename、outbox acknowledgement 或 phase 写入任一点中止，默认 resume 都会重放相同 manifest 字节，不再次访问已经完成的 Provider journal。notify attempt 是 32 位十六进制稳定 ID，并进入 scheduled delivery run 身份：父进程在 attempt 落盘后、结果落盘前中止时，恢复复用同一 ID，已终态的内层 run 只返回状态，仍 active 的 run 走既有 lease 恢复。
+
+父进程最多保留并解析 64 KiB child stdout，同时继续排空管道；只接受字段集合、protocol version、attempt、workflow、mode、status 和 db 全部匹配的一份 JSON。`idle/completed/skipped + exit 0` 是成功；`failed/cancelled/timed_out + nonzero` 在下一次调用创建新 attempt；`running + nonzero` 保留并复用当前 attempt。`unknown`、缺失/畸形/超大输出、上下文不匹配、无退出码或 status/exit 不一致一律持久化为 Unknown，默认 resume 不再启动 child。
+
+审核认证库中的 delivery run、subscriber item 与 dedupe 后，operator 可在原 `--resume --update --notify` 命令上增加 `--acknowledge-unknown-notify`。batch ledger 在一个 transaction 中记录被确认的 Unknown attempt 与时间，再建立一个新 attempt；文章级 Confirmed/Unknown dedupe 不变，所以旧副作用不会自动重发，而 manifest 中尚未处理的新文章仍可执行。每次父进程 invocation 对每个 catalog 至多启动一个 notify child。若已存在待完成的已发布 notify manifest，`--no-resume` 会失败，不允许通过放弃 batch 静默跳过 handoff。
+
+如果新 batch 的 outbox 为空，而目标已有一个大小受限、可解析且 `db_name` 匹配的 manifest，索引会保留现有文件、返回无新 manifest，并跳过内联 notify；不会用空 payload 覆盖尚待消费的候选。删除项目 batch ledger 会失去这些 phase/intent 证明，文件与 SQLite 的通用边界仍按至少一次对待。
+
 ## 持久状态与旧文件
 
 认证库 v10 提供 `delivery_checkpoints`、`delivery_runs`、`delivery_run_items`、`delivery_dedupe` 和 `delivery_leases`。这些表通过唯一约束、owner lease 和单调 revision 为多进程投递提供事务边界；外部发送已经开始但结果不明确时使用 `unknown`，不能自动重放。
 
 文件边界如下：
 
-| 路径                                | 用途                                      |
-| ----------------------------------- | ----------------------------------------- |
-| `data/push_state/<db>.changes.json` | 保持文件形式的增量候选输入                |
-| `data/push_state/<db>.json`         | 保留的旧 notify/手动 PushPlus 状态导入源  |
-| `data/folder_push_state/<db>.json`  | 保留的旧 push 状态导入源                  |
+| 路径                                | 用途                                     |
+| ----------------------------------- | ---------------------------------------- |
+| `data/push_state/<db>.changes.json` | 保持文件形式的增量候选输入               |
+| `data/push_state/<db>.json`         | 保留的旧 notify/手动 PushPlus 状态导入源 |
+| `data/folder_push_state/<db>.json`  | 保留的旧 push 状态导入源                 |
 
 启动时会先读取并校验全部旧 `<db>.json`，再在一个 transaction 中导入。相同 SHA-256 重复导入会跳过；任何文件损坏都使整批零写入，已导入文件内容变化会拒绝启动。导入不会删除源文件，也不会读取或改写 `.changes.json`。不要手工编辑保留的旧源文件。
 

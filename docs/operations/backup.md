@@ -1,6 +1,6 @@
 # 备份与恢复
 
-`litradar admin backup` 创建版本化、可独立验证的目录备份。部署密钥永远不在备份中，必须单独保存。命令语法见 [CLI 参考](../reference/cli.md)。
+`litradar admin backup` 创建版本化、可独立验证的目录备份。部署密钥永远不在备份中，必须单独保存。命令语法见 [CLI 参考](../reference/cli.md)。本机示例使用 Bash，假定部署根目录为 `/srv/litradar`，`litradar` 已在 PATH 中；把示例备份日期替换为本次唯一目录名。Docker 示例从仓库根目录执行。
 
 ## 备份范围
 
@@ -8,20 +8,20 @@
 
 `auth.sqlite` 快照包含安全审计事件、保留 maintenance 标记，邀请码有效期/撤销/配额与逐次兑换历史，以及投递 checkpoint、run、item、dedupe 和 lease；不需要也不能通过额外 flag 排除。恢复认证库会把审计历史、用户、令牌、邀请码、安全变更和投递状态恢复到同一个时间点，避免恢复出跨时间线的注册配额、去重或任务状态。
 
-| 范围或选项             | 内容                                            |
-| ---------------------- | ----------------------------------------------- |
-| v2 固定范围            | `data/auth.sqlite` 和完整 `data/meta`           |
-| `--include-indexes`    | 创建时发现的全部 `data/index/*.sqlite`          |
-| `--include-push-state` | `data/push_state/` 和 `data/folder_push_state/` |
+| 范围或选项             | 内容                                                                                                            |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
+| v2 固定范围            | `data/auth.sqlite` 和完整 `data/meta`                                                                           |
+| `--include-indexes`    | 创建时发现的全部 `data/index/*.sqlite`                                                                          |
+| `--include-push-state` | `data/push_state/` 和 `data/folder_push_state/`                                                                 |
 | 始终排除               | 整个 `data/index-control/`（batch ledger、catalog checkpoint 和 lease）及 `data/index-work/`（Crossref 工作集） |
 
 未选择的索引和状态组不会在恢复时修改。v2 Meta 和选择的可选组按精确快照恢复，包括“备份时为空”的情况。
 
 `--include-push-state` 中的 `.changes.json` 是 Provider-neutral 候选变更清单；其余 `<db>.json` 是启动迁移保留的旧投递导入源。持久投递权威状态已经包含在固定的 `auth.sqlite` 快照中，但若部署仍保留旧文件，建议同时选择该选项，以保留导入 hash 的来源证据和未消费的变更清单。恢复不会自动删除或改写这些源文件。
 
-`--include-indexes` 为创建时发现的全部 `data/index/*.sqlite` 制作快照，不按内容 schema 筛选，因此也可保存通过备份完整性与版本检查的历史数据库。运行时能直接读写的内容库仍要求精确 v6/v7/v8；恢复后的迁移或重建要求见[数据库参考](../reference/database.md#内容库破坏性切换)。
+`--include-indexes` 为创建时发现的全部 `data/index/*.sqlite` 制作快照，不按内容 schema 筛选，因此也可保存通过备份完整性与版本检查的历史数据库。运行时能直接读写的内容库要求精确 v6/v7/v8/v9；恢复后的迁移或重建要求见[数据库参考](../reference/database.md#内容库破坏性切换)。
 
-`data/index-control` 是可重建的运行控制状态：项目级 `index-batches.sqlite`（batch schema v2，含 typed notify handoff）和每个 catalog 的 v4 anchor/run/lease 控制库即使位于项目根下，也都不会进入 backup manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；清空控制状态后的首次索引会创建新 batch 并通过内容 identity alias/upsert 幂等收敛，但也会失去尚未完成的 notify handoff/Unknown acknowledgement 证明。
+`data/index-control` 是可重建的运行控制状态：项目级 `index-batches.sqlite`（batch schema v2，含 typed notify handoff）和每个 catalog 的 v5 anchor/run/lease 控制库即使位于项目根下，也都不会进入 backup manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；清空控制状态后的首次索引会创建新 batch 并通过内容 identity alias/upsert 幂等收敛，但也会失去尚未完成的 notify handoff/Unknown acknowledgement 证明。
 
 `data/index-work/scholarly/` 只保存 Crossref 的必要消费字段、创建日期分片、计数和排序进度；其 SQLite、归属 JSON 和事务文件都不是内容索引，不进入 manifest、备份树、内容发现或恢复目标。它与正式内容/控制 schema 的版本独立，删除正式数据库不是工作集恢复步骤。
 
@@ -93,7 +93,7 @@ litradar admin backup verify \
 
 ## 为离线索引优化准备回滚点
 
-`litradar admin index optimize-storage` 会把精确 v6/v7/v8 内容库离线重建为 v8。优化前的 verified backup 是旧二进制降级所需的受支持回滚点；备份中的 v6/v7 必须受目标二进制支持。不要降低 v8 文件的 `user_version`，也不要手工补建 `article_search_content` 或历史索引。
+`litradar admin index optimize-storage` 接受精确 v6/v7/v8/v9 内容库，离线重建为 v9。优化前经验证的备份是降级到旧二进制时的回滚点，其内容版本必须受目标二进制支持。不要降低 v9 文件的 `user_version`，也不要手工补建 `article_search_content` 或历史索引。
 
 完整顺序：
 
@@ -103,26 +103,26 @@ litradar admin backup verify \
 4. 独立运行 `backup verify`，并把成功备份保持只读、与活动 `data/` 分离。
 5. 统计 `data/index/*.sqlite` 的总字节数，确认同一文件系统至少有 `2 × source_bytes + 64 MiB` 可用空间。
 6. 运行带显式确认的优化命令，保存完整 stdout JSON 和日志；检查 `status=optimized`、`optimized_bytes`、`reclaimed_bytes`、每库 schema/影子表/freelist/FTS 分配和行计数。
-7. 启动当前二进制，检查 `/`、`/health/live`、`/health/ready`、`/openapi.json` 和代表性检索/详情/分页。确认业务结果与优化前一致后，继续保留 v6 备份直到降级窗口结束。
+7. 启动当前二进制，检查 `/`、`/health/live`、`/health/ready`、`/openapi.json` 和代表性检索、详情、分页。原文、身份和权威行数必须保持；检索结果按[新分词契约](../../libs/simple/README.md)核对，不能要求旧 unicode61 的全部匹配结果不变。继续保留优化前备份直到降级窗口结束。
 
 本机命令骨架：
 
 ```bash
 litradar admin backup create \
   --project-root /srv/litradar \
-  --output /srv/backups/litradar-before-index-v8 \
+  --output /srv/backups/litradar-before-index-v9 \
   --include-indexes \
   --include-push-state
 
 litradar admin backup verify \
-  --backup /srv/backups/litradar-before-index-v8
+  --backup /srv/backups/litradar-before-index-v9
 
 litradar admin index optimize-storage \
   --project-root /srv/litradar \
   --confirm-index-maintenance
 ```
 
-如果优化失败并返回非空 `error.recovery_paths`，不要删除 marker、staging 或 rollback；保留备份、完整错误 JSON 和这些精确路径。只有优化器成功退出并自行清理恢复状态，才可启动服务。不支持 v8 的旧二进制不能打开优化后的文件；需要降级时先停止当前服务，重新验证受目标二进制支持的优化前 v6/v7 备份，再按下述离线恢复流程恢复包含索引的快照。
+如果优化失败并返回非空 `error.recovery_paths`，不要删除 marker、staging 或 rollback；保留备份、完整错误 JSON 和这些精确路径。只有优化器成功退出并自行清理恢复状态，才可启动服务。不支持 v9 的旧二进制不能打开优化后的文件；需要降级时先停止当前服务，重新验证受目标二进制支持的优化前备份，再按下述离线恢复流程恢复包含索引的快照。
 
 ## Docker Compose
 
