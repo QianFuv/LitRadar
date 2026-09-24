@@ -1,26 +1,34 @@
-# SQLite simple tokenizer
+# SQLite simple 分词器
 
-Content schema v9 uses FTS5 `tokenize = 'simple 0'`. Chinese text is indexed as character sequences, so ordinary phrase MATCH can find a short phrase inside a longer title or abstract. The `0` explicitly disables pinyin aliases, including initials. LitRadar never invokes `simple_query()` or `jieba_query()` and does not install Jieba dictionaries.
+当前内容库 v9 使用 FTS5 的 `tokenize = 'simple 0'`。中文按字符序列索引，普通短语 MATCH 可以匹配标题或摘要中的短语；参数 `0` 显式关闭拼音及首字母别名。LitRadar 不调用 `simple_query()` 或 `jieba_query()`，也不安装 Jieba 词典。
 
-Search still uses parameterized, table-wide `article_search MATCH ?`; simple/advanced query modes, filters, ordering and pagination are unchanged. Search-only Unicode normalization preserves covered Latin accent/case behavior and punctuation word boundaries. Advanced query operands are normalized without changing FTS operators or column names. Native simple segmentation may split alphanumeric terms differently from unicode61; migration validates the new search contract rather than requiring all old result sets to be identical. Canonical article text and identifiers are not normalized or rewritten.
+搜索仍通过参数化的全表 `article_search MATCH ?` 执行，简单与高级查询模式、过滤、排序和分页保持原有接口。只有检索投影和查询文本进行 Unicode 规范化，以保留所覆盖的拉丁重音、大小写和标点分词行为；高级操作数的规范化不改变 FTS 运算符或列名。原生 simple 对字母数字词项的切分可能与 unicode61 不同，迁移验证新的检索契约，不要求所有旧查询结果完全相同。规范文章原文与标识符不被改写。
 
-## Native builds and locations
+<a id="native-builds-and-locations"></a>
 
-- Windows x64 development uses `libs/simple-windows/libsimple-windows-x64/simple.dll` (SHA256 `89cd063db0c01ba97bb78f61fb500488b8c14f7cd162962a728dc20836ef0108`).
-- Linux development and CI run `node scripts/build-simple-tokenizer.mjs`, producing `target/simple-tokenizer/libsimple.so`. CMake and a C++14 compiler are required.
-- Docker builds the library for its actual amd64/arm64 target and installs `/usr/lib/litradar/libsimple.so` plus the C++ runtime.
-- Packaged native executables may carry the matching library beside the executable. Only fixed executable/package/build locations are searched; database contents and the configured data directory cannot select an extension.
+## 原生构建与发现路径
 
-Linux source is pinned to upstream commit `45db071ba8043ffe8a2e5dfe41f9d68fb477576c`, with source archive SHA256 `d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61`. Builds set `SIMPLE_WITH_JIEBA=OFF`, `BUILD_SQLITE3=OFF`, `BUILD_TEST_EXAMPLE=OFF` and `BUILD_STATIC=OFF`. The bundled pinyin resource remains part of upstream's library but is not used by `simple 0`.
+| 环境             | 构建或加载位置                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Windows x64 开发 | `libs/simple-windows/libsimple-windows-x64/simple.dll`                                                                          |
+| Linux 开发与 CI  | 在仓库根运行 `node scripts/build-simple-tokenizer.mjs`，生成 `target/simple-tokenizer/libsimple.so`；需要 CMake 和 C++14 编译器 |
+| Docker           | 按目标 amd64/arm64 架构构建，安装到 `/usr/lib/litradar/libsimple.so`，同时提供 C++ 运行库                                       |
+| 独立原生程序     | 可在可执行文件旁打包匹配平台的库                                                                                                |
 
-## Existing databases
+加载器只搜索固定的可执行文件、打包和编译工作区位置；数据库内容及配置的数据目录不能指定扩展。精确搜索顺序见[SQLite 连接实现](../../crates/litradar-storage/src/sqlite.rs)，Linux 构建脚本见[分词器构建](../../scripts/build-simple-tokenizer.mjs)。
 
-Exact v6/v7/v8 content schemas retain `unicode61` and remain readable without the native extension. Startup does not silently rebuild them. To enable Chinese matching in an existing database, stop writers and run the documented offline `admin index optimize-storage --confirm-index-maintenance` operation. It streams canonical rows into a v9 candidate and validates identities before replacement. Backups and old binaries must be paired with the corresponding old index files for rollback.
+Windows DLL 的 SHA-256 为 `89cd063db0c01ba97bb78f61fb500488b8c14f7cd162962a728dc20836ef0108`。Linux 源码固定在上游提交 `45db071ba8043ffe8a2e5dfe41f9d68fb477576c`，源码压缩包 SHA-256 为 `d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61`。构建选项为 `SIMPLE_WITH_JIEBA=OFF`、`BUILD_SQLITE3=OFF`、`BUILD_TEST_EXAMPLE=OFF` 和 `BUILD_STATIC=OFF`。上游库仍包含拼音资源，但 `simple 0` 不使用它。
 
-Missing or incompatible native code is an explicit error for v9; there is no fallback to unicode61. SQLite extension loading is enabled only while registering the trusted library, then disabled again.
+<a id="existing-databases"></a>
 
-## License
+## 现有数据库
 
-Upstream: https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c
+精确 v6/v7/v8 内容库保留 unicode61，无需原生扩展即可读取；启动不会静默重建。要为旧库启用中文短语匹配，必须先停止写入者并准备已验证备份，再执行[离线索引优化](../../docs/reference/cli.md#索引存储优化)。命令把规范记录流式重建到 v9 候选库，并在替换前验证身份。回滚时，旧二进制必须配合它支持的旧版索引备份。
 
-LitRadar selects the MIT option from upstream's MIT OR GPL-3.0-or-later licensing. Copyright and permission text are distributed in `third-party/Simple-LICENSE.txt`.
+v9 缺少或无法兼容原生库时明确失败，不回退到 unicode61。SQLite 只在注册可信库期间允许扩展加载，注册后立即关闭。
+
+<a id="license"></a>
+
+## 许可证与来源
+
+源码来自 [simple 固定上游提交](https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c)。LitRadar 在上游的 MIT OR GPL-3.0-or-later 双许可证中选择 MIT；版权与授权原文随项目分发于 [Simple-LICENSE.txt](../../third-party/Simple-LICENSE.txt)。

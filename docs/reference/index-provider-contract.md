@@ -30,20 +30,20 @@
 
 列顺序和含义：
 
-| 列                           | 必填 | 规则                                                                                             |
-| ---------------------------- | ---- | ------------------------------------------------------------------------------------------------ |
-| `catalog_id`                 | 是   | 3–128 个小写 ASCII 字符；允许内部的 `.`、`_`、`-`；分配后不可因标题、ISSN 或 Provider 变化而重建 |
-| `catalog_aliases`            | 否   | 以 `;` 分隔的已退役 catalog ID；不得等于当前 ID、相互重复或被其他规范期刊占用                    |
-| `title`                      | 是   | 裁剪并规范化为 Unicode NFC 的规范标题                                                            |
-| `issn`                       | 否   | 校验位正确的 `NNNN-NNNX` 印刷 ISSN                                                               |
-| `eissn`                      | 否   | 校验位正确的电子 ISSN                                                                            |
-| `all_issns`                  | 否   | 以 `;` 分隔的去重 ISSN；必须包含非空的 `issn`、`eissn`                                           |
-| `title_aliases`              | 否   | 以 `;` 分隔；与规范标题及其他别名规范化后不得重复                                                |
-| `area`                       | 否   | LitRadar 维护的领域标签                                                                          |
-| `utd_rank`、`utd_rating`     | 否   | 维护的 UTD 排名信息                                                                              |
-| `abs_rank`、`abs_rating`     | 否   | 维护的 ABS 排名信息                                                                              |
-| `fms_rank`、`fms_rating`     | 否   | 维护的 FMS 排名信息                                                                              |
-| `fmscn_rank`、`fmscn_rating` | 否   | 维护的 FMS China 排名信息                                                                        |
+| 列                           | 必填 | 规则                                                                                                |
+| ---------------------------- | ---- | --------------------------------------------------------------------------------------------------- |
+| `catalog_id`                 | 是   | 3 至 128 个小写 ASCII 字符；允许内部的 `.`、`_`、`-`；分配后不可因标题、ISSN 或 Provider 变化而重建 |
+| `catalog_aliases`            | 否   | 以 `;` 分隔的已退役 catalog ID；不得等于当前 ID、相互重复或被其他规范期刊占用                       |
+| `title`                      | 是   | 裁剪并规范化为 Unicode NFC 的规范标题                                                               |
+| `issn`                       | 否   | 校验位正确的 `NNNN-NNNX` 印刷 ISSN                                                                  |
+| `eissn`                      | 否   | 校验位正确的电子 ISSN                                                                               |
+| `all_issns`                  | 否   | 以 `;` 分隔的去重 ISSN；必须包含非空的 `issn`、`eissn`                                              |
+| `title_aliases`              | 否   | 以 `;` 分隔；与规范标题及其他别名规范化后不得重复                                                   |
+| `area`                       | 否   | LitRadar 维护的领域标签                                                                             |
+| `utd_rank`、`utd_rating`     | 否   | 维护的 UTD 排名信息                                                                                 |
+| `abs_rank`、`abs_rating`     | 否   | 维护的 ABS 排名信息                                                                                 |
+| `fms_rank`、`fms_rating`     | 否   | 维护的 FMS 排名信息                                                                                 |
+| `fmscn_rank`、`fmscn_rating` | 否   | 维护的 FMS China 排名信息                                                                           |
 
 目录中禁止 `provider`、`source`、上游期刊 ID、路由、URL、可用性、Cookie、会话或检查点列。Provider 路由来自 `auth.sqlite.runtime_settings.index_provider_routes`，不属于目录内容。
 
@@ -77,7 +77,7 @@ Provider 对所请求期刊的观察：
 
 | 分组 | 字段                                                                                          |
 | ---- | --------------------------------------------------------------------------------------------- |
-| 必填 | `catalog_id`, `title` (empty only when a valid canonical DOI preserves identity) |
+| 必填 | `catalog_id`、`title`（只有有效规范 DOI 能保留身份时，标题才允许为空）                        |
 | 出版 | `publication_year`、`date`、`issue_title`、`volume`、`issue_number`、`start_page`、`end_page` |
 | 内容 | 有序 `authors[].display_name`、`abstract_text`                                                |
 | 标识 | 规范 DOI、数字 PMID、按字典序排列且无重复的规范 `retraction_dois`                             |
@@ -85,14 +85,7 @@ Provider 对所请求期刊的观察：
 
 文章还必须具有 DOI、PMID，或同时具有出版时间和卷/期/起始页中的至少一个定位字段。禁止 Provider ID、持久 URL、原始响应、权限、订阅、馆藏、会话和传输状态。
 
-A source title may be unavailable even when its DOI and publication metadata are
-valid. Preserve that record with exactly `title=""` and its canonical DOI; do not
-invent a title, drop the identity, or derive a bibliographic alias from empty text.
-Whitespace-only canonical titles, invalid/missing DOI, and PMID-only untitled
-records still fail validation. Request-time article locators use the same rule.
-UI missing-title labels are presentation only and must never enter stored data,
-FTS or exported citations. A later genuine title merges into the same DOI identity,
-and a later missing-title observation must not erase an existing real title.
+来源可能缺少标题，但仍有有效的 DOI 和出版元数据。这时保留精确的 `title=""` 与规范 DOI，不编造标题、丢弃身份或从空文本生成书目别名。只有空白的规范标题、缺失或无效 DOI，以及只有 PMID 的无标题记录仍会校验失败；请求时的文章定位信息也遵循同一规则。界面上的缺标题提示只用于显示，不得进入存储、FTS 或引文导出。后续真实标题合并到同一 DOI 身份，后续缺标题观察不能覆盖已有真实标题。
 
 ### `ProviderBatch`
 
@@ -118,11 +111,11 @@ Continue 可以不含文章。例如 Crossref 在完整创建日期分片通过�
 
 模式语义：
 
-| 模式          | 核心语义                                                                                                      |
-| ------------- | ------------------------------------------------------------------------------------------------------------- |
+| 模式          | 核心语义                                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
 | `Bootstrap`   | 新 batch 完整覆盖；仅 active batch 内已经完成的 journal 可由默认 resume 零请求跳过                           |
 | `Incremental` | 新 batch 从远端当前头部扫描到旧 committed anchor 并包含边界；同 active batch 已完成 journal 才是 skip marker |
-| `FullRescan`  | 新 batch 覆盖完整 Provider 历史；可恢复同 batch/同模式 traversal，同 batch 已完成 journal 可跳过              |
+| `FullRescan`  | 新 batch 覆盖完整 Provider 历史；可恢复同 batch/同模式 traversal，同 batch 已完成 journal 可跳过             |
 
 journal 运行开始时核心把 committed anchor 冻结为 `base_anchor`。Provider 在自己的 traversal 中冻结 candidate head；重试不得根据已写内容重新计算边界。Continue 只推进 traversal。Complete 只有在整本期刊窗口已覆盖后才返回 next anchor。核心把 completion 与当前 batch ID 一起提交；成功 batch 结束后的下一条命令创建新 batch，因此 Provider 必须预期每次独立更新都会再次收到所有选中 journal。
 
@@ -171,7 +164,7 @@ bibliographic fingerprint 包含目录、规范题名、由 `publication_year` �
 
 `ProviderDescriptor` 包含：
 
-- 2–64 字符的小写 ASCII 运行时名称；允许数字及非首位的 `_`、`-`；
+- 2 至 64 个字符的小写 ASCII 运行时名称；允许数字及非首位的 `_`、`-`；
 - 三个显式 capability 布尔值：`index_content`、`article_abstract`、`article_full_text`；
 - 只用于运行时响应校验的 `allowed_redirect_hosts`。
 
@@ -230,12 +223,12 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 
 ## 内容库与控制库
 
-| 路径                                         | 生命周期 | 内容                                                                                   |
-| -------------------------------------------- | -------- | -------------------------------------------------------------------------------------- |
-| `data/index/<catalog>.sqlite`                | 需要备份 | v6 规范期刊、期刊/文章 identity aliases、撤稿关系、列表投影、FTS 和文章变更 outbox     |
-| `data/index-control/index-batches.sqlite`    | 可丢弃   | v2 core-owned batch fingerprint、catalog phase/manifest intent、typed notify handoff 和全局 lease |
-| `data/index-control/<catalog>.sqlite`        | 可丢弃   | v4 Provider-scoped lease、batch-aware 成功 anchor 和运行 traversal checkpoint            |
-| `data/index-work/scholarly/`                 | 可丢弃   | 私有 Crossref 分片、必要书目字段、完整性计数和本地排序工作集；不是内容或提交权威          |
+| 路径                                      | 生命周期 | 内容                                                                                              |
+| ----------------------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `data/index/<catalog>.sqlite`             | 需要备份 | 规范期刊、期刊/文章身份别名、撤稿关系、列表投影、FTS 和文章变更 outbox                            |
+| `data/index-control/index-batches.sqlite` | 可丢弃   | v2 core-owned batch fingerprint、catalog phase/manifest intent、typed notify handoff 和全局 lease |
+| `data/index-control/<catalog>.sqlite`     | 可丢弃   | v5 Provider-scoped lease、batch-aware 成功 anchor 和运行 traversal checkpoint                     |
+| `data/index-work/scholarly/`              | 可丢弃   | 私有 Crossref 分片、必要书目字段、完整性计数和本地排序工作集；不是内容或提交权威                  |
 
 成功 anchor 与运行 checkpoint 分表保存，并分别带可空 `completed_batch_id` / `batch_id`。成功行存在但 anchor 为 NULL 表示“完整成功但没有可复用边界”，不同于成功行缺失；它只有在完成标记属于 active batch 时才能跳过，否则新 batch 安全完整覆盖。删除控制状态会失去 batch、成功边界和恢复进度，并依靠 alias/upsert 收敛，不会改变内容身份。
 
@@ -245,7 +238,9 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 
 内容库禁止 Provider 名称、路由、检查点、lease、运行统计、上游 ID 和 URL。控制库禁止规范文章内容；batch ledger 不保存 Provider opaque state、代理或凭据。备份明确排除整个 `data/index-control` 和 `data/index-work`。工作集只允许保存消费字段与中间进度，不保存凭据或资源 URL，也不参与内容发现。
 
-## Conformance 流程
+<a id="conformance-流程"></a>
+
+## 契约一致性验证
 
 新增 Provider 至少应执行：
 
@@ -258,7 +253,7 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 7. 运行 Provider switch fixture，证明共享 alias 复用同一 ID，且新 Provider 使用独立 anchor/run namespace。
 8. 对发出 HTTP 的实现覆盖受管直连、显式代理失败不直连回退，以及多进程 request/参数/环境/日志不含代理秘密。
 
-内置实现的常用检查：
+修改内置实现后，在仓库根目录运行以下检查；应通过相关测试且无 Clippy 警告：
 
 ```bash
 cargo test -p litradar-domain -p litradar-provider -p litradar-sources -p litradar-index

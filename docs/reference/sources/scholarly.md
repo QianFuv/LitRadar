@@ -1,6 +1,6 @@
 # Scholarly Provider
 
-Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、OpenAlex 和 Semantic Scholar 响应转换为[规范 Provider 契约](../index-provider-contract.md)，并可独立提供在线摘要页能力。
+Scholarly 是内置数据源适配器（Provider），负责连接上游与规范内容契约。它把 Crossref、OpenAlex 和 Semantic Scholar 响应转换为[规范 Provider 契约](../index-provider-contract.md)，并可独立提供在线摘要页能力。
 
 ## 能力声明
 
@@ -19,11 +19,11 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 
 ## 索引上游职责
 
-| 上游             | 请求时职责                                                | 可进入规范内容的字段                            |
-| ---------------- | --------------------------------------------------------- | ----------------------------------------------- |
-| Crossref         | 按 ISSN 获取主文章清单                                    | DOI、题名、作者、摘要、日期、卷期页码、撤稿关系 |
-| OpenAlex | Conditional DOI enhancement; source-list fallback when every Crossref ISSN is missing/empty | DOI enhancement: title, abstract, OA; source fallback additionally supplies its own authors, dates and PMID |
-| Semantic Scholar | 按 DOI 批量增强                                           | 题名、摘要、OA                                  |
+| 上游             | 请求时职责                                                       | 可进入规范内容的字段                                               |
+| ---------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Crossref         | 按 ISSN 获取主文章清单                                           | DOI、题名、作者、摘要、日期、卷期页码、撤稿关系                    |
+| OpenAlex         | 按需补全 DOI 元数据；全部 Crossref ISSN 缺失或为空时提供来源清单 | DOI 增强提供标题、摘要和 OA；来源清单还提供自己的作者、日期和 PMID |
+| Semantic Scholar | 按 DOI 批量增强                                                  | 题名、摘要、OA                                                     |
 
 上游 URL、source ID、Crossref cursor、OpenAlex cursor 和 Semantic Scholar PDF/landing-page URL 不进入 `ArticleDraft` 或内容数据库。OpenAlex source ID 与 cursor 只存在于可丢弃 traversal checkpoint；Crossref cursor 可存在于 traversal 和私有工作集。成功 anchor 只使用规范书目信息和日期，不含 Provider/upstream ID 或 URL。
 
@@ -38,43 +38,34 @@ Scholarly 是内置 Provider adapter，不是内容 schema。它把 Crossref、O
 3. 依次探测 Crossref `/journals/{issn}/works` 的完整创建日期范围；整刊 404 或为空时尝试下一个 ISSN。按下述 created 分片规则收集，单步最多消费一个响应，先返回不含文章的 Continue 供 core 确认进度。
 4. 全部 ISSN 均无可用 Crossref 清单时，按 ISSN、再按维护标题/别名解析 OpenAlex source，并沿用其出版日期降序分页。
 5. Crossref 的分片、父子总数和全局唯一数全部通过后，才按本地期次组排序，冻结 candidate 并选择完整的 candidate/base 窗口。
-6. Normalize DOI values only for the selected local output page. Request S2 first in batches of at most 500 IDs, then request OA only for works whose current fields still need its fallback. OA batches retain the 100-ID and 1900-byte URL limits. Map the complete results to JournalDraft, IssueDraft and ArticleDraft without changing selected work order.
+6. 只规范化当前选中输出页的 DOI，先按每批最多 500 个 ID 请求 Semantic Scholar，再为仍缺少字段的记录请求 OpenAlex。OpenAlex 每批最多 100 个 ID，URL 上限为 1,900 字节。完整结果映射为 `JournalDraft`、`IssueDraft` 和 `ArticleDraft`，不改变选中记录顺序。
 7. 返回有界 `ProviderBatch`。Crossref Continue 保存收集状态或本地 keyset 位置；只有完整输出所选期次后才 Complete，由 core 在内容提交后保存成功 anchor。
 
 空的创建日期子分片只表示该片完成，不能触发整刊 fallback 或推进 anchor。已有 anchor 的增量候选为空或找不到 base 时，仍保留同源无 update 过滤重放语义，避免把暂时没有更新误判为需要切换主清单。没有 DOI 的记录仍可在具备充分 bibliographic identity 时进入内容库，但不会进入 DOI 增强。
 
 ## 字段合并
 
-| 规范字段                          | 顺序/规则                                                            |
-| --------------------------------- | -------------------------------------------------------------------- |
-| `title`                           | Crossref，缺失或空白时按同一 DOI 使用 OpenAlex，再使用 Semantic Scholar |
-| `authors` | Crossref ordered display names on the Crossref main-list path |
-| `abstract_text`                   | Crossref 去标记文本，缺失时 OpenAlex，再缺失时 Semantic Scholar      |
-| `publication_year` / `date` | Crossref date chain on the Crossref main-list path |
-| `volume` / `issue_number` / pages | Crossref                                                             |
-| `doi`                             | 规范化为小写标识符，不保存 DOI URL                                   |
-| `pmid` | Normalized Crossref PMID on the Crossref main-list path |
-| `open_access` | Matching S2 boolean first, including false; otherwise presence of a non-null OA best_oa_location |
-| `retraction_dois`                 | Crossref `updated-by` 中 type 为 retraction 的全部规范 DOI，排序去重 |
+| 规范字段                          | 顺序/规则                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `title`                           | Crossref，缺失或空白时按同一 DOI 使用 OpenAlex，再使用 Semantic Scholar                          |
+| `authors`                         | Crossref 主清单中的有序作者显示名称                                                              |
+| `abstract_text`                   | Crossref 去标记文本，缺失时 OpenAlex，再缺失时 Semantic Scholar                                  |
+| `publication_year` / `date`       | Crossref 主清单的日期优先链                                                                      |
+| `volume` / `issue_number` / pages | Crossref                                                                                         |
+| `doi`                             | 规范化为小写标识符，不保存 DOI URL                                                               |
+| `pmid`                            | Crossref 主清单中规范化后的 PMID                                                                 |
+| `open_access`                     | 优先匹配的 Semantic Scholar 布尔值（包括 false）；否则判断 OpenAlex 的 best_oa_location 是否非空 |
+| `retraction_dois`                 | Crossref `updated-by` 中 type 为 retraction 的全部规范 DOI，排序去重                             |
 
-This merge table describes Crossref main-list enrichment. The separate OA source-list fallback continues reading its complete work payload, including authorships, publication dates, biblio, ids and open_access.is_oa. No fields or mapping priorities were added to the Crossref path.
+上表描述 Crossref 主清单的增强路径。独立的 OpenAlex 来源清单仍读取完整作品字段，包括 `authorships`、出版日期、`biblio`、`ids` 和 `open_access.is_oa`；两条路径的字段来源不能混用。
 
-A DOI skips OA only when Crossref has a usable title and a nonempty stripped abstract, and matching S2 data has an actual boolean isOpenAccess. Missing or malformed S2 state still needs OA; S2 text cannot suppress higher-priority OA text when Crossref lacks it. Duplicate DOI needs are combined without changing output order or count. A required source failure still fails the page; an unused OA service cannot fail a fully covered page. This is per-page dependency selection, not a cache across updates.
+只有 Crossref 已有可用标题和去标记后非空摘要，且匹配的 Semantic Scholar 数据包含真实布尔 `isOpenAccess` 时，才跳过该 DOI 的 OpenAlex 请求。缺失或损坏的开放获取状态仍需要 OpenAlex；Crossref 缺文本时，Semantic Scholar 文本不能使优先级更高的 OpenAlex 文本被跳过。重复 DOI 的需求合并，但不改变输出顺序或数量。必需来源失败会使整页失败，未使用的 OpenAlex 服务则不会影响字段已完整的页面。这是每页依赖选择，不是跨更新缓存。
 
-OA DOI requests select only doi,display_name,title,abstract_inverted_index,best_oa_location. Their planner and sender use the same fields; the full source-list projection is unchanged. S2 selects externalIds,title,isOpenAccess,abstract. Narrower fields reduce response bytes and may fit more DOI values per URL; in the representative 32-character-key fixture, 225 DOI values still use five requests, while its 200-value prefix uses four instead of five. These are fixture-specific counts, not a universal percentage.
+OpenAlex DOI 请求只选择 `doi,display_name,title,abstract_inverted_index,best_oa_location`，规划器和发送器使用同一字段集；完整来源清单投影不变。Semantic Scholar 选择 `externalIds,title,isOpenAccess,abstract`。较窄字段可减少响应字节，并可能在同一 URL 内容纳更多 DOI。在使用 32 字符密钥的既有测试场景中，225 个 DOI 仍需 5 次请求，其前 200 个从 5 次降为 4 次；这是特定场景的计数，不是普遍节省比例。
 
 Provider 不返回 PDF URL、landing page、permalink 或 content location。在线全文不是 Scholarly 当前声明的能力。
 
-Title enrichment uses only responses whose normalized DOI matches the Crossref
-record. Crossref remains preferred, followed by matching OpenAlex and Semantic
-Scholar titles; enrichment does not change the original DOI, date or issue.
-The existing S2 batch already requests `title`, with no extra title request.
-When every usable source title is absent, a work with a valid canonical DOI is
-retained with an empty title. Its identity, page position and metadata are kept;
-no placeholder is stored and the selected-work count check remains enforced.
-An untitled work without a canonical DOI still cannot advance the checkpoint.
-Mismatched enrichment must never supply a title. Presentation may identify the
-missing field, while citation exports retain the empty title and actual DOI.
+标题增强只接受规范 DOI 与 Crossref 记录匹配的响应，优先级为 Crossref、OpenAlex、Semantic Scholar，不改变原 DOI、日期或期次。现有 Semantic Scholar 批量请求已包含 `title`，无需额外标题请求。所有来源都没有可用标题时，有有效规范 DOI 的记录以空标题保留身份、页位置和元数据，不存占位文本，仍校验选中记录数量；无规范 DOI 的无标题记录不能推进检查点。错配响应不能提供标题，界面缺标题提示也不能替代导出中的真实空标题和 DOI。
 
 通用 Crossref `relation` 不表示撤稿，不能填充 `retraction_dois`。`updated-by` 中 correction 等其他 update type、格式不合法的 DOI、source 标签、更新时间和原始 update payload 都会被忽略；多个来源重复报告同一撤稿 DOI 时只保留一条。
 
@@ -86,15 +77,15 @@ LitRadar 采用官方建议的“小窗口、created 条件、小结果单响应
 
 所有请求使用 `https://api.crossref.org/v1/journals/{issn}/works` 和 `type:journal-article`：
 
-| 步骤 | 查询与完成条件 |
-| ---- | -------------- |
-| 创建日期定界 | 无 cursor，`rows=1&sort=created&order=asc`，只加 `until-created-date:T`，不加 update 条件；用最早记录的 `created.timestamp` 毫秒值转换为 UTC 秒下界 `C`。 |
-| 普通分片 | 查询 `[C,T]` 或其子区间，无 cursor、无 sort/order、`rows=225`。响应条数必须等于 `min(message.total-results,225)`；总数不超过 225 时，实际条数和唯一数必须都与总数相等。 |
-| 大于 225 的分片 | 丢弃探测响应的文章前缀，将 UTC 整秒闭区间 `[a,b]` 二分为 `[a,m]`、`[m+1,b]`；继续单响应探测，最大深度 64。 |
-| 单秒仍大于 225 | 该片从 `cursor=*&rows=225` 完整重取，无 sort/order；后续只改变 cursor，其他参数固定，不使用 offset。 |
-| 完整性校验 | 每片累计条数、唯一数和首响应总数一致；每页总数不得漂移，父片等于子片之和，根总数等于全局唯一数。游标最后一页恰好满 225 条时继续确认终止响应，不能仅凭已达到总数提前完成。 |
+| 步骤            | 查询与完成条件                                                                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 创建日期定界    | 无 cursor，`rows=1&sort=created&order=asc`，只加 `until-created-date:T`，不加 update 条件；用最早记录的 `created.timestamp` 毫秒值转换为 UTC 秒下界 `C`。                 |
+| 普通分片        | 查询 `[C,T]` 或其子区间，无 cursor、无 sort/order、`rows=225`。响应条数必须等于 `min(message.total-results,225)`；总数不超过 225 时，实际条数和唯一数必须都与总数相等。   |
+| 大于 225 的分片 | 丢弃探测响应的文章前缀，将 UTC 整秒闭区间 `[a,b]` 二分为 `[a,m]`、`[m+1,b]`；继续单响应探测，最大深度 64。                                                                |
+| 单秒仍大于 225  | 该片从 `cursor=*&rows=225` 完整重取，无 sort/order；后续只改变 cursor，其他参数固定，不使用 offset。                                                                      |
+| 完整性校验      | 每片累计条数、唯一数和首响应总数一致；每页总数不得漂移，父片等于子片之和，根总数等于全局唯一数。游标最后一页恰好满 225 条时继续确认终止响应，不能仅凭已达到总数提前完成。 |
 
-An unfiltered discovery reporting exactly one valid complete work reuses that response through the existing collection validation and storage path. Discovery and Ready commit in one transaction with one sequence advance, removing the second Crossref request. Discovery with an update filter or a larger reported total still requires collection; incomplete or invalid responses do not qualify.
+无更新过滤的发现请求若恰好返回 1 条有效完整记录，会通过既有收集校验与存储路径复用该响应，在一个事务中提交 Discovery 与 Ready、推进一次序号，省去第二次 Crossref 请求。带更新过滤、总数更大、响应不完整或无效的情况仍必须进入收集流程。
 
 225 条沿用既有的单次请求规模。[官方允许的最大 rows 为 1000](https://github.com/CrossRef/rest-api-doc#rows)，无需使用最大值才能采用单响应与计数校验方案。较小阈值可能增加分片和请求数，不新增 `rows=0` 探测或超限回退。已验证的旧版完整叶片可以继续复用，已有游标仍以相同的 225 条参数恢复；新产生的 226–1000 条单秒游标状态不能交给仍要求总数大于 1000 的旧二进制恢复。
 
@@ -114,7 +105,7 @@ created 不变只能稳定分片归属，不能冻结文章字段或 update 条�
 
 core checkpoint 是确认进度的权威。缓存超前一页时先重放该已暂存步骤；内容已提交而控制事务失败时依靠既有 identity/upsert 重放。工作集缺失或可识别的自有文件损坏时，从同一 `C/T`、update 条件和 candidate 重建，不继续缺少前缀的旧 cursor。Provider 准备返回 Complete 时可清理缓存；若随后 core 提交失败，恢复仍按缺失缓存规则重取。路径或身份不匹配直接失败。
 
-When a complete Ready workset already has no update filter, an unsafe boundary switches selection to Unbounded in that same owned workset instead of downloading the identical range again. A missing frozen candidate still fails. Truly filtered results retain conservative unfiltered recollection. If the selection ACK is lost, replay restores the window phase from the persisted Emit selection; merely seeing an unfiltered Collect checkpoint does not trigger this shortcut. Existing schema, ownership checks and missing/damaged-workset recovery are unchanged.
+完整 Ready 工作集已无更新过滤时，若无法安全确定边界，就在同一自有工作集中把选择改为 Unbounded，不重复下载相同范围；冻结候选缺失仍会失败。真正经过过滤的结果继续保守地无过滤重取。选择 ACK 丢失时，从持久化的 Emit 选择恢复窗口阶段；仅看到无过滤 Collect 检查点不触发复用。结构、归属校验和工作集缺失或损坏时的恢复规则保持不变。
 
 ### 请求预算
 
@@ -128,9 +119,9 @@ OpenAlex `/sources` 以 ISSN 精确查询优先，题名 search 只作为 fallba
 
 某些 OpenAlex 套餐拒绝 `from_created_date`。客户端只对明确的 plan-restriction 错误启用一次 Provider-local fallback：清除日期 filter 和旧 query cursor，从 source 头部重放；核心模式和控制协议不变化。普通 429 仍然失败，不会被误判为套餐 fallback。
 
-The configured free OpenAlex keys returned a 30 req/s/key limit during the 2026-09-16 live checks. LitRadar uses 40-ms global slots (25 starts/s/key): process p owns epoch + p * 40 ms + n * actual_process_count * 40 ms. Changing the executor count redistributes those slots without multiplying the key budget. Account-specific responses take precedence over generic documentation; this profile does not assume a 100-RPS entitlement.
+2026 年 9 月 16 日的历史在线检查中，所配置免费 OpenAlex 密钥返回每密钥 `30 req/s` 的限制。LitRadar 使用跨进程 40 ms 槽位（每密钥每秒启动 25 次）：进程 `p` 拥有 `epoch + p * 40 ms + n * actual_process_count * 40 ms`。执行器数量只重新分配槽位，不放大密钥预算；账号实际响应优先于通用文档，本配置不假定拥有 100 RPS 权限。该历史观察不是本次编辑的新测试。
 
-All healthy OpenAlex keys participate in scheduling. Only successful responses and confirmed daily-quota responses update quota estimates; per-second 429 headers cannot falsely exhaust a key until midnight. Unknown quota allows one probe per key/process. Default concurrency is 6 workers per executor and 3 journal executors (18 DOI tasks); explicit limits are 32 workers, 3 executors and aggregate 96. Daily headroom is max(total_inflight_capacity * list_cost, actual_process_count * search_cost), initially list_cost=1 and search_cost=10. Thus 6x1 reserves 10, 6x3 reserves 30 and 32x3 reserves 96 credits. Trusted higher costs raise only the corresponding estimate. The internal source_search operation uses the search class; DOI, source ISSN and source works use the list class.
+所有健康 OpenAlex 密钥参与调度，只有成功响应和明确的每日额度响应更新额度估计；每秒速率 429 的头字段不能把密钥错误地耗尽到午夜。额度未知时，每个密钥、每个进程允许一次探测。默认每个执行器 6 个工作线程、3 个期刊执行器，共 18 个 DOI 任务；显式上限分别为 32、3，聚合容量 96。每日预留公式为 `max(total_inflight_capacity * list_cost, actual_process_count * search_cost)`，初始 `list_cost=1`、`search_cost=10`，因此 `6 × 1`、`6 × 3`、`32 × 3` 分别预留 10、30、96 个积分。可信的更高成本只上调对应估计；内部 `source_search` 使用搜索类别，DOI、来源 ISSN 和来源作品使用列表类别。
 
 [OpenAlex deprecation 说明](https://developers.openalex.org/guides/deprecations)记录其自 2026 年 2 月起忽略 mailto。LitRadar 的 source、source search、source works 和 DOI 请求均不发送 Crossref mailto，URL 长度预算也只计入 OpenAlex key。
 
@@ -148,7 +139,7 @@ Crossref Incremental 在整个工作集验证后，才从本地首个有效期�
 
 OpenAlex 继续使用原有有序分页与整期边界停止规则；套餐拒绝日期 filter 时保留既有无过滤重放。两条路径的 next anchor 都取冻结 candidate，不因恢复时出现新 head 而重新计算。日期 filter 不能替代期次边界校验。
 
-新 traversal checkpoint 为 v2，保存冻结窗口、Crossref token/收集阶段/计数或本地输出位置，仍受 65,536 字节上限约束。严格读取有效 v1：旧 Crossref cursor 被丢弃，在原 base/candidate 约束下建立新查询；旧 OpenAlex cursor 和既有恢复语义保留。未知版本、无版本或损坏状态、mode/base 不匹配直接拒绝。成功 anchor 仍为 v1，内容 v6、catalog control v4、batch ledger v2 和 Provider contract v3 均不变；无需清空正式数据库。开始写入 v2 后，不应直接用不能识别它的旧二进制恢复。
+新 traversal checkpoint 为 v2，保存冻结窗口、Crossref token/收集阶段/计数或本地输出位置，仍受 65,536 字节上限约束。严格读取有效 v1：旧 Crossref cursor 被丢弃，在原 base/candidate 约束下建立新查询；旧 OpenAlex cursor 和既有恢复语义保留。未知版本、无版本或损坏状态、mode/base 不匹配直接拒绝。成功 anchor 仍为 v1，遍历格式独立于内容库、控制库和批次账本版本；无需因此清空正式数据库。当前存储版本见[数据库参考](../database.md#连接和版本)。开始写入 v2 后，不应直接用不能识别它的旧二进制恢复。
 
 同次中断恢复可复用已验证片和当前有效 cursor，不再因 240 秒或 HTTP 500 重扫。下一次独立 `--update` 必须新建查询和 `T`，保留成功边界整期补查，才能收录上次期次后来追加的文章；终点 cursor 不是永久变更水位。当前规则没有固定回看 7 天或 30 天的窗口。
 
@@ -178,13 +169,13 @@ Scholarly 在线 adapter 不请求或读取索引时保存的 URL：
 
 ## 重试、日志与秘密
 
-Crossref HTTP-status retries remain bounded to three attempts, and eligible no-response transport failures retain their existing at-most-six-attempt policy. Retryable statuses honor the larger of Retry-After (integer seconds or HTTP date) and local backoff. Every logical Crossref/OpenAlex/Semantic Scholar request now has a 180-second monotonic ceiling covering admission, phase/cooldown waits, HTTP attempts and backoff; an earlier caller deadline wins. A server delay that cannot fit returns a recoverable failure immediately instead of retrying early. OpenAlex/S2 retain at most key_count + 2 attempts and every retry/failover obtains a fresh future phase. Auth failures disable only the selected key.
+Crossref 的 HTTP 状态重试最多尝试 3 次，适用的无响应传输失败最多尝试 6 次。可重试状态采用 `Retry-After`（整数秒或 HTTP 日期）与本地退避的较大值。每个逻辑 Crossref、OpenAlex 或 Semantic Scholar 请求都有 180 秒单调时钟上限，覆盖接纳、相位或冷却等待、HTTP 尝试和退避；调用方更早的截止时间优先。无法容纳服务端等待时间时立即返回可恢复失败，不提前重试。OpenAlex 和 Semantic Scholar 最多尝试 `key_count + 2` 次，每次重试或故障切换都必须取得新的未来相位；认证失败只禁用所选密钥。
 
-Crossref retains an observed server cooldown across logical calls, including when a retry is rejected by the request deadline. HTTP dates accept the preferred IMF format and both legacy forms required by [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#name-date-time-formats).
+Crossref 在逻辑请求之间保留已观察到的服务端冷却，即使本次重试被截止时间拒绝也不丢失。HTTP 日期接受首选 IMF 格式及 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#name-date-time-formats) 要求的两种旧格式。
 
-OpenAlex distinguishes confirmed daily-budget exhaustion from per-second or unknown 429 responses. Only successful responses or explicit insufficient-budget responses update daily quota; a transient 429 reporting remaining=0 and a midnight reset cannot poison the trusted balance. Same-period successes retain the smaller balance. Cooldowns advance monotonically and late shorter responses cannot shorten them. A 429 header immediately publishes cooldown without releasing its in-flight reservation while the body is read. Invalid/truncated 429 bodies preserve status and Retry-After; an oversized response still ends the logical request while preserving the throttle for other requests.
+OpenAlex 区分明确的每日额度耗尽与每秒或未知原因的 429。只有成功或明确额度不足响应更新每日余额；临时 429 中的 `remaining=0` 与午夜重置不能污染可信余额。同周期成功响应保留较小余额，冷却时间单调推进，迟到的较短响应不能缩短它。收到 429 响应头立即发布冷却，读取正文期间不释放在途预留。损坏或截断正文仍保留状态和 `Retry-After`；超大响应会结束本次逻辑请求，同时保留对其他请求的节流。
 
-Scheduler waits respect the same request deadline and consider the earliest recovering key even when a different key would normally be preferred. A canceled OpenAlex reservation releases exactly its own in-flight claim. A terminal DOI-batch failure stops admission of further batches and joins already-admitted work. Cohort phases are anchored to an initial UTC epoch and then advanced by monotonic elapsed time, so a local wall-clock adjustment cannot shorten a cooldown.
+请求调度等待遵守同一截止时间，并考虑最早恢复的密钥，即使通常优先选择另一密钥。取消 OpenAlex 预留时只释放自身在途占用。DOI 批次终态失败会停止接纳后续批次，并等待已接纳工作结束。进程组相位从初始 UTC 时刻出发，随后按单调经过时间推进，因此本地系统时钟调整不会缩短冷却。
 
 Crossref、OpenAlex 和 Semantic Scholar 共用的 HTTP client 禁止自动重定向。任何 3xx 都在原始上游响应处失败，不会访问 `Location`，也不会把 Semantic Scholar `x-api-key`、DOI batch body 或查询参数转发到其他 origin/协议。
 

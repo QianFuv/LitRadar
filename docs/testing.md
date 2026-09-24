@@ -19,7 +19,7 @@
 - Rust 私有实现规则放在所属模块旁；跨 crate 公共行为放在对应 crate 的 `tests/`；真实 `litradar` 进程边界放在 `crates/litradar/tests/`。
 - REST 路由场景放在 `crates/litradar-api/src/tests/`；MCP 协议和工具行为留在 `mcp.rs` 的现有测试所有者中。
 - 普通前端行为放在 `app/tests/*.test.tsx`。只有 jsdom 无法忠实提供的浏览器 API 或事件链，才进入 `browser-components/`。
-- fixture Playwright 只放在 `local-fixtures.spec.tsx`；真实后端 Playwright 只放在 `e2e/full-stack/`，且禁止 `page.route`、`context.route`、`route.fulfill`、`route.abort` 等拦截。
+- fixture Playwright 放在 `local-fixtures.spec.tsx`；真实后端 Playwright 只放在 `e2e/full-stack/`，且禁止 `page.route`、`context.route`、`route.fulfill`、`route.abort` 等拦截。
 - 跨栈稳定 JSON 放在 `testdata/scenarios/api/`；运行时生成物、随机凭据和数据库快照不得签入该目录。
 - 不为视觉整齐批量移动测试。审阅现有用例时使用以下处置：
   - **保留**：在正确层证明唯一可观察行为。
@@ -53,18 +53,19 @@ MSW 的全局 server 不安装登录态或业务默认值，并以 `onUnhandledR
 
 ## 浏览器边界
 
-Vitest Browser Mode 目前只拥有三类 jsdom 保真缺口：
+Vitest Browser Mode 覆盖 jsdom 无法忠实验证的行为：
 
 - Dialog 的 pointer、Escape 和焦点归还；
 - 真实 Clipboard API 的成功与不可用反馈；
-- 原生 IntersectionObserver、布局、滚动和事件链。
+- 原生 IntersectionObserver、布局、滚动和事件链；
+- 真实退出动效生命周期与减少动态效果偏好。
 
 普通渲染、表单、缓存、错误、mutation 和路由状态仍由 jsdom 拥有。新增 Browser Mode 用例前，应先证明所需 Web API、布局或事件顺序在 jsdom 中不可忠实验证。
 
 Playwright 有两个独立角色：
 
-- `fixture-chromium` 保留 7 条快速 UI smoke；它启动隔离 Next.js dev server，并显式拦截 API。
-- `full-stack-chromium` 串行运行 3 条关键旅程；它先构建静态前端，再启动实际 `litradar serve` 和临时 SQLite/index，验证 HttpOnly 会话、搜索/收藏持久化、管理员 mutation、权限、退出和匿名拒绝。
+- `fixture-chromium` 运行快速 UI 冒烟测试；它启动隔离 Next.js dev server，并显式拦截 API。
+- `full-stack-chromium` 串行运行真实后端关键旅程；它先构建静态前端，再启动实际 `litradar serve` 和临时 SQLite/index，验证 HttpOnly 会话、搜索/收藏持久化、管理员 mutation、权限、退出和匿名拒绝。
 
 全栈 fixture 由 marker 保护，只能写入 OS 临时根；不提供生产测试端点，不读取真实 `data/`、`secrets/` 或外部凭据，也不访问 Crossref、OpenAlex、Semantic Scholar、ZJLIB、CNKI、AI 或 PushPlus。
 
@@ -82,6 +83,8 @@ Playwright 有两个独立角色：
 | Provider 与索引        | `litradar-domain`、`litradar-provider`、`litradar-index`                                                         | source fixture、生产 ZJLIB transport 的 bounded loopback、迁移/identity/outbox | 真实 CLI index 对本地已完成 catalog 的恢复                          |
 | 调度与 worker          | worker scheduler/delivery/AI/PushPlus fixture 测试；runtime 协调测试                                             | 租约、时区、超时、取消、去重、持久状态和安全日志                               | scheduler run-once 启动实际类型化子命令并等待结果                   |
 | 容器运行时             | Dockerfile/Compose 静态检查                                                                                      | `scripts/container-smoke.mjs` 的 HTTP 与 inspect 断言                          | CI 对将要推送的同一镜像 ID 执行硬化启动和完整清理                   |
+
+征稿领域的最低充分测试分别位于[领域规则](../crates/litradar-domain/tests/cfp.rs)、[来源解析](../crates/litradar-sources/tests/cfp.rs)、[持久化](../crates/litradar-storage/tests/cfp.rs)、[API](../crates/litradar-api/src/routes/cfp/tests.rs)和[前端状态](../app/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
 
 ## 统一命令
 
@@ -104,19 +107,19 @@ cargo install cargo-llvm-cov --version 0.8.7 --locked
 
 所有统一命令都从仓库根运行，任一子步骤失败即停止，并转发 SIGINT/SIGTERM：
 
-| 命令                                | 精确职责                                                                                                             |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `node scripts/test.mjs fast`        | Cargo workspace 的 library/binary 测试，加 Vitest jsdom；不构建浏览器，不运行 E2E。                                  |
-| `node scripts/test.mjs integration` | cargo-nextest workspace、独立 doctest、OpenAPI 生成幂等和共享前端 API contract。                                     |
-| `node scripts/test.mjs e2e-smoke`   | 构建/导出前端，并只运行 3 条真实后端 Chromium 关键旅程。                                                             |
-| `node scripts/test.mjs all`         | Rust/前端静态检查、完整 nextest/doctest、jsdom、Browser Mode、7 条 fixture smoke、3 条 full-stack smoke 和前端构建。 |
-| `node scripts/test.mjs diagnostics` | 分别生成 Rust 和前端覆盖率报告；不应用百分比阈值。                                                                   |
+| 命令                                | 精确职责                                                                                                  |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `node scripts/test.mjs fast`        | Cargo workspace 的 library/binary 测试，加 Vitest jsdom；不构建浏览器，不运行 E2E。                       |
+| `node scripts/test.mjs integration` | cargo-nextest workspace、独立 doctest、OpenAPI 生成幂等和共享前端 API contract。                          |
+| `node scripts/test.mjs e2e-smoke`   | 构建/导出前端，并运行真实后端 Chromium 关键旅程。                                                         |
+| `node scripts/test.mjs all`         | Rust/前端静态检查、完整 nextest/doctest、jsdom、Browser Mode、fixture 和 full-stack 冒烟测试 和前端构建。 |
+| `node scripts/test.mjs diagnostics` | 分别生成 Rust 和前端覆盖率报告；不应用百分比阈值。                                                        |
 
 在命令末尾加 `--ci` 会选择 nextest CI profile、固定报告路径和浏览器 CI 诊断策略。`--ci` 不是额外测试层，也不会让统一脚本自行重试失败命令。
 
 ## 直接命令
 
-聚焦排障时可直接运行所属框架：
+聚焦排障时可直接运行所属框架。下面 Rust 命令从仓库根目录运行，将 `<crate>` 和 `<filter>` 替换为目标包与测试过滤条件；前端命令从 `app/` 运行：
 
 ```bash
 # Rust

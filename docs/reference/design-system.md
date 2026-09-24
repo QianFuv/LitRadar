@@ -1,10 +1,10 @@
 # 前端设计系统
 
-本文档描述当前已经实现的视觉 token、基础组件、布局和无障碍约定，不是外部品牌复刻规范。实现来源：
+本文档说明当前实现中的设计变量（token）、基础组件、布局和无障碍约定。修改界面时先复用这里的语义变量和组件，再核对实现来源：
 
-- `app/app/globals.css`：主题、字体、圆角、阴影和全局行为
-- `app/app/layout.tsx`、`app/app/providers.tsx`：根文档、主题和根级无障碍
-- `app/components/ui/*.tsx`：基础组件 variants
+- [全局样式](../../app/app/globals.css)：主题、字体、圆角、阴影和全局行为
+- [根布局](../../app/app/layout.tsx)、[根级上下文](../../app/app/providers.tsx)：根文档、主题和根级无障碍
+- [基础组件目录](../../app/components/ui/)：组件变体
 - `app/app/(protected)/*.tsx` 与业务组件：真实布局和响应式用法
 
 前端开发流程见[前端包说明](../../app/README.md)。
@@ -80,13 +80,13 @@ ThemeProvider 使用 `attribute="class"`、`defaultTheme="system"` 和 `enableSy
 
 | Utility token | 计算值 |
 | ------------- | -----: |
-| `radius-sm`   |    2px |
-| `radius-md`   |    4px |
-| `radius-lg`   |    6px |
-| `radius-xl`   |   10px |
-| `radius-2xl`  |   14px |
-| `radius-3xl`  |   18px |
-| `radius-4xl`  |   22px |
+| `radius-sm`   |   2 px |
+| `radius-md`   |   4 px |
+| `radius-lg`   |   6 px |
+| `radius-xl`   |  10 px |
+| `radius-2xl`  |  14 px |
+| `radius-3xl`  |  18 px |
+| `radius-4xl`  |  22 px |
 
 Badge 和滚动条使用全圆角；个别紧凑控件使用 Tailwind 自带的 `rounded-xs`。圆角由组件语义决定，不存在“主按钮禁止 pill”之类的额外品牌规则。
 
@@ -94,10 +94,10 @@ Badge 和滚动条使用全圆角；个别紧凑控件使用 Tailwind 自带的 
 
 项目保留两个历史命名的 shadow token：
 
-| Token                  | Light                           | Dark                            |
-| ---------------------- | ------------------------------- | ------------------------------- |
-| `--shadow-vercel-ring` | `#cecece 0 0 0 1px`             | `#484848 0 0 0 1px`             |
-| `--shadow-vercel-card` | `#d9d9d9` 外环 + 2px/4px 轻阴影 | `#3a3a3a` 外环 + 2px/4px 轻阴影 |
+| Token                  | Light                               | Dark                                |
+| ---------------------- | ----------------------------------- | ----------------------------------- |
+| `--shadow-vercel-ring` | `#cecece 0 0 0 1px`                 | `#484848 0 0 0 1px`                 |
+| `--shadow-vercel-card` | `#d9d9d9` 外环 + 2 px / 4 px 轻阴影 | `#3a3a3a` 外环 + 2 px / 4 px 轻阴影 |
 
 `shadow-vercel-ring` 用于 outline Button、Badge、Input、Select 等紧凑控件；`shadow-vercel-card` 用于 Card 和可见的 skip link。
 
@@ -114,7 +114,7 @@ Badge 和滚动条使用全圆角；个别紧凑控件使用 Tailwind 自带的 
 
 ### Button
 
-Variants：
+外观变体：
 
 - `default`：primary 实底
 - `destructive`：破坏性实底
@@ -123,12 +123,12 @@ Variants：
 - `ghost`：仅 hover 表面
 - `link`：文本链接
 
-Sizes：
+尺寸：
 
 - `xs`、`sm`、`default`、`lg`
 - `icon-xs`、`icon-sm`、`icon`、`icon-lg`
 
-Button 的 default、outline、secondary、ghost variants 提供配套 hover/active 底色，link 使用 primary-text。Button 统一使用 `rounded-md`、禁用态 opacity、有限属性 transition 和 3px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、筛选移除、收藏等高频或需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
+Button 的 default、outline、secondary、ghost variants 提供配套 hover/active 底色，link 使用 primary-text。Button 统一使用 `rounded-md`、禁用态 opacity、有限属性 transition 和 3 px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、筛选移除、收藏等高频或需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
 
 ### Badge
 
@@ -136,17 +136,17 @@ Badge 默认全圆角，支持 `default`、`secondary`、`destructive`、`outlin
 
 ### Card
 
-Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24px 外层纵向 padding 和统一 header/content/footer 结构。业务组件可以调整间距、hover 背景或 shadow，但应复用 Card 的语义结构。聚合设置中心是明确例外：内部使用 `SettingsSection` 的无阴影分隔行，避免在大 Dialog 中继续嵌套整组 Card elevation。
+Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24 px 外层纵向 padding 和统一 header/content/footer 结构。业务组件可以调整间距、hover 背景或 shadow，但应复用 Card 的语义结构。聚合设置中心是明确例外：内部使用 `SettingsSection` 的无阴影分隔行，避免在大 Dialog 中继续嵌套整组 Card elevation。
 
 ### 表单和浮层
 
 | 组件              | 实现约定                                                                    |
 | ----------------- | --------------------------------------------------------------------------- |
-| Input             | 36px 高、shadow ring、移动端 16px 字号、`md` 后 14px、3px focus ring        |
+| Input             | 36 px 高、shadow ring、移动端 16 px 字号、`md` 后 14 px、3 px focus ring    |
 | Checkbox / Switch | Radix 状态属性驱动颜色、焦点和禁用态                                        |
 | Select / Popover  | Radix portal，使用 popover token 与 shadow；内容限制在 viewport 内          |
 | Dialog            | `bg-black/50` overlay；默认居中，移动工作区侧栏使用 `placement="left"` 抽屉 |
-| ScrollArea        | Radix viewport 与 10px 自定义 scrollbar                                     |
+| ScrollArea        | Radix viewport 与 10 px 自定义 scrollbar                                    |
 | Skeleton          | muted pulse，用于加载占位                                                   |
 | StateMessage      | 紧凑的空态/错误/成功/警告表面；色彩始终配合图标、标题与 live-region role    |
 | Label             | 与原生表单关联；禁用状态随 peer/group 传播                                  |
@@ -161,7 +161,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 所有已认证页面都从当前 pathname 的 `settings` query 打开全局设置 Dialog。稳定分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`；分类切换使用 replace 语义，只改这一参数，关闭时移除参数，未知值直接规范化移除。`/settings` 与 `/tracking` 不是页面路由。
 
-桌面 `md` 及以上使用受 `90dvh` 和 1rem viewport margin 限制的大型双栏 Dialog：左侧约 240px 分类栏，右侧为固定标题和独立滚动内容。移动端使用 `h-dvh`、`w-screen` 的全屏单列布局，分类导航置于顶部并允许水平滚动，底部操作栏避开 safe area。
+桌面 `md` 及以上使用受 `90dvh` 和 1 rem viewport margin 限制的大型双栏 Dialog：左侧约 240 px 分类栏，右侧为固定标题和独立滚动内容。移动端使用 `h-dvh`、`w-screen` 的全屏单列布局，分类导航置于顶部并允许水平滚动，底部操作栏避开 safe area。
 
 该响应式外壳由无业务状态的 `SectionedDialogFrame` 统一提供，包括分类导航、当前分类标题、内容滚动区、关闭控件和焦点归还；设置中心只持有 URL、追踪草稿与确认状态，不重复实现布局。
 
@@ -171,7 +171,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 ### 页面导航与账号菜单
 
-首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行四列导航：“检索”“收藏”“周报”“征稿”。品牌、导航和数据库或收藏夹管理控件固定，下方筛选项、收藏夹和期刊列表独立滚动；征稿分组继续各自滚动。侧栏统一保留一层 16px 外层留白，数据库标签与选择器同行，列表不叠加外框；四个工作区的独立滚动列表共用 `sidebar-scroll-gutter`，左侧及上下各预留 4px、右侧预留 12px，并使用 `scrollbar-gutter: stable`，保护外侧边框和 3px 焦点环，期刊和收藏夹条目使用 8px 水平内边距及一致的选中状态。短标签始终可见，链接同时保留 `aria-label`、`title` 和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
+首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行四列导航：“检索”“收藏”“周报”“征稿”。品牌、导航和数据库或收藏夹管理控件固定，下方筛选项、收藏夹和期刊列表独立滚动；征稿分组继续各自滚动。侧栏统一保留一层 16 px 外层留白，数据库标签与选择器同行，列表不叠加外框；四个工作区的独立滚动列表共用 `sidebar-scroll-gutter`，左侧及上下各预留 4 px、右侧预留 12 px，并使用 `scrollbar-gutter: stable`，保护外侧边框和 3 px 焦点环，期刊和收藏夹条目使用 8 px 水平内边距及一致的选中状态。短标签始终可见，链接同时保留 `aria-label`、`title` 和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
 
 所有受保护页面右下角使用带圆形头像、用户名和展开提示的账号 pill。账号菜单只承载四类账号级动作：打开聚合设置中心、在“外观主题”右侧通过 Monitor / Sun / Moon 三个图标直接选择 system/light/dark 主题、向管理员显示管理面板入口，以及使用 destructive 语义退出登录。主题选项使用同一行的 radio items、明确的可访问名称与选中态，不再展开子菜单。页面级导航不应在账号菜单中重复；设置与管理链接必须保留当前 pathname 和现有 query，并用一次性标记让 Dialog 关闭后把焦点归还给账号按钮。菜单复用 Radix Dropdown Menu 的键盘导航、Escape、点击外部关闭与焦点归还行为，并避开设备 safe area。退出登录的红色属于明确的危险操作语义，不受普通 UI chrome 的中性色约束。
 
@@ -179,11 +179,11 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 文章卡片使用紧凑的单一表面：标题是第一视觉层，期刊/卷期/日期使用较小的中性元数据行，开放获取与预发表 badge 作为次级信号，摘要限制三行。整张卡片是详情入口，不再保留“查看详情”按钮及底栏；点击标题、摘要或空白区域均可打开，也支持 Enter、空格与可见焦点环，关闭后焦点回到卡片。文章卡片和详情标题使用 `text-wrap` 自然换行，优先利用可用行宽，摘要使用 `text-pretty`；窄屏 badge 排在标题下方，避免挤压长标题。拖选正文与卡片外的独立多选框不会打开详情。hover 只改变背景，沿用共享阴影环。
 
-搜索框、清空、搜索、帮助、筛选移除及收藏操作在移动端保留至少 44px 的实际命中高度，桌面为 40px；图标按钮同时保证相应宽度，不使用会重叠的伪元素扩展命中区。搜索清空即时反馈并归还输入焦点，不改变已提交查询。搜索历史与收藏选择器使用 10px 外圆角、8px padding 和 2px 内圆角，沿用共享 shadow stack。
+搜索框、清空、搜索、帮助、筛选移除及收藏操作在移动端保留至少 44 px 的实际命中高度，桌面为 40 px；图标按钮同时保证相应宽度，不使用会重叠的伪元素扩展命中区。搜索清空即时反馈并归还输入焦点，不改变已提交查询。搜索历史与收藏选择器使用 10 px 外圆角、8 px padding 和 2 px 内圆角，沿用共享 shadow stack。
 
 收藏按钮为两个文字状态预留相同宽度，避免切换时推动相邻操作；星形使用 `currentColor`，仅选中状态填充，配合文字和收藏夹的 `aria-pressed` 表达状态。收藏文字使用浅色 `amber-700` / 深色 `amber-400`，不对标签或图标重播 presence 入场。
 
-文章详情底部操作在 `md` 以下显示为 44×44px 的纯图标圆角按钮，间距为 4px；复制、摘要页、全文、数据源登录、收藏和移除收藏均保留可访问名称。加载与错误使用明确的状态图标。桌面端恢复文字与 8px 间距；收藏按钮在移动端固定宽度、桌面端为文字状态预留宽度。
+文章详情底部操作在 `md` 以下显示为 44 × 44 px 的纯图标圆角按钮，间距为 4 px；复制、摘要页、全文、数据源登录、收藏和移除收藏均保留可访问名称。加载与错误使用明确的状态图标。桌面端恢复文字与 8 px 间距；收藏按钮在移动端固定宽度、桌面端为文字状态预留宽度。
 
 搜索的 loading、error、empty 和 results 只在列表级状态边界交叉淡入淡出；错误与空态使用 `StateMessage`。列表边界之外只保留一个即时更新的 live region，分页加载复用该语义状态，避免退出中的视觉表面成为陈旧播报。长文章结果不逐卡应用 presence、layout 或 stagger，继续保留 `content-visibility-card` 与 Intersection Observer sentinel。
 
@@ -216,7 +216,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 - `<html lang="zh-CN">`。
 - 页面首个可聚焦元素是“跳到主要内容”链接；各页面主区域使用 `id="main-content"`。
 - `.skip-link` 平时视觉隐藏，`focus-visible` 时显示。
-- `prefers-reduced-motion: reduce` 将 animation/transition 缩短到 0.01ms，并关闭平滑滚动。
+- `prefers-reduced-motion: reduce` 将 animation/transition 缩短到 0.01 ms，并关闭平滑滚动。
 - 滚动条同时提供 Firefox 与 WebKit 样式。
 
 组件保障：
@@ -226,7 +226,7 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 - 加载、成功与错误反馈使用 `role="status"` / `role="alert"`。
 - 展开、选中和当前状态使用 Radix data attributes 或对应 ARIA 属性。
 - Dialog、DropdownMenu、Select、Popover、Checkbox 和 Switch 复用 Radix 的键盘与焦点行为。
-- 居中 Dialog（包括移动端全屏设置与管理面板）的关闭按钮统一位于右上角，距上、右边缘各 16px；复用 ghost Button，静止时仅显示 16px 细线叉号，不显示边框、阴影或底色，悬停时出现淡色圆角背景，键盘焦点保留可见提示。实际命中区为移动端 44×44px、桌面 40×40px。标题行预留按钮空间，设置中心与后台不单独覆盖位置或样式；左侧抽屉不显示该按钮。通用标题默认均衡换行，文章详情标题覆盖为自然换行，描述使用 `text-pretty`。
+- 居中 Dialog（包括移动端全屏设置与管理面板）的关闭按钮统一位于右上角，距上、右边缘各 16 px；复用 ghost Button，静止时仅显示 16 px 细线叉号，不显示边框、阴影或底色，悬停时出现淡色圆角背景，键盘焦点保留可见提示。实际命中区为移动端 44 × 44 px、桌面 40 × 40 px。标题行预留按钮空间，设置中心与后台不单独覆盖位置或样式；左侧抽屉不显示该按钮。通用标题默认均衡换行，文章详情标题覆盖为自然换行，描述使用 `text-pretty`。
 - Dialog 动画和普通 transition 受全局 reduced-motion 规则约束；关闭动画期间仍由 Radix 保持 portal 与焦点归还生命周期。
 
 颜色不能作为唯一状态信号；状态文本、图标或 ARIA 语义应与颜色同时存在。
@@ -237,17 +237,17 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 动效保持快速、克制且可预测：
 
-| 场景             | 进入                              | 退出                              |
-| ---------------- | --------------------------------- | --------------------------------- |
-| Overlay          | opacity，160ms                    | opacity，120ms                    |
-| 居中 Dialog      | opacity + 6px + scale 0.98，200ms | opacity + 4px + scale 0.98，140ms |
-| 左侧移动抽屉     | `translateX(-100%)`，220ms        | `translateX(-100%)`，160ms        |
-| Popover / Select | opacity + 4px + scale 0.98，140ms | opacity + 4px + scale 0.98，110ms |
-| 普通状态切换     | 120–180ms，进入曲线               | 120–140ms，退出曲线               |
+| 场景             | 进入                                | 退出                                |
+| ---------------- | ----------------------------------- | ----------------------------------- |
+| Overlay          | opacity，160 ms                     | opacity，120 ms                     |
+| 居中 Dialog      | opacity + 6 px + scale 0.98，200 ms | opacity + 4 px + scale 0.98，140 ms |
+| 左侧移动抽屉     | `translateX(-100%)`，220 ms         | `translateX(-100%)`，160 ms         |
+| Popover / Select | opacity + 4 px + scale 0.98，140 ms | opacity + 4 px + scale 0.98，110 ms |
+| 普通状态切换     | 120 至 180 ms，进入曲线             | 120 至 140 ms，退出曲线             |
 
 进入使用 `cubic-bezier(0.16, 1, 0.3, 1)`，退出使用 `cubic-bezier(0.4, 0, 1, 1)`。只对会被 React 条件卸载且需要退出生命周期的状态使用 JS presence；Radix portal 使用共享 CSS animation，继续由 Radix 管理键盘、Escape、点击外部与焦点。长结果列表不逐项错峰，key 必须来自稳定业务标识，控件只声明需要过渡的属性，不使用 `transition-all`。
 
-系统不使用 bounce、spring、parallax、drag、layout animation 或 `domMax`。`prefers-reduced-motion: reduce` 和测试 override 会移除空间位移、延迟与 JS presence 时长；CSS animation/transition 保持 0.01ms，以便状态完成而不制造可感知运动。
+系统不使用 bounce、spring、parallax、drag、layout animation 或 `domMax`。`prefers-reduced-motion: reduce` 和测试 override 会移除空间位移、延迟与 JS presence 时长；CSS animation/transition 保持 0.01 ms，以便状态完成而不制造可感知运动。
 
 ## 修改准则
 

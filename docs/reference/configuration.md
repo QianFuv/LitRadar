@@ -12,7 +12,7 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 | 固定前端/镜像/进程协议              | 构建与运行时   | 同源 API、开发代理、只读 Meta bundle、父子进程日志关联   |
 | 部署密钥文件                        | 一个部署       | 认证和解密数据库秘密值                                   |
 
-生产应用不把 LitRadar 自定义环境变量作为通用配置中心。旧版的前端 API/开发代理、bundle 路径、日志和父子进程环境覆盖均已删除且没有兼容回退；唯一的来源凭据例外是数据库 token 为空时，`litradar index` 可读取 `LITRADAR_CNKI_CAPTCHA_TOKEN` 作为单次国内 CNKI 探测输入。全局可配置业务值通过管理员前端写入数据库，用户级通知/追踪值通过个人设置中心写入数据库。固定打包/进程协议不属于用户设置，标准测试工具和 OS 进程发现仍保留自己的环境输入边界。
+生产应用不把 LitRadar 自定义环境变量作为通用配置中心。旧版的前端 API/开发代理、bundle 路径、日志和父子进程环境覆盖均已删除且没有兼容回退；唯一的来源凭据例外是数据库 token 为空时，`litradar index` 可读取 `LITRADAR_CNKI_CAPTCHA_TOKEN` 作为单次国内 CNKI 探测输入。全局可配置业务值通过管理员前端写入数据库，用户级通知/追踪值通过个人设置中心写入数据库。固定打包/进程协议不属于用户设置，征稿采集辅助程序另有明确的路径覆盖，见[征稿 CLI](cli.md#cfp)；标准测试工具和操作系统进程发现也保留各自的环境输入边界。
 
 ## 部署密钥文件
 
@@ -27,7 +27,7 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 - `litradar scheduler`
 - `litradar admin secrets migrate/verify`
 
-`litradar admin bootstrap`、`litradar admin backup` 和 `litradar openapi` 不需要密钥。生成、轮换和恢复要求见[安全说明](../operations/security.md)。
+`litradar admin bootstrap`、`litradar admin backup`、`litradar cfp` 和 `litradar openapi` 不需要密钥。生成、轮换和恢复要求见[安全说明](../operations/security.md)。
 
 ## 官方 Meta 打包路径
 
@@ -59,7 +59,7 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 | `audit_retention_days`             | `180`                      |   否 | `1..=3650` 的整数                 | 下一检查 | 持久安全审计保留                  |
 | `ai_allowed_base_urls`             | 空                         |   否 | 有序 HTTPS URL 列表               | 下一请求 | 用户可选择的 AI Endpoint 目录     |
 | `delivery_worker_concurrency`      | `2`                        |   否 | `1..=16` 的整数                   | 重启进程 | 手动投递子进程池                  |
-| `provider_proxy_policy`            | 四个 Provider 均为 `false` |   否 | 按能力目录生成的独立开关          | 重启进程 | 逻辑 Provider 到代理启用状态      |
+| `provider_proxy_policy`            | 内置 Provider 均为 `false` |   否 | 按能力目录生成的独立开关          | 重启进程 | 逻辑 Provider 到代理启用状态      |
 | `index_provider_routes`            | 三个官方目录的默认映射     |   否 | 每个 catalog 的能力过滤单选       | 下一命令 | CSV stem 到索引 Provider          |
 | `article_abstract_provider_orders` | 见下文                     |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线摘要页 fallback               |
 | `article_fulltext_provider_orders` | 见下文                     |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线全文 fallback                 |
@@ -121,17 +121,17 @@ URL 与策略在同一个 `PUT /api/admin/runtime-settings` 中按更新后的�
 
 ### Scholarly 请求预算
 
-| 上游             | 当前合同                         | LitRadar 安全相位                                                       | 池的含义                                        |
-| ---------------- | -------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------- |
-| Crossref         | polite `10 req/s`、并发 `3`      | 整个父进程树每 110 ms 一个尝试，约 `9.09 req/s`；最多三个期刊子进程在途 | mailto 是联系身份；数量不乘以容量               |
-| OpenAlex | Configured free keys measured at `30 req/s/key`, with daily credits | One start per key every 40 ms across the cohort (`25 req/s/key`) | Independent key quotas; no assumed 100-RPS entitlement |
-| Semantic Scholar | 每 key `1 req/s`                 | 每个健康 key 跨进程每 1,100 ms 一个相位，约 `0.909 req/s/key`           | 每个合法 key 有独立速率；key 间在周期内均匀错相 |
+| 上游             | 当前合同                                                | LitRadar 安全相位                                                       | 池的含义                                        |
+| ---------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------- |
+| Crossref         | polite `10 req/s`、并发 `3`                             | 整个父进程树每 110 ms 一个尝试，约 `9.09 req/s`；最多三个期刊子进程在途 | mailto 是联系身份；数量不乘以容量               |
+| OpenAlex         | 所配置免费密钥的历史观测为 `30 req/s/key`，另有每日额度 | 同一进程组内每个密钥每 40 ms 启动一次请求（`25 req/s/key`）             | 各密钥独立计额，不假定拥有 100 RPS 权限         |
+| Semantic Scholar | 每 key `1 req/s`                                        | 每个健康 key 跨进程每 1,100 ms 一个相位，约 `0.909 req/s/key`           | 每个合法 key 有独立速率；key 间在周期内均匀错相 |
 
 这些相位协调同一个 `litradar index` 父进程启动的最多三个期刊子进程，不协调另一条命令、另一台主机或其他应用。外部客户端共享同一 key、上游临时降额或窗口实现差异仍可能产生 429；LitRadar 会冷却对应 key 并保留安全证据，不承诺精确 100% 利用率或任何环境下都零限流。
 
-Scholarly defaults to 6 source workers and 3 journal executors, with explicit limits of 32 workers, 3 executors and aggregate 96. Counts are resolved independently for each selected provider after freezing the catalog inputs. Credentials are required only for selected Scholarly catalogs. Validate all selected profiles before opening batch/control/content databases or admitting provider work. Explicit invalid counts fail; they are never clamped. Missing counts remain omitted until this selection step.
+Scholarly 默认每个期刊执行器使用 6 个来源工作线程，同时运行 3 个期刊执行器；显式上限为 32 个工作线程、3 个执行器，聚合容量 96。目录输入冻结后，系统分别解析所选 Provider 的缺省值，并在打开批次、控制和内容库或接纳上游工作前校验全部配置。只有选中的 Scholarly 目录需要相应凭据。显式非法值会失败，不会被截断到上限；未指定的值保留到选择阶段再解析。
 
-Generic and domestic CNKI counts each accept 1..=32, with configured aggregate at most 32. Domestic CNKI defaults to 6 workers and 1 process; its detail pool is created once per provider and reused across papers pages and retries. Other providers retain defaults 6x1. OpenAlex daily headroom uses max(total_inflight_capacity * list_cost, actual_process_count * search_cost), initially 1 credit for lists and 10 for source search; trusted higher costs update each class independently. Unknown quota admits one probe per key/process.
+通用 Provider 与国内 CNKI 的工作线程数、进程数各接受 `1..=32`，聚合容量最多 32。国内 CNKI 默认 6 个工作线程和 1 个进程，详情线程池在 Provider 构造时创建，并供后续页面和重试复用；其他 Provider 同样默认 `6 × 1`。OpenAlex 的每日预留额度为 `max(total_inflight_capacity * list_cost, actual_process_count * search_cost)`，列表和来源搜索的初始成本分别为 1 和 10 个积分；可信响应显示更高成本时，各类别独立上调。额度未知时，每个密钥、每个进程只允许一次探测。
 
 实际吞吐同时受 Provider 速率、可用在途数、响应延迟和待处理工作量约束，可近似看作 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)`。增加 `workers` 或 `processes` 不能突破每 key 预算；它只在延迟或工作并行度成为瓶颈时提高可达吞吐。
 
@@ -157,7 +157,7 @@ Generic and domestic CNKI counts each accept 1..=32, with configured aggregate a
 - 顺序中的名称不得重复，且只能使用安全的小写 ASCII 运行时名称；未知 JSON 字段被拒绝。
 - 保存时 catalog key 确定性排序并压缩为规范 JSON。
 
-默认摘要配置是 `{"default":["scholarly","cnki"],"catalogs":{}}`，默认全文配置是 `{"default":["zjlib"],"catalogs":{}}`。`scholarly → cnki` 明确表示请求时先尝试 scholarly，失败后再尝试国内 CNKI；它不是索引来源或静态绑定。The retired overseas provider is no longer available.
+默认摘要配置是 `{"default":["scholarly","cnki"],"catalogs":{}}`，默认全文配置是 `{"default":["zjlib"],"catalogs":{}}`。`scholarly → cnki` 明确表示请求时先尝试 scholarly，失败后再尝试国内 CNKI；它不是索引来源或静态绑定。已退役的海外 Provider 不再可用。
 
 管理页调用 `GET /api/admin/provider-catalog`，把 `data/meta/*.csv` 与 `data/index/*.sqlite` 按安全 stem 合并为 catalog 列表，并按 `index_content`、`article_abstract`、`article_full_text` capability 过滤每个控件的候选项。索引 Provider 每个 catalog 单选；摘要页和全文各自支持默认排序、catalog 继承、覆盖与禁用。粒度止于 CSV/database stem，不细化到 CSV 内的期刊。
 
@@ -172,7 +172,7 @@ Generic and domestic CNKI counts each accept 1..=32, with configured aggregate a
 3. 旧顺序成为 `default`，`catalogs` 初始为空；旧空值保留为显式空 default。
 4. 成功后删除三个旧字段。重复或非法 Provider 名称会使整个迁移回滚并保留 v6 状态。
 
-认证库 v8 同时完成运行时 Provider 名称迁移。由 v1-v7 升级且缺少 Provider 配置行的旧安装，会先物化旧版有效默认值，再把 `cnki` 重写为 `cnki_oversea`、把 `zjlib_cnki` 重写为 `zjlib`；因此“从未保存默认值”和“显式保存旧默认值”的升级结果一致。Auth v19 subsequently replaces `cnki_oversea` with `cnki`, deduplicates provider orders, preserves empty overrides, and removes the retired proxy key. An explicit domestic proxy choice takes precedence; otherwise the overseas choice is inherited.
+认证库 v8 同时完成运行时 Provider 名称迁移。由 v1-v7 升级且缺少 Provider 配置行的旧安装，会先物化旧版有效默认值，再把 `cnki` 重写为 `cnki_oversea`、把 `zjlib_cnki` 重写为 `zjlib`；因此“从未保存默认值”和“显式保存旧默认值”的升级结果一致。认证库 v19 随后把 `cnki_oversea` 替换为 `cnki`，去重 Provider 顺序、保留空覆盖并移除退役代理键。显式国内代理选择优先；没有该选择时继承原海外选择。
 
 全新 v0 数据库不会物化这些 legacy 行，继续从当前代码默认值读取国内语义：中文索引为 `cnki`，摘要为 `scholarly → cnki`，全文为 `zjlib`。这一区分只保护升级语义，不改变管理员以后显式保存的配置。
 
@@ -289,7 +289,6 @@ Generic and domestic CNKI counts each accept 1..=32, with configured aggregate a
 - Semantic Scholar key：`x-api-key` 请求头
 - Crossref mailto：只作为 Crossref query 参数；不传给 OpenAlex
 
-
 ## 用户通知配置
 
 AI 凭据和 PushPlus 是用户级设置。每个用户在 `notification_settings` 中保存从全局 `ai_allowed_base_urls` 目录选择的主备 OpenAI 兼容 endpoint、key、model、prompt、PushPlus token 和偏好。
@@ -330,8 +329,7 @@ warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litra
 | `data/auth.sqlite`       | 认证和业务库                            |
 | `data/push_state`        | `.changes.json` 候选和只读旧状态导入源  |
 | `data/folder_push_state` | 只读旧 push 状态导入源                  |
-| `libs/simple-*`          | 平台 `simple` 扩展                      |
 
-`simple` 扩展只按项目根下的内置平台路径发现，不接受环境变量覆盖。
+`simple` 扩展从固定打包位置、可执行文件旁以及编译工作区的构建或平台目录发现；`--project-root` 和数据目录不能选择任意扩展，也没有环境变量覆盖。平台路径、来源与构建要求见[分词器说明](../../libs/simple/README.md)。
 
 `/usr/share/litradar/meta` 不在 `project-root` 下，只是发布镜像中的固定官方只读 bundle；`data/meta` 才是需要备份和恢复的运行时目录。

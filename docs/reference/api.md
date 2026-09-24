@@ -33,29 +33,17 @@ Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST �
 
 `/api/admin/*` 需要管理员身份，其余接口需要普通用户或管理员身份。
 
-## CFP tracking
+<a id="cfp-tracking"></a>
 
-`GET /api/cfp/journals?db=NAME&q=TEXT` returns the complete maintained journal
-catalog, including journals without articles, plus backend-calculated source
-coverage, counts and freshness. It contains no notice bodies.
+## 征稿追踪
 
-`GET /api/cfp/journals/{catalog_id}/notices?db=NAME&include_closed=false&limit=50`
-returns original-language notices, server-calculated states and initial submission
-deadlines. `limit` is capped at 200. Here `catalog_id` is the opaque maintained
-catalog identity or an explicit historical alias, and `db` is a required metadata
-catalog database filename. Valid unadapted members return an empty 200 response;
-missing catalogs or members return 404.
+`GET /api/cfp/journals?db=NAME&q=TEXT` 返回完整维护期刊目录，包括尚无文章的期刊，以及后端计算的来源覆盖、数量和新鲜度，不含征稿正文。
 
-The next-page token binds database, canonical journal, closed filter, ordering,
-metadata/source revision and evaluation instant through authenticated encryption.
-Tokens expire after 15 minutes. An altered, foreign or stale token returns 409;
-clients must discard accumulated pages and restart without a cursor. Responses
-use camelCase CFP fields and the existing snake_case `page` pagination fields.
+`GET /api/cfp/journals/{catalog_id}/notices?db=NAME&include_closed=false&limit=50` 返回征稿原文、服务端计算的状态和首次投稿截止日期。`limit` 最大为 200；`catalog_id` 是不透明的维护目录身份或显式历史别名，`db` 是必填的元数据目录数据库文件名。有效但尚未适配的成员返回空的 `200` 响应，不存在的目录或成员返回 `404`。
 
-CFP GET requests only read persisted data. Acquisition, original-text parsing,
-Obscura/PDF helpers and SQLite publication belong to the Rust backend. The
-operational entrypoint is `litradar cfp refresh`; see
-[CFP architecture](../architecture/cfp-tracking.md) for commands and limits.
+下一页的 `cursor` 令牌通过认证加密绑定数据库、规范期刊、是否包含已关闭征稿、排序、元数据及来源版本和状态计算时刻，15 分钟后过期。篡改、跨查询、过期或数据版本已变化的令牌返回 `409`；客户端必须丢弃已累积的页面，不带游标重新开始。征稿字段使用 camelCase，既有 `page` 分页字段仍使用 snake_case。
+
+征稿 GET 请求只读持久数据；采集、原文解析、Obscura/PDF 辅助程序和 SQLite 发布都由后端负责。操作入口见[征稿 CLI](cli.md#cfp)，采集和可用性边界见[征稿追踪架构](../architecture/cfp-tracking.md)。
 
 ## 通用约定
 
@@ -79,31 +67,17 @@ operational entrypoint is `litradar cfp refresh`; see
 - cursor 请求显式传 `include_total=true` 时，`total` 是不含 cursor/offset 条件的完整过滤结果总数。
 - 精确的默认值、上限和过滤字段以 OpenAPI schema 为准。
 
-全文查询 `q` 默认使用 `search_mode=simple`，把完整输入转义为一个 FTS5 字面短语，引号和 `OR` 等符号不会被解释为运算符。只有显式设置 `search_mode=advanced` 才启用 FTS5 查询语法；非法高级表达式返回 `400 Invalid search expression`。REST、MCP 与 storage 均限制搜索文本最多 2048 个 Unicode 字符、重复 `journal_id`/`area` 与期刊评级过滤值合计最多 500 项。
+全文查询 `q` 默认使用 `search_mode=simple`，把完整输入转义为一个 FTS5 字面短语，引号和 `OR` 等符号不会被解释为运算符。只有显式设置 `search_mode=advanced` 才启用 FTS5 查询语法；非法高级表达式返回 `400 Invalid search expression`。REST、MCP 与 storage 均限制搜索文本最多 2,048 个 Unicode 字符、重复 `journal_id`/`area` 与期刊评级过滤值合计最多 500 项。
 
-### Journal rating filters
+<a id="journal-rating-filters"></a>
 
-`GET /api/articles` and `GET /api/journals` accept repeated `utd_rating`,
-`abs_rating`, `fms_rating` and `fmscn_rating` parameters. The corresponding MCP
-tools, `search_articles` and `list_journals`, accept arrays with the same names.
-Values within one system are combined with OR; systems and other applicable
-filters are combined with AND. For example, `abs_rating=4&abs_rating=4%2A&fms_rating=A`
-means `(ABS 4 OR ABS 4*) AND FMS A`. `4*` is an exact grade, not a wildcard or threshold.
+### 期刊评级筛选
 
-Values are trimmed and deduplicated. Omitted parameters and empty MCP arrays leave
-a system unrestricted; a supplied blank string is invalid. Unknown nonblank grades
-and conflicting filters return no matches. All submitted filter items count toward
-the shared 500-item limit before deduplication, and each grade is limited to 2,048
-Unicode characters. Ratings apply to both page membership and the full filtered total;
-clients must retain filters on subsequent pages and reset cursors when filters change.
+`GET /api/articles` 和 `GET /api/journals` 接受重复的 `utd_rating`、`abs_rating`、`fms_rating` 和 `fmscn_rating` 参数；MCP 的 `search_articles`、`list_journals` 接受同名数组。同一评级体系内使用 OR，不同体系及其他适用筛选条件之间使用 AND。例如，`abs_rating=4&abs_rating=4%2A&fms_rating=A` 表示 `(ABS 4 OR ABS 4*) AND FMS A`。`4*` 是精确等级，不是通配符或阈值。
 
-`GET /api/meta/ratings?db=NAME` and MCP `list_journal_ratings` return four groups
-named after the parameters, each containing `{ "value": "4*", "count": 47 }`-shaped
-choices. Counts describe journals, including journals without articles, across the
-selected database. Unrated journals are excluded from choices and cannot match a
-selected grade. A database with no ratings returns four empty arrays. Choices follow
-the stored journal metadata without rebuilding article projections. Homepage ratings
-do not implicitly filter the independent favorites, weekly-update or CFP endpoints.
+评级值会去除首尾空白并去重。省略参数或传入空 MCP 数组表示不限制该体系，显式空白字符串则无效。未知的非空等级与冲突筛选返回空结果。所有输入项在去重前计入共享的 500 项上限，每个等级最多 2,048 个 Unicode 字符。评级同时约束页面成员与完整筛选总数；后续页必须保留筛选条件，条件变化时重置游标。
+
+`GET /api/meta/ratings?db=NAME` 和 MCP `list_journal_ratings` 返回以上述参数命名的四组选项。选项结构例如 `{ "value": "4*", "count": 47 }`，其中数字仅用于说明格式，计数对象是所选数据库的期刊，包括无文章的期刊。无评级期刊不会出现在选项中，也不匹配已选等级；无评级数据的库返回四个空数组。选项直接读取期刊元数据，无需重建文章投影。首页评级不会隐式筛选独立的收藏、周报或征稿接口。
 
 ### 错误
 
@@ -147,7 +121,7 @@ do not implicitly filter the independent favorites, weekly-update or CFP endpoin
 | `GET` | `/api/announcements`                  | 当前启用的公告                   |
 | `GET` | `/api/meta/databases`                 | 可用索引库                       |
 | `GET` | `/api/meta/areas`                     | 领域与数量                       |
-| `GET` | `/api/meta/ratings`                   | Journal grades and journal counts |
+| `GET` | `/api/meta/ratings`                   | 期刊评级与期刊数量               |
 | `GET` | `/api/meta/journals`                  | 期刊筛选选项                     |
 | `GET` | `/api/years`                          | 出版年份汇总                     |
 | `GET` | `/api/journals`                       | 期刊列表                         |
@@ -173,30 +147,28 @@ do not implicitly filter the independent favorites, weekly-update or CFP endpoin
 
 ### 认证与 CNKI 会话
 
-| 方法             | 路径                          | 作用                             |
-| ---------------- | ----------------------------- | -------------------------------- |
-| `POST`           | `/api/auth/register`          | 使用邀请码注册普通用户           |
-| `POST`           | `/api/auth/login`             | 登录并设置会话 Cookie            |
-| `GET`            | `/api/auth/invite-required`   | 注册与首管理员初始化状态         |
-| `GET`            | `/api/auth/me`                | 当前用户                         |
-| `POST`           | `/api/auth/change-password`   | 修改当前用户密码                 |
-| `POST`           | `/api/auth/logout`            | 注销当前会话                     |
-| `POST`           | `/api/auth/logout-all`        | 撤销当前用户的全部会话与访问令牌 |
-| `GET` / `POST`   | `/api/auth/tokens`            | 列出或创建访问令牌               |
-| `DELETE`         | `/api/auth/tokens/{token_id}` | 吊销访问令牌                     |
-| `GET` / `POST` / `DELETE` | `/api/auth/invite-code`       | 查看、生成或永久撤销当前用户的邀请码 |
-| `POST`           | `/api/auth/invite-code/rotate` | 撤销旧邀请码并原子签发替代码     |
-| `GET` / `DELETE` | `/api/cnki/session`           | 查看或清除当前用户的 CNKI 会话   |
-| `POST`           | `/api/cnki/login/start`       | 启动浙江图书馆扫码登录           |
-| `POST`           | `/api/cnki/login/poll`        | 轮询扫码登录状态                 |
+| 方法                      | 路径                           | 作用                                 |
+| ------------------------- | ------------------------------ | ------------------------------------ |
+| `POST`                    | `/api/auth/register`           | 使用邀请码注册普通用户               |
+| `POST`                    | `/api/auth/login`              | 登录并设置会话 Cookie                |
+| `GET`                     | `/api/auth/invite-required`    | 注册与首管理员初始化状态             |
+| `GET`                     | `/api/auth/me`                 | 当前用户                             |
+| `POST`                    | `/api/auth/change-password`    | 修改当前用户密码                     |
+| `POST`                    | `/api/auth/logout`             | 注销当前会话                         |
+| `POST`                    | `/api/auth/logout-all`         | 撤销当前用户的全部会话与访问令牌     |
+| `GET` / `POST`            | `/api/auth/tokens`             | 列出或创建访问令牌                   |
+| `DELETE`                  | `/api/auth/tokens/{token_id}`  | 吊销访问令牌                         |
+| `GET` / `POST` / `DELETE` | `/api/auth/invite-code`        | 查看、生成或永久撤销当前用户的邀请码 |
+| `POST`                    | `/api/auth/invite-code/rotate` | 撤销旧邀请码并原子签发替代码         |
+| `GET` / `DELETE`          | `/api/cnki/session`            | 查看或清除当前用户的 CNKI 会话       |
+| `POST`                    | `/api/cnki/login/start`        | 启动浙江图书馆扫码登录               |
+| `POST`                    | `/api/cnki/login/poll`         | 轮询扫码登录状态                     |
 
 公开注册始终要求有效邀请码，且只能创建非管理员。首个管理员必须在本机通过 `litradar admin bootstrap` 创建，API 不提供远程引导端点。新密码至少为 12 个 Unicode 字符。
 
 普通用户邀请码默认有效 7 天、最多注册 1 次。`GET` 返回 `status=active|expired|revoked|exhausted`、`expires_at`、`revoked_at`、`max_uses` 与 `use_count`；`rotate` 在一个事务中永久撤销当前未撤销码并创建替代码。过期、撤销或用尽的邀请码均不能注册，重复撤销返回 `404`。
 
-浏览器登录 Cookie 使用固定 7 天有效期，每次登录轮换，不因普通 API 访问而滚动延长。登录写入会原子复核密码验证时观察到的令牌代际；若改密、管理员重置或 `logout-all` 已先提交，旧验证结果只会得到认证失败，不能创建撤销后的新 Cookie。`POST /api/auth/logout` 只撤销当前凭据；`POST /api/auth/logout-all` 在一个事务中递增令牌代际并撤销该用户的浏览器登录令牌和全部 Personal Access Token。两个端点对携带 `litradar_session` 的请求无论成功或失败都返回清除 Cookie 的 `Set-Cookie`；`logout` 返回 `401` 表示请求到达前令牌已失效，第一方浏览器将其视为幂等注销完成。SQLite busy/locked 只执行一次短时重试；若持久删除仍未确认，返回 `503`：
-
-登录页的 `next` 查询参数会按 URL 规则规范化，只有同源站内路径会保留 pathname、query 和 fragment。含反斜杠或控制字符的值、绝对 URL、协议相对 URL 以及无法解析的值均视为 `/`，不会在登录前后导航到外部站点。
+浏览器登录 Cookie 使用固定 7 天有效期，每次登录轮换，不因普通 API 访问而滚动延长。登录写入会原子复核密码验证时观察到的令牌代际；若改密、管理员重置或 `logout-all` 已先提交，旧验证结果只会得到认证失败，不能创建撤销后的新 Cookie。`POST /api/auth/logout` 只撤销当前凭据；`POST /api/auth/logout-all` 在一个事务中递增令牌代际并撤销该用户的浏览器登录令牌和全部 Personal Access Token。两个端点对携带 `litradar_session` 的请求无论成功或失败都返回清除 Cookie 的 `Set-Cookie`；`logout` 返回 `401` 表示请求到达前令牌已失效，第一方浏览器将其视为幂等注销完成。SQLite busy/locked 只执行一次短时重试；若持久删除仍未确认，返回 `503`，响应示例如下：
 
 ```json
 {
@@ -210,9 +182,11 @@ do not implicitly filter the independent favorites, weekly-update or CFP endpoin
 
 浏览器此时必须清除非秘密本地用户快照，但不能声称服务端令牌已经撤销；第一方界面会保留跨刷新的警告和 request ID，并要求重新输入账号密码。重新认证取得一个新 Cookie 后，界面立即调用 `/api/auth/logout-all`，而不是尝试重放已清除的旧 Cookie。只有该请求成功后才清除警告。
 
+登录页的 `next` 查询参数只保留以 `/` 开头的站内路径及其查询参数和片段；含反斜杠、控制字符、绝对 URL（包括同源绝对地址）、协议相对 URL 或无法解析的值均回到 `/`，不会导航到外部站点。
+
 CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，不返回 token 或 Cookie 值。
 
-#### 访问令牌创建规则
+### 访问令牌创建规则
 
 `POST /api/auth/tokens` 先认证当前用户，再按以下固定顺序处理新令牌请求：
 
@@ -234,27 +208,28 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 
 ### 收藏与追踪
 
-| 方法             | 路径                                                       | 作用                       |
-| ---------------- | ---------------------------------------------------------- | -------------------------- |
-| `GET` / `POST`   | `/api/favorites/folders`                                   | 列出或创建文件夹           |
-| `PUT` / `DELETE` | `/api/favorites/folders/{folder_id}`                       | 重命名或删除文件夹         |
-| `GET` / `PUT`    | `/api/favorites/tracking`                                  | 查看或设置追踪文件夹       |
-| `GET` / `POST`   | `/api/favorites/folders/{folder_id}/articles`              | 列出或添加收藏             |
-| `DELETE`         | `/api/favorites/folders/{folder_id}/articles/{article_id}` | 删除单条收藏               |
-| `POST`           | `/api/favorites/folders/{folder_id}/articles/bulk`         | 批量添加收藏               |
-| `POST`           | `/api/favorites/folders/{folder_id}/articles/bulk-remove`  | 批量删除收藏               |
-| `POST`           | `/api/favorites/folders/{folder_id}/articles/bulk-move`    | 批量移动收藏               |
-| `GET`            | `/api/favorites/folders/{folder_id}/count`                 | 文件夹文章数               |
-| `GET`            | `/api/favorites/folders/{folder_id}/export`                | 导出引文数据               |
-| `GET`            | `/api/favorites/check`                                     | 查询一篇文章所在文件夹     |
-| `POST`           | `/api/favorites/check/batch`                               | 批量查询收藏状态           |
-| `GET`            | `/api/tracking/status`                                     | 当前追踪状态               |
-| `GET` / `PUT`    | `/api/tracking/notification-settings`                      | 当前用户通知设置           |
-| `GET`            | `/api/tracking/ai-endpoints`                               | 管理员批准的 AI Endpoint   |
-| `POST`           | `/api/tracking/push-weekly`                                | 启动当前用户的手动周报任务 |
-| `GET`            | `/api/tracking/push-weekly/status`                         | 查询手动周报任务状态       |
-| `GET`            | `/api/tracking/push-weekly/runs/{run_id}`                  | 按 ID 查询 owner/admin 任务 |
-| `POST`           | `/api/tracking/push-weekly/runs/{run_id}/cancel`           | 请求取消 owner/admin 任务   |
+| 方法             | 路径                                                       | 作用                          |
+| ---------------- | ---------------------------------------------------------- | ----------------------------- |
+| `GET` / `POST`   | `/api/favorites/folders`                                   | 列出或创建文件夹              |
+| `PUT` / `DELETE` | `/api/favorites/folders/{folder_id}`                       | 重命名或删除文件夹            |
+| `GET` / `PUT`    | `/api/favorites/tracking`                                  | 查看或设置追踪文件夹          |
+| `GET`            | `/api/favorites/folders/{folder_id}/articles/page`         | 收藏文章游标页                |
+| `GET` / `POST`   | `/api/favorites/folders/{folder_id}/articles`              | 列出或添加收藏                |
+| `DELETE`         | `/api/favorites/folders/{folder_id}/articles/{article_id}` | 删除单条收藏                  |
+| `POST`           | `/api/favorites/folders/{folder_id}/articles/bulk`         | 批量添加收藏                  |
+| `POST`           | `/api/favorites/folders/{folder_id}/articles/bulk-remove`  | 批量删除收藏                  |
+| `POST`           | `/api/favorites/folders/{folder_id}/articles/bulk-move`    | 批量移动收藏                  |
+| `GET`            | `/api/favorites/folders/{folder_id}/count`                 | 文件夹文章数                  |
+| `GET`            | `/api/favorites/folders/{folder_id}/export`                | 导出引文数据                  |
+| `GET`            | `/api/favorites/check`                                     | 查询一篇文章所在文件夹        |
+| `POST`           | `/api/favorites/check/batch`                               | 批量查询收藏状态              |
+| `GET`            | `/api/tracking/status`                                     | 当前追踪状态                  |
+| `GET` / `PUT`    | `/api/tracking/notification-settings`                      | 当前用户通知设置              |
+| `GET`            | `/api/tracking/ai-endpoints`                               | 管理员批准的 AI Endpoint      |
+| `POST`           | `/api/tracking/push-weekly`                                | 启动当前用户的手动周报任务    |
+| `GET`            | `/api/tracking/push-weekly/status`                         | 查询手动周报任务状态          |
+| `GET`            | `/api/tracking/push-weekly/runs/{run_id}`                  | 按 ID 查询 owner/admin 任务   |
+| `POST`           | `/api/tracking/push-weekly/runs/{run_id}/cancel`           | 请求取消 owner/admin 任务     |
 | `POST`           | `/api/tracking/push-weekly/runs/{run_id}/acknowledge`      | owner 确认 Unknown 并新建任务 |
 
 收藏文件夹名称按 Unicode scalar value 计数，最多 100 个字符；note 最多 2,000 个字符，`db_name` 最多 255 个字符。批量添加、删除、移动和检查每次最多提交 500 个 article item/ID；501 个及以上在构造 SQL 前返回 `400`。动态 `IN` 查询固定按 500 个 ID 分块，HTTP JSON body 超过框架的 2 MiB 上限仍返回 `413`。
@@ -352,7 +327,7 @@ Pragma: no-cache
 
 前文列出的免认证端点在成功响应时保持现有缓存头行为；本策略不会为它们新增共享缓存 TTL。
 
-生产 Web 由 Rust 从 `/app/web` 直接提供，浏览器同源访问 `/api/*`，不依赖 Next.js 运行时或 rewrite。只有本地开发的 Next.js 8000 入口会把后端命名空间代理到内部 Rust 8001。浏览器跨源直连时，管理员必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie credentials。
+生产 Web 由 Rust 从 `/app/web` 直接提供，浏览器同源访问 `/api/*`，不依赖 Next.js 运行时或 rewrite。只有本地开发的 Next.js 8000 入口会把后端命名空间代理到内部 Rust 8001。第一方前端始终同源。确需跨源访问的其他浏览器客户端必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie 凭据。
 
 成功的 `/_next/static/*` 哈希文件使用 `public, max-age=31536000, immutable`；页面、导航 payload 和导出的 404 使用 `no-cache`。客户端声明支持 gzip 时，Rust 优先返回镜像内预压缩文件并保留正确 MIME；原文件仍供不支持 gzip 的客户端和 Range 请求使用。后端保留 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 的路由优先级。
 
@@ -362,13 +337,13 @@ Pragma: no-cache
 
 当前工具：
 
-| 领域   | 工具                                                                 |
-| ------ | -------------------------------------------------------------------- |
+| 领域   | 工具                                                                                         |
+| ------ | -------------------------------------------------------------------------------------------- |
 | 元数据 | `list_databases`、`list_areas`、`list_years`、`list_journal_options`、`list_journal_ratings` |
-| 期刊   | `list_journals`、`get_journal`                                       |
-| 文章   | `search_articles`、`get_article`                                     |
-| 更新   | `get_weekly_updates`                                                 |
-| 收藏   | `list_folders`、`add_favorite`、`remove_favorite`                    |
+| 期刊   | `list_journals`、`get_journal`                                                               |
+| 文章   | `search_articles`、`get_article`                                                             |
+| 更新   | `get_weekly_updates`                                                                         |
+| 收藏   | `list_folders`、`add_favorite`、`remove_favorite`                                            |
 
 工具结果的 text content 是 JSON 字符串。收藏工具始终使用当前认证用户 ID，不能访问其他用户的数据。所有 MCP 字符串参数最多 2,048 个 Unicode 字符，数组参数最多 500 项；超限作为 tool-level error 返回，不进入 SQLite 查询。
 

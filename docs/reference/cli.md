@@ -1,10 +1,10 @@
 # CLI 参考
 
-LitRadar 只发布一个可执行文件 `litradar`。本文档是其七个规范子命令、参数和默认值的完整参考。任务流程分别见[开发指南](../guides/development.md)、[Docker 部署](../operations/docker.md)、[通知与追踪](../guides/notifications.md)和[备份与恢复](../operations/backup.md)。
+LitRadar 只发布一个可执行文件 `litradar`。本文档说明其公共子命令、参数和默认值。任务流程分别见[开发指南](../guides/development.md)、[Docker 部署](../operations/docker.md)、[通知与追踪](../guides/notifications.md)和[备份与恢复](../operations/backup.md)。
 
 ## 调用形式
 
-本地源码：
+以下调用形式是语法示意，将 `<subcommand>` 和 `<arguments>` 替换为后文的命令与参数。在仓库根目录使用本地源码：
 
 ```bash
 cargo run --bin litradar -- <subcommand> <arguments>
@@ -27,6 +27,7 @@ docker compose run --rm litradar <subcommand> <arguments>
 - `serve`
 - `admin`
 - `index`
+- `cfp`
 - `notify`
 - `push`
 - `scheduler`
@@ -36,14 +37,14 @@ docker compose run --rm litradar <subcommand> <arguments>
 
 ## 公共路径参数
 
-除 `serve` 和 `openapi` 的特殊边界外，业务子命令共享：
+`admin`、`index`、`notify`、`push` 和 `scheduler` 通常使用以下路径参数，具体维护操作的例外见各节：
 
-| 参数                  | 默认值                            | 含义                                     |
-| --------------------- | --------------------------------- | ---------------------------------------- |
-| `--project-root PATH` | 当前工作目录                      | 解析 `data/`、`libs/` 和相对路径的根目录 |
-| `--auth-db PATH`      | `<project-root>/data/auth.sqlite` | 显式认证/业务数据库                      |
+| 参数                  | 默认值                            | 含义                               |
+| --------------------- | --------------------------------- | ---------------------------------- |
+| `--project-root PATH` | 当前工作目录                      | 解析数据目录和相关运行路径的根目录 |
+| `--auth-db PATH`      | `<project-root>/data/auth.sqlite` | 显式认证/业务数据库                |
 
-`serve` 接受 `--project-root`，但不接受 `--auth-db`；它始终使用项目根下的 `data/auth.sqlite`。相对路径按 `project-root` 解析，绝对路径保持不变。
+`serve` 和 `cfp` 接受 `--project-root`，但不接受 `--auth-db`；它们始终使用项目根下的 `data/auth.sqlite`。其他相对路径按具体参数解析，不能假定所有参数都相对于 `project-root`；例如 CFP 的输入和采集目录相对于命令工作目录。
 
 ## `serve`
 
@@ -62,7 +63,7 @@ litradar serve --secret-key-file PATH
 | `--secret-key-file PATH`         | 必填         | 32 字节部署密钥                                      |
 | `--host HOST`                    | `127.0.0.1`  | HTTP 监听地址                                        |
 | `--port PORT`                    | `8000`       | HTTP TCP 端口                                        |
-| `--project-root PATH`            | 当前工作目录 | 数据、静态 Web 和扩展根目录                          |
+| `--project-root PATH`            | 当前工作目录 | 数据与静态 Web 根目录                                |
 | `--scheduler-interval-seconds N` | `30`         | 立即执行首个 tick 后的调度间隔；必须大于 0           |
 | `--require-secure-cookies`       | 关闭         | 要求数据库 `secure_cookies=true`，否则绑定端口前失败 |
 | `--development`                  | 关闭         | 本地开发只提供后端接口，不依赖或托管前端静态构建     |
@@ -140,11 +141,13 @@ litradar admin backup restore
 
 备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 选择创建时发现的全部 `data/index/*.sqlite`，不按内容 schema 筛选，明确排除可重建的 `data/index-control`（项目 `index-batches.sqlite` 和每个 catalog control）以及 `data/index-work`（Crossref 工作集）；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
 
-备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限。通过这些检查的历史数据库可以保留在备份中；恢复后的内容库仍须满足运行时精确 v6/v7/v8 结构或受支持的迁移、重建要求。
+备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限。通过这些检查的历史数据库可以保留在备份中；恢复后的内容库仍须满足运行时精确 v6/v7/v8/v9 结构或受支持的迁移、重建要求。
 
-### CNKI author repair
+<a id="cnki-author-repair"></a>
 
-`admin index repair-cnki-authors` repairs only `data/index/chinese_journals.sqlite`, retaining its v7 or v9 schema and tokenizer. It accepts a reviewed JSON array of corrections, each with `article_id` (decimal string), `before` (exact original author JSON string), `after` (replacement JSON string in the original string-array or object-array shape), and `reason` (evidence or classification). It does not infer exceptional names or fetch sources. Prepare the corrections separately from a read-only inspection of the target database.
+### CNKI 作者修复
+
+`admin index repair-cnki-authors` 只修复 `data/index/chinese_journals.sqlite`，保留其 v7 或 v9 结构与分词器。输入为已审阅的 JSON 修正数组，每项包含 `article_id`（十进制字符串）、`before`（精确原始作者 JSON 字符串）、`after`（保留原字符串数组或对象数组形状的替换 JSON 字符串）和 `reason`（依据或分类）。命令不推断特殊姓名，也不抓取来源；应先只读检查目标数据库，再单独准备修正文件。下面是操作顺序示意，将 `PATH` 和文件名替换为实际位置：
 
 ```text
 litradar admin index repair-cnki-authors --project-root PATH --corrections corrections.json --output plan.json
@@ -152,11 +155,11 @@ litradar admin index repair-cnki-authors --project-root PATH --corrections plan.
 litradar admin index repair-cnki-authors --project-root PATH --corrections plan.json --verify --backup before.sqlite
 ```
 
-The first command is a read-only dry run; it creates a new manifest bound to the complete source schema, authoritative non-author values, all article IDs and author values, and the search tokens of unaffected articles. Review that manifest before applying it. Output and backup parent directories must already exist; existing files are never overwritten. Put both outside managed database directories. Stop all writers and wait for service heartbeats and index leases to expire before applying. The command uses the shared index maintenance marker, a SQLite write transaction, and a consistent SQLite backup before any mutation. The backup must also match the dry-run snapshot.
+第一条命令只读目标数据库，并创建新的修复清单；清单绑定完整源结构、权威非作者字段、全部文章 ID 与作者值，以及未受影响文章的搜索词项。应用前必须审阅清单。输出与备份的父目录必须已存在，且位于受管数据库目录之外；已有文件不会被覆盖。应用前停止全部写入者，等待服务心跳和索引租约过期。命令使用共享维护标记、SQLite 写事务，并在修改前创建一致性备份；备份也必须匹配预演快照。
 
-Only `authors_json` and the corresponding complete FTS rows change. Article IDs, identity aliases, listing, notifications, and all other canonical fields remain unchanged. Verification compares the persisted database and backup with the bound digests, checks integrity and FTS membership, and independently reconstructs the affected rows to compare their tokenizer-generated terms, columns and positions. Repeating the dry run with the original correction array reports zero pending corrections. A changed source snapshot requires a new dry run; do not edit manifest digests manually.
+只有 `authors_json` 和对应完整 FTS 行会改变，文章 ID、身份别名、列表投影、通知和其他规范字段保持不变。验证会比较持久数据库、备份与绑定摘要，检查完整性和 FTS 成员，并独立重建受影响行以比较分词器产生的词项、列和位置。使用原始修正数组再次预演应报告零项待修正。源快照改变时必须重新预演，不得手改清单摘要。
 
-Keep the backup and manifest together. A failed operation rolls back; an uncertain commit or rollback retains the maintenance marker and blocks normal startup. Inspect the actual database and verify the retained backup before recovery. Restore while all writers are stopped, preserving the original schema; never lower `user_version` manually. This command does not accept `--auth-db` and does not migrate runtime provider settings.
+备份与清单应一起保留。操作失败时回滚；提交或回滚结果不确定时保留维护标记并阻止正常启动。恢复前应检查实际数据库并验证保留备份，所有写入者停止后再按原结构恢复，不能手工降低 `user_version`。本命令不接受 `--auth-db`，也不迁移运行时 Provider 设置。
 
 ### 索引存储优化
 
@@ -166,9 +169,9 @@ litradar admin index optimize-storage
     [--project-root PATH]
 ```
 
-这是显式、离线、整目录替换操作，不接受 `--auth-db` 或部署密钥。它把受支持的精确 v6/v7/v8 内容库从规范化关系表重建为精确 v8，删除 stored-content FTS 的重复内容并压缩 freelist；普通 `serve`、查询和索引启动只 preflight 精确 v6/v7/v8，不会自动升级 v6/v7。
+这是显式、离线、整目录替换操作，不接受 `--auth-db` 或部署密钥。它把受支持的精确 v6/v7/v8/v9 内容库从规范关系表重建为当前 v9，使用 `simple 0` 生成搜索投影、移除重复 FTS 内容并压缩空闲页。普通服务或索引启动对现有 v6/v7/v8/v9 只做结构预检，不自动升级旧分词器。
 
-运行前必须停止 `serve`、独立 `index`/投递命令和计划任务子进程，等待 API/worker/调度心跳超过 90 秒，并等待所有 batch/catalog lease 到期或由正常退出释放。先创建并独立验证带 `--include-indexes` 的备份；需要旧二进制降级时，必须保留这份 v6 备份。可用空间至少按 `2 × source_bytes + 64 MiB` 预留；命令也会在复制前记录 `temporary_bytes_required` 估计。
+运行前必须停止 `serve`、独立 `index`/投递命令和计划任务子进程，等待 API/worker/调度心跳超过 90 秒，并等待所有 batch/catalog lease 到期或由正常退出释放。先创建并独立验证带 `--include-indexes` 的备份；需要旧二进制降级时，必须保留受目标旧二进制支持的优化前索引备份。可用空间至少按 `2 × source_bytes + 64 MiB` 预留；命令也会在复制前记录 `temporary_bytes_required` 估计。
 
 成功 stdout 为一行 JSON：
 
@@ -176,7 +179,7 @@ litradar admin index optimize-storage
 - `report` 包含 `database_count`、`source_bytes`、`temporary_bytes_required`、`optimized_bytes`、`reclaimed_bytes` 和 `databases`；
 - 每个数据库包含安全文件名、`source_schema_version`、`target_schema_version`、权威 `row_counts`，以及 `before`/`after` 的 `file_bytes`、页大小/页数、freelist、FTS 分配和 `has_content_shadow`。
 
-优化器在任何目录切换前验证源库 `quick_check`、外键、FTS rowid 和固定查询语料；候选还必须通过精确 v8 schema、权威表计数/键集合、无影子表和 freelist 不超过 1%。切换后会再次执行完整验证，失败时自动回滚；成功后才删除 rollback 和维护标记。
+优化器在任何目录切换前验证源库 `quick_check`、外键、FTS rowid 和固定查询语料；候选还必须通过精确 v9 schema、权威表计数/键集合、无影子表和 freelist 不超过 1%。切换后会再次执行完整验证，失败时自动回滚；成功后才删除 rollback 和维护标记。
 
 失败 stdout 先输出 `{"status":"failed","error":...}`，命令随后非零退出。稳定 `error.code` 包括：
 
@@ -207,42 +210,36 @@ litradar index --secret-key-file PATH
     [--acknowledge-unknown-notify]
 ```
 
-| 参数                                       | 默认值   | 含义                                                         |
-| ------------------------------------------ | -------- | ------------------------------------------------------------ |
-| `--secret-key-file PATH`                   | 必填     | 解密索引运行配置                                             |
-| `--file FILE`、`-f FILE`                   | 全部 CSV | 只处理 `data/meta/` 下的一个文件                             |
-| `--stop-after FILE`                       | 关闭     | 指定目录完成保存后暂停，保留原 batch 和后续目录供续跑          |
-| `--workers N`、`-w N`                      | `6`      | 每个期刊子进程内的 CNKI 详情请求和 OpenAlex DOI 增强并发上限 |
-| `--processes N` | Scholarly `3`; others `1` | Maximum journal executors per CSV, resolved for each selected provider |
-| `--issue-batch N`                          | `8`      | 旧 active batch 的恢复兼容值；当前 Provider 不读取该值       |
-| `--timeout N`                              | `20`     | 上游 HTTP 超时秒数                                           |
-| `--resume` / `--no-resume`                 | 开启     | 续跑兼容 active batch，或显式放弃它并从 committed anchor 新建 batch |
-| `--update` / `--no-update`                 | 关闭     | 是否执行成功期次边界增量并生成变更清单                       |
-| `--full-rescan` / `--no-full-rescan`       | 关闭     | 是否扫描完整 Provider 历史且不生成变更清单                   |
-| `--notify` / `--no-notify`                 | 关闭     | 更新成功后启动 `litradar notify`                             |
-| `--notify-dry-run` / `--no-notify-dry-run` | 关闭     | 下游 notify 是否 dry-run                                     |
-| `--acknowledge-unknown-notify`              | 关闭     | 审核 Unknown handoff 后确认并创建新的 notify attempt          |
+| 参数                                       | 默认值                       | 含义                                                                |
+| ------------------------------------------ | ---------------------------- | ------------------------------------------------------------------- |
+| `--secret-key-file PATH`                   | 必填                         | 解密索引运行配置                                                    |
+| `--file FILE`、`-f FILE`                   | 全部 CSV                     | 只处理 `data/meta/` 下的一个文件                                    |
+| `--stop-after FILE`                        | 关闭                         | 指定目录完成保存后暂停，保留原 batch 和后续目录供续跑               |
+| `--workers N`、`-w N`                      | `6`                          | 每个期刊子进程内的 CNKI 详情请求和 OpenAlex DOI 增强并发上限        |
+| `--processes N`                            | Scholarly 为 `3`，其他为 `1` | 每个 CSV 的期刊执行器上限，按所选 Provider 分别解析                 |
+| `--issue-batch N`                          | `8`                          | 旧 active batch 的恢复兼容值；当前 Provider 不读取该值              |
+| `--timeout N`                              | `20`                         | 上游 HTTP 超时秒数                                                  |
+| `--resume` / `--no-resume`                 | 开启                         | 续跑兼容 active batch，或显式放弃它并从 committed anchor 新建 batch |
+| `--update` / `--no-update`                 | 关闭                         | 是否执行成功期次边界增量并生成变更清单                              |
+| `--full-rescan` / `--no-full-rescan`       | 关闭                         | 是否扫描完整 Provider 历史且不生成变更清单                          |
+| `--notify` / `--no-notify`                 | 关闭                         | 更新成功后启动 `litradar notify`                                    |
+| `--notify-dry-run` / `--no-notify-dry-run` | 关闭                         | 下游 notify 是否 dry-run                                            |
+| `--acknowledge-unknown-notify`             | 关闭                         | 审核 Unknown handoff 后确认并创建新的 notify attempt                |
 
 约束：
 
-- Explicit workers/processes each accept 1..=32. Provider-specific capacity is checked after freezing all selected catalogs, before batch admission or index database creation. Missing counts are resolved independently; explicit invalid combinations fail without clamping. Legacy issue-batch must remain at least 1 for resume compatibility.
-- Scholarly defaults to 6 workers and 3 processes; explicit limits are 32 workers, 3 processes and aggregate 96. Domestic CNKI defaults to 6 workers and 1 process with aggregate at most 32. Other providers retain defaults 6x1 and aggregate 32. An unused configured route does not constrain the selected catalogs.
-- 国内 CNKI 中，`processes` 并行不同期刊，`workers` 是每个期刊子进程在 Provider 构造时创建一次的固定详情线程池；所有 papers 页复用该池，Provider 释放时关闭并等待全部线程。期刊定位、刊期树、papers 页、checkpoint 和 SQLite 提交仍保持有序。实际详情在途量不超过 `workers × min(processes, 期刊数)`、聚合上限 32 和各当前 papers 页的文章数。
-- 只要选中的目录路由到 Scholarly，OpenAlex key、Semantic Scholar key 和 Crossref mailto 都必须存在；缺少任一类会在创建内容库、控制库或其他索引状态前失败。
-- `--update` 与 `--full-rescan` 互斥；冲突会在数据库迁移、Provider 构造和 worker 启动前失败。
-- `--notify` 必须和 `--update` 同时使用。
-- 单独传 `--notify-dry-run` 不会启动 notify；它只修改 `--notify` handoff 的模式。
-- `--acknowledge-unknown-notify` 必须与默认 `--resume`、`--update` 和 `--notify` 同时使用；它是恢复控制，不进入 batch correctness fingerprint。
-- Scholarly workers bound OpenAlex DOI tasks per executor. The default 6x3 allows 18 such tasks; the explicit 32x3 boundary allows 96. OpenAlex starts are separately paced at 40 ms/key (25 starts/s/key), below the configured keys' measured 30-RPS limit. Daily headroom is max(total_inflight_capacity * list_cost, actual_process_count * search_cost), initially 1 and 10 credits respectively, with independent upward corrections from trusted responses.
-- Crossref 不使用 `--workers`。整个父进程树共享一个 110-ms polite 相位序列，约 `9.09 req/s`，最多由三个期刊子进程各保留一个在途请求。仅第一个稳定 mailto 被发送；增加 mailto 不会增加 10-RPS/并发-3 合同容量。
-- Semantic Scholar 不使用 `--workers`。每个合法 key 各有一个跨进程 1,100-ms 相位序列，约 `0.909 req/s/key`；不同 key 在周期内均匀错开，所以两个或三个 key 可线性增加建模容量。增加 `--processes` 只分配每 key 的相位所有权，不突破 `1 req/s/key`。401/403 只禁用对应 slot，429/Retry-After 只冷却对应 slot，重试同样必须取得未来相位。
-- 这些共同 epoch 只协调同一条 `litradar index` 命令的父进程树，不协调其他命令、主机或应用。实际吞吐受 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)` 约束；低 worker、慢响应或工作不足时不会达到理论 RPS。上游临时降额或其他客户端共享 key 时仍可能返回 429，CLI 不承诺精确 100% 利用率或普遍零限流。
-- 多个 CSV 仍逐个处理。
-- Concurrency defaults follow upstream budgets; there is no default 100-MiB memory gate. Issue-batch does not control runtime concurrency or memory. Memory profile thresholds are opt-in; OOM and functional failures remain failures.
+- 显式 `workers/processes` 各接受 `1..=32`。冻结全部选中目录后、接纳批次或创建内容库前，系统检查 Provider 容量。缺省值分别解析；非法组合直接失败，不截断到上限。遗留 `issue-batch` 至少为 1，仅用于恢复兼容。
+- Scholarly 默认 6 个工作线程和 3 个进程，上限分别为 32、3，聚合容量最多 96；国内 CNKI 默认 6 个工作线程和 1 个进程，聚合容量最多 32。其他 Provider 默认 `6 × 1`，聚合上限 32。未选中的配置路由不限制本次目录。
+
+并发只控制任务容量，不提高上游 API 配额。OpenAlex、Crossref 和 Semantic Scholar 的请求节奏、密钥隔离与额度计算统一见[请求预算](configuration.md#scholarly-请求预算)。`--issue-batch` 不控制并发或内存；没有默认 100 MiB 内存门禁，性能分析阈值由运维人员显式选择。
+
+`--update` 与 `--full-rescan` 互斥；`--notify` 必须配合 `--update`。单独的 `--notify-dry-run` 只设置下游模式，不会启动通知。`--acknowledge-unknown-notify` 必须与默认 `--resume`、`--update`、`--notify` 同用，且不进入批次正确性指纹。多个 CSV 仍逐个处理。只要选中 Scholarly 目录，OpenAlex、Semantic Scholar 密钥和 Crossref 联系邮箱都必须配置。
+
+国内 CNKI 的 `processes` 并行期刊，`workers` 限制每刊固定详情线程池；定位、期次、列表页、检查点和 SQLite 提交保持有序。在途详情量受工作线程数、实际期刊执行器数、聚合容量和当前页文章数共同限制。
 
 索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。每个 worker 都在独立的 Unix process group 或 Windows Job Object 中启动，父进程错误、协议失败和清理路径会终止并等待整个进程树。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。手动投递 dispatcher 还会启动私有 `delivery-run --run-id ... --owner-id ...`，child 只从认证 SQLite 和部署密钥加载权威配置。私有命令必须同时携带内部 parent marker，不出现在 `--help`，也不是用户可配置的 CLI。同步公共 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
 
-Command results retain status, message, csvs and numeric effective_concurrency fields. Each csv now includes concurrency with resolved configured_workers/processes/capacity, aggregate_limit, effective_workers, executor_count, child_process_count, inline_executor_count and effective_aggregate_capacity. A single inline executor counts as one executor and zero children. Worker cohorts count only nonempty pending partitions; completed/skipped and manifest-only recovery catalogs report zero active capacity. Top-level configured and effective summaries each select the maximum-capacity catalog tuple, without multiplying maxima from different catalogs. An empty selection reports zero resolved capacity. requested_workers/processes preserve omitted values as null. These are task capacities, not measured physical HTTP overlap. source_attempt_count retains its historical meaning: committed canonical provider pages, including persisted counts on recovery, not HTTP requests or retries. written_article_count remains a fixed-size count.
+命令结果保留 `status`、`message`、`csvs` 和数值 `effective_concurrency`。每个 CSV 的 `concurrency` 包含解析后的 `configured_workers/processes/capacity`、`aggregate_limit`、`effective_workers`、`executor_count`、`child_process_count`、`inline_executor_count` 和 `effective_aggregate_capacity`。单个内联执行器计为 1 个执行器、0 个子进程；只有非空待处理分区计入工作组，已完成、跳过或仅恢复清单的目录活动容量为 0。顶层配置与实际摘要分别选择容量最大的目录元组，不会把不同目录的最大值相乘。空选择容量为 0，未指定的 `requested_workers/processes` 保留为 `null`。这些字段表示任务容量，不是实测 HTTP 重叠数。`source_attempt_count` 统计已提交的规范 Provider 页面，包括恢复时保存的计数，不是 HTTP 请求或重试次数；`written_article_count` 仍是固定大小计数。
 
 发布镜像把 bundle 固定放在 `/usr/share/litradar/meta`。普通 `index` 仅在精确的 `bundle-manifest.json` 存在时，于认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。该路径不接受环境变量或 CLI 覆盖；本地构建通常发现不到 manifest，因此执行 no-op。运行目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
 
@@ -260,7 +257,7 @@ CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_alias
 
 `index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册 `IndexContentProvider`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线摘要页和全文使用各自的 default + per-catalog 顺序，和索引 Provider 单选相互独立。
 
-内容库必须是新建/空 v0、精确 v6/v7/v8，或可事务迁移到 v8 的精确 v4/v5。新文件使用 v8；普通启动对精确 v6/v7/v8 只做 preflight，不自动改写现有 v6/v7 文件。非空 v0 及 v1–v3 会返回包含确切路径的 rebuild-required 错误；命令不自动删除、改名或降低 `user_version`。先备份，再移动或删除点名文件并重建。
+内容库的新建、预检和迁移要求统一见[数据库版本](database.md#连接和版本)。新建库使用 v9；精确 v6/v7/v8/v9 在普通启动时保留原结构，精确 v4/v5 可事务迁移到 v9。非空 v0 及 v1 至 v3 返回包含确切路径的重建错误，命令不会自动删除、改名或降低 `user_version`。
 
 ### 实时恢复与增量同步
 
@@ -324,7 +321,7 @@ litradar index \
 
 ```bash
 litradar index \
-  --secret-key-file /run/secrets/litradar.key \
+  --secret-key-file /run/secrets/litradar_key \
   --project-root /app \
   --file english_journals.csv \
   --update
@@ -351,6 +348,38 @@ litradar index \
   --file english_journals.csv \
   --full-rescan
 ```
+
+## `cfp`
+
+征稿命令使用 `<project-root>/data/auth.sqlite`，不接受 `--auth-db` 或 `--secret-key-file`。`--project-root` 可省略，默认当前工作目录。以下是语法示意，将 `PATH`、`FILE`、`NAME` 和 `ID` 替换为实际值：
+
+```text
+litradar cfp import --input FILE [--project-root PATH]
+litradar cfp refresh (--db NAME | --catalog-id ID | --all)
+    [--project-root PATH]
+    [--full-text]
+    [--capture-dir PATH]
+    [--resume-captures]
+    [--obscura-path PATH]
+    [--pdftotext-path PATH]
+    [--source-timeout SECONDS]
+    [--timeout SECONDS]
+```
+
+`import` 接受最多 16 MiB 的后端种子格式，先校验输入，再迁移认证库。导入只追加，不能替换已有期刊的在线快照；相同字节重复导入幂等，外部输入以内容摘要生成身份。
+
+刷新必须且只能选择 `--db`、`--catalog-id`、`--all` 之一。`--db` 要使用完整文件名，例如 `english_journals.sqlite`；`--catalog-id` 接受维护身份或显式历史别名。单个期刊没有适配来源时报错；有效数据库没有适配来源时可返回空结果。普通刷新发现新征稿，`--full-text` 则重新采集已存征稿的完整正文，包括仅有快照的来源。
+
+| 参数                | 默认值与约束                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------- |
+| `--source-timeout`  | 90 秒；接受 1 至 600 秒                                                                     |
+| `--timeout`         | 整批 600 秒；接受 1 至 3,600 秒                                                             |
+| `--capture-dir`     | 默认不保存采集文件；只可与 `--full-text` 同用                                               |
+| `--resume-captures` | 默认关闭；同时要求 `--full-text` 和 `--capture-dir`，用当前解析器重验已保存响应并补抓缺失页 |
+| `--obscura-path`    | 优先于 `LITRADAR_OBSCURA_PATH`，再回退到 `PATH`                                             |
+| `--pdftotext-path`  | 优先于 `LITRADAR_PDFTOTEXT_PATH`，再回退到 `PATH`                                           |
+
+普通刷新固定并发 2 个来源，全文刷新固定并发 4 个期刊尝试，没有公开并发参数。响应会区分成功、失败、未尝试和不支持的来源；`failed` 或 `notAttempted` 非零时命令退出非零，全文的 `partial` 也计入失败。普通刷新中的 `unsupported` 本身不导致失败。失败时保留上次有效数据，不能把部分刷新解释为全部完成。采集边界与原文规则见[征稿追踪架构](../architecture/cfp-tracking.md)。
 
 ## `notify` 和 `push`
 
@@ -384,18 +413,18 @@ litradar push --secret-key-file PATH
 
 parser 还接受 `--index-db PATH` 直接指定索引文件；普通使用优先选择 `--db`。
 
-| 参数                         | 默认值             | 含义                            |
-| ---------------------------- | ------------------ | ------------------------------- |
-| `--secret-key-file PATH`     | 必填               | 解密用户投递凭据                |
-| `--index-db PATH`            | 空                 | 直接指定一个索引 SQLite         |
-| `--db NAME`                  | 全部索引库         | 数据库文件名或 stem             |
-| `--changes-file PATH`        | SQLite checkpoint 差异 | 指定 Provider-neutral 变更清单 |
-| `--ai-model MODEL`           | 用户设置或代码默认 | 覆盖模型名，不提供 API key      |
-| `--max-candidates N`         | `120`              | 进入模型前的候选上限            |
-| `--timeout N`                | `60`               | AI/PushPlus HTTP 超时秒数       |
-| `--retries N`                | `3`                | 适用请求的重试次数，范围 `0..=10` |
-| `--dedupe-retention-days N`  | `60`               | 已确认去重记录保留天数          |
-| `--dry-run` / `--no-dry-run` | 执行模式           | 是否禁止外部发送和收藏/去重写入 |
+| 参数                         | 默认值                 | 含义                              |
+| ---------------------------- | ---------------------- | --------------------------------- |
+| `--secret-key-file PATH`     | 必填                   | 解密用户投递凭据                  |
+| `--index-db PATH`            | 空                     | 直接指定一个索引 SQLite           |
+| `--db NAME`                  | 全部索引库             | 数据库文件名或 stem               |
+| `--changes-file PATH`        | SQLite checkpoint 差异 | 指定 Provider-neutral 变更清单    |
+| `--ai-model MODEL`           | 用户设置或代码默认     | 覆盖模型名，不提供 API key        |
+| `--max-candidates N`         | `120`                  | 进入模型前的候选上限              |
+| `--timeout N`                | `60`                   | AI/PushPlus HTTP 超时秒数         |
+| `--retries N`                | `3`                    | 适用请求的重试次数，范围 `0..=10` |
+| `--dedupe-retention-days N`  | `60`                   | 已确认去重记录保留天数            |
+| `--dry-run` / `--no-dry-run` | 执行模式               | 是否禁止外部发送和收藏/去重写入   |
 
 checkpoint、run、item、dedupe 和 workflow lease 统一写入 `--auth-db` 指向的认证 SQLite，不再接受状态目录覆盖。启动时会安全导入项目根下保留的旧 `<db>.json`，但运行过程中只读取 `.changes.json`，不会创建或更新投递状态 JSON。
 
@@ -446,9 +475,9 @@ litradar openapi [--output PATH]
 - 维护和作业子命令成功时向 stdout 输出 JSON。
 - `openapi` 输出 OpenAPI JSON 或写入指定文件。
 - 错误写入 stderr，并以非零状态退出。
-- 不支持的位置参数或未知选项会 fail loud，不会静默忽略。
+- 不支持的位置参数或未知选项会明确报错，不会静默忽略。
 - 密文和密码不会出现在结构化输出。
 
-### Search tokenizer upgrade
+<a id="search-tokenizer-upgrade"></a>
 
-Content schema v9 uses `simple 0` with no pinyin aliases or expansion. Existing v6/v7/v8 indexes remain readable as unicode61 until explicitly converted. With all service/index writers stopped and a verified recovery copy available, run `litradar admin index optimize-storage --confirm-index-maintenance --project-root PATH` to stream canonical records into the current schema. This preserves source titles, abstracts, IDs, listing and outbox records; only the search projection and storage layout change. Review reported disk requirements before running. Pair old binaries with retained old index files when rolling back.
+分词升级统一见[索引存储优化](#索引存储优化)，原生库与旧版行为见[分词器说明](../../libs/simple/README.md)。

@@ -31,7 +31,7 @@ litradar serve  (one long-running process)
                                                                -> *.changes.json -> litradar notify / litradar push
 ```
 
-系统没有 Python 运行时路径。Node.js 只在镜像构建阶段把 `app/` 导出为静态资源；生产运行层不包含 Node.js。Rust workspace 只发布 `litradar` 一个可执行文件，所有能力都通过它的七个子命令进入。
+系统没有 Python 运行时路径。Node.js 只在镜像构建阶段把 `app/` 导出为静态资源；生产运行层不包含 Node.js。Rust workspace 只发布 `litradar` 一个可执行文件，所有能力都通过它的公共子命令进入。
 
 ## 运行进程
 
@@ -39,13 +39,14 @@ litradar serve  (one long-running process)
 | -------------------- | ---------- | ----------------------------------------------------------- |
 | `litradar serve`     | 唯一常驻   | HTTP 服务与内嵌调度；统一负责准备、信号、关闭和组件失败传播 |
 | `litradar index`     | 按需或调度 | 读取期刊 CSV、请求上游、写索引库和变更清单                  |
+| `litradar cfp`       | 按需       | 导入或刷新期刊征稿原文                                      |
 | `litradar notify`    | 按需或调度 | AI 选择后发送 PushPlus                                      |
 | `litradar push`      | 按需或调度 | AI 选择后写入用户追踪文件夹                                 |
 | `litradar scheduler` | 按需       | 校验任务或立即执行一个已保存的类型化任务                    |
 | `litradar admin`     | 按需、本机 | 初始化管理员、维护密文、备份和离线恢复                      |
 | `litradar openapi`   | 按需       | 把当前 REST schema 输出到 stdout 或文件                     |
 
-Docker Compose 只运行一个名为 `litradar` 的容器。`app/` 是镜像构建输入，不是运行服务。调度和索引需要进程隔离时，父进程通过当前可执行路径再次启动 `litradar` 并传入规范子命令；镜像中不存在按功能拆分的其他可执行文件。
+Docker Compose 只运行一个名为 `litradar` 的容器。`app/` 是镜像构建输入，不是运行服务。调度和索引需要进程隔离时，父进程通过当前可执行路径再次启动 `litradar` 并传入规范子命令；镜像还包含征稿采集所需的 Obscura 和 `pdftotext` 辅助程序；它们不提供独立的 LitRadar 服务。
 
 SIGINT 或 SIGTERM 会同时通知 HTTP 与调度组件。若计划任务子进程正在运行，调度器先终止并等待该子进程，将运行状态持久化为 `cancelled`，且不再启动剩余步骤。HTTP、心跳或调度组件意外退出时，组合根会关闭另一组件并以非零状态退出，避免半可用进程继续运行。
 
@@ -76,7 +77,7 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 
 | Crate                | 责任                                                        |
 | -------------------- | ----------------------------------------------------------- |
-| `litradar`           | 唯一二进制、七个子命令分发、服务组合、信号和组件生命周期    |
+| `litradar`           | 唯一二进制、公共子命令分发、服务组合、信号和组件生命周期    |
 | `litradar-api`       | 可准备和注入关闭信号的 Axum 库、OpenAPI、MCP 与请求异步边界 |
 | `litradar-auth`      | 密码、会话、访问令牌和认证服务                              |
 | `litradar-cli`       | `admin`、索引、投递和手动调度子命令的库级参数适配与编排     |
@@ -139,7 +140,7 @@ freeze ordered CSV selection -> validate catalog contracts
         +-- catalog stem -> runtime index_provider_routes -> registered IndexContentProvider
         |
         +-- data/index/<stem>.sqlite         (content v9; v6/v7/v8 compatible)
-        +-- data/index-control/<stem>.sqlite (disposable control v4)
+        +-- data/index-control/<stem>.sqlite (disposable control v5)
                     |
                     v
 acquire provider-scoped lease
@@ -160,7 +161,7 @@ batch compatibility 包含 CSV 的选择方式、顺序和精确内容、Provide
 
 “分进程注册”只表示同一个 `litradar` 二进制在不同命令边界构造不同的内存注册表：`index` 进程注册索引实现，`serve` 的 API 进程注册摘要页/全文实现。它不是多服务部署，也不表示 Provider 自动回退。管理 API 按相同逻辑名称聚合这些注册，形成供前端过滤选项的 capability 目录。
 
-多进程索引使用私有 worker protocol v6，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程仍独占 SQLite、batch ID 和提交顺序。项目 batch ID 不进入 `IndexFetchContext` 或 worker request JSON，因此 Provider contract v3 和 worker protocol v6 都不因完整 resume 改版。国内 CNKI captcha token 和共用 Provider 代理 URL 都不属于该文件、进程参数或 child 环境：父进程启动 child 后移除继承的探测环境变量，再通过 stdin 发送一次版本化 bootstrap。只有 `provider_name=cnki` 的 worker 可以收到 captcha token，只有自身逻辑 Provider 的代理开关已启用时才能收到代理 URL。worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK；相关 Debug、错误和日志只保留固定脱敏字段。
+多进程索引使用私有 worker protocol v8，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程仍独占 SQLite、batch ID 和提交顺序。项目 batch ID 不进入 `IndexFetchContext` 或 worker request JSON，Provider 内容契约保持 v3；私有工作进程协议为 v8，二者分别演进。国内 CNKI captcha token 和共用 Provider 代理 URL 都不属于该文件、进程参数或 child 环境：父进程启动 child 后移除继承的探测环境变量，再通过 stdin 发送一次版本化 bootstrap。只有 `provider_name=cnki` 的 worker 可以收到 captcha token，只有自身逻辑 Provider 的代理开关已启用时才能收到代理 URL。worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK；相关 Debug、错误和日志只保留固定脱敏字段。
 
 Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `ProviderProgress`。`Continue` 携带下一 traversal checkpoint；`Complete` 携带可空的 next anchor。两个字符串都保持 Provider-scoped、opaque，核心不解析 CNKI issue ID、Scholarly fingerprint 或上游 cursor。`litradar-index` 负责校验、稳定 ID、合并、SQLite 事务和 outbox。内容先提交、控制状态后提交；控制提交失败时旧 anchor 保持不变，重跑依靠冻结窗口和规范 alias 幂等收敛。
 
@@ -168,7 +169,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 
 每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v9 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v9 沿用 contentless FTS 布局，使用关闭拼音的 `simple 0` 分词；检索仍走全字段 FTS MATCH，并仅在检索投影和查询参数上规范化拉丁重音及大小写，原始元数据保持不变。运行时仍支持精确 v6/v7/v8 内容库，其 unicode61 索引只在显式离线维护时升级。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
 
-`data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v2；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v4 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent、typed notify handoff/Unknown acknowledgement 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。v1 active Notifying 行迁移为保守 Unknown，不丢弃 manifest。删除全部控制状态后没有可信 batch、成功边界、handoff 或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章；operator 也同时承担失去待完成 handoff 证明的风险。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](reference/database.md)。
+`data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v2；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v5 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent、typed notify handoff/Unknown acknowledgement 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。v1 active Notifying 行迁移为保守 Unknown，不丢弃 manifest。删除全部控制状态后没有可信 batch、成功边界、handoff 或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章；operator 也同时承担失去待完成 handoff 证明的风险。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](reference/database.md)。
 
 ### 认证与业务数据库
 
@@ -181,6 +182,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 - 全局运行配置，包括 Provider 路由、服务器安全和日志设置
 - 类型化定时任务、运行槽和心跳
 - 投递 checkpoint、run、item、dedupe 和 workflow lease
+- 期刊征稿原文、来源、期刊身份和导入记录
 - 系统公告
 
 该库不保存 32 字节部署密钥；受保护的集成凭据以认证密文写入数据库，密钥通过文件单独提供。
@@ -190,8 +192,8 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 | 路径                                | 所有者                                                       |
 | ----------------------------------- | ------------------------------------------------------------ |
 | `data/push_state/<db>.changes.json` | `litradar index --update` 生成；每周更新、通知和追踪共同读取 |
-| `data/push_state/<db>.json`         | 启动时只读导入并原样保留的旧 notify 状态                    |
-| `data/folder_push_state/<db>.json`  | 启动时只读导入并原样保留的旧 push 状态                      |
+| `data/push_state/<db>.json`         | 启动时只读导入并原样保留的旧 notify 状态                     |
+| `data/folder_push_state/<db>.json`  | 启动时只读导入并原样保留的旧 push 状态                       |
 
 变更清单是新文章分发的输入，不是可从文章日期实时重建的视图。读取方只以必填的 `db_name` 识别目标数据库，不使用保存的文件系统路径作为身份回退。可变投递状态只存在于 `auth.sqlite`；运行时不会写 `<db>.json` 或固定 `.tmp`。
 
@@ -212,6 +214,10 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 ### CNKI 索引和全文
 
 默认国内 `cnki` 元数据 Provider 使用 NZKPT 的 `navi.cnki.net` / `kns.cnki.net` 页面和接口生成规范内容；海外运行时实现已移除。页面 filename、详情 URL 和 captcha 状态只存在于一次适配调用中。按用户全文获取是独立的 `zjlib` 在线能力，使用当前用户已有的浙江图书馆会话，与索引 Provider 无关。详见 [CNKI 数据源](reference/sources/cnki.md)。
+
+### 征稿追踪
+
+征稿追踪使用维护目录中的期刊身份，但不依赖文章索引是否已有内容。后端负责征稿采集、原文解析、状态计算和持久化；前端通过认证 API 浏览，不在浏览器中运行采集器，也不把种子数据打包进 JavaScript。征稿状态随查询时刻计算，日期缺失不表示长期开放。数据归属、刷新流程与限制见[征稿追踪架构](architecture/cfp-tracking.md)。
 
 ### 文章在线访问
 
@@ -270,29 +276,26 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 ## 数据库迁移
 
-所有正式子命令在业务访问前执行所需的版本化 SQLite 迁移：
+正式子命令在业务访问前完成各自需要的存储准备：先解析路径和参数，检查 `PRAGMA user_version`，再执行受支持的迁移或结构预检。认证库按版本在独立的 `BEGIN IMMEDIATE` 事务中迁移；普通查询仓库不负责数据定义操作。
 
-1. 解析路径和参数。
-2. 检查 `PRAGMA user_version`。
-3. 认证库在独立 `BEGIN IMMEDIATE` 事务中逐版本迁移。
-4. 内容索引将新建/空 v0 初始化为 v8，正常预检只读接受精确 v6/v7/v8，精确 v4/v5 可在事务中迁移到 v8；显式维护可升级 v6/v7。非空 v0 及 v1–v3 明确要求人工备份、移动或删除点名文件后重建。
-5. 项目 batch ledger 按 v2 创建，已有 v1 ledger 原位增加 typed notify handoff 列，并把 active Notifying 保守迁移为 Unknown；catalog 控制库在一个事务中迁移到 v4。v0/v1 的旧 Provider 名称先按兼容规则重写，v0/v1/v2 中可证明为 journal complete 的事实迁移为成功但 NULL 的 anchor；v3 行保留并以 NULL batch 列进入保守 legacy bridge。
-6. 两类控制库都可删除后重建；遇到未来版本或失败立即退出，不自动删除或改写文件。
+新建内容库使用 v9。精确匹配的 v4/v5 可事务迁移到 v9；现有 v6/v7/v8/v9 在普通启动时只做结构预检，旧版分词器不会被自动替换。非空 v0 及 v1 至 v3 要求先备份，再按错误中点名的文件执行重建。内容库、项目批次账本和目录控制库分别维护版本，当前版本与迁移边界统一见[数据库参考](reference/database.md#连接和版本)。
 
-`litradar serve` 先完成一次存储迁移、密钥验证和 HTTP 准备，再启动监听器与立即执行的首个调度 tick。普通查询仓库不负责 DDL。
+项目批次账本与目录控制库可以重建，但删除它们会丢失恢复进度和已发布通知的交接记录。遇到未来版本或迁移失败时，命令会退出，不会自动删除文件。`serve` 完成存储迁移、密钥验证和 HTTP 准备后，才启动监听器及首轮调度。
 
 ## 同步工作与异步服务
 
-SQLite、PBKDF2、阻塞 HTTP、文件系统和手动推送编排是同步工作。HTTP 组件通过 `ApiState` 的有界阻塞执行器把这些工作送入 Tokio blocking pool，避免在路由或 MCP future 中直接阻塞运行时。内嵌调度 tick 也通过 `spawn_blocking` 运行；按需子命令使用同步作业模型。
+SQLite、密码派生、阻塞 HTTP 和文件系统操作通过有界执行器进入 Tokio 阻塞线程池。API 分别限制存储、上游请求和密码派生任务，避免慢网络请求或密码计算占满存储请求的执行容量；当前容量分别为 8、4、2，排队超时为 30 秒。定义见[API 共享状态](../crates/litradar-api/src/state.rs)。内嵌调度通过 `spawn_blocking` 运行，按需 CLI 命令使用同步作业模型。
 
-HTTP 组件共享的 `blocking executor` 有 8 个 permit。除此之外，手动周推在每个 `litradar serve` 进程内按 `auth.sqlite` 路径设置 1 个 admission slot：同一用户重复启动会复用当前 running job，不同用户竞争同一 storage instance 时立即收到 `503`，因此最多 1 个 manual API job 等待或占用共享 permit。该边界不排队、不持久化，也不是 `cross-process` 锁；独立调用的 `litradar notify`、`litradar push` 或计划任务子进程不受它协调。
+手动周报通过 SQLite 持久任务排队，API 返回 `202` 后由独立的[投递监督器](../crates/litradar/src/manual_delivery.rs)启动子进程。同一用户重复启动会复用当前排队或活动任务；不同用户可以排队并在实例容量内并行。并发池由 `delivery_worker_concurrency` 控制，租约、版本比较和去重仍由存储层保证。状态、取消和不确定结果的确认规则见[API 参考](reference/api.md#收藏与追踪)，配置见[运行配置](reference/configuration.md#用户通知配置)。
+
+<a id="scheduled-execution-across-service-ticks"></a>
+
+### 跨调度轮次的任务执行
+
+内嵌调度器最多保留 4 个活动执行。长时间索引不会阻止发现后续到期任务：每轮先把到期时段持久化，再按空闲执行槽认领任务。多余工作保持待处理状态，不会提前取得认领租约；每个任务仍最多有一次活动运行。
+
+服务负责活动执行集合，并在关闭或基础设施故障时协同取消、回收所有子进程。每次运行的心跳和进程树监督保持有效。一次性 `scheduler` 命令会等待自己已接纳的运行完成；每轮摘要汇总上一轮以来收集的结果，单次运行的终态事件则立即记录。
 
 ## 部署边界
 
 默认 Compose 只运行一个非 root、只读根文件系统且丢弃全部 Linux capabilities 的 `litradar` 容器，并把唯一 HTTP 入口 `127.0.0.1:8000` 发布到宿主机 loopback。公网部署必须增加 TLS 反向代理和共享限流，不能把默认端口直接改为所有网卡。详见 [Docker 部署](operations/docker.md)和[安全说明](operations/security.md)。
-
-### Scheduled execution across service ticks
-
-The embedded scheduler keeps up to four active executions across scan ticks. A long index job does not delay discovery of later due tasks: each tick still enqueues due slots, then claims only as many jobs as there are free execution slots. Excess work remains durable and pending without an early claim lease; each task still has at most one active run.
-
-The service owns the active execution set and cooperatively cancels and drains every child on shutdown or an infrastructure failure. Per-run heartbeats and process-tree supervision remain unchanged. The one-shot scheduler CLI continues waiting for its own admitted runs to finish. Tick summaries report executions collected since the previous scan, while per-run terminal events remain immediate.

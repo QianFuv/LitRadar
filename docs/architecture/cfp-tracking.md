@@ -1,177 +1,75 @@
-# CFP tracking
+# 征稿追踪架构
 
-The workspace `/?view=cfp-tracking` browses original journal calls by database and
-maintained catalog identity. Rust owns acquisition, normalization, persistence,
-identity matching and availability. The browser reads authenticated APIs and keeps
-only display labels, formatting, filtering and selection state. `cfp_db` and
-`cfp_journal` stay separate from the article-search database preference.
+征稿追踪工作区 `/?view=cfp-tracking` 按数据库和维护期刊身份展示期刊征稿原文（Call for Papers，CFP）。Rust 后端负责采集、规范化、持久化、身份匹配和可用性计算；浏览器只保留显示标签、格式化、筛选和选择状态。`cfp_db`、`cfp_journal` 与文章检索的数据库偏好相互独立。
 
-## Data ownership
+<a id="data-ownership"></a>
 
-The backend packages `crates/litradar-sources/assets/cfp-seed.json`: 467 journal
-identities, 1,622 notices and 16 scoped publisher statements with no recorded calls.
-The original-language payload is imported once into the existing `data/auth.sqlite`
-business database. It is not included in browser JavaScript. Startup neither
-requires article indexes nor overwrites a later source refresh.
+## 数据归属
 
-Schema 18 adds `cfp_journals`, `cfp_journal_aliases`, `cfp_sources`,
-`cfp_source_journals`, `cfp_notices` and `cfp_seed_imports`. Announcements are unique
-within a journal; a shared multi-journal call is retained for each journal. Import
-markers bind a versioned identity to its exact content digest. Malformed payloads,
-conflicting aliases or existing journal ownership reject the whole import.
+后端打包的[征稿种子](../../crates/litradar-sources/assets/cfp-seed.json)包含 467 个期刊身份、1,622 条征稿记录，以及 16 条限定范围内未发现征稿的出版方声明。原始语言内容只导入已有的 `data/auth.sqlite` 业务库一次，不进入浏览器 JavaScript。启动不依赖文章索引，也不会覆盖后续在线刷新结果。
 
-The standard central-database backup includes all CFP state. Before upgrading an
-existing installation from schema 17, create and verify a normal backup. An older
-binary cannot read schema 18; rollback restores the verified backup rather than
-changing `PRAGMA user_version`.
+认证库 v18 新增 `cfp_journals`、`cfp_journal_aliases`、`cfp_sources`、`cfp_source_journals`、`cfp_notices` 和 `cfp_seed_imports`。征稿记录在期刊内唯一，多刊共用的征稿启事会分别保留。导入标记把版本化身份绑定到精确内容摘要；输入损坏、别名冲突或已有期刊归属冲突都会拒绝整个导入。
 
-## Backend operations
+标准业务库备份包含全部征稿状态。从认证库 v17 升级前，应先[创建并验证备份](../operations/backup.md)。不支持 v18 的旧二进制不能读取升级后的数据库，回滚必须恢复相容的已验证备份，不能修改 `PRAGMA user_version`。
 
-```text
-litradar cfp refresh --project-root PATH --db english_journals.sqlite
-litradar cfp refresh --project-root PATH --catalog-id issn-0304-4076
-litradar cfp refresh --project-root PATH --all
-litradar cfp refresh --project-root PATH --all --full-text --capture-dir OUTPUT_DIRECTORY
-litradar cfp import --project-root PATH --input FILE
-```
+<a id="backend-operations"></a>
 
-Refresh selection accepts exactly one database, maintained catalog ID/alias or
-`--all`. The command reports successful, failed, unsupported and unattempted source
-units. Failed or unattempted units cause a nonzero exit status. Import accepts the
-backend seed format and is additive and immutable: it cannot replace an existing
-journal's online snapshot. Reimporting identical bytes is idempotent. The bundled
-seed uses its bundled identity; other inputs use a digest-derived operator identity.
+## 导入与刷新
 
-`--full-text` revisits the stored announcements, including snapshot-only sources.
-It matches their original titles, follows detail and PDF links with a bounded
-depth, and retains complete paragraphs without a character limit. Springer
-collection descriptions are read from the complete description container,
-including text hidden by its Show more control. That publisher uses Obscura to
-complete its public cookie handshake. Other sources try direct HTTP first and can
-use the same supervised fallback. Four journal attempts can run concurrently,
-with captures cached within each attempt. Springer descriptions are available at
-DOMContentLoaded; their captured text is checked before publication.
+运维入口是 `litradar cfp import` 和 `litradar cfp refresh`。命令使用指定项目根下的业务数据库，不需要部署密钥。完整参数、选择范围、超时和输出状态见[CLI 参考](../reference/cli.md#cfp)。
 
-This operation updates original scope, requirements and the verified detail URL;
-it preserves existing titles and timeline semantics. Verified replacements and
-unresolved originals are published together in one fenced transaction. Partial
-results retain failed notices and the last complete-refresh timestamp, with an
-explicit error explaining the remaining limitation. A completely failed attempt
-does not replace the previous snapshot. Output distinguishes recovered text from
-records actually updated. `--capture-dir` retains each journal's responses,
-recovered fields and unresolved titles for inspection. It does not cause a later
-run to silently reuse old captures.
-An explicit `--resume-captures` revalidates the saved responses in that same capture
-directory with the current parser, and fetches missing pages. This supports
-resuming the same interrupted acquisition without repeating successful downloads.
+导入接受后端种子格式，只追加经验证且不可变的内容，不替换已有期刊的在线快照。相同字节重复导入是幂等的；内置种子使用打包身份，其他输入使用内容摘要派生的运维导入身份。
 
-`cfp-sources.json` records every retained acquisition unit, exact observed discovery
-URL, journal identities, permitted host/path boundaries and adapter capability.
-There are 106 configured discovery adapters: 65 Springer collection lists, 39
-ScienceDirect CFP lists and 2 KeAi CFP sections. The other 361 units retain reviewed
-snapshots and explicitly lack automatic discovery support. These counts describe
-configured parser coverage, not a new successful live crawl of every publisher.
+普通刷新读取实际发现页面，以新增征稿为目标。[来源注册表](../../crates/litradar-sources/assets/cfp-sources.json)记录采集单元、观察到的发现 URL、期刊身份、允许的主机和路径，以及适配器能力。当前配置包含 106 个发现适配器：65 个 Springer 专题列表、39 个 ScienceDirect 征稿列表和 2 个 KeAi 征稿栏目；其余 361 个单元保留已审阅快照，明确不支持自动发现。这些数字描述配置覆盖，不能视为所有出版方的一次成功在线抓取。
 
-Refresh reads the actual discovery page and can discover newly added announcements.
-It extracts literal card/section text and follows required registered detail links.
-Wrong journal identity, conflicting titles, incomplete cards, pagination requiring
-additional adaptation, challenges and empty responses do not establish an empty
-journal. Filtered/preview lists and collections with independently reviewed detail
-records retain older verified records. An explicit configured negative statement
-can establish a scoped empty result; it never closes ordinary submissions by
-inference. More complex HTML-to-PDF wrapper chains remain unadapted rather than
-being published as complete announcements.
+适配器提取卡片或栏目原文，并跟随必需的已注册详情链接。期刊身份错误、标题冲突、卡片不完整、尚待适配的分页、验证挑战或空响应，都不能证明该刊没有征稿。筛选或预览列表，以及已有独立审阅详情记录的专题，会保留先前验证的记录。只有显式配置的否定声明才能建立对应范围内的空结果，不能据此推断普通投稿也已关闭。复杂的 HTML/PDF 包装链仍可能尚未适配，不能标记为完整征稿。
 
-HTTP and subprocess work happens outside write transactions. Publication validates
-all journal bindings, checks the current refresh generation and lease, and replaces
-a complete source unit atomically. A failed or superseded attempt preserves the
-last-good notices, captures and success timestamp. Interrupted leases appear as
-failed/stale reads, not permanent in-progress states.
+HTTP 与子进程工作发生在写事务之外。发布时重新验证全部期刊绑定、刷新代际和租约，并原子替换完整来源单元。失败或被新尝试取代的运行保留最后有效的征稿、采集结果和成功时间；中断租约显示为失败或陈旧状态，不会永久停留在进行中。
 
-## Obscura and PDF helpers
+### 重新采集正文
 
-The backend first tries direct HTTP. Connection failures, restricted statuses,
-challenges and unrecognized JavaScript-dependent pages can use one Obscura fallback
-per source, within the remaining source budget. No browser API invokes Obscura.
-Executable resolution uses PATH by default, with these backend overrides:
+`--full-text` 重新访问已保存的征稿，包括仅有快照的来源。它匹配原始标题，在限定深度内跟随详情和 PDF 链接，保留完整段落，不按字符数截断。Springer 从完整描述容器读取内容，包括 **Show more** 隐藏的文本，并使用 Obscura 完成公开 Cookie 握手；其他来源先尝试直接 HTTP，必要时采用同一受监督的后备路径。每次最多并行处理 4 个期刊尝试，采集缓存在单次尝试内复用。Springer 描述在 DOMContentLoaded 后即可读取，发布前仍须验证原文。
 
-- `LITRADAR_OBSCURA_PATH` or `--obscura-path PATH`
-- `LITRADAR_PDFTOTEXT_PATH` or `--pdftotext-path PATH`
+正文刷新只更新原始范围、要求和已验证详情 URL，保留标题与时间线语义。已验证替换和未解决原文在同一个带代际检查的事务中发布。部分成功时保留失败记录及上次完整刷新时间，并记录剩余限制；完全失败则不替换旧快照。输出分别统计找回原文的记录和实际更新的记录。
 
-The Docker image includes `/usr/local/bin/obscura` and `/usr/bin/pdftotext` and
-sets both backend path overrides. Obscura `0.2.2+litradar.1` is built from pinned
-0.2.2 source with the rustls/webpki security update, native JavaScript/DOM support
-and rendering/stealth support matching the locally used browser. The parallel
-`scrape` worker is not packaged because CFP acquisition uses `fetch`. Chromium,
-Node.js and runtime browser downloads are unnecessary. PDF extraction uses Debian's `poppler-utils`
-and `poppler-data` character maps, including the CJK maps used by Chinese PDFs.
-Both helpers run as the existing unprivileged service user; temporary captures
-use `/tmp` without relaxing read-only root or noexec mount settings.
+`--capture-dir` 保存各期刊响应、恢复字段与未解决标题供审阅，后续运行不会自动复用这些文件。显式增加 `--resume-captures` 后，当前解析器会重新验证同目录的已保存响应，并补抓缺失页面，适合恢复同一次中断采集。
 
-Obscura runs without a shell, with `--stealth`, a finite timeout, and a JSON `--eval`
-envelope containing the final URL and original HTML. Exit zero is insufficient:
-framing, URL, publisher identity, challenges and original call boundaries are still
-validated. Private-network overrides are removed from the child environment;
-Obscura retains its own default private-network protection. Rust independently
-checks HTTP DNS results and each HTTP redirect before requesting it. Browser helper
-final-URL validation is a result check; it does not claim visibility into the
-helper's internal subresource/redirect implementation.
+<a id="obscura-and-pdf-helpers"></a>
 
-Directly linked text PDFs use `pdftotext` with UTF-8 output. The original PDF text
-must contain the expected call title. Both helpers use owned process trees and
-bounded temporary-file outputs; Windows processes are hidden. Remaining descendants
-are terminated even when the leader exits first. Missing helpers, extraction errors
-and image-only/unrecognized PDFs retain previous data.
+## 采集辅助程序
 
-Default limits are two concurrent sources, 90 seconds per source, 600 seconds per
-batch, two HTTP attempts per page, five redirects, twelve required detail pages,
-4 MiB per decoded page/helper result and 24 MiB per source capture. CLI timeout
-options are capped at 600 seconds per source and 3,600 seconds per batch. A bounded
-pool of at most eight OS DNS lookups lives outside the request runtime so an
-uncancellable lookup cannot block request-client teardown. No recurring scheduler
-job, browser refresh queue or admin refresh button is added by this migration.
+后端优先使用直接 HTTP。连接失败、受限状态、验证挑战或无法识别的 JavaScript 页面，可以在来源剩余预算内使用一次 Obscura 后备采集；浏览器 API 不会直接调用 Obscura。辅助程序按显式 CLI 路径、对应后端环境变量、`PATH` 的顺序解析，详见[征稿参数](../reference/cli.md#cfp)。
 
-## Original text and availability
+Docker 镜像包含 `/usr/local/bin/obscura` 和 `/usr/bin/pdftotext`，并设置对应路径变量。Obscura `0.2.2+litradar.1` 从固定的 0.2.2 源码构建，包含 rustls/webpki 安全更新、原生 JavaScript/DOM 和渲染支持；构建和补丁来源见 [Dockerfile](../../Dockerfile) 及[安全补丁](../../third-party/obscura-rustls.patch)。采集使用 `fetch`，不打包并行 `scrape` 工作进程，也不需要 Chromium、Node.js 或运行时浏览器下载。PDF 提取依赖 Debian 的 `poppler-utils` 和 `poppler-data`，包括中文 PDF 所需的 CJK 字符映射。
 
-`litradar-domain::cfp` normalizes literal fields without translation, generated
-summaries or language-model calls. Missing scope and requirements remain empty.
-Chinese/English date clauses retain their original text, stage, exclusivity and
-optional status. Invalid or ambiguous timelines remain available as original text
-with an uncertain state; missing dates do not imply perpetual acceptance.
+两个辅助程序都以现有非特权服务用户运行，临时采集使用 `/tmp`，不放宽只读根文件系统或 noexec 挂载设置。Obscura 不经过 shell，以有限超时和 `--stealth` 运行，`--eval` 返回包含最终 URL 与原始 HTML 的 JSON。退出码为 0 不等于采集有效；结果仍须通过封装格式、URL、出版方身份、挑战页面和征稿原文边界检查。
 
-Required abstract/proposal gates precede the full-paper gate. Optional workshops,
-revisions, notifications, publication and registration dates do not reopen admission.
-Explicit source closure, invitation-only and historical states are retained.
-Source timezones are used when known; an unknown timezone remains conservative
-around a cutoff. Date-dependent state is evaluated by the backend at query time.
+子进程环境会移除私有网络覆盖，Obscura 保留自身默认的私有网络保护。Rust 另行检查直接 HTTP 的 DNS 结果及每次重定向。辅助程序的最终 URL 校验只是结果检查，不代表后端能观察其内部子资源和重定向实现。
 
-## Read APIs
+直接链接的文本 PDF 通过 `pdftotext` 输出 UTF-8，原文必须包含预期征稿标题。两个辅助程序都使用受监督的进程树和有界临时文件输出；Windows 进程保持隐藏，即使主进程先退出也会终止残留后代。缺少工具、提取失败、图像型或无法识别的 PDF 都保留旧数据。
 
-Both endpoints require the existing session cookie or bearer token:
+普通刷新默认并发 2 个来源，每来源 90 秒、整批 600 秒。每页最多 2 次 HTTP 尝试、5 次重定向，每来源最多 12 个必需详情页；单页或辅助程序解码结果上限为 4 MiB，单来源采集上限为 24 MiB。CLI 最多允许每来源 600 秒、整批 3,600 秒。最多 8 个操作系统 DNS 查询运行在请求运行时之外，避免不可取消的解析阻塞客户端关闭。项目没有为征稿新增周期调度任务、浏览器刷新队列或管理员刷新按钮。
 
-| Endpoint | Behavior |
-|---|---|
-| `GET /api/cfp/journals?db=NAME&q=TEXT` | Complete lightweight metadata catalog, source coverage, state counts and freshness; optional name/ISSN/alias search |
-| `GET /api/cfp/journals/{catalog_id}/notices?db=NAME&include_closed=false&limit=50&cursor=TOKEN` | Original notice page, authoritative state and entry deadline; maximum page size 200 |
+<a id="original-text-and-availability"></a>
 
-The database filename is explicit and must identify a maintained metadata CSV.
-Catalogs include journals without indexed articles. Valid unadapted members return
-an empty 200 response; missing databases or members return 404. Cursor tokens use
-authenticated encryption and bind database, canonical journal, filter, ordering,
-metadata/source revision, position and a fixed evaluation instant. They expire after
-15 minutes. Stale, altered or foreign tokens return 409; the page discards old pages
-and reloads from the first cursor. Backend read failures show an error/retry state
-without a bundled-data fallback.
+## 原文与可用状态
 
-## Verification
+`litradar-domain::cfp` 只规范化字面字段，不翻译、不生成摘要，也不调用语言模型。缺失的范围和要求保持为空。中英文日期条款保留原文、阶段、排他性和可选性；无效或含糊的时间线保留原文并标记不确定，缺少日期不代表无限期接收。
 
-Rust fixtures compare all 1,622 imported notices with the prior original-text
-contract at three fixed instants, and cover migration, aliases, concurrent import,
-fenced publication, backup recovery, source boundaries, helper cleanup and DNS
-teardown. API tests cover auth, catalogs without articles, cursor consistency,
-refresh visibility and restart persistence. Frontend tests cover source-language
-rendering, server-owned state, pagination, failed reads and late selection results.
-Browser checks verify four equal navigation columns, fixed sidebar controls,
-independently scrolling journal groups, and the mobile layout. The
-marker-guarded full-stack fixture proves a real HTTP-source refresh changes the
-already built page without rebuilding the frontend.
+必需的摘要或提案门槛先于全文投稿门槛。可选研讨会、修订、通知、出版或注册日期不会重新开启投稿；明确关闭、仅限邀请和历史状态均保留。已知时采用来源时区，未知时区则在截止点附近保守判断。后端在查询时计算随日期变化的状态。
+
+<a id="read-apis"></a>
+
+## 读取接口
+
+两个征稿端点都需要会话 Cookie 或 Bearer 令牌。目录端点返回轻量期刊元数据、来源覆盖、状态数量和新鲜度；征稿端点返回原文分页、权威状态和投稿截止日期。参数与游标规则集中在 [API 参考](../reference/api.md#征稿追踪)。
+
+数据库文件名必须显式指定，并对应维护元数据 CSV，因此目录可以包含尚未索引文章的期刊。有效但未适配的成员返回空的 `200` 响应，不存在的目录或成员返回 `404`。游标绑定查询条件、数据版本和固定状态计算时刻，15 分钟后过期；陈旧、篡改或跨查询令牌返回 `409`，客户端应丢弃旧页并从头加载。后端读取失败时展示错误与重试状态，不回退到前端内置数据。
+
+<a id="verification"></a>
+
+## 验证范围
+
+现有 Rust 场景在三个固定时刻比较全部 1,622 条种子征稿与原文契约，并覆盖迁移、别名、并发导入、代际保护发布、备份恢复、来源边界、辅助程序清理和 DNS 关闭。API 场景覆盖认证、无文章目录、游标一致性、刷新可见性和重启持久化；前端场景覆盖来源语言、服务端状态、分页、读取失败和过期选择响应。
+
+浏览器场景检查四列导航、固定侧栏控件、独立滚动期刊分组及移动布局。受标记保护的全栈场景使用本地 HTTP 来源，验证刷新可以改变已构建页面中的内容，无需重新构建前端。这些是测试职责说明，不代表本次编辑执行了测试或在线刷新；测试位置与执行方法见[测试系统](../testing.md)。

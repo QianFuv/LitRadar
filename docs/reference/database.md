@@ -4,26 +4,26 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 ## 文件布局
 
-| 路径                                      |             数量 | 生命周期与责任                                                     |
-| ----------------------------------------- | ---------------: | ------------------------------------------------------------------ |
-| `data/index/<catalog>.sqlite`             |     每个目录一个 | 需要备份的 Provider-neutral 内容库                                 |
-| `data/index-control/index-batches.sqlite` |         项目一个 | 可删除的 batch/catalog phase、manifest intent 和全局 lease ledger  |
-| `data/index-control/<catalog>.sqlite`     | 每个活动目录一个 | 可删除的 v5 Provider anchor/run checkpoint/lease 控制库            |
-| `data/index-work/scholarly/`              | 每个遍历一个工作集 | 可丢弃的 Crossref SQLite、归属记录及事务文件，不是内容库或控制库 |
-| `data/auth.sqlite`                        |             一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
-| `data/push_state/`                        |        多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源                  |
-| `data/folder_push_state/`                 |        多个 JSON | 保留的旧 push 导入源                                               |
+| 路径                                      |               数量 | 生命周期与责任                                                     |
+| ----------------------------------------- | -----------------: | ------------------------------------------------------------------ |
+| `data/index/<catalog>.sqlite`             |       每个目录一个 | 需要备份的 Provider-neutral 内容库                                 |
+| `data/index-control/index-batches.sqlite` |           项目一个 | 可删除的 batch/catalog phase、manifest intent 和全局 lease ledger  |
+| `data/index-control/<catalog>.sqlite`     |   每个活动目录一个 | 可删除的 v5 Provider anchor/run checkpoint/lease 控制库            |
+| `data/index-work/scholarly/`              | 每个遍历一个工作集 | 可丢弃的 Crossref SQLite、归属记录及事务文件，不是内容库或控制库   |
+| `data/auth.sqlite`                        |               一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
+| `data/push_state/`                        |          多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源                  |
+| `data/folder_push_state/`                 |          多个 JSON | 保留的旧 push 导入源                                               |
 
 目录 stem 是内容边界：`data/meta/chinese_journals.csv`、内容库和控制库都使用 `chinese_journals`。Provider 名称不参与文件名。
 
 ## 连接和版本
 
-| 数据库             | `PRAGMA user_version` | 升级策略                                              |
-| ------------------ | --------------------: | ----------------------------------------------------- |
-| 认证/业务库        |                    19 | 版本化 migration                                      |
+| 数据库             | `PRAGMA user_version` | 升级策略                                                          |
+| ------------------ | --------------------: | ----------------------------------------------------------------- |
+| 认证/业务库        |                    19 | 版本化 migration                                                  |
 | 内容索引库         |                     9 | 新建精确 v9；运行时读写精确 v6/v7/v8/v9；精确 v4/v5 原子迁移到 v9 |
-| 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建 |
-| catalog 索引控制库 |                     5 | v0/v1/v2/v3/v4 安全事务迁移；可删除后按 v5 重建          |
+| 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建             |
+| catalog 索引控制库 |                     5 | v0/v1/v2/v3/v4 安全事务迁移；可删除后按 v5 重建                   |
 
 上述内容、业务和控制库的可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。Crossref 私有工作集使用下面单独说明的连接策略，不改变这些正式 schema 版本。
 
@@ -174,7 +174,7 @@ v7/v8 不创建 `article_search_content`，详情和列表字段继续以 `artic
 
 内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7 的只读 preflight 保留原文件和历史索引；显式迁移或离线优化才升级到当前 v9。当前 DDL、版本和公共结构验证统一由 `litradar-storage::index_schema` 提供。
 
-当前二进制读写精确 v6/v7/v8；不支持 v8 的旧二进制不能打开新库。需要降级时必须停机并恢复优化前已验证、且受目标二进制支持的 v6/v7 备份；不得降低 `user_version`、直接复制 v8 文件给旧二进制或手工重建影子表。
+当前二进制读写精确 v6/v7/v8/v9。旧二进制未必支持 v9；需要降级时，必须停机并恢复优化前已验证、且受目标二进制支持的旧索引备份。不得降低 `user_version`、直接把新版索引交给不支持它的旧二进制，或手工拼接影子表。
 
 ### `article_change_events`
 
@@ -300,6 +300,14 @@ v11 升级保留旧 ID、code、创建者、首位使用者和使用时间；已
 
 v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4/v5 到 v9 的迁移保留 ID。无法解析的旧引用由运维人员或用户清理。
 
+<a id="favorite-cursor-pagination"></a>
+
+#### 收藏游标与索引维护
+
+认证库 v16 新增 `idx_favorites_cursor`，列为 `(user_id, folder_id, created_at DESC, id DESC)`。`GET /api/favorites/folders/{folder_id}/articles/page` 使用绑定用户和文件夹的版本化不透明游标，读取 `limit + 1` 行，不计算精确总数；游标时间戳保留原始浮点位。旧 `/articles` 数组端点继续支持 `limit/offset`。
+
+认证库 v17 删除重复的 `idx_invite_codes_code` 和 `idx_notification_settings_user` 索引，原有 `UNIQUE` 约束继续保证 `invite_codes.code` 和 `notification_settings.user_id` 唯一，不改变应用数据。
+
 ### 用户通知配置
 
 `notification_settings` 每用户一行，保存数据库、关键词、方向、投递方式、PushPlus 和主备 AI 配置。PushPlus token 与 AI key 加密。业务语义见[通知与追踪](../guides/notifications.md)。
@@ -317,6 +325,14 @@ v1–v3 的破坏性重建不会重映射旧 favorite 的 article ID；精确 v4
 run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-swap。run 终态、checkpoint CAS 和 workflow lease 释放在一个 transaction 中提交；一次 subscriber 外部尝试的 item 终态和全部文章 dedupe 也在一个 transaction 中提交。只有租约已过期的 run、pre-send item 或 workflow lease 可被新 owner 接管；接管时 `claimed` item 回到 pending 并释放 pre-send reservation，`sending` item 与对应 reservation 则固定收敛为 `unknown`，不得自动重新投递。
 
 启动迁移会先读取 `data/push_state/<db>.json` 和 `data/folder_push_state/<db>.json`，校验所有文件后再用一个 immediate transaction 导入。每个源文件的 SHA-256 保存在 checkpoint 中：相同 hash 重启时跳过，已导入文件内容变化则拒绝启动，损坏文件使整批零写入。源文件和 `.changes.json` 都不会被导入器删除；未知旧状态只映射为固定 `unknown`/`unrecognized` 分类，不把原始状态或错误内容写入数据库。
+
+<a id="weekly-query-and-manual-delivery-membership"></a>
+
+#### 周报与手动投递的候选范围
+
+周报查询、可追踪文章数量和手动周报共享以 UTC 计算的 7 日变更清单窗口。它们合并当前及受管历史清单，去除重复发布，只包含仍存在于可用内容库中的可通知文章；历史回填 ID 不计入数量或手动候选集。
+
+手动任务以持久化创建时间固定窗口终点，并把已解析的来源快照交给投递流程，保留原来源运行身份与用户尝试去重。发现候选后不会在发送前重新读取可变的当前清单；无时间戳或窗口外的清单被排除，损坏的受管文件则明确失败。
 
 ### 调度和活动门禁
 
@@ -344,13 +360,23 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 `provider_proxy_policy`、Provider 路由/顺序和审计保留天数是非秘密运行配置。代理策略只保存逻辑 Provider 的布尔选择，代理 URL 只存在于认证库密文和当前进程受限内存，不进入内容库、索引控制库、worker request JSON、日志或审计 payload。
 
+<a id="retired-cnki-provider-migration"></a>
+
+#### 退役 CNKI Provider 的迁移
+
+认证库 v19 把存储的海外路由和访问顺序迁移到国内 `cnki`，保留自定义 Provider、空覆盖与设置时间戳。显式国内代理设置优先于已移除的海外设置。控制库 v5 仅移除海外租约、成功边界和检查点，国内状态与历史批次身份保持不变。
+
+### 征稿数据
+
+认证库 v18 新增 `cfp_journals`、`cfp_journal_aliases`、`cfp_sources`、`cfp_source_journals`、`cfp_notices` 和 `cfp_seed_imports`。征稿原文、来源和期刊身份属于业务库，随认证库一起备份，不依赖文章索引。导入摘要、刷新租约和原子发布规则见[征稿追踪架构](../architecture/cfp-tracking.md#数据归属)。
+
 ### `managed_meta_catalogs` 和 `announcements`
 
 `managed_meta_catalogs` 记录官方 bundle 版本/hash 所有权，用于保护用户修改的目录。`announcements` 保存标题、消息、优先级、启用状态和时间。
 
 ## 数据库之外的状态
 
-### 变更与投递状态
+<a id="变更与投递状态"></a>
 
 - `data/push_state/<db>.changes.json`：索引 update 的 Provider-neutral 变更清单；
 - `data/push_state/<db>.json`：旧 notify/手动 PushPlus 状态导入源；
@@ -363,19 +389,3 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 包含创建时发现的全部 `data/index/*.sqlite` 文件，不按内容 schema 筛选；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v5 controls，`data/index-work` 的 Crossref 工作集也始终排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
 
 备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限，因此也能保留通过这些检查的历史数据库。它不执行内容结构预检或迁移；恢复后能否服务仍取决于上文的精确内容 schema、迁移或重建要求。
-
-### Weekly query and manual delivery membership
-
-Weekly queries, the tracking availability count, and manual weekly delivery share the same UTC seven-day manifest window. They merge current and managed history publications, deduplicate identical publications, and include only notifiable article IDs that still exist in an available content database. Backfill IDs do not contribute to this count or manual candidate set.
-
-A manual job fixes the window end to its durable creation time. It passes parsed source snapshots into the existing delivery workflow, preserving the original source run identity and per-user attempt deduplication; it does not reread a mutable current manifest between discovery and delivery. Untimestamped or out-of-window publications are excluded, while malformed managed files remain visible failures.
-
-### Favorite cursor pagination
-
-Auth schema v16 adds idx_favorites_cursor on (user_id, folder_id, created_at DESC, id DESC). The new GET /api/favorites/folders/{folder_id}/articles/page endpoint seeks from an opaque, versioned user/folder-bound cursor and reads limit + 1 rows without an exact total. Cursor timestamps preserve their original floating-point bits. The existing /articles array endpoint retains its limit/offset contract for older clients.
-
-Auth schema v17 removes the redundant `idx_invite_codes_code` and `idx_notification_settings_user` indexes. The existing `UNIQUE` constraints on `invite_codes.code` and `notification_settings.user_id` continue to enforce the same invariants; migration does not change application data.
-
-### Retired CNKI provider migration
-
-Auth schema v19 migrates stored overseas provider routes and access orders to domestic `cnki`, preserving custom providers, empty overrides and setting timestamps. Explicit domestic proxy settings win over the removed overseas setting. Control schema v5 removes only overseas leases, anchors and checkpoints; domestic state and historical batch identities remain unchanged.
