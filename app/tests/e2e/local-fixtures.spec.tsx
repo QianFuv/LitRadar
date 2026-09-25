@@ -587,7 +587,7 @@ async function completesFixtureTrackingPush(page: Page): Promise<void> {
   );
 }
 
-/** Cover the full scroll viewport so trailing category text cannot escape the fade. */
+/** Cover the full scroll viewport within one layout subpixel of rounding. */
 async function expectMobileCategoryFadeCoverage(dialog: Locator): Promise<void> {
   const bounds = await dialog.locator('[data-mobile-overflow-cue="true"]').evaluate((element) => {
     const navigation = element.querySelector('nav')!;
@@ -604,7 +604,7 @@ async function expectMobileCategoryFadeCoverage(dialog: Locator): Promise<void> 
     };
   });
   expect(
-    bounds.fadeRight,
+    bounds.fadeRight + 1 / 64,
     'the fade must reach the navigation clipping edge',
   ).toBeGreaterThanOrEqual(bounds.navigationRight);
   expect(bounds.fadeWidth).toBeGreaterThanOrEqual(16);
