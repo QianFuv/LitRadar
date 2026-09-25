@@ -17,7 +17,7 @@
 
 加载器只搜索固定的可执行文件、打包和编译工作区位置；数据库内容及配置的数据目录不能指定扩展。精确搜索顺序见[SQLite 连接实现](../../crates/litradar-storage/src/sqlite.rs)，Linux 构建脚本见[分词器构建](../../scripts/build-simple-tokenizer.mjs)。
 
-Windows DLL 的 SHA-256 为 `89cd063db0c01ba97bb78f61fb500488b8c14f7cd162962a728dc20836ef0108`。Linux 源码固定在上游提交 `45db071ba8043ffe8a2e5dfe41f9d68fb477576c`，源码压缩包 SHA-256 为 `d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61`。构建选项为 `SIMPLE_WITH_JIEBA=OFF`、`BUILD_SQLITE3=OFF`、`BUILD_TEST_EXAMPLE=OFF` 和 `BUILD_STATIC=OFF`。上游库仍包含拼音资源，但 `simple 0` 不使用它。
+仓库内预编译的 Windows DLL 和 Linux SO 来自 [Simple v0.7.1](https://github.com/wangfenjin/simple/releases/tag/v0.7.1)，SHA-256 分别为 `27c700ca34cd5935ff934459f1f9c107cdefef7e54250de5a1c6646e05f21a4f` 和 `5493821c973a0dfee1afeb270ff5efbef49b4002c117433a3a2203393874a991`。Linux 源码构建仍固定在较新的上游提交 `45db071ba8043ffe8a2e5dfe41f9d68fb477576c`，源码压缩包 SHA-256 为 `d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61`。构建选项为 `SIMPLE_WITH_JIEBA=OFF`、`BUILD_SQLITE3=OFF`、`BUILD_TEST_EXAMPLE=OFF` 和 `BUILD_STATIC=OFF`。上游库仍包含拼音资源，但 `simple 0` 不使用它。
 
 <a id="existing-databases"></a>
 
@@ -31,4 +31,4 @@ v9 缺少或无法兼容原生库时明确失败，不回退到 unicode61。SQLi
 
 ## 许可证与来源
 
-源码来自 [simple 固定上游提交](https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c)。LitRadar 在上游的 MIT OR GPL-3.0-or-later 双许可证中选择 MIT；版权与授权原文随项目分发于 [Simple-LICENSE.txt](../../third-party/Simple-LICENSE.txt)。
+预编译库来自 [Simple v0.7.1](https://github.com/wangfenjin/simple/releases/tag/v0.7.1)；Docker 和本地 Linux 源码构建使用 [simple 固定上游提交](https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c)。LitRadar 在上游的 MIT OR GPL-3.0-or-later 双许可证中选择 MIT；版权与授权原文随项目分发于 [Simple-LICENSE.txt](../../third-party/Simple-LICENSE.txt)。

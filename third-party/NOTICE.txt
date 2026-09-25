@@ -46,6 +46,10 @@ copyright and license notices remain under /usr/share/doc in the image.
 
 SQLite simple tokenizer
 -----------------------
+Bundled Windows x64 and Linux ubuntu-latest libraries: Simple v0.7.1.
+Release: https://github.com/wangfenjin/simple/releases/tag/v0.7.1
+Library SHA256 (Windows DLL): 27c700ca34cd5935ff934459f1f9c107cdefef7e54250de5a1c6646e05f21a4f
+Library SHA256 (Linux SO): 5493821c973a0dfee1afeb270ff5efbef49b4002c117433a3a2203393874a991
 Source: https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c
 Source archive SHA256: d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61
 License: MIT (selected from the upstream MIT OR GPL-3.0-or-later options).
