@@ -132,7 +132,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
   const pages = data?.pages ?? [];
   const loadedPages = pages.length;
   const { visiblePages, prefetchRef, loadMoreRef } = useVisiblePageList({
-    listKey: searchKey,
+    listKey: `${currentDb}:${searchKey}`,
     loadedPages,
     hasNextPage,
     isFetchingNextPage,

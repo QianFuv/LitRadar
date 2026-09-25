@@ -1897,7 +1897,7 @@ async function journalRatingBrowserTest({ page }: { page: Page }): Promise<void>
 
 test('combines journal ratings across desktop and mobile filters', journalRatingBrowserTest);
 
-/** Verify fresh and cached database switches keep result cards clickable without reloading. */
+/** Verify fresh and cached database switches reset scrolling and keep cards clickable. */
 async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise<void> {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.route('**/api/**', async (route) => {
@@ -1909,8 +1909,12 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
     if (url.pathname === '/api/articles') {
       const database = url.searchParams.get('db') ?? 'fixture.sqlite';
       await fulfillJson(route, {
-        items: [{ article_id: 'shared-id', title: `Article from ${database}` }],
-        page: { total: 1, limit: 50, offset: 0, next_cursor: null, has_more: false },
+        items: Array.from({ length: 30 }, (_, index) => ({
+          article_id: index === 0 ? 'shared-id' : `article-${index}`,
+          title: index === 0 ? `Article from ${database}` : `Article ${index} from ${database}`,
+          abstract: 'Scrollable database-switch regression article.',
+        })),
+        page: { total: 30, limit: 50, offset: 0, next_cursor: null, has_more: false },
       });
       return;
     }
@@ -1936,6 +1940,7 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
   await hideDevelopmentIndicator(page);
 
   const databaseSelect = page.getByRole('combobox', { name: '检索数据库' });
+  const scrollContainer = page.locator('#results-scroll-container');
   await expect(databaseSelect).toHaveText('fixture');
   for (const database of ['fixture', 'second', 'third', 'fixture', 'second']) {
     if ((await databaseSelect.textContent()) !== database) {
@@ -1945,6 +1950,8 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
     const title = `Article from ${database}.sqlite`;
     const card = page.getByRole('button', { name: `查看文章详情：${title}`, exact: true });
     await expect(card).toBeVisible();
+    await expect.poll(() => scrollContainer.evaluate((element) => element.scrollTop)).toBe(0);
+    await expect(card).toBeInViewport();
     await card.click({ timeout: 5000 });
     const dialog = page.getByRole('dialog');
     await expect(dialog).toHaveAccessibleName(new RegExp(title));
@@ -1954,6 +1961,10 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
     );
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
+    await scrollContainer.evaluate((element) => {
+      element.scrollTop = 600;
+    });
+    await expect.poll(() => scrollContainer.evaluate((element) => element.scrollTop)).toBe(600);
   }
 }
 
