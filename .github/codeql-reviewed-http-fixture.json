@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "ruleId": "rust/non-https-url",
+  "owner": "repository-security-maintainers",
+  "rationale": "The full-stack browser-test fixture requests its deterministic CFP document through a temporary HTTP proxy bound to 127.0.0.1. Its transport accepts only the fixed fixture URL, and the proxy serves the response locally; production CFP transport is not covered by this exception.",
+  "expiresOn": "2026-12-31",
+  "findings": [
+    {
+      "path": "crates/litradar/examples/full_stack_fixture.rs",
+      "fingerprint": "6e25b2c8e899b093:1",
+      "columnFingerprint": "5"
+    }
+  ]
+}

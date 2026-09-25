@@ -243,3 +243,67 @@ test(
   filtersOnlyExactReviewedColumns,
 );
 test("rejects a missing reviewed column", rejectsMissingReviewedColumn);
+
+/** Prove the HTTP exception covers only the reviewed loopback fixture result. */
+async function filtersOnlyReviewedHttpFixtureFinding() {
+  const fixturePath = "crates/litradar/examples/full_stack_fixture.rs";
+  const reviewedResult = {
+    ...sarifResult(REVIEWED_FINGERPRINT, "5"),
+    ruleId: "rust/non-https-url",
+    locations: [
+      {
+        physicalLocation: {
+          artifactLocation: { uri: fixturePath },
+          region: { startLine: 245 },
+        },
+      },
+    ],
+  };
+  const newResult = {
+    ...reviewedResult,
+    partialFingerprints: {
+      ...reviewedResult.partialFingerprints,
+      primaryLocationLineHash: NEW_FINGERPRINT,
+    },
+  };
+  const allowlist = {
+    ...reviewedAllowlist([
+      {
+        path: fixturePath,
+        fingerprint: REVIEWED_FINGERPRINT,
+        columnFingerprint: "5",
+      },
+    ]),
+    ruleId: "rust/non-https-url",
+  };
+  const fixture = await createFixture([reviewedResult, newResult], allowlist);
+  try {
+    const summary = await filterReviewedFindings(fixture);
+    assert.equal(summary.reviewedCount, 1);
+    assert.equal(summary.remainingCount, 1);
+    const filtered = JSON.parse(await readFile(fixture.sarifPath, "utf8"));
+    assert.deepEqual(filtered.runs[0].results, [newResult]);
+    assert.throws(
+      () =>
+        parseReviewedFindings(
+          JSON.stringify({
+            ...allowlist,
+            findings: [
+              {
+                path: "crates/litradar/src/main.rs",
+                fingerprint: REVIEWED_FINGERPRINT,
+              },
+            ],
+          }),
+        ),
+      /must be in crates\/litradar\/examples\/full_stack_fixture\.rs/u,
+    );
+  } finally {
+    await removeFixture(fixture.root);
+  }
+}
+
+test(
+  "filters only the reviewed HTTP fixture finding",
+  filtersOnlyReviewedHttpFixtureFinding,
+);

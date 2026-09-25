@@ -71,6 +71,7 @@ jobs:
         run: |
           node --test scripts/filter-codeql-sarif.test.mjs
           node scripts/filter-codeql-sarif.mjs "$SARIF_DIRECTORY" .github/codeql-reviewed-fixtures.json
+          node scripts/filter-codeql-sarif.mjs "$SARIF_DIRECTORY" .github/codeql-reviewed-http-fixture.json
 
       - name: Fail on CodeQL alerts
         env:

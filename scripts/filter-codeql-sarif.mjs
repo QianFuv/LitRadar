@@ -7,7 +7,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const EXPECTED_SCHEMA_VERSION = 1;
-const EXPECTED_RULE_ID = "rust/hard-coded-cryptographic-value";
+const REVIEWED_RULE_PATHS = new Map([
+  ["rust/hard-coded-cryptographic-value", null],
+  ["rust/non-https-url", "crates/litradar/examples/full_stack_fixture.rs"],
+]);
 const FINGERPRINT_PROPERTY = "primaryLocationLineHash";
 const COLUMN_FINGERPRINT_PROPERTY = "primaryLocationStartColumnFingerprint";
 const FINGERPRINT_PATTERN = /^[0-9a-f]{8,64}:[1-9][0-9]*$/u;
@@ -59,8 +62,8 @@ export function parseReviewedFindings(rawAllowlist, today = new Date()) {
     );
   }
   const ruleId = requireNonEmptyString(parsed.ruleId, "ruleId");
-  if (ruleId !== EXPECTED_RULE_ID) {
-    throw new Error(`allowlist ruleId must be ${EXPECTED_RULE_ID}`);
+  if (!REVIEWED_RULE_PATHS.has(ruleId)) {
+    throw new Error(`unsupported allowlist ruleId: ${ruleId}`);
   }
   const owner = requireNonEmptyString(parsed.owner, "owner");
   const rationale = requireNonEmptyString(parsed.rationale, "rationale");
@@ -86,6 +89,10 @@ export function parseReviewedFindings(rawAllowlist, today = new Date()) {
       throw new Error(
         `finding path must be normalized and repository-relative: ${sourcePath}`,
       );
+    }
+    const reviewedPath = REVIEWED_RULE_PATHS.get(ruleId);
+    if (reviewedPath !== null && sourcePath !== reviewedPath) {
+      throw new Error(`reviewed ${ruleId} finding must be in ${reviewedPath}`);
     }
     const fingerprint = requireNonEmptyString(
       finding.fingerprint,
