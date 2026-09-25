@@ -97,6 +97,7 @@ export function ArticleDialogCard({
           >
             <ArticleListCard
               title={resolvedTitle}
+              authors={article.authors}
               journalTitle={article.journal_title}
               volume={article.volume}
               number={article.number}

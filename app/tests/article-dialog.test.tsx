@@ -158,6 +158,26 @@ async function opensAndClosesAccessibleDialog(): Promise<void> {
   }
 }
 
+/** Verify the card subtitle lists ordered authors before the journal metadata. */
+async function showsAuthorsBeforeJournal(): Promise<void> {
+  registerArticleDialogHandlers();
+  await renderArticleCard({ ...SAFE_ARTICLE, authors: ['Ada Lovelace', 'Grace Hopper'] });
+  const subtitle = screen
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .querySelector('[data-slot="card-description"]');
+  expect(subtitle).toHaveTextContent(/^Ada Lovelace; Grace Hopper.*Journal of Tests/);
+}
+
+/** Verify missing authors leave the existing journal metadata available. */
+async function showsJournalWithoutAuthors(authors: Article['authors']): Promise<void> {
+  registerArticleDialogHandlers();
+  await renderArticleCard({ ...SAFE_ARTICLE, authors });
+  const subtitle = screen
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .querySelector('[data-slot="card-description"]');
+  expect(subtitle).toHaveTextContent(/^Journal of Tests/);
+}
+
 /** Verify text selection and a sibling selection checkbox do not open article details. */
 async function keepsSelectionSeparateFromOpening(): Promise<void> {
   registerArticleDialogHandlers();
@@ -379,6 +399,14 @@ async function showsMissingTitleWithoutCopyingPlaceholder(title: Article['title'
 }
 
 describe('article dialog workflow', () => {
+  test('shows ordered authors before the journal in the card subtitle', showsAuthorsBeforeJournal);
+  test.each<{ authors: Article['authors'] }>([
+    { authors: undefined },
+    { authors: null },
+    { authors: [] },
+  ])('keeps journal metadata with authors $authors', ({ authors }) =>
+    showsJournalWithoutAuthors(authors),
+  );
   test.each(['', '   ', null])(
     'shows a missing title without copying a placeholder: %s',
     showsMissingTitleWithoutCopyingPlaceholder,

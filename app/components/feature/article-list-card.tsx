@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 
 type ArticleListCardProps = {
   title: ReactNode;
+  authors?: string[] | null;
   journalTitle?: string | null;
   volume?: string | null;
   number?: string | null;
@@ -56,6 +57,7 @@ function hasPreviewContent(preview: ReactNode): boolean {
  */
 export function ArticleListCard({
   title,
+  authors,
   journalTitle,
   volume,
   number,
@@ -101,6 +103,9 @@ export function ArticleListCard({
           )}
         </div>
         <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed">
+          {authors && authors.length > 0 && (
+            <span className="min-w-0 break-words">{authors.join('; ')}</span>
+          )}
           <span className="font-medium text-foreground/70">{journalTitle || '未知期刊'}</span>
           {issueLabel && <span>{issueLabel}</span>}
           {date && <time>{date}</time>}
