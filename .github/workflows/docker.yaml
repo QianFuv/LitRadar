@@ -142,6 +142,7 @@ jobs:
       needs.codeql-quality.result == 'success'
     outputs:
       image_tag: ${{ steps.image.outputs.image_tag }}
+      commit_tag: ${{ steps.image.outputs.commit_tag }}
     permissions:
       contents: read
       packages: write
@@ -184,15 +185,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve image tag
+      - name: Resolve image tags
         id: image
         env:
           SOURCE_REPOSITORY: ${{ github.repository }}
         run: |
-          image_tag="${REGISTRY}/${SOURCE_REPOSITORY,,}:latest"
+          image_name="${REGISTRY}/${SOURCE_REPOSITORY,,}"
+          image_tag="${image_name}:latest"
+          commit_tag="${image_name}:sha-${GITHUB_SHA:0:6}"
           created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
           {
+            echo "image_name=$image_name"
             echo "image_tag=$image_tag"
+            echo "commit_tag=$commit_tag"
             echo "created_at=$created_at"
           } >> "$GITHUB_OUTPUT"
 
@@ -202,7 +207,9 @@ jobs:
           DOCKER_BUILD_SUMMARY: "false"
         with:
           context: .
-          tags: ${{ steps.image.outputs.image_tag }}
+          tags: |
+            ${{ steps.image.outputs.image_tag }}
+            ${{ steps.image.outputs.commit_tag }}
           load: true
           labels: |
             org.opencontainers.image.created=${{ steps.image.outputs.created_at }}
@@ -228,11 +235,20 @@ jobs:
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
           exit "$status"
 
-      - name: Push the tested image
+      - name: Push both tested image tags
         id: publish
         env:
+          COMMIT_TAG: ${{ steps.image.outputs.commit_tag }}
+          IMAGE_NAME: ${{ steps.image.outputs.image_name }}
           IMAGE_TAG: ${{ steps.image.outputs.image_tag }}
-        run: docker push "$IMAGE_TAG"
+        run: |
+          actual_tags="$(docker image ls --format '{{.Repository}}:{{.Tag}}' "$IMAGE_NAME" | LC_ALL=C sort -u)"
+          expected_tags="$(printf '%s\n%s\n' "$COMMIT_TAG" "$IMAGE_TAG" | LC_ALL=C sort -u)"
+          if [[ "$actual_tags" != "$expected_tags" ]]; then
+            echo "Local image tags differ from the two release tags" >&2
+            exit 1
+          fi
+          docker push --all-tags "$IMAGE_NAME"
 
       - name: Upload container diagnostics
         if: always()
@@ -248,6 +264,7 @@ jobs:
       - name: Write container summary
         if: always()
         env:
+          COMMIT_TAG: ${{ steps.image.outputs.commit_tag }}
           IMAGE_TAG: ${{ steps.image.outputs.image_tag }}
           PUBLISH_RESULT: ${{ steps.publish.outcome }}
           SMOKE_DURATION: ${{ steps.smoke.outputs.duration_seconds }}
@@ -256,7 +273,8 @@ jobs:
           {
             echo "## Container release"
             echo
-            echo "- Image tag: ${IMAGE_TAG:-not available}"
+            echo "- Commit tag: ${COMMIT_TAG:-not available}"
+            echo "- Latest tag: ${IMAGE_TAG:-not available}"
             echo "- Smoke status: ${SMOKE_RESULT:-not run}"
             echo "- Smoke duration: ${SMOKE_DURATION:-n/a}s"
             echo "- Push status: ${PUBLISH_RESULT:-not run}"
@@ -284,6 +302,7 @@ jobs:
           BUILD_RESULT: ${{ needs.build-image.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           CODEQL_RESULT: ${{ needs.codeql-quality.result }}
+          COMMIT_TAG: ${{ needs.build-image.outputs.commit_tag }}
           COMMIT_SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           FRONTEND_RESULT: ${{ needs.frontend-quality.result }}
@@ -307,7 +326,7 @@ jobs:
 
           run_url="$SERVER_URL/$REPOSITORY/actions/runs/$RUN_ID"
           commit_url="$SERVER_URL/$REPOSITORY/commit/$COMMIT_SHA"
-          short_sha="${COMMIT_SHA:0:7}"
+          short_sha="${COMMIT_SHA:0:6}"
 
           {
             echo "# LitRadar CI Summary"
@@ -335,7 +354,8 @@ jobs:
             echo "## Container image"
             echo
             if [[ "$BUILD_RESULT" == "success" && -n "$IMAGE_TAG" ]]; then
-              echo "- Published tag: $IMAGE_TAG"
+              echo "- Commit tag: $COMMIT_TAG"
+              echo "- Latest tag: $IMAGE_TAG"
             else
               echo "No image was published by this run."
             fi

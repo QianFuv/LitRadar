@@ -177,7 +177,7 @@ OSV-Scanner、actionlint 和 Gitleaks 在 CI 中下载固定版本发行包，�
 
 `.github/workflows/security.yaml` 上传 cargo-audit JSON、cargo-deny 输出、OSV JSON、Gitleaks SARIF 和 Action pin 清单；`.github/workflows/codeql.yaml` 为 Rust 与 JavaScript/TypeScript 分别上传 SARIF。`docker.yaml` 仅在 backend、frontend、supply-chain 和 CodeQL 四类前置工作流全部成功后构建镜像。
 
-容器发布 job 在 backend、frontend、security 和 CodeQL 检查通过后构建并加载 `ghcr.io/qianfuv/litradar:latest` 本地镜像。它先运行 `node tests/container-smoke.mjs ghcr.io/qianfuv/litradar:latest`，成功后才执行 `docker push`；失败时不推送镜像。
+容器发布 job 在 backend、frontend、security 和 CodeQL 检查通过后构建并加载同一个本地镜像，打上 `ghcr.io/qianfuv/litradar:latest` 和 `sha-<提交 SHA 前 6 位>` 两个 tag。它先运行 `node tests/container-smoke.mjs ghcr.io/qianfuv/litradar:latest`，成功且核对本地 tag 集合后才一次推送两个 tag；失败时不推送镜像。
 
 ## 报告与失败诊断
 

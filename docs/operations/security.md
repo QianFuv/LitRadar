@@ -261,8 +261,8 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 容器发布工作流同样属于阻断门禁：
 
 - Dockerfile frontend 与 Node/Rust/Debian 基础镜像都固定到 reviewed digest；tag 只保留可读性和 Dependabot 更新入口。
-- Buildx 构建并加载带 `latest` tag 的本地镜像；hardened smoke 验证镜像 ID、固定 UID/GID、只读根、完整 capability drop、no-new-privileges、loopback 端口、Docker health、只读密钥和唯一持久可写数据卷。
-- smoke 成功后，工作流才将该镜像的 `latest` tag 推送到 GHCR。`latest` 会随下一次成功发布更新。
+- Buildx 构建并加载带 `latest` 和 `sha-<提交 SHA 前 6 位>` 两个 tag 的本地镜像；hardened smoke 验证镜像 ID、固定 UID/GID、只读根、完整 capability drop、no-new-privileges、loopback 端口、Docker health、只读密钥和唯一持久可写数据卷。
+- smoke 成功且本地 tag 集合符合预期后，工作流才一次将短 SHA tag 和 `latest` 推送到 GHCR。`latest` 会随下一次成功发布更新。
 - `docker-compose.yml` 只向宿主机 loopback 发布端口，并保留非特权、只读根文件系统等容器边界。
 
 ## 网络暴露

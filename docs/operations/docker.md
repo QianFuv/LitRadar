@@ -406,7 +406,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 
 ### 1. 确认镜像发布
 
-`Build and Push Docker Image` 工作流通过 backend、frontend、security 和 CodeQL 检查后，构建 `ghcr.io/qianfuv/litradar:latest`，对本地镜像运行容器冒烟测试，成功后推送该 tag。部署前确认工作流成功及其源码 commit 符合预期。`latest` 是可变 tag，后续发布会更新它。
+`Build and Push Docker Image` 工作流通过 backend、frontend、security 和 CodeQL 检查后，为同一次构建添加 `ghcr.io/qianfuv/litradar:latest` 和 `ghcr.io/qianfuv/litradar:sha-<提交 SHA 前 6 位>` 两个 tag。容器冒烟测试成功且本地只有这两个目标 tag 时，一次推送两者。部署前确认工作流成功及其源码 commit 符合预期；`latest` 是可变 tag，后续发布会更新它。
 
 ### 2. 配置 HTTPS 访问
 
