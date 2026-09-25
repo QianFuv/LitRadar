@@ -1318,6 +1318,7 @@ dependencies = [
  "litradar-sources",
  "litradar-storage",
  "litradar-worker",
+ "nix",
  "rusqlite",
  "serde",
  "serde_json",

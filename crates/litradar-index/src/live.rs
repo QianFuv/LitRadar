@@ -1627,6 +1627,9 @@ fn catalog_manifest_history_path(
 
 /// Run one serialized fetch-worker request over the process standard streams.
 ///
+/// Unix workers require the launcher's private ownership environment and an
+/// independent process group; ownership is monitored before request I/O begins.
+///
 /// # Arguments
 ///
 /// * `request_path` - Disposable JSON request path created by the parent process.
@@ -1637,6 +1640,8 @@ fn catalog_manifest_history_path(
 pub fn run_live_index_worker_from_file_path(
     request_path: impl AsRef<Path>,
 ) -> Result<(), LiveIndexError> {
+    #[cfg(unix)]
+    let _parent_guard = crate::parent_process::ParentProcessGuard::from_environment()?;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     run_live_index_worker_with_io(request_path.as_ref(), stdin.lock(), stdout.lock())
@@ -2085,6 +2090,8 @@ fn run_worker_processes(
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit());
+            #[cfg(unix)]
+            crate::parent_process::configure_worker_parent(&mut command);
             let child = SupervisedChild::spawn(&mut command).map_err(|_| {
                 LiveIndexError::Worker(format!("worker process {worker_id} could not start"))
             })?;

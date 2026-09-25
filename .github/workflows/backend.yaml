@@ -181,3 +181,4 @@ jobs:
         run: |
           cargo test -p litradar-worker process_tree --locked -- --nocapture
           cargo test -p litradar-worker scheduler_process --locked -- --nocapture
+          cargo test -p litradar-index parent_process --locked -- --nocapture

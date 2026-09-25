@@ -302,6 +302,8 @@ Coalescing keeps the latest known scheduled slot across pending, claimed, runnin
 
 服务负责活动执行集合，并在关闭或基础设施故障时协同取消、回收所有子进程。每次运行的心跳和进程树监督保持有效。一次性 `scheduler` 命令会等待自己已接纳的运行完成；每轮摘要汇总上一轮以来收集的结果，单次运行的终态事件则立即记录。
 
+On Unix, independently grouped index fetch workers receive their launcher's PID through the private `LITRADAR_INDEX_PARENT_PID` environment variable. Before reading a worker request, they validate ownership and process-group isolation, then monitor the parent on a separate thread every 100 ms. Parent loss kills the worker's whole group even while provider I/O is blocked; normal completion stops and joins the watcher. Windows retains Job Object supervision.
+
 ## 部署边界
 
 默认 Compose 只运行一个非 root、只读根文件系统且丢弃全部 Linux capabilities 的 `litradar` 容器，并把唯一 HTTP 入口 `127.0.0.1:8000` 发布到宿主机 loopback。对外访问时必须增加 TLS 反向代理和共享限流，不能把默认端口直接改为所有网卡。详见 [Docker 部署](operations/docker.md)和[安全说明](operations/security.md)。

@@ -5,6 +5,8 @@ pub mod changes;
 pub mod control;
 pub mod identity;
 pub mod live;
+#[cfg(unix)]
+mod parent_process;
 pub mod schema;
 pub mod stats;
 pub mod transforms;
