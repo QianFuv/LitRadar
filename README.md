@@ -103,7 +103,6 @@ curl --fail --output /dev/null http://localhost:8000/
 - 开发：[系统架构](docs/architecture.md)、[开发指南](docs/guides/development.md)、[测试系统](docs/testing.md)。
 - 运维：[Docker 部署](docs/operations/docker.md)、[备份与恢复](docs/operations/backup.md)、[日志运维](docs/operations/logging.md)。
 - 使用与接入：[通知与追踪](docs/guides/notifications.md)、[API 参考](docs/reference/api.md)、[CLI 参考](docs/reference/cli.md)。
-- 文档维护：[中文技术写作指南](docs/style-guide.md)。
 
 <a id="license"></a>
 
