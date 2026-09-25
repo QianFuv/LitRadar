@@ -1480,9 +1480,30 @@ fn cron_matches_time(cron: &str, time: CronTime) -> Result<bool, SchedulerError>
             "Cron expression must contain exactly five fields".to_string(),
         ));
     }
+    let is_day_match = cron_field_matches(fields[2], time.day, 1, 31, &[])?;
+    let is_weekday_match = cron_field_matches(
+        fields[4],
+        time.weekday,
+        0,
+        7,
+        &[
+            ("sun", 0),
+            ("mon", 1),
+            ("tue", 2),
+            ("wed", 3),
+            ("thu", 4),
+            ("fri", 5),
+            ("sat", 6),
+        ],
+    )?;
+    let has_matching_day = if fields[2].starts_with('*') || fields[4].starts_with('*') {
+        is_day_match && is_weekday_match
+    } else {
+        is_day_match || is_weekday_match
+    };
     Ok(cron_field_matches(fields[0], time.minute, 0, 59, &[])?
         && cron_field_matches(fields[1], time.hour, 0, 23, &[])?
-        && cron_field_matches(fields[2], time.day, 1, 31, &[])?
+        && has_matching_day
         && cron_field_matches(
             fields[3],
             time.month,
@@ -1501,21 +1522,6 @@ fn cron_matches_time(cron: &str, time: CronTime) -> Result<bool, SchedulerError>
                 ("oct", 10),
                 ("nov", 11),
                 ("dec", 12),
-            ],
-        )?
-        && cron_field_matches(
-            fields[4],
-            time.weekday,
-            0,
-            7,
-            &[
-                ("sun", 0),
-                ("mon", 1),
-                ("tue", 2),
-                ("wed", 3),
-                ("thu", 4),
-                ("fri", 5),
-                ("sat", 6),
             ],
         )?)
 }
@@ -1574,17 +1580,12 @@ fn cron_part_matches(
         let parsed = cron_value(base, minimum, maximum, names)?;
         (parsed, parsed)
     };
-    if !cron_value_matches_range(value, start, end, maximum) {
-        return Ok(false);
-    }
-    Ok(step.is_none_or(|step| (value - start).rem_euclid(step) == 0))
-}
-
-fn cron_value_matches_range(value: i64, start: i64, end: i64, maximum: i64) -> bool {
-    if maximum == 7 && value == 0 && start <= 7 && end >= 7 {
-        return true;
-    }
-    value >= start && value <= end
+    let matches = |candidate: i64| {
+        candidate >= start
+            && candidate <= end
+            && step.is_none_or(|step| (candidate - start).rem_euclid(step) == 0)
+    };
+    Ok(matches(value) || (maximum == 7 && value == 0 && matches(7)))
 }
 
 fn current_unix_time() -> f64 {
@@ -1656,6 +1657,63 @@ mod tests {
         assert!(validate_cron_expression("60 * * * *").is_err());
         assert!(validate_cron_expression("* *").is_err());
         assert!(validate_cron_expression("* * * * */0").is_err());
+    }
+
+    #[test]
+    fn scheduler_cron_combines_restricted_days_and_respects_wildcards() {
+        for (cron, day, weekday, expected) in [
+            ("0 8 1 * 1", 14, 1, true),
+            ("0 8 1 * 1", 1, 2, true),
+            ("0 8 1 * 1", 2, 2, false),
+            ("0 8 * * 1", 14, 1, true),
+            ("0 8 * * 1", 15, 2, false),
+            ("0 8 1 * *", 14, 1, false),
+            ("0 8 */2 * 1", 14, 1, false),
+            ("0 8 */2 * 1", 21, 1, true),
+            ("0 8 1 * */2", 1, 2, true),
+            ("0 8 1 * */2", 1, 1, false),
+        ] {
+            let time = CronTime {
+                minute: 0,
+                hour: 8,
+                day,
+                month: 9,
+                weekday,
+            };
+            assert_eq!(
+                cron_matches_time(cron, time).unwrap(),
+                expected,
+                "{cron}: {time:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scheduler_cron_sunday_steps_match_expanded_weekday_lists() {
+        for (stepped, expanded) in [
+            ("1-7/2", "1,3,5,7"),
+            ("0-7/2", "0,2,4,6"),
+            ("5-7/2", "5,7"),
+            ("7/2", "sun"),
+            ("0-7/3", "0,3,6"),
+            ("7", "0"),
+            ("mon-sat/2", "mon,wed,fri"),
+        ] {
+            for weekday in 0..=6 {
+                let time = CronTime {
+                    minute: 0,
+                    hour: 8,
+                    day: 13,
+                    month: 9,
+                    weekday,
+                };
+                assert_eq!(
+                    cron_matches_time(&format!("0 8 * * {stepped}"), time).unwrap(),
+                    cron_matches_time(&format!("0 8 * * {expanded}"), time).unwrap(),
+                    "{stepped} differs from {expanded} on {weekday}",
+                );
+            }
+        }
     }
 
     #[test]
