@@ -10,6 +10,8 @@ on:
       - "Cargo.lock"
       - "crates/**"
       - "app/**"
+      - "tests/filter-codeql-sarif.test.mjs"
+      - "scripts/filter-codeql-sarif.mjs"
       - ".github/workflows/codeql.yaml"
   pull_request:
     paths:
@@ -17,6 +19,8 @@ on:
       - "Cargo.lock"
       - "crates/**"
       - "app/**"
+      - "tests/filter-codeql-sarif.test.mjs"
+      - "scripts/filter-codeql-sarif.mjs"
       - ".github/workflows/codeql.yaml"
   schedule:
     - cron: "45 3 * * 1"
@@ -69,7 +73,7 @@ jobs:
         env:
           SARIF_DIRECTORY: ${{ steps.analysis.outputs.sarif-output }}
         run: |
-          node --test scripts/filter-codeql-sarif.test.mjs
+          node --test tests/filter-codeql-sarif.test.mjs
           node scripts/filter-codeql-sarif.mjs "$SARIF_DIRECTORY" .github/codeql-reviewed-fixtures.json
           node scripts/filter-codeql-sarif.mjs "$SARIF_DIRECTORY" .github/codeql-reviewed-http-fixture.json
 

@@ -14,7 +14,8 @@ on:
       - "crates/litradar-index/**"
       - "crates/litradar-storage/**"
       - "app/**"
-      - "scripts/test.mjs"
+      - "tests/test.mjs"
+      - "tests/data/**"
       - "scripts/build-simple-tokenizer.mjs"
       - ".github/workflows/frontend.yaml"
   pull_request:
@@ -27,7 +28,8 @@ on:
       - "crates/litradar-index/**"
       - "crates/litradar-storage/**"
       - "app/**"
-      - "scripts/test.mjs"
+      - "tests/test.mjs"
+      - "tests/data/**"
       - "scripts/build-simple-tokenizer.mjs"
       - ".github/workflows/frontend.yaml"
 

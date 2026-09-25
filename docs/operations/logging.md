@@ -260,7 +260,7 @@ docker compose logs --no-log-prefix litradar |
 
 ```powershell
 docker compose build
-pwsh ./scripts/profile_logging.ps1 `
+pwsh ./tests/profiling/profile_logging.ps1 `
   -DataPath ./output/logging-fixture `
   -Rounds 3 `
   -RequestCount 300 `

@@ -4,13 +4,13 @@
 
 import type { components } from '@/lib/generated/api-schema';
 
-import articlePageJson from '../../../testdata/scenarios/api/article-page.json';
-import errorJson from '../../../testdata/scenarios/api/error.json';
-import loginJson from '../../../testdata/scenarios/api/login.json';
-import maskedNotificationSettingsJson from '../../../testdata/scenarios/api/masked-notification-settings.json';
-import weeklyArticlePageJson from '../../../testdata/scenarios/api/weekly-article-page.json';
-import weeklyUpdateSummaryJson from '../../../testdata/scenarios/api/weekly-update-summary.json';
-import weeklyUpdatesJson from '../../../testdata/scenarios/api/weekly-updates.json';
+import articlePageJson from '../../../tests/data/scenarios/api/article-page.json';
+import errorJson from '../../../tests/data/scenarios/api/error.json';
+import loginJson from '../../../tests/data/scenarios/api/login.json';
+import maskedNotificationSettingsJson from '../../../tests/data/scenarios/api/masked-notification-settings.json';
+import weeklyArticlePageJson from '../../../tests/data/scenarios/api/weekly-article-page.json';
+import weeklyUpdateSummaryJson from '../../../tests/data/scenarios/api/weekly-update-summary.json';
+import weeklyUpdatesJson from '../../../tests/data/scenarios/api/weekly-updates.json';
 
 type ApiSchemas = components['schemas'];
 type DatePrecision = ApiSchemas['DatePrecision'];

@@ -12,7 +12,8 @@ on:
       - "crates/**"
       - "libs/**"
       - "data/meta/**"
-      - "scripts/test.mjs"
+      - "tests/test.mjs"
+      - "tests/data/**"
       - "scripts/build-simple-tokenizer.mjs"
       - ".github/workflows/backend.yaml"
   pull_request:
@@ -23,7 +24,8 @@ on:
       - "crates/**"
       - "libs/**"
       - "data/meta/**"
-      - "scripts/test.mjs"
+      - "tests/test.mjs"
+      - "tests/data/**"
       - "scripts/build-simple-tokenizer.mjs"
       - ".github/workflows/backend.yaml"
 

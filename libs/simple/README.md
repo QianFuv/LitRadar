@@ -10,7 +10,8 @@
 
 | 环境             | 构建或加载位置                                                                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Windows x64 开发 | `libs/simple-windows/libsimple-windows-x64/simple.dll`                                                                          |
+| Windows x64 开发 | `libs/simple/windows/simple.dll`                                                                                                |
+| Linux x64 预编译 | `libs/simple/linux/libsimple.so`                                                                                                |
 | Linux 开发与 CI  | 在仓库根运行 `node scripts/build-simple-tokenizer.mjs`，生成 `target/simple-tokenizer/libsimple.so`；需要 CMake 和 C++14 编译器 |
 | Docker           | 按目标 amd64/arm64 架构构建，安装到 `/usr/lib/litradar/libsimple.so`，同时提供 C++ 运行库                                       |
 | 独立原生程序     | 可在可执行文件旁打包匹配平台的库                                                                                                |
@@ -31,4 +32,4 @@ v9 缺少或无法兼容原生库时明确失败，不回退到 unicode61。SQLi
 
 ## 许可证与来源
 
-预编译库来自 [Simple v0.7.1](https://github.com/wangfenjin/simple/releases/tag/v0.7.1)；Docker 和本地 Linux 源码构建使用 [simple 固定上游提交](https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c)。LitRadar 在上游的 MIT OR GPL-3.0-or-later 双许可证中选择 MIT；版权与授权原文随项目分发于 [Simple-LICENSE.txt](../../third-party/Simple-LICENSE.txt)。
+预编译库来自 [Simple v0.7.1](https://github.com/wangfenjin/simple/releases/tag/v0.7.1)；Docker 和本地 Linux 源码构建使用 [simple 固定上游提交](https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c)。LitRadar 在上游的 MIT OR GPL-3.0-or-later 双许可证中选择 MIT；版权与授权原文随项目分发于 [Simple-LICENSE.txt](../../docs/third-party/Simple-LICENSE.txt)。

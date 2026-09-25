@@ -19,7 +19,7 @@ WORKDIR /app
 COPY --from=frontend-deps /app/node_modules node_modules/
 COPY app/ ./
 COPY scripts/generate-csp.mjs /scripts/generate-csp.mjs
-COPY testdata /testdata
+COPY tests/data /tests/data
 
 RUN corepack enable pnpm && pnpm build
 RUN apk add --no-cache gzip \
@@ -57,7 +57,7 @@ RUN apt-get update \
 
 ADD --checksum=sha256:92e742e3c1f4d030561b0df559c4a0a5707b3f3c977bee1307c38d988404003c \
     https://codeload.github.com/h4ckf0r0day/obscura/tar.gz/a1e09de68c7617b8079fbb1661b0548c501971c1 /tmp/obscura.tar.gz
-COPY third-party/obscura-rustls.patch /tmp/obscura-rustls.patch
+COPY docs/third-party/obscura-rustls.patch /tmp/obscura-rustls.patch
 
 ARG TARGETARCH
 
@@ -130,7 +130,7 @@ RUN apt-get update \
 COPY --from=obscura-build /usr/local/bin/obscura /usr/local/bin/obscura
 COPY --from=simple-tokenizer-build /simple/output/libsimple.so /usr/lib/litradar/libsimple.so
 
-COPY third-party /usr/share/doc/litradar/third-party
+COPY docs/third-party /usr/share/doc/litradar/third-party
 COPY --from=obscura-build /obscura/licenses /usr/share/doc/litradar/third-party/obscura-dependencies
 COPY --from=obscura-build /obscura/dependencies.txt /usr/share/doc/litradar/third-party/Obscura-dependencies.txt
 

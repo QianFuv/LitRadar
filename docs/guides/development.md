@@ -207,9 +207,9 @@ pnpm generate:api:check
 日常从仓库根选择最低充分的统一入口；完整职责和聚焦命令见[测试系统](../testing.md)：
 
 ```bash
-node scripts/test.mjs fast
-node scripts/test.mjs integration
-node scripts/test.mjs all
+node tests/test.mjs fast
+node tests/test.mjs integration
+node tests/test.mjs all
 ```
 
 Backend CI 使用固定的 cargo-nextest 0.9.137、零重试和独立 doctest。`cargo test --workspace --locked` 保留为完整计划或发布前的一次 Cargo 兼容门禁，不在每个 PR 中与 nextest 重复。
@@ -217,7 +217,7 @@ Backend CI 使用固定的 cargo-nextest 0.9.137、零重试和独立 doctest。
 覆盖率只在每周/手动诊断中分别生成 Rust 和前端报告，不设阈值：
 
 ```bash
-node scripts/test.mjs diagnostics
+node tests/test.mjs diagnostics
 ```
 
 ## 前端检查
@@ -256,7 +256,7 @@ node scripts/container-smoke.mjs litradar:test
 日志或请求路径变更还应使用隔离 fixture 运行 off/on 门禁：
 
 ```powershell
-pwsh ./scripts/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 -RequestCount 300 -Concurrency 4
+pwsh ./tests/profiling/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 -RequestCount 300 -Concurrency 4
 ```
 
 脚本验证 JSON schema、请求事件完整性、零丢失、p95 延迟差，并复用 Docker warm-idle 内存画像。它会迁移和写入传入目录，不能指向正在运行的真实数据。

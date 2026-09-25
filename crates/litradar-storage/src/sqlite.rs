@@ -85,11 +85,10 @@ pub fn load_simple_tokenizer(connection: &Connection) -> rusqlite::Result<()> {
     }
     candidates.push(workspace.join("target/simple-tokenizer").join(library_name));
     if cfg!(all(windows, target_arch = "x86_64")) {
-        candidates.push(workspace.join("libs/simple-windows/libsimple-windows-x64/simple.dll"));
+        candidates.push(workspace.join("libs/simple/windows/simple.dll"));
     }
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        candidates
-            .push(workspace.join("libs/simple-linux/libsimple-linux-ubuntu-latest/libsimple.so"));
+        candidates.push(workspace.join("libs/simple/linux/libsimple.so"));
     }
     let path = candidates
         .into_iter()

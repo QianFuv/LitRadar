@@ -382,12 +382,13 @@ pub(crate) fn replace_json_pointer(payload: &mut Value, pointer: &str, replaceme
 ///
 /// # Arguments
 ///
-/// * `scenario_name` - Scenario filename under `testdata/scenarios/api`.
+/// * `scenario_name` - Scenario filename under `tests/data/scenarios/api`.
 /// * `payload` - Normalized real route response.
 pub(crate) fn assert_api_scenario(scenario_name: &str, payload: &Value) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("testdata")
+        .join("tests")
+        .join("data")
         .join("scenarios")
         .join("api")
         .join(scenario_name);

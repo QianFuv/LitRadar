@@ -29,7 +29,7 @@ param(
 
     [switch]$EnforceMemoryBudgets,
 
-    [string]$ComposeFile = (Join-Path $PSScriptRoot "..\docker-compose.yml"),
+    [string]$ComposeFile = (Join-Path $PSScriptRoot "..\..\docker-compose.yml"),
 
     [string]$SqliteExecutable = "sqlite3",
 

@@ -20,7 +20,7 @@
 - REST 路由场景放在 `crates/litradar-api/src/tests/`；MCP 协议和工具行为留在 `mcp.rs` 的现有测试所有者中。
 - 普通前端行为放在 `app/tests/*.test.tsx`。只有 jsdom 无法忠实提供的浏览器 API 或事件链，才进入 `browser-components/`。
 - fixture Playwright 放在 `local-fixtures.spec.tsx`；真实后端 Playwright 只放在 `e2e/full-stack/`，且禁止 `page.route`、`context.route`、`route.fulfill`、`route.abort` 等拦截。
-- 跨栈稳定 JSON 放在 `testdata/scenarios/api/`；运行时生成物、随机凭据和数据库快照不得签入该目录。
+- 跨栈稳定 JSON 放在 `tests/data/scenarios/api/`；运行时生成物、随机凭据和数据库快照不得签入该目录。
 - 不为视觉整齐批量移动测试。审阅现有用例时使用以下处置：
   - **保留**：在正确层证明唯一可观察行为。
   - **加强**：意图有效，但缺少结果、状态或失败断言。
@@ -107,13 +107,13 @@ cargo install cargo-llvm-cov --version 0.8.7 --locked
 
 所有统一命令都从仓库根运行，任一子步骤失败即停止，并转发 SIGINT/SIGTERM：
 
-| 命令                                | 精确职责                                                                                                  |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `node scripts/test.mjs fast`        | Cargo workspace 的 library/binary 测试，加 Vitest jsdom；不构建浏览器，不运行 E2E。                       |
-| `node scripts/test.mjs integration` | cargo-nextest workspace、独立 doctest、OpenAPI 生成幂等和共享前端 API contract。                          |
-| `node scripts/test.mjs e2e-smoke`   | 构建/导出前端，并运行真实后端 Chromium 关键旅程。                                                         |
-| `node scripts/test.mjs all`         | Rust/前端静态检查、完整 nextest/doctest、jsdom、Browser Mode、fixture 和 full-stack 冒烟测试 和前端构建。 |
-| `node scripts/test.mjs diagnostics` | 分别生成 Rust 和前端覆盖率报告；不应用百分比阈值。                                                        |
+| 命令                              | 精确职责                                                                                                  |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `node tests/test.mjs fast`        | Cargo workspace 的 library/binary 测试，加 Vitest jsdom；不构建浏览器，不运行 E2E。                       |
+| `node tests/test.mjs integration` | cargo-nextest workspace、独立 doctest、OpenAPI 生成幂等和共享前端 API contract。                          |
+| `node tests/test.mjs e2e-smoke`   | 构建/导出前端，并运行真实后端 Chromium 关键旅程。                                                         |
+| `node tests/test.mjs all`         | Rust/前端静态检查、完整 nextest/doctest、jsdom、Browser Mode、fixture 和 full-stack 冒烟测试 和前端构建。 |
+| `node tests/test.mjs diagnostics` | 分别生成 Rust 和前端覆盖率报告；不应用百分比阈值。                                                        |
 
 在命令末尾加 `--ci` 会选择 nextest CI profile、固定报告路径和浏览器 CI 诊断策略。`--ci` 不是额外测试层，也不会让统一脚本自行重试失败命令。
 

@@ -28,7 +28,7 @@ param(
 
     [string[]]$TrafficPath = @(),
 
-    [string]$ComposeFile = (Join-Path $PSScriptRoot "..\docker-compose.yml"),
+    [string]$ComposeFile = (Join-Path $PSScriptRoot "..\..\docker-compose.yml"),
 
     [string]$OutputPath
 )

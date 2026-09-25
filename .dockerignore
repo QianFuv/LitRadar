@@ -22,6 +22,8 @@ backups/
 secrets/
 test/
 docs/
+!docs/third-party/
+!docs/third-party/**
 *.md
 !README.md
 .idea/

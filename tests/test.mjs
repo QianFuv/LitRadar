@@ -232,7 +232,7 @@ function parseArguments(args) {
     ciCount > 1
   ) {
     throw new Error(
-      "Usage: node scripts/test.mjs <fast|integration|e2e-smoke|all|diagnostics> [--ci]",
+      "Usage: node tests/test.mjs <fast|integration|e2e-smoke|all|diagnostics> [--ci]",
     );
   }
   return { mode, isCi: ciCount === 1 };

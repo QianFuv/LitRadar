@@ -791,23 +791,23 @@ mod tests {
 
     #[cfg(any(windows, target_os = "linux"))]
     #[test]
-    fn article_queries_ignore_obsolete_simple_extension_assets() {
+    fn article_queries_ignore_project_root_simple_extension_assets() {
         let fixture = IndexFixture::new(true);
         let extension_path = if cfg!(windows) {
             fixture
                 .config
                 .project_root()
                 .join("libs")
-                .join("simple-windows")
-                .join("libsimple-windows-x64")
+                .join("simple")
+                .join("windows")
                 .join("simple.dll")
         } else {
             fixture
                 .config
                 .project_root()
                 .join("libs")
-                .join("simple-linux")
-                .join("libsimple-linux-ubuntu-latest")
+                .join("simple")
+                .join("linux")
                 .join("libsimple.so")
         };
         std::fs::create_dir_all(
@@ -815,9 +815,9 @@ mod tests {
                 .parent()
                 .expect("extension path should have a parent"),
         )
-        .expect("historical extension directory should be created");
-        std::fs::write(&extension_path, b"invalid historical extension")
-            .expect("invalid historical extension should be written");
+        .expect("project-root extension directory should be created");
+        std::fs::write(&extension_path, b"invalid project-root extension")
+            .expect("invalid project-root extension should be written");
 
         let page = list_articles(
             &fixture.config,

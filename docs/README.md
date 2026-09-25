@@ -57,7 +57,7 @@
 - [前端包说明](../app/README.md)：`app/` 的启动、目录、API 契约和测试
 - [simple 分词器](../libs/simple/README.md)：仓库内置扩展、发现规则和上游许可证
 
-`libs/simple-*/**/dict/README.md` 是第三方词典说明，不属于 LitRadar 的项目文档，保持上游内容。
+`libs/simple/{linux,windows}/dict/README.md` 是第三方词典说明，不属于 LitRadar 的项目文档，保持上游内容。
 
 ## 事实来源
 
@@ -81,7 +81,7 @@
 | Docker 行为        | `Dockerfile`、`docker-compose.yml`                                                                                                 | [Docker 部署](operations/docker.md)                          |
 | 结构化日志         | `crates/litradar/src/observability.rs`、各组件 tracing 事件、`app/lib/client-logger.tsx`                                           | [日志运维](operations/logging.md)                            |
 | 前端结构           | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                                                                      | [前端包说明](../app/README.md)                               |
-| 测试分层与诊断     | `scripts/test.mjs`、测试配置、`.github/workflows/`                                                                                 | [测试系统](testing.md)                                       |
+| 测试分层与诊断     | `tests/test.mjs`、测试配置、`.github/workflows/`                                                                                   | [测试系统](testing.md)                                       |
 | UI token 与组件    | `app/app/globals.css`、`app/components/ui/`                                                                                        | [前端设计系统](reference/design-system.md)                   |
 
 ## 维护原则

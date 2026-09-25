@@ -40,7 +40,7 @@ HTTP 与子进程工作发生在写事务之外。发布时重新验证全部期
 
 后端优先使用直接 HTTP。连接失败、受限状态、验证挑战或无法识别的 JavaScript 页面，可以在来源剩余预算内使用一次 Obscura 后备采集；浏览器 API 不会直接调用 Obscura。辅助程序按显式 CLI 路径、对应后端环境变量、`PATH` 的顺序解析，详见[征稿参数](../reference/cli.md#cfp)。
 
-Docker 镜像包含 `/usr/local/bin/obscura` 和 `/usr/bin/pdftotext`，并设置对应路径变量。Obscura `0.2.2+litradar.1` 从固定的 0.2.2 源码构建，包含 rustls/webpki 安全更新、原生 JavaScript/DOM 和渲染支持；构建和补丁来源见 [Dockerfile](../../Dockerfile) 及[安全补丁](../../third-party/obscura-rustls.patch)。采集使用 `fetch`，不打包并行 `scrape` 工作进程，也不需要 Chromium、Node.js 或运行时浏览器下载。PDF 提取依赖 Debian 的 `poppler-utils` 和 `poppler-data`，包括中文 PDF 所需的 CJK 字符映射。
+Docker 镜像包含 `/usr/local/bin/obscura` 和 `/usr/bin/pdftotext`，并设置对应路径变量。Obscura `0.2.2+litradar.1` 从固定的 0.2.2 源码构建，包含 rustls/webpki 安全更新、原生 JavaScript/DOM 和渲染支持；构建和补丁来源见 [Dockerfile](../../Dockerfile) 及[安全补丁](../third-party/obscura-rustls.patch)。采集使用 `fetch`，不打包并行 `scrape` 工作进程，也不需要 Chromium、Node.js 或运行时浏览器下载。PDF 提取依赖 Debian 的 `poppler-utils` 和 `poppler-data`，包括中文 PDF 所需的 CJK 字符映射。
 
 两个辅助程序都以现有非特权服务用户运行，临时采集使用 `/tmp`，不放宽只读根文件系统或 noexec 挂载设置。Obscura 不经过 shell，以有限超时和 `--stealth` 运行，`--eval` 返回包含最终 URL 与原始 HTML 的 JSON。退出码为 0 不等于采集有效；结果仍须通过封装格式、URL、出版方身份、挑战页面和征稿原文边界检查。
 

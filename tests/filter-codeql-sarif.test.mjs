@@ -11,7 +11,7 @@ import test from "node:test";
 import {
   filterReviewedFindings,
   parseReviewedFindings,
-} from "./filter-codeql-sarif.mjs";
+} from "../scripts/filter-codeql-sarif.mjs";
 
 const REVIEWED_PATH = "crates/example/src/lib.rs";
 const REVIEWED_FINGERPRINT = "1382ed900590088:1";

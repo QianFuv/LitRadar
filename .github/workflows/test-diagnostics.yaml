@@ -56,7 +56,7 @@ jobs:
         run: |
           started_at="$(date +%s)"
           set +e
-          node scripts/test.mjs diagnostics --ci
+          node tests/test.mjs diagnostics --ci
           status="$?"
           set -e
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"

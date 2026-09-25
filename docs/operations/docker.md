@@ -269,7 +269,7 @@ docker compose logs --no-log-prefix litradar | jq -c 'select(.level == "ERROR")'
 
 ## 内存画像与门禁
 
-仓库提供 PowerShell 7 脚本 `scripts/profile_docker_memory.ps1`。脚本为每次运行生成唯一的 Compose 项目、容器和网络，只删除这些具名测试资源，并把不含命令参数和密钥值的 JSON 写入已忽略的 `output/memory/`。Docker 必须使用 cgroup v2，目标镜像必须先构建：
+仓库提供 PowerShell 7 脚本 `tests/profiling/profile_docker_memory.ps1`。脚本为每次运行生成唯一的 Compose 项目、容器和网络，只删除这些具名测试资源，并把不含命令参数和密钥值的 JSON 写入已忽略的 `output/memory/`。Docker 必须使用 cgroup v2，目标镜像必须先构建：
 
 ```powershell
 docker compose build litradar
@@ -310,7 +310,7 @@ docker compose config --quiet
 默认恢复索引不带 `--update`，用于证明已完成期刊可跳过且旧待发布事件不会被非更新运行接管：
 
 ```powershell
-pwsh ./scripts/profile_docker_memory.ps1 `
+pwsh ./tests/profiling/profile_docker_memory.ps1 `
   -Scenario index `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -324,7 +324,7 @@ pwsh ./scripts/profile_docker_memory.ps1 `
 先运行需要恢复待发布事件的 CCF 更新，再分别运行中国期刊和英文学术更新：
 
 ```powershell
-pwsh ./scripts/profile_docker_memory.ps1 `
+pwsh ./tests/profiling/profile_docker_memory.ps1 `
   -Scenario update `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -336,7 +336,7 @@ pwsh ./scripts/profile_docker_memory.ps1 `
   ) `
   -OutputPath ./output/memory/final-update-ccf.json
 
-pwsh ./scripts/profile_docker_memory.ps1 `
+pwsh ./tests/profiling/profile_docker_memory.ps1 `
   -Scenario update `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -348,7 +348,7 @@ pwsh ./scripts/profile_docker_memory.ps1 `
   ) `
   -OutputPath ./output/memory/final-update-chinese.json
 
-pwsh ./scripts/profile_docker_memory.ps1 `
+pwsh ./tests/profiling/profile_docker_memory.ps1 `
   -Scenario update `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -364,7 +364,7 @@ pwsh ./scripts/profile_docker_memory.ps1 `
 常驻服务和同 cgroup 子任务的合并画像：
 
 ```powershell
-pwsh ./scripts/profile_docker_memory.ps1 `
+pwsh ./tests/profiling/profile_docker_memory.ps1 `
   -Scenario scheduled-child `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -380,7 +380,7 @@ pwsh ./scripts/profile_docker_memory.ps1 `
 五分钟预热后采集十分钟日常服务和轻流量；路径必须包含 `/health/live`、`/health/ready` 和 `/`：
 
 ```powershell
-pwsh ./scripts/profile_docker_memory.ps1 `
+pwsh ./tests/profiling/profile_docker_memory.ps1 `
   -Scenario warm-idle `
   -DataPath ./data `
   -WarmupSeconds 300 `
@@ -394,7 +394,7 @@ pwsh ./scripts/profile_docker_memory.ps1 `
 无论内存选项如何，非零退出（含超时 124）、上游错误、OOM 或流量失败都属于失败运行。显式阈值或旧压力检查超限也返回 1，未设置的预算不参与判断。以下极小阈值用于验证单项内存检查确实能报错：
 
 ```powershell
-pwsh ./scripts/profile_docker_memory.ps1 `
+pwsh ./tests/profiling/profile_docker_memory.ps1 `
   -Scenario warm-idle `
   -DataPath ./isolated-profile-data `
   -DurationSeconds 10 `
