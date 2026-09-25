@@ -296,6 +296,8 @@ Cron uses five-field crontab rules: when day-of-month and day-of-week are both r
 
 内嵌调度器最多保留 4 个活动执行。长时间索引不会阻止发现后续到期任务：每轮先把到期时段持久化，再按空闲执行槽认领任务。多余工作保持待处理状态，不会提前取得认领租约；每个任务仍最多有一次活动运行。
 
+Coalescing keeps the latest known scheduled slot across pending, claimed, running and terminal records. Older pending slots are removed again after expired unstarted claims are recovered, so delayed ticks and restarts cannot resurrect work already coalesced away. Tasks with coalescing disabled retain each missed slot.
+
 服务负责活动执行集合，并在关闭或基础设施故障时协同取消、回收所有子进程。每次运行的心跳和进程树监督保持有效。一次性 `scheduler` 命令会等待自己已接纳的运行完成；每轮摘要汇总上一轮以来收集的结果，单次运行的终态事件则立即记录。
 
 ## 部署边界

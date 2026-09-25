@@ -457,13 +457,13 @@ pub fn enqueue_scheduled_runs(
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if task.coalesce {
         let latest_slot = scheduled_slots[scheduled_slots.len() - 1];
-        let latest_pending = transaction.query_row(
+        let latest_known_slot = transaction.query_row(
             "SELECT MAX(scheduled_for) FROM scheduled_task_runs
-             WHERE task_id = ?1 AND status = 'pending'",
+             WHERE task_id = ?1",
             [task.id],
             |row| row.get::<_, Option<i64>>(0),
         )?;
-        let selected_slot = latest_pending.map_or(latest_slot, |pending| pending.max(latest_slot));
+        let selected_slot = latest_known_slot.map_or(latest_slot, |known| known.max(latest_slot));
         transaction.execute(
             "DELETE FROM scheduled_task_runs
              WHERE task_id = ?1 AND status = 'pending' AND scheduled_for < ?2",
@@ -569,6 +569,16 @@ pub fn claim_ready_scheduled_runs_with_limit(
              claimed_at = NULL
          WHERE status = 'claimed' AND claim_expires_at <= ?1",
         [claimed_at],
+    )?;
+    transaction.execute(
+        "DELETE FROM scheduled_task_runs
+         WHERE status = 'pending'
+           AND task_id IN (SELECT id FROM scheduled_tasks WHERE coalesce = 1)
+           AND scheduled_for < (
+               SELECT MAX(latest.scheduled_for) FROM scheduled_task_runs AS latest
+               WHERE latest.task_id = scheduled_task_runs.task_id
+           )",
+        [],
     )?;
 
     let candidates = {
@@ -921,6 +931,91 @@ mod tests {
 
     use super::*;
     use crate::migrate_auth_database;
+
+    fn scheduler_fixture(coalesce: bool) -> (tempfile::TempDir, ScheduledTaskInfo) {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("auth.sqlite");
+        migrate_auth_database(&path).unwrap();
+        let task = create_scheduled_task(
+            &path,
+            ScheduledTaskCreateParams {
+                name: "Scheduler regression",
+                job: &ScheduledJobSpec::Index(ScheduledIndexJob {
+                    metadata_file: None,
+                    notify: false,
+                    push: false,
+                }),
+                cron: "* * * * *",
+                timezone: "UTC",
+                timeout_seconds: 60,
+                coalesce,
+                enabled: true,
+            },
+        )
+        .unwrap();
+        (directory, task)
+    }
+
+    #[test]
+    fn scheduler_coalescing_does_not_resurrect_slots_after_claim_or_completion() {
+        for status in [
+            SchedulerRunState::Claimed,
+            SchedulerRunState::Running,
+            SchedulerRunState::Success,
+        ] {
+            let (directory, task) = scheduler_fixture(true);
+            let path = directory.path().join("auth.sqlite");
+            enqueue_scheduled_runs(&path, &task, &[60, 120, 180]).unwrap();
+            let claim = claim_ready_scheduled_runs(&path, "new", 180.0, 90.0)
+                .unwrap()
+                .remove(0);
+            if status != SchedulerRunState::Claimed {
+                assert!(start_scheduled_run(&path, claim.run_id, "new", 180.0, 90.0).unwrap());
+            }
+            if status == SchedulerRunState::Success {
+                assert!(finish_scheduled_run(&path, &claim, status, "", 181.0).unwrap());
+            }
+            assert_eq!(
+                enqueue_scheduled_runs(&path, &task, &[60, 120]).unwrap(),
+                0,
+                "{status:?}"
+            );
+            let runs = get_scheduler_status(&path, 182.0, 90.0, 10)
+                .unwrap()
+                .recent_runs;
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].scheduled_for, 180);
+        }
+    }
+
+    #[test]
+    fn scheduler_coalescing_reconciles_expired_claim_before_selecting_work() {
+        for coalesce in [true, false] {
+            let (directory, task) = scheduler_fixture(coalesce);
+            let path = directory.path().join("auth.sqlite");
+            enqueue_scheduled_runs(&path, &task, &[0]).unwrap();
+            assert_eq!(
+                claim_ready_scheduled_runs(&path, "crashed", 0.0, 90.0)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            enqueue_scheduled_runs(&path, &task, &[60, 120]).unwrap();
+            let claim = claim_ready_scheduled_runs(&path, "restart", 120.0, 90.0)
+                .unwrap()
+                .remove(0);
+            assert_eq!(claim.scheduled_for, if coalesce { 120 } else { 0 });
+            assert!(
+                finish_scheduled_run(&path, &claim, SchedulerRunState::Success, "", 121.0).unwrap()
+            );
+            let remaining = claim_ready_scheduled_runs(&path, "restart", 122.0, 90.0).unwrap();
+            if coalesce {
+                assert!(remaining.is_empty());
+            } else {
+                assert_eq!(remaining[0].scheduled_for, 60);
+            }
+        }
+    }
 
     #[test]
     fn scheduler_claim_capacity_keeps_excess_work_pending_without_leases() {
