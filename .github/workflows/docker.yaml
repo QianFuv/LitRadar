@@ -15,6 +15,7 @@ on:
       - "data/meta/**"
       - ".dockerignore"
       - "Dockerfile"
+      - "README.md"
       - "docs/third-party/**"
       - "docker-compose.yml"
       - "app/**"
@@ -60,6 +61,7 @@ jobs:
               - "data/meta/**"
               - ".dockerignore"
               - "Dockerfile"
+              - "README.md"
               - "docs/third-party/**"
               - "docker-compose.yml"
               - "app/**"
@@ -194,11 +196,17 @@ jobs:
           image_tag="${image_name}:latest"
           commit_tag="${image_name}:sha-${GITHUB_SHA:0:6}"
           created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
+          description="$(awk 'NR > 1 && NF { print; exit }' README.md)"
+          if [[ -z "$description" || ${#description} -gt 512 ]]; then
+            echo "README description must be one nonempty line of at most 512 characters" >&2
+            exit 1
+          fi
           {
             echo "image_name=$image_name"
             echo "image_tag=$image_tag"
             echo "commit_tag=$commit_tag"
             echo "created_at=$created_at"
+            echo "description=$description"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build the tagged image locally
@@ -213,6 +221,7 @@ jobs:
           load: true
           labels: |
             org.opencontainers.image.created=${{ steps.image.outputs.created_at }}
+            org.opencontainers.image.description=${{ steps.image.outputs.description }}
             org.opencontainers.image.licenses=MIT
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
