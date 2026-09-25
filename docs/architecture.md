@@ -31,7 +31,7 @@ litradar serve  (one long-running process)
                                                                -> *.changes.json -> litradar notify / litradar push
 ```
 
-系统没有 Python 运行时路径。Node.js 只在镜像构建阶段把 `app/` 导出为静态资源；生产运行层不包含 Node.js。Rust workspace 只发布 `litradar` 一个可执行文件，所有能力都通过它的公共子命令进入。
+系统没有 Python 运行时路径。Node.js 只在镜像构建阶段把 `app/` 导出为静态资源；运行镜像不包含 Node.js。Rust workspace 只发布 `litradar` 一个可执行文件，所有能力都通过它的公共子命令进入。
 
 ## 运行进程
 
@@ -267,10 +267,10 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 - CLI 参数：`litradar` 子命令的路径、端口、并发和一次运行覆盖
 - `runtime_settings`：外部元数据 key 池、按 CSV 的索引/在线 Provider 路由、CORS、MCP、Cookie 和日志策略
 - `notification_settings`：每个用户的 AI、PushPlus 和追踪偏好
-- 固定前端网络边界：浏览器同源，`next dev` 固定代理到 `127.0.0.1:8001`，生产静态导出
+- 固定前端网络边界：浏览器同源，`next dev` 固定代理到 `127.0.0.1:8001`，发布构建静态导出
 - 部署密钥文件：只用于认证和解密数据库中的秘密值
 
-生产应用不把 LitRadar 自定义环境变量作为通用配置中心。固定镜像路径和隐藏父子进程关联参数都是不可配置的内部协议；CLI 路径/监听/并发参数、部署密钥文件和测试工具输入仍保留各自边界。数据库 token 为空时，`LITRADAR_CNKI_CAPTCHA_TOKEN` 是国内 CNKI 单次索引探测的唯一来源凭据例外，并在父进程解析后从 child 环境移除。
+部署后的应用不把 LitRadar 自定义环境变量作为通用配置中心。固定镜像路径和隐藏父子进程关联参数都是不可配置的内部协议；CLI 路径/监听/并发参数、部署密钥文件和测试工具输入仍保留各自边界。数据库 token 为空时，`LITRADAR_CNKI_CAPTCHA_TOKEN` 是国内 CNKI 单次索引探测的唯一来源凭据例外，并在父进程解析后从 child 环境移除。
 
 来源、默认值和优先级见[运行配置](reference/configuration.md)。
 
@@ -298,4 +298,4 @@ SQLite、密码派生、阻塞 HTTP 和文件系统操作通过有界执行器�
 
 ## 部署边界
 
-默认 Compose 只运行一个非 root、只读根文件系统且丢弃全部 Linux capabilities 的 `litradar` 容器，并把唯一 HTTP 入口 `127.0.0.1:8000` 发布到宿主机 loopback。公网部署必须增加 TLS 反向代理和共享限流，不能把默认端口直接改为所有网卡。详见 [Docker 部署](operations/docker.md)和[安全说明](operations/security.md)。
+默认 Compose 只运行一个非 root、只读根文件系统且丢弃全部 Linux capabilities 的 `litradar` 容器，并把唯一 HTTP 入口 `127.0.0.1:8000` 发布到宿主机 loopback。对外访问时必须增加 TLS 反向代理和共享限流，不能把默认端口直接改为所有网卡。详见 [Docker 部署](operations/docker.md)和[安全说明](operations/security.md)。

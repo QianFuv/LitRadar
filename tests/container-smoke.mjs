@@ -1,5 +1,5 @@
 /**
- * Start one exact local image under hardened settings and verify its public runtime contract.
+ * Start one local image under hardened settings and verify its public runtime contract.
  */
 
 import { spawn } from "node:child_process";
@@ -24,7 +24,6 @@ const FAILURE_LOG_PATH = path.join(REPORT_ROOT, "failure.log");
 const FAILURE_LOG_MESSAGE =
   "Container smoke failed; inspect the redacted workflow stderr for details.\n";
 const COMMAND_TIMEOUT_MS = 60_000;
-const IMAGE_PULL_TIMEOUT_MS = 300_000;
 const READY_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 250;
 const CFP_SMOKE_TEXT = "LitRadar 征稿原文";
@@ -36,8 +35,6 @@ const SEARCH_SMOKE_TITLES = [
 ];
 const CFP_PAGE_EVAL =
   "JSON.stringify({protocol:'litradar.cfp.page.v1',finalUrl:location.href,html:document.documentElement.outerHTML})";
-const DIGEST_REFERENCE_PATTERN =
-  /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/[a-z0-9]+(?:[._/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/;
 const REMOVED_APPLICATION_ENVIRONMENT_NAMES = [
   "NEXT_PUBLIC_API_URL",
   "INTERNAL_API_URL",
@@ -871,29 +868,18 @@ async function verifyCfpHelpers() {
 }
 
 /**
- * Execute the exact-image security and HTTP probes.
+ * Execute the image security and HTTP probes.
  *
- * @param {string} imageReference - Local tag or immutable registry digest reference.
- * @param {boolean} isDigestRequired - Whether a registry digest reference is mandatory.
+ * @param {string} imageReference - Local image tag.
  * @returns {Promise<Record<string, unknown>>} Successful smoke report before cleanup.
  */
-async function runSmoke(imageReference, isDigestRequired) {
+async function runSmoke(imageReference) {
   const suffix = `${process.pid}-${randomBytes(4).toString("hex")}`;
   containerName = `litradar-smoke-${suffix}`;
   secretInitializerName = `${containerName}-secret-init`;
   volumeName = `litradar-smoke-data-${suffix}`;
   secretVolumeName = `litradar-smoke-secret-${suffix}`;
 
-  const isDigestReference = DIGEST_REFERENCE_PATTERN.test(imageReference);
-  assertInvariant(
-    !isDigestRequired || isDigestReference,
-    "release smoke requires a fully qualified image@sha256 digest reference",
-  );
-  if (isDigestReference) {
-    await runDocker(["pull", imageReference], {
-      timeoutMs: IMAGE_PULL_TIMEOUT_MS,
-    });
-  }
   const imageInspection = JSON.parse(
     (
       await runDocker([
@@ -906,19 +892,10 @@ async function runSmoke(imageReference, isDigestRequired) {
     ).stdout,
   );
   const imageId = imageInspection.Id;
-  const repositoryDigests = imageInspection.RepoDigests ?? [];
   assertInvariant(
     typeof imageId === "string" && imageId.startsWith("sha256:"),
     "local image did not resolve to a content ID",
   );
-  if (isDigestReference) {
-    assertInvariant(
-      repositoryDigests.some(
-        (digest) => digest.toLowerCase() === imageReference.toLowerCase(),
-      ),
-      "pulled image metadata omitted the requested immutable digest",
-    );
-  }
   await runDocker(["volume", "create", volumeName]);
   await runDocker(["volume", "create", secretVolumeName]);
   await runDocker([
@@ -1131,8 +1108,6 @@ async function runSmoke(imageReference, isDigestRequired) {
     status: "passed",
     imageReference,
     imageId,
-    repositoryDigests,
-    immutableDigestRequired: isDigestRequired,
     containerUser: inspection.Config.User,
     endpoints: ["/", "/health/ready", "/openapi.json", "/api/auth/me"],
     managedMetaPrepared: true,
@@ -1169,19 +1144,11 @@ const args = process.argv.slice(2);
 let report;
 let failure;
 
-const isDigestRequired = args[1] === "--require-digest";
-if (
-  args.length < 1 ||
-  args.length > 2 ||
-  !args[0].trim() ||
-  (args.length === 2 && !isDigestRequired)
-) {
-  failure = new Error(
-    "Usage: node scripts/container-smoke.mjs <image-reference> [--require-digest]",
-  );
+if (args.length !== 1 || !args[0].trim()) {
+  failure = new Error("Usage: node tests/container-smoke.mjs <image-tag>");
 } else {
   try {
-    report = await runSmoke(args[0].trim(), isDigestRequired);
+    report = await runSmoke(args[0].trim());
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
     if (containerName) {

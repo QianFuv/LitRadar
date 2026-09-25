@@ -28,7 +28,7 @@
 
 ## 运维
 
-- [Docker 部署](operations/docker.md)：镜像、Compose、权限、健康检查、生产边界和故障排查
+- [Docker 部署](operations/docker.md)：镜像、Compose、权限、健康检查、安全边界和故障排查
 - [日志运维](operations/logging.md)：事件契约、级别、关联、保留、查询、隐私和事故处理
 - [安全说明](operations/security.md)：部署密钥、凭据加密、管理员初始化、密码、限流和网络暴露
 - [备份与恢复](operations/backup.md)：创建、验证、离线恢复、回滚和失败处理

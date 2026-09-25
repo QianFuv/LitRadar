@@ -1,6 +1,6 @@
 # LitRadar 前端包
 
-`app/` 是 LitRadar 的 Next.js Web 客户端源码，负责登录、检索、收藏、每周更新、征稿追踪、聚合设置中心和管理后台。生产构建输出静态 `out/`，由唯一的 `litradar serve` 应用进程直接提供；生产镜像没有独立 Next.js 进程或 Node.js 运行时。本页只说明前端包的开发边界：
+`app/` 是 LitRadar 的 Next.js Web 客户端源码，负责登录、检索、收藏、每周更新、征稿追踪、聚合设置中心和管理后台。发布构建输出静态 `out/`，由唯一的 `litradar serve` 应用进程直接提供；运行镜像没有独立 Next.js 进程或 Node.js 运行时。本页只说明前端包的开发边界：
 
 - 系统进程与数据流见[系统架构](../docs/architecture.md)。
 - REST 契约与认证方式见[API 参考](../docs/reference/api.md)。
@@ -58,7 +58,7 @@ pnpm dev
 - OpenAPI JSON：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
-生产构建执行 `pnpm build` 并写入 `out/`。生产静态文件和后端路由由同一个 Rust 监听器提供，不使用 Next.js rewrite，也没有 `pnpm start`/`next start` 路径。
+发布构建执行 `pnpm build` 并写入 `out/`。导出的静态文件和后端路由由同一个 Rust 监听器提供，不使用 Next.js rewrite，也没有 `pnpm start`/`next start` 路径。
 
 ## 前端网络配置
 

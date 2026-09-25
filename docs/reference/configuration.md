@@ -12,7 +12,7 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 | 固定前端/镜像/进程协议              | 构建与运行时   | 同源 API、开发代理、只读 Meta bundle、父子进程日志关联   |
 | 部署密钥文件                        | 一个部署       | 认证和解密数据库秘密值                                   |
 
-生产应用不把 LitRadar 自定义环境变量作为通用配置中心。旧版的前端 API/开发代理、bundle 路径、日志和父子进程环境覆盖均已删除且没有兼容回退；唯一的来源凭据例外是数据库 token 为空时，`litradar index` 可读取 `LITRADAR_CNKI_CAPTCHA_TOKEN` 作为单次国内 CNKI 探测输入。全局可配置业务值通过管理员前端写入数据库，用户级通知/追踪值通过个人设置中心写入数据库。固定打包/进程协议不属于用户设置，征稿采集辅助程序另有明确的路径覆盖，见[征稿 CLI](cli.md#cfp)；标准测试工具和操作系统进程发现也保留各自的环境输入边界。
+部署后的应用不把 LitRadar 自定义环境变量作为通用配置中心。旧版的前端 API/开发代理、bundle 路径、日志和父子进程环境覆盖均已删除且没有兼容回退；唯一的来源凭据例外是数据库 token 为空时，`litradar index` 可读取 `LITRADAR_CNKI_CAPTCHA_TOKEN` 作为单次国内 CNKI 探测输入。全局可配置业务值通过管理员前端写入数据库，用户级通知/追踪值通过个人设置中心写入数据库。固定打包/进程协议不属于用户设置，征稿采集辅助程序另有明确的路径覆盖，见[征稿 CLI](cli.md#cfp)；标准测试工具和操作系统进程发现也保留各自的环境输入边界。
 
 ## 部署密钥文件
 
@@ -301,13 +301,13 @@ AI 凭据和 PushPlus 是用户级设置。每个用户在 `notification_setting
 
 ## 前端网络边界
 
-前端没有应用专用环境配置。浏览器始终从 `window.location.origin` 生成同源 API URL；`next dev` 通过 Next phase 固定把 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 代理到 `http://127.0.0.1:8001`；其他 phase 始终 `output: 'export'`。生产静态文件和 API 由同一 Rust 监听器提供。
+前端没有应用专用环境配置。浏览器始终从 `window.location.origin` 生成同源 API URL；`next dev` 通过 Next phase 固定把 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 代理到 `http://127.0.0.1:8001`；其他 phase 始终 `output: 'export'`。导出的静态文件和 API 由同一 Rust 监听器提供。
 
 跨源静态前端部署和构建时 API 地址覆盖不再受支持。需要外部域名时，应在同一 Origin 前放置 TLS 反向代理；`cors_allowed_origins` 只服务确有需要的非第一方客户端，不改变第一方浏览器的同源策略。
 
 ## 日志设置
 
-`log_format` 默认 `json`，只接受精确值 `json` 或 `compact`。生产和机器解析使用 JSON Lines；本地交互终端可由管理员显式选择 compact。
+`log_format` 默认 `json`，只接受精确值 `json` 或 `compact`。部署运行和机器解析使用 JSON Lines；本地交互终端可由管理员显式选择 compact。
 
 `log_filter` 使用 tracing `EnvFilter` 语法。默认值为：
 

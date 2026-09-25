@@ -10,7 +10,7 @@
 | 2. 契约与适配器         | Rust crate 集成测试、临时 SQLite、Axum router、MCP、loopback transport、共享 JSON 场景                     | 路由/存储/迁移/Provider/CLI 边界，以及真实响应与 OpenAPI 场景的一致性                            | 页面交互和浏览器语义              |
 | 3. 前端功能组件         | `app/tests/*.test.tsx` 的 Vitest/jsdom/MSW；仅必要时使用 `app/tests/browser-components/*.browser.test.tsx` | 页面状态、mutation、缓存、路由、错误呈现；焦点、Clipboard、IntersectionObserver 等浏览器原生语义 | 完整后端或部署拓扑                |
 | 4. 浏览器 fixture smoke | `app/tests/e2e/local-fixtures.spec.tsx` 的 Playwright Chromium                                             | 少量跨页面 UI、可访问导航、主题和响应式关键流；API 由显式页面 fixture 提供                       | 后端、Cookie、SQLite 持久化真实性 |
-| 5. 真实系统边界         | `app/tests/e2e/full-stack/`、`crates/litradar/tests/`、`scripts/container-smoke.mjs`                       | 前端导出 → 实际 Rust listener → 临时 SQLite，以及真实进程、信号、镜像安全和清理                  | 组合式边界条件枚举                |
+| 5. 真实系统边界         | `app/tests/e2e/full-stack/`、`crates/litradar/tests/`、`tests/container-smoke.mjs`                         | 前端导出 → 实际 Rust listener → 临时 SQLite，以及真实进程、信号、镜像安全和清理                  | 组合式边界条件枚举                |
 
 一个改动可以由多层共同拥有，但每条业务规则必须有一个最低充分所有者。高层 smoke 只证明关键装配，不复制低层的全部输入组合。
 
@@ -67,7 +67,7 @@ Playwright 有两个独立角色：
 - `fixture-chromium` 运行快速 UI 冒烟测试；它启动隔离 Next.js dev server，并显式拦截 API。
 - `full-stack-chromium` 串行运行真实后端关键旅程；它先构建静态前端，再启动实际 `litradar serve` 和临时 SQLite/index，验证 HttpOnly 会话、搜索/收藏持久化、管理员 mutation、权限、退出和匿名拒绝。
 
-全栈 fixture 由 marker 保护，只能写入 OS 临时根；不提供生产测试端点，不读取真实 `data/`、`secrets/` 或外部凭据，也不访问 Crossref、OpenAlex、Semantic Scholar、ZJLIB、CNKI、AI 或 PushPlus。
+全栈 fixture 由 marker 保护，只能写入 OS 临时根；不提供线上测试端点，不读取真实 `data/`、`secrets/` 或外部凭据，也不访问 Crossref、OpenAlex、Semantic Scholar、ZJLIB、CNKI、AI 或 PushPlus。
 
 ## 功能所有权矩阵
 
@@ -80,9 +80,9 @@ Playwright 有两个独立角色：
 | 管理后台               | `admin-users`、`admin-mutations`、`admin-announcements`、runtime secret suites                                   | admin REST、调度存储、密码/邀请码/角色/运行设置校验                            | full-stack 用户角色、邀请码和公告 mutation 持久化                   |
 | REST 与 MCP            | API route/unit suites；MCP initialize/index/favorites tool suites                                                | OpenAPI 完整路由检查、共享场景、临时 router/storage                            | `crates/litradar/tests/service.rs` 的实际 listener；full-stack REST |
 | CLI 与统一服务         | `litradar-cli` parser/runner；`litradar` runtime 单元测试                                                        | `crates/litradar/tests/cli.rs` 的真实二进制副作用                              | `service.rs` 启动、readiness、认证、信号、端口与临时根清理          |
-| Provider 与索引        | `litradar-domain`、`litradar-provider`、`litradar-index`                                                         | source fixture、生产 ZJLIB transport 的 bounded loopback、迁移/identity/outbox | 真实 CLI index 对本地已完成 catalog 的恢复                          |
+| Provider 与索引        | `litradar-domain`、`litradar-provider`、`litradar-index`                                                         | source fixture、实际 ZJLIB transport 的 bounded loopback、迁移/identity/outbox | 真实 CLI index 对本地已完成 catalog 的恢复                          |
 | 调度与 worker          | worker scheduler/delivery/AI/PushPlus fixture 测试；runtime 协调测试                                             | 租约、时区、超时、取消、去重、持久状态和安全日志                               | scheduler run-once 启动实际类型化子命令并等待结果                   |
-| 容器运行时             | Dockerfile/Compose 静态检查                                                                                      | `scripts/container-smoke.mjs` 的 HTTP 与 inspect 断言                          | CI 对将要推送的同一镜像 ID 执行硬化启动和完整清理                   |
+| 容器运行时             | Dockerfile/Compose 静态检查                                                                                      | `tests/container-smoke.mjs` 的 HTTP 与 inspect 断言                            | CI 对将要推送的同一镜像 ID 执行硬化启动和完整清理                   |
 
 征稿领域的最低充分测试分别位于[领域规则](../crates/litradar-domain/tests/cfp.rs)、[来源解析](../crates/litradar-sources/tests/cfp.rs)、[持久化](../crates/litradar-storage/tests/cfp.rs)、[API](../crates/litradar-api/src/routes/cfp/tests.rs)和[前端状态](../app/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
 
@@ -142,18 +142,16 @@ pnpm build
 
 ```bash
 docker build --provenance=false --tag litradar:test .
-node scripts/container-smoke.mjs litradar:test
+node tests/container-smoke.mjs litradar:test
 ```
 
 探针先用隔离数据库写入 `secure_cookies=true`，再以 `--require-secure-cookies` 重启同一镜像。它要求 readiness、Docker health、根页、OpenAPI 和 auth Header 成功，镜像 ID 不变，UID/GID 为 `10001:10001`，根文件系统只读，drop 全部 capability，启用 no-new-privileges，只发布 loopback，`/tmp` 含 `noexec,nosuid,nodev`，只有数据卷持久可写，密钥卷只读。成功或失败后都要删除容器、卷和监听端口。
 
-生产覆盖文件的静态边界也必须单独验证：未设置 digest 时 `config` 失败；设置 64 位测试 digest 时，解析结果不含 service build/ports，镜像只使用 `repository@sha256:...`，command 包含 `--require-secure-cookies`：
+Compose 配置的静态边界也必须单独验证：解析结果只有 `litradar` 服务，使用 `latest` 镜像，只向宿主机 loopback 发布 8000 端口，并保留只读根文件系统等安全选项：
 
 ```bash
-export LITRADAR_IMAGE_DIGEST="$(printf '0%.0s' {1..64})"
 docker compose \
   -f docker-compose.yml \
-  -f compose.production.yaml \
   config --format json
 ```
 
@@ -179,39 +177,30 @@ OSV-Scanner、actionlint 和 Gitleaks 在 CI 中下载固定版本发行包，�
 
 `.github/workflows/security.yaml` 上传 cargo-audit JSON、cargo-deny 输出、OSV JSON、Gitleaks SARIF 和 Action pin 清单；`.github/workflows/codeql.yaml` 为 Rust 与 JavaScript/TypeScript 分别上传 SARIF。`docker.yaml` 仅在 backend、frontend、supply-chain 和 CodeQL 四类前置工作流全部成功后构建镜像。
 
-容器发布 job 不向本地 daemon load 后再按 tag 推送。它把一次 Buildx 构建以无 tag digest 推入 GHCR，从 `steps.build.outputs.digest` 生成唯一精确 reference，随后按以下固定顺序执行：
-
-1. `container-smoke.mjs <repository@sha256:...> --require-digest` 重新拉取并验证 registry digest。
-2. Syft `v1.49.0` 为该 digest 生成 SPDX 2.3 JSON，且 packages 必须非空。
-3. `actions/attest` 为同一 subject name/digest 生成 SLSA provenance 和 SBOM attestation。
-4. Cosign 对该 digest 进行 keyless signing，并以 workflow 精确 identity 与 GitHub OIDC issuer 验签。
-5. `gh attestation verify` 分别验证 SLSA 与 SPDX predicate。
-6. 最后用 `imagetools create --prefer-index=false` 创建 full-commit SHA tag，并把 `latest` 更新为同一个已验证 digest；已存在但指向其他 digest 的 full-commit tag 会使发布失败，两个标签的最终 digest 都必须与 Buildx 输出一致。
-
-以上 hosted 步骤必须在最终准备发布的同一 commit 上成功；本地 tag smoke 不能替代 registry digest、attestation 或 signature 证据。
+容器发布 job 在 backend、frontend、security 和 CodeQL 检查通过后构建并加载 `ghcr.io/qianfuv/litradar:latest` 本地镜像。它先运行 `node tests/container-smoke.mjs ghcr.io/qianfuv/litradar:latest`，成功后才执行 `docker push`；失败时不推送镜像。
 
 ## 报告与失败诊断
 
 `--ci` 使用以下固定路径：
 
-| 报告                                               | 路径                                                                                                                    |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| nextest JUnit                                      | `target/nextest/ci/junit.xml`                                                                                           |
-| Vitest jsdom JUnit                                 | `app/test-results/vitest/junit.xml`                                                                                     |
-| Vitest Browser Mode JUnit                          | `app/test-results/vitest-browser/junit.xml`                                                                             |
-| Browser Mode 截图                                  | `app/test-results/browser-components/screenshots/`                                                                      |
-| fixture Playwright JUnit/trace/screenshot/video    | `app/test-results/playwright-fixtures/`                                                                                 |
-| fixture Playwright HTML                            | `app/playwright-report/fixtures/`                                                                                       |
-| full-stack Playwright JUnit/trace/screenshot/video | `app/test-results/playwright-full-stack/`                                                                               |
-| full-stack Playwright HTML                         | `app/playwright-report/full-stack/`                                                                                     |
-| Rust coverage                                      | `target/llvm-cov/html/`、`target/llvm-cov/lcov.info`                                                                    |
-| Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                                                                               |
-| Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`                                                    |
-| Immutable container release                        | workflow artifact `immutable-container-release`，含 exact image、Compose、SBOM、attestation bundle 与 verification JSON |
-| Rust/OSV supply chain                              | workflow artifacts `rust-supply-chain-results`、`osv-lockfile-results`                                                  |
-| Secret scanning                                    | workflow artifact `gitleaks-results` 与 GitHub code scanning SARIF                                                      |
-| CodeQL                                             | workflow artifacts `codeql-<language>-sarif` 与 Security 页面                                                           |
-| Immutable Action inventory                         | workflow artifact `immutable-action-inventory`                                                                          |
+| 报告                                               | 路径                                                                     |
+| -------------------------------------------------- | ------------------------------------------------------------------------ |
+| nextest JUnit                                      | `target/nextest/ci/junit.xml`                                            |
+| Vitest jsdom JUnit                                 | `app/test-results/vitest/junit.xml`                                      |
+| Vitest Browser Mode JUnit                          | `app/test-results/vitest-browser/junit.xml`                              |
+| Browser Mode 截图                                  | `app/test-results/browser-components/screenshots/`                       |
+| fixture Playwright JUnit/trace/screenshot/video    | `app/test-results/playwright-fixtures/`                                  |
+| fixture Playwright HTML                            | `app/playwright-report/fixtures/`                                        |
+| full-stack Playwright JUnit/trace/screenshot/video | `app/test-results/playwright-full-stack/`                                |
+| full-stack Playwright HTML                         | `app/playwright-report/full-stack/`                                      |
+| Rust coverage                                      | `target/llvm-cov/html/`、`target/llvm-cov/lcov.info`                     |
+| Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                                |
+| Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`     |
+| Container release                                  | workflow artifact `container-release`，含 Compose 解析结果与容器冒烟报告 |
+| Rust/OSV supply chain                              | workflow artifacts `rust-supply-chain-results`、`osv-lockfile-results`   |
+| Secret scanning                                    | workflow artifact `gitleaks-results` 与 GitHub code scanning SARIF       |
+| CodeQL                                             | workflow artifacts `codeql-<language>-sarif` 与 Security 页面            |
+| Immutable Action inventory                         | workflow artifact `immutable-action-inventory`                           |
 
 CI 的 artifact upload 使用 `if: always()`。失败时先看 workflow summary 的层级状态和时长，再看 JUnit 的失败 owner；浏览器问题打开对应 HTML，并使用失败截图、第一次重试的 trace/video。容器问题先看安全清理摘要，再看已脱敏的尾部日志。报告目录均为生成物，不应提交。
 

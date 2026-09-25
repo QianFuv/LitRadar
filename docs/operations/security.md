@@ -172,13 +172,13 @@ unset ADMIN_PASSWORD
 
 超过限制返回统一 `429`、数值 `Retry-After` 和相同 detail，不泄露用户名是否存在。每个请求的结构化事件包含固定 `reason`、`bucket`、`source_class`、递增 `rejected_count` 和服务器生成的 `request_id`，不记录原始 IP、用户名或转发头；持久安全审计按操作与桶每 60 秒最多保存一个代表性事件，避免攻击流量转化为无上界的同步 SQLite 写入。策略可由严格的 `auth_rate_limit_policy` JSON 调整，但 parser 要求全局桶容量/补充速率始终高于前置桶。
 
-这些桶和计数只在单进程内存中，重启会清空。多副本或公网部署必须在可信网关使用共享限流（例如 Redis-backed gateway policy）；应用内全局桶只是额外熔断器，不能代替跨实例控制。
+这些桶和计数只在单进程内存中，重启会清空。多副本或对外访问时必须在可信网关使用共享限流（例如 Redis-backed gateway policy）；应用内全局桶只是额外熔断器，不能代替跨实例控制。
 
 ## Cookie、CORS 和 MCP
 
-默认 `secure_cookies=false`，适合 loopback HTTP。生产 HTTPS 应先把数据库设置改为 `true`，再用 `litradar serve --require-secure-cookies` 作为启动门；不满足时应用在绑定端口前失败。
+默认 `secure_cookies=false`，适合 loopback HTTP。通过 HTTPS 对外访问前应把数据库设置改为 `true`。直接运行二进制时可用 `litradar serve --require-secure-cookies` 作为启动门；不满足时应用在绑定端口前失败。默认 Compose 不添加该参数，因此开放入口前要核对数据库设置。
 
-生产 Web 静态资源和后端命名空间由同一个 Rust 监听器直接提供，因此浏览器默认同源调用 API，不经过 Next.js 服务或生产 rewrite。本地开发由 Next.js 8000 端口代理内部 Rust 8001；浏览器跨源直连时：
+部署后的 Web 静态资源和后端命名空间由同一个 Rust 监听器直接提供，因此浏览器默认同源调用 API，不经过 Next.js 服务或 rewrite。本地开发由 Next.js 8000 端口代理内部 Rust 8001；浏览器跨源直连时：
 
 - 在 `cors_allowed_origins` 列出准确 Origin
 - credentialed CORS 拒绝 `*` wildcard，避免把任意网站纳入携带 Cookie 的信任边界
@@ -198,7 +198,7 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 ### 响应安全策略
 
-生产前端构建在 `next build` 后生成 `web/csp-hashes.json`，记录每个导出 HTML 的完整 SHA-256 和所有内联脚本的 CSP SHA-256。服务启动时会递归重新读取全部 HTML，并要求文件集合、文件摘要、脚本顺序和全局哈希集合与清单完全一致；清单缺失、损坏、过大、过期，静态目录缺少 HTML 或包含符号链接都会在绑定端口前失败。部署时必须把同一次构建产生的 `web/` 作为整体复制，不能单独替换 HTML。
+前端发布构建在 `next build` 后生成 `web/csp-hashes.json`，记录每个导出 HTML 的完整 SHA-256 和所有内联脚本的 CSP SHA-256。服务启动时会递归重新读取全部 HTML，并要求文件集合、文件摘要、脚本顺序和全局哈希集合与清单完全一致；清单缺失、损坏、过大、过期，静态目录缺少 HTML 或包含符号链接都会在绑定端口前失败。部署时必须把同一次构建产生的 `web/` 作为整体复制，不能单独替换 HTML。
 
 所有静态与后端响应统一包含：
 
@@ -214,7 +214,7 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 ### 静态 Web 缓存
 
-生产导出的 Web 文件是公开构建产物，不得包含部署密钥或用户秘密。Rust 按以下边界设置缓存：
+导出的 Web 文件是公开构建产物，不得包含部署密钥或用户秘密。Rust 按以下边界设置缓存：
 
 - 成功的 `/_next/static/*` 哈希资源使用 `public, max-age=31536000, immutable`，即使请求携带会话 Cookie 也不会变成用户专属内容。
 - 页面、导航 payload 和导出的 404 使用 `no-cache`，以便浏览器重新验证版本。
@@ -239,7 +239,7 @@ AI 与 PushPlus 共用以下出站边界：
 
 AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 上限 60 秒，其他情况使用指数 full jitter。PushPlus 只重试能证明请求尚未发送的连接建立失败；timeout、所有 HTTP 响应和其他连接后错误均只尝试一次并作为不确定投递结果处理。手动任务跨主备 Endpoint、格式和摘要请求共享 8 次 AI HTTP 预算；输出格式降级只发生在成功响应的明确兼容性失败之后。
 
-应用层策略不能替代基础设施隔离。公网部署仍应在容器、主机或云网络层设置 egress ACL，只放行确有需要的 AI/PushPlus 目标和 DNS/TLS 基础设施。
+应用层策略不能替代基础设施隔离。对外访问时仍应在容器、主机或云网络层设置 egress ACL，只放行确有需要的 AI/PushPlus 目标和 DNS/TLS 基础设施。
 
 ## 供应链门禁
 
@@ -261,10 +261,9 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 容器发布工作流同样属于阻断门禁：
 
 - Dockerfile frontend 与 Node/Rust/Debian 基础镜像都固定到 reviewed digest；tag 只保留可读性和 Dependabot 更新入口。
-- Buildx 把一次构建以无 tag digest 推入 GHCR；hardened smoke 必须重新拉取该 `repository@sha256:...`，并验证实际 RepoDigest、固定 UID/GID、只读根、完整 capability drop、no-new-privileges、loopback 端口、Docker health、只读密钥和唯一持久可写数据卷。
-- smoke 成功后才为同一 digest 生成 SPDX SBOM 与 SLSA provenance、写入 GitHub artifact attestations，并用 workflow OIDC 进行 Cosign keyless signing；workflow 随即用精确 certificate identity、issuer 和 digest 重新验证三类证明。
-- 只有上述步骤全部成功，才用 `imagetools create --prefer-index=false` 为同一 digest 创建不可变的 `sha-<full commit>` tag，并更新可变的 `latest` tag。既有 full-commit tag 指向其他 digest 时发布失败；两个发布 tag 都必须解析到经过验证的 digest，生产配置仍不接受 `latest`。
-- `compose.production.yaml` 删除本地 build/ports，要求 64 位 digest 并强制 `--require-secure-cookies`。生产运行仍必须先独立验证 Cosign、provenance 和 SBOM attestation。
+- Buildx 构建并加载带 `latest` tag 的本地镜像；hardened smoke 验证镜像 ID、固定 UID/GID、只读根、完整 capability drop、no-new-privileges、loopback 端口、Docker health、只读密钥和唯一持久可写数据卷。
+- smoke 成功后，工作流才将该镜像的 `latest` tag 推送到 GHCR。`latest` 会随下一次成功发布更新。
+- `docker-compose.yml` 只向宿主机 loopback 发布端口，并保留非特权、只读根文件系统等容器边界。
 
 ## 网络暴露
 
@@ -285,7 +284,7 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 - 丢弃全部 Linux capabilities
 - 启用 `no-new-privileges:true`
 - 镜像定义 `/health/ready` Docker health check；发布 smoke 另行探测根 Web、OpenAPI 和 auth cache/Header 边界
-- 生产覆盖文件不发布宿主机端口，并要求数据库 `secure_cookies=true`
+- Compose 只向宿主机 loopback 发布端口；通过 HTTPS 对外访问前应把数据库 `secure_cookies` 设为 `true`
 
 不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
 

@@ -21,7 +21,7 @@ litradar openapi > openapi.json 2> litradar.log
 
 ## 服务端事件契约
 
-生产默认格式是 JSON Lines。每个正常 tracing 事件至少包含：
+部署运行的默认格式是 JSON Lines。每个正常 tracing 事件至少包含：
 
 | 字段          | 含义                                                                  |
 | ------------- | --------------------------------------------------------------------- |
@@ -38,7 +38,7 @@ litradar openapi > openapi.json 2> litradar.log
 
 事件专有字段只允许使用计数、状态码、有限枚举、安全内部 ID 和有界关联 ID。消费者必须按字段名读取，并容忍未来增加字段；不能依赖 JSON 键顺序。
 
-典型生产事件：
+典型运行事件：
 
 ```json
 {
@@ -125,7 +125,7 @@ compact 只改变显示形式，不改变事件选择或隐私规则。一次本
 2026-07-18T03:22:14.682Z  INFO process: litradar: event="process.completed" component="runtime" outcome="success" duration_ms=0 component="runtime" command="help" version="0.1.0" process_id=42412
 ```
 
-生产和需要机器解析的本地检查保持默认 JSON。临时增加目标级别时，在同一管理分组把 `log_filter` 保存为最窄指令，例如 `warn,litradar=debug,litradar_api=debug`，重启并完成诊断后再恢复默认值。
+部署运行和需要机器解析的本地检查保持默认 JSON。临时增加目标级别时，在同一管理分组把 `log_filter` 保存为最窄指令，例如 `warn,litradar=debug,litradar_api=debug`，重启并完成诊断后再恢复默认值。
 
 即使启用 `DEBUG` 或 `TRACE`，也禁止增加秘密或内容字段。
 
@@ -281,7 +281,7 @@ pwsh ./tests/profiling/profile_logging.ps1 `
 
 报告列出实际生效的策略，禁用的阈值为 `null`。即使不启用内存预算，日志正确性、丢失事件和延迟门禁仍必须通过。
 
-只使用隔离 fixture。脚本会启动迁移并读写传入的数据目录；不要把正在运行或未备份的生产 `data/` 交给画像脚本。
+只使用隔离 fixture。脚本会启动迁移并读写传入的数据目录；不要把正在运行或未备份的实际 `data/` 交给画像脚本。
 
 ## 隐私规则
 

@@ -327,7 +327,7 @@ Pragma: no-cache
 
 前文列出的免认证端点在成功响应时保持现有缓存头行为；本策略不会为它们新增共享缓存 TTL。
 
-生产 Web 由 Rust 从 `/app/web` 直接提供，浏览器同源访问 `/api/*`，不依赖 Next.js 运行时或 rewrite。只有本地开发的 Next.js 8000 入口会把后端命名空间代理到内部 Rust 8001。第一方前端始终同源。确需跨源访问的其他浏览器客户端必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie 凭据。
+部署后的 Web 由 Rust 从 `/app/web` 直接提供，浏览器同源访问 `/api/*`，不依赖 Next.js 运行时或 rewrite。只有本地开发的 Next.js 8000 入口会把后端命名空间代理到内部 Rust 8001。第一方前端始终同源。确需跨源访问的其他浏览器客户端必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie 凭据。
 
 成功的 `/_next/static/*` 哈希文件使用 `public, max-age=31536000, immutable`；页面、导航 payload 和导出的 404 使用 `no-cache`。客户端声明支持 gzip 时，Rust 优先返回镜像内预压缩文件并保留正确 MIME；原文件仍供不支持 gzip 的客户端和 Range 请求使用。后端保留 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 的路由优先级。
 

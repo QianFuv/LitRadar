@@ -1,8 +1,8 @@
 # Docker 部署
 
-本文档是根目录 `Dockerfile`、本地 `docker-compose.yml` 与生产覆盖文件 `compose.production.yaml` 的部署操作手册。命令参数见 [CLI 参考](../reference/cli.md)，安全边界见[安全说明](security.md)。
+本文档是根目录 `Dockerfile` 与 `docker-compose.yml` 的部署操作手册。命令参数见 [CLI 参考](../reference/cli.md)，安全边界见[安全说明](security.md)。
 
-首次本机部署按下文的初始化步骤执行；已有数据先阅读备份与恢复要求；公网部署使用生产覆盖文件。除明确标为 PowerShell 的画像命令外，示例在仓库根目录的 Bash 中执行，所需工具包括 Docker Compose、OpenSSL 和 curl；日志筛选另需 jq。
+首次部署按下文的初始化步骤执行；已有数据先阅读备份与恢复要求。除明确标为 PowerShell 的画像命令外，示例在仓库根目录的 Bash 中执行，所需工具包括 Docker Compose、OpenSSL 和 curl；日志筛选另需 jq。
 
 ## 服务拓扑
 
@@ -18,13 +18,12 @@ browser / API / MCP client
 
 litradar -> ./data:/app/data
 litradar -> litradar_key Compose secret
-local only -> ghcr.io/qianfuv/litradar:latest or local build
-production -> ghcr.io/qianfuv/litradar@sha256:<verified digest>
+image -> ghcr.io/qianfuv/litradar:latest or local build
 ```
 
-`docker-compose.yml` 是开发和 loopback 单机配置，Compose 项目名为 `litradar`，并且只声明一个同名服务。HTTP 和调度共享一个应用生命周期；没有第二个常驻容器。默认只把 8000 端口发布到宿主机 loopback，不直接暴露到局域网或公网。
+`docker-compose.yml` 是默认部署配置，Compose 项目名为 `litradar`，并且只声明一个同名服务。HTTP 和调度共享一个应用生命周期；没有第二个常驻容器。默认只把 8000 端口发布到宿主机 loopback，不直接暴露到局域网或公网。
 
-公网部署必须同时加载 `compose.production.yaml`。该覆盖文件删除本地 build 和宿主机端口，只接受 `repository@sha256:<64 hex>` 形式的镜像，强制拉取并以 `--require-secure-cookies` 启动。`latest`、提交 tag 和其他 source tag 只能用于发现或本地便利，不能成为生产配置的运行输入。
+对外访问时在同一主机上配置 HTTPS 反向代理，转发到宿主机 `127.0.0.1:8000`；Compose 端口仍只绑定 loopback。
 
 ## 服务契约
 
@@ -32,8 +31,7 @@ production -> ghcr.io/qianfuv/litradar@sha256:<verified digest>
 | ---------- | -------------------------------------------------------------------------------------------------- |
 | 服务名     | `litradar`                                                                                         |
 | 构建上下文 | 仓库根目录                                                                                         |
-| 本地镜像   | `ghcr.io/qianfuv/litradar:latest` 或当前源码 build                                                 |
-| 生产镜像   | `${LITRADAR_IMAGE_REPOSITORY}@sha256:${LITRADAR_IMAGE_DIGEST}`                                     |
+| 镜像       | `ghcr.io/qianfuv/litradar:latest` 或当前源码 build                                                 |
 | 入口       | `litradar`                                                                                         |
 | 默认命令   | `serve --host 0.0.0.0 --port 8000 --project-root /app --secret-key-file /run/secrets/litradar_key` |
 | 宿主机端口 | `127.0.0.1:8000:8000`                                                                              |
@@ -68,7 +66,7 @@ release profile 没有设置 LTO、codegen unit 或 `panic = "abort"`，保留 C
 
 支持 gzip 的客户端会直接收到预压缩文件，不支持的客户端仍收到原文件。`/_next/static/*` 成功响应使用长期 public immutable 缓存；页面、导航 payload 和导出的 404 使用 `no-cache`；认证/API 的私有缓存边界不因此放宽。
 
-## 本机或 loopback 首次部署
+## 首次部署
 
 ### 1. 目录权限和密钥
 
@@ -106,7 +104,7 @@ docker compose up -d --remove-orphans
 docker compose ps
 ```
 
-这里的 `latest` 只用于本机初始配置和验证，不是生产部署输入。生产升级不得执行只使用 `docker-compose.yml` 的上述命令。
+镜像更新后，再运行 `docker compose pull` 和 `docker compose up -d --remove-orphans`。
 
 需要验证当前源码时改为本地构建：
 
@@ -179,7 +177,7 @@ Scholarly 增量使用成功期次 anchor 年份的 1 月 1 日作为日期下�
 
 CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
 
-旧 v6/v7/v8 备份与恢复验证不依赖平台原生 tokenizer；v9 验证会按固定打包路径注册 simple，以读取其 FTS 表。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前内容库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向生产镜像临时复制 DLL/SO 绕过版本边界。
+旧 v6/v7/v8 备份与恢复验证不依赖平台原生 tokenizer；v9 验证会按固定打包路径注册 simple，以读取其 FTS 表。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前内容库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向运行镜像临时复制 DLL/SO 绕过版本边界。
 
 ## 数据和秘密
 
@@ -404,78 +402,26 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 
 该命令预期返回 1，并在 JSON 的 `Gate.Failures` 中同时列出 p95 和峰值超限。中断或失败时 `finally` 仍只按本次唯一名称删除容器和网络；若宿主机或 Docker daemon 被强制终止，可用 `docker ps -a --filter name=litradar-memory-` 检查后按完整名称清理。
 
-## 公网部署
+## 通过 HTTPS 提供访问
 
-### 1. 取得并验证发布 digest
+### 1. 确认镜像发布
 
-`Build and Push Docker Image` 工作流只构建并推送一次无 tag 候选。它从 Buildx 捕获 registry digest，重新拉取 `repository@sha256:...` 运行 hardened smoke，随后才为同一 digest 生成 SPDX SBOM、SLSA provenance、GitHub attestation 和 Cosign keyless signature。最后一步在不重建的前提下创建 `sha-<40-character commit>` tag，并把 `latest` 更新为同一个已验证 digest。`latest` 只用于本地便利和版本发现；生产部署仍必须从成功的 workflow summary 取得并验证精确 digest。
+`Build and Push Docker Image` 工作流通过 backend、frontend、security 和 CodeQL 检查后，构建 `ghcr.io/qianfuv/litradar:latest`，对本地镜像运行容器冒烟测试，成功后推送该 tag。部署前确认工作流成功及其源码 commit 符合预期。`latest` 是可变 tag，后续发布会更新它。
 
-从成功 workflow summary 复制 64 位 digest，不要从 tag 推测：
+### 2. 配置 HTTPS 访问
 
-```bash
-export LITRADAR_IMAGE_REPOSITORY=ghcr.io/qianfuv/litradar
-export LITRADAR_IMAGE_DIGEST='<64 lowercase hexadecimal characters>'
-[[ "$LITRADAR_IMAGE_DIGEST" =~ ^[0-9a-f]{64}$ ]]
-export LITRADAR_IMAGE_REFERENCE="${LITRADAR_IMAGE_REPOSITORY}@sha256:${LITRADAR_IMAGE_DIGEST}"
-```
+先通过 loopback 完成管理员 bootstrap，在管理员运行配置中设置 `secure_cookies=true`，并配置准确的 CORS Origin、MCP Host/Origin、trusted proxy 与认证限流。对外开放前确认这些设置已经生效。
 
-使用发布 workflow 的精确身份验证签名，并分别验证 provenance 与 SPDX SBOM attestation：
+检查单个 Compose 文件的解析结果：
 
 ```bash
-cosign verify \
-  --certificate-identity 'https://github.com/QianFuv/LitRadar/.github/workflows/docker.yaml@refs/heads/main' \
-  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  "$LITRADAR_IMAGE_REFERENCE"
-
-gh attestation verify "oci://${LITRADAR_IMAGE_REFERENCE}" \
-  --repo QianFuv/LitRadar \
-  --predicate-type https://slsa.dev/provenance/v1
-
-gh attestation verify "oci://${LITRADAR_IMAGE_REFERENCE}" \
-  --repo QianFuv/LitRadar \
-  --predicate-type https://spdx.dev/Document/v2.3
+docker compose config --images
+docker compose config --format json > /tmp/litradar-compose.json
 ```
 
-任一验证失败、workflow 的源码 commit 不匹配、或 registry digest 与 summary 不一致时停止部署。不得把证书 identity 改成通配符，也不得退回 tag 运行。
+`config --images` 应只输出 `ghcr.io/qianfuv/litradar:latest`；服务端口应只绑定 `127.0.0.1:8000`，并保留只读根文件系统、丢弃全部 capability 和受限 `/tmp`。
 
-### 2. 预置生产安全设置
-
-先通过只绑定 loopback 的本地配置完成管理员 bootstrap，在管理员运行配置中设置 `secure_cookies=true`，并配置准确的 CORS Origin、MCP Host/Origin、trusted proxy 与认证限流。随后停止本地服务：
-
-```bash
-docker compose down
-```
-
-生产覆盖文件固定加入 `--require-secure-cookies`；数据库值仍为 false 时，服务会在绑定端口前失败，不能降级启动。
-
-### 3. 验证并启动生产 Compose
-
-`compose.production.yaml` 使用 `!reset` 删除本地 build 和端口发布，并把镜像强制组装为 `${LITRADAR_IMAGE_REPOSITORY}@sha256:${LITRADAR_IMAGE_DIGEST}`。需要 Docker Compose 2.24.4 或更新版本。先检查解析结果：
-
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f compose.production.yaml \
-  config --images
-
-docker compose \
-  -f docker-compose.yml \
-  -f compose.production.yaml \
-  config --format json > /tmp/litradar-production-compose.json
-```
-
-`config --images` 必须只输出上面已经验证的 digest reference；JSON 中不得存在 service `build` 或 `ports`，command 必须包含 `--require-secure-cookies`，`/tmp` 必须包含 `noexec,nosuid,nodev`。确认后启动：
-
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f compose.production.yaml \
-  up -d --pull always --remove-orphans
-```
-
-### 4. 完成基础设施边界
-
-生产环境必须在同一容器网络加入只发布 HTTPS `443` 的反向代理，并把 Web、API、Swagger/OpenAPI 和 MCP 全部路径转发到 `litradar:8000`。不要用 `0.0.0.0` 宿主机端口替代反向代理。
+在同一主机上配置只发布 HTTPS `443` 的反向代理，把 Web、API、Swagger/OpenAPI 和 MCP 全部路径转发到 `127.0.0.1:8000`。不要把 Compose 端口改为 `0.0.0.0`。
 
 应用 URL 校验不能替代网络策略。容器或主机 egress ACL 只应允许管理员批准的 AI/PushPlus 目标、DNS 和 TLS 基础设施，并显式阻断 loopback、RFC1918、link-local、元数据地址与内部服务网段。多实例部署还必须在反向代理/网关使用共享认证限流；应用内单实例 bucket 不是跨实例协调器。
 
@@ -505,7 +451,7 @@ MCP 端点内置于统一应用的 `/mcp`，不需要单独服务：
 
 ## 离线索引存储优化
 
-`admin index optimize-storage` 会整目录重建 `data/index`，必须在停机窗口运行。普通容器启动只 preflight 精确 v6/v7/v8/v9，不会自动改写现有 v6/v7/v8 文件。不支持 v9 的旧镜像不能打开优化后的文件；生产降级必须先恢复优化前已验证、包含索引且受目标镜像支持的旧版备份。
+`admin index optimize-storage` 会整目录重建 `data/index`，必须在停机窗口运行。普通容器启动只 preflight 精确 v6/v7/v8/v9，不会自动改写现有 v6/v7/v8 文件。不支持 v9 的旧镜像不能打开优化后的文件；降级前必须先恢复优化前已验证、包含索引且受目标镜像支持的旧版备份。
 
 先停止服务和所有一次性 `index`/投递容器，等待 API/worker/调度心跳超过 90 秒；若任务被强制终止，还要等待最长 300 秒的 batch/catalog lease 过期。创建和验证的备份必须通过独立 `/backups` bind mount 保存：
 

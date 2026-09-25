@@ -17,7 +17,7 @@ LitRadar 是面向学术期刊的自托管检索与订阅平台。它从 Crossre
 
 ## Docker 快速开始
 
-以下步骤用于首次本机部署，在仓库根目录的 **Bash** 中执行，需要 Docker Engine 或 Docker Desktop、Docker Compose、OpenSSL 和 curl。Windows 用户可使用 WSL Bash；不要直接把 Bash 的续行和输入语法粘贴到 PowerShell。已有数据的升级或公网部署请使用 [Docker 部署](docs/operations/docker.md)中的对应流程。
+以下步骤用于首次本机部署，在仓库根目录的 **Bash** 中执行，需要 Docker Engine 或 Docker Desktop、Docker Compose、OpenSSL 和 curl。Windows 用户可使用 WSL Bash；不要直接把 Bash 的续行和输入语法粘贴到 PowerShell。已有数据的升级或 HTTPS 接入请使用 [Docker 部署](docs/operations/docker.md)中的对应流程。
 
 ### 1. 准备数据目录和部署密钥
 

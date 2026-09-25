@@ -147,7 +147,7 @@ OpenAlex 继续使用原有有序分页与整期边界停止规则；套餐拒�
 
 ## Semantic Scholar 节流
 
-请求为 `POST /graph/v1/paper/batch`，最多 500 个规范 DOI ID。当前 [Semantic Scholar API 合同](https://www.semanticscholar.org/product/api) 的入门配额为每 API key `1 req/s`。Scholarly 对每个合法 key 使用 1,100-ms 跨进程相位，约为 `0.909 req/s/key`；生产路径会把更小的内部间隔钳制到 1,100 ms。
+请求为 `POST /graph/v1/paper/batch`，最多 500 个规范 DOI ID。当前 [Semantic Scholar API 合同](https://www.semanticscholar.org/product/api) 的入门配额为每 API key `1 req/s`。Scholarly 对每个合法 key 使用 1,100-ms 跨进程相位，约为 `0.909 req/s/key`；实际请求路径会把更小的内部间隔钳制到 1,100 ms。
 
 key `k`、进程 `p` 的相位为 `epoch + p × 1,100 ms + k × 1,100 ms / key_count + n × process_count × 1,100 ms`。key 间在一个周期内均匀错开，使串行 batch 调用也能使用两个或三个独立 key 的容量；对任一 key，全部进程合并后仍至少间隔 1,100 ms。401/403 只禁用被选 key，429 使用 Retry-After 与退避的较大值冷却被选 key，5xx/传输失败可切换到其他健康 key，但每次尝试仍需自己的未来相位。
 
