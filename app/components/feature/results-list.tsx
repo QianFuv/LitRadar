@@ -281,7 +281,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
       {filterSummary && (
         <div
           data-testid="filter-summary-slot"
-          className="sticky top-0 z-20 bg-background py-2 empty:hidden"
+          className="sticky -top-3 z-20 bg-background py-2 empty:hidden sm:-top-5 lg:-top-6"
         >
           {filterSummary}
         </div>

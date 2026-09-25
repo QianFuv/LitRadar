@@ -223,7 +223,7 @@ async function rendersTypedResultContent(): Promise<void> {
   const filterSummary = screen.getByRole('region', { name: '已应用筛选' });
   expect(filterSummary.parentElement).toHaveClass(
     'sticky',
-    'top-0',
+    '-top-3',
     'z-20',
     'bg-background',
     'empty:hidden',

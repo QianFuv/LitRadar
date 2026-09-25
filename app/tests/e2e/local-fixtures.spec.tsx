@@ -1970,6 +1970,34 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
 
 test('keeps article cards clickable after database switches', databaseSwitchArticleClickTest);
 
+/** Verify pinned filter feedback stays close to the toolbar at every workspace breakpoint. */
+async function compactStickyFilterGapTest({ page }: { page: Page }): Promise<void> {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.route('**/api/**', serveTrackingApi);
+  await page.goto('/?q=graph');
+  const scrollContainer = page.locator('#results-scroll-container');
+  const filterSummary = page.getByRole('region', { name: '已应用筛选' });
+  await expect(
+    page.getByRole('button', { name: '查看文章详情：Graph evidence fixture 1', exact: true }),
+  ).toBeVisible();
+  for (const width of [1280, 800, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await scrollContainer.evaluate((element) => {
+      element.scrollTop = 400;
+    });
+    await expect
+      .poll(async () => {
+        const summaryBounds = await filterSummary.boundingBox();
+        const scrollBounds = await scrollContainer.boundingBox();
+        return Math.round(summaryBounds!.y - scrollBounds!.y);
+      })
+      .toBe(8);
+    await page.screenshot({ path: test.info().outputPath(`sticky-filter-${width}.png`) });
+  }
+}
+
+test('keeps the sticky filter summary close to the toolbar', compactStickyFilterGapTest);
+
 /**
  * Verify long drawers scroll with real wheel and touch input and dismiss without a close button.
  *
