@@ -279,12 +279,14 @@ trait ScheduledJobRunner {
 }
 
 struct ProcessScheduledJobRunner {
+    project_root: PathBuf,
     application_executable: PathBuf,
     cancellation: SchedulerCancellation,
     secret_key_file: PathBuf,
 }
 
 struct ScheduledJobExecutionContext<'context> {
+    project_root: &'context Path,
     auth_db_path: &'context Path,
     application_executable: &'context Path,
     secret_key_file: &'context Path,
@@ -309,6 +311,7 @@ impl ScheduledJobRunner for ProcessScheduledJobRunner {
             |job| {
                 execute_scheduled_job(
                     ScheduledJobExecutionContext {
+                        project_root: &self.project_root,
                         auth_db_path,
                         application_executable: &self.application_executable,
                         secret_key_file: &self.secret_key_file,
@@ -416,6 +419,7 @@ pub fn load_scheduler_jobs(
 /// # Arguments
 ///
 /// * `auth_db_path` - Path to `auth.sqlite`.
+/// * `project_root` - Explicit project root inherited by each job subprocess.
 /// * `application_executable` - Canonical application executable used for the task subprocess.
 /// * `secret_key_file` - Raw 32-byte deployment secret key file.
 /// * `task_id` - Scheduled task row identifier.
@@ -425,6 +429,7 @@ pub fn load_scheduler_jobs(
 ///
 /// Manual run outcome.
 pub fn run_task_now(
+    project_root: impl AsRef<Path>,
     auth_db_path: impl AsRef<Path>,
     application_executable: impl AsRef<Path>,
     secret_key_file: impl AsRef<Path>,
@@ -432,6 +437,7 @@ pub fn run_task_now(
     mode: SchedulerMode,
 ) -> Result<RunTaskOutcome, SchedulerError> {
     let mut runner = ProcessScheduledJobRunner {
+        project_root: project_root.as_ref().to_path_buf(),
         application_executable: application_executable.as_ref().to_path_buf(),
         cancellation: SchedulerCancellation::new(),
         secret_key_file: secret_key_file.as_ref().to_path_buf(),
@@ -535,6 +541,7 @@ pub fn prepare_scheduled_runs(
 /// # Arguments
 ///
 /// * `auth_db_path` - Authentication and scheduler database path.
+/// * `project_root` - Explicit project root inherited by each job subprocess.
 /// * `application_executable` - Canonical child executable.
 /// * `secret_key_file` - Deployment key file passed to the child.
 /// * `claim` - Durable claim to start and heartbeat.
@@ -544,6 +551,7 @@ pub fn prepare_scheduled_runs(
 ///
 /// Final persisted execution status after the child has been reaped.
 pub fn run_scheduled_claim(
+    project_root: impl AsRef<Path>,
     auth_db_path: impl AsRef<Path>,
     application_executable: impl AsRef<Path>,
     secret_key_file: impl AsRef<Path>,
@@ -551,6 +559,7 @@ pub fn run_scheduled_claim(
     cancellation: SchedulerCancellation,
 ) -> Result<ScheduledTaskExecution, SchedulerError> {
     let mut runner = ProcessScheduledJobRunner {
+        project_root: project_root.as_ref().to_path_buf(),
         application_executable: application_executable.as_ref().to_path_buf(),
         secret_key_file: secret_key_file.as_ref().to_path_buf(),
         cancellation,
@@ -928,6 +937,7 @@ fn execute_scheduled_job_in_span(
     on_heartbeat: &mut dyn FnMut() -> HeartbeatDirective,
 ) -> ProcessExecution {
     let processes = match scheduled_processes(
+        context.project_root,
         context.auth_db_path,
         context.application_executable,
         context.secret_key_file,
@@ -1263,6 +1273,7 @@ fn elapsed_millis(started_at: Instant) -> u64 {
 }
 
 fn scheduled_processes(
+    project_root: &Path,
     auth_db_path: &Path,
     application_executable: &Path,
     secret_key_file: &Path,
@@ -1273,7 +1284,7 @@ fn scheduled_processes(
     match job {
         ScheduledJobSpec::Index(index) => {
             let mut arguments = vec![OsString::from("index")];
-            arguments.extend(auth_arguments(auth_db_path, secret_key_file));
+            arguments.extend(auth_arguments(project_root, auth_db_path, secret_key_file));
             arguments.push("--update".into());
             if let Some(metadata_file) = index.metadata_file.as_deref() {
                 arguments.push("--file".into());
@@ -1287,6 +1298,7 @@ fn scheduled_processes(
             if index.notify {
                 processes.push(delivery_process(
                     "notify",
+                    project_root,
                     auth_db_path,
                     application_executable,
                     secret_key_file,
@@ -1299,6 +1311,7 @@ fn scheduled_processes(
             if index.push {
                 processes.push(delivery_process(
                     "push",
+                    project_root,
                     auth_db_path,
                     application_executable,
                     secret_key_file,
@@ -1312,6 +1325,7 @@ fn scheduled_processes(
         ScheduledJobSpec::Notify(delivery) => {
             processes.push(delivery_process(
                 "notify",
+                project_root,
                 auth_db_path,
                 application_executable,
                 secret_key_file,
@@ -1321,6 +1335,7 @@ fn scheduled_processes(
         ScheduledJobSpec::Push(delivery) => {
             processes.push(delivery_process(
                 "push",
+                project_root,
                 auth_db_path,
                 application_executable,
                 secret_key_file,
@@ -1331,8 +1346,14 @@ fn scheduled_processes(
     Ok(processes)
 }
 
-fn auth_arguments(auth_db_path: &Path, secret_key_file: &Path) -> Vec<OsString> {
+fn auth_arguments(
+    project_root: &Path,
+    auth_db_path: &Path,
+    secret_key_file: &Path,
+) -> Vec<OsString> {
     vec![
+        "--project-root".into(),
+        project_root.as_os_str().to_owned(),
         "--auth-db".into(),
         auth_db_path.as_os_str().to_owned(),
         "--secret-key-file".into(),
@@ -1342,13 +1363,14 @@ fn auth_arguments(auth_db_path: &Path, secret_key_file: &Path) -> Vec<OsString> 
 
 fn delivery_process(
     subcommand: &'static str,
+    project_root: &Path,
     auth_db_path: &Path,
     application_executable: &Path,
     secret_key_file: &Path,
     job: &ScheduledDeliveryJob,
 ) -> ScheduledProcess {
     let mut arguments = vec![OsString::from(subcommand)];
-    arguments.extend(auth_arguments(auth_db_path, secret_key_file));
+    arguments.extend(auth_arguments(project_root, auth_db_path, secret_key_file));
     arguments.push("--no-dry-run".into());
     if let Some(database) = job.database.as_deref() {
         arguments.push("--db".into());
@@ -1893,6 +1915,7 @@ mod tests {
                                 tracing::dispatcher::with_default(&subscriber, || {
                                     span.in_scope(|| {
                                         run_scheduled_claim(
+                                            Path::new("."),
                                             auth_db_path,
                                             executable,
                                             secret_key_file,
@@ -2563,6 +2586,7 @@ mod tests {
     fn scheduler_builds_same_application_subcommands_and_allowlisted_arguments() {
         let auth_db_path = Path::new("data/auth.sqlite");
         let processes = scheduled_processes(
+            Path::new("project with spaces"),
             auth_db_path,
             Path::new("/app/litradar"),
             Path::new("secret.key"),
@@ -2585,6 +2609,8 @@ mod tests {
             process_arguments(&processes[0]),
             vec![
                 "index",
+                "--project-root",
+                "project with spaces",
                 "--auth-db",
                 "data/auth.sqlite",
                 "--secret-key-file",
@@ -2598,6 +2624,8 @@ mod tests {
             process_arguments(&processes[1]),
             vec![
                 "notify",
+                "--project-root",
+                "project with spaces",
                 "--auth-db",
                 "data/auth.sqlite",
                 "--secret-key-file",
@@ -2607,6 +2635,7 @@ mod tests {
         );
 
         let push = scheduled_processes(
+            Path::new("project with spaces"),
             auth_db_path,
             Path::new("/app/litradar"),
             Path::new("secret.key"),
@@ -2621,6 +2650,8 @@ mod tests {
             process_arguments(&push[0]),
             vec![
                 "push",
+                "--project-root",
+                "project with spaces",
                 "--auth-db",
                 "data/auth.sqlite",
                 "--secret-key-file",

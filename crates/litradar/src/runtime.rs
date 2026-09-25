@@ -272,6 +272,7 @@ async fn run_scheduler_loop(
             }
         },
         move |claim| {
+            let project_root = config.api_config.project_root.clone();
             let auth_db_path = config.auth_db_path.clone();
             let application_executable = config.application_executable.clone();
             let secret_key_file = config.api_config.secret_key_file.clone();
@@ -283,6 +284,7 @@ async fn run_scheduler_loop(
                     tracing::dispatcher::with_default(&subscriber, || {
                         span.in_scope(|| {
                             run_scheduled_claim(
+                                project_root,
                                 auth_db_path,
                                 application_executable,
                                 secret_key_file,

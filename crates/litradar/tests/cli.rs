@@ -983,7 +983,12 @@ fn seed_terminal_delivery_run(
 #[test]
 fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     let root = tempdir().expect("temporary project root should be created");
-    let storage_config = litradar_storage::StorageConfig::from_project_root(root.path());
+    let working_directory = root.path().join("working directory");
+    fs::create_dir(&working_directory).expect("working directory should exist");
+    let project_root = root.path().join("project 空间");
+    let auth_db_path = root.path().join("separate-auth.sqlite");
+    let storage_config = litradar_storage::StorageConfig::from_project_root(&project_root)
+        .with_auth_db_path(auth_db_path.clone());
     let secret_key_file = root.path().join("secret.key");
     fs::write(&secret_key_file, [25_u8; 32]).expect("secret key should write");
     litradar_storage::migrate_storage(&storage_config).expect("storage should migrate");
@@ -1009,15 +1014,19 @@ fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     let task_id = task.id.to_string();
 
     let dry_run = run_litradar_in(
-        root.path(),
+        &working_directory,
         &[
             "scheduler",
             "dry-run-once",
             &task_id,
             "--project-root",
-            ".",
+            project_root.to_str().expect("fixture path should be UTF-8"),
+            "--auth-db",
+            auth_db_path.to_str().expect("fixture path should be UTF-8"),
             "--secret-key-file",
-            "secret.key",
+            secret_key_file
+                .to_str()
+                .expect("fixture path should be UTF-8"),
         ],
     );
     let dry_payload: Value =
@@ -1037,15 +1046,19 @@ fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     assert!(unchanged.last_run_at.is_none());
 
     let executed = run_litradar_in(
-        root.path(),
+        &working_directory,
         &[
             "scheduler",
             "run-once",
             &task_id,
             "--project-root",
-            ".",
+            project_root.to_str().expect("fixture path should be UTF-8"),
+            "--auth-db",
+            auth_db_path.to_str().expect("fixture path should be UTF-8"),
             "--secret-key-file",
-            "secret.key",
+            secret_key_file
+                .to_str()
+                .expect("fixture path should be UTF-8"),
         ],
     );
     let executed_payload: Value =
@@ -1058,6 +1071,7 @@ fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     assert_eq!(executed_payload["found"], true);
     assert_eq!(executed_payload["did_execute"], true);
     assert_eq!(executed_payload["status"], "success");
+    assert!(!working_directory.join("data").exists());
     assert_eq!(
         updated.last_status,
         litradar_domain::SchedulerRunState::Success

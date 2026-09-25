@@ -443,6 +443,8 @@ litradar scheduler dry-run-once TASK_ID
 
 保存的任务只能展开为同一 `litradar` 可执行文件的 `index`、`notify` 或 `push` argv，不执行 shell 文本。
 
+Every scheduled subprocess inherits the explicit project root, including follow-up notification and push stages. A custom `--auth-db` path does not change that root; the launching working directory may differ from the project directory.
+
 ## `openapi`
 
 ```text

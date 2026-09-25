@@ -694,6 +694,7 @@ fn run_scheduler_command_inner(
         SchedulerAction::Validate => print_scheduler_load(&auth_db_path),
         SchedulerAction::RunOnce(task_id, mode) => {
             let outcome = run_task_now(
+                &project_root,
                 &auth_db_path,
                 application_executable,
                 &secret_key_file,
