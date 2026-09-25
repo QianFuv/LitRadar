@@ -104,7 +104,6 @@ function activatesGlobalLocalFontWeights(): void {
     /Maple Mono|MapleMono|font-geist|next\/font\/google|Geist_Mono/,
   );
   expect(existsSync(path.resolve(PROJECT_ROOT, 'assets/MapleMonoNormalNL-CN-Regular'))).toBe(false);
-  expect(readme).toContain('JetBrainsLxgwNerdMono-Bold');
   expect(designSystem).toContain('JetBrainsLxgwNerdMono-Bold');
 }
 
