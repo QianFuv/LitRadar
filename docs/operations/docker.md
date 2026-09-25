@@ -171,6 +171,8 @@ docker compose run --rm litradar index \
 4. 需要恢复 changes JSON 时必须用兼容的目录选择、sync mode、ledger 中保存的遗留 issue-batch 恢复值和 notify flags 重跑 `--update`，让默认 resume 继续同一 active batch。issue-batch 只用于匹配旧 active batch；若非默认值要求显式传入，CLI 会发出兼容性警告。存在已发布或可能已发布 manifest 时不要用 `--no-resume` 丢弃 handoff。
 5. 成功后确认命令退出 0、changes JSON 可解析、batch 历史进入 `completed`、`index_batch_lease` 与 catalog `provider_leases` 都没有活动所有者，再启动服务并检查 `/health/live`、`/health/ready` 和 `/`。
 
+Zeabur 更新应保留现有服务和 PVC 身份。停服后只运行单个一次性维护进程，不向同一卷启动第二个应用服务。为独立的 Provider 设置迁移保留旧镜像 digest，以及分别验证的认证库和控制库备份。完成受支持的设置迁移后再启动，检查 readiness 和代表性查询，并保留全部备份直到发布回滚窗口结束。
+
 Scholarly 增量使用成功期次 anchor 年份的 1 月 1 日作为日期下界，并完整补查 candidate 到 base 的边界期次；不是从完成时间回看 30 天。Crossref 保留 `from-update-date`，冻结 UTC 秒上界 `T`，按完整 created 历史分片；小片以最多 225 条单响应校验，单秒仍过大才使用无排序 cursor，完整计数通过后在本地归并期次。OpenAlex 保留原有 `from_created_date` 和有序分页。缺少可用 anchor 或无法证明边界时进行同源无界重放，已有内容不因空结果被删除。规则和非快照限制见 [Scholarly](../reference/sources/scholarly.md)。
 
 同次 Crossref resume 不再使用 240 秒游标过期或 HTTP 500 强制重扫；下一次 update 仍须新查询并保留整期补查。升级后的 English 恢复使用原正确性选项和默认 `--resume`，只选 `english_journals.csv`，本次不发送通知；完整示例见 [CLI 恢复步骤](../reference/cli.md#crossref-2026-08-游标升级后的-english-恢复)。这次 API 兼容升级不要求删除内容库、控制库或重建约 10 GB 的 English 数据；新 traversal v2 不能由旧二进制直接恢复。
@@ -582,11 +584,3 @@ curl --fail http://localhost:8000/openapi.json
 镜像为目标架构构建固定版本的 `simple` SQLite 扩展，安装到 `/usr/lib/litradar/libsimple.so`，并包含 `libstdc++6` 与所选 MIT 许可声明。运行时不启用 Jieba 词典或查询扩展。新 v9 索引使用 `simple 0`；受支持的旧索引在显式离线优化前继续使用 unicode61。容器冒烟测试会创建旧库、执行镜像中的离线迁移，再验证认证后的中文、拉丁文本和禁用拼音查询。来源与发现规则见 [simple 分词器](../../libs/simple/README.md)。
 
 v9 缺少匹配的原生库时会明确失败，不回退到 unicode61。先核对镜像版本、目标架构和打包路径；不要从未知来源补装扩展。
-
-<a id="offline-cnki-author-repair"></a>
-
-### 离线修复 CNKI 作者
-
-使用已验证发布镜像中的[作者修复 CLI](../reference/cli.md#cnki-author-repair)维护现有数据卷。先停止全部服务与索引写入者，等待心跳和租约保护过期，再挂载独立修复目录，保存经审核的更正、生成清单和 SQLite 备份；备份不得放入 `data/index`、`data/index-control` 或 `data/meta`。先只读生成计划，再应用精确清单，最后验证持久结果并重复 dry-run。此流程不迁移内容 schema：v7 保留 unicode61，v9 继续使用镜像扩展提供的 `simple 0`。
-
-Zeabur 更新应保留现有服务和 PVC 身份。停服后只运行单个一次性维护进程，不向同一卷启动第二个应用服务。为独立的 Provider 设置迁移保留旧镜像 digest，以及分别验证的认证库和控制库备份。作者修复验证与受支持的设置迁移均成功后再启动，检查 readiness 和代表性作者查询，并保留全部备份直到发布回滚窗口结束。

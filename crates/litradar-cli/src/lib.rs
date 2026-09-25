@@ -257,57 +257,6 @@ fn run_admin_command_with_reader(
             }))
         }
         [group, command]
-            if group == "index" && command == "repair-cnki-authors" && !has_explicit_auth_db =>
-        {
-            use litradar_storage::cnki_author_repair::{
-                apply_cnki_author_repair, plan_cnki_author_repair, verify_cnki_author_repair,
-                AuthorCorrection, AuthorRepairPlan,
-            };
-            let corrections =
-                extract_path_option(&mut args, "--corrections")?.ok_or_else(admin_usage)?;
-            let output = extract_path_option(&mut args, "--output")?;
-            let backup = extract_path_option(&mut args, "--backup")?;
-            let should_apply = remove_flag(&mut args, "--apply");
-            let should_verify = remove_flag(&mut args, "--verify");
-            reject_remaining_admin_options(&args)?;
-            if should_apply && should_verify {
-                return Err(admin_usage().into());
-            }
-            let config = StorageConfig::from_project_root(&project_root);
-            let input = fs::read(resolve_project_path(&project_root, corrections))?;
-            if should_apply || should_verify {
-                if output.is_some() {
-                    return Err(admin_usage().into());
-                }
-                let backup = resolve_project_path(&project_root, backup.ok_or_else(admin_usage)?);
-                let plan: AuthorRepairPlan = serde_json::from_slice(&input)?;
-                if should_apply {
-                    apply_cnki_author_repair(&config, &plan, &backup)?;
-                } else {
-                    verify_cnki_author_repair(&config, &plan, &backup)?;
-                }
-                Ok(
-                    json!({"status": if should_apply { "repaired" } else { "verified" }, "changed_articles": plan.corrections.len(), "backup": backup, "protected_sha256": plan.protected_sha256}),
-                )
-            } else {
-                if backup.is_some() {
-                    return Err(admin_usage().into());
-                }
-                let output = resolve_project_path(&project_root, output.ok_or_else(admin_usage)?);
-                let corrections: Vec<AuthorCorrection> = serde_json::from_slice(&input)?;
-                let plan = plan_cnki_author_repair(&config, &corrections)?;
-                let mut file = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&output)?;
-                serde_json::to_writer_pretty(&mut file, &plan)?;
-                file.sync_all()?;
-                Ok(
-                    json!({"status": "planned", "changed_articles": plan.corrections.len(), "manifest": output, "protected_sha256": plan.protected_sha256}),
-                )
-            }
-        }
-        [group, command]
             if group == "index" && command == "optimize-storage" && !has_explicit_auth_db =>
         {
             let is_index_maintenance_confirmed =
@@ -342,7 +291,6 @@ fn extract_admin_command(args: &mut Vec<String>) -> Result<Vec<String>, Box<dyn 
                 | "--new-key-file"
                 | "--output"
                 | "--backup"
-                | "--corrections"
         ) {
             if index + 1 >= args.len() {
                 return Err(format!("{} requires a value", args[index]).into());
@@ -1322,8 +1270,7 @@ fn admin_usage() -> String {
             "litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]",
             "litradar admin backup verify --backup PATH [--project-root PATH]",
             "litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]",
-            "litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]",
-            "litradar admin index repair-cnki-authors --corrections FILE [--output PLAN | --apply --backup FILE | --verify --backup FILE] [--project-root PATH]"
+            "litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]"
         ]
     })
     .to_string()
@@ -1521,63 +1468,24 @@ mod tests {
     }
 
     #[test]
-    fn cnki_author_repair_cli_plans_applies_and_verifies_without_migration() {
+    fn retired_cnki_author_repair_command_is_unavailable() {
         let root = tempfile::tempdir().unwrap();
-        let config = litradar_storage::StorageConfig::from_project_root(root.path());
-        litradar_storage::migrate_auth_database(config.auth_db_path()).unwrap();
-        fs::create_dir_all(config.index_dir()).unwrap();
-        litradar_storage::migrate_index_database(
-            config.index_dir().join("chinese_journals.sqlite"),
-        )
-        .unwrap();
-        fs::write(root.path().join("corrections.json"), "[]").unwrap();
-        let run = |options: &[&str]| {
-            let mut args = vec![
+        let error = run_admin_command_with_reader(
+            vec![
                 "index".to_string(),
                 "repair-cnki-authors".to_string(),
                 "--project-root".to_string(),
                 root.path().to_string_lossy().into_owned(),
-            ];
-            args.extend(options.iter().map(|value| value.to_string()));
-            run_admin_command_with_reader(args, std::io::Cursor::new(Vec::<u8>::new()))
-        };
-        assert_eq!(
-            run(&["--corrections", "corrections.json", "--output", "plan.json"]).unwrap()["status"],
-            "planned"
+            ],
+            std::io::Cursor::new(Vec::<u8>::new()),
+        )
+        .expect_err("retired command must be rejected");
+        assert_eq!(error.to_string(), admin_usage());
+        assert!(
+            !admin_usage().contains("repair-cnki-authors"),
+            "retired command must be absent from help"
         );
-        assert!(run(&[
-            "--corrections",
-            "plan.json",
-            "--apply",
-            "--verify",
-            "--backup",
-            "before.sqlite"
-        ])
-        .is_err());
-        assert!(!root.path().join("before.sqlite").exists());
-        assert_eq!(
-            run(&[
-                "--corrections",
-                "plan.json",
-                "--apply",
-                "--backup",
-                "before.sqlite"
-            ])
-            .unwrap()["status"],
-            "repaired"
-        );
-        assert_eq!(
-            run(&[
-                "--corrections",
-                "plan.json",
-                "--verify",
-                "--backup",
-                "before.sqlite"
-            ])
-            .unwrap()["status"],
-            "verified"
-        );
-        assert!(root.path().join("before.sqlite").exists());
+        assert!(!root.path().join("data").exists());
     }
 
     #[test]

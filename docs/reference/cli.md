@@ -143,24 +143,6 @@ litradar admin backup restore
 
 备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限。通过这些检查的历史数据库可以保留在备份中；恢复后的内容库仍须满足运行时精确 v6/v7/v8/v9 结构或受支持的迁移、重建要求。
 
-<a id="cnki-author-repair"></a>
-
-### CNKI 作者修复
-
-`admin index repair-cnki-authors` 只修复 `data/index/chinese_journals.sqlite`，保留其 v7 或 v9 结构与分词器。输入为已审阅的 JSON 修正数组，每项包含 `article_id`（十进制字符串）、`before`（精确原始作者 JSON 字符串）、`after`（保留原字符串数组或对象数组形状的替换 JSON 字符串）和 `reason`（依据或分类）。命令不推断特殊姓名，也不抓取来源；应先只读检查目标数据库，再单独准备修正文件。下面是操作顺序示意，将 `PATH` 和文件名替换为实际位置：
-
-```text
-litradar admin index repair-cnki-authors --project-root PATH --corrections corrections.json --output plan.json
-litradar admin index repair-cnki-authors --project-root PATH --corrections plan.json --apply --backup before.sqlite
-litradar admin index repair-cnki-authors --project-root PATH --corrections plan.json --verify --backup before.sqlite
-```
-
-第一条命令只读目标数据库，并创建新的修复清单；清单绑定完整源结构、权威非作者字段、全部文章 ID 与作者值，以及未受影响文章的搜索词项。应用前必须审阅清单。输出与备份的父目录必须已存在，且位于受管数据库目录之外；已有文件不会被覆盖。应用前停止全部写入者，等待服务心跳和索引租约过期。命令使用共享维护标记、SQLite 写事务，并在修改前创建一致性备份；备份也必须匹配预演快照。
-
-只有 `authors_json` 和对应完整 FTS 行会改变，文章 ID、身份别名、列表投影、通知和其他规范字段保持不变。验证会比较持久数据库、备份与绑定摘要，检查完整性和 FTS 成员，并独立重建受影响行以比较分词器产生的词项、列和位置。使用原始修正数组再次预演应报告零项待修正。源快照改变时必须重新预演，不得手改清单摘要。
-
-备份与清单应一起保留。操作失败时回滚；提交或回滚结果不确定时保留维护标记并阻止正常启动。恢复前应检查实际数据库并验证保留备份，所有写入者停止后再按原结构恢复，不能手工降低 `user_version`。本命令不接受 `--auth-db`，也不迁移运行时 Provider 设置。
-
 ### 索引存储优化
 
 ```text
