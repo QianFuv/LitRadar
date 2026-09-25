@@ -196,9 +196,21 @@ jobs:
           image_tag="${image_name}:latest"
           commit_tag="${image_name}:sha-${GITHUB_SHA:0:6}"
           created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
-          description="$(awk 'NR > 1 && NF { print; exit }' README.md)"
+          description="$(awk '
+            NR > 1 && !intro && !in_overview && NF && $0 !~ /^#/ { intro = $0 }
+            /^## 能力概览$/ { in_overview = 1; next }
+            in_overview && /^## / { exit }
+            in_overview && /^- / {
+              sub(/^- /, "")
+              gsub(/`/, "")
+              overview = overview (overview ? " " : "") $0
+            }
+            END {
+              if (intro && overview) print intro " 能力概览：" overview
+            }
+          ' README.md)"
           if [[ -z "$description" || ${#description} -gt 512 ]]; then
-            echo "README description must be one nonempty line of at most 512 characters" >&2
+            echo "README introduction and overview must fit in 512 characters" >&2
             exit 1
           fi
           {
