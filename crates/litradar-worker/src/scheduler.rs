@@ -253,19 +253,6 @@ impl ScheduledRunContext {
             job_id: format!("scheduled-task-{}", claim.task.id),
         }
     }
-
-    fn for_manual_run(task_id: i64) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be after Unix epoch")
-            .as_nanos();
-        Self {
-            worker_id: "manual".to_string(),
-            task_id,
-            run_id: format!("manual-{task_id}-{nanos}"),
-            job_id: format!("scheduled-task-{task_id}"),
-        }
-    }
 }
 
 trait ScheduledJobRunner {
@@ -476,15 +463,44 @@ fn run_task_now_with_runner(
         });
     };
     validate_task(&task)?;
-    let ran_at = current_unix_time();
-    let context = ScheduledRunContext::for_manual_run(task.id);
-    let execution = runner.run(auth_db_path, &task, &context, &mut || {
-        HeartbeatDirective::Continue
-    });
-    litradar_storage::record_scheduled_task_run(auth_db_path, task.id, execution.status, ran_at)?;
+    let admission = litradar_storage::claim_manual_scheduled_run(
+        auth_db_path,
+        task.id,
+        &scheduler_worker_id(),
+        current_unix_time(),
+        RUN_LEASE_SECONDS,
+    )?;
+    let claim = match admission {
+        litradar_storage::ManualScheduledRunAdmission::NotFound => {
+            return Ok(RunTaskOutcome {
+                found: false,
+                did_execute: false,
+                status: None,
+                message: None,
+            })
+        }
+        litradar_storage::ManualScheduledRunAdmission::Busy => {
+            return Ok(RunTaskOutcome {
+                found: true,
+                did_execute: false,
+                status: None,
+                message: Some("Task already has an active run".to_string()),
+            })
+        }
+        litradar_storage::ManualScheduledRunAdmission::Claimed(claim) => *claim,
+    };
+    execute_manual_claim(auth_db_path, claim, runner)
+}
+
+fn execute_manual_claim(
+    auth_db_path: &Path,
+    claim: ScheduledRunClaim,
+    runner: &mut impl ScheduledJobRunner,
+) -> Result<RunTaskOutcome, SchedulerError> {
+    let (execution, did_execute) = execute_scheduled_claim_with_start(auth_db_path, claim, runner)?;
     Ok(RunTaskOutcome {
         found: true,
-        did_execute: true,
+        did_execute,
         status: Some(execution.status),
         message: None,
     })
@@ -683,6 +699,14 @@ fn execute_scheduled_claim(
     claim: ScheduledRunClaim,
     runner: &mut impl ScheduledJobRunner,
 ) -> Result<ScheduledTaskExecution, SchedulerError> {
+    execute_scheduled_claim_with_start(auth_db_path, claim, runner).map(|(execution, _)| execution)
+}
+
+fn execute_scheduled_claim_with_start(
+    auth_db_path: &Path,
+    claim: ScheduledRunClaim,
+    runner: &mut impl ScheduledJobRunner,
+) -> Result<(ScheduledTaskExecution, bool), SchedulerError> {
     let context = ScheduledRunContext::for_claim(&claim);
     let claim_span = tracing::info_span!(
         "scheduler.claim",
@@ -700,7 +724,7 @@ fn execute_scheduled_claim_in_span(
     claim: ScheduledRunClaim,
     context: ScheduledRunContext,
     runner: &mut impl ScheduledJobRunner,
-) -> Result<ScheduledTaskExecution, SchedulerError> {
+) -> Result<(ScheduledTaskExecution, bool), SchedulerError> {
     let elapsed_started_at = Instant::now();
     let started_at = current_unix_time();
     tracing::info!(
@@ -730,12 +754,15 @@ fn execute_scheduled_claim_in_span(
             reason = "claim_unavailable",
             duration_ms = elapsed_millis(elapsed_started_at),
         );
-        return Ok(ScheduledTaskExecution {
-            task_id: claim.task.id,
-            job_id: context.job_id,
-            name: claim.task.name,
-            status: SchedulerRunState::Unknown,
-        });
+        return Ok((
+            ScheduledTaskExecution {
+                task_id: claim.task.id,
+                job_id: context.job_id,
+                name: claim.task.name,
+                status: SchedulerRunState::Unknown,
+            },
+            false,
+        ));
     }
     let mut heartbeat_error = None;
     let mut is_heartbeat_lost = false;
@@ -791,12 +818,15 @@ fn execute_scheduled_claim_in_span(
         return Err(SchedulerError::HeartbeatLost);
     }
     emit_scheduler_claim_terminal(&execution, elapsed_started_at);
-    Ok(ScheduledTaskExecution {
-        task_id: claim.task.id,
-        job_id: context.job_id,
-        name: claim.task.name,
-        status: execution.status,
-    })
+    Ok((
+        ScheduledTaskExecution {
+            task_id: claim.task.id,
+            job_id: context.job_id,
+            name: claim.task.name,
+            status: execution.status,
+        },
+        true,
+    ))
 }
 
 fn emit_scheduler_claim_terminal(execution: &ProcessExecution, started_at: Instant) {
@@ -1737,6 +1767,64 @@ mod tests {
         assert_eq!(updated.last_status, SchedulerRunState::Failed);
         assert!(updated.last_run_at.is_some());
         assert_eq!(runner.jobs, vec![index_job()]);
+        let history =
+            litradar_storage::get_scheduler_status(&auth_db_path, current_unix_time(), 90.0, 10)
+                .unwrap();
+        assert_eq!(history.recent_runs.len(), 1);
+        assert_eq!(history.recent_runs[0].status, SchedulerRunState::Failed);
+    }
+
+    #[test]
+    fn scheduler_manual_run_does_not_overlap_an_active_scheduled_claim() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("auth.sqlite");
+        initialize_auth_database(&path).unwrap();
+        let task = create_index_task(&path, "busy", "* * * * *", true);
+        let now = current_unix_time();
+        litradar_storage::enqueue_scheduled_runs(&path, &task, &[60]).unwrap();
+        assert_eq!(
+            litradar_storage::claim_ready_scheduled_runs(&path, "automatic", now, 90.0)
+                .unwrap()
+                .len(),
+            1
+        );
+        let mut runner = FixtureRunner::new([SchedulerRunState::Success]);
+        let result =
+            run_task_now_with_runner(&path, task.id, SchedulerMode::Execute, &mut runner).unwrap();
+        assert!(result.found);
+        assert!(!result.did_execute);
+        assert!(result.message.as_deref().unwrap().contains("active"));
+        assert!(runner.jobs.is_empty());
+        assert_eq!(
+            litradar_storage::get_scheduler_status(&path, now, 90.0, 10)
+                .unwrap()
+                .recent_runs
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn scheduler_expired_manual_claim_reports_no_execution() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("auth.sqlite");
+        initialize_auth_database(&path).unwrap();
+        let task = create_index_task(&path, "expired", "* * * * *", true);
+        let litradar_storage::ManualScheduledRunAdmission::Claimed(claim) =
+            litradar_storage::claim_manual_scheduled_run(&path, task.id, "paused", 100.0, 90.0)
+                .unwrap()
+        else {
+            panic!("manual claim should be admitted")
+        };
+        assert!(
+            litradar_storage::claim_ready_scheduled_runs(&path, "recovery", 191.0, 90.0)
+                .unwrap()
+                .is_empty()
+        );
+        let mut runner = FixtureRunner::new([SchedulerRunState::Success]);
+        let outcome = execute_manual_claim(&path, *claim, &mut runner).unwrap();
+        assert!(!outcome.did_execute);
+        assert!(runner.jobs.is_empty());
     }
 
     #[test]

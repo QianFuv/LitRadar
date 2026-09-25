@@ -89,14 +89,14 @@ pub use runtime_settings::{
     DEFAULT_RUNTIME_LOG_FILTER, DEFAULT_RUNTIME_LOG_FORMAT, MAX_DELIVERY_WORKER_CONCURRENCY,
 };
 pub use scheduled_tasks::{
-    claim_ready_scheduled_runs, claim_ready_scheduled_runs_with_limit, create_scheduled_task,
-    create_scheduled_task_with_audit, delete_scheduled_task, delete_scheduled_task_with_audit,
-    enqueue_scheduled_runs, finish_scheduled_run, get_scheduled_task,
-    get_scheduler_last_checked_at, get_scheduler_status, heartbeat_scheduled_run,
-    list_scheduled_tasks, record_scheduled_task_run, record_scheduler_check,
-    record_scheduler_heartbeat, start_scheduled_run, update_scheduled_task,
-    update_scheduled_task_with_audit, ScheduledRunClaim, ScheduledTaskCreateParams,
-    ScheduledTaskUpdateParams,
+    claim_manual_scheduled_run, claim_ready_scheduled_runs, claim_ready_scheduled_runs_with_limit,
+    create_scheduled_task, create_scheduled_task_with_audit, delete_scheduled_task,
+    delete_scheduled_task_with_audit, enqueue_scheduled_runs, finish_scheduled_run,
+    get_scheduled_task, get_scheduler_last_checked_at, get_scheduler_status,
+    heartbeat_scheduled_run, list_scheduled_tasks, record_scheduled_task_run,
+    record_scheduler_check, record_scheduler_heartbeat, start_scheduled_run, update_scheduled_task,
+    update_scheduled_task_with_audit, ManualScheduledRunAdmission, ScheduledRunClaim,
+    ScheduledTaskCreateParams, ScheduledTaskUpdateParams,
 };
 pub(crate) use security_audit::insert_required_security_audit_event;
 pub use security_audit::{

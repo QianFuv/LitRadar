@@ -879,7 +879,7 @@ pub struct ScheduledTaskRunInfo {
     pub task_id: i64,
     /// Task name captured when the slot was queued.
     pub task_name: String,
-    /// Scheduled UTC Unix timestamp aligned to a minute.
+    /// UTC Unix timestamp of the scheduled minute or explicit manual request.
     pub scheduled_for: i64,
     /// Durable run status.
     pub status: SchedulerRunState,

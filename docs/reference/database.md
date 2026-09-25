@@ -20,7 +20,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 | 数据库             | `PRAGMA user_version` | 升级策略                                                          |
 | ------------------ | --------------------: | ----------------------------------------------------------------- |
-| 认证/业务库        |                    19 | 版本化 migration                                                  |
+| 认证/业务库        |                    20 | 版本化 migration                                                  |
 | 内容索引库         |                     9 | 新建精确 v9；运行时读写精确 v6/v7/v8/v9；精确 v4/v5 原子迁移到 v9 |
 | 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建             |
 | catalog 索引控制库 |                     5 | v0/v1/v2/v3/v4 安全事务迁移；可删除后按 v5 重建                   |
@@ -338,6 +338,8 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 - `scheduled_tasks` 保存类型化 `job_spec`；旧 `legacy_command` 只读且不能启用。
 - `scheduled_task_runs` 保存认领、运行、取消、超时和终态。
+
+Auth v20 preserves run history and IDs while adding internal `trigger_kind` (`scheduled` or `manual`). Only scheduled runs have a unique `(task_id, scheduled_for)` slot; sequential manual requests may share a timestamp without consuming a cron slot. The migration preserves the autoincrement high-water mark, including IDs of deleted runs.
 - `scheduler_state` 保存单调调度游标。
 - `scheduler_workers` 保存内嵌调度心跳。
 - `service_heartbeats` 保存统一进程 HTTP 组件的活动记录。

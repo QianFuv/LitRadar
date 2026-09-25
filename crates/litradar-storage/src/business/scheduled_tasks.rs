@@ -56,6 +56,68 @@ pub struct ScheduledRunClaim {
     pub task: ScheduledTaskInfo,
 }
 
+/// Result of admitting an explicit manual execution under the task-wide lease boundary.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ManualScheduledRunAdmission {
+    /// The requested task no longer exists.
+    NotFound,
+    /// Another manual or scheduled execution already owns this task.
+    Busy,
+    /// A durable manual claim ready for supervised execution.
+    Claimed(Box<ScheduledRunClaim>),
+}
+
+/// Atomically claim a manual run without consuming a scheduled cron slot.
+///
+/// Disabled typed tasks may be run explicitly. Busy requests create no run;
+/// expired manual claims are cancelled rather than automatically replayed.
+pub fn claim_manual_scheduled_run(
+    auth_db_path: impl AsRef<Path>,
+    task_id: i64,
+    worker_id: &str,
+    claimed_at: f64,
+    lease_seconds: f64,
+) -> Result<ManualScheduledRunAdmission, BusinessRepositoryError> {
+    let mut connection = open_business_connection(auth_db_path)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let Some(task) = get_scheduled_task_from_connection(&transaction, task_id)? else {
+        return Ok(ManualScheduledRunAdmission::NotFound);
+    };
+    let job = task.job.as_ref().ok_or_else(|| {
+        BusinessRepositoryError::InvalidScheduledJob("Legacy task requires a typed job".to_string())
+    })?;
+    validate_scheduled_job(job)?;
+    validate_scheduled_timing(&task.timezone, task.timeout_seconds)?;
+    reconcile_scheduled_runs(&transaction, claimed_at)?;
+    let has_active_run: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM scheduled_task_runs
+         WHERE task_id = ?1 AND status IN ('claimed', 'running'))",
+        [task_id],
+        |row| row.get(0),
+    )?;
+    if has_active_run {
+        transaction.commit()?;
+        return Ok(ManualScheduledRunAdmission::Busy);
+    }
+    let scheduled_for = claimed_at.floor() as i64;
+    transaction.execute(
+        "INSERT INTO scheduled_task_runs
+         (task_id, task_name, scheduled_for, trigger_kind, status, worker_id, claimed_at, claim_expires_at)
+         VALUES (?1, ?2, ?3, 'manual', 'claimed', ?4, ?5, ?6)",
+        params![task_id, task.name, scheduled_for, worker_id, claimed_at, claimed_at + lease_seconds],
+    )?;
+    let run_id = transaction.last_insert_rowid();
+    transaction.commit()?;
+    Ok(ManualScheduledRunAdmission::Claimed(Box::new(
+        ScheduledRunClaim {
+            run_id,
+            scheduled_for,
+            worker_id: worker_id.to_string(),
+            task,
+        },
+    )))
+}
+
 /// List scheduled tasks.
 ///
 /// # Arguments
@@ -459,14 +521,15 @@ pub fn enqueue_scheduled_runs(
         let latest_slot = scheduled_slots[scheduled_slots.len() - 1];
         let latest_known_slot = transaction.query_row(
             "SELECT MAX(scheduled_for) FROM scheduled_task_runs
-             WHERE task_id = ?1",
+             WHERE task_id = ?1 AND trigger_kind = 'scheduled'",
             [task.id],
             |row| row.get::<_, Option<i64>>(0),
         )?;
         let selected_slot = latest_known_slot.map_or(latest_slot, |known| known.max(latest_slot));
         transaction.execute(
             "DELETE FROM scheduled_task_runs
-             WHERE task_id = ?1 AND status = 'pending' AND scheduled_for < ?2",
+             WHERE task_id = ?1 AND trigger_kind = 'scheduled'
+               AND status = 'pending' AND scheduled_for < ?2",
             params![task.id, selected_slot],
         )?;
         let inserted = if selected_slot == latest_slot {
@@ -548,45 +611,14 @@ pub fn claim_ready_scheduled_runs_with_limit(
     let auth_db_path = auth_db_path.as_ref();
     let mut connection = open_business_connection(auth_db_path)?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute(
-        "UPDATE scheduled_task_runs
-         SET status = 'unknown', finished_at = ?1, claim_expires_at = NULL
-         WHERE status = 'running' AND claim_expires_at <= ?1",
-        [claimed_at],
-    )?;
-    transaction.execute(
-        "UPDATE scheduled_tasks
-         SET last_run_at = ?1, last_status = 'unknown', updated_at = ?1
-         WHERE id IN (
-             SELECT task_id FROM scheduled_task_runs
-             WHERE status = 'unknown' AND finished_at = ?1
-         )",
-        [claimed_at],
-    )?;
-    transaction.execute(
-        "UPDATE scheduled_task_runs
-         SET status = 'pending', worker_id = NULL, claim_expires_at = NULL,
-             claimed_at = NULL
-         WHERE status = 'claimed' AND claim_expires_at <= ?1",
-        [claimed_at],
-    )?;
-    transaction.execute(
-        "DELETE FROM scheduled_task_runs
-         WHERE status = 'pending'
-           AND task_id IN (SELECT id FROM scheduled_tasks WHERE coalesce = 1)
-           AND scheduled_for < (
-               SELECT MAX(latest.scheduled_for) FROM scheduled_task_runs AS latest
-               WHERE latest.task_id = scheduled_task_runs.task_id
-           )",
-        [],
-    )?;
+    reconcile_scheduled_runs(&transaction, claimed_at)?;
 
     let candidates = {
         let mut statement = transaction.prepare(
             "SELECT run.id, run.task_id, run.scheduled_for
              FROM scheduled_task_runs AS run
              JOIN scheduled_tasks AS task ON task.id = run.task_id
-             WHERE run.status = 'pending'
+             WHERE run.status = 'pending' AND run.trigger_kind = 'scheduled'
                AND task.enabled = 1
                AND task.job_spec IS NOT NULL
                AND NOT EXISTS (
@@ -597,6 +629,7 @@ pub fn claim_ready_scheduled_runs_with_limit(
                AND NOT EXISTS (
                    SELECT 1 FROM scheduled_task_runs AS earlier
                    WHERE earlier.task_id = run.task_id AND earlier.status = 'pending'
+                      AND earlier.trigger_kind = 'scheduled'
                      AND (earlier.scheduled_for < run.scheduled_for
                           OR (earlier.scheduled_for = run.scheduled_for AND earlier.id < run.id))
                )
@@ -660,6 +693,57 @@ pub fn claim_ready_scheduled_runs_with_limit(
         });
     }
     Ok(claims)
+}
+
+fn reconcile_scheduled_runs(
+    transaction: &rusqlite::Transaction<'_>,
+    claimed_at: f64,
+) -> Result<(), BusinessRepositoryError> {
+    transaction.execute(
+        "UPDATE scheduled_task_runs
+         SET status = 'unknown', finished_at = ?1, claim_expires_at = NULL
+         WHERE status = 'running' AND claim_expires_at <= ?1",
+        [claimed_at],
+    )?;
+    transaction.execute(
+        "UPDATE scheduled_tasks
+         SET last_run_at = ?1, last_status = 'unknown', updated_at = ?1
+         WHERE id IN (
+             SELECT task_id FROM scheduled_task_runs
+             WHERE status = 'unknown' AND finished_at = ?1
+         )",
+        [claimed_at],
+    )?;
+    transaction.execute(
+        "UPDATE scheduled_task_runs
+         SET status = 'pending', worker_id = NULL, claim_expires_at = NULL,
+             claimed_at = NULL
+         WHERE status = 'claimed' AND trigger_kind = 'scheduled' AND claim_expires_at <= ?1",
+        [claimed_at],
+    )?;
+    transaction.execute(
+        "UPDATE scheduled_task_runs
+         SET status = 'cancelled', finished_at = ?1, claim_expires_at = NULL
+         WHERE status = 'claimed' AND trigger_kind = 'manual' AND claim_expires_at <= ?1",
+        [claimed_at],
+    )?;
+    transaction.execute(
+        "UPDATE scheduled_tasks SET last_run_at = ?1, last_status = 'cancelled', updated_at = ?1
+         WHERE id IN (SELECT task_id FROM scheduled_task_runs
+                      WHERE trigger_kind = 'manual' AND status = 'cancelled' AND finished_at = ?1)",
+        [claimed_at],
+    )?;
+    transaction.execute(
+        "DELETE FROM scheduled_task_runs
+         WHERE status = 'pending' AND trigger_kind = 'scheduled'
+           AND task_id IN (SELECT id FROM scheduled_tasks WHERE coalesce = 1)
+           AND scheduled_for < (
+               SELECT MAX(latest.scheduled_for) FROM scheduled_task_runs AS latest
+               WHERE latest.task_id = scheduled_task_runs.task_id AND latest.trigger_kind = 'scheduled'
+           )",
+        [],
+    )?;
+    Ok(())
 }
 
 /// Mark a claimed scheduled run as started.
@@ -954,6 +1038,132 @@ mod tests {
         )
         .unwrap();
         (directory, task)
+    }
+
+    fn manual_claim(path: &Path, task_id: i64, now: f64) -> ScheduledRunClaim {
+        match claim_manual_scheduled_run(path, task_id, "manual", now, 90.0).unwrap() {
+            ManualScheduledRunAdmission::Claimed(claim) => *claim,
+            other => panic!("expected a manual claim, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scheduler_manual_history_does_not_consume_cron_slots_or_coalescing_watermark() {
+        let (directory, task) = scheduler_fixture(true);
+        let path = directory.path().join("auth.sqlite");
+        for _ in 0..2 {
+            let claim = manual_claim(&path, task.id, 360.0);
+            assert!(start_scheduled_run(&path, claim.run_id, "manual", 360.0, 90.0).unwrap());
+            assert!(heartbeat_scheduled_run(&path, claim.run_id, "manual", 360.1, 90.0).unwrap());
+            assert!(
+                finish_scheduled_run(&path, &claim, SchedulerRunState::Success, "", 360.2).unwrap()
+            );
+        }
+        assert_eq!(enqueue_scheduled_runs(&path, &task, &[60, 120]).unwrap(), 1);
+        let automatic = claim_ready_scheduled_runs(&path, "automatic", 361.0, 90.0)
+            .unwrap()
+            .remove(0);
+        assert_eq!(automatic.scheduled_for, 120);
+        let before = get_scheduled_task(&path, task.id).unwrap().unwrap();
+        assert_eq!(
+            claim_manual_scheduled_run(&path, task.id, "busy", 362.0, 90.0).unwrap(),
+            ManualScheduledRunAdmission::Busy
+        );
+        assert_eq!(get_scheduled_task(&path, task.id).unwrap().unwrap(), before);
+        assert!(
+            finish_scheduled_run(&path, &automatic, SchedulerRunState::Success, "", 363.0).unwrap()
+        );
+        assert_eq!(enqueue_scheduled_runs(&path, &task, &[360]).unwrap(), 1);
+        let manual = manual_claim(&path, task.id, 364.0);
+        assert!(claim_ready_scheduled_runs(&path, "automatic", 365.0, 90.0)
+            .unwrap()
+            .is_empty());
+        assert!(
+            finish_scheduled_run(&path, &manual, SchedulerRunState::Success, "", 366.0).unwrap()
+        );
+        assert_eq!(
+            claim_ready_scheduled_runs(&path, "automatic", 367.0, 90.0).unwrap()[0].scheduled_for,
+            360
+        );
+    }
+
+    #[test]
+    fn scheduler_manual_claims_serialize_concurrent_requests() {
+        for is_automatic_competitor in [false, true] {
+            let (directory, task) = scheduler_fixture(false);
+            let path = directory.path().join("auth.sqlite");
+            enqueue_scheduled_runs(&path, &task, &[60]).unwrap();
+            let barrier = Arc::new(Barrier::new(3));
+            let mut handles = Vec::new();
+            for index in 0..2 {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                let task_id = task.id;
+                handles.push(thread::spawn(move || {
+                    barrier.wait();
+                    if index == 1 && is_automatic_competitor {
+                        claim_ready_scheduled_runs(&path, "automatic", 100.0, 90.0)
+                            .unwrap()
+                            .len()
+                    } else {
+                        usize::from(matches!(
+                            claim_manual_scheduled_run(
+                                &path,
+                                task_id,
+                                &format!("manual-{index}"),
+                                100.0,
+                                90.0
+                            )
+                            .unwrap(),
+                            ManualScheduledRunAdmission::Claimed(_)
+                        ))
+                    }
+                }));
+            }
+            barrier.wait();
+            assert_eq!(
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap())
+                    .sum::<usize>(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn scheduler_manual_expiry_never_replays_and_disabled_tasks_allow_manual_runs() {
+        for should_start in [false, true] {
+            let (directory, task) = scheduler_fixture(true);
+            let path = directory.path().join("auth.sqlite");
+            Connection::open(&path)
+                .unwrap()
+                .execute(
+                    "UPDATE scheduled_tasks SET enabled = 0 WHERE id = ?1",
+                    [task.id],
+                )
+                .unwrap();
+            let claim = manual_claim(&path, task.id, 100.0);
+            if should_start {
+                assert!(start_scheduled_run(&path, claim.run_id, "manual", 100.0, 90.0).unwrap());
+            }
+            assert!(claim_ready_scheduled_runs(&path, "restart", 191.0, 90.0)
+                .unwrap()
+                .is_empty());
+            let runs = get_scheduler_status(&path, 191.0, 90.0, 10)
+                .unwrap()
+                .recent_runs;
+            assert_eq!(
+                runs[0].status,
+                if should_start {
+                    SchedulerRunState::Unknown
+                } else {
+                    SchedulerRunState::Cancelled
+                }
+            );
+            let next = manual_claim(&path, task.id, 192.0);
+            assert_ne!(next.run_id, claim.run_id);
+        }
     }
 
     #[test]

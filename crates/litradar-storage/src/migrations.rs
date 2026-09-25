@@ -18,7 +18,7 @@ use crate::index_maintenance::{interrupted_index_maintenance_state, IndexStorage
 use crate::{DatabaseResolutionError, StorageConfig};
 
 /// Current auth and business database schema version.
-pub const AUTH_SCHEMA_VERSION: i64 = 19;
+pub const AUTH_SCHEMA_VERSION: i64 = 20;
 
 pub use crate::index_schema::{INDEX_SCHEMA_VERSION, MIN_SUPPORTED_INDEX_SCHEMA_VERSION};
 
@@ -427,6 +427,7 @@ fn migrate_auth_database_inner(path: &Path) -> Result<MigrationSummary, Migratio
             17 => apply_auth_version_seventeen(&transaction)?,
             18 => transaction.execute_batch(crate::business::cfp::SCHEMA_SQL)?,
             19 => retire_overseas_provider(&transaction)?,
+            20 => apply_auth_version_twenty(&transaction)?,
             _ => unreachable!("auth migration version should be implemented"),
         }
         transaction.pragma_update(None, "user_version", next_version)?;
@@ -1052,6 +1053,66 @@ fn apply_auth_version_five(transaction: &Transaction<'_>) -> rusqlite::Result<()
             ON scheduled_task_runs(status, claim_expires_at);
         ",
     )
+}
+
+fn apply_auth_version_twenty(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    let previous_sequence: i64 = transaction.query_row(
+        "SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'scheduled_task_runs'",
+        [],
+        |row| row.get(0),
+    )?;
+    transaction.execute_batch(
+        "
+        CREATE TABLE scheduled_task_runs_v20 (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id          INTEGER NOT NULL,
+            task_name        TEXT    NOT NULL,
+            scheduled_for    INTEGER NOT NULL,
+            status           TEXT    NOT NULL
+                CHECK (status IN ('pending', 'claimed', 'running', 'success',
+                                  'failed', 'timed_out', 'error', 'unknown',
+                                  'cancelled')),
+            worker_id        TEXT,
+            claim_expires_at REAL,
+            claimed_at       REAL,
+            started_at       REAL,
+            finished_at      REAL,
+            output_summary   TEXT NOT NULL DEFAULT '',
+            trigger_kind     TEXT NOT NULL DEFAULT 'scheduled'
+                CHECK (trigger_kind IN ('scheduled', 'manual'))
+        );
+
+        INSERT INTO scheduled_task_runs_v20
+            (id, task_id, task_name, scheduled_for, status, worker_id,
+             claim_expires_at, claimed_at, started_at, finished_at,
+             output_summary)
+        SELECT
+            id, task_id, task_name, scheduled_for, status, worker_id,
+            claim_expires_at, claimed_at, started_at, finished_at,
+            output_summary
+        FROM scheduled_task_runs;
+
+        DROP TABLE scheduled_task_runs;
+        ALTER TABLE scheduled_task_runs_v20 RENAME TO scheduled_task_runs;
+        CREATE INDEX idx_scheduled_task_runs_task
+            ON scheduled_task_runs(task_id, scheduled_for DESC);
+        CREATE INDEX idx_scheduled_task_runs_status
+            ON scheduled_task_runs(status, claim_expires_at);
+        CREATE UNIQUE INDEX idx_scheduled_task_runs_slot
+            ON scheduled_task_runs(task_id, scheduled_for) WHERE trigger_kind = 'scheduled';
+        ",
+    )?;
+    transaction.execute(
+        "UPDATE sqlite_sequence SET seq = MAX(seq, ?1) WHERE name = 'scheduled_task_runs'",
+        [previous_sequence],
+    )?;
+    transaction.execute(
+        "INSERT INTO sqlite_sequence (name, seq)
+         SELECT 'scheduled_task_runs', ?1
+         WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'scheduled_task_runs')",
+        [previous_sequence],
+    )?;
+    Ok(())
 }
 
 fn apply_auth_version_six(transaction: &Transaction<'_>) -> rusqlite::Result<()> {

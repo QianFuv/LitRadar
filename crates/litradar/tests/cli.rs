@@ -1071,6 +1071,19 @@ fn scheduler_dry_run_and_run_once_use_the_real_child_boundary() {
     assert_eq!(executed_payload["found"], true);
     assert_eq!(executed_payload["did_execute"], true);
     assert_eq!(executed_payload["status"], "success");
+    let history = litradar_storage::get_scheduler_status(
+        storage_config.auth_db_path(),
+        current_epoch_seconds() as f64,
+        90.0,
+        10,
+    )
+    .expect("manual history should load");
+    assert_eq!(history.recent_runs.len(), 1);
+    assert_eq!(history.recent_runs[0].task_id, task.id);
+    assert_eq!(
+        history.recent_runs[0].status,
+        litradar_domain::SchedulerRunState::Success
+    );
     assert!(!working_directory.join("data").exists());
     assert_eq!(
         updated.last_status,

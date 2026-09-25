@@ -445,6 +445,8 @@ litradar scheduler dry-run-once TASK_ID
 
 Every scheduled subprocess inherits the explicit project root, including follow-up notification and push stages. A custom `--auth-db` path does not change that root; the launching working directory may differ from the project directory.
 
+`run-once` uses the same durable task claim, heartbeat and history as automatic execution. If a manual or scheduled run is already active, it returns `found=true`, `did_execute=false`, `status=null` and a busy message without queuing work. Valid disabled tasks may still be run explicitly. Manual requests do not consume scheduled slots; pending cron work remains eligible after the manual run completes. `dry-run-once` does not execute or create history. An expired unstarted manual claim is cancelled, while an expired running claim becomes unknown; neither is automatically replayed.
+
 ## `openapi`
 
 ```text

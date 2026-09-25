@@ -12,6 +12,101 @@ use rusqlite::{Connection, OptionalExtension};
 use tempfile::tempdir;
 
 #[test]
+fn scheduler_manual_migration_preserves_history_sequences_and_slot_identity() {
+    for retained_rows in [0, 9] {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("auth.sqlite");
+        migrate_auth_database(&path).unwrap();
+        let connection = open_fixture_connection(&path).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE scheduled_task_runs;
+             CREATE TABLE scheduled_task_runs (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL,
+                 task_name TEXT NOT NULL, scheduled_for INTEGER NOT NULL,
+                 status TEXT NOT NULL CHECK(status IN ('pending','claimed','running','success',
+                     'failed','timed_out','error','unknown','cancelled')),
+                 worker_id TEXT, claim_expires_at REAL, claimed_at REAL, started_at REAL,
+                 finished_at REAL, output_summary TEXT NOT NULL DEFAULT '',
+                 UNIQUE(task_id, scheduled_for));
+             PRAGMA user_version = 19;",
+            )
+            .unwrap();
+        for (offset, status) in [
+            "pending",
+            "claimed",
+            "running",
+            "success",
+            "failed",
+            "timed_out",
+            "error",
+            "unknown",
+            "cancelled",
+        ]
+        .into_iter()
+        .enumerate()
+        .take(retained_rows)
+        {
+            connection.execute(
+                "INSERT INTO scheduled_task_runs
+                 (id, task_id, task_name, scheduled_for, status, worker_id, claim_expires_at,
+                  claimed_at, started_at, finished_at, output_summary)
+                 VALUES (?1, 99, 'Deleted task', ?2, ?3, 'owner', 300.0, 200.0, NULL, NULL, 'saved output')",
+                rusqlite::params![offset as i64 + 1, offset as i64 * 60, status],
+            ).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO scheduled_task_runs (id,task_id,task_name,scheduled_for,status)
+             VALUES (1000, 99, 'Deleted task', 10000, 'success');
+             DELETE FROM scheduled_task_runs WHERE id = 1000;",
+            )
+            .unwrap();
+        let before = scheduler_history_values(&connection);
+        drop(connection);
+        migrate_auth_database(&path).unwrap();
+        migrate_auth_database(&path).unwrap();
+        let connection = open_fixture_connection(&path).unwrap();
+        assert_eq!(scheduler_history_values(&connection), before);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM scheduled_task_runs WHERE trigger_kind != 'scheduled'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        for trigger in ["manual", "manual", "scheduled"] {
+            connection.execute(
+                "INSERT INTO scheduled_task_runs (task_id,task_name,scheduled_for,status,trigger_kind)
+                 VALUES (99,'New run',10000,'claimed',?1)", [trigger],
+            ).unwrap();
+            assert!(connection.last_insert_rowid() > 1000);
+        }
+        for trigger in ["scheduled", "invalid"] {
+            assert!(connection.execute(
+                "INSERT INTO scheduled_task_runs (task_id,task_name,scheduled_for,status,trigger_kind)
+                 VALUES (99,'Duplicate',10000,'claimed',?1)", [trigger],
+            ).is_err());
+        }
+        assert_eq!(user_version(&path), 20);
+        assert!(index_exists(&path, "idx_scheduled_task_runs_task"));
+        assert!(index_exists(&path, "idx_scheduled_task_runs_status"));
+        assert!(index_exists(&path, "idx_scheduled_task_runs_slot"));
+    }
+}
+
+fn scheduler_history_values(connection: &Connection) -> Vec<Vec<rusqlite::types::Value>> {
+    connection.prepare(
+        "SELECT id,task_id,task_name,scheduled_for,status,worker_id,claim_expires_at,
+                claimed_at,started_at,finished_at,output_summary FROM scheduled_task_runs ORDER BY id"
+    ).unwrap().query_map([], |row| (0..11).map(|column| row.get(column)).collect()).unwrap()
+        .collect::<Result<_, _>>().unwrap()
+}
+
+#[test]
 fn overseas_retirement_preserves_domestic_choices_and_empty_overrides() {
     let directory = tempdir().unwrap();
     let path = directory.path().join("auth.sqlite");
