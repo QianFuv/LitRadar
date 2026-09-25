@@ -313,7 +313,10 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
           key={resultState}
           data-testid={`results-state-${resultState}`}
           className="space-y-4"
-          variants={FADE_UP_VARIANTS}
+          variants={{
+            ...FADE_UP_VARIANTS,
+            visible: { ...FADE_UP_VARIANTS.visible, pointerEvents: 'auto' },
+          }}
           initial="hidden"
           animate="visible"
           exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}

@@ -1897,6 +1897,68 @@ async function journalRatingBrowserTest({ page }: { page: Page }): Promise<void>
 
 test('combines journal ratings across desktop and mobile filters', journalRatingBrowserTest);
 
+/** Verify fresh and cached database switches keep result cards clickable without reloading. */
+async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise<void> {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/meta/databases') {
+      await fulfillJson(route, ['fixture.sqlite', 'second.sqlite', 'third.sqlite']);
+      return;
+    }
+    if (url.pathname === '/api/articles') {
+      const database = url.searchParams.get('db') ?? 'fixture.sqlite';
+      await fulfillJson(route, {
+        items: [{ article_id: 'shared-id', title: `Article from ${database}` }],
+        page: { total: 1, limit: 50, offset: 0, next_cursor: null, has_more: false },
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/access')) {
+      await fulfillJson(route, {
+        abstract_page: {
+          available: true,
+          label: '查看摘要页',
+          requires_login: false,
+          message: null,
+        },
+        fulltext: { available: false, label: '获取全文', requires_login: false, message: null },
+      });
+      return;
+    }
+    if (url.pathname === '/api/favorites/check/batch') {
+      await fulfillJson(route, {});
+      return;
+    }
+    await serveTrackingApi(route);
+  });
+  await page.goto('/');
+  await hideDevelopmentIndicator(page);
+
+  const databaseSelect = page.getByRole('combobox', { name: '检索数据库' });
+  await expect(databaseSelect).toHaveText('fixture');
+  for (const database of ['fixture', 'second', 'third', 'fixture', 'second']) {
+    if ((await databaseSelect.textContent()) !== database) {
+      await databaseSelect.click();
+      await page.getByRole('option', { name: database, exact: true }).click();
+    }
+    const title = `Article from ${database}.sqlite`;
+    const card = page.getByRole('button', { name: `查看文章详情：${title}`, exact: true });
+    await expect(card).toBeVisible();
+    await card.click({ timeout: 5000 });
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveAccessibleName(new RegExp(title));
+    await expect(dialog.getByRole('link', { name: '查看摘要页' })).toHaveAttribute(
+      'href',
+      new URL(`/api/articles/shared-id/abstract?db=${database}.sqlite`, page.url()).href,
+    );
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+  }
+}
+
+test('keeps article cards clickable after database switches', databaseSwitchArticleClickTest);
+
 /**
  * Verify long drawers scroll with real wheel and touch input and dismiss without a close button.
  *
