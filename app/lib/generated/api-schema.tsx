@@ -3124,7 +3124,7 @@ export interface components {
       id: number;
       /**
        * Format: int64
-       * @description Scheduled UTC Unix timestamp aligned to a minute.
+       * @description UTC Unix timestamp of the scheduled minute or explicit manual request.
        */
       scheduled_for: number;
       /**

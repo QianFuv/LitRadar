@@ -6789,7 +6789,7 @@
           "scheduled_for": {
             "type": "integer",
             "format": "int64",
-            "description": "Scheduled UTC Unix timestamp aligned to a minute."
+            "description": "UTC Unix timestamp of the scheduled minute or explicit manual request."
           },
           "started_at": {
             "type": ["number", "null"],
