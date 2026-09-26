@@ -201,12 +201,22 @@ fn prepare_root(root: &Path) -> Result<PathBuf, ProviderError> {
         match fs::symlink_metadata(ancestor) {
             Ok(_) => validate_path(ancestor, true)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir(ancestor).map_err(storage_error)?
+                create_root_directory(ancestor)?
             }
             Err(error) => return Err(storage_error(error)),
         }
     }
     fs::canonicalize(root).map_err(storage_error)
+}
+
+/// Accept a concurrently created ancestor only after validating the resulting directory.
+fn create_root_directory(path: &Path) -> Result<(), ProviderError> {
+    match fs::create_dir(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(storage_error(error)),
+    }
+    validate_path(path, true)
 }
 
 fn owned_paths(root: &Path, token: &str) -> Result<Vec<PathBuf>, ProviderError> {
@@ -1285,6 +1295,61 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn concurrently_created_root_directory_is_reused() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("scholarly");
+        fs::create_dir(&root).unwrap();
+
+        create_root_directory(&root)
+            .expect("another worker creating the missing directory must not fail indexing");
+        assert_eq!(
+            prepare_root(&root).unwrap(),
+            fs::canonicalize(root).unwrap()
+        );
+    }
+
+    #[test]
+    fn concurrent_worksets_share_a_fresh_nested_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("index-work").join("scholarly");
+        let barrier = std::sync::Barrier::new(3);
+
+        std::thread::scope(|scope| {
+            let workers = (0..3)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let state =
+                            CrossrefCheckpoint::new("1234-5679".to_string(), 2, None).unwrap();
+                        barrier.wait();
+                        let workset = CrossrefWorkset::create(&root, "catalog", state)
+                            .expect("concurrent workers must initialize independent worksets");
+                        assert_eq!(workset.root, fs::canonicalize(&root).unwrap());
+                    })
+                })
+                .collect::<Vec<_>>();
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+
+        assert_eq!(fs::read_dir(root).unwrap().count(), 6);
+    }
+
+    #[test]
+    fn root_creation_rejects_files_and_preserves_other_io_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("scholarly");
+        fs::write(&root, "existing file").unwrap();
+        assert!(create_root_directory(&root).is_err());
+        assert!(prepare_root(&root).is_err());
+        assert_eq!(fs::read_to_string(&root).unwrap(), "existing file");
+
+        let missing_parent = directory.path().join("missing").join("scholarly");
+        assert!(create_root_directory(&missing_parent).is_err());
+        assert!(!missing_parent.exists());
+    }
+
     fn work(index: u64, created: i64) -> Value {
         json!({"DOI":format!("10.1000/{index:08}"),"title":[format!("Article {index}")],
             "published":{"date-parts":[[2026,1 + index % 12,1]]},"volume":"2","issue":format!("{}",1 + index % 12),
@@ -1922,6 +1987,7 @@ mod tests {
             assert!(output.status.success(), "junction fixture must be created");
         }
         let state = CrossrefCheckpoint::new("1234-5679".to_string(), 2, None).unwrap();
+        assert!(create_root_directory(&link).is_err());
         assert!(CrossrefWorkset::create(&link, "catalog", state).is_err());
         assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
         #[cfg(windows)]
