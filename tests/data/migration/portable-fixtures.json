@@ -1,0 +1,90 @@
+{
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "files": [
+    {
+      "path": "rust/auth-rows.json",
+      "oraclePath": "fixtures/auth-rows.json",
+      "sha256": "d890355155f613b451fb30f84935cbe26e795c4099609e9f32d2d1211037529b"
+    },
+    {
+      "path": "rust/auth-schema.json",
+      "oraclePath": "fixtures/auth-schema.json",
+      "sha256": "ef7bc87f6f99a61e51ffed2a71f8661c1aca539ccbc2f12a09b002dcdfeb54a8"
+    },
+    {
+      "path": "rust/auth-v19-after.json",
+      "oraclePath": "fixtures/auth-v19-after.json",
+      "sha256": "ef7bc87f6f99a61e51ffed2a71f8661c1aca539ccbc2f12a09b002dcdfeb54a8"
+    },
+    {
+      "path": "rust/auth-v19-before.json",
+      "oraclePath": "fixtures/auth-v19-before.json",
+      "sha256": "029d2de4edd4e142504beb8db016fad957cc1d902eb2921793544f0ca1840b9b"
+    },
+    {
+      "path": "rust/auth-v19-result.json",
+      "oraclePath": "fixtures/auth-v19-result.json",
+      "sha256": "d7ce9238b008c674591860790d8577d4766f098ef1aa4314f1e826c491954d6f"
+    },
+    {
+      "path": "rust/content-schema.json",
+      "oraclePath": "fixtures/content-schema.json",
+      "sha256": "261b8fe7bf19aadfb91dee70241abbe9100028083c864028829be60236efa050"
+    },
+    {
+      "path": "rust/content-schema.sql",
+      "oraclePath": "fixtures/content-schema.sql",
+      "sha256": "998ce8c63802d3cbd0f9765c13dc86ed798d9a088314d95a0cf9b6c9cc7192e2"
+    },
+    {
+      "path": "rust/control-schema.json",
+      "oraclePath": "fixtures/control-schema.json",
+      "sha256": "2e75379e105a0ca8b59bacaeadb0f94acc144eb93d436653b347434d69c261e2"
+    },
+    {
+      "path": "rust/crypto.json",
+      "oraclePath": "fixtures/crypto.json",
+      "sha256": "5387530473d886c13b7a17bddc940494e9d18195051d4f7cff64670ed4ae101b"
+    },
+    {
+      "path": "rust/identifiers.json",
+      "oraclePath": "fixtures/identifiers.json",
+      "sha256": "da15b7705d2ba0d7944c27eb0ad0b4d419467cb2cb7c3f4cf1f194046bff5723"
+    },
+    {
+      "path": "rust/openapi.json",
+      "oraclePath": "fixtures/openapi.json",
+      "sha256": "769c7fe071475d17d8f1471f87485f37765c0893b7cb15f6203e8dd6d9002de1"
+    },
+    {
+      "path": "rust/runtime-settings.json",
+      "oraclePath": "fixtures/runtime-settings.json",
+      "sha256": "a8cc87c8caf4ace4345a296be5eadd0c679d0cbbfd67b61f3429693f10b49e9f"
+    },
+    {
+      "path": "rust/auth-v19-input.sqlite.fixture",
+      "oraclePath": "fixtures/auth-v19-input.sqlite",
+      "sha256": "aa0edb9a7dc7729651a9c5348732233c520307ba0a049122fafa8bdc760199a1"
+    },
+    {
+      "path": "rust/auth-v19.sqlite.fixture",
+      "oraclePath": "fixtures/auth-v19.sqlite",
+      "sha256": "3b3903e0ce282a95ae0ba03649f0b8ffcd3c61d645f8e9455251689d95671631"
+    },
+    {
+      "path": "rust/auth.sqlite.fixture",
+      "oraclePath": "fixtures/auth.sqlite",
+      "sha256": "08beb4eaae1001efe529bd2cac130e283a88dd0b474ef4a01e434e6adebccadc"
+    },
+    {
+      "path": "rust/content.sqlite.fixture",
+      "oraclePath": "fixtures/content.sqlite",
+      "sha256": "cdf2c99dd154271a438d158f6b18b077e535f8236e236d675f87789c1b29409a"
+    },
+    {
+      "path": "rust/control.sqlite.fixture",
+      "oraclePath": "fixtures/control.sqlite",
+      "sha256": "133e5a551b76724af964369003e4ef7c0b8c0bc42da3096816dce3ae939be7dd"
+    }
+  ]
+}

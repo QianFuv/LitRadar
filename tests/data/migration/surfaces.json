@@ -1,0 +1,766 @@
+{
+  "format": 1,
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "platform": "win32",
+  "oracleManifestSha256": "dbf4f0495a8a3c1ae99d1ef939684838e63a48ec989d0ab3bfdb40e026fc6cfa",
+  "cli": [
+    {
+      "args": [
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "Usage: litradar <COMMAND> [OPTIONS]\n\nCommands:\n  serve      Run HTTP and scheduling as one service\n  admin      Manage administrators, secrets, and backups\n  index      Build or update searchable article indexes\n  cfp        Import or refresh original journal calls for papers\n  notify     Deliver recommendation notifications\n  push       Push tracking updates\n  scheduler  Validate or run scheduled tasks manually\n  openapi    Emit the generated OpenAPI document\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:23.956985Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"help\",\"component\":\"runtime\",\"process_id\":49568,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"help\",\"component\":\"runtime\",\"process_id\":49568,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:23.957206Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"help\",\"component\":\"runtime\",\"process_id\":49568,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"help\",\"component\":\"runtime\",\"process_id\":49568,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "serve",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "Usage: litradar serve --secret-key-file PATH [--host HOST] [--port PORT] [--project-root PATH] [--scheduler-interval-seconds N] [--require-secure-cookies] [--development]\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.035410Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"serve\",\"component\":\"runtime\",\"process_id\":18024,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"serve\",\"component\":\"runtime\",\"process_id\":18024,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.035599Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"serve\",\"component\":\"runtime\",\"process_id\":18024,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"serve\",\"component\":\"runtime\",\"process_id\":18024,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.114028Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53308,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53308,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.114232Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53308,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.114380Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53308,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.114437Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53308,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53308,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "bootstrap",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.195373Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":30380,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":30380,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.195561Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":30380,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.195704Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":30380,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.195759Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":30380,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":30380,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "secrets",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.278538Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":15708,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":15708,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.278745Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":15708,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.278892Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":15708,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.278948Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":15708,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":15708,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "secrets",
+        "migrate",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.362543Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":20276,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":20276,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.362747Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":20276,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.362898Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":20276,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.362955Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":20276,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":20276,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "secrets",
+        "verify",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.442931Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53380,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53380,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.443134Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53380,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.443290Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53380,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.443353Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53380,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53380,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "secrets",
+        "rotate",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.522662Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":52440,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":52440,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.522870Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":52440,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.523030Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":52440,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.523089Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":52440,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":52440,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "backup",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.603125Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":48816,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":48816,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.603367Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":48816,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.603527Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":48816,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.603586Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":48816,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":48816,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "backup",
+        "create",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.679392Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":51824,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":51824,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.679604Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":51824,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.679749Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":51824,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.679805Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":51824,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":51824,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "backup",
+        "verify",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.760891Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":38028,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":38028,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.761160Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":38028,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.761350Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":38028,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.761536Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":38028,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":38028,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "backup",
+        "restore",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.843842Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":46088,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":46088,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.844037Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":46088,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.844206Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":46088,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.844296Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":46088,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":46088,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "index",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:24.930048Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53616,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53616,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.930242Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53616,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.930394Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53616,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:24.930449Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53616,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":53616,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "admin",
+        "index",
+        "optimize-storage",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar admin bootstrap --username NAME --password-stdin [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets migrate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets verify --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin secrets rotate --old-key-file PATH --new-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup create --output PATH [--include-indexes] [--include-push-state] [--project-root PATH] [--auth-db PATH]\",\"litradar admin backup verify --backup PATH [--project-root PATH]\",\"litradar admin backup restore --backup PATH --confirm-restore [--project-root PATH] [--auth-db PATH]\",\"litradar admin index optimize-storage --confirm-index-maintenance [--project-root PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.010180Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":2676,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":2676,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.010432Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"admin\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":2676,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.010595Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"admin\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":2676,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"admin\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.010789Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":2676,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"admin\",\"component\":\"runtime\",\"process_id\":2676,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "index",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"defaults\":{\"full_rescan\":false,\"issue_batch\":8,\"processes\":3,\"resume\":true,\"update\":false,\"workers\":6},\"limits\":{\"aggregate_max\":32,\"processes_max\":32,\"processes_min\":1,\"scholarly_aggregate_max\":96,\"scholarly_processes_max\":3,\"scholarly_workers_max\":32,\"workers_max\":32,\"workers_min\":1},\"modes\":{\"acknowledge_unknown_notify\":\"after review, acknowledge an ambiguous notify attempt and resume with a new delivery attempt\",\"concurrency\":\"each omitted count is resolved per selected provider; provider_defaults is authoritative; explicit invalid counts are rejected\",\"file\":\"select and freeze exactly one CSV; it cannot adopt an active all-CSV batch\",\"full_rescan\":\"complete historical synchronization without a change manifest; mutually exclusive with --update\",\"issue_batch\":\"legacy active-batch resume metadata; explicit use warns and does not control current Provider concurrency or memory\",\"no_resume\":\"abandon the active batch and its owned traversal checkpoints, then start a new batch from committed anchors\",\"resume\":\"continue only a compatible active project batch; completed batches always start a new independent update\",\"stop_after\":\"pause after finalizing the named selected CSV; keep the original batch resumable without starting later catalogs\",\"update\":\"incremental synchronization that publishes a change manifest\"},\"provider_defaults\":{\"cnki\":{\"processes\":1,\"workers\":6},\"generic\":{\"processes\":1,\"workers\":6},\"scholarly\":{\"processes\":3,\"workers\":6}},\"usage\":\"litradar index --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--file FILE] [--stop-after FILE] [--workers N] [--processes N] [--issue-batch N] [--timeout N] [--resume|--no-resume] [--update|--no-update] [--full-rescan|--no-full-rescan] [--notify] [--notify-dry-run] [--acknowledge-unknown-notify]\"}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.090455Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"index\",\"component\":\"runtime\",\"process_id\":10644,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"index\",\"component\":\"runtime\",\"process_id\":10644,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.090656Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"index\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"index\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"index\",\"component\":\"runtime\",\"process_id\":10644,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"index\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.091067Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"index\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"index\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"index\",\"component\":\"runtime\",\"process_id\":10644,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"index\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.091136Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"index\",\"component\":\"runtime\",\"process_id\":10644,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"index\",\"component\":\"runtime\",\"process_id\":10644,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "cfp",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"defaults\":{\"concurrency\":2,\"source_timeout\":90,\"timeout\":600},\"fullText\":\"Recapture stored notices and follow original-title detail links, including snapshot-only sources. Unresolved notices retain their previous originals.\",\"import\":\"Additive, validated, immutable seed import. Existing source ownership and online refresh data are preserved.\",\"usage\":[\"litradar cfp import --project-root PATH --input FILE\",\"litradar cfp refresh --project-root PATH (--db NAME | --catalog-id ID | --all) [--full-text] [--capture-dir PATH] [--resume-captures] [--obscura-path PATH] [--pdftotext-path PATH] [--source-timeout SECONDS] [--timeout SECONDS]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.168554Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":32980,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":32980,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.168793Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"cfp\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":32980,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.169072Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"cfp\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":32980,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.169329Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":32980,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":32980,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "cfp",
+        "import",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"defaults\":{\"concurrency\":2,\"source_timeout\":90,\"timeout\":600},\"fullText\":\"Recapture stored notices and follow original-title detail links, including snapshot-only sources. Unresolved notices retain their previous originals.\",\"import\":\"Additive, validated, immutable seed import. Existing source ownership and online refresh data are preserved.\",\"usage\":[\"litradar cfp import --project-root PATH --input FILE\",\"litradar cfp refresh --project-root PATH (--db NAME | --catalog-id ID | --all) [--full-text] [--capture-dir PATH] [--resume-captures] [--obscura-path PATH] [--pdftotext-path PATH] [--source-timeout SECONDS] [--timeout SECONDS]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.247721Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":36872,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":36872,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.247922Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"cfp\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":36872,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.248067Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"cfp\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":36872,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.248123Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":36872,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":36872,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "cfp",
+        "refresh",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"defaults\":{\"concurrency\":2,\"source_timeout\":90,\"timeout\":600},\"fullText\":\"Recapture stored notices and follow original-title detail links, including snapshot-only sources. Unresolved notices retain their previous originals.\",\"import\":\"Additive, validated, immutable seed import. Existing source ownership and online refresh data are preserved.\",\"usage\":[\"litradar cfp import --project-root PATH --input FILE\",\"litradar cfp refresh --project-root PATH (--db NAME | --catalog-id ID | --all) [--full-text] [--capture-dir PATH] [--resume-captures] [--obscura-path PATH] [--pdftotext-path PATH] [--source-timeout SECONDS] [--timeout SECONDS]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.332159Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":50204,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":50204,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.332368Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"cfp\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":50204,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.332522Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"cfp\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":50204,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"cfp\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.332579Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":50204,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"cfp\",\"component\":\"runtime\",\"process_id\":50204,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "notify",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":\"litradar notify --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--db NAME] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]\"}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.413799Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"notify\",\"component\":\"runtime\",\"process_id\":37008,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"notify\",\"component\":\"runtime\",\"process_id\":37008,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.414008Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"notify\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"notify\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"notify\",\"component\":\"runtime\",\"process_id\":37008,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"notify\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.414142Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"notify\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"notify\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"notify\",\"component\":\"runtime\",\"process_id\":37008,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"notify\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.414199Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"notify\",\"component\":\"runtime\",\"process_id\":37008,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"notify\",\"component\":\"runtime\",\"process_id\":37008,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "push",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":\"litradar push --secret-key-file PATH [--project-root PATH] [--auth-db PATH] [--db NAME] [--changes-file PATH] [--ai-model MODEL] [--max-candidates N] [--timeout N] [--retries N] [--dedupe-retention-days N] [--dry-run|--no-dry-run]\"}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.495062Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"push\",\"component\":\"runtime\",\"process_id\":44584,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"push\",\"component\":\"runtime\",\"process_id\":44584,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.495266Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"push\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"push\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"push\",\"component\":\"runtime\",\"process_id\":44584,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"push\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.495398Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"push\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"push\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"push\",\"component\":\"runtime\",\"process_id\":44584,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"push\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.495454Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"push\",\"component\":\"runtime\",\"process_id\":44584,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"push\",\"component\":\"runtime\",\"process_id\":44584,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "scheduler",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar scheduler validate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar scheduler run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar scheduler dry-run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.573836Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":50652,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":50652,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.574026Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"scheduler\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":50652,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.574166Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"scheduler\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":50652,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.574220Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":50652,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":50652,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "scheduler",
+        "validate",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar scheduler validate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar scheduler run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar scheduler dry-run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.652653Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":32956,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":32956,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.653085Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"scheduler\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":32956,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.653277Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"scheduler\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":32956,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.653342Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":32956,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":32956,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "scheduler",
+        "run-once",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar scheduler validate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar scheduler run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar scheduler dry-run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.738279Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":53912,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":53912,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.738466Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"scheduler\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":53912,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.738601Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"scheduler\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":53912,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.738655Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":53912,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":53912,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "scheduler",
+        "dry-run-once",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "{\"usage\":[\"litradar scheduler validate --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar scheduler run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\",\"litradar scheduler dry-run-once TASK_ID --secret-key-file PATH [--project-root PATH] [--auth-db PATH]\"]}\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.816372Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":43128,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":43128,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.816570Z\",\"level\":\"INFO\",\"event\":\"cli.command.started\",\"component\":\"cli\",\"command\":\"scheduler\",\"target\":\"litradar_cli\",\"span\":{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":43128,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.816701Z\",\"level\":\"INFO\",\"event\":\"cli.command.completed\",\"component\":\"cli\",\"command\":\"scheduler\",\"outcome\":\"success\",\"duration_ms\":0,\"target\":\"litradar_cli\",\"span\":{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":43128,\"version\":\"0.1.0\",\"name\":\"process\"},{\"command\":\"scheduler\",\"component\":\"cli\",\"name\":\"cli.command\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.816756Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":43128,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"scheduler\",\"component\":\"runtime\",\"process_id\":43128,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    },
+    {
+      "args": [
+        "openapi",
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "Usage: litradar openapi [--output PATH]\n",
+      "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.897081Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"openapi\",\"component\":\"runtime\",\"process_id\":6264,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"openapi\",\"component\":\"runtime\",\"process_id\":6264,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.897287Z\",\"level\":\"INFO\",\"event\":\"process.completed\",\"component\":\"runtime\",\"outcome\":\"success\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"openapi\",\"component\":\"runtime\",\"process_id\":6264,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"openapi\",\"component\":\"runtime\",\"process_id\":6264,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+    }
+  ],
+  "invalidArgument": {
+    "args": [
+      "--migration-invalid-option"
+    ],
+    "exitCode": 1,
+    "stdout": "",
+    "stderr": "{\"timestamp\":\"2026-10-02T20:32:25.977579Z\",\"level\":\"INFO\",\"event\":\"process.started\",\"component\":\"runtime\",\"target\":\"litradar\",\"span\":{\"command\":\"unknown\",\"component\":\"runtime\",\"process_id\":10172,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"unknown\",\"component\":\"runtime\",\"process_id\":10172,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n{\"timestamp\":\"2026-10-02T20:32:25.977810Z\",\"level\":\"ERROR\",\"event\":\"process.failed\",\"component\":\"runtime\",\"outcome\":\"failure\",\"error_kind\":\"command_failed\",\"duration_ms\":\"0\",\"target\":\"litradar\",\"span\":{\"command\":\"unknown\",\"component\":\"runtime\",\"process_id\":10172,\"version\":\"0.1.0\",\"name\":\"process\"},\"spans\":[{\"command\":\"unknown\",\"component\":\"runtime\",\"process_id\":10172,\"version\":\"0.1.0\",\"name\":\"process\"}]}\n"
+  },
+  "mcp": {
+    "initialize": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {
+          "tools": {}
+        },
+        "serverInfo": {
+          "name": "rmcp",
+          "version": "2.1.0"
+        },
+        "instructions": "Use LitRadar tools to query indexed papers and favorites."
+      }
+    },
+    "tools": [
+      {
+        "name": "add_favorite",
+        "description": "Add an article to a favorite folder for the authenticated user.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "article_id": {
+              "type": "string"
+            },
+            "db_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "folder_id": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "article_id",
+            "folder_id"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "name": "get_article",
+        "description": "Get a single article by ID.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "article_id": {
+              "type": "string"
+            },
+            "db": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "article_id"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "name": "get_journal",
+        "description": "Get a single journal by ID.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "db": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "journal_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "journal_id"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "name": "get_weekly_updates",
+        "description": "Get weekly update summaries across all LitRadar databases.",
+        "inputSchema": {
+          "properties": {},
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_areas",
+        "description": "List research areas for the selected LitRadar database.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "db": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_databases",
+        "description": "List available LitRadar SQLite databases.",
+        "inputSchema": {
+          "properties": {},
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_folders",
+        "description": "List favorite folders for the authenticated LitRadar user.",
+        "inputSchema": {
+          "properties": {},
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_journal_options",
+        "description": "List journal filter options for the selected LitRadar database.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "db": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_journal_ratings",
+        "description": "List exact UTD, ABS, FMS and FMS China grades with journal counts for the selected database. Empty groups mean no rating information.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "db": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_journals",
+        "description": "List journals from the selected LitRadar database.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "abs_rating": {
+              "description": "Exact ABS grades; 4* is a literal grade, not a wildcard.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "area": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "db": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fms_rating": {
+              "description": "Exact FMS grades.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "fmscn_rating": {
+              "description": "Exact FMS China grades.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "has_articles": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "limit": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "offset": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "sort": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "utd_rating": {
+              "description": "Exact UTD grades; OR within a system, AND across systems and other filters.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "year": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_years",
+        "description": "List publication years for the selected LitRadar database.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "db": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      {
+        "name": "remove_favorite",
+        "description": "Remove an article from a favorite folder for the authenticated user.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "article_id": {
+              "type": "string"
+            },
+            "db_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "folder_id": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "article_id",
+            "folder_id"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "name": "search_articles",
+        "description": "Search articles in the LitRadar index.",
+        "inputSchema": {
+          "$defs": {
+            "StringOrStrings": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ]
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "abs_rating": {
+              "description": "Exact ABS grades; 4* is a literal grade, not a wildcard.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "area": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StringOrStrings"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "date_from": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "date_to": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "db": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "doi": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fms_rating": {
+              "description": "Exact FMS grades.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "fmscn_rating": {
+              "description": "Exact FMS China grades.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "in_press": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "include_total": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "issue_id": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "journal_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StringOrStrings"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "limit": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "offset": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "open_access": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "pmid": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "q": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "search_mode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sort": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "utd_rating": {
+              "description": "Exact UTD grades; OR within a system, AND across systems and other filters.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "year": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      }
+    ],
+    "initializeWire": "data: \nid: 0\nretry: 3000\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"rmcp\",\"version\":\"2.1.0\"},\"instructions\":\"Use LitRadar tools to query indexed papers and favorites.\"}}\n\n",
+    "initializedStatus": 202,
+    "initializedBody": "",
+    "toolsListWire": "data: \nid: 0/0\nretry: 3000\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"add_favorite\",\"description\":\"Add an article to a favorite folder for the authenticated user.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"article_id\":{\"type\":\"string\"},\"db_name\":{\"type\":[\"string\",\"null\"]},\"folder_id\":{\"format\":\"int64\",\"type\":\"integer\"}},\"required\":[\"article_id\",\"folder_id\"],\"type\":\"object\"}},{\"name\":\"get_article\",\"description\":\"Get a single article by ID.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"article_id\":{\"type\":\"string\"},\"db\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"article_id\"],\"type\":\"object\"}},{\"name\":\"get_journal\",\"description\":\"Get a single journal by ID.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"db\":{\"type\":[\"string\",\"null\"]},\"journal_id\":{\"type\":\"string\"}},\"required\":[\"journal_id\"],\"type\":\"object\"}},{\"name\":\"get_weekly_updates\",\"description\":\"Get weekly update summaries across all LitRadar databases.\",\"inputSchema\":{\"properties\":{},\"type\":\"object\"}},{\"name\":\"list_areas\",\"description\":\"List research areas for the selected LitRadar database.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"db\":{\"type\":[\"string\",\"null\"]}},\"type\":\"object\"}},{\"name\":\"list_databases\",\"description\":\"List available LitRadar SQLite databases.\",\"inputSchema\":{\"properties\":{},\"type\":\"object\"}},{\"name\":\"list_folders\",\"description\":\"List favorite folders for the authenticated LitRadar user.\",\"inputSchema\":{\"properties\":{},\"type\":\"object\"}},{\"name\":\"list_journal_options\",\"description\":\"List journal filter options for the selected LitRadar database.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"db\":{\"type\":[\"string\",\"null\"]}},\"type\":\"object\"}},{\"name\":\"list_journal_ratings\",\"description\":\"List exact UTD, ABS, FMS and FMS China grades with journal counts for the selected database. Empty groups mean no rating information.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"db\":{\"type\":[\"string\",\"null\"]}},\"type\":\"object\"}},{\"name\":\"list_journals\",\"description\":\"List journals from the selected LitRadar database.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"abs_rating\":{\"description\":\"Exact ABS grades; 4* is a literal grade, not a wildcard.\",\"items\":{\"type\":\"string\"},\"type\":[\"array\",\"null\"]},\"area\":{\"type\":[\"string\",\"null\"]},\"db\":{\"type\":[\"string\",\"null\"]},\"fms_rating\":{\"description\":\"Exact FMS grades.\",\"items\":{\"type\":\"string\"},\"type\":[\"array\",\"null\"]},\"fmscn_rating\":{\"description\":\"Exact FMS China grades.\",\"items\":{\"type\":\"string\"},\"type\":[\"array\",\"null\"]},\"has_articles\":{\"type\":[\"boolean\",\"null\"]},\"limit\":{\"format\":\"int64\",\"type\":[\"integer\",\"null\"]},\"offset\":{\"format\":\"int64\",\"type\":[\"integer\",\"null\"]},\"sort\":{\"type\":[\"string\",\"null\"]},\"utd_rating\":{\"description\":\"Exact UTD grades; OR within a system, AND across systems and other filters.\",\"items\":{\"type\":\"string\"},\"type\":[\"array\",\"null\"]},\"year\":{\"format\":\"int64\",\"type\":[\"integer\",\"null\"]}},\"type\":\"object\"}},{\"name\":\"list_years\",\"description\":\"List publication years for the selected LitRadar database.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"db\":{\"type\":[\"string\",\"null\"]}},\"type\":\"object\"}},{\"name\":\"remove_favorite\",\"description\":\"Remove an article from a favorite folder for the authenticated user.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"article_id\":{\"type\":\"string\"},\"db_name\":{\"type\":[\"string\",\"null\"]},\"folder_id\":{\"format\":\"int64\",\"type\":\"integer\"}},\"required\":[\"article_id\",\"folder_id\"],\"type\":\"object\"}},{\"name\":\"search_articles\",\"description\":\"Search articles in the LitRadar index.\",\"inputSchema\":{\"$defs\":{\"StringOrStrings\":{\"anyOf\":[{\"type\":\"string\"},{\"items\":{\"type\":\"string\"},\"type\":\"array\"}]}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"abs_rating\":{\"description\":\"Exact ABS grades; 4* is a literal grade, not a wildcard.\",\"items\":{\"type\":\"string\"},\"type\":[\"array\",\"null\"]},\"area\":{\"anyOf\":[{\"$ref\":\"#/$defs/StringOrStrings\"},{\"type\":\"null\"}]},\"cursor\":{\"type\":[\"string\",\"null\"]},\"date_from\":{\"type\":[\"string\",\"null\"]},\"date_to\":{\"type\":[\"string\",\"null\"]},\"db\":{\"type\":[\"string\",\"null\"]},\"doi\":{\"type\":[\"string\",\"null\"]},\"fms_rating\":{\"description\":\"Exact FMS grades.\",\"items\":{\"type\":\"string\"},\"type\":[\"array\",\"null\"]},\"fmscn_rating\":{\"description\":\"Exact FMS China grades.\",\"items\":{\"type\":\"string\"},\"type\":[\"array\",\"null\"]},\"in_press\":{\"type\":[\"boolean\",\"null\"]},\"include_total\":{\"type\":[\"boolean\",\"null\"]},\"issue_id\":{\"format\":\"int64\",\"type\":[\"integer\",\"null\"]},\"journal_id\":{\"anyOf\":[{\"$ref\":\"#/$defs/StringOrStrings\"},{\"type\":\"null\"}]},\"limit\":{\"format\":\"int64\",\"type\":[\"integer\",\"null\"]},\"offset\":{\"format\":\"int64\",\"type\":[\"integer\",\"null\"]},\"open_access\":{\"type\":[\"boolean\",\"null\"]},\"pmid\":{\"type\":[\"string\",\"null\"]},\"q\":{\"type\":[\"string\",\"null\"]},\"search_mode\":{\"type\":[\"string\",\"null\"]},\"sort\":{\"type\":[\"string\",\"null\"]},\"utd_rating\":{\"description\":\"Exact UTD grades; OR within a system, AND across systems and other filters.\",\"items\":{\"type\":\"string\"},\"type\":[\"array\",\"null\"]},\"year\":{\"format\":\"int64\",\"type\":[\"integer\",\"null\"]}},\"type\":\"object\"}}]}}\nid: 1/0\n\n"
+  },
+  "resourceBaseline": {
+    "profile": "debug; synthetic full-stack fixture: 2 articles; loopback; development mode",
+    "startupMs": 1221.2614000000003,
+    "sequentialDatabaseRequests": 100,
+    "requestMs": 1132.929,
+    "workingSetBytes": 52957184,
+    "sampling": "Get-Process WorkingSet64 after 100 sequential database-list requests",
+    "cancellation": "Measured separately by phase-owned process tests; forced harness teardown is not graceful cancellation evidence"
+  },
+  "exclusions": [
+    "Random authenticated session/cookie values are runtime credentials and are not serialized; their policies remain separate parity obligations",
+    "CLI help is wire evidence, not a substitute for command side-effect tests",
+    "Debug Windows measurements are not Linux production or release-build performance claims"
+  ]
+}

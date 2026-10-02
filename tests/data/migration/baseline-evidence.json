@@ -1,0 +1,173 @@
+{
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "checks": [
+    {
+      "id": "baseline-all",
+      "log": "output/migration/execution/v01-baseline-all.log",
+      "sha256": "b323c6fbe11988bcd07e5445982279e828f8616672da7653260d130aa95fa044",
+      "command": "node tests/test.mjs all",
+      "exitCode": 1,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "types",
+      "log": "output/migration/execution/v01-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "command": "pnpm --dir app exec tsc --noEmit",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "rust",
+      "log": "output/migration/execution/v01-nextest.log",
+      "sha256": "bea3c2ebcb74bc90a78b3952cb6b00e8a87fa4183b4cefa482a6f81af3339b1e",
+      "command": "cargo nextest run --workspace --locked",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "unit",
+      "log": "output/migration/execution/v01-vitest.log",
+      "sha256": "87cdf64a326e45cf16a7875b6f024d84518dec6cbdd0f34b3ff1840d496748f4",
+      "command": "pnpm --dir app test:unit",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "browser",
+      "log": "output/migration/execution/v01-browser-components.log",
+      "sha256": "0e20b2bced42c96d308dc8552f413733587ec68d065e59e8e2707f09af201b63",
+      "command": "pnpm --dir app test:browser-components",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "doc",
+      "log": "output/migration/execution/v01-doctests.log",
+      "sha256": "0798bf995036a56736546379f95766c1e5336e0216099fcb60191f5a4f76ed08",
+      "command": "cargo test --workspace --doc --locked",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "generated",
+      "log": "output/migration/execution/v01-generated-api.log",
+      "sha256": "3ac6b9f7120705fda1a92074b576e0e46ed575e6971d1fced284f1fb8e51d568",
+      "command": "pnpm --dir app generate:api:check",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "fixture",
+      "log": "output/migration/execution/v01-e2e-fixtures.log",
+      "sha256": "8434997574881ea059af1af16d498d9988d353d5378593616fa3afb9d158a06d",
+      "command": "CI=true pnpm --dir app test:e2e:fixtures",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "full-stack",
+      "log": "output/migration/execution/v01-full-stack.log",
+      "sha256": "4a4360ca6331daa51802e3ca4af781a09b00d1bdeee5befb4990711288310b78",
+      "command": "CI=true pnpm --dir app test:e2e:full-stack",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "example",
+      "log": "output/migration/execution/v01-example-tests.log",
+      "sha256": "fe237b9b9ebbfcb8320f043b9faf87697e0682b4779055e08b21c7a70d7767de",
+      "command": "cargo test --locked -p litradar --example full_stack_fixture",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "static-export",
+      "log": "output/migration/execution/v01-static-export.log",
+      "sha256": "70d95f4d31a48b0f59b8398e8972cb73b8102b27517f163c412c92594fe6e223",
+      "command": "cargo test --locked -p litradar-api security_headers_validate_production_static_export -- --ignored --exact security_headers::tests::security_headers_validate_production_static_export",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    },
+    {
+      "id": "oracle-build",
+      "log": "output/migration/execution/oracle-build-artifacts.log",
+      "sha256": "87f357a943a5c585c0f7a42ecfe06e6456a5436f4358dec651239e828f022033",
+      "command": "cargo build --locked -p litradar --bin litradar --example migration_fixture --example full_stack_fixture --message-format=json",
+      "exitCode": 0,
+      "provenance": "Primary agent observed actual process completion in this execution session"
+    }
+  ],
+  "exception": {
+    "id": "A3",
+    "reason": "User delegated non-major decisions; preserve fourteen existing baseline formatting findings only",
+    "files": [
+      {
+        "path": "app/components/admin/overview-card.tsx",
+        "sha256": "b8ad662951b54f17ee4d1bbd0fbcb647f7e6dfce82ae0f21afd53fad84f94adc"
+      },
+      {
+        "path": "app/components/cfp/cfp-notice-card.tsx",
+        "sha256": "b033cb724e488a87589554bcec0b6bae0a967a0ce99c2d2ab036db755e764d54"
+      },
+      {
+        "path": "app/components/cfp/cfp-tracking-view.tsx",
+        "sha256": "3087e3eded902bec80f5eae72f812fcfe88a14c08e75422e11e2e539f183a0f9"
+      },
+      {
+        "path": "app/components/favorites/favorites-page-content.tsx",
+        "sha256": "9e2a8253338a1013a82d3865e76b45b9ed3433aa282ab1468e6f4208d095614e"
+      },
+      {
+        "path": "app/components/feature/active-filter-chips.tsx",
+        "sha256": "61a24abec4bfe42f0b9f20508bc5133787a9a8384075b0beb4b5ddff6a289823"
+      },
+      {
+        "path": "app/components/feature/article-detail-dialog-content.tsx",
+        "sha256": "bd5204b4ef2e0475f87ae9b94e1cf1d7d37c5984a0c2ac760c69a333762f9035"
+      },
+      {
+        "path": "app/components/feature/article-list-card.tsx",
+        "sha256": "48f25bf68f540d8f6dc49a7c1b2ee037a0863f989491a8a0a38a82093949de11"
+      },
+      {
+        "path": "app/components/feature/favorite-button.tsx",
+        "sha256": "97eaf032cf45bcf5121673e69b62352e28ee7e8aa800beba6e6ba46bcb37de51"
+      },
+      {
+        "path": "app/components/feature/sectioned-dialog.tsx",
+        "sha256": "c760354ac4b4dc16ffa2144cf49088c672527b6f62f18d60b884b7e6aa22b07f"
+      },
+      {
+        "path": "app/components/feature/sidebar-navigation.tsx",
+        "sha256": "530a4cd8dc0a968e337aba5be256c740c63570f3eb01a1d8f65adf56c9b2b4e4"
+      },
+      {
+        "path": "app/components/settings/general-settings-section.tsx",
+        "sha256": "fdc3970069b1fa56ff222b14de42462bf33f14644a3edbbb8a5bf5aa23d617f3"
+      },
+      {
+        "path": "app/components/weekly/weekly-updates-view.tsx",
+        "sha256": "bb71209c326ecfc9509d0d50ed379d3a420828b713d6166babf5ba0dbf072cb1"
+      },
+      {
+        "path": "app/tests/e2e/local-fixtures.spec.tsx",
+        "sha256": "37646a144868572b6ffc0c210d08b0615325d2a9e689f50faf879438569722dd"
+      },
+      {
+        "path": "app/tests/favorite-flow.test.tsx",
+        "sha256": "34aeb3c84cbdade1023037a5fdcd13b3bbf77e2e35a1a9ccfbc17c27e0ab0e10"
+      }
+    ]
+  },
+  "limitations": [
+    "Windows x64 native baseline; Unix-specific cases remain Not Run on this host and are mandatory in their platform phases",
+    "Thirteen tests are ignored in normal nextest: child-process entry fixtures are exercised by supervising tests; static export separately passed; two release benchmarks remain diagnostic Not Run",
+    "Three source-only full_stack_fixture example tests separately passed; other source-only cases remain platform obligations",
+    "Original all-mode formatting gate fails on fourteen unchanged files; all subsequent required layers executed separately",
+    "Domain ownership overlays are conservative; each phase must refine individual assertions and attach Go evidence before claiming parity",
+    "Resource capture is a debug Windows loopback baseline; production Linux/helper throughput, cancellation and memory gates remain required",
+    "Raw CLI stderr includes baseline observational process timestamps/IDs; compare structured log fields with case-specific policy, never strip whole stderr",
+    "MCP schemas and public help are frozen; complete tool behavior and transport session gates remain T02/T10"
+  ]
+}

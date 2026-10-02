@@ -1,0 +1,21 @@
+{
+  "article": "9223372036854775807",
+  "journal": "9007199254740993",
+  "stable": [
+    {
+      "expectedDecimal": "1772761818438667030",
+      "input": "",
+      "prefix": "article"
+    },
+    {
+      "expectedDecimal": "4975018697657990071",
+      "input": "migration-fixture",
+      "prefix": "article"
+    },
+    {
+      "expectedDecimal": "5568127700266567832",
+      "input": "中文期刊",
+      "prefix": "article"
+    }
+  ]
+}

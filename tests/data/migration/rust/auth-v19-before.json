@@ -1,0 +1,504 @@
+{
+  "objects": [
+    {
+      "name": "idx_access_tokens_user",
+      "sql": "CREATE INDEX idx_access_tokens_user ON access_tokens(user_id)",
+      "table": "access_tokens",
+      "type": "index"
+    },
+    {
+      "name": "idx_announcements_enabled",
+      "sql": "CREATE INDEX idx_announcements_enabled ON announcements(enabled)",
+      "table": "announcements",
+      "type": "index"
+    },
+    {
+      "name": "idx_cfp_alias_owner",
+      "sql": "CREATE INDEX idx_cfp_alias_owner ON cfp_journal_aliases(journal_key)",
+      "table": "cfp_journal_aliases",
+      "type": "index"
+    },
+    {
+      "name": "idx_cfp_notice_source",
+      "sql": "CREATE INDEX idx_cfp_notice_source ON cfp_notices(source_key, journal_key, display_order)",
+      "table": "cfp_notices",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_checkpoints_scope",
+      "sql": "CREATE UNIQUE INDEX idx_delivery_checkpoints_scope\n             ON delivery_checkpoints(workflow, db_name)",
+      "table": "delivery_checkpoints",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_dedupe_identity",
+      "sql": "CREATE UNIQUE INDEX idx_delivery_dedupe_identity\n             ON delivery_dedupe(workflow, db_name, user_id, article_id)",
+      "table": "delivery_dedupe",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_dedupe_status_time",
+      "sql": "CREATE INDEX idx_delivery_dedupe_status_time\n             ON delivery_dedupe(status, updated_at, id)",
+      "table": "delivery_dedupe",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_leases_expiration",
+      "sql": "CREATE INDEX idx_delivery_leases_expiration\n             ON delivery_leases(expires_at)\n             WHERE owner_id IS NOT NULL",
+      "table": "delivery_leases",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_leases_scope",
+      "sql": "CREATE UNIQUE INDEX idx_delivery_leases_scope\n             ON delivery_leases(workflow, db_name)",
+      "table": "delivery_leases",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_run_items_claim",
+      "sql": "CREATE INDEX idx_delivery_run_items_claim\n             ON delivery_run_items(delivery_run_id, status, lease_expires_at, id)",
+      "table": "delivery_run_items",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_runs_active_manual_user",
+      "sql": "CREATE UNIQUE INDEX idx_delivery_runs_active_manual_user\n             ON delivery_runs(user_id)\n             WHERE trigger_kind = 'manual'\n               AND user_id IS NOT NULL\n               AND status IN ('queued', 'claimed', 'running', 'cancelling')",
+      "table": "delivery_runs",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_runs_active_scope",
+      "sql": "CREATE UNIQUE INDEX idx_delivery_runs_active_scope\n             ON delivery_runs(workflow, db_name)\n             WHERE db_name IS NOT NULL\n               AND status IN ('claimed', 'running', 'cancelling')",
+      "table": "delivery_runs",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_runs_external_scope",
+      "sql": "CREATE UNIQUE INDEX idx_delivery_runs_external_scope\n             ON delivery_runs(workflow, scope_key, external_id)",
+      "table": "delivery_runs",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_runs_owner_lease",
+      "sql": "CREATE INDEX idx_delivery_runs_owner_lease\n             ON delivery_runs(owner_id, lease_expires_at)\n             WHERE owner_id IS NOT NULL",
+      "table": "delivery_runs",
+      "type": "index"
+    },
+    {
+      "name": "idx_delivery_runs_queue",
+      "sql": "CREATE INDEX idx_delivery_runs_queue\n             ON delivery_runs(status, created_at, id)",
+      "table": "delivery_runs",
+      "type": "index"
+    },
+    {
+      "name": "idx_favorites_cursor",
+      "sql": "CREATE INDEX idx_favorites_cursor ON favorites(user_id, folder_id, created_at DESC, id DESC)",
+      "table": "favorites",
+      "type": "index"
+    },
+    {
+      "name": "idx_favorites_folder",
+      "sql": "CREATE INDEX idx_favorites_folder ON favorites(folder_id)",
+      "table": "favorites",
+      "type": "index"
+    },
+    {
+      "name": "idx_favorites_user",
+      "sql": "CREATE INDEX idx_favorites_user ON favorites(user_id)",
+      "table": "favorites",
+      "type": "index"
+    },
+    {
+      "name": "idx_folders_one_tracking_per_user",
+      "sql": "CREATE UNIQUE INDEX idx_folders_one_tracking_per_user\n             ON folders(user_id) WHERE is_tracking = 1",
+      "table": "folders",
+      "type": "index"
+    },
+    {
+      "name": "idx_folders_user",
+      "sql": "CREATE INDEX idx_folders_user ON folders(user_id)",
+      "table": "folders",
+      "type": "index"
+    },
+    {
+      "name": "idx_invite_code_uses_code_time",
+      "sql": "CREATE INDEX idx_invite_code_uses_code_time\n        ON invite_code_uses(invite_code_id, used_at, id)",
+      "table": "invite_code_uses",
+      "type": "index"
+    },
+    {
+      "name": "idx_invite_code_uses_user",
+      "sql": "CREATE INDEX idx_invite_code_uses_user\n        ON invite_code_uses(user_id, used_at, id)",
+      "table": "invite_code_uses",
+      "type": "index"
+    },
+    {
+      "name": "idx_invite_codes_created_by",
+      "sql": "CREATE INDEX idx_invite_codes_created_by ON invite_codes(created_by)",
+      "table": "invite_codes",
+      "type": "index"
+    },
+    {
+      "name": "idx_invite_codes_lifecycle",
+      "sql": "CREATE INDEX idx_invite_codes_lifecycle\n        ON invite_codes(revoked_at, expires_at, use_count, max_uses)",
+      "table": "invite_codes",
+      "type": "index"
+    },
+    {
+      "name": "idx_invite_codes_one_unrevoked_creator",
+      "sql": "CREATE UNIQUE INDEX idx_invite_codes_one_unrevoked_creator\n        ON invite_codes(created_by)\n        WHERE created_by IS NOT NULL AND revoked_at IS NULL",
+      "table": "invite_codes",
+      "type": "index"
+    },
+    {
+      "name": "idx_scheduled_tasks_enabled",
+      "sql": "CREATE INDEX idx_scheduled_tasks_enabled ON scheduled_tasks(enabled)",
+      "table": "scheduled_tasks",
+      "type": "index"
+    },
+    {
+      "name": "idx_scheduler_workers_heartbeat",
+      "sql": "CREATE INDEX idx_scheduler_workers_heartbeat\n            ON scheduler_workers(heartbeat_at DESC)",
+      "table": "scheduler_workers",
+      "type": "index"
+    },
+    {
+      "name": "idx_security_audit_events_action_outcome",
+      "sql": "CREATE INDEX idx_security_audit_events_action_outcome\n             ON security_audit_events(action, outcome, occurred_at DESC)",
+      "table": "security_audit_events",
+      "type": "index"
+    },
+    {
+      "name": "idx_security_audit_events_actor",
+      "sql": "CREATE INDEX idx_security_audit_events_actor\n             ON security_audit_events(actor_id, occurred_at DESC)",
+      "table": "security_audit_events",
+      "type": "index"
+    },
+    {
+      "name": "idx_security_audit_events_occurred",
+      "sql": "CREATE INDEX idx_security_audit_events_occurred\n             ON security_audit_events(occurred_at, id)",
+      "table": "security_audit_events",
+      "type": "index"
+    },
+    {
+      "name": "idx_security_audit_events_request",
+      "sql": "CREATE INDEX idx_security_audit_events_request\n             ON security_audit_events(request_id) WHERE request_id <> ''",
+      "table": "security_audit_events",
+      "type": "index"
+    },
+    {
+      "name": "idx_service_heartbeats_recent",
+      "sql": "CREATE INDEX idx_service_heartbeats_recent\n            ON service_heartbeats(heartbeat_at DESC)",
+      "table": "service_heartbeats",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_access_tokens_1",
+      "sql": null,
+      "table": "access_tokens",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_cfp_journal_aliases_1",
+      "sql": null,
+      "table": "cfp_journal_aliases",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_cfp_journals_1",
+      "sql": null,
+      "table": "cfp_journals",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_cfp_notices_1",
+      "sql": null,
+      "table": "cfp_notices",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_cfp_seed_imports_1",
+      "sql": null,
+      "table": "cfp_seed_imports",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_cfp_source_journals_1",
+      "sql": null,
+      "table": "cfp_source_journals",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_cfp_sources_1",
+      "sql": null,
+      "table": "cfp_sources",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_delivery_run_items_1",
+      "sql": null,
+      "table": "delivery_run_items",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_favorites_1",
+      "sql": null,
+      "table": "favorites",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_folders_1",
+      "sql": null,
+      "table": "folders",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_invite_codes_1",
+      "sql": null,
+      "table": "invite_codes",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_managed_meta_catalogs_1",
+      "sql": null,
+      "table": "managed_meta_catalogs",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_notification_settings_1",
+      "sql": null,
+      "table": "notification_settings",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_runtime_settings_1",
+      "sql": null,
+      "table": "runtime_settings",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_scheduled_task_runs_1",
+      "sql": null,
+      "table": "scheduled_task_runs",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_scheduler_workers_1",
+      "sql": null,
+      "table": "scheduler_workers",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_service_heartbeats_1",
+      "sql": null,
+      "table": "service_heartbeats",
+      "type": "index"
+    },
+    {
+      "name": "sqlite_autoindex_users_1",
+      "sql": null,
+      "table": "users",
+      "type": "index"
+    },
+    {
+      "name": "access_tokens",
+      "sql": "CREATE TABLE access_tokens (\n        id          INTEGER PRIMARY KEY AUTOINCREMENT,\n        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n        token_hash  TEXT    NOT NULL UNIQUE,\n        name        TEXT    NOT NULL DEFAULT '',\n        expires_at  REAL    NOT NULL,\n        created_at  REAL    NOT NULL\n    )",
+      "table": "access_tokens",
+      "type": "table"
+    },
+    {
+      "name": "announcements",
+      "sql": "CREATE TABLE announcements (\n        id         INTEGER PRIMARY KEY AUTOINCREMENT,\n        title      TEXT    NOT NULL,\n        message    TEXT    NOT NULL,\n        priority   TEXT    NOT NULL DEFAULT 'normal',\n        enabled    INTEGER NOT NULL DEFAULT 1,\n        created_at REAL    NOT NULL,\n        updated_at REAL    NOT NULL\n    )",
+      "table": "announcements",
+      "type": "table"
+    },
+    {
+      "name": "cfp_journal_aliases",
+      "sql": "CREATE TABLE cfp_journal_aliases (\n    catalog_id TEXT PRIMARY KEY,\n    journal_key TEXT NOT NULL REFERENCES cfp_journals(journal_key) ON DELETE CASCADE\n)",
+      "table": "cfp_journal_aliases",
+      "type": "table"
+    },
+    {
+      "name": "cfp_journals",
+      "sql": "CREATE TABLE cfp_journals (\n    journal_key TEXT PRIMARY KEY,\n    title TEXT NOT NULL,\n    checked_on TEXT NOT NULL,\n    source_url TEXT,\n    source_statement TEXT\n)",
+      "table": "cfp_journals",
+      "type": "table"
+    },
+    {
+      "name": "cfp_notices",
+      "sql": "CREATE TABLE cfp_notices (\n    journal_key TEXT NOT NULL,\n    notice_key TEXT NOT NULL,\n    source_key TEXT NOT NULL,\n    source_json TEXT NOT NULL,\n    normalized_json TEXT NOT NULL,\n    display_order INTEGER NOT NULL,\n    PRIMARY KEY(journal_key, notice_key),\n    FOREIGN KEY(source_key, journal_key) REFERENCES cfp_source_journals(source_key, journal_key)\n)",
+      "table": "cfp_notices",
+      "type": "table"
+    },
+    {
+      "name": "cfp_seed_imports",
+      "sql": "CREATE TABLE cfp_seed_imports (\n    seed_id TEXT PRIMARY KEY,\n    format_version INTEGER NOT NULL,\n    content_hash TEXT NOT NULL,\n    parser_version INTEGER NOT NULL,\n    journal_count INTEGER NOT NULL,\n    notice_count INTEGER NOT NULL\n)",
+      "table": "cfp_seed_imports",
+      "type": "table"
+    },
+    {
+      "name": "cfp_source_journals",
+      "sql": "CREATE TABLE cfp_source_journals (\n    source_key TEXT NOT NULL REFERENCES cfp_sources(source_key) ON DELETE CASCADE,\n    journal_key TEXT NOT NULL REFERENCES cfp_journals(journal_key) ON DELETE CASCADE,\n    PRIMARY KEY(source_key, journal_key)\n)",
+      "table": "cfp_source_journals",
+      "type": "table"
+    },
+    {
+      "name": "cfp_sources",
+      "sql": "CREATE TABLE cfp_sources (\n    source_key TEXT PRIMARY KEY,\n    url TEXT NOT NULL,\n    parser_version INTEGER NOT NULL,\n    config_version INTEGER NOT NULL DEFAULT 0,\n    capture TEXT NOT NULL,\n    capture_format TEXT NOT NULL,\n    content_hash TEXT NOT NULL,\n    etag TEXT,\n    last_modified TEXT,\n    last_attempt INTEGER,\n    last_success INTEGER,\n    last_error TEXT,\n    status TEXT NOT NULL,\n    generation INTEGER NOT NULL DEFAULT 0,\n    lease_expires_at INTEGER,\n    revision INTEGER NOT NULL DEFAULT 1\n)",
+      "table": "cfp_sources",
+      "type": "table"
+    },
+    {
+      "name": "cnki_sessions",
+      "sql": "CREATE TABLE cnki_sessions (\n        user_id          INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,\n        session_json     TEXT    NOT NULL DEFAULT '{}',\n        qr_uuid          TEXT    NOT NULL DEFAULT '',\n        status           TEXT    NOT NULL DEFAULT 'empty',\n        token_expires_at REAL,\n        created_at       REAL    NOT NULL,\n        updated_at       REAL    NOT NULL,\n        last_used_at     REAL\n    , generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0))",
+      "table": "cnki_sessions",
+      "type": "table"
+    },
+    {
+      "name": "delivery_checkpoints",
+      "sql": "CREATE TABLE delivery_checkpoints (\n             id                    INTEGER PRIMARY KEY AUTOINCREMENT,\n             workflow              TEXT NOT NULL CHECK (workflow IN ('notify', 'push')),\n             db_name               TEXT NOT NULL CHECK (length(db_name) BETWEEN 1 AND 255),\n             status                TEXT NOT NULL DEFAULT 'idle' CHECK (\n                 status IN ('idle', 'running', 'completed', 'failed', 'skipped', 'unknown')\n             ),\n             legacy_status         TEXT CHECK (\n                 legacy_status IS NULL OR length(legacy_status) BETWEEN 1 AND 128\n             ),\n             snapshot_json         TEXT NOT NULL,\n             last_completed_run_at TEXT,\n             revision              INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),\n             legacy_source_hash    TEXT CHECK (\n                 legacy_source_hash IS NULL OR (\n                     length(legacy_source_hash) = 64\n                     AND legacy_source_hash NOT GLOB '*[^0-9a-f]*'\n                 )\n             ),\n             legacy_source_name    TEXT CHECK (\n                 legacy_source_name IS NULL OR length(legacy_source_name) BETWEEN 1 AND 255\n             ),\n             legacy_imported_at    REAL,\n             created_at            REAL NOT NULL,\n             updated_at            REAL NOT NULL,\n             CHECK (\n                 (legacy_source_hash IS NULL AND legacy_source_name IS NULL\n                  AND legacy_imported_at IS NULL)\n                 OR (legacy_source_hash IS NOT NULL AND legacy_source_name IS NOT NULL\n                     AND legacy_imported_at IS NOT NULL)\n             )\n         )",
+      "table": "delivery_checkpoints",
+      "type": "table"
+    },
+    {
+      "name": "delivery_dedupe",
+      "sql": "CREATE TABLE delivery_dedupe (\n             id                  INTEGER PRIMARY KEY AUTOINCREMENT,\n             workflow            TEXT NOT NULL CHECK (workflow IN ('notify', 'push')),\n             db_name             TEXT NOT NULL CHECK (length(db_name) BETWEEN 1 AND 255),\n             user_id             INTEGER NOT NULL CHECK (user_id > 0),\n             article_id          INTEGER NOT NULL CHECK (article_id > 0),\n             delivery_run_id     INTEGER REFERENCES delivery_runs(id) ON DELETE SET NULL,\n             status              TEXT NOT NULL CHECK (status IN ('reserved', 'confirmed', 'unknown')),\n             message_id          TEXT CHECK (\n                 message_id IS NULL OR length(message_id) BETWEEN 1 AND 256\n             ),\n             reservation_owner   TEXT CHECK (\n                 reservation_owner IS NULL OR length(reservation_owner) BETWEEN 1 AND 128\n             ),\n             legacy_delivered_at TEXT,\n             revision            INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),\n             reserved_at         REAL NOT NULL,\n             delivered_at        REAL,\n             updated_at          REAL NOT NULL,\n             CHECK (\n                 (status = 'reserved' AND delivery_run_id IS NOT NULL\n                  AND reservation_owner IS NOT NULL AND delivered_at IS NULL)\n                 OR (status IN ('confirmed', 'unknown')\n                     AND reservation_owner IS NULL AND delivered_at IS NOT NULL)\n             )\n         )",
+      "table": "delivery_dedupe",
+      "type": "table"
+    },
+    {
+      "name": "delivery_leases",
+      "sql": "CREATE TABLE delivery_leases (\n             id                  INTEGER PRIMARY KEY AUTOINCREMENT,\n             workflow            TEXT NOT NULL CHECK (workflow IN ('notify', 'push')),\n             db_name             TEXT NOT NULL CHECK (length(db_name) BETWEEN 1 AND 255),\n             delivery_run_id     INTEGER REFERENCES delivery_runs(id) ON DELETE SET NULL,\n             owner_id            TEXT CHECK (\n                 owner_id IS NULL OR length(owner_id) BETWEEN 1 AND 128\n             ),\n             revision            INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),\n             acquired_at         REAL,\n             heartbeat_at        REAL,\n             expires_at          REAL,\n             updated_at          REAL NOT NULL,\n             CHECK (\n                 (owner_id IS NULL AND delivery_run_id IS NULL AND acquired_at IS NULL\n                  AND heartbeat_at IS NULL AND expires_at IS NULL)\n                 OR (owner_id IS NOT NULL AND delivery_run_id IS NOT NULL\n                     AND acquired_at IS NOT NULL AND heartbeat_at IS NOT NULL\n                     AND expires_at IS NOT NULL)\n             )\n         )",
+      "table": "delivery_leases",
+      "type": "table"
+    },
+    {
+      "name": "delivery_run_items",
+      "sql": "CREATE TABLE delivery_run_items (\n             id               INTEGER PRIMARY KEY AUTOINCREMENT,\n             delivery_run_id  INTEGER NOT NULL REFERENCES delivery_runs(id) ON DELETE CASCADE,\n             item_kind        TEXT NOT NULL CHECK (\n                 item_kind IN ('issue', 'inpress', 'article', 'subscriber')\n             ),\n             item_key         TEXT NOT NULL CHECK (length(item_key) BETWEEN 1 AND 512),\n             user_id          INTEGER CHECK (user_id IS NULL OR user_id > 0),\n             article_id       INTEGER CHECK (article_id IS NULL OR article_id > 0),\n             status           TEXT NOT NULL CHECK (\n                 status IN (\n                     'pending', 'claimed', 'sending', 'succeeded', 'failed', 'skipped',\n                     'cancelled', 'unknown'\n                 )\n             ),\n             legacy_status    TEXT CHECK (\n                 legacy_status IS NULL OR length(legacy_status) BETWEEN 1 AND 128\n             ),\n             owner_id         TEXT CHECK (\n                 owner_id IS NULL OR length(owner_id) BETWEEN 1 AND 128\n             ),\n             lease_expires_at REAL,\n             attempt_count    INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),\n             result_json      TEXT,\n             error_code       TEXT CHECK (\n                 error_code IS NULL OR length(error_code) BETWEEN 1 AND 64\n             ),\n             revision         INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),\n             created_at       REAL NOT NULL,\n             started_at       REAL,\n             updated_at       REAL NOT NULL,\n             finished_at      REAL,\n             UNIQUE(delivery_run_id, item_kind, item_key),\n             CHECK (\n                 (status = 'pending' AND owner_id IS NULL AND lease_expires_at IS NULL\n                  AND finished_at IS NULL)\n                 OR (status IN ('claimed', 'sending')\n                     AND owner_id IS NOT NULL AND lease_expires_at IS NOT NULL\n                     AND finished_at IS NULL)\n                 OR (status IN ('succeeded', 'failed', 'skipped', 'cancelled', 'unknown')\n                     AND owner_id IS NULL AND lease_expires_at IS NULL\n                     AND finished_at IS NOT NULL)\n             )\n         )",
+      "table": "delivery_run_items",
+      "type": "table"
+    },
+    {
+      "name": "delivery_runs",
+      "sql": "CREATE TABLE delivery_runs (\n             id                     INTEGER PRIMARY KEY AUTOINCREMENT,\n             external_id            TEXT NOT NULL CHECK (length(external_id) BETWEEN 1 AND 128),\n             workflow               TEXT NOT NULL CHECK (workflow IN ('notify', 'push')),\n             scope_key              TEXT NOT NULL CHECK (length(scope_key) BETWEEN 1 AND 255),\n             db_name                TEXT CHECK (db_name IS NULL OR length(db_name) BETWEEN 1 AND 255),\n             trigger_kind           TEXT NOT NULL CHECK (\n                 trigger_kind IN ('scheduled', 'manual', 'legacy')\n             ),\n             mode                   TEXT NOT NULL CHECK (mode IN ('dry_run', 'execute')),\n             user_id                INTEGER CHECK (user_id IS NULL OR user_id > 0),\n             status                 TEXT NOT NULL CHECK (\n                 status IN (\n                     'queued', 'claimed', 'running', 'cancelling', 'completed', 'failed',\n                     'cancelled', 'timed_out', 'skipped', 'unknown'\n                 )\n             ),\n             legacy_status          TEXT CHECK (\n                 legacy_status IS NULL OR length(legacy_status) BETWEEN 1 AND 128\n             ),\n             owner_id               TEXT CHECK (\n                 owner_id IS NULL OR length(owner_id) BETWEEN 1 AND 128\n             ),\n             lease_expires_at       REAL,\n             deadline_at            REAL,\n             cancellation_requested INTEGER NOT NULL DEFAULT 0 CHECK (\n                 cancellation_requested IN (0, 1)\n             ),\n             result_json            TEXT,\n             error_code             TEXT CHECK (\n                 error_code IS NULL OR length(error_code) BETWEEN 1 AND 64\n             ),\n             revision               INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),\n             created_at             REAL NOT NULL,\n             started_at             REAL,\n             updated_at             REAL NOT NULL,\n             finished_at            REAL,\n             CHECK (\n                 (status = 'queued' AND owner_id IS NULL AND lease_expires_at IS NULL\n                  AND finished_at IS NULL)\n                 OR (status IN ('claimed', 'running', 'cancelling')\n                     AND owner_id IS NOT NULL AND lease_expires_at IS NOT NULL\n                     AND finished_at IS NULL)\n                 OR (status IN ('completed', 'failed', 'cancelled', 'timed_out', 'skipped', 'unknown')\n                     AND owner_id IS NULL AND lease_expires_at IS NULL\n                     AND finished_at IS NOT NULL)\n             ),\n             CHECK (\n                 (trigger_kind = 'manual' AND user_id IS NOT NULL)\n                 OR (trigger_kind <> 'manual' AND db_name IS NOT NULL)\n             ),\n             CHECK (deadline_at IS NULL OR deadline_at > created_at)\n         )",
+      "table": "delivery_runs",
+      "type": "table"
+    },
+    {
+      "name": "favorites",
+      "sql": "CREATE TABLE favorites (\n        id          INTEGER PRIMARY KEY AUTOINCREMENT,\n        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n        folder_id   INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,\n        article_id  INTEGER NOT NULL,\n        db_name     TEXT    NOT NULL DEFAULT '',\n        note        TEXT    NOT NULL DEFAULT '',\n        created_at  REAL    NOT NULL,\n        UNIQUE(user_id, folder_id, article_id, db_name)\n    )",
+      "table": "favorites",
+      "type": "table"
+    },
+    {
+      "name": "folders",
+      "sql": "CREATE TABLE folders (\n        id          INTEGER PRIMARY KEY AUTOINCREMENT,\n        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n        name        TEXT    NOT NULL,\n        is_tracking INTEGER NOT NULL DEFAULT 0,\n        created_at  REAL    NOT NULL,\n        updated_at  REAL    NOT NULL,\n        UNIQUE(user_id, name)\n    )",
+      "table": "folders",
+      "type": "table"
+    },
+    {
+      "name": "invite_code_uses",
+      "sql": "CREATE TABLE invite_code_uses (\n        id             INTEGER PRIMARY KEY AUTOINCREMENT,\n        invite_code_id INTEGER NOT NULL REFERENCES \"invite_codes\"(id) ON DELETE RESTRICT,\n        user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,\n        used_at        REAL NOT NULL\n    )",
+      "table": "invite_code_uses",
+      "type": "table"
+    },
+    {
+      "name": "invite_codes",
+      "sql": "CREATE TABLE \"invite_codes\" (\n        id          INTEGER PRIMARY KEY AUTOINCREMENT,\n        code        TEXT    NOT NULL UNIQUE,\n        created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,\n        used_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,\n        used_at     REAL,\n        created_at  REAL    NOT NULL,\n        expires_at  REAL    NOT NULL CHECK (expires_at > created_at),\n        revoked_at  REAL    CHECK (revoked_at IS NULL OR revoked_at >= created_at),\n        max_uses    INTEGER NOT NULL CHECK (max_uses BETWEEN 1 AND 1000),\n        use_count   INTEGER NOT NULL DEFAULT 0 CHECK (\n            use_count >= 0 AND use_count <= max_uses\n        ),\n        CHECK (used_by IS NULL OR used_at IS NOT NULL)\n    )",
+      "table": "invite_codes",
+      "type": "table"
+    },
+    {
+      "name": "managed_meta_catalogs",
+      "sql": "CREATE TABLE managed_meta_catalogs (\n            filename       TEXT PRIMARY KEY,\n            bundle_version INTEGER NOT NULL CHECK (bundle_version > 0),\n            applied_sha256 TEXT NOT NULL CHECK (length(applied_sha256) = 64)\n        )",
+      "table": "managed_meta_catalogs",
+      "type": "table"
+    },
+    {
+      "name": "notification_settings",
+      "sql": "CREATE TABLE \"notification_settings\" (\n        id                      INTEGER PRIMARY KEY AUTOINCREMENT,\n        user_id                 INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,\n        keywords                TEXT    NOT NULL DEFAULT '[]' CHECK (\n            CASE WHEN json_valid(keywords)\n                 THEN json_type(keywords) = 'array'\n                 ELSE 0\n            END\n        ),\n        directions              TEXT    NOT NULL DEFAULT '[]' CHECK (\n            CASE WHEN json_valid(directions)\n                 THEN json_type(directions) = 'array'\n                 ELSE 0\n            END\n        ),\n        selected_databases      TEXT    NOT NULL DEFAULT '[]' CHECK (\n            CASE WHEN json_valid(selected_databases)\n                 THEN json_type(selected_databases) = 'array'\n                 ELSE 0\n            END\n        ),\n        delivery_method         TEXT    NOT NULL DEFAULT 'folder',\n        pushplus_token          TEXT    NOT NULL DEFAULT '',\n        pushplus_template       TEXT    NOT NULL DEFAULT 'markdown',\n        pushplus_topic          TEXT    NOT NULL DEFAULT '',\n        pushplus_channel        TEXT    NOT NULL DEFAULT 'wechat',\n        sync_to_tracking_folder INTEGER NOT NULL DEFAULT 0,\n        ai_base_url             TEXT    NOT NULL DEFAULT '',\n        ai_api_key              TEXT    NOT NULL DEFAULT '',\n        ai_model                TEXT    NOT NULL DEFAULT '',\n        ai_system_prompt        TEXT    NOT NULL DEFAULT '',\n        ai_backup_base_url      TEXT    NOT NULL DEFAULT '',\n        ai_backup_api_key       TEXT    NOT NULL DEFAULT '',\n        ai_backup_model         TEXT    NOT NULL DEFAULT '',\n        ai_backup_system_prompt TEXT    NOT NULL DEFAULT '',\n        ai_retry_attempts       INTEGER NOT NULL DEFAULT 3,\n        enabled                 INTEGER NOT NULL DEFAULT 1,\n        created_at              REAL    NOT NULL,\n        updated_at              REAL    NOT NULL\n    )",
+      "table": "notification_settings",
+      "type": "table"
+    },
+    {
+      "name": "runtime_settings",
+      "sql": "CREATE TABLE runtime_settings (\n        key        TEXT PRIMARY KEY,\n        value      TEXT NOT NULL DEFAULT '',\n        updated_at REAL NOT NULL\n    )",
+      "table": "runtime_settings",
+      "type": "table"
+    },
+    {
+      "name": "scheduled_task_runs",
+      "sql": "CREATE TABLE scheduled_task_runs (\n             id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL,\n             task_name TEXT NOT NULL, scheduled_for INTEGER NOT NULL,\n             status TEXT NOT NULL CHECK(status IN ('pending','claimed','running','success',\n                 'failed','timed_out','error','unknown','cancelled')),\n             worker_id TEXT, claim_expires_at REAL, claimed_at REAL, started_at REAL,\n             finished_at REAL, output_summary TEXT NOT NULL DEFAULT '',\n             UNIQUE(task_id, scheduled_for))",
+      "table": "scheduled_task_runs",
+      "type": "table"
+    },
+    {
+      "name": "scheduled_tasks",
+      "sql": "CREATE TABLE \"scheduled_tasks\" (\n            id             INTEGER PRIMARY KEY AUTOINCREMENT,\n            name           TEXT    NOT NULL,\n            job_spec       TEXT,\n            legacy_command TEXT,\n            cron           TEXT    NOT NULL,\n            enabled        INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),\n            last_run_at    REAL,\n            last_status    TEXT    NOT NULL DEFAULT '',\n            created_at     REAL    NOT NULL,\n            updated_at     REAL    NOT NULL, timezone TEXT NOT NULL DEFAULT 'UTC', timeout_seconds INTEGER NOT NULL DEFAULT 3600\n            CHECK (timeout_seconds BETWEEN 1 AND 86400), coalesce INTEGER NOT NULL DEFAULT 1\n            CHECK (coalesce IN (0, 1)),\n            CHECK (\n                (job_spec IS NOT NULL AND legacy_command IS NULL)\n                OR (job_spec IS NULL AND legacy_command IS NOT NULL)\n            ),\n            CHECK (job_spec IS NOT NULL OR enabled = 0)\n        )",
+      "table": "scheduled_tasks",
+      "type": "table"
+    },
+    {
+      "name": "scheduler_state",
+      "sql": "CREATE TABLE scheduler_state (\n            id              INTEGER PRIMARY KEY CHECK (id = 1),\n            last_checked_at REAL\n        )",
+      "table": "scheduler_state",
+      "type": "table"
+    },
+    {
+      "name": "scheduler_workers",
+      "sql": "CREATE TABLE scheduler_workers (\n            worker_id    TEXT PRIMARY KEY,\n            started_at   REAL NOT NULL,\n            heartbeat_at REAL NOT NULL\n        )",
+      "table": "scheduler_workers",
+      "type": "table"
+    },
+    {
+      "name": "security_audit_events",
+      "sql": "CREATE TABLE security_audit_events (\n             id                  INTEGER PRIMARY KEY AUTOINCREMENT,\n             actor_id            INTEGER CHECK (actor_id IS NULL OR actor_id > 0),\n             target_id           INTEGER CHECK (target_id IS NULL OR target_id > 0),\n             action              TEXT NOT NULL CHECK (\n                 length(action) BETWEEN 1 AND 64 AND action NOT GLOB '*[^a-z0-9_]*'\n             ),\n             outcome             TEXT NOT NULL CHECK (\n                 length(outcome) BETWEEN 1 AND 64 AND outcome NOT GLOB '*[^a-z0-9_]*'\n             ),\n             reason              TEXT NOT NULL DEFAULT '' CHECK (\n                 length(reason) <= 64 AND reason NOT GLOB '*[^a-z0-9_]*'\n             ),\n             request_id          TEXT NOT NULL DEFAULT '' CHECK (\n                 length(request_id) <= 128 AND request_id NOT GLOB '*[^A-Za-z0-9_.:-]*'\n             ),\n             source_class        TEXT NOT NULL DEFAULT '' CHECK (\n                 length(source_class) <= 64 AND source_class NOT GLOB '*[^a-z0-9_]*'\n             ),\n             bucket              TEXT NOT NULL DEFAULT '' CHECK (\n                 length(bucket) <= 64 AND bucket NOT GLOB '*[^a-z0-9_]*'\n             ),\n             rejected_count      INTEGER NOT NULL DEFAULT 0 CHECK (rejected_count >= 0),\n             retry_after_seconds INTEGER NOT NULL DEFAULT 0 CHECK (retry_after_seconds >= 0),\n             occurred_at         REAL NOT NULL\n         )",
+      "table": "security_audit_events",
+      "type": "table"
+    },
+    {
+      "name": "security_audit_maintenance",
+      "sql": "CREATE TABLE security_audit_maintenance (\n             id                INTEGER PRIMARY KEY CHECK (id = 1),\n             last_retention_at REAL\n         )",
+      "table": "security_audit_maintenance",
+      "type": "table"
+    },
+    {
+      "name": "service_heartbeats",
+      "sql": "CREATE TABLE service_heartbeats (\n            service      TEXT NOT NULL CHECK (service IN ('api', 'worker')),\n            instance_id  TEXT NOT NULL,\n            started_at   REAL NOT NULL,\n            heartbeat_at REAL NOT NULL,\n            PRIMARY KEY(service, instance_id)\n        )",
+      "table": "service_heartbeats",
+      "type": "table"
+    },
+    {
+      "name": "sqlite_sequence",
+      "sql": "CREATE TABLE sqlite_sequence(name,seq)",
+      "table": "sqlite_sequence",
+      "type": "table"
+    },
+    {
+      "name": "users",
+      "sql": "CREATE TABLE users (\n        id            INTEGER PRIMARY KEY AUTOINCREMENT,\n        username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,\n        password_hash TEXT    NOT NULL,\n        salt          TEXT    NOT NULL,\n        is_admin      INTEGER NOT NULL DEFAULT 0,\n        created_at    REAL    NOT NULL,\n        updated_at    REAL    NOT NULL,\n        token_generation INTEGER NOT NULL DEFAULT 0 CHECK (token_generation >= 0)\n    )",
+      "table": "users",
+      "type": "table"
+    },
+    {
+      "name": "notification_settings_json_strings_insert",
+      "sql": "CREATE TRIGGER notification_settings_json_strings_insert\n    AFTER INSERT ON notification_settings\n    WHEN EXISTS (SELECT 1 FROM json_each(NEW.keywords) WHERE type <> 'text')\n      OR EXISTS (SELECT 1 FROM json_each(NEW.directions) WHERE type <> 'text')\n      OR EXISTS (SELECT 1 FROM json_each(NEW.selected_databases) WHERE type <> 'text')\n    BEGIN\n        SELECT RAISE(ABORT, 'notification settings JSON arrays must contain strings');\n    END",
+      "table": "notification_settings",
+      "type": "trigger"
+    },
+    {
+      "name": "notification_settings_json_strings_update",
+      "sql": "CREATE TRIGGER notification_settings_json_strings_update\n    AFTER UPDATE OF keywords, directions, selected_databases ON notification_settings\n    WHEN EXISTS (SELECT 1 FROM json_each(NEW.keywords) WHERE type <> 'text')\n      OR EXISTS (SELECT 1 FROM json_each(NEW.directions) WHERE type <> 'text')\n      OR EXISTS (SELECT 1 FROM json_each(NEW.selected_databases) WHERE type <> 'text')\n    BEGIN\n        SELECT RAISE(ABORT, 'notification settings JSON arrays must contain strings');\n    END",
+      "table": "notification_settings",
+      "type": "trigger"
+    },
+    {
+      "name": "security_audit_events_no_update",
+      "sql": "CREATE TRIGGER security_audit_events_no_update\n         BEFORE UPDATE ON security_audit_events\n         BEGIN\n             SELECT RAISE(ABORT, 'security audit events are append-only');\n         END",
+      "table": "security_audit_events",
+      "type": "trigger"
+    }
+  ],
+  "sqliteVersion": "3.50.2",
+  "userVersion": 19
+}

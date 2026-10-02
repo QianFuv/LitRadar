@@ -1,0 +1,67 @@
+{
+  "cleared": "",
+  "current": {
+    "password": "litradar-auth-dummy-password",
+    "phc": "$argon2id$v=19$m=19456,t=2,p=1$bGl0cmFkYXItZHVtbXkhIQ$ZYJd4/sBFG46tq7/498a19Zgzc/4MglD6AaOL5G1bdM",
+    "result": "ValidCurrent",
+    "wrongParameters": "Invalid",
+    "wrongPassword": "Invalid"
+  },
+  "envelopes": [
+    {
+      "context": "notification_settings:2:ai_api_key",
+      "decrypted": "synthetic-only-凭据",
+      "envelope": "litradarenc:v1:1-k-6wFMz6zFAIsmDz_4n_sz5PRMriox:GXUAKU7MnVvs8SRGiOmq_qZOnA0DB9sZ6CTKaLxf3MhRjnAkdQ",
+      "plaintext": "synthetic-only-凭据",
+      "wrongContextRejected": true,
+      "wrongKeyRejected": true
+    },
+    {
+      "context": "runtime_settings:provider_proxy_url",
+      "decrypted": "synthetic-only-凭据",
+      "envelope": "litradarenc:v1:0E11jWJdRyiRxkzA2VgXxuCU4CfuYetl:mKaeShmo1iPs0b49x-uP9sc5LpiwTO_YXIcZHUdckL3Ogea9mw",
+      "plaintext": "synthetic-only-凭据",
+      "wrongContextRejected": true,
+      "wrongKeyRejected": true
+    },
+    {
+      "context": "cnki_sessions:2:session_json",
+      "decrypted": "synthetic-only-凭据",
+      "envelope": "litradarenc:v1:kJAeXKhmaVz0QV0TleXiEonLbj__eW6G:8iQFbCeq4ThPzDv8RYP8nfD_ql8MESo59GIdCqxGhv8_cFW7_A",
+      "plaintext": "synthetic-only-凭据",
+      "wrongContextRejected": true,
+      "wrongKeyRejected": true
+    }
+  ],
+  "keyByteRepeated32Times": 42,
+  "legacy": {
+    "hash": "8a55c2131c3ecfe2c702d8b8a1f01c0b8f619a9d697d5d9c8d9764e8221fe25e",
+    "password": "secret123",
+    "salt": "salt"
+  },
+  "malformedRejected": true,
+  "passwordPolicy": [
+    {
+      "accepted": false,
+      "input": "12345678901"
+    },
+    {
+      "accepted": true,
+      "input": "123456789012"
+    },
+    {
+      "accepted": false,
+      "input": "😀😀😀😀😀😀😀😀😀😀😀"
+    },
+    {
+      "accepted": true,
+      "input": "😀😀😀😀😀😀😀😀😀😀😀😀"
+    }
+  ],
+  "plaintextRejected": true,
+  "syntheticOnly": true,
+  "token": {
+    "hash": "3c469e9d6c5875d37a43f353d4f88e61fcf812c66eee3457465a40b0da4153e0",
+    "input": "token"
+  }
+}

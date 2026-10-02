@@ -1,0 +1,9 @@
+{
+  "administratorId": 1,
+  "createdAt": 1700000000.0,
+  "legacyHash": "3d0312bac8ddf1bffa48b16215326dce4ef3e860b3c72c9fa1cbcb9468e37b91",
+  "memberId": 2,
+  "password": "MigrationFixture!2026",
+  "salt": "migration-fixture-salt",
+  "syntheticOnly": true
+}
