@@ -63,6 +63,12 @@ if (phase === "auth") {
   console.log(await runAuth(requested.get("--reuse-driver-proof")));
   process.exit(0);
 }
+if (phase === "storage") {
+  assert(!requested.has("--candidate"), "Storage must execute its own checks");
+  const { runStorage } = await import("./storage/run.mjs");
+  console.log(await runStorage());
+  process.exit(0);
+}
 assert.equal(
   phase,
   "baseline",

@@ -1,0 +1,1763 @@
+{
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "sources": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "a572dd66f03daa1f9243d27caa45799c9e21bfa3007e07449f51586e226e5318"
+    },
+    {
+      "path": "crates/litradar-api/src/citation.rs",
+      "sha256": "30ebc01e5620c9c275344ddfe885456d82ad8d59eed5a02d33263785a167cb17"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/favorites.rs",
+      "sha256": "8645a78f4415f56e349d459a1b6d40368aabdfb0fb1b51b9878faad072622ad1"
+    },
+    {
+      "path": "tests/migration/storage/citation-oracle.rs",
+      "sha256": "a7cec36956701268f4727761b8f8984ce105dafd827ee0a4926f063df992a61b"
+    },
+    {
+      "path": "target/debug/liblitradar_storage.rlib",
+      "sha256": "e22bab13e56c553f6fda2172492c093ff3fa20679f437c189d8664e547de4573"
+    }
+  ],
+  "cases": [
+    {
+      "articles": [],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": ""
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "@article{favorite1,\n  title = {},\n  author = {},\n  journal = {},\n  year = {},\n  doi = {}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "@article{101000abcdef1,\n  title = {A \\& B <Genome>},\n  author = {Alice and Bob},\n  journal = {Journal One},\n  year = {2026-01-05},\n  doi = {10.1000/abc-def}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "@article{101000untitled1,\n  title = {},\n  author = {Author},\n  journal = {Journal},\n  year = {2026},\n  doi = {10.1000/untitled}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "@article{favorite1,\n  title = {Title \\char125{} \\char123{} \\char92{} \\% \\# \\_ \\& \\$ \\char126{} \\char94{}  @article\\char123{}injected,},\n  author = {Author \\char125{}, @book\\char123{}injected},\n  journal = {Journal \\char123{}unsafe\\char125{}},\n  year = {2026 \\char125{}},\n  doi = {\\char123{}\\char125{}}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "@article{101000ab1,\n  title = {</title><record>A\\&B },\n  author = {Alice O'Neil</author>},\n  journal = {Unused},\n  year = {2026<1900},\n  doi = {10.1000/a\\&b}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "@article{101,\n  title = {研究-é-🔑   ￿},\n  author = {       },\n  journal = {Ω},\n  year = {2026 PY - 1900},\n  doi = {10/中文}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "@article{favorite1,\n  title = {},\n  author = {},\n  journal = {},\n  year = {},\n  doi = {}\n}\n\n@article{101000abcdef2,\n  title = {A \\& B <Genome>},\n  author = {Alice and Bob},\n  journal = {Journal One},\n  year = {2026-01-05},\n  doi = {10.1000/abc-def}\n}\n\n@article{101000untitled3,\n  title = {},\n  author = {Author},\n  journal = {Journal},\n  year = {2026},\n  doi = {10.1000/untitled}\n}\n\n@article{favorite4,\n  title = {Title \\char125{} \\char123{} \\char92{} \\% \\# \\_ \\& \\$ \\char126{} \\char94{}  @article\\char123{}injected,},\n  author = {Author \\char125{}, @book\\char123{}injected},\n  journal = {Journal \\char123{}unsafe\\char125{}},\n  year = {2026 \\char125{}},\n  doi = {\\char123{}\\char125{}}\n}\n\n@article{101000ab5,\n  title = {</title><record>A\\&B },\n  author = {Alice O'Neil</author>},\n  journal = {Unused},\n  year = {2026<1900},\n  doi = {10.1000/a\\&b}\n}\n\n@article{106,\n  title = {研究-é-🔑   ￿},\n  author = {       },\n  journal = {Ω},\n  year = {2026 PY - 1900},\n  doi = {10/中文}\n}"
+    },
+    {
+      "articles": [],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": ""
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "TY  - JOUR\nTI  - \nAU  - \nJO  - \nPY  - \nDO  - \nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "TY  - JOUR\nTI  - A & B <Genome>\nAU  - Alice\nAU  - Bob\nJO  - Journal One\nPY  - 2026-01-05\nDO  - 10.1000/abc-def\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "TY  - JOUR\nTI  - \nAU  - Author\nJO  - Journal\nPY  - 2026\nDO  - 10.1000/untitled\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "TY  - JOUR\nTI  - Title } { \\ % # _ & $ ~ ^  @article{injected,\nAU  - Author }, @book{injected\nJO  - Journal {unsafe}\nPY  - 2026 }\nDO  - {}\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "TY  - JOUR\nTI  - </title><record>A&B \nAU  - Alice O'Neil</author>\nJO  - Unused\nPY  - 2026<1900\nDO  - 10.1000/a&b\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "TY  - JOUR\nTI  - 研究-é-🔑   ￿\nAU  -        \nJO  - Ω\nPY  - 2026 PY - 1900\nDO  - 10/中文\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "TY  - JOUR\nTI  - \nAU  - \nJO  - \nPY  - \nDO  - \nER  -\n\nTY  - JOUR\nTI  - A & B <Genome>\nAU  - Alice\nAU  - Bob\nJO  - Journal One\nPY  - 2026-01-05\nDO  - 10.1000/abc-def\nER  -\n\nTY  - JOUR\nTI  - \nAU  - Author\nJO  - Journal\nPY  - 2026\nDO  - 10.1000/untitled\nER  -\n\nTY  - JOUR\nTI  - Title } { \\ % # _ & $ ~ ^  @article{injected,\nAU  - Author }, @book{injected\nJO  - Journal {unsafe}\nPY  - 2026 }\nDO  - {}\nER  -\n\nTY  - JOUR\nTI  - </title><record>A&B \nAU  - Alice O'Neil</author>\nJO  - Unused\nPY  - 2026<1900\nDO  - 10.1000/a&b\nER  -\n\nTY  - JOUR\nTI  - 研究-é-🔑   ￿\nAU  -        \nJO  - Ω\nPY  - 2026 PY - 1900\nDO  - 10/中文\nER  -"
+    },
+    {
+      "articles": [],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title></title></titles><contributors><authors><author></author></authors></contributors><dates><year></year></dates><electronic-resource-num></electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title>A &amp; B &lt;Genome&gt;</title></titles><contributors><authors><author>Alice</author><author>Bob</author></authors></contributors><dates><year>2026-01-05</year></dates><electronic-resource-num>10.1000/abc-def</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title></title></titles><contributors><authors><author>Author</author></authors></contributors><dates><year>2026</year></dates><electronic-resource-num>10.1000/untitled</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title>Title } { \\ % # _ &amp; $ ~ ^\r\n@article{injected,</title></titles><contributors><authors><author>Author\n},\n@book{injected</author></authors></contributors><dates><year>2026\n}</year></dates><electronic-resource-num>{}</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title>&lt;/title&gt;&lt;record&gt;A&amp;B </title></titles><contributors><authors><author>Alice O&apos;Neil&lt;/author&gt;</author></authors></contributors><dates><year>2026&lt;1900</year></dates><electronic-resource-num>10.1000/a&amp;b</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title>研究-é-🔑   </title></titles><contributors><authors><author>  \t\r\n</author></authors></contributors><dates><year>2026\rPY - 1900</year></dates><electronic-resource-num>10/中文</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 1048576,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title></title></titles><contributors><authors><author></author></authors></contributors><dates><year></year></dates><electronic-resource-num></electronic-resource-num></record><record><titles><title>A &amp; B &lt;Genome&gt;</title></titles><contributors><authors><author>Alice</author><author>Bob</author></authors></contributors><dates><year>2026-01-05</year></dates><electronic-resource-num>10.1000/abc-def</electronic-resource-num></record><record><titles><title></title></titles><contributors><authors><author>Author</author></authors></contributors><dates><year>2026</year></dates><electronic-resource-num>10.1000/untitled</electronic-resource-num></record><record><titles><title>Title } { \\ % # _ &amp; $ ~ ^\r\n@article{injected,</title></titles><contributors><authors><author>Author\n},\n@book{injected</author></authors></contributors><dates><year>2026\n}</year></dates><electronic-resource-num>{}</electronic-resource-num></record><record><titles><title>&lt;/title&gt;&lt;record&gt;A&amp;B </title></titles><contributors><authors><author>Alice O&apos;Neil&lt;/author&gt;</author></authors></contributors><dates><year>2026&lt;1900</year></dates><electronic-resource-num>10.1000/a&amp;b</electronic-resource-num></record><record><titles><title>研究-é-🔑   </title></titles><contributors><authors><author>  \t\r\n</author></authors></contributors><dates><year>2026\rPY - 1900</year></dates><electronic-resource-num>10/中文</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 0,
+      "output": ""
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 90,
+      "output": "@article{favorite1,\n  title = {},\n  author = {},\n  journal = {},\n  year = {},\n  doi = {}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 89,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 158,
+      "output": "@article{101000abcdef1,\n  title = {A \\& B <Genome>},\n  author = {Alice and Bob},\n  journal = {Journal One},\n  year = {2026-01-05},\n  doi = {10.1000/abc-def}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 157,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 129,
+      "output": "@article{101000untitled1,\n  title = {},\n  author = {Author},\n  journal = {Journal},\n  year = {2026},\n  doi = {10.1000/untitled}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 128,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 303,
+      "output": "@article{favorite1,\n  title = {Title \\char125{} \\char123{} \\char92{} \\% \\# \\_ \\& \\$ \\char126{} \\char94{}  @article\\char123{}injected,},\n  author = {Author \\char125{}, @book\\char123{}injected},\n  journal = {Journal \\char123{}unsafe\\char125{}},\n  year = {2026 \\char125{}},\n  doi = {\\char123{}\\char125{}}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 302,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 159,
+      "output": "@article{101000ab1,\n  title = {</title><record>A\\&B },\n  author = {Alice O'Neil</author>},\n  journal = {Unused},\n  year = {2026<1900},\n  doi = {10.1000/a\\&b}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 158,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 136,
+      "output": "@article{101,\n  title = {研究-é-🔑   ￿},\n  author = {       },\n  journal = {Ω},\n  year = {2026 PY - 1900},\n  doi = {10/中文}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 135,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "bibtex",
+      "limited": false,
+      "maximum_bytes": 985,
+      "output": "@article{favorite1,\n  title = {},\n  author = {},\n  journal = {},\n  year = {},\n  doi = {}\n}\n\n@article{101000abcdef2,\n  title = {A \\& B <Genome>},\n  author = {Alice and Bob},\n  journal = {Journal One},\n  year = {2026-01-05},\n  doi = {10.1000/abc-def}\n}\n\n@article{101000untitled3,\n  title = {},\n  author = {Author},\n  journal = {Journal},\n  year = {2026},\n  doi = {10.1000/untitled}\n}\n\n@article{favorite4,\n  title = {Title \\char125{} \\char123{} \\char92{} \\% \\# \\_ \\& \\$ \\char126{} \\char94{}  @article\\char123{}injected,},\n  author = {Author \\char125{}, @book\\char123{}injected},\n  journal = {Journal \\char123{}unsafe\\char125{}},\n  year = {2026 \\char125{}},\n  doi = {\\char123{}\\char125{}}\n}\n\n@article{101000ab5,\n  title = {</title><record>A\\&B },\n  author = {Alice O'Neil</author>},\n  journal = {Unused},\n  year = {2026<1900},\n  doi = {10.1000/a\\&b}\n}\n\n@article{106,\n  title = {研究-é-🔑   ￿},\n  author = {       },\n  journal = {Ω},\n  year = {2026 PY - 1900},\n  doi = {10/中文}\n}"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "bibtex",
+      "limited": true,
+      "maximum_bytes": 984,
+      "output": null
+    },
+    {
+      "articles": [],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 0,
+      "output": ""
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 51,
+      "output": "TY  - JOUR\nTI  - \nAU  - \nJO  - \nPY  - \nDO  - \nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 50,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 116,
+      "output": "TY  - JOUR\nTI  - A & B <Genome>\nAU  - Alice\nAU  - Bob\nJO  - Journal One\nPY  - 2026-01-05\nDO  - 10.1000/abc-def\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 115,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 84,
+      "output": "TY  - JOUR\nTI  - \nAU  - Author\nJO  - Journal\nPY  - 2026\nDO  - 10.1000/untitled\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 83,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 144,
+      "output": "TY  - JOUR\nTI  - Title } { \\ % # _ & $ ~ ^  @article{injected,\nAU  - Author }, @book{injected\nJO  - Journal {unsafe}\nPY  - 2026 }\nDO  - {}\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 143,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 118,
+      "output": "TY  - JOUR\nTI  - </title><record>A&B \nAU  - Alice O'Neil</author>\nJO  - Unused\nPY  - 2026<1900\nDO  - 10.1000/a&b\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 117,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 103,
+      "output": "TY  - JOUR\nTI  - 研究-é-🔑   ￿\nAU  -        \nJO  - Ω\nPY  - 2026 PY - 1900\nDO  - 10/中文\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 102,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "ris",
+      "limited": false,
+      "maximum_bytes": 626,
+      "output": "TY  - JOUR\nTI  - \nAU  - \nJO  - \nPY  - \nDO  - \nER  -\n\nTY  - JOUR\nTI  - A & B <Genome>\nAU  - Alice\nAU  - Bob\nJO  - Journal One\nPY  - 2026-01-05\nDO  - 10.1000/abc-def\nER  -\n\nTY  - JOUR\nTI  - \nAU  - Author\nJO  - Journal\nPY  - 2026\nDO  - 10.1000/untitled\nER  -\n\nTY  - JOUR\nTI  - Title } { \\ % # _ & $ ~ ^  @article{injected,\nAU  - Author }, @book{injected\nJO  - Journal {unsafe}\nPY  - 2026 }\nDO  - {}\nER  -\n\nTY  - JOUR\nTI  - </title><record>A&B \nAU  - Alice O'Neil</author>\nJO  - Unused\nPY  - 2026<1900\nDO  - 10.1000/a&b\nER  -\n\nTY  - JOUR\nTI  - 研究-é-🔑   ￿\nAU  -        \nJO  - Ω\nPY  - 2026 PY - 1900\nDO  - 10/中文\nER  -"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "ris",
+      "limited": true,
+      "maximum_bytes": 625,
+      "output": null
+    },
+    {
+      "articles": [],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 68,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records></records></xml>"
+    },
+    {
+      "articles": [],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 67,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 261,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title></title></titles><contributors><authors><author></author></authors></contributors><dates><year></year></dates><electronic-resource-num></electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 260,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 335,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title>A &amp; B &lt;Genome&gt;</title></titles><contributors><authors><author>Alice</author><author>Bob</author></authors></contributors><dates><year>2026-01-05</year></dates><electronic-resource-num>10.1000/abc-def</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 334,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 287,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title></title></titles><contributors><authors><author>Author</author></authors></contributors><dates><year>2026</year></dates><electronic-resource-num>10.1000/untitled</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 286,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 342,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title>Title } { \\ % # _ &amp; $ ~ ^\r\n@article{injected,</title></titles><contributors><authors><author>Author\n},\n@book{injected</author></authors></contributors><dates><year>2026\n}</year></dates><electronic-resource-num>{}</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 341,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 356,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title>&lt;/title&gt;&lt;record&gt;A&amp;B </title></titles><contributors><authors><author>Alice O&apos;Neil&lt;/author&gt;</author></authors></contributors><dates><year>2026&lt;1900</year></dates><electronic-resource-num>10.1000/a&amp;b</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 355,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 314,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title>研究-é-🔑   </title></titles><contributors><authors><author>  \t\r\n</author></authors></contributors><dates><year>2026\rPY - 1900</year></dates><electronic-resource-num>10/中文</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 313,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 0,
+      "output": null
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "endnote",
+      "limited": false,
+      "maximum_bytes": 1555,
+      "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xml><records><record><titles><title></title></titles><contributors><authors><author></author></authors></contributors><dates><year></year></dates><electronic-resource-num></electronic-resource-num></record><record><titles><title>A &amp; B &lt;Genome&gt;</title></titles><contributors><authors><author>Alice</author><author>Bob</author></authors></contributors><dates><year>2026-01-05</year></dates><electronic-resource-num>10.1000/abc-def</electronic-resource-num></record><record><titles><title></title></titles><contributors><authors><author>Author</author></authors></contributors><dates><year>2026</year></dates><electronic-resource-num>10.1000/untitled</electronic-resource-num></record><record><titles><title>Title } { \\ % # _ &amp; $ ~ ^\r\n@article{injected,</title></titles><contributors><authors><author>Author\n},\n@book{injected</author></authors></contributors><dates><year>2026\n}</year></dates><electronic-resource-num>{}</electronic-resource-num></record><record><titles><title>&lt;/title&gt;&lt;record&gt;A&amp;B </title></titles><contributors><authors><author>Alice O&apos;Neil&lt;/author&gt;</author></authors></contributors><dates><year>2026&lt;1900</year></dates><electronic-resource-num>10.1000/a&amp;b</electronic-resource-num></record><record><titles><title>研究-é-🔑   </title></titles><contributors><authors><author>  \t\r\n</author></authors></contributors><dates><year>2026\rPY - 1900</year></dates><electronic-resource-num>10/中文</electronic-resource-num></record></records></xml>"
+    },
+    {
+      "articles": [
+        {
+          "authors": [],
+          "date": null,
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "doi": "10.1000/abc-def",
+          "journal_title": "Journal One",
+          "title": "A & B <Genome>"
+        },
+        {
+          "authors": ["Author"],
+          "date": "2026",
+          "doi": "10.1000/untitled",
+          "journal_title": "Journal",
+          "title": ""
+        },
+        {
+          "authors": ["Author\n},\n@book{injected"],
+          "date": "2026\n}",
+          "doi": "{}",
+          "journal_title": "Journal {unsafe}",
+          "title": "Title } { \\ % # _ & $ ~ ^\r\n@article{injected,"
+        },
+        {
+          "authors": ["Alice O'Neil</author>"],
+          "date": "2026<1900",
+          "doi": "10.1000/a&b",
+          "journal_title": "Unused",
+          "title": "</title><record>A&B\u0000"
+        },
+        {
+          "authors": ["\u0000\u0001\t\r\n"],
+          "date": "2026\rPY - 1900",
+          "doi": "10/中文",
+          "journal_title": "Ω",
+          "title": "研究-é-🔑  ￿"
+        }
+      ],
+      "format": "endnote",
+      "limited": true,
+      "maximum_bytes": 1554,
+      "output": null
+    }
+  ]
+}

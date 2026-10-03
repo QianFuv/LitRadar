@@ -1,0 +1,2435 @@
+{
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "sources": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "a572dd66f03daa1f9243d27caa45799c9e21bfa3007e07449f51586e226e5318"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/favorites.rs",
+      "sha256": "8645a78f4415f56e349d459a1b6d40368aabdfb0fb1b51b9878faad072622ad1"
+    },
+    {
+      "path": "crates/litradar-domain/src/business.rs",
+      "sha256": "5dbc0746f43a8094b9a5215e3704bda9f9a23bc2da69cab3ad57d293446806e8"
+    },
+    {
+      "path": "crates/litradar-domain/src/validation.rs",
+      "sha256": "0a06d0b2ea1f1b14dc0cb166ac148eb65733310205af0d34b41b6d6f6c7d3cf4"
+    },
+    {
+      "path": "tests/migration/storage/favorites-oracle.rs",
+      "sha256": "bc27cf07941a18f5e396d2b7332eff04b7ba9cff486f158db67377e068e7b0cb"
+    },
+    {
+      "path": "tests/migration/storage/export-favorites.mjs",
+      "sha256": "33fd970c32a2e1f6b2b0b4305b5194361055651b698985b140d6707887a3ad0e"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/metadata.sqlite.fixture",
+      "sha256": "aa1e552eb8dc28ee0493d267395ed67c7091331c5d0e6fef8ec14e6db5448bb4"
+    }
+  ],
+  "fixture_sha256": "929a3128b6e3d9c916b70b43426030f7ca8417c0a5a90a4af1aecf37f3b78fcb",
+  "cases": [
+    {
+      "error": null,
+      "operation": "folders",
+      "output": [
+        {
+          "article_count": 4,
+          "created_at": 10.25,
+          "id": 10,
+          "is_tracking": true,
+          "name": "first"
+        },
+        {
+          "article_count": 1,
+          "created_at": 11,
+          "id": 11,
+          "is_tracking": false,
+          "name": "second"
+        }
+      ],
+      "owner": 1
+    },
+    {
+      "error": null,
+      "operation": "folders",
+      "output": [
+        {
+          "article_count": 1,
+          "created_at": 12,
+          "id": 20,
+          "is_tracking": true,
+          "name": "private"
+        }
+      ],
+      "owner": 2
+    },
+    {
+      "error": null,
+      "operation": "folders",
+      "output": [],
+      "owner": 99
+    },
+    {
+      "error": null,
+      "operation": "tracking",
+      "output": {
+        "article_count": 0,
+        "created_at": 10.25,
+        "id": 10,
+        "is_tracking": true,
+        "name": "first"
+      },
+      "owner": 1
+    },
+    {
+      "error": null,
+      "operation": "tracking",
+      "output": {
+        "article_count": 0,
+        "created_at": 12,
+        "id": 20,
+        "is_tracking": true,
+        "name": "private"
+      },
+      "owner": 2
+    },
+    {
+      "error": null,
+      "operation": "tracking",
+      "output": null,
+      "owner": 99
+    },
+    {
+      "error": null,
+      "operation": "count",
+      "output": 5,
+      "owner": 1
+    },
+    {
+      "error": null,
+      "operation": "count",
+      "output": 1,
+      "owner": 2
+    },
+    {
+      "error": null,
+      "operation": "count",
+      "output": 0,
+      "owner": 99
+    },
+    {
+      "error": null,
+      "operation": "list",
+      "output": [
+        {
+          "abstract": "Genome sequencing precision study",
+          "article_id": "1001",
+          "authors": ["Alice", "Bob"],
+          "created_at": 14,
+          "date": "2026-01-05",
+          "db_name": "metadata",
+          "doi": "10.1000/genome",
+          "eissn": null,
+          "folder_id": 11,
+          "id": 4,
+          "in_press": false,
+          "issn": "1234-5679",
+          "issue_id": 10,
+          "journal_id": "1",
+          "journal_title": "Alpha Journal",
+          "metadata_status": "available",
+          "note": "second folder",
+          "number": "1",
+          "open_access": true,
+          "publication_year": 2026,
+          "title": "Genome Methods",
+          "volume": "12"
+        },
+        {
+          "abstract": null,
+          "article_id": "999",
+          "authors": null,
+          "created_at": 13,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 3,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "missing",
+          "note": "gone",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": "Genome sequencing precision study",
+          "article_id": "1001",
+          "authors": ["Alice", "Bob"],
+          "created_at": 12.25,
+          "date": "2026-01-05",
+          "db_name": "metadata",
+          "doi": "10.1000/genome",
+          "eissn": null,
+          "folder_id": 10,
+          "id": 1,
+          "in_press": false,
+          "issn": "1234-5679",
+          "issue_id": 10,
+          "journal_id": "1",
+          "journal_title": "Alpha Journal",
+          "metadata_status": "available",
+          "note": "one",
+          "number": "1",
+          "open_access": true,
+          "publication_year": 2026,
+          "title": "Genome Methods",
+          "volume": "12"
+        },
+        {
+          "abstract": null,
+          "article_id": "1012",
+          "authors": [],
+          "created_at": 12.25,
+          "date": "2026-02-01",
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 2,
+          "in_press": false,
+          "issn": "2049-3630",
+          "issue_id": null,
+          "journal_id": "2",
+          "journal_title": "Beta Journal",
+          "metadata_status": "available",
+          "note": "two",
+          "number": null,
+          "open_access": false,
+          "publication_year": null,
+          "title": "Café 科技金融",
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "1011",
+          "authors": ["Sequence author"],
+          "created_at": 9,
+          "date": "",
+          "db_name": "",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 6,
+          "in_press": true,
+          "issn": "2049-3630",
+          "issue_id": null,
+          "journal_id": "2",
+          "journal_title": "Beta Journal",
+          "metadata_status": "available",
+          "note": "default",
+          "number": null,
+          "open_access": true,
+          "publication_year": null,
+          "title": "Empty date",
+          "volume": null
+        }
+      ],
+      "owner": 1
+    },
+    {
+      "error": null,
+      "operation": "list",
+      "output": [
+        {
+          "abstract": "Genome sequencing precision study",
+          "article_id": "1001",
+          "authors": ["Alice", "Bob"],
+          "created_at": 15,
+          "date": "2026-01-05",
+          "db_name": "metadata",
+          "doi": "10.1000/genome",
+          "eissn": null,
+          "folder_id": 20,
+          "id": 5,
+          "in_press": false,
+          "issn": "1234-5679",
+          "issue_id": 10,
+          "journal_id": "1",
+          "journal_title": "Alpha Journal",
+          "metadata_status": "available",
+          "note": "private",
+          "number": "1",
+          "open_access": true,
+          "publication_year": 2026,
+          "title": "Genome Methods",
+          "volume": "12"
+        }
+      ],
+      "owner": 2
+    },
+    {
+      "error": null,
+      "operation": "list",
+      "output": [],
+      "owner": 99
+    },
+    {
+      "error": null,
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "missing",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1012",
+            "authors": [],
+            "created_at": 12.25,
+            "date": "2026-02-01",
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 2,
+            "in_press": false,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "two",
+            "number": null,
+            "open_access": false,
+            "publication_year": null,
+            "title": "Café 科技金融",
+            "volume": null
+          },
+          {
+            "abstract": "Genome sequencing precision study",
+            "article_id": "1001",
+            "authors": ["Alice", "Bob"],
+            "created_at": 12.25,
+            "date": "2026-01-05",
+            "db_name": "metadata",
+            "doi": "10.1000/genome",
+            "eissn": null,
+            "folder_id": 10,
+            "id": 1,
+            "in_press": false,
+            "issn": "1234-5679",
+            "issue_id": 10,
+            "journal_id": "1",
+            "journal_title": "Alpha Journal",
+            "metadata_status": "available",
+            "note": "one",
+            "number": "1",
+            "open_access": true,
+            "publication_year": 2026,
+            "title": "Genome Methods",
+            "volume": "12"
+          },
+          {
+            "abstract": null,
+            "article_id": "1011",
+            "authors": ["Sequence author"],
+            "created_at": 9,
+            "date": "",
+            "db_name": "",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 6,
+            "in_press": true,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "default",
+            "number": null,
+            "open_access": true,
+            "publication_year": null,
+            "title": "Empty date",
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": false,
+          "limit": 50,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      },
+      "owner": 1
+    },
+    {
+      "error": "Folder not found",
+      "operation": "page",
+      "output": null,
+      "owner": 2
+    },
+    {
+      "error": "Folder not found",
+      "operation": "page",
+      "output": null,
+      "owner": 99
+    },
+    {
+      "error": null,
+      "operation": "snapshot",
+      "output": {
+        "folder_name": "first",
+        "has_more": false,
+        "references": [
+          {
+            "article_id": "999",
+            "db_name": "metadata"
+          },
+          {
+            "article_id": "1012",
+            "db_name": "metadata"
+          },
+          {
+            "article_id": "1001",
+            "db_name": "metadata"
+          },
+          {
+            "article_id": "1011",
+            "db_name": ""
+          }
+        ]
+      },
+      "owner": 1
+    },
+    {
+      "error": "Folder not found",
+      "operation": "snapshot",
+      "output": null,
+      "owner": 2
+    },
+    {
+      "error": "Folder not found",
+      "operation": "snapshot",
+      "output": null,
+      "owner": 99
+    },
+    {
+      "error": "limit must be a positive integer",
+      "folder": 10,
+      "limit": 0,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "error": "limit must be a positive integer",
+      "folder": 10,
+      "limit": -1,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "error": null,
+      "folder": 10,
+      "limit": 1,
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "missing",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": true,
+          "limit": 1,
+          "next_cursor": "MXwxfDEwfDQwMmEwMDAwMDAwMDAwMDB8Mw",
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "error": null,
+      "folder": 10,
+      "limit": 2,
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "missing",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1012",
+            "authors": [],
+            "created_at": 12.25,
+            "date": "2026-02-01",
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 2,
+            "in_press": false,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "two",
+            "number": null,
+            "open_access": false,
+            "publication_year": null,
+            "title": "Café 科技金融",
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": true,
+          "limit": 2,
+          "next_cursor": "MXwxfDEwfDQwMjg4MDAwMDAwMDAwMDB8Mg",
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "error": null,
+      "folder": 10,
+      "limit": 3,
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "missing",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1012",
+            "authors": [],
+            "created_at": 12.25,
+            "date": "2026-02-01",
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 2,
+            "in_press": false,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "two",
+            "number": null,
+            "open_access": false,
+            "publication_year": null,
+            "title": "Café 科技金融",
+            "volume": null
+          },
+          {
+            "abstract": "Genome sequencing precision study",
+            "article_id": "1001",
+            "authors": ["Alice", "Bob"],
+            "created_at": 12.25,
+            "date": "2026-01-05",
+            "db_name": "metadata",
+            "doi": "10.1000/genome",
+            "eissn": null,
+            "folder_id": 10,
+            "id": 1,
+            "in_press": false,
+            "issn": "1234-5679",
+            "issue_id": 10,
+            "journal_id": "1",
+            "journal_title": "Alpha Journal",
+            "metadata_status": "available",
+            "note": "one",
+            "number": "1",
+            "open_access": true,
+            "publication_year": 2026,
+            "title": "Genome Methods",
+            "volume": "12"
+          }
+        ],
+        "page": {
+          "has_more": true,
+          "limit": 3,
+          "next_cursor": "MXwxfDEwfDQwMjg4MDAwMDAwMDAwMDB8MQ",
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "error": null,
+      "folder": 10,
+      "limit": 500,
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "missing",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1012",
+            "authors": [],
+            "created_at": 12.25,
+            "date": "2026-02-01",
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 2,
+            "in_press": false,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "two",
+            "number": null,
+            "open_access": false,
+            "publication_year": null,
+            "title": "Café 科技金融",
+            "volume": null
+          },
+          {
+            "abstract": "Genome sequencing precision study",
+            "article_id": "1001",
+            "authors": ["Alice", "Bob"],
+            "created_at": 12.25,
+            "date": "2026-01-05",
+            "db_name": "metadata",
+            "doi": "10.1000/genome",
+            "eissn": null,
+            "folder_id": 10,
+            "id": 1,
+            "in_press": false,
+            "issn": "1234-5679",
+            "issue_id": 10,
+            "journal_id": "1",
+            "journal_title": "Alpha Journal",
+            "metadata_status": "available",
+            "note": "one",
+            "number": "1",
+            "open_access": true,
+            "publication_year": 2026,
+            "title": "Genome Methods",
+            "volume": "12"
+          },
+          {
+            "abstract": null,
+            "article_id": "1011",
+            "authors": ["Sequence author"],
+            "created_at": 9,
+            "date": "",
+            "db_name": "",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 6,
+            "in_press": true,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "default",
+            "number": null,
+            "open_access": true,
+            "publication_year": null,
+            "title": "Empty date",
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": false,
+          "limit": 500,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "error": "limit must contain at most 500 items",
+      "folder": 10,
+      "limit": 501,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "error": null,
+      "folder": 10,
+      "limit": 0,
+      "operation": "snapshot",
+      "output": {
+        "folder_name": "first",
+        "has_more": true,
+        "references": []
+      }
+    },
+    {
+      "error": null,
+      "folder": 10,
+      "limit": 1,
+      "operation": "snapshot",
+      "output": {
+        "folder_name": "first",
+        "has_more": true,
+        "references": [
+          {
+            "article_id": "999",
+            "db_name": "metadata"
+          }
+        ]
+      }
+    },
+    {
+      "error": null,
+      "folder": 10,
+      "limit": 4,
+      "operation": "snapshot",
+      "output": {
+        "folder_name": "first",
+        "has_more": false,
+        "references": [
+          {
+            "article_id": "999",
+            "db_name": "metadata"
+          },
+          {
+            "article_id": "1012",
+            "db_name": "metadata"
+          },
+          {
+            "article_id": "1001",
+            "db_name": "metadata"
+          },
+          {
+            "article_id": "1011",
+            "db_name": ""
+          }
+        ]
+      }
+    },
+    {
+      "error": null,
+      "folder": 10,
+      "limit": 10,
+      "operation": "snapshot",
+      "output": {
+        "folder_name": "first",
+        "has_more": false,
+        "references": [
+          {
+            "article_id": "999",
+            "db_name": "metadata"
+          },
+          {
+            "article_id": "1012",
+            "db_name": "metadata"
+          },
+          {
+            "article_id": "1001",
+            "db_name": "metadata"
+          },
+          {
+            "article_id": "1011",
+            "db_name": ""
+          }
+        ]
+      }
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "limit": 2,
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "missing",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1012",
+            "authors": [],
+            "created_at": 12.25,
+            "date": "2026-02-01",
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 2,
+            "in_press": false,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "two",
+            "number": null,
+            "open_access": false,
+            "publication_year": null,
+            "title": "Café 科技金融",
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": true,
+          "limit": 2,
+          "next_cursor": "MXwxfDEwfDQwMjg4MDAwMDAwMDAwMDB8Mg",
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "cursor": "",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwxfDEwfDQwMjg4MDAwMDAwMDAwMDB8Mg",
+      "error": null,
+      "limit": 2,
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": "Genome sequencing precision study",
+            "article_id": "1001",
+            "authors": ["Alice", "Bob"],
+            "created_at": 12.25,
+            "date": "2026-01-05",
+            "db_name": "metadata",
+            "doi": "10.1000/genome",
+            "eissn": null,
+            "folder_id": 10,
+            "id": 1,
+            "in_press": false,
+            "issn": "1234-5679",
+            "issue_id": 10,
+            "journal_id": "1",
+            "journal_title": "Alpha Journal",
+            "metadata_status": "available",
+            "note": "one",
+            "number": "1",
+            "open_access": true,
+            "publication_year": 2026,
+            "title": "Genome Methods",
+            "volume": "12"
+          },
+          {
+            "abstract": null,
+            "article_id": "1011",
+            "authors": ["Sequence author"],
+            "created_at": 9,
+            "date": "",
+            "db_name": "",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 6,
+            "in_press": true,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "default",
+            "number": null,
+            "open_access": true,
+            "publication_year": null,
+            "title": "Empty date",
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": false,
+          "limit": 2,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "cursor": "MXwrMXwwMTB8KzQwMjg4MDAwMDAwMDAwMDB8KzI",
+      "error": null,
+      "limit": 2,
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": "Genome sequencing precision study",
+            "article_id": "1001",
+            "authors": ["Alice", "Bob"],
+            "created_at": 12.25,
+            "date": "2026-01-05",
+            "db_name": "metadata",
+            "doi": "10.1000/genome",
+            "eissn": null,
+            "folder_id": 10,
+            "id": 1,
+            "in_press": false,
+            "issn": "1234-5679",
+            "issue_id": 10,
+            "journal_id": "1",
+            "journal_title": "Alpha Journal",
+            "metadata_status": "available",
+            "note": "one",
+            "number": "1",
+            "open_access": true,
+            "publication_year": 2026,
+            "title": "Genome Methods",
+            "volume": "12"
+          },
+          {
+            "abstract": null,
+            "article_id": "1011",
+            "authors": ["Sequence author"],
+            "created_at": 9,
+            "date": "",
+            "db_name": "",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 6,
+            "in_press": true,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "default",
+            "number": null,
+            "open_access": true,
+            "publication_year": null,
+            "title": "Empty date",
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": false,
+          "limit": 2,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "cursor": "MXwxfDEwfDgwMDAwMDAwMDAwMDAwMDB8Mg",
+      "error": null,
+      "limit": 2,
+      "operation": "page",
+      "output": {
+        "items": [],
+        "page": {
+          "has_more": false,
+          "limit": 2,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "cursor": "MXwxfDEwfDB8Mg",
+      "error": null,
+      "limit": 2,
+      "operation": "page",
+      "output": {
+        "items": [],
+        "page": {
+          "has_more": false,
+          "limit": 2,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "cursor": "MXwxfDEwfDdmZjAwMDAwMDAwMDAwMDB8Mg",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwxfDEwfDdmZjgwMDAwMDAwMDAwMDB8Mg",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwxfDEwfGJmZjAwMDAwMDAwMDAwMDB8Mg",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwxfDEwfDB4MHwy",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwxfDEwfDB8MA",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MnwxfDEwfDB8Mg",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwyfDEwfDB8Mg",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwxfDExfDB8Mg",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwxfDEwfDB8Mg=",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwxfDEwfDB8Mg\n",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "MXwxfDEwfDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwfDI",
+      "error": null,
+      "limit": 2,
+      "operation": "page",
+      "output": {
+        "items": [],
+        "page": {
+          "has_more": false,
+          "limit": 2,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "cursor": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "error": "Invalid favorite pagination cursor",
+      "limit": 2,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "cursor": "invalid",
+      "error": "Folder not found",
+      "folder": 10,
+      "operation": "page",
+      "output": null,
+      "owner": 2
+    },
+    {
+      "cursor": "invalid",
+      "error": "folder_id must be a positive integer",
+      "folder": 0,
+      "operation": "page",
+      "output": null
+    },
+    {
+      "ambiguous": true,
+      "error": null,
+      "operation": "list",
+      "output": [
+        {
+          "abstract": "Genome sequencing precision study",
+          "article_id": "1001",
+          "authors": ["Alice", "Bob"],
+          "created_at": 14,
+          "date": "2026-01-05",
+          "db_name": "metadata",
+          "doi": "10.1000/genome",
+          "eissn": null,
+          "folder_id": 11,
+          "id": 4,
+          "in_press": false,
+          "issn": "1234-5679",
+          "issue_id": 10,
+          "journal_id": "1",
+          "journal_title": "Alpha Journal",
+          "metadata_status": "available",
+          "note": "second folder",
+          "number": "1",
+          "open_access": true,
+          "publication_year": 2026,
+          "title": "Genome Methods",
+          "volume": "12"
+        },
+        {
+          "abstract": null,
+          "article_id": "999",
+          "authors": null,
+          "created_at": 13,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 3,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "missing",
+          "note": "gone",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": "Genome sequencing precision study",
+          "article_id": "1001",
+          "authors": ["Alice", "Bob"],
+          "created_at": 12.25,
+          "date": "2026-01-05",
+          "db_name": "metadata",
+          "doi": "10.1000/genome",
+          "eissn": null,
+          "folder_id": 10,
+          "id": 1,
+          "in_press": false,
+          "issn": "1234-5679",
+          "issue_id": 10,
+          "journal_id": "1",
+          "journal_title": "Alpha Journal",
+          "metadata_status": "available",
+          "note": "one",
+          "number": "1",
+          "open_access": true,
+          "publication_year": 2026,
+          "title": "Genome Methods",
+          "volume": "12"
+        },
+        {
+          "abstract": null,
+          "article_id": "1012",
+          "authors": [],
+          "created_at": 12.25,
+          "date": "2026-02-01",
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 2,
+          "in_press": false,
+          "issn": "2049-3630",
+          "issue_id": null,
+          "journal_id": "2",
+          "journal_title": "Beta Journal",
+          "metadata_status": "available",
+          "note": "two",
+          "number": null,
+          "open_access": false,
+          "publication_year": null,
+          "title": "Café 科技金融",
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "1011",
+          "authors": null,
+          "created_at": 9,
+          "date": null,
+          "db_name": "",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 6,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "unavailable",
+          "note": "default",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        }
+      ]
+    },
+    {
+      "error": null,
+      "index_sql": "UPDATE articles SET authors_json='invalid' WHERE article_id=1012;",
+      "operation": "list",
+      "output": [
+        {
+          "abstract": null,
+          "article_id": "1001",
+          "authors": null,
+          "created_at": 14,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 11,
+          "id": 4,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "unavailable",
+          "note": "second folder",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "999",
+          "authors": null,
+          "created_at": 13,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 3,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "unavailable",
+          "note": "gone",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "1001",
+          "authors": null,
+          "created_at": 12.25,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 1,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "unavailable",
+          "note": "one",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "1012",
+          "authors": null,
+          "created_at": 12.25,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 2,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "unavailable",
+          "note": "two",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "1011",
+          "authors": ["Sequence author"],
+          "created_at": 9,
+          "date": "",
+          "db_name": "",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 6,
+          "in_press": true,
+          "issn": "2049-3630",
+          "issue_id": null,
+          "journal_id": "2",
+          "journal_title": "Beta Journal",
+          "metadata_status": "available",
+          "note": "default",
+          "number": null,
+          "open_access": true,
+          "publication_year": null,
+          "title": "Empty date",
+          "volume": null
+        }
+      ]
+    },
+    {
+      "error": null,
+      "index_sql": "DELETE FROM articles WHERE article_id=1012;",
+      "operation": "list",
+      "output": [
+        {
+          "abstract": "Genome sequencing precision study",
+          "article_id": "1001",
+          "authors": ["Alice", "Bob"],
+          "created_at": 14,
+          "date": "2026-01-05",
+          "db_name": "metadata",
+          "doi": "10.1000/genome",
+          "eissn": null,
+          "folder_id": 11,
+          "id": 4,
+          "in_press": false,
+          "issn": "1234-5679",
+          "issue_id": 10,
+          "journal_id": "1",
+          "journal_title": "Alpha Journal",
+          "metadata_status": "available",
+          "note": "second folder",
+          "number": "1",
+          "open_access": true,
+          "publication_year": 2026,
+          "title": "Genome Methods",
+          "volume": "12"
+        },
+        {
+          "abstract": null,
+          "article_id": "999",
+          "authors": null,
+          "created_at": 13,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 3,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "missing",
+          "note": "gone",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": "Genome sequencing precision study",
+          "article_id": "1001",
+          "authors": ["Alice", "Bob"],
+          "created_at": 12.25,
+          "date": "2026-01-05",
+          "db_name": "metadata",
+          "doi": "10.1000/genome",
+          "eissn": null,
+          "folder_id": 10,
+          "id": 1,
+          "in_press": false,
+          "issn": "1234-5679",
+          "issue_id": 10,
+          "journal_id": "1",
+          "journal_title": "Alpha Journal",
+          "metadata_status": "available",
+          "note": "one",
+          "number": "1",
+          "open_access": true,
+          "publication_year": 2026,
+          "title": "Genome Methods",
+          "volume": "12"
+        },
+        {
+          "abstract": null,
+          "article_id": "1012",
+          "authors": null,
+          "created_at": 12.25,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 2,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "missing",
+          "note": "two",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "1011",
+          "authors": ["Sequence author"],
+          "created_at": 9,
+          "date": "",
+          "db_name": "",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 6,
+          "in_press": true,
+          "issn": "2049-3630",
+          "issue_id": null,
+          "journal_id": "2",
+          "journal_title": "Beta Journal",
+          "metadata_status": "available",
+          "note": "default",
+          "number": null,
+          "open_access": true,
+          "publication_year": null,
+          "title": "Empty date",
+          "volume": null
+        }
+      ]
+    },
+    {
+      "error": null,
+      "index_sql": "UPDATE articles SET abstract_text=X'ff' WHERE article_id=1012;",
+      "operation": "list",
+      "output": [
+        {
+          "abstract": null,
+          "article_id": "1001",
+          "authors": null,
+          "created_at": 14,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 11,
+          "id": 4,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "unavailable",
+          "note": "second folder",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "999",
+          "authors": null,
+          "created_at": 13,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 3,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "unavailable",
+          "note": "gone",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "1001",
+          "authors": null,
+          "created_at": 12.25,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 1,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "unavailable",
+          "note": "one",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "1012",
+          "authors": null,
+          "created_at": 12.25,
+          "date": null,
+          "db_name": "metadata",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 2,
+          "in_press": null,
+          "issn": null,
+          "issue_id": null,
+          "journal_id": null,
+          "journal_title": null,
+          "metadata_status": "unavailable",
+          "note": "two",
+          "number": null,
+          "open_access": null,
+          "publication_year": null,
+          "title": null,
+          "volume": null
+        },
+        {
+          "abstract": null,
+          "article_id": "1011",
+          "authors": ["Sequence author"],
+          "created_at": 9,
+          "date": "",
+          "db_name": "",
+          "doi": null,
+          "eissn": null,
+          "folder_id": 10,
+          "id": 6,
+          "in_press": true,
+          "issn": "2049-3630",
+          "issue_id": null,
+          "journal_id": "2",
+          "journal_title": "Beta Journal",
+          "metadata_status": "available",
+          "note": "default",
+          "number": null,
+          "open_access": true,
+          "publication_year": null,
+          "title": "Empty date",
+          "volume": null
+        }
+      ]
+    },
+    {
+      "ambiguous": true,
+      "error": null,
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "missing",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1012",
+            "authors": [],
+            "created_at": 12.25,
+            "date": "2026-02-01",
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 2,
+            "in_press": false,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "two",
+            "number": null,
+            "open_access": false,
+            "publication_year": null,
+            "title": "Café 科技金融",
+            "volume": null
+          },
+          {
+            "abstract": "Genome sequencing precision study",
+            "article_id": "1001",
+            "authors": ["Alice", "Bob"],
+            "created_at": 12.25,
+            "date": "2026-01-05",
+            "db_name": "metadata",
+            "doi": "10.1000/genome",
+            "eissn": null,
+            "folder_id": 10,
+            "id": 1,
+            "in_press": false,
+            "issn": "1234-5679",
+            "issue_id": 10,
+            "journal_id": "1",
+            "journal_title": "Alpha Journal",
+            "metadata_status": "available",
+            "note": "one",
+            "number": "1",
+            "open_access": true,
+            "publication_year": 2026,
+            "title": "Genome Methods",
+            "volume": "12"
+          },
+          {
+            "abstract": null,
+            "article_id": "1011",
+            "authors": null,
+            "created_at": 9,
+            "date": null,
+            "db_name": "",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 6,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "unavailable",
+            "note": "default",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": false,
+          "limit": 50,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "error": null,
+      "index_sql": "UPDATE articles SET authors_json='invalid' WHERE article_id=1012;",
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "unavailable",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1012",
+            "authors": null,
+            "created_at": 12.25,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 2,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "unavailable",
+            "note": "two",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1001",
+            "authors": null,
+            "created_at": 12.25,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 1,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "unavailable",
+            "note": "one",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1011",
+            "authors": ["Sequence author"],
+            "created_at": 9,
+            "date": "",
+            "db_name": "",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 6,
+            "in_press": true,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "default",
+            "number": null,
+            "open_access": true,
+            "publication_year": null,
+            "title": "Empty date",
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": false,
+          "limit": 50,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "error": null,
+      "index_sql": "DELETE FROM articles WHERE article_id=1012;",
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "missing",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1012",
+            "authors": null,
+            "created_at": 12.25,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 2,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "missing",
+            "note": "two",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": "Genome sequencing precision study",
+            "article_id": "1001",
+            "authors": ["Alice", "Bob"],
+            "created_at": 12.25,
+            "date": "2026-01-05",
+            "db_name": "metadata",
+            "doi": "10.1000/genome",
+            "eissn": null,
+            "folder_id": 10,
+            "id": 1,
+            "in_press": false,
+            "issn": "1234-5679",
+            "issue_id": 10,
+            "journal_id": "1",
+            "journal_title": "Alpha Journal",
+            "metadata_status": "available",
+            "note": "one",
+            "number": "1",
+            "open_access": true,
+            "publication_year": 2026,
+            "title": "Genome Methods",
+            "volume": "12"
+          },
+          {
+            "abstract": null,
+            "article_id": "1011",
+            "authors": ["Sequence author"],
+            "created_at": 9,
+            "date": "",
+            "db_name": "",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 6,
+            "in_press": true,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "default",
+            "number": null,
+            "open_access": true,
+            "publication_year": null,
+            "title": "Empty date",
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": false,
+          "limit": 50,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "error": null,
+      "index_sql": "UPDATE articles SET abstract_text=X'ff' WHERE article_id=1012;",
+      "operation": "page",
+      "output": {
+        "items": [
+          {
+            "abstract": null,
+            "article_id": "999",
+            "authors": null,
+            "created_at": 13,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 3,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "unavailable",
+            "note": "gone",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1012",
+            "authors": null,
+            "created_at": 12.25,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 2,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "unavailable",
+            "note": "two",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1001",
+            "authors": null,
+            "created_at": 12.25,
+            "date": null,
+            "db_name": "metadata",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 1,
+            "in_press": null,
+            "issn": null,
+            "issue_id": null,
+            "journal_id": null,
+            "journal_title": null,
+            "metadata_status": "unavailable",
+            "note": "one",
+            "number": null,
+            "open_access": null,
+            "publication_year": null,
+            "title": null,
+            "volume": null
+          },
+          {
+            "abstract": null,
+            "article_id": "1011",
+            "authors": ["Sequence author"],
+            "created_at": 9,
+            "date": "",
+            "db_name": "",
+            "doi": null,
+            "eissn": null,
+            "folder_id": 10,
+            "id": 6,
+            "in_press": true,
+            "issn": "2049-3630",
+            "issue_id": null,
+            "journal_id": "2",
+            "journal_title": "Beta Journal",
+            "metadata_status": "available",
+            "note": "default",
+            "number": null,
+            "open_access": true,
+            "publication_year": null,
+            "title": "Empty date",
+            "volume": null
+          }
+        ],
+        "page": {
+          "has_more": false,
+          "limit": 50,
+          "next_cursor": null,
+          "offset": 0,
+          "total": null
+        }
+      }
+    },
+    {
+      "error": null,
+      "operation": "citation",
+      "output": [
+        {
+          "article_id": "1001",
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "db_name": "metadata",
+          "doi": "10.1000/genome",
+          "journal_title": "Alpha Journal",
+          "title": "Genome Methods"
+        },
+        {
+          "article_id": "999",
+          "authors": [],
+          "date": null,
+          "db_name": "absent",
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        },
+        {
+          "article_id": "1001",
+          "authors": ["Alice", "Bob"],
+          "date": "2026-01-05",
+          "db_name": "metadata",
+          "doi": "10.1000/genome",
+          "journal_title": "Alpha Journal",
+          "title": "Genome Methods"
+        }
+      ],
+      "references": [
+        {
+          "db": "metadata",
+          "id": 1001
+        },
+        {
+          "db": "absent",
+          "id": 999
+        },
+        {
+          "db": "metadata",
+          "id": 1001
+        }
+      ]
+    },
+    {
+      "error": null,
+      "operation": "citation",
+      "output": [
+        {
+          "article_id": "1012",
+          "authors": [],
+          "date": "2026-02-01",
+          "db_name": "",
+          "doi": null,
+          "journal_title": "Beta Journal",
+          "title": "Café 科技金融"
+        }
+      ],
+      "references": [
+        {
+          "db": "",
+          "id": 1012
+        }
+      ]
+    },
+    {
+      "error": null,
+      "operation": "citation",
+      "output": [],
+      "references": []
+    },
+    {
+      "ambiguous": true,
+      "error": null,
+      "operation": "citation",
+      "output": [
+        {
+          "article_id": "1001",
+          "authors": [],
+          "date": null,
+          "db_name": "",
+          "doi": null,
+          "journal_title": null,
+          "title": null
+        }
+      ],
+      "references": [
+        {
+          "db": "",
+          "id": 1001
+        }
+      ]
+    },
+    {
+      "error": "Conversion error from type Text at index: 2, expected value at line 1 column 1",
+      "error_category": true,
+      "index_sql": "UPDATE articles SET authors_json='invalid' WHERE article_id=1012;",
+      "operation": "citation",
+      "output": null,
+      "references": [
+        {
+          "db": "metadata",
+          "id": 1001
+        },
+        {
+          "db": "metadata",
+          "id": 1012
+        }
+      ]
+    },
+    {
+      "error": null,
+      "index_sql": "UPDATE articles SET abstract_text=X'ff' WHERE article_id=1012;",
+      "operation": "citation",
+      "output": [
+        {
+          "article_id": "1012",
+          "authors": [],
+          "date": "2026-02-01",
+          "db_name": "metadata",
+          "doi": null,
+          "journal_title": "Beta Journal",
+          "title": "Café 科技金融"
+        }
+      ],
+      "references": [
+        {
+          "db": "metadata",
+          "id": 1012
+        }
+      ]
+    },
+    {
+      "db": "metadata",
+      "error": null,
+      "id": 1001,
+      "operation": "check",
+      "output": [
+        {
+          "folder_id": 10,
+          "folder_name": "first"
+        },
+        {
+          "folder_id": 11,
+          "folder_name": "second"
+        }
+      ]
+    },
+    {
+      "db": "metadata",
+      "error": null,
+      "id": 999,
+      "operation": "check",
+      "output": [
+        {
+          "folder_id": 10,
+          "folder_name": "first"
+        }
+      ]
+    },
+    {
+      "db": "metadata",
+      "error": "article_id must be a positive integer",
+      "id": 0,
+      "operation": "check",
+      "output": null
+    },
+    {
+      "db": "metadata",
+      "error": "article_id must be a positive integer",
+      "id": -1,
+      "operation": "check",
+      "output": null
+    },
+    {
+      "db": "metadata",
+      "error": null,
+      "ids": [],
+      "operation": "batch",
+      "output": []
+    },
+    {
+      "db": "metadata",
+      "error": null,
+      "ids": [1001, 1001, -1, 0, 1012, 999],
+      "operation": "batch",
+      "output": [
+        {
+          "article_id": "1001",
+          "folders": [
+            {
+              "folder_id": 10,
+              "folder_name": "first"
+            },
+            {
+              "folder_id": 11,
+              "folder_name": "second"
+            }
+          ]
+        },
+        {
+          "article_id": "1012",
+          "folders": [
+            {
+              "folder_id": 10,
+              "folder_name": "first"
+            }
+          ]
+        },
+        {
+          "article_id": "999",
+          "folders": [
+            {
+              "folder_id": 10,
+              "folder_name": "first"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "db": "metadata",
+      "error": "article_ids must contain at most 500 items",
+      "ids": [
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001,
+        1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001
+      ],
+      "operation": "batch",
+      "output": null
+    }
+  ]
+}
