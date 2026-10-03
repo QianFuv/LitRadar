@@ -1,0 +1,1482 @@
+{
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "serdeJson": "1.0.150",
+  "rmcp": "2.1.0",
+  "reader": "from_reader",
+  "sources": [
+    {
+      "path": "tests/migration/primitives/json-oracle.rs",
+      "sha256": "711fc8b6a9263c2f46d4a9d08927531bef4745bdccae65f9e8e31d1a87c75fb4"
+    },
+    {
+      "path": "target/debug/deps/libserde_json-4b04879bb0b79b6d.rlib",
+      "sha256": "e4ef37031e60d61e1811cc3726bf3789b557804d6f5d17a894c14dd00f6ee752"
+    },
+    {
+      "path": "target/debug/deps/librmcp-066ed2a76f20a06d.rlib",
+      "sha256": "eaf4b8863749498ffb169b0be8db45a0e5176690aa2c1e10c70e630e54cd8605"
+    }
+  ],
+  "cases": [
+    {
+      "envelope": "EOF while parsing a value at line 1 column 0",
+      "hex": "",
+      "syntax": "EOF while parsing a value at line 1 column 0"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 1",
+      "hex": "20",
+      "syntax": "EOF while parsing a value at line 1 column 1"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 2",
+      "hex": "200d",
+      "syntax": "EOF while parsing a value at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 2 column 0",
+      "hex": "200d0a",
+      "syntax": "EOF while parsing a value at line 2 column 0"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 2 column 1",
+      "hex": "200d0a09",
+      "syntax": "EOF while parsing a value at line 2 column 1"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 1",
+      "hex": "7b",
+      "syntax": "EOF while parsing an object at line 1 column 1"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "7b7d",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "7b7d78",
+      "syntax": "trailing characters at line 1 column 3"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 1",
+      "hex": "5b",
+      "syntax": "EOF while parsing a list at line 1 column 1"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "5b5d",
+      "syntax": null
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 2",
+      "hex": "7b22",
+      "syntax": "EOF while parsing a string at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 3",
+      "hex": "7b2261",
+      "syntax": "EOF while parsing a string at line 1 column 3"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 4",
+      "hex": "7b226122",
+      "syntax": "EOF while parsing an object at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 5",
+      "hex": "7b2261223a",
+      "syntax": "EOF while parsing a value at line 1 column 5"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 6",
+      "hex": "7b2261223a31",
+      "syntax": "EOF while parsing an object at line 1 column 6"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "7b2261223a317d",
+      "syntax": null
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 2",
+      "hex": "5b74",
+      "syntax": "EOF while parsing a value at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 3",
+      "hex": "5b7472",
+      "syntax": "EOF while parsing a value at line 1 column 3"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 4",
+      "hex": "5b747275",
+      "syntax": "EOF while parsing a value at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 5",
+      "hex": "5b74727565",
+      "syntax": "EOF while parsing a list at line 1 column 5"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 6",
+      "hex": "5b747275652c",
+      "syntax": "EOF while parsing a value at line 1 column 6"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 7",
+      "hex": "5b747275652c66",
+      "syntax": "EOF while parsing a value at line 1 column 7"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 8",
+      "hex": "5b747275652c6661",
+      "syntax": "EOF while parsing a value at line 1 column 8"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 9",
+      "hex": "5b747275652c66616c",
+      "syntax": "EOF while parsing a value at line 1 column 9"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 10",
+      "hex": "5b747275652c66616c73",
+      "syntax": "EOF while parsing a value at line 1 column 10"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 11",
+      "hex": "5b747275652c66616c7365",
+      "syntax": "EOF while parsing a list at line 1 column 11"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 12",
+      "hex": "5b747275652c66616c73652c",
+      "syntax": "EOF while parsing a value at line 1 column 12"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 13",
+      "hex": "5b747275652c66616c73652c6e",
+      "syntax": "EOF while parsing a value at line 1 column 13"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 14",
+      "hex": "5b747275652c66616c73652c6e75",
+      "syntax": "EOF while parsing a value at line 1 column 14"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 15",
+      "hex": "5b747275652c66616c73652c6e756c",
+      "syntax": "EOF while parsing a value at line 1 column 15"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 16",
+      "hex": "5b747275652c66616c73652c6e756c6c",
+      "syntax": "EOF while parsing a list at line 1 column 16"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 17",
+      "hex": "5b747275652c66616c73652c6e756c6c2c",
+      "syntax": "EOF while parsing a value at line 1 column 17"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 18",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22",
+      "syntax": "EOF while parsing a string at line 1 column 18"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 19",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4",
+      "syntax": "EOF while parsing a string at line 1 column 19"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 20",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8",
+      "syntax": "EOF while parsing a string at line 1 column 20"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 21",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ad",
+      "syntax": "EOF while parsing a string at line 1 column 21"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 22",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade6",
+      "syntax": "EOF while parsing a string at line 1 column 22"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 23",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade696",
+      "syntax": "EOF while parsing a string at line 1 column 23"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 24",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687",
+      "syntax": "EOF while parsing a string at line 1 column 24"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 25",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade6968722",
+      "syntax": "EOF while parsing a list at line 1 column 25"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 26",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687222c",
+      "syntax": "EOF while parsing a value at line 1 column 26"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 27",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687222c2d",
+      "syntax": "EOF while parsing a value at line 1 column 27"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 28",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687222c2d31",
+      "syntax": "EOF while parsing a list at line 1 column 28"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 29",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687222c2d312e",
+      "syntax": "EOF while parsing a value at line 1 column 29"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 30",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687222c2d312e32",
+      "syntax": "EOF while parsing a list at line 1 column 30"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 31",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687222c2d312e3265",
+      "syntax": "EOF while parsing a value at line 1 column 31"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 32",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687222c2d312e32652b",
+      "syntax": "EOF while parsing a value at line 1 column 32"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 33",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687222c2d312e32652b33",
+      "syntax": "EOF while parsing a list at line 1 column 33"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "5b747275652c66616c73652c6e756c6c2c22e4b8ade69687222c2d312e32652b335d",
+      "syntax": null
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 3",
+      "hex": "7b226a",
+      "syntax": "EOF while parsing a string at line 1 column 3"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 4",
+      "hex": "7b226a73",
+      "syntax": "EOF while parsing a string at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 5",
+      "hex": "7b226a736f",
+      "syntax": "EOF while parsing a string at line 1 column 5"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 6",
+      "hex": "7b226a736f6e",
+      "syntax": "EOF while parsing a string at line 1 column 6"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 7",
+      "hex": "7b226a736f6e72",
+      "syntax": "EOF while parsing a string at line 1 column 7"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 8",
+      "hex": "7b226a736f6e7270",
+      "syntax": "EOF while parsing a string at line 1 column 8"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 9",
+      "hex": "7b226a736f6e727063",
+      "syntax": "EOF while parsing a string at line 1 column 9"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 10",
+      "hex": "7b226a736f6e72706322",
+      "syntax": "EOF while parsing an object at line 1 column 10"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 11",
+      "hex": "7b226a736f6e727063223a",
+      "syntax": "EOF while parsing a value at line 1 column 11"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 12",
+      "hex": "7b226a736f6e727063223a22",
+      "syntax": "EOF while parsing a string at line 1 column 12"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 13",
+      "hex": "7b226a736f6e727063223a2232",
+      "syntax": "EOF while parsing a string at line 1 column 13"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 14",
+      "hex": "7b226a736f6e727063223a22322e",
+      "syntax": "EOF while parsing a string at line 1 column 14"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 15",
+      "hex": "7b226a736f6e727063223a22322e30",
+      "syntax": "EOF while parsing a string at line 1 column 15"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 16",
+      "hex": "7b226a736f6e727063223a22322e3022",
+      "syntax": "EOF while parsing an object at line 1 column 16"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 17",
+      "hex": "7b226a736f6e727063223a22322e30222c",
+      "syntax": "EOF while parsing a value at line 1 column 17"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 18",
+      "hex": "7b226a736f6e727063223a22322e30222c22",
+      "syntax": "EOF while parsing a string at line 1 column 18"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 19",
+      "hex": "7b226a736f6e727063223a22322e30222c2269",
+      "syntax": "EOF while parsing a string at line 1 column 19"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 20",
+      "hex": "7b226a736f6e727063223a22322e30222c226964",
+      "syntax": "EOF while parsing a string at line 1 column 20"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 21",
+      "hex": "7b226a736f6e727063223a22322e30222c22696422",
+      "syntax": "EOF while parsing an object at line 1 column 21"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 22",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a",
+      "syntax": "EOF while parsing a value at line 1 column 22"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 23",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a31",
+      "syntax": "EOF while parsing an object at line 1 column 23"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 24",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c",
+      "syntax": "EOF while parsing a value at line 1 column 24"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 25",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c22",
+      "syntax": "EOF while parsing a string at line 1 column 25"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 26",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d",
+      "syntax": "EOF while parsing a string at line 1 column 26"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 27",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d65",
+      "syntax": "EOF while parsing a string at line 1 column 27"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 28",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574",
+      "syntax": "EOF while parsing a string at line 1 column 28"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 29",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d657468",
+      "syntax": "EOF while parsing a string at line 1 column 29"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 30",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f",
+      "syntax": "EOF while parsing a string at line 1 column 30"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 31",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64",
+      "syntax": "EOF while parsing a string at line 1 column 31"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 32",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f6422",
+      "syntax": "EOF while parsing an object at line 1 column 32"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 33",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a",
+      "syntax": "EOF while parsing a value at line 1 column 33"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 34",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a22",
+      "syntax": "EOF while parsing a string at line 1 column 34"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 35",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a2270",
+      "syntax": "EOF while parsing a string at line 1 column 35"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 36",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a227069",
+      "syntax": "EOF while parsing a string at line 1 column 36"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 37",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a2270696e",
+      "syntax": "EOF while parsing a string at line 1 column 37"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 38",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a2270696e67",
+      "syntax": "EOF while parsing a string at line 1 column 38"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 39",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a2270696e6722",
+      "syntax": "EOF while parsing an object at line 1 column 39"
+    },
+    {
+      "envelope": null,
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a312c226d6574686f64223a2270696e67227d",
+      "syntax": null
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 23",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a39",
+      "syntax": "EOF while parsing an object at line 1 column 23"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 24",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a3932",
+      "syntax": "EOF while parsing an object at line 1 column 24"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 25",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232",
+      "syntax": "EOF while parsing an object at line 1 column 25"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 26",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a39323233",
+      "syntax": "EOF while parsing an object at line 1 column 26"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 27",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a3932323333",
+      "syntax": "EOF while parsing an object at line 1 column 27"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 28",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337",
+      "syntax": "EOF while parsing an object at line 1 column 28"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 29",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a39323233333732",
+      "syntax": "EOF while parsing an object at line 1 column 29"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 30",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a3932323333373230",
+      "syntax": "EOF while parsing an object at line 1 column 30"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 31",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033",
+      "syntax": "EOF while parsing an object at line 1 column 31"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 32",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a39323233333732303336",
+      "syntax": "EOF while parsing an object at line 1 column 32"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 33",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a3932323333373230333638",
+      "syntax": "EOF while parsing an object at line 1 column 33"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 34",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835",
+      "syntax": "EOF while parsing an object at line 1 column 34"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 35",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a39323233333732303336383534",
+      "syntax": "EOF while parsing an object at line 1 column 35"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 36",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a3932323333373230333638353437",
+      "syntax": "EOF while parsing an object at line 1 column 36"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 37",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737",
+      "syntax": "EOF while parsing an object at line 1 column 37"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 38",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a39323233333732303336383534373735",
+      "syntax": "EOF while parsing an object at line 1 column 38"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 39",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a3932323333373230333638353437373538",
+      "syntax": "EOF while parsing an object at line 1 column 39"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 40",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830",
+      "syntax": "EOF while parsing an object at line 1 column 40"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 41",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a39323233333732303336383534373735383037",
+      "syntax": "EOF while parsing an object at line 1 column 41"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 42",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c",
+      "syntax": "EOF while parsing a value at line 1 column 42"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 43",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c22",
+      "syntax": "EOF while parsing a string at line 1 column 43"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 44",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d",
+      "syntax": "EOF while parsing a string at line 1 column 44"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 45",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d65",
+      "syntax": "EOF while parsing a string at line 1 column 45"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 46",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574",
+      "syntax": "EOF while parsing a string at line 1 column 46"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 47",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d657468",
+      "syntax": "EOF while parsing a string at line 1 column 47"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 48",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f",
+      "syntax": "EOF while parsing a string at line 1 column 48"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 49",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64",
+      "syntax": "EOF while parsing a string at line 1 column 49"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 50",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f6422",
+      "syntax": "EOF while parsing an object at line 1 column 50"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 51",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64223a",
+      "syntax": "EOF while parsing a value at line 1 column 51"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 52",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64223a22",
+      "syntax": "EOF while parsing a string at line 1 column 52"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 53",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64223a2270",
+      "syntax": "EOF while parsing a string at line 1 column 53"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 54",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64223a227069",
+      "syntax": "EOF while parsing a string at line 1 column 54"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 55",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64223a2270696e",
+      "syntax": "EOF while parsing a string at line 1 column 55"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 56",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64223a2270696e67",
+      "syntax": "EOF while parsing a string at line 1 column 56"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 57",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64223a2270696e6722",
+      "syntax": "EOF while parsing an object at line 1 column 57"
+    },
+    {
+      "envelope": null,
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64223a2270696e67227d",
+      "syntax": null
+    },
+    {
+      "envelope": "trailing characters at line 1 column 59",
+      "hex": "7b226a736f6e727063223a22322e30222c226964223a393232333337323033363835343737353830372c226d6574686f64223a2270696e67227d78",
+      "syntax": "trailing characters at line 1 column 59"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "31",
+      "syntax": null
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 2",
+      "hex": "312e",
+      "syntax": "EOF while parsing a value at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 2",
+      "hex": "3165",
+      "syntax": "EOF while parsing a value at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 3",
+      "hex": "31652b",
+      "syntax": "EOF while parsing a value at line 1 column 3"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 3",
+      "hex": "31652d",
+      "syntax": "EOF while parsing a value at line 1 column 3"
+    },
+    {
+      "envelope": "invalid number at line 1 column 3",
+      "hex": "312e65",
+      "syntax": "invalid number at line 1 column 3"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "30",
+      "syntax": null
+    },
+    {
+      "envelope": "invalid number at line 1 column 2",
+      "hex": "3031",
+      "syntax": "invalid number at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 1",
+      "hex": "2d",
+      "syntax": "EOF while parsing a value at line 1 column 1"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d30",
+      "syntax": null
+    },
+    {
+      "envelope": "invalid number at line 1 column 3",
+      "hex": "2d3031",
+      "syntax": "invalid number at line 1 column 3"
+    },
+    {
+      "envelope": "invalid number at line 1 column 2",
+      "hex": "2d78",
+      "syntax": "invalid number at line 1 column 2"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "316539",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "31653939",
+      "syntax": null
+    },
+    {
+      "envelope": "number out of range at line 1 column 5",
+      "hex": "3165393939",
+      "syntax": "number out of range at line 1 column 5"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "316532",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "31653231",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "3165323134",
+      "syntax": null
+    },
+    {
+      "envelope": "number out of range at line 1 column 6",
+      "hex": "316532313437",
+      "syntax": "number out of range at line 1 column 6"
+    },
+    {
+      "envelope": "number out of range at line 1 column 7",
+      "hex": "31653231343734",
+      "syntax": "number out of range at line 1 column 7"
+    },
+    {
+      "envelope": "number out of range at line 1 column 8",
+      "hex": "3165323134373438",
+      "syntax": "number out of range at line 1 column 8"
+    },
+    {
+      "envelope": "number out of range at line 1 column 9",
+      "hex": "316532313437343833",
+      "syntax": "number out of range at line 1 column 9"
+    },
+    {
+      "envelope": "number out of range at line 1 column 10",
+      "hex": "31653231343734383336",
+      "syntax": "number out of range at line 1 column 10"
+    },
+    {
+      "envelope": "number out of range at line 1 column 11",
+      "hex": "3165323134373438333634",
+      "syntax": "number out of range at line 1 column 11"
+    },
+    {
+      "envelope": "number out of range at line 1 column 12",
+      "hex": "316532313437343833363438",
+      "syntax": "number out of range at line 1 column 12"
+    },
+    {
+      "envelope": "number out of range at line 1 column 12",
+      "hex": "31653231343734383336343830",
+      "syntax": "number out of range at line 1 column 12"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 2",
+      "hex": "3065",
+      "syntax": "EOF while parsing a value at line 1 column 2"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "306532",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "30653231",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "3065323134",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "306532313437",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "30653231343734",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "3065323134373438",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "306532313437343833",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "30653231343734383336",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "3065323134373438333634",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "306532313437343833363438",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "30653231343734383336343830",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31",
+      "syntax": null
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 3",
+      "hex": "2d3165",
+      "syntax": "EOF while parsing a value at line 1 column 3"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 4",
+      "hex": "2d31652d",
+      "syntax": "EOF while parsing a value at line 1 column 4"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d32",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d3231",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d323134",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d32313437",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d3231343734",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d323134373438",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d32313437343833",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d3231343734383336",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d323134373438333634",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d32313437343833363438",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "2d31652d3231343734383336343830",
+      "syntax": null
+    },
+    {
+      "envelope": "number out of range at line 1 column 6",
+      "hex": "316539393920",
+      "syntax": "number out of range at line 1 column 6"
+    },
+    {
+      "envelope": "number out of range at line 1 column 6",
+      "hex": "31653939395d",
+      "syntax": "number out of range at line 1 column 6"
+    },
+    {
+      "envelope": "invalid number at line 1 column 4",
+      "hex": "31652b58",
+      "syntax": "invalid number at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 1",
+      "hex": "22",
+      "syntax": "EOF while parsing a string at line 1 column 1"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 2",
+      "hex": "225c",
+      "syntax": "EOF while parsing a string at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 3",
+      "hex": "225c75",
+      "syntax": "EOF while parsing a string at line 1 column 3"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 4",
+      "hex": "225c7558",
+      "syntax": "EOF while parsing a string at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 5",
+      "hex": "225c755830",
+      "syntax": "EOF while parsing a string at line 1 column 5"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 6",
+      "hex": "225c75583030",
+      "syntax": "EOF while parsing a string at line 1 column 6"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 7",
+      "hex": "225c7558303030",
+      "syntax": "invalid escape at line 1 column 7"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 7",
+      "hex": "225c755830303022",
+      "syntax": "invalid escape at line 1 column 7"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 4",
+      "hex": "225c7564",
+      "syntax": "EOF while parsing a string at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 5",
+      "hex": "225c756438",
+      "syntax": "EOF while parsing a string at line 1 column 5"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 6",
+      "hex": "225c75643830",
+      "syntax": "EOF while parsing a string at line 1 column 6"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 7",
+      "hex": "225c7564383030",
+      "syntax": "EOF while parsing a string at line 1 column 7"
+    },
+    {
+      "envelope": "unexpected end of hex escape at line 1 column 8",
+      "hex": "225c756438303022",
+      "syntax": "unexpected end of hex escape at line 1 column 8"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 5",
+      "hex": "225c756463",
+      "syntax": "EOF while parsing a string at line 1 column 5"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 6",
+      "hex": "225c75646330",
+      "syntax": "EOF while parsing a string at line 1 column 6"
+    },
+    {
+      "envelope": "lone leading surrogate in hex escape at line 1 column 7",
+      "hex": "225c7564633030",
+      "syntax": "lone leading surrogate in hex escape at line 1 column 7"
+    },
+    {
+      "envelope": "lone leading surrogate in hex escape at line 1 column 7",
+      "hex": "225c756463303022",
+      "syntax": "lone leading surrogate in hex escape at line 1 column 7"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 8",
+      "hex": "225c75643830305c",
+      "syntax": "EOF while parsing a string at line 1 column 8"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 9",
+      "hex": "225c75643830305c75",
+      "syntax": "EOF while parsing a string at line 1 column 9"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 10",
+      "hex": "225c75643830305c7530",
+      "syntax": "EOF while parsing a string at line 1 column 10"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 11",
+      "hex": "225c75643830305c753030",
+      "syntax": "EOF while parsing a string at line 1 column 11"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 12",
+      "hex": "225c75643830305c75303034",
+      "syntax": "EOF while parsing a string at line 1 column 12"
+    },
+    {
+      "envelope": "lone leading surrogate in hex escape at line 1 column 13",
+      "hex": "225c75643830305c7530303431",
+      "syntax": "lone leading surrogate in hex escape at line 1 column 13"
+    },
+    {
+      "envelope": "lone leading surrogate in hex escape at line 1 column 13",
+      "hex": "225c75643830305c753030343122",
+      "syntax": "lone leading surrogate in hex escape at line 1 column 13"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 10",
+      "hex": "225c75643830305c7564",
+      "syntax": "EOF while parsing a string at line 1 column 10"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 11",
+      "hex": "225c75643830305c756463",
+      "syntax": "EOF while parsing a string at line 1 column 11"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 12",
+      "hex": "225c75643830305c75646330",
+      "syntax": "EOF while parsing a string at line 1 column 12"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 13",
+      "hex": "225c75643830305c7564633030",
+      "syntax": "EOF while parsing a string at line 1 column 13"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "225c75643830305c756463303022",
+      "syntax": null
+    },
+    {
+      "envelope": "unexpected end of hex escape at line 1 column 9",
+      "hex": "225c75643830305c78",
+      "syntax": "unexpected end of hex escape at line 1 column 9"
+    },
+    {
+      "envelope": "unexpected end of hex escape at line 1 column 9",
+      "hex": "225c75643830305c7822",
+      "syntax": "unexpected end of hex escape at line 1 column 9"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 4",
+      "hex": "225c7530",
+      "syntax": "EOF while parsing a string at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 5",
+      "hex": "225c753030",
+      "syntax": "EOF while parsing a string at line 1 column 5"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 6",
+      "hex": "225c75303031",
+      "syntax": "EOF while parsing a string at line 1 column 6"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 7",
+      "hex": "225c7530303167",
+      "syntax": "invalid escape at line 1 column 7"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 7",
+      "hex": "225c753030316722",
+      "syntax": "invalid escape at line 1 column 7"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 5",
+      "hex": "225c755859",
+      "syntax": "EOF while parsing a string at line 1 column 5"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 6",
+      "hex": "225c7558595a",
+      "syntax": "EOF while parsing a string at line 1 column 6"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 7",
+      "hex": "225c7558595a5a",
+      "syntax": "invalid escape at line 1 column 7"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 7",
+      "hex": "225c7558595a5a22",
+      "syntax": "invalid escape at line 1 column 7"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 2",
+      "hex": "2261",
+      "syntax": "EOF while parsing a string at line 1 column 2"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0",
+      "hex": "22610a",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0",
+      "hex": "22610a62",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0",
+      "hex": "22610a6222",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 1 column 3",
+      "hex": "22610d",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 1 column 3"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 1 column 3",
+      "hex": "22610d62",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 1 column 3"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 1 column 3",
+      "hex": "22610d6222",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 1 column 3"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 3",
+      "hex": "22615c",
+      "syntax": "EOF while parsing a string at line 1 column 3"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 4",
+      "hex": "22615c78",
+      "syntax": "invalid escape at line 1 column 4"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 4",
+      "hex": "22615c7822",
+      "syntax": "invalid escape at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 7",
+      "hex": "7b2261223a312c",
+      "syntax": "EOF while parsing a value at line 1 column 7"
+    },
+    {
+      "envelope": "trailing comma at line 1 column 8",
+      "hex": "7b2261223a312c7d",
+      "syntax": "trailing comma at line 1 column 8"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 2",
+      "hex": "5b31",
+      "syntax": "EOF while parsing a list at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 3",
+      "hex": "5b312c",
+      "syntax": "EOF while parsing a value at line 1 column 3"
+    },
+    {
+      "envelope": "trailing comma at line 1 column 4",
+      "hex": "5b312c5d",
+      "syntax": "trailing comma at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing an object at line 1 column 5",
+      "hex": "7b22612220",
+      "syntax": "EOF while parsing an object at line 1 column 5"
+    },
+    {
+      "envelope": "expected `:` at line 1 column 6",
+      "hex": "7b2261222031",
+      "syntax": "expected `:` at line 1 column 6"
+    },
+    {
+      "envelope": "expected `:` at line 1 column 6",
+      "hex": "7b22612220317d",
+      "syntax": "expected `:` at line 1 column 6"
+    },
+    {
+      "envelope": "expected value at line 1 column 6",
+      "hex": "7b2261223a7d",
+      "syntax": "expected value at line 1 column 6"
+    },
+    {
+      "envelope": "EOF while parsing a list at line 1 column 3",
+      "hex": "5b3120",
+      "syntax": "EOF while parsing a list at line 1 column 3"
+    },
+    {
+      "envelope": "expected `,` or `]` at line 1 column 4",
+      "hex": "5b312032",
+      "syntax": "expected `,` or `]` at line 1 column 4"
+    },
+    {
+      "envelope": "expected `,` or `]` at line 1 column 4",
+      "hex": "5b3120325d",
+      "syntax": "expected `,` or `]` at line 1 column 4"
+    },
+    {
+      "envelope": "key must be a string at line 1 column 2",
+      "hex": "7b31",
+      "syntax": "key must be a string at line 1 column 2"
+    },
+    {
+      "envelope": "key must be a string at line 1 column 2",
+      "hex": "7b313a",
+      "syntax": "key must be a string at line 1 column 2"
+    },
+    {
+      "envelope": "key must be a string at line 1 column 2",
+      "hex": "7b313a32",
+      "syntax": "key must be a string at line 1 column 2"
+    },
+    {
+      "envelope": "key must be a string at line 1 column 2",
+      "hex": "7b313a327d",
+      "syntax": "key must be a string at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 1",
+      "hex": "74",
+      "syntax": "EOF while parsing a value at line 1 column 1"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 2",
+      "hex": "7472",
+      "syntax": "EOF while parsing a value at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 3",
+      "hex": "747275",
+      "syntax": "EOF while parsing a value at line 1 column 3"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "74727565",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "7472756558",
+      "syntax": "trailing characters at line 1 column 5"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 1",
+      "hex": "66",
+      "syntax": "EOF while parsing a value at line 1 column 1"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 2",
+      "hex": "6661",
+      "syntax": "EOF while parsing a value at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 3",
+      "hex": "66616c",
+      "syntax": "EOF while parsing a value at line 1 column 3"
+    },
+    {
+      "envelope": "expected ident at line 1 column 4",
+      "hex": "66616c53",
+      "syntax": "expected ident at line 1 column 4"
+    },
+    {
+      "envelope": "expected ident at line 1 column 4",
+      "hex": "66616c5365",
+      "syntax": "expected ident at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 1",
+      "hex": "6e",
+      "syntax": "EOF while parsing a value at line 1 column 1"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 2",
+      "hex": "6e75",
+      "syntax": "EOF while parsing a value at line 1 column 2"
+    },
+    {
+      "envelope": "EOF while parsing a value at line 1 column 3",
+      "hex": "6e756c",
+      "syntax": "EOF while parsing a value at line 1 column 3"
+    },
+    {
+      "envelope": "expected ident at line 1 column 4",
+      "hex": "6e756c4c",
+      "syntax": "expected ident at line 1 column 4"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 2",
+      "hex": "22ff",
+      "syntax": "EOF while parsing a string at line 1 column 2"
+    },
+    {
+      "envelope": "invalid unicode code point at line 1 column 3",
+      "hex": "22ff22",
+      "syntax": "invalid unicode code point at line 1 column 3"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0",
+      "hex": "22ff0a22",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 4",
+      "hex": "22ff5c7822",
+      "syntax": "invalid escape at line 1 column 4"
+    },
+    {
+      "envelope": "invalid unicode code point at line 1 column 9",
+      "hex": "22ff5c753030343122",
+      "syntax": "invalid unicode code point at line 1 column 9"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 3",
+      "hex": "22c080",
+      "syntax": "EOF while parsing a string at line 1 column 3"
+    },
+    {
+      "envelope": "invalid unicode code point at line 1 column 4",
+      "hex": "22c08022",
+      "syntax": "invalid unicode code point at line 1 column 4"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0",
+      "hex": "22c0800a22",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 5",
+      "hex": "22c0805c7822",
+      "syntax": "invalid escape at line 1 column 5"
+    },
+    {
+      "envelope": "invalid unicode code point at line 1 column 10",
+      "hex": "22c0805c753030343122",
+      "syntax": "invalid unicode code point at line 1 column 10"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 4",
+      "hex": "22eda080",
+      "syntax": "EOF while parsing a string at line 1 column 4"
+    },
+    {
+      "envelope": "invalid unicode code point at line 1 column 5",
+      "hex": "22eda08022",
+      "syntax": "invalid unicode code point at line 1 column 5"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0",
+      "hex": "22eda0800a22",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 6",
+      "hex": "22eda0805c7822",
+      "syntax": "invalid escape at line 1 column 6"
+    },
+    {
+      "envelope": "invalid unicode code point at line 1 column 11",
+      "hex": "22eda0805c753030343122",
+      "syntax": "invalid unicode code point at line 1 column 11"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 5",
+      "hex": "22f4908080",
+      "syntax": "EOF while parsing a string at line 1 column 5"
+    },
+    {
+      "envelope": "invalid unicode code point at line 1 column 6",
+      "hex": "22f490808022",
+      "syntax": "invalid unicode code point at line 1 column 6"
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0",
+      "hex": "22f49080800a22",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 7",
+      "hex": "22f49080805c7822",
+      "syntax": "invalid escape at line 1 column 7"
+    },
+    {
+      "envelope": "invalid unicode code point at line 1 column 12",
+      "hex": "22f49080805c753030343122",
+      "syntax": "invalid unicode code point at line 1 column 12"
+    },
+    {
+      "envelope": "EOF while parsing a string at line 1 column 4",
+      "hex": "22efbfbd",
+      "syntax": "EOF while parsing a string at line 1 column 4"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "22efbfbd22",
+      "syntax": null
+    },
+    {
+      "envelope": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0",
+      "hex": "22efbfbd0a22",
+      "syntax": "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0"
+    },
+    {
+      "envelope": "invalid escape at line 1 column 6",
+      "hex": "22efbfbd5c7822",
+      "syntax": "invalid escape at line 1 column 6"
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "22efbfbd5c753030343122",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b305d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a307d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b305d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d",
+      "syntax": null
+    },
+    {
+      "envelope": "data did not match any variant of untagged enum JsonRpcMessage",
+      "hex": "7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a307d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d",
+      "syntax": null
+    },
+    {
+      "envelope": "recursion limit exceeded at line 1 column 128",
+      "hex": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b305d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d",
+      "syntax": "recursion limit exceeded at line 1 column 128"
+    },
+    {
+      "envelope": "recursion limit exceeded at line 1 column 636",
+      "hex": "7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a307d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d",
+      "syntax": "recursion limit exceeded at line 1 column 636"
+    },
+    {
+      "envelope": "recursion limit exceeded at line 1 column 128",
+      "hex": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b305d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d",
+      "syntax": "recursion limit exceeded at line 1 column 128"
+    },
+    {
+      "envelope": "recursion limit exceeded at line 1 column 636",
+      "hex": "7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a7b2261223a307d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d",
+      "syntax": "recursion limit exceeded at line 1 column 636"
+    }
+  ]
+}

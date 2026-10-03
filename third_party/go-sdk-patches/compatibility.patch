@@ -1,0 +1,1723 @@
+diff --git a/mcp/litradar_compat.go b/mcp/litradar_compat.go
+new file mode 100644
+--- /dev/null
++++ b/mcp/litradar_compat.go
+@@ -0,0 +1,735 @@
++// Copyright 2026 LitRadar contributors. All rights reserved.
++// Use of this source code is governed by the MIT-style license in the LICENSE file.
++
++package mcp
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"strconv"
++	"strings"
++	"time"
++	"unicode/utf8"
++
++	"github.com/modelcontextprotocol/go-sdk/internal/jsonrpc2"
++	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
++)
++
++type litradarJsonScanner struct {
++	body     []byte
++	position int
++}
++type litradarJsonError struct{ detail string }
++
++func (err *litradarJsonError) Error() string { return err.detail }
++
++func (scanner *litradarJsonScanner) failure(message string, lookahead bool) error {
++	position := scanner.position
++	if lookahead && position < len(scanner.body) {
++		position++
++	}
++	prefix := scanner.body[:position]
++	line := bytes.Count(prefix, []byte{'\n'}) + 1
++	column := position - (bytes.LastIndexByte(prefix, '\n') + 1)
++	return &litradarJsonError{detail: fmt.Sprintf("%s at line %d column %d", message, line, column)}
++}
++
++func (scanner *litradarJsonScanner) whitespace() {
++	for scanner.position < len(scanner.body) && bytes.ContainsRune([]byte(" \t\n\r"), rune(scanner.body[scanner.position])) {
++		scanner.position++
++	}
++}
++
++// ValidateLitRadarBody validates original JSON bytes with the legacy strict string/depth rules.
++// Callers use it before normalization so error positions refer to the incoming body.
++func ValidateLitRadarBody(body []byte) error {
++	scanner := litradarJsonScanner{body: body}
++	if err := scanner.value(0); err != nil {
++		return err
++	}
++	scanner.whitespace()
++	if scanner.position != len(body) {
++		return scanner.failure("trailing characters", true)
++	}
++	return nil
++}
++
++func (scanner *litradarJsonScanner) value(depth int) error {
++	scanner.whitespace()
++	if scanner.position == len(scanner.body) {
++		return scanner.failure("EOF while parsing a value", false)
++	}
++	switch scanner.body[scanner.position] {
++	case '{', '[':
++		object := scanner.body[scanner.position] == '{'
++		scanner.position++
++		if depth+1 >= 128 {
++			return scanner.failure("recursion limit exceeded", false)
++		}
++		end := byte(']')
++		kind := "list"
++		commaError := "expected `,` or `]`"
++		if object {
++			end = '}'
++			kind = "object"
++			commaError = "expected `,` or `}`"
++		}
++		scanner.whitespace()
++		if scanner.position == len(scanner.body) {
++			return scanner.failure("EOF while parsing "+map[bool]string{true: "an object", false: "a list"}[object], false)
++		}
++		if scanner.body[scanner.position] == end {
++			scanner.position++
++			return nil
++		}
++		for {
++			if object {
++				if scanner.position == len(scanner.body) {
++					return scanner.failure("EOF while parsing a value", false)
++				}
++				if scanner.body[scanner.position] != '"' {
++					return scanner.failure("key must be a string", true)
++				}
++				if err := scanner.stringValue(); err != nil {
++					return err
++				}
++				scanner.whitespace()
++				if scanner.position == len(scanner.body) {
++					return scanner.failure("EOF while parsing an object", false)
++				}
++				if scanner.body[scanner.position] != ':' {
++					return scanner.failure("expected `:`", true)
++				}
++				scanner.position++
++			}
++			if err := scanner.value(depth + 1); err != nil {
++				return err
++			}
++			scanner.whitespace()
++			if scanner.position == len(scanner.body) {
++				article := "a "
++				if object {
++					article = "an "
++				}
++				return scanner.failure("EOF while parsing "+article+kind, false)
++			}
++			if scanner.body[scanner.position] == end {
++				scanner.position++
++				return nil
++			}
++			if scanner.body[scanner.position] != ',' {
++				return scanner.failure(commaError, true)
++			}
++			scanner.position++
++			scanner.whitespace()
++			if scanner.position < len(scanner.body) && scanner.body[scanner.position] == end {
++				return scanner.failure("trailing comma", true)
++			}
++		}
++	case '"':
++		return scanner.stringValue()
++	case 't', 'f', 'n':
++		literal := map[byte]string{'t': "true", 'f': "false", 'n': "null"}[scanner.body[scanner.position]]
++		for _, character := range []byte(literal) {
++			if scanner.position == len(scanner.body) {
++				return scanner.failure("EOF while parsing a value", false)
++			}
++			if scanner.body[scanner.position] != character {
++				return scanner.failure("expected ident", true)
++			}
++			scanner.position++
++		}
++		return nil
++	default:
++		if scanner.body[scanner.position] != '-' && (scanner.body[scanner.position] < '0' || scanner.body[scanner.position] > '9') {
++			return scanner.failure("expected value", true)
++		}
++		start := scanner.position
++		if scanner.body[scanner.position] == '-' {
++			scanner.position++
++		}
++		if scanner.position == len(scanner.body) {
++			return scanner.failure("EOF while parsing a value", false)
++		}
++		if scanner.body[scanner.position] == '0' {
++			scanner.position++
++			if scanner.digit() {
++				return scanner.failure("invalid number", true)
++			}
++		} else {
++			if !scanner.digit() {
++				return scanner.failure("invalid number", true)
++			}
++			for scanner.digit() {
++				scanner.position++
++			}
++		}
++		if scanner.position < len(scanner.body) && scanner.body[scanner.position] == '.' {
++			scanner.position++
++			if scanner.position == len(scanner.body) {
++				return scanner.failure("EOF while parsing a value", false)
++			}
++			if !scanner.digit() {
++				return scanner.failure("invalid number", true)
++			}
++			for scanner.digit() {
++				scanner.position++
++			}
++		}
++		if scanner.position < len(scanner.body) && (scanner.body[scanner.position] == 'e' || scanner.body[scanner.position] == 'E') {
++			mantissa := scanner.body[start:scanner.position]
++			scanner.position++
++			positiveExponent := true
++			if scanner.position < len(scanner.body) && (scanner.body[scanner.position] == '+' || scanner.body[scanner.position] == '-') {
++				positiveExponent = scanner.body[scanner.position] != '-'
++				scanner.position++
++			}
++			if scanner.position == len(scanner.body) {
++				return scanner.failure("EOF while parsing a value", false)
++			}
++			if !scanner.digit() {
++				return scanner.failure("invalid number", true)
++			}
++			exponent := int64(0)
++			nonzero := bytes.ContainsAny(mantissa, "123456789")
++			for scanner.digit() {
++				exponent = exponent*10 + int64(scanner.body[scanner.position]-'0')
++				scanner.position++
++				if exponent > 2147483647 {
++					if nonzero && positiveExponent {
++						return scanner.failure("number out of range", false)
++					}
++					for scanner.digit() {
++						scanner.position++
++					}
++					return nil
++				}
++			}
++		}
++		if _, err := strconv.ParseFloat(string(scanner.body[start:scanner.position]), 64); err != nil {
++			return scanner.failure("number out of range", true)
++		}
++		return nil
++	}
++}
++
++func (scanner *litradarJsonScanner) digit() bool {
++	return scanner.position < len(scanner.body) && scanner.body[scanner.position] >= '0' && scanner.body[scanner.position] <= '9'
++}
++
++func (scanner *litradarJsonScanner) hexUnit() (uint64, error) {
++	start := scanner.position
++	for range 4 {
++		if scanner.position == len(scanner.body) {
++			return 0, scanner.failure("EOF while parsing a string", false)
++		}
++		scanner.position++
++	}
++	for _, character := range scanner.body[start:scanner.position] {
++		if !strings.ContainsRune("0123456789abcdefABCDEF", rune(character)) {
++			return 0, scanner.failure("invalid escape", false)
++		}
++	}
++	value, _ := strconv.ParseUint(string(scanner.body[start:scanner.position]), 16, 16)
++	return value, nil
++}
++
++func (scanner *litradarJsonScanner) stringValue() error {
++	scanner.position++
++	start := scanner.position
++	for scanner.position < len(scanner.body) {
++		character := scanner.body[scanner.position]
++		scanner.position++
++		switch {
++		case character == '"':
++			if !utf8.Valid(scanner.body[start : scanner.position-1]) {
++				return scanner.failure("invalid unicode code point", false)
++			}
++			return nil
++		case character < 32:
++			return scanner.failure("control character (\\u0000-\\u001F) found while parsing a string", false)
++		case character == '\\':
++			if scanner.position == len(scanner.body) {
++				return scanner.failure("EOF while parsing a string", false)
++			}
++			escaped := scanner.body[scanner.position]
++			scanner.position++
++			if strings.ContainsRune(`"\/bfnrt`, rune(escaped)) {
++				continue
++			}
++			if escaped != 'u' {
++				return scanner.failure("invalid escape", false)
++			}
++			value, err := scanner.hexUnit()
++			if err != nil {
++				return err
++			}
++			if value >= 0xdc00 && value <= 0xdfff {
++				return scanner.failure("lone leading surrogate in hex escape", false)
++			}
++			if value >= 0xd800 && value <= 0xdbff {
++				for _, expected := range []byte{'\\', 'u'} {
++					if scanner.position == len(scanner.body) {
++						return scanner.failure("EOF while parsing a string", false)
++					}
++					actual := scanner.body[scanner.position]
++					scanner.position++
++					if actual != expected {
++						return scanner.failure("unexpected end of hex escape", false)
++					}
++				}
++				low, err := scanner.hexUnit()
++				if err != nil {
++					return err
++				}
++				if low < 0xdc00 || low > 0xdfff {
++					return scanner.failure("lone leading surrogate in hex escape", false)
++				}
++			}
++		}
++	}
++	return scanner.failure("EOF while parsing a string", false)
++}
++
++type litradarVersionsKey struct{}
++type litradarVersions struct{ header, body string }
++
++// WithLitRadarVersions retains original external labels across application version normalization.
++// It only affects explicitly enabled compatibility mode and never trusts HTTP metadata for this context.
++func WithLitRadarVersions(ctx context.Context, header, body string) context.Context {
++	return context.WithValue(ctx, litradarVersionsKey{}, litradarVersions{header: header, body: body})
++}
++
++// decodeLitRadarMessage preserves signed integer identifiers without the upstream float64 conversion.
++func decodeLitRadarMessage(body []byte) (message jsonrpc.Message, err error) {
++	scanner := litradarJsonScanner{body: body}
++	if err := scanner.value(0); err != nil {
++		return nil, err
++	}
++	body = body[:scanner.position]
++	defer func() {
++		if err == nil {
++			scanner.whitespace()
++			if scanner.position != len(scanner.body) {
++				message, err = nil, scanner.failure("trailing characters", true)
++			}
++		}
++	}()
++	var envelope map[string]json.RawMessage
++	if err := json.Unmarshal(body, &envelope); err != nil {
++		return nil, err
++	}
++	var version string
++	if json.Unmarshal(envelope["jsonrpc"], &version) != nil || version != "2.0" {
++		return nil, fmt.Errorf("invalid envelope")
++	}
++	raw := envelope["id"]
++	var id jsonrpc.ID
++	if len(raw) > 0 && raw[0] == '"' {
++		var value string
++		if err := json.Unmarshal(raw, &value); err != nil {
++			return nil, err
++		}
++		id = jsonrpc2.StringID(value)
++	} else {
++		value, err := strconv.ParseInt(string(raw), 10, 64)
++		if err == nil {
++			id = jsonrpc2.Int64ID(value)
++		}
++	}
++	var method string
++	if rawMethod := envelope["method"]; len(rawMethod) > 0 && rawMethod[0] == '"' && json.Unmarshal(rawMethod, &method) == nil {
++		return &jsonrpc.Request{ID: id, Method: method, Params: envelope["params"]}, nil
++	}
++	if result, exists := envelope["result"]; exists && id.IsValid() {
++		return &jsonrpc.Response{ID: id, Result: result}, nil
++	}
++	var wire struct {
++		Code    *int32
++		Message *string
++		Data    json.RawMessage
++	}
++	if json.Unmarshal(envelope["error"], &wire) == nil && wire.Code != nil && wire.Message != nil && (id.IsValid() || len(raw) == 0 || bytes.Equal(raw, []byte("null"))) {
++		return &jsonrpc.Response{ID: id, Error: &jsonrpc.Error{Code: int64(*wire.Code), Message: *wire.Message, Data: wire.Data}}, nil
++	}
++	return nil, fmt.Errorf("invalid envelope")
++}
++
++// ValidateLitRadarMessage checks the original MCP envelope before application normalization.
++// Envelope classification precedes the trailing-data check, as with the legacy typed reader.
++func ValidateLitRadarMessage(body []byte) error {
++	_, err := decodeLitRadarMessage(body)
++	var syntax *litradarJsonError
++	if err == nil || errors.As(err, &syntax) {
++		return err
++	}
++	return errors.New("data did not match any variant of untagged enum JsonRpcMessage")
++}
++
++func litradarHTTPError(writer http.ResponseWriter, status int, message string) {
++	writer.Header()["Content-Type"] = nil
++	writer.WriteHeader(status)
++	_, _ = io.WriteString(writer, message)
++}
++
++// prepareLitRadarRequest preserves legacy HTTP precedence while delegating all message ownership to the SDK.
++func (handler *StreamableHTTPHandler) prepareLitRadarRequest(writer http.ResponseWriter, request *http.Request) (*http.Request, bool) {
++	reject := func(status int, message string) (*http.Request, bool) {
++		litradarHTTPError(writer, status, message)
++		return nil, false
++	}
++	accept := request.Header.Get("Accept")
++	switch request.Method {
++	case http.MethodGet:
++		if !strings.Contains(accept, "text/event-stream") {
++			return reject(406, "Not Acceptable: Client must accept text/event-stream")
++		}
++	case http.MethodPost:
++		if !strings.Contains(accept, "application/json") || !strings.Contains(accept, "text/event-stream") {
++			return reject(406, "Not Acceptable: Client must accept both application/json and text/event-stream")
++		}
++		if !strings.HasPrefix(request.Header.Get("Content-Type"), "application/json") {
++			return reject(415, "Unsupported Media Type: Content-Type must be application/json")
++		}
++	case http.MethodDelete:
++	default:
++		writer.Header().Set("Allow", "GET, POST, DELETE")
++		return reject(405, "Method Not Allowed")
++	}
++	prepared := request.Clone(request.Context())
++	prepared.Header.Set("Accept", "application/json, text/event-stream")
++	prepared.Header.Set("Content-Type", "application/json")
++	hasSession := len(request.Header.Values(sessionIDHeader)) > 0
++	var message jsonrpc.Message
++	if request.Method == http.MethodPost {
++		body, err := io.ReadAll(request.Body)
++		if err != nil {
++			return reject(500, "Failed to read request body: "+err.Error())
++		}
++		message, err = decodeLitRadarMessage(body)
++		if err != nil {
++			detail := "data did not match any variant of untagged enum JsonRpcMessage"
++			var syntaxError *litradarJsonError
++			if errors.As(err, &syntaxError) {
++				detail = syntaxError.Error()
++			}
++			return reject(415, "fail to deserialize request body "+detail)
++		}
++		prepared.Body = io.NopCloser(bytes.NewReader(body))
++		if !hasSession {
++			initialize, ok := message.(*jsonrpc.Request)
++			if !ok || initialize.Method != methodInitialize || !initialize.IsCall() {
++				return reject(422, "Unexpected message, expect initialize request")
++			}
++			var params InitializeParams
++			if json.Unmarshal(initialize.Params, &params) != nil || params.Capabilities == nil || params.ClientInfo == nil {
++				return reject(422, "Unexpected message, expect initialize request")
++			}
++			header, bodyVersion := request.Header.Get(protocolVersionHeader), params.ProtocolVersion
++			if original, ok := request.Context().Value(litradarVersionsKey{}).(litradarVersions); ok {
++				header, bodyVersion = original.header, original.body
++			}
++			if header != "" && header != bodyVersion {
++				writeJSONRPCError(writer, 400, initialize.ID, &jsonrpc.Error{Code: jsonrpc.CodeInvalidRequest, Message: fmt.Sprintf("Invalid Request: MCP-Protocol-Version header (%s) does not match initialize params.protocolVersion (%s)", header, bodyVersion)})
++				return nil, false
++			}
++		}
++	} else if !hasSession {
++		return reject(400, "Bad Request: Session ID is required")
++	}
++	if hasSession && request.Method != http.MethodDelete {
++		handler.mu.Lock()
++		exists := handler.sessions[request.Header.Get(sessionIDHeader)] != nil
++		handler.mu.Unlock()
++		if !exists {
++			return reject(404, "Not Found: Session not found")
++		}
++	}
++	version := request.Header.Get(protocolVersionHeader)
++	if hasSession || request.Method != http.MethodPost {
++		if version != "" {
++			server := handler.getServer(request)
++			known := false
++			versions := supportedProtocolVersions
++			if server != nil {
++				versions = server.protocolVersions
++			}
++			for _, candidate := range versions {
++				if candidate == version {
++					known = true
++					break
++				}
++			}
++			if !known {
++				return reject(400, "Bad Request: Unsupported MCP-Protocol-Version: "+version)
++			}
++		}
++	}
++	prepared = prepared.WithContext(context.WithValue(prepared.Context(), protocolVersionContextKey{}, version))
++	return prepared, true
++}
++
++// CloseLitRadar closes all sessions and rejects new requests in compatibility mode.
++// Callers must enable LitRadarCompatibility; the default SDK mode is unchanged.
++func (h *StreamableHTTPHandler) CloseLitRadar() error {
++	if !h.opts.LitRadarCompatibility {
++		return fmt.Errorf("LitRadar compatibility is disabled")
++	}
++	h.closeAll()
++	return nil
++}
++
++// resetLitRadarTimer changes only the existing session's timer, fencing callbacks already queued.
++func (info *sessionInfo) resetLitRadarTimer(duration time.Duration, phase uint8) {
++	info.timerMu.Lock()
++	defer info.timerMu.Unlock()
++	if info.litradarExpired {
++		return
++	}
++	info.litradarPhase = phase
++	info.litradarGeneration++
++	generation := info.litradarGeneration
++	if info.timer != nil {
++		info.timer.Stop()
++		info.timer = nil
++	}
++	if duration <= 0 {
++		return
++	}
++	info.timer = time.AfterFunc(duration, func() {
++		info.timerMu.Lock()
++		if info.litradarExpired || info.litradarGeneration != generation {
++			info.timerMu.Unlock()
++			return
++		}
++		info.litradarExpired = true
++		info.timer = nil
++		info.timerMu.Unlock()
++		if info.litradarRemove != nil {
++			info.litradarRemove()
++		}
++		info.transport.connection.Close()
++		info.session.Close()
++	})
++}
++
++func (info *sessionInfo) readLitRadarInitialize() {
++	info.timerMu.Lock()
++	if info.litradarPhase == 0 && !info.litradarExpired {
++		info.litradarPhase = 1
++		info.litradarGeneration++
++		if info.timer != nil {
++			info.timer.Stop()
++			info.timer = nil
++		}
++		info.timerMu.Unlock()
++		return
++	}
++	info.timerMu.Unlock()
++	info.touchLitRadar()
++}
++
++func (info *sessionInfo) touchLitRadar() {
++	info.timerMu.Lock()
++	ready := info.litradarPhase == 2 && !info.litradarExpired
++	info.timerMu.Unlock()
++	if ready {
++		info.resetLitRadarTimer(info.timeout, 2)
++	}
++}
++
++// litradarLease belongs to the existing SDK stream, never to a second session manager.
++type litradarLease struct {
++	writer  http.ResponseWriter
++	context context.Context
++	done    chan struct{}
++}
++
++func (lease *litradarLease) isLive() bool {
++	if lease == nil || lease.context.Err() != nil {
++		return false
++	}
++	select {
++	case <-lease.done:
++		return false
++	default:
++		return true
++	}
++}
++
++type litradarEvent struct {
++	index int
++	data  []byte
++	id    string
++}
++
++func writeLitRadarEvent(writer http.ResponseWriter, data []byte, id, retry string) error {
++	if _, err := fmt.Fprintf(writer, "data: %s\n", data); err != nil {
++		return err
++	}
++	if id != "" {
++		if _, err := fmt.Fprintf(writer, "id: %s\n", id); err != nil {
++			return err
++		}
++	}
++	if retry != "" {
++		if _, err := fmt.Fprintf(writer, "retry: %s\n", retry); err != nil {
++			return err
++		}
++	}
++	if _, err := fmt.Fprint(writer, "\n"); err != nil {
++		return err
++	}
++	return http.NewResponseController(writer).Flush()
++}
++
++// closeLitRadarLease requires the owning stream lock and tolerates SDK response completion.
++func closeLitRadarLease(lease *litradarLease) {
++	if lease == nil {
++		return
++	}
++	select {
++	case <-lease.done:
++	default:
++		close(lease.done)
++	}
++}
++
++func (s *stream) releaseLitRadar(lease *litradarLease) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if s.litradarPrimary == lease {
++		s.litradarPrimary = nil
++		s.w = nil
++		s.done = nil
++	}
++	for index, shadow := range s.litradarShadows {
++		if shadow == lease {
++			s.litradarShadows = append(s.litradarShadows[:index], s.litradarShadows[index+1:]...)
++			break
++		}
++	}
++}
++
++func (c *streamableServerConn) hangLitRadar(ctx context.Context, s *stream, lease *litradarLease) {
++	keepalive := time.NewTicker(15 * time.Second)
++	defer keepalive.Stop()
++	for {
++		select {
++		case <-ctx.Done():
++			return
++		case <-lease.done:
++			return
++		case <-c.done:
++			return
++		case <-keepalive.C:
++			s.mu.Lock()
++			select {
++			case <-lease.done:
++			default:
++				if _, err := fmt.Fprint(lease.writer, ":\n\n"); err != nil {
++					closeLitRadarLease(lease)
++				} else if err := http.NewResponseController(lease.writer).Flush(); err != nil {
++					closeLitRadarLease(lease)
++				}
++			}
++			s.mu.Unlock()
++		}
++	}
++}
++
++func (c *streamableServerConn) serveLitRadarGET(writer http.ResponseWriter, request *http.Request) {
++	writer.Header().Set("Content-Type", "text/event-stream")
++	writer.Header().Set("Cache-Control", "no-cache")
++	streamID := ""
++	index := 0
++	hasResume := len(request.Header.Values(lastEventIDHeader)) > 0
++	if hasResume {
++		parts := strings.Split(request.Header.Get(lastEventIDHeader), "/")
++		if len(parts) > 2 {
++			return
++		}
++		parsed, err := strconv.ParseUint(parts[0], 10, 63)
++		if err != nil {
++			return
++		}
++		index = int(parsed)
++		if len(parts) == 2 {
++			parsedID, err := strconv.ParseUint(parts[1], 10, 64)
++			if err != nil {
++				return
++			}
++			streamID = strconv.FormatUint(parsedID, 10)
++		}
++	}
++	if c.litradarSession != nil {
++		c.litradarSession.touchLitRadar()
++	}
++	c.mu.Lock()
++	s := c.streams[streamID]
++	c.mu.Unlock()
++	if s == nil {
++		return
++	}
++	s.mu.Lock()
++	if s.doneLocked() {
++		s.mu.Unlock()
++		return
++	}
++	lease := &litradarLease{writer: writer, context: request.Context(), done: make(chan struct{})}
++	if streamID == "" && s.litradarPrimary.isLive() {
++		live := s.litradarShadows[:0]
++		for _, shadow := range s.litradarShadows {
++			if shadow.isLive() {
++				live = append(live, shadow)
++			} else {
++				closeLitRadarLease(shadow)
++			}
++		}
++		s.litradarShadows = live
++		if len(live) == 32 {
++			closeLitRadarLease(live[0])
++			s.litradarShadows = s.litradarShadows[1:]
++		}
++		s.litradarShadows = append(s.litradarShadows, lease)
++		writer.WriteHeader(http.StatusOK)
++		if !hasResume {
++			_ = writeLitRadarEvent(writer, nil, "0", "3000")
++		} else {
++			_ = http.NewResponseController(writer).Flush()
++		}
++		s.mu.Unlock()
++		defer s.releaseLitRadar(lease)
++		c.hangLitRadar(request.Context(), s, lease)
++		return
++	}
++	if hasResume && len(s.litradarCache) > 0 && index > s.litradarCache[len(s.litradarCache)-1].index+1 {
++		s.mu.Unlock()
++		return
++	}
++	closeLitRadarLease(s.litradarPrimary)
++	s.litradarPrimary = lease
++	s.w = writer
++	s.done = lease.done
++	writer.WriteHeader(http.StatusOK)
++	if !hasResume {
++		_ = writeLitRadarEvent(writer, nil, "0", "3000")
++	}
++	for _, event := range s.litradarCache {
++		if event.index >= index {
++			if err := writeLitRadarEvent(writer, event.data, event.id, ""); err != nil {
++				closeLitRadarLease(lease)
++				break
++			}
++		}
++	}
++	_ = http.NewResponseController(writer).Flush()
++	s.mu.Unlock()
++	defer s.releaseLitRadar(lease)
++	c.hangLitRadar(request.Context(), s, lease)
++}
+diff --git a/mcp/litradar_compat_test.go b/mcp/litradar_compat_test.go
+new file mode 100644
+--- /dev/null
++++ b/mcp/litradar_compat_test.go
+@@ -0,0 +1,435 @@
++package mcp
++
++import (
++	"bufio"
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
++)
++
++type litradarFixture struct {
++	handler  *StreamableHTTPHandler
++	listener *httptest.Server
++	session  string
++	client   *http.Client
++}
++
++func TestLitRadarUnknownMethodIsSseError(t *testing.T) {
++	fixture := newLitRadarFixture(t, true, nil)
++	response := fixture.request(t, "POST", `{"jsonrpc":"2.0","id":42,"method":"custom/unknown","params":{}}`, "")
++	body, err := io.ReadAll(response.Body)
++	response.Body.Close()
++	if err != nil || response.StatusCode != 200 || !strings.Contains(string(body), `"code":-32601,"message":"custom/unknown"`) {
++		t.Fatalf("unknown method %d %s %v", response.StatusCode, body, err)
++	}
++	response = fixture.request(t, "POST", `{"jsonrpc":"2.0","method":"custom/unknown","params":{}}`, "")
++	body, err = io.ReadAll(response.Body)
++	response.Body.Close()
++	if err != nil || response.StatusCode != 202 || len(body) != 0 {
++		t.Fatalf("unknown notification %d %s %v", response.StatusCode, body, err)
++	}
++}
++
++func TestLitRadarNumericIdentifiersAndCompleteBody(t *testing.T) {
++	fixture := newLitRadarFixture(t, true, nil)
++	for _, id := range []string{"9007199254740993", "9223372036854775807", "-9223372036854775808"} {
++		response := fixture.request(t, "POST", `{"jsonrpc":"2.0","id":`+id+`,"method":"ping"}`, "ignored-on-post")
++		body, err := io.ReadAll(response.Body)
++		response.Body.Close()
++		if err != nil || response.StatusCode != 200 || !strings.Contains(string(body), `"id":`+id+`,"result"`) {
++			t.Fatalf("id %s result %d %s %v", id, response.StatusCode, body, err)
++		}
++	}
++	for _, body := range []string{
++		`{"jsonrpc":"2.0","id":1,"method":"ping"} {}`,
++		`{"jsonrpc":"2.0","id":1,"method":"ping"} trailing`,
++	} {
++		response := fixture.request(t, "POST", body, "")
++		io.Copy(io.Discard, response.Body)
++		response.Body.Close()
++		if response.StatusCode != 415 {
++			t.Fatalf("malformed body accepted: %s status=%d", body, response.StatusCode)
++		}
++	}
++	for _, body := range []string{`{"jsonrpc":"2.0","id":1.5,"method":"ping"}`, `{"jsonrpc":"2.0","id":9223372036854775808,"method":"ping"}`} {
++		response := fixture.request(t, "POST", body, "")
++		io.Copy(io.Discard, response.Body)
++		response.Body.Close()
++		if response.StatusCode != 202 {
++			t.Fatalf("legacy notification fallback: %d", response.StatusCode)
++		}
++	}
++}
++
++func TestLitRadarApprovedDuplicateIdIsolationAndReuse(t *testing.T) {
++	entered := make(chan struct{})
++	release := make(chan struct{})
++	var releaseOnce sync.Once
++	defer releaseOnce.Do(func() { close(release) })
++	var executions atomic.Int32
++	fixture := newLitRadarFixture(t, true, func(server *Server) {
++		server.AddTool(&Tool{Name: "blocked", InputSchema: map[string]any{"type": "object"}}, func(ctx context.Context, request *CallToolRequest) (*CallToolResult, error) {
++			if executions.Add(1) == 1 {
++				close(entered)
++			}
++			select {
++			case <-release:
++			case <-ctx.Done():
++				return nil, ctx.Err()
++			}
++			return &CallToolResult{Content: []Content{&TextContent{Text: "completed"}}}, nil
++		})
++	})
++	first := fixture.request(t, "POST", `{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"blocked","arguments":{}}}`, "")
++	defer first.Body.Close()
++	select {
++	case <-entered:
++	case <-time.After(time.Second):
++		t.Fatal("first request did not enter tool")
++	}
++	second := fixture.request(t, "POST", `{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"blocked","arguments":{}}}`, "")
++	body, err := io.ReadAll(second.Body)
++	second.Body.Close()
++	if err != nil || second.StatusCode != 400 || !strings.Contains(string(body), "duplicate in-flight request ID 20") {
++		t.Fatalf("duplicate observation %d %s %v", second.StatusCode, body, err)
++	}
++	assertPing := func(selected *litradarFixture, id string) {
++		t.Helper()
++		response := selected.request(t, "POST", `{"jsonrpc":"2.0","id":`+id+`,"method":"ping"}`, "")
++		data, err := io.ReadAll(response.Body)
++		response.Body.Close()
++		if err != nil || response.StatusCode != 200 || !strings.Contains(string(data), `"id":`+id+`,"result":{}`) {
++			t.Fatalf("independent/reused ping %d %s %v", response.StatusCode, data, err)
++		}
++	}
++	assertPing(fixture, "21")
++	other := &litradarFixture{handler: fixture.handler, listener: fixture.listener, client: fixture.client}
++	initial := other.request(t, "POST", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"other","version":"1"}}}`, "")
++	other.session = initial.Header.Get(sessionIDHeader)
++	io.Copy(io.Discard, initial.Body)
++	initial.Body.Close()
++	if other.session == "" || other.session == fixture.session {
++		t.Fatal("independent session not created")
++	}
++	assertPing(other, "20")
++	if executions.Load() != 1 {
++		t.Fatalf("duplicate executed tool: %d", executions.Load())
++	}
++	releaseOnce.Do(func() { close(release) })
++	body, err = io.ReadAll(first.Body)
++	if err != nil || first.StatusCode != 200 || !strings.Contains(string(body), `"id":20,"result"`) || !strings.Contains(string(body), `"text":"completed"`) {
++		t.Fatalf("original response lost: %d %s %v", first.StatusCode, body, err)
++	}
++	assertPing(fixture, "20")
++	if executions.Load() != 1 {
++		t.Fatal("rejected tool executed after original completion")
++	}
++}
++
++func newLitRadarFixture(t *testing.T, enabled bool, configure func(*Server), idle ...time.Duration) *litradarFixture {
++	t.Helper()
++	server := NewServer(&Implementation{Name: "primitive", Version: "1"}, nil)
++	if configure != nil {
++		configure(server)
++	}
++	options := &StreamableHTTPOptions{LitRadarCompatibility: enabled}
++	if len(idle) > 0 {
++		options.SessionTimeout = idle[0]
++	}
++	handler := NewStreamableHTTPHandler(func(*http.Request) *Server { return server }, options)
++	listener := httptest.NewServer(handler)
++	fixture := &litradarFixture{handler: handler, listener: listener, client: &http.Client{Timeout: 5 * time.Second}}
++	t.Cleanup(func() { handler.closeAll(); listener.Close() })
++	response := fixture.request(t, "POST", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"raw","version":"1"}}}`, "")
++	fixture.session = response.Header.Get(sessionIDHeader)
++	body, err := io.ReadAll(response.Body)
++	response.Body.Close()
++	if err != nil || response.StatusCode != 200 || fixture.session == "" {
++		t.Fatalf("initialize: %d %s %v", response.StatusCode, body, err)
++	}
++	if enabled && (!strings.HasPrefix(string(body), "data: \nid: 0\nretry: 3000\n\n") || strings.Contains(string(body), "event:")) {
++		t.Fatalf("legacy initialize framing: %q", body)
++	}
++	response = fixture.request(t, "POST", `{"jsonrpc":"2.0","method":"notifications/initialized"}`, "")
++	io.Copy(io.Discard, response.Body)
++	response.Body.Close()
++	if response.StatusCode != 202 {
++		t.Fatalf("initialized: %d", response.StatusCode)
++	}
++	return fixture
++}
++
++func (fixture *litradarFixture) request(t *testing.T, method, body, resume string) *http.Response {
++	t.Helper()
++	request, err := http.NewRequest(method, fixture.listener.URL, strings.NewReader(body))
++	if err != nil {
++		t.Fatal(err)
++	}
++	request.Header.Set("Content-Type", "application/json")
++	request.Header.Set("Accept", "application/json, text/event-stream")
++	request.Header.Set(protocolVersionHeader, "2025-06-18")
++	if fixture.session != "" {
++		request.Header.Set(sessionIDHeader, fixture.session)
++	}
++	if resume != "" {
++		request.Header.Set(lastEventIDHeader, resume)
++	}
++	response, err := fixture.client.Do(request)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { response.Body.Close() })
++	return response
++}
++
++func litradarReadEvent(t *testing.T, reader *bufio.Reader) string {
++	t.Helper()
++	var event strings.Builder
++	for {
++		line, err := reader.ReadString('\n')
++		if err != nil {
++			t.Fatalf("reading event: %v (%q)", err, event.String())
++		}
++		event.WriteString(line)
++		if line == "\n" {
++			return event.String()
++		}
++	}
++}
++
++func (fixture *litradarFixture) connection(t *testing.T) *streamableServerConn {
++	t.Helper()
++	fixture.handler.mu.Lock()
++	defer fixture.handler.mu.Unlock()
++	info := fixture.handler.sessions[fixture.session]
++	if info == nil {
++		t.Fatal("session disappeared")
++	}
++	return info.transport.connection
++}
++
++func TestLitRadarPrimaryShadowsAndReconnection(t *testing.T) {
++	fixture := newLitRadarFixture(t, true, nil)
++	primary := fixture.request(t, "GET", "", "")
++	reader := bufio.NewReader(primary.Body)
++	if event := litradarReadEvent(t, reader); event != "data: \nid: 0\nretry: 3000\n\n" {
++		t.Fatalf("prime %q", event)
++	}
++	shadows := make([]*http.Response, 33)
++	for index := range shadows {
++		shadows[index] = fixture.request(t, "GET", "", "")
++		litradarReadEvent(t, bufio.NewReader(shadows[index].Body))
++	}
++	if body, err := io.ReadAll(shadows[0].Body); err != nil || len(body) != 0 {
++		t.Fatalf("oldest shadow not evicted: %q %v", body, err)
++	}
++	connection := fixture.connection(t)
++	if err := connection.Write(context.Background(), &jsonrpc.Request{Method: "notifications/test"}); err != nil {
++		t.Fatal(err)
++	}
++	if event := litradarReadEvent(t, reader); !strings.Contains(event, "notifications/test") || !strings.Contains(event, "id: 0\n") {
++		t.Fatalf("primary %q", event)
++	}
++	primary.Body.Close()
++	deadline := time.Now().Add(time.Second)
++	for {
++		connection.mu.Lock()
++		common := connection.streams[""]
++		connection.mu.Unlock()
++		common.mu.Lock()
++		detached := common.litradarPrimary == nil
++		common.mu.Unlock()
++		if detached {
++			break
++		}
++		if time.Now().After(deadline) {
++			t.Fatal("primary not released")
++		}
++		time.Sleep(time.Millisecond)
++	}
++	replacement := fixture.request(t, "GET", "", "0")
++	replay := litradarReadEvent(t, bufio.NewReader(replacement.Body))
++	if !strings.Contains(replay, "notifications/test") {
++		t.Fatalf("inclusive replay: %q", replay)
++	}
++	for _, shadow := range shadows[1:] {
++		shadow.Body.Close()
++	}
++	deletion := fixture.request(t, "DELETE", "", "")
++	deletion.Body.Close()
++	if deletion.StatusCode != 202 {
++		t.Fatalf("DELETE %d", deletion.StatusCode)
++	}
++	if body, err := io.ReadAll(replacement.Body); err != nil || len(body) != 0 {
++		t.Fatalf("DELETE left stream open: %q %v", body, err)
++	}
++	deletion = fixture.request(t, "DELETE", "", "")
++	deletion.Body.Close()
++	if deletion.StatusCode != 202 {
++		t.Fatalf("repeat DELETE %d", deletion.StatusCode)
++	}
++}
++
++func TestLitRadarActiveRequestReplacementFencesOldWriter(t *testing.T) {
++	release := make(chan struct{})
++	fixture := newLitRadarFixture(t, true, func(server *Server) {
++		AddTool(server, &Tool{Name: "hold"}, func(ctx context.Context, request *CallToolRequest, input struct{}) (*CallToolResult, any, error) {
++			select {
++			case <-release:
++			case <-ctx.Done():
++				return nil, nil, ctx.Err()
++			}
++			return &CallToolResult{Content: []Content{&TextContent{Text: "finished"}}}, nil, nil
++		})
++	})
++	original := fixture.request(t, "POST", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hold","arguments":{}}}`, "")
++	if event := litradarReadEvent(t, bufio.NewReader(original.Body)); !strings.Contains(event, "id: 0/0") {
++		t.Fatalf("request prime: %q", event)
++	}
++	replacement := fixture.request(t, "GET", "", "0/0")
++	if body, err := io.ReadAll(original.Body); err != nil || len(body) != 0 {
++		t.Fatalf("old writer retained: %q %v", body, err)
++	}
++	close(release)
++	body, err := io.ReadAll(replacement.Body)
++	if err != nil || !strings.Contains(string(body), "finished") || !strings.Contains(string(body), "id: 1/0") {
++		t.Fatalf("replacement lost response: %q %v", body, err)
++	}
++	completed := fixture.request(t, "GET", "", "1/0")
++	body, err = io.ReadAll(completed.Body)
++	if err != nil || completed.StatusCode != 200 || len(body) != 0 {
++		t.Fatalf("completed replay: %d %q %v", completed.StatusCode, body, err)
++	}
++}
++
++func TestLitRadarDefaultModeCounterexample(t *testing.T) {
++	fixture := newLitRadarFixture(t, false, nil)
++	response := fixture.request(t, "DELETE", "", "")
++	response.Body.Close()
++	if response.StatusCode != 204 {
++		t.Fatalf("default DELETE changed: %d", response.StatusCode)
++	}
++	response = fixture.request(t, "DELETE", "", "")
++	response.Body.Close()
++	if response.StatusCode != 404 {
++		t.Fatalf("default missing session changed: %d", response.StatusCode)
++	}
++}
++
++func TestLitRadarShutdownRejectsNewSessions(t *testing.T) {
++	fixture := newLitRadarFixture(t, true, nil)
++	if err := fixture.handler.CloseLitRadar(); err != nil {
++		t.Fatal(err)
++	}
++	fixture.session = ""
++	response := fixture.request(t, "POST", `{}`, "")
++	response.Body.Close()
++	if response.StatusCode != 503 {
++		t.Fatalf("shutdown admitted request: %d", response.StatusCode)
++	}
++}
++
++func TestLitRadarPendingPostDoesNotPauseIdle(t *testing.T) {
++	fixture := newLitRadarFixture(t, true, func(server *Server) {
++		AddTool(server, &Tool{Name: "hold"}, func(ctx context.Context, request *CallToolRequest, input struct{}) (*CallToolResult, any, error) {
++			<-ctx.Done()
++			return nil, nil, ctx.Err()
++		})
++	}, 150*time.Millisecond)
++	response := fixture.request(t, "POST", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hold","arguments":{}}}`, "")
++	started := time.Now()
++	body, err := io.ReadAll(response.Body)
++	if err != nil || time.Since(started) > time.Second || !strings.Contains(string(body), "retry: 3000") {
++		t.Fatalf("open POST suspended idle: %q %v", body, err)
++	}
++}
++
++func TestLitRadarActivityRefreshesSessionWithoutRefreshingOnMalformedResume(t *testing.T) {
++	fixture := newLitRadarFixture(t, true, nil, 400*time.Millisecond)
++	connection := fixture.connection(t)
++	time.Sleep(250 * time.Millisecond)
++	if err := connection.Write(context.Background(), &jsonrpc.Request{Method: "notifications/test"}); err != nil {
++		t.Fatal(err)
++	}
++	time.Sleep(250 * time.Millisecond)
++	select {
++	case <-connection.done:
++		t.Fatal("old timer killed refreshed session")
++	default:
++	}
++	valid := fixture.request(t, "GET", "", "0/99999")
++	io.Copy(io.Discard, valid.Body)
++	valid.Body.Close()
++	time.Sleep(250 * time.Millisecond)
++	invalid := fixture.request(t, "GET", "", "malformed")
++	io.Copy(io.Discard, invalid.Body)
++	invalid.Body.Close()
++	select {
++	case <-connection.done:
++	case <-time.After(300 * time.Millisecond):
++		t.Fatal("malformed resume refreshed session")
++	}
++}
++
++func TestLitRadarFrozenRustHttpBoundary(t *testing.T) {
++	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "data", "migration", "mcp-http-boundary.json"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	var fixture struct {
++		Baseline string
++		Cases    []struct {
++			Name, Method, Body string
++			Headers            map[string]string
++			Status             int
++			ResponseBody       string
++			ContentType        *string
++		}
++	}
++	if err := json.Unmarshal(data, &fixture); err != nil {
++		t.Fatal(err)
++	}
++	if fixture.Baseline != "6bb1220059c82c19a53a1418fc376fc842fea834" {
++		t.Fatal("unexpected Rust baseline")
++	}
++	server := NewServer(&Implementation{Name: "primitive", Version: "1"}, nil)
++	handler := NewStreamableHTTPHandler(func(*http.Request) *Server { return server }, &StreamableHTTPOptions{LitRadarCompatibility: true, MaxRequestBodyBytes: -1})
++	listener := httptest.NewServer(handler)
++	defer listener.Close()
++	defer handler.closeAll()
++	client := &http.Client{Timeout: time.Second}
++	for _, scenario := range fixture.Cases {
++		t.Run(scenario.Name, func(t *testing.T) {
++			request, err := http.NewRequest(scenario.Method, listener.URL, strings.NewReader(scenario.Body))
++			if err != nil {
++				t.Fatal(err)
++			}
++			for name, value := range scenario.Headers {
++				request.Header.Set(name, value)
++			}
++			response, err := client.Do(request)
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer response.Body.Close()
++			body, err := io.ReadAll(response.Body)
++			if err != nil || response.StatusCode != scenario.Status || string(body) != scenario.ResponseBody {
++				t.Fatalf("HTTP boundary: status=%d body=%q error=%v; want %d %q", response.StatusCode, body, err, scenario.Status, scenario.ResponseBody)
++			}
++			if scenario.ContentType == nil && response.Header.Get("Content-Type") != "" {
++				t.Fatalf("introduced content type %q", response.Header.Get("Content-Type"))
++			}
++		})
++	}
++}
+diff --git a/mcp/streamable.go b/mcp/streamable.go
+index f24badb..115f256 100644
+--- a/mcp/streamable.go
++++ b/mcp/streamable.go
+@@ -50,8 +50,9 @@ type StreamableHTTPHandler struct {
+ 
+ 	onTransportDeletion func(sessionID string) // for testing
+ 
+-	mu       sync.Mutex
+-	sessions map[string]*sessionInfo // keyed by session ID
++	mu             sync.Mutex
++	sessions       map[string]*sessionInfo // keyed by session ID
++	litradarClosed bool
+ }
+ 
+ type sessionInfo struct {
+@@ -63,10 +64,14 @@ type sessionInfo struct {
+ 	userID string
+ 
+ 	// If timeout is set, automatically close the session after an idle period.
+-	timeout time.Duration
+-	timerMu sync.Mutex
+-	refs    int // reference count
+-	timer   *time.Timer
++	timeout            time.Duration
++	timerMu            sync.Mutex
++	refs               int // reference count
++	timer              *time.Timer
++	litradarPhase      uint8
++	litradarGeneration uint64
++	litradarExpired    bool
++	litradarRemove     func()
+ }
+ 
+ // startPOST signals that a POST request for this session is starting (which
+@@ -118,6 +123,8 @@ func (i *sessionInfo) endPOST() {
+ func (i *sessionInfo) stopTimer() {
+ 	i.timerMu.Lock()
+ 	defer i.timerMu.Unlock()
++	i.litradarExpired = true
++	i.litradarGeneration++
+ 	if i.timer != nil {
+ 		i.timer.Stop()
+ 		i.timer = nil
+@@ -126,6 +133,9 @@ func (i *sessionInfo) stopTimer() {
+ 
+ // StreamableHTTPOptions configures the StreamableHTTPHandler.
+ type StreamableHTTPOptions struct {
++	// LitRadarCompatibility enables the explicitly maintained legacy stateful transport contract.
++	// The default SDK protocol behavior remains unchanged when false.
++	LitRadarCompatibility bool
+ 	// Stateless controls whether the session is 'stateless'.
+ 	//
+ 	// A stateless server does not read or set the Mcp-Session-Id header, and
+@@ -261,9 +271,18 @@ func (h *StreamableHTTPHandler) closeAll() {
+ 	// Currently, sessions remove themselves from h.sessions when closed, so we
+ 	// can't call Close while holding the lock.
+ 	h.mu.Lock()
++	if h.opts.LitRadarCompatibility {
++		h.litradarClosed = true
++	}
+ 	sessionInfos := slices.Collect(maps.Values(h.sessions))
+ 	h.sessions = nil
+ 	h.mu.Unlock()
++	if h.opts.LitRadarCompatibility {
++		for _, info := range sessionInfos {
++			info.stopTimer()
++			info.transport.connection.Close()
++		}
++	}
+ 	for _, s := range sessionInfos {
+ 		s.session.Close()
+ 	}
+@@ -314,6 +333,15 @@ func writeJSONRPCError(w http.ResponseWriter, status int, id jsonrpc.ID, jerr *j
+ }
+ 
+ func (h *StreamableHTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
++	if h.opts.LitRadarCompatibility {
++		h.mu.Lock()
++		closed := h.litradarClosed
++		h.mu.Unlock()
++		if closed {
++			http.Error(w, "server shutting down", http.StatusServiceUnavailable)
++			return
++		}
++	}
+ 	// DNS rebinding protection: auto-enabled for localhost servers.
+ 	// See: https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise
+ 	if !h.opts.DisableLocalhostProtection {
+@@ -336,6 +364,13 @@ func (h *StreamableHTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
+ 	if req.Body != nil && h.opts.MaxRequestBodyBytes > 0 {
+ 		req.Body = http.MaxBytesReader(w, req.Body, h.opts.MaxRequestBodyBytes)
+ 	}
++	if h.opts.LitRadarCompatibility {
++		prepared, ok := h.prepareLitRadarRequest(w, req)
++		if ok {
++			h.serveStateful(w, prepared)
++		}
++		return
++	}
+ 
+ 	// [§2.7] of the spec (2025-06-18): validate the MCP-Protocol-Version
+ 	// header. If provided, it must be a version the server negotiates, which
+@@ -600,10 +635,23 @@ func (h *StreamableHTTPHandler) serveStatefulGET(w http.ResponseWriter, req *htt
+ // DELETE requires a valid Mcp-Session-Id header.
+ func (h *StreamableHTTPHandler) serveStatefulDELETE(w http.ResponseWriter, req *http.Request) {
+ 	sessionID := req.Header.Get(sessionIDHeader)
+-	if sessionID == "" {
++	if sessionID == "" && (!h.opts.LitRadarCompatibility || len(req.Header.Values(sessionIDHeader)) == 0) {
+ 		http.Error(w, "Bad Request: DELETE requires an Mcp-Session-Id header", http.StatusBadRequest)
+ 		return
+ 	}
++	if h.opts.LitRadarCompatibility {
++		h.mu.Lock()
++		info := h.sessions[sessionID]
++		delete(h.sessions, sessionID)
++		h.mu.Unlock()
++		if info != nil {
++			info.stopTimer()
++			info.transport.connection.Close()
++			go info.session.Close()
++		}
++		w.WriteHeader(http.StatusAccepted)
++		return
++	}
+ 
+ 	sessInfo, ok := h.lookupSession(w, req, sessionID)
+ 	if !ok {
+@@ -638,8 +686,10 @@ func (h *StreamableHTTPHandler) serveStatefulPOST(w http.ResponseWriter, req *ht
+ 		if !ok {
+ 			return
+ 		}
+-		sessInfo.startPOST()
+-		defer sessInfo.endPOST()
++		if !h.opts.LitRadarCompatibility {
++			sessInfo.startPOST()
++			defer sessInfo.endPOST()
++		}
+ 		sessInfo.transport.ServeHTTP(w, req)
+ 		return
+ 	}
+@@ -653,11 +703,20 @@ func (h *StreamableHTTPHandler) serveStatefulPOST(w http.ResponseWriter, req *ht
+ 	sessionID = server.opts.GetSessionID()
+ 
+ 	transport := &StreamableServerTransport{
+-		SessionID:    sessionID,
+-		Stateless:    false,
+-		EventStore:   h.opts.EventStore,
+-		jsonResponse: h.opts.JSONResponse,
+-		logger:       h.opts.Logger,
++		SessionID:             sessionID,
++		Stateless:             false,
++		EventStore:            h.opts.EventStore,
++		jsonResponse:          h.opts.JSONResponse,
++		logger:                h.opts.Logger,
++		litradarCompatibility: h.opts.LitRadarCompatibility,
++	}
++	var litradarInfo *sessionInfo
++	if h.opts.LitRadarCompatibility {
++		litradarInfo = &sessionInfo{transport: transport, timeout: h.opts.SessionTimeout}
++		if litradarInfo.timeout == 0 {
++			litradarInfo.timeout = 300 * time.Second
++		}
++		transport.litradarSession = litradarInfo
+ 	}
+ 
+ 	// Sessions without a session ID (GetSessionID returned "") are ephemeral:
+@@ -717,14 +776,34 @@ func (h *StreamableHTTPHandler) serveStatefulPOST(w http.ResponseWriter, req *ht
+ 		transport: transport,
+ 		userID:    userID,
+ 	}
++	if litradarInfo != nil {
++		sessInfo = litradarInfo
++		sessInfo.session = session
++		sessInfo.userID = userID
++		sessInfo.litradarRemove = func() {
++			h.mu.Lock()
++			if h.sessions[sessionID] == sessInfo {
++				delete(h.sessions, sessionID)
++			}
++			h.mu.Unlock()
++		}
++		sessInfo.resetLitRadarTimer(60*time.Second, 0)
++	}
+ 
+-	if h.opts.SessionTimeout > 0 {
++	if h.opts.SessionTimeout > 0 && !h.opts.LitRadarCompatibility {
+ 		sessInfo.timeout = h.opts.SessionTimeout
+ 		sessInfo.timer = time.AfterFunc(sessInfo.timeout, func() {
+ 			sessInfo.session.Close()
+ 		})
+ 	}
+ 	h.mu.Lock()
++	if h.opts.LitRadarCompatibility && h.litradarClosed {
++		h.mu.Unlock()
++		sessInfo.stopTimer()
++		session.Close()
++		http.Error(w, "server shutting down", http.StatusServiceUnavailable)
++		return
++	}
+ 	h.sessions[transport.SessionID] = sessInfo
+ 	h.mu.Unlock()
+ 	defer func() {
+@@ -734,8 +813,10 @@ func (h *StreamableHTTPHandler) serveStatefulPOST(w http.ResponseWriter, req *ht
+ 		}
+ 	}()
+ 
+-	sessInfo.startPOST()
+-	defer sessInfo.endPOST()
++	if !h.opts.LitRadarCompatibility {
++		sessInfo.startPOST()
++		defer sessInfo.endPOST()
++	}
+ 	sessInfo.transport.ServeHTTP(w, req)
+ }
+ 
+@@ -787,6 +868,8 @@ func baseMediaType(value string) string {
+ //   - Requests or notifications made with a detached context.Context value are
+ //     routed to the standalone SSE stream.
+ type StreamableServerTransport struct {
++	litradarCompatibility bool
++	litradarSession       *sessionInfo
+ 	// SessionID is the ID of this session.
+ 	//
+ 	// If SessionID is the empty string, this is a 'stateless' session, which has
+@@ -842,6 +925,8 @@ func (t *StreamableServerTransport) Connect(ctx context.Context) (Connection, er
+ 		return nil, fmt.Errorf("transport already connected")
+ 	}
+ 	t.connection = &streamableServerConn{
++		litradarCompatibility:       t.litradarCompatibility,
++		litradarSession:             t.litradarSession,
+ 		sessionID:                   t.SessionID,
+ 		stateless:                   t.Stateless,
+ 		eventStore:                  t.EventStore,
+@@ -876,10 +961,13 @@ func (t *StreamableServerTransport) SupportsProtocolVersion(version string) bool
+ }
+ 
+ type streamableServerConn struct {
+-	sessionID    string
+-	stateless    bool
+-	jsonResponse bool
+-	eventStore   EventStore
++	litradarCompatibility bool
++	litradarSession       *sessionInfo
++	litradarNextStream    atomic.Uint64
++	sessionID             string
++	stateless             bool
++	jsonResponse          bool
++	eventStore            EventStore
+ 
+ 	// shouldPropagateCancellation is true when the underlying HTTP request's
+ 	// lifetime IS the connection's cancellation signal (e.g., a stateless
+@@ -943,6 +1031,12 @@ func (c *streamableServerConn) propagateCancellation() bool {
+ // since a client may send a GET with a Last-Event-ID that references the stream
+ // at any time.
+ type stream struct {
++	litradarPrimary    *litradarLease
++	litradarShadows    []*litradarLease
++	litradarCache      []litradarEvent
++	litradarEnabled    bool
++	litradarInitialize bool
++	litradarMethod     string
+ 	// id is the logical ID for the stream, unique within a session.
+ 	//
+ 	// The standalone SSE stream has id "".
+@@ -1093,7 +1187,14 @@ func (s *stream) deliverLocked(data []byte, eventID string, responseTo jsonrpc.I
+ 		return done, fmt.Errorf("stream not connected or already closed")
+ 	}
+ 	if done {
+-		defer func() { close(s.done); s.done = nil }()
++		defer func() {
++			if s.litradarEnabled {
++				closeLitRadarLease(s.litradarPrimary)
++			} else {
++				close(s.done)
++			}
++			s.done = nil
++		}()
+ 	}
+ 	// SEP-2575 protocol-level error override: write the error as a raw
+ 	// JSON-RPC response with the spec-mandated HTTP status, bypassing any
+@@ -1132,6 +1233,9 @@ func (s *stream) deliverLocked(data []byte, eventID string, responseTo jsonrpc.I
+ 	} else {
+ 		// SSE mode: write event to response writer.
+ 		s.lastIdx++
++		if s.litradarEnabled {
++			return done, writeLitRadarEvent(s.w, data, eventID, "")
++		}
+ 		if _, err := writeEvent(s.w, Event{Name: "message", Data: data, ID: eventID}); err != nil {
+ 			return done, err
+ 		}
+@@ -1157,10 +1261,11 @@ func (c *streamableServerConn) newStream(ctx context.Context, requests map[jsonr
+ 		}
+ 	}
+ 	return &stream{
+-		id:       id,
+-		requests: requests,
+-		lastIdx:  -1, // indices start at 0, incremented before each write
+-		logger:   c.logger,
++		litradarEnabled: c.litradarCompatibility,
++		id:              id,
++		requests:        requests,
++		lastIdx:         -1, // indices start at 0, incremented before each write
++		logger:          c.logger,
+ 	}, nil
+ }
+ 
+@@ -1223,12 +1328,16 @@ func (t *StreamableServerTransport) ServeHTTP(w http.ResponseWriter, req *http.R
+ //
+ // It returns an HTTP status code and error message.
+ func (c *streamableServerConn) serveGET(w http.ResponseWriter, req *http.Request) {
++	if c.litradarCompatibility {
++		c.serveLitRadarGET(w, req)
++		return
++	}
+ 	// streamID "" corresponds to the default GET request.
+ 	streamID := ""
+ 	// By default, we haven't seen a last index. Since indices start at 0, we represent
+ 	// that by -1. This is incremented just before each event is written.
+ 	lastIdx := -1
+-	if len(req.Header.Values(lastEventIDHeader)) > 0 {
++	if !c.litradarCompatibility && len(req.Header.Values(lastEventIDHeader)) > 0 {
+ 		eid := req.Header.Get(lastEventIDHeader)
+ 		var ok bool
+ 		streamID, lastIdx, ok = parseEventID(eid)
+@@ -1413,7 +1522,7 @@ func (c *streamableServerConn) acquireStream(ctx context.Context, w http.Respons
+ //
+ // It returns an HTTP status code and error message.
+ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Request) {
+-	if len(req.Header.Values(lastEventIDHeader)) > 0 {
++	if !c.litradarCompatibility && len(req.Header.Values(lastEventIDHeader)) > 0 {
+ 		http.Error(w, "can't send Last-Event-ID for POST request", http.StatusBadRequest)
+ 		return
+ 	}
+@@ -1437,6 +1546,11 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 	// earlier, drop support for matching entirely; that will simplify this
+ 	// logic.
+ 	incoming, isBatch, err := readBatch(body)
++	if c.litradarCompatibility {
++		var message jsonrpc.Message
++		message, err = decodeLitRadarMessage(body)
++		incoming, isBatch = []jsonrpc.Message{message}, false
++	}
+ 	if err != nil {
+ 		http.Error(w, fmt.Sprintf("malformed payload: %v", err), http.StatusBadRequest)
+ 		return
+@@ -1477,7 +1591,7 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 			if c.server != nil {
+ 				methodInfos = c.server.receivingMethodInfos()
+ 			}
+-			if _, err := checkRequest(jreq, methodInfos); err != nil {
++			if _, err := checkRequest(jreq, methodInfos); err != nil && !(c.litradarCompatibility && (errors.Is(err, jsonrpc2.ErrNotHandled) || !jreq.IsCall())) {
+ 				if protocolVersion >= protocolVersion20260728 && errors.Is(err, jsonrpc2.ErrNotHandled) && jreq.IsCall() {
+ 					writeJSONRPCError(w, http.StatusNotFound, jreq.ID, &jsonrpc.Error{
+ 						Code:    jsonrpc.CodeMethodNotFound,
+@@ -1489,7 +1603,7 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 				return
+ 			}
+ 			if jreq.Method == methodInitialize {
+-				isInitialize = true
++				isInitialize = !c.litradarCompatibility || len(req.Header.Values(sessionIDHeader)) == 0
+ 				// Extract the protocol version from InitializeParams.
+ 				var params InitializeParams
+ 				if err := internaljson.Unmarshal(jreq.Params, &params); err == nil {
+@@ -1614,7 +1728,7 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 	}
+ 
+ 	// Validate MCP standard headers (Mcp-Method, Mcp-Name, Mcp-Param-*)
+-	if !isBatch && len(incoming) == 1 {
++	if !c.litradarCompatibility && !isBatch && len(incoming) == 1 {
+ 		if err := validateMcpHeaders(req.Header, incoming[0], c.toolLookup); err != nil {
+ 			resp := &jsonrpc.Response{
+ 				Error: jsonrpc2.NewError(CodeHeaderMismatch, err.Error()),
+@@ -1674,6 +1788,17 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 	}
+ 	stream.isListen = isSubscriptionsListen
+ 	stream.isBatch = isBatch
++	if c.litradarCompatibility {
++		stream.litradarInitialize = isInitialize
++		for _, message := range incoming {
++			if request, ok := message.(*jsonrpc.Request); ok && request.IsCall() {
++				stream.litradarMethod = request.Method
++			}
++		}
++		if !isInitialize {
++			stream.id = strconv.FormatUint(c.litradarNextStream.Add(1)-1, 10)
++		}
++	}
+ 
+ 	// subscriptions/listen is inherently a long-lived SSE endpoint (SEP-2575):
+ 	// it has no synchronous result, the response stream stays open until the
+@@ -1699,6 +1824,15 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 	done := make(chan struct{})
+ 	stream.done = done
+ 	stream.protocolVersion = effectiveVersion
++	var litradarPostLease *litradarLease
++	if c.litradarCompatibility {
++		litradarPostLease = &litradarLease{writer: w, context: req.Context(), done: done}
++		stream.litradarPrimary = litradarPostLease
++		w.Header().Set("Cache-Control", "no-cache")
++	}
++	if c.litradarCompatibility {
++		stream.mu.Lock()
++	}
+ 
+ 	// Reject any call whose ID is already in flight on this session,
+ 	// atomically and without partial registration.
+@@ -1706,6 +1840,9 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 	for reqID := range calls {
+ 		if _, ok := c.requestStreams[reqID]; ok {
+ 			c.mu.Unlock()
++			if c.litradarCompatibility {
++				stream.mu.Unlock()
++			}
+ 			writeJSONRPCError(w, http.StatusBadRequest, reqID, &jsonrpc.Error{
+ 				Code:    jsonrpc.CodeInvalidRequest,
+ 				Message: fmt.Sprintf("duplicate in-flight request ID %v", reqID.Raw()),
+@@ -1721,7 +1858,11 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 
+ 	// TODO(rfindley): if we have no event store, we should really cancel all
+ 	// remaining requests here, since the client will never get the results.
+-	defer stream.release()
++	if c.litradarCompatibility {
++		defer stream.releaseLitRadar(litradarPostLease)
++	} else {
++		defer stream.release()
++	}
+ 
+ 	if !useSSE {
+ 		// JSON mode: collect messages in pendingJSONMessages until done.
+@@ -1733,7 +1874,18 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 		//
+ 		// SEP-2575 removes Last-Event-ID-based resumable streams for protocol
+ 		// version >= 2026-07-28.
+-		if c.eventStore != nil && effectiveVersion >= protocolVersion20251125 && effectiveVersion < protocolVersion20260728 {
++		if c.litradarCompatibility {
++			stream.lastIdx = 0
++			primeID := "0"
++			if !isInitialize {
++				primeID += "/" + stream.id
++			}
++			if err := writeLitRadarEvent(w, nil, primeID, "3000"); err != nil {
++				closeLitRadarLease(litradarPostLease)
++				stream.w = nil
++				stream.done = nil
++			}
++		} else if c.eventStore != nil && effectiveVersion >= protocolVersion20251125 && effectiveVersion < protocolVersion20260728 {
+ 			// Write a priming event, as defined by [§2.1.6] of the spec.
+ 			//
+ 			// [§2.1.6]: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#sending-messages-to-the-server
+@@ -1751,6 +1903,9 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 		}
+ 	}
+ 
++	if c.litradarCompatibility {
++		stream.mu.Unlock()
++	}
+ 	// Publish incoming messages.
+ 	for _, msg := range incoming {
+ 		select {
+@@ -1767,7 +1922,11 @@ func (c *streamableServerConn) servePOST(w http.ResponseWriter, req *http.Reques
+ 		}
+ 	}
+ 
+-	c.hangResponse(req.Context(), done)
++	if c.litradarCompatibility {
++		c.hangLitRadar(req.Context(), stream, litradarPostLease)
++	} else {
++		c.hangResponse(req.Context(), done)
++	}
+ }
+ 
+ // Event IDs: encode both the logical connection ID and the index, as
+@@ -1807,6 +1966,13 @@ func (c *streamableServerConn) Read(ctx context.Context) (jsonrpc.Message, error
+ 		if !ok {
+ 			return nil, io.EOF
+ 		}
++		if c.litradarSession != nil {
++			if request, ok := msg.(*jsonrpc.Request); ok && request.Method == methodInitialize {
++				c.litradarSession.readLitRadarInitialize()
++			} else {
++				c.litradarSession.touchLitRadar()
++			}
++		}
+ 		return msg, nil
+ 	case <-c.done:
+ 		return nil, io.EOF
+@@ -1815,6 +1981,9 @@ func (c *streamableServerConn) Read(ctx context.Context) (jsonrpc.Message, error
+ 
+ // Write implements the [Connection] interface.
+ func (c *streamableServerConn) Write(ctx context.Context, msg jsonrpc.Message) error {
++	if c.litradarSession != nil {
++		defer c.litradarSession.touchLitRadar()
++	}
+ 	// Throughout this function, note that any error that wraps ErrRejected
+ 	// indicates a does not cause the connection to break.
+ 	//
+@@ -1892,6 +2061,22 @@ func (c *streamableServerConn) Write(ctx context.Context, msg jsonrpc.Message) e
+ 		// the standalone SSE stream.
+ 		return fmt.Errorf("%w: write to closed stream", jsonrpc2.ErrRejected)
+ 	}
++	if c.litradarCompatibility {
++		if response, ok := msg.(*jsonrpc.Response); ok {
++			var wireError *jsonrpc.Error
++			if errors.As(response.Error, &wireError) && wireError.Code == jsonrpc.CodeMethodNotFound {
++				copyResponse := *response
++				copyResponse.Error = &jsonrpc.Error{Code: jsonrpc.CodeMethodNotFound, Message: s.litradarMethod}
++				data, err = jsonrpc2.EncodeMessage(&copyResponse)
++				if err != nil {
++					return err
++				}
++			}
++		}
++	}
++	if c.litradarSession != nil && s.litradarInitialize {
++		defer c.litradarSession.resetLitRadarTimer(c.litradarSession.timeout, 2)
++	}
+ 	if sessionClosed {
+ 		return errors.New("session is closed")
+ 	}
+@@ -1919,6 +2104,22 @@ func (c *streamableServerConn) Write(ctx context.Context, msg jsonrpc.Message) e
+ 	if c.eventStore != nil && protocolVersion < protocolVersion20260728 {
+ 		eventID = formatEventID(s.id, s.lastIdx+1)
+ 	}
++	if c.litradarCompatibility {
++		if !s.litradarInitialize {
++			eventID = strconv.Itoa(s.lastIdx + 1)
++			if s.id != "" {
++				eventID += "/" + s.id
++			}
++		}
++		s.litradarCache = append(s.litradarCache, litradarEvent{index: s.lastIdx + 1, data: bytes.Clone(data), id: eventID})
++		if len(s.litradarCache) > 16 {
++			s.litradarCache = s.litradarCache[len(s.litradarCache)-16:]
++		}
++		delivered = true
++		if s.done == nil {
++			s.lastIdx++
++		}
++	}
+ 
+ 	// SEP-2575: map protocol-level JSON-RPC error codes to HTTP status codes
+ 	// on the new protocol (>= 2026-07-28). When non-zero, deliverLocked will

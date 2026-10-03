@@ -1,0 +1,87 @@
+{
+  "source": "encoding_rs from unchanged Rust baseline build",
+  "sourceSha256": "98dd7875a0cfc59ef989556e6c96e1955451678960a285269f8eebf4f25966e7",
+  "Cases": [
+    {
+      "Label": "gb18030",
+      "InputHex": "d6d0cec48431a4379439d935",
+      "DecodedHex": "e4b8ade69687efbfbdf09f92a1"
+    },
+    {
+      "Label": "gbk",
+      "InputHex": "d6d0cec48431a4379439d935",
+      "DecodedHex": "e4b8ade69687efbfbdf09f92a1"
+    },
+    {
+      "Label": "gb18030",
+      "InputHex": "81",
+      "DecodedHex": null
+    },
+    {
+      "Label": "gb18030",
+      "InputHex": "ff",
+      "DecodedHex": null
+    },
+    {
+      "Label": "gb18030",
+      "InputHex": "81308130",
+      "DecodedHex": "c280"
+    },
+    {
+      "Label": "gb18030",
+      "InputHex": "8431a437",
+      "DecodedHex": "efbfbd"
+    },
+    {
+      "Label": "gb18030",
+      "InputHex": "8431a437ff",
+      "DecodedHex": null
+    },
+    {
+      "Label": "utf-8",
+      "InputHex": "76616c696420efbfbd",
+      "DecodedHex": "76616c696420efbfbd"
+    },
+    {
+      "Label": "utf-8",
+      "InputHex": "ff",
+      "DecodedHex": null
+    },
+    {
+      "Label": "utf-8",
+      "InputHex": "e4b8",
+      "DecodedHex": null
+    },
+    {
+      "Label": "utf-16le",
+      "InputHex": "fdff",
+      "DecodedHex": "efbfbd"
+    },
+    {
+      "Label": "utf-16le",
+      "InputHex": "3dd8a1dc",
+      "DecodedHex": "f09f92a1"
+    },
+    {
+      "Label": "utf-16le",
+      "InputHex": "00d8",
+      "DecodedHex": null
+    },
+    {
+      "Label": "utf-16le",
+      "InputHex": "00",
+      "DecodedHex": null
+    },
+    {
+      "Label": "windows-1252",
+      "InputHex": "80818d8f909d",
+      "DecodedHex": "e282acc281c28dc28fc290c29d"
+    },
+    {
+      "Label": "shift_jis",
+      "InputHex": "81",
+      "DecodedHex": null
+    }
+  ],
+  "probeSha256": "67fc347292e70d1a67ff7ff976daeb5d364d4965623a61fe39bb38270deb3ee8"
+}

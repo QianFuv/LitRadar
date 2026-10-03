@@ -31,6 +31,26 @@ function options(args) {
 const requested = options(process.argv.slice(2));
 const phase = requested.get("--phase");
 assert.equal(requested.get("--baseline") ?? BASELINE, BASELINE);
+if (["sdk-integrity", "sqlite-driver-integrity"].includes(phase)) {
+  assert(
+    !requested.has("--candidate"),
+    "Integrity phase cannot accept candidate observations",
+  );
+  const { verifyDependency } = await import("./dependency.mjs");
+  console.log(
+    await verifyDependency(phase === "sdk-integrity" ? "go-sdk" : "go-sqlite3"),
+  );
+  process.exit(0);
+}
+if (phase === "primitives") {
+  assert(
+    !requested.has("--candidate"),
+    "Primitives must execute their own checks",
+  );
+  const { runPrimitives } = await import("./primitives/run.mjs");
+  console.log(await runPrimitives());
+  process.exit(0);
+}
 assert.equal(
   phase,
   "baseline",

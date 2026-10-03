@@ -1,0 +1,104 @@
+diff --git a/sqlite3.go b/sqlite3.go
+index c519de7..57c81c2 100644
+--- a/sqlite3.go
++++ b/sqlite3.go
+@@ -460,6 +460,9 @@ const (
+ type SQLiteDriver struct {
+ 	Extensions  []string
+ 	ConnectHook func(*SQLiteConn) error
++	// NoFollow enables SQLite's native SQLITE_OPEN_NOFOLLOW flag on every open.
++	// It does not replace validation of ancestor directories or other path policy.
++	NoFollow bool
+ }
+ 
+ // SQLiteConn implements driver.Conn.
+@@ -1609,8 +1612,12 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
+ 		vfs = C.CString(vfsName)
+ 		defer C.free(unsafe.Pointer(vfs))
+ 	}
++	openFlags := mutex | C.SQLITE_OPEN_READWRITE | C.SQLITE_OPEN_CREATE
++	if d.NoFollow {
++		openFlags |= C.SQLITE_OPEN_NOFOLLOW
++	}
+ 	rv := C._sqlite3_open_v2(name, &db,
+-		mutex|C.SQLITE_OPEN_READWRITE|C.SQLITE_OPEN_CREATE,
++		openFlags,
+ 		vfs)
+ 	if rv != 0 {
+ 		// Save off the error _before_ closing the database.
+diff --git a/sqlite3_litradar_nofollow_test.go b/sqlite3_litradar_nofollow_test.go
+new file mode 100644
+--- /dev/null
++++ b/sqlite3_litradar_nofollow_test.go
+@@ -0,0 +1,71 @@
++//go:build cgo
++
++package sqlite3
++
++import (
++	"bytes"
++	"database/sql/driver"
++	"os"
++	"path/filepath"
++	"runtime"
++	"testing"
++)
++
++// TestLitRadarNoFollowPreservesDefault tests the native flag at the actual driver open boundary.
++func TestLitRadarNoFollowPreservesDefault(t *testing.T) {
++	root := t.TempDir()
++	filename := filepath.Join(root, "native-open.sqlite")
++	strict := &SQLiteDriver{NoFollow: true}
++	connection, err := strict.Open(filename)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := connection.(driver.Execer).Exec("CREATE TABLE sentinel(value TEXT); INSERT INTO sentinel VALUES('unchanged')", nil); err != nil {
++		t.Fatal(err)
++	}
++	if err := connection.Close(); err != nil {
++		t.Fatal(err)
++	}
++	original, err := os.ReadFile(filename)
++	if err != nil {
++		t.Fatal(err)
++	}
++	link := filepath.Join(root, "alias.sqlite")
++	if err := os.Symlink(filename, link); err != nil {
++		t.Fatalf("Native symlink proof unavailable: %v", err)
++	}
++	ordinary, err := (&SQLiteDriver{}).Open(link)
++	if err != nil {
++		t.Fatalf("Default driver must preserve symlink behavior: %v", err)
++	}
++	if err := ordinary.Close(); err != nil {
++		t.Fatal(err)
++	}
++	rejected, err := strict.Open(link)
++	if runtime.GOOS == "windows" {
++		if err != nil {
++			t.Fatalf("Windows native behavior differs from frozen Rust SQLite: %v", err)
++		}
++		rejected.Close()
++		t.Log("Windows VFS accepts the final symlink even with NOFOLLOW, matching Rust SQLite 3.50.2; application path validation remains required")
++	} else if err == nil {
++		rejected.Close()
++		t.Fatal("NOFOLLOW unexpectedly accepted a symbolic database path")
++	}
++	if info, err := os.Stat(filename); err != nil || info.Size() == 0 {
++		t.Fatalf("Original database lost: %v", err)
++	}
++	for attempt := 0; attempt < 2; attempt++ {
++		reopened, err := strict.Open(filename)
++		if err != nil {
++			t.Fatalf("Regular file reconnect failed: %v", err)
++		}
++		if err := reopened.Close(); err != nil {
++			t.Fatal(err)
++		}
++	}
++	current, err := os.ReadFile(filename)
++	if err != nil || !bytes.Equal(original, current) {
++		t.Fatalf("external target changed: %v", err)
++	}
++}

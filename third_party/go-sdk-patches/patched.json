@@ -1,0 +1,18 @@
+{
+  "upstreamCommit": "3f3b699b2b67e1ed033a63d6651671dab53c2d32",
+  "patchSha256": "1c90f2a257bd1d8b657708740ab2fe0919c0c5899863a1e73122a44cead14835",
+  "files": [
+    {
+      "path": "mcp/litradar_compat.go",
+      "sha256": "4439fedd2f8206bade1bde94213536c1454b5e6392c29175602d2099f1da63b5"
+    },
+    {
+      "path": "mcp/litradar_compat_test.go",
+      "sha256": "62248b759ee47150b1f37042fce46251b3a246b850a0f82b676b5c606d5511cc"
+    },
+    {
+      "path": "mcp/streamable.go",
+      "sha256": "894193763d17f69516089b64441d3c2276bb6d471dc9d63cd5f87b833ae5af6c"
+    }
+  ]
+}

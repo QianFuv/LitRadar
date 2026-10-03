@@ -1,0 +1,407 @@
+{
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "source": "Frozen Rust binary; tests/migration/primitives/mcp-rust-boundary.mjs",
+  "cases": [
+    {
+      "name": "get-missing-accept",
+      "method": "GET",
+      "status": 406,
+      "responseBody": "Not Acceptable: Client must accept text/event-stream",
+      "contentType": null
+    },
+    {
+      "name": "get-no-session",
+      "method": "GET",
+      "headers": {
+        "accept": "text/event-stream"
+      },
+      "status": 400,
+      "responseBody": "Bad Request: Session ID is required",
+      "contentType": null
+    },
+    {
+      "name": "get-unknown-before-version",
+      "method": "GET",
+      "headers": {
+        "accept": "text/event-stream",
+        "mcp-session-id": "unknown",
+        "mcp-protocol-version": "bad"
+      },
+      "status": 404,
+      "responseBody": "Not Found: Session not found",
+      "contentType": null
+    },
+    {
+      "name": "delete-unknown",
+      "method": "DELETE",
+      "headers": {
+        "mcp-session-id": "unknown"
+      },
+      "status": 202,
+      "responseBody": "",
+      "contentType": null
+    },
+    {
+      "name": "post-accept-before-content-type",
+      "method": "POST",
+      "body": "{}",
+      "status": 406,
+      "responseBody": "Not Acceptable: Client must accept both application/json and text/event-stream",
+      "contentType": null
+    },
+    {
+      "name": "post-bad-content-type",
+      "method": "POST",
+      "headers": {
+        "accept": "application/json, text/event-stream"
+      },
+      "body": "{}",
+      "status": 415,
+      "responseBody": "Unsupported Media Type: Content-Type must be application/json",
+      "contentType": null
+    },
+    {
+      "name": "post-body-0",
+      "method": "POST",
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body data did not match any variant of untagged enum JsonRpcMessage",
+      "contentType": null
+    },
+    {
+      "name": "post-body-1",
+      "method": "POST",
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "[]",
+      "status": 415,
+      "responseBody": "fail to deserialize request body data did not match any variant of untagged enum JsonRpcMessage",
+      "contentType": null
+    },
+    {
+      "name": "post-body-2",
+      "method": "POST",
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{",
+      "status": 415,
+      "responseBody": "fail to deserialize request body EOF while parsing an object at line 1 column 1",
+      "contentType": null
+    },
+    {
+      "name": "post-body-3",
+      "method": "POST",
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "",
+      "status": 415,
+      "responseBody": "fail to deserialize request body EOF while parsing a value at line 1 column 0",
+      "contentType": null
+    },
+    {
+      "name": "post-body-4",
+      "method": "POST",
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "null",
+      "status": 415,
+      "responseBody": "fail to deserialize request body data did not match any variant of untagged enum JsonRpcMessage",
+      "contentType": null
+    },
+    {
+      "name": "post-body-5",
+      "method": "POST",
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"not/a/method\"}",
+      "status": 422,
+      "responseBody": "Unexpected message, expect initialize request",
+      "contentType": null
+    },
+    {
+      "name": "post-body-6",
+      "method": "POST",
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"tools/call\",\"params\":{}}",
+      "status": 422,
+      "responseBody": "Unexpected message, expect initialize request",
+      "contentType": null
+    },
+    {
+      "name": "post-body-7",
+      "method": "POST",
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"ping\",\"params\":{}}",
+      "status": 422,
+      "responseBody": "Unexpected message, expect initialize request",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-0",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"ping\"}",
+      "status": 202,
+      "responseBody": "",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-1",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":9223372036854775808,\"method\":\"ping\"}",
+      "status": 202,
+      "responseBody": "",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-2",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"ping\"}",
+      "status": 202,
+      "responseBody": "",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-3",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":1}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body data did not match any variant of untagged enum JsonRpcMessage",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-4",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":null}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body data did not match any variant of untagged enum JsonRpcMessage",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-5",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"fixture\"}}",
+      "status": 202,
+      "responseBody": "",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-6",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32600,\"message\":\"fixture\"}}",
+      "status": 202,
+      "responseBody": "",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-7",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}",
+      "status": 200,
+      "responseBody": "data: \nid: 0/0\nretry: 3000\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"initialize\"}}\nid: 1/0\n\n",
+      "contentType": "text/event-stream"
+    },
+    {
+      "name": "raw-session-8",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"} {}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body trailing characters at line 1 column 42",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-9",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "\n{",
+      "status": 415,
+      "responseBody": "fail to deserialize request body EOF while parsing an object at line 2 column 1",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-10",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "  \n  ",
+      "status": 415,
+      "responseBody": "fail to deserialize request body EOF while parsing a value at line 2 column 2",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-11",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"x\":}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body expected value at line 1 column 6",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-12",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"x\" 1}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body expected `:` at line 1 column 6",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-13",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"x\":1,}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body trailing comma at line 1 column 8",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-14",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "[1,]",
+      "status": 415,
+      "responseBody": "fail to deserialize request body trailing comma at line 1 column 4",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-15",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"x\":\"\\uD800\"}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body unexpected end of hex escape at line 1 column 13",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-16",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"x\":\"\\q\"}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body invalid escape at line 1 column 8",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-17",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"x\":01}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body invalid number at line 1 column 7",
+      "contentType": null
+    },
+    {
+      "name": "raw-session-18",
+      "method": "POST",
+      "useSession": true,
+      "headers": {
+        "accept": "application/json, text/event-stream",
+        "content-type": "application/json"
+      },
+      "body": "{\"x\":1e999}",
+      "status": 415,
+      "responseBody": "fail to deserialize request body number out of range at line 1 column 11",
+      "contentType": null
+    }
+  ]
+}
