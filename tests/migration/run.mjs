@@ -15,7 +15,9 @@ function options(args) {
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index];
     assert(
-      ["--phase", "--baseline", "--candidate"].includes(key),
+      ["--phase", "--baseline", "--candidate", "--reuse-driver-proof"].includes(
+        key,
+      ),
       `Unknown option: ${key}`,
     );
     assert(
@@ -30,6 +32,10 @@ function options(args) {
 
 const requested = options(process.argv.slice(2));
 const phase = requested.get("--phase");
+assert(
+  !requested.has("--reuse-driver-proof") || phase === "auth",
+  "Driver proof reuse is limited to auth",
+);
 assert.equal(requested.get("--baseline") ?? BASELINE, BASELINE);
 if (["sdk-integrity", "sqlite-driver-integrity"].includes(phase)) {
   assert(
@@ -49,6 +55,12 @@ if (phase === "primitives") {
   );
   const { runPrimitives } = await import("./primitives/run.mjs");
   console.log(await runPrimitives());
+  process.exit(0);
+}
+if (phase === "auth") {
+  assert(!requested.has("--candidate"), "Auth must execute its own checks");
+  const { runAuth } = await import("./auth/run.mjs");
+  console.log(await runAuth(requested.get("--reuse-driver-proof")));
   process.exit(0);
 }
 assert.equal(

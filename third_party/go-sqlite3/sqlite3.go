@@ -463,6 +463,9 @@ type SQLiteDriver struct {
 	// NoFollow enables SQLite's native SQLITE_OPEN_NOFOLLOW flag on every open.
 	// It does not replace validation of ancestor directories or other path policy.
 	NoFollow bool
+	// DeferSynchronous leaves the native default untouched during version-only preflight.
+	// Opt-in callers must configure synchronous before starting writable application work.
+	DeferSynchronous bool
 }
 
 // SQLiteConn implements driver.Conn.
@@ -1909,9 +1912,11 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 
 	// Synchronous Mode
 	//
-	// Because default is NORMAL this statement is always executed
-	if err := exec(fmt.Sprintf("PRAGMA synchronous = %s;", synchronousMode)); err != nil {
-		return fail(err)
+	// The default remains NORMAL unless a version-only preflight explicitly defers it.
+	if !d.DeferSynchronous {
+		if err := exec(fmt.Sprintf("PRAGMA synchronous = %s;", synchronousMode)); err != nil {
+			return fail(err)
+		}
 	}
 
 	// Writable Schema

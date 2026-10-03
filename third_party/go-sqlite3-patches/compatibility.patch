@@ -1,18 +1,21 @@
 diff --git a/sqlite3.go b/sqlite3.go
-index c519de7..57c81c2 100644
+index c519de7..d27dc5f 100644
 --- a/sqlite3.go
 +++ b/sqlite3.go
-@@ -460,6 +460,9 @@ const (
+@@ -460,6 +460,12 @@ const (
  type SQLiteDriver struct {
  	Extensions  []string
  	ConnectHook func(*SQLiteConn) error
 +	// NoFollow enables SQLite's native SQLITE_OPEN_NOFOLLOW flag on every open.
 +	// It does not replace validation of ancestor directories or other path policy.
 +	NoFollow bool
++	// DeferSynchronous leaves the native default untouched during version-only preflight.
++	// Opt-in callers must configure synchronous before starting writable application work.
++	DeferSynchronous bool
  }
  
  // SQLiteConn implements driver.Conn.
-@@ -1609,8 +1612,12 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
+@@ -1609,8 +1615,12 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
  		vfs = C.CString(vfsName)
  		defer C.free(unsafe.Pointer(vfs))
  	}
@@ -26,11 +29,26 @@ index c519de7..57c81c2 100644
  		vfs)
  	if rv != 0 {
  		// Save off the error _before_ closing the database.
+@@ -1902,9 +1912,11 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
+ 
+ 	// Synchronous Mode
+ 	//
+-	// Because default is NORMAL this statement is always executed
+-	if err := exec(fmt.Sprintf("PRAGMA synchronous = %s;", synchronousMode)); err != nil {
+-		return fail(err)
++	// The default remains NORMAL unless a version-only preflight explicitly defers it.
++	if !d.DeferSynchronous {
++		if err := exec(fmt.Sprintf("PRAGMA synchronous = %s;", synchronousMode)); err != nil {
++			return fail(err)
++		}
+ 	}
+ 
+ 	// Writable Schema
 diff --git a/sqlite3_litradar_nofollow_test.go b/sqlite3_litradar_nofollow_test.go
 new file mode 100644
 --- /dev/null
 +++ b/sqlite3_litradar_nofollow_test.go
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,129 @@
 +//go:build cgo
 +
 +package sqlite3
@@ -38,6 +56,7 @@ new file mode 100644
 +import (
 +	"bytes"
 +	"database/sql/driver"
++	"fmt"
 +	"os"
 +	"path/filepath"
 +	"runtime"
@@ -100,5 +119,62 @@ new file mode 100644
 +	current, err := os.ReadFile(filename)
 +	if err != nil || !bytes.Equal(original, current) {
 +		t.Fatalf("external target changed: %v", err)
++	}
++}
++
++// TestLitRadarDeferredSynchronous preserves version-first preflight on malformed schemas.
++func TestLitRadarDeferredSynchronous(t *testing.T) {
++	for _, version := range []int64{20, 21} {
++		t.Run(fmt.Sprint(version), func(t *testing.T) {
++			filename := filepath.Join(t.TempDir(), "preflight.sqlite")
++			ordinary := &SQLiteDriver{}
++			connection, err := ordinary.Open(filename)
++			if err != nil {
++				t.Fatal(err)
++			}
++			rows, err := connection.(driver.Queryer).Query("PRAGMA synchronous", nil)
++			if err != nil {
++				t.Fatal(err)
++			}
++			values := make([]driver.Value, 1)
++			if err := rows.Next(values); err != nil || values[0] != int64(1) {
++				t.Fatalf("default synchronous changed: %v %v", values, err)
++			}
++			rows.Close()
++			statement := fmt.Sprintf("CREATE TABLE marker(value TEXT); PRAGMA user_version=%d; PRAGMA writable_schema=ON; UPDATE sqlite_schema SET sql='CREATE TABLE marker(' WHERE name='marker'", version)
++			if _, err := connection.(driver.Execer).Exec(statement, nil); err != nil {
++				t.Fatal(err)
++			}
++			if err := connection.Close(); err != nil {
++				t.Fatal(err)
++			}
++			original, err := os.ReadFile(filename)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if unexpected, err := ordinary.Open(filename); err == nil {
++				unexpected.Close()
++				t.Fatal("default schema validation changed")
++			}
++			preflight, err := (&SQLiteDriver{DeferSynchronous: true}).Open(filename)
++			if err != nil {
++				t.Fatal(err)
++			}
++			rows, err = preflight.(driver.Queryer).Query("PRAGMA user_version", nil)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := rows.Next(values); err != nil || values[0] != version {
++				t.Fatalf("preflight version: %v %v", values, err)
++			}
++			rows.Close()
++			if err := preflight.Close(); err != nil {
++				t.Fatal(err)
++			}
++			current, err := os.ReadFile(filename)
++			if err != nil || !bytes.Equal(original, current) {
++				t.Fatalf("preflight mutated bytes: %v", err)
++			}
++		})
 +	}
 +}

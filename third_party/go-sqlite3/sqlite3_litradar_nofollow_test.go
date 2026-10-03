@@ -5,6 +5,7 @@ package sqlite3
 import (
 	"bytes"
 	"database/sql/driver"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -67,5 +68,62 @@ func TestLitRadarNoFollowPreservesDefault(t *testing.T) {
 	current, err := os.ReadFile(filename)
 	if err != nil || !bytes.Equal(original, current) {
 		t.Fatalf("external target changed: %v", err)
+	}
+}
+
+// TestLitRadarDeferredSynchronous preserves version-first preflight on malformed schemas.
+func TestLitRadarDeferredSynchronous(t *testing.T) {
+	for _, version := range []int64{20, 21} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), "preflight.sqlite")
+			ordinary := &SQLiteDriver{}
+			connection, err := ordinary.Open(filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := connection.(driver.Queryer).Query("PRAGMA synchronous", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := make([]driver.Value, 1)
+			if err := rows.Next(values); err != nil || values[0] != int64(1) {
+				t.Fatalf("default synchronous changed: %v %v", values, err)
+			}
+			rows.Close()
+			statement := fmt.Sprintf("CREATE TABLE marker(value TEXT); PRAGMA user_version=%d; PRAGMA writable_schema=ON; UPDATE sqlite_schema SET sql='CREATE TABLE marker(' WHERE name='marker'", version)
+			if _, err := connection.(driver.Execer).Exec(statement, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := connection.Close(); err != nil {
+				t.Fatal(err)
+			}
+			original, err := os.ReadFile(filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if unexpected, err := ordinary.Open(filename); err == nil {
+				unexpected.Close()
+				t.Fatal("default schema validation changed")
+			}
+			preflight, err := (&SQLiteDriver{DeferSynchronous: true}).Open(filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err = preflight.(driver.Queryer).Query("PRAGMA user_version", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := rows.Next(values); err != nil || values[0] != version {
+				t.Fatalf("preflight version: %v %v", values, err)
+			}
+			rows.Close()
+			if err := preflight.Close(); err != nil {
+				t.Fatal(err)
+			}
+			current, err := os.ReadFile(filename)
+			if err != nil || !bytes.Equal(original, current) {
+				t.Fatalf("preflight mutated bytes: %v", err)
+			}
+		})
 	}
 }
