@@ -69,6 +69,15 @@ if (phase === "storage") {
   console.log(await runStorage());
   process.exit(0);
 }
+if (phase === "sources") {
+  assert(
+    !requested.has("--candidate"),
+    "Sources must execute their own checks",
+  );
+  const { runSources } = await import("./sources/run.mjs");
+  console.log(await runSources());
+  process.exit(0);
+}
 assert.equal(
   phase,
   "baseline",
