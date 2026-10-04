@@ -1,0 +1,63 @@
+{
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "exporter_sha256": "c16cce0ed4f1a01fa51594d7b67b87a89a7d41237490ed00aab5481d37be2f39",
+  "cases": [
+    {
+      "folders": [
+        {
+          "id": 2,
+          "name": "默认收藏",
+          "is_tracking": true,
+          "article_count": 0,
+          "created_at": 1
+        },
+        {
+          "id": 3,
+          "name": "Reading",
+          "is_tracking": false,
+          "article_count": 0,
+          "created_at": 1
+        }
+      ],
+      "text": "[\n  {\n    \"id\": 2,\n    \"name\": \"默认收藏\",\n    \"is_tracking\": true,\n    \"article_count\": 0,\n    \"created_at\": 1.0\n  },\n  {\n    \"id\": 3,\n    \"name\": \"Reading\",\n    \"is_tracking\": false,\n    \"article_count\": 0,\n    \"created_at\": 1.0\n  }\n]"
+    },
+    {
+      "folders": [
+        {
+          "id": 2,
+          "name": "默认收藏",
+          "is_tracking": true,
+          "article_count": 0,
+          "created_at": 0.000001
+        },
+        {
+          "id": 3,
+          "name": "Reading",
+          "is_tracking": false,
+          "article_count": 0,
+          "created_at": 0.000001
+        }
+      ],
+      "text": "[\n  {\n    \"id\": 2,\n    \"name\": \"默认收藏\",\n    \"is_tracking\": true,\n    \"article_count\": 0,\n    \"created_at\": 1e-6\n  },\n  {\n    \"id\": 3,\n    \"name\": \"Reading\",\n    \"is_tracking\": false,\n    \"article_count\": 0,\n    \"created_at\": 1e-6\n  }\n]"
+    },
+    {
+      "folders": [
+        {
+          "id": 2,
+          "name": "默认收藏",
+          "is_tracking": true,
+          "article_count": 0,
+          "created_at": 10000000000000000
+        },
+        {
+          "id": 3,
+          "name": "Reading",
+          "is_tracking": false,
+          "article_count": 0,
+          "created_at": 10000000000000000
+        }
+      ],
+      "text": "[\n  {\n    \"id\": 2,\n    \"name\": \"默认收藏\",\n    \"is_tracking\": true,\n    \"article_count\": 0,\n    \"created_at\": 1e+16\n  },\n  {\n    \"id\": 3,\n    \"name\": \"Reading\",\n    \"is_tracking\": false,\n    \"article_count\": 0,\n    \"created_at\": 1e+16\n  }\n]"
+    }
+  ]
+}

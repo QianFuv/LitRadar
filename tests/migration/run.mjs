@@ -110,6 +110,12 @@ if (phase === "scheduler") {
   console.log(await runScheduler());
   process.exit(0);
 }
+if (phase === "api") {
+  assert(!requested.has("--candidate"), "API must execute its own checks");
+  const { runApi } = await import("./api/run.mjs");
+  console.log(await runApi());
+  process.exit(0);
+}
 assert.equal(
   phase,
   "baseline",

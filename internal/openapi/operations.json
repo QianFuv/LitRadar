@@ -1,0 +1,4285 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/admin/announcements",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "List all announcements for admin management.",
+      "operationId": "list_announcements",
+      "responses": {
+        "200": {
+          "description": "All announcements.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AnnouncementInfo"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/announcements",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Create an announcement.",
+      "operationId": "create_announcement",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AnnouncementCreate"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Created announcement.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnnouncementInfo"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/announcements/{announcement_id}",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Update an announcement.",
+      "operationId": "update_announcement",
+      "parameters": [
+        {
+          "name": "announcement_id",
+          "in": "path",
+          "description": "Announcement row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AnnouncementUpdate"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Updated announcement.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnnouncementInfo"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/announcements/{announcement_id}",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Delete an announcement.",
+      "operationId": "delete_announcement",
+      "parameters": [
+        {
+          "name": "announcement_id",
+          "in": "path",
+          "description": "Announcement row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Announcement deleted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/invite-codes",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "List invite codes.",
+      "operationId": "list_invite_codes",
+      "responses": {
+        "200": {
+          "description": "Invite codes.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AdminInviteCodeInfo"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/invite-codes",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Create an admin-generated invite code.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `request_id` - Server-generated request identifier.\n* `body` - Optional bounded lifecycle overrides.\n\n# Returns\n\nCreated invite code metadata.",
+      "operationId": "create_invite_code",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/AdminInviteCodeCreate"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Created invite code.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminInviteCodeInfo"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/invite-codes/{code_id}",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Irreversibly revoke an invite code.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `code_id` - Invite code row identifier.\n* `request_id` - Server-generated request identifier.\n\n# Returns\n\nOK response when an unrevoked invite was changed.",
+      "operationId": "revoke_admin_invite_code",
+      "parameters": [
+        {
+          "name": "code_id",
+          "in": "path",
+          "description": "Invite code row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Invite code revoked.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/provider-catalog",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Return built-in Provider capabilities and discovered catalog files.",
+      "operationId": "get_provider_catalog",
+      "responses": {
+        "200": {
+          "description": "Provider capabilities and catalogs.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderCatalogResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/runtime-settings",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "List managed runtime settings.",
+      "operationId": "list_runtime_settings",
+      "responses": {
+        "200": {
+          "description": "Runtime settings.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RuntimeSettingInfo"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/runtime-settings",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Update managed runtime settings.",
+      "operationId": "update_runtime_settings",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RuntimeSettingsUpdate"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Updated runtime settings.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RuntimeSettingInfo"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/scheduled-tasks",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "List scheduled tasks.",
+      "operationId": "list_scheduled_tasks",
+      "responses": {
+        "200": {
+          "description": "Scheduled tasks.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ScheduledTaskInfo"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/scheduled-tasks",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Create a scheduled task.",
+      "operationId": "create_scheduled_task",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ScheduledTaskCreate"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Created scheduled task.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledTaskInfo"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/scheduled-tasks/{task_id}",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Update a scheduled task.",
+      "operationId": "update_scheduled_task",
+      "parameters": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "description": "Scheduled task row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ScheduledTaskUpdate"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Updated scheduled task.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledTaskInfo"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/scheduled-tasks/{task_id}",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Delete a scheduled task.",
+      "operationId": "delete_scheduled_task",
+      "parameters": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "description": "Scheduled task row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Scheduled task deleted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/scheduler/status",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Read durable scheduler cursor, worker heartbeat, and run status.",
+      "operationId": "scheduler_status",
+      "responses": {
+        "200": {
+          "description": "Durable scheduler status.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulerStatusResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/stats",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Return dashboard statistics.",
+      "operationId": "stats",
+      "responses": {
+        "200": {
+          "description": "Admin dashboard statistics.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminStatsResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/users",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "List all users with admin dashboard counts.",
+      "operationId": "list_users",
+      "responses": {
+        "200": {
+          "description": "Admin user list.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AdminUserInfo"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/users/{user_id}",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Delete a user and associated data.",
+      "operationId": "delete_user",
+      "parameters": [
+        {
+          "name": "user_id",
+          "in": "path",
+          "description": "User row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "User deleted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/users/{user_id}/admin",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Grant or revoke admin status.",
+      "operationId": "set_admin",
+      "parameters": [
+        {
+          "name": "user_id",
+          "in": "path",
+          "description": "User row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AdminSetAdmin"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Admin status updated.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/users/{user_id}/reset-password",
+    "operation": {
+      "tags": [
+        "admin"
+      ],
+      "summary": "Reset a user's password.",
+      "operationId": "reset_password",
+      "parameters": [
+        {
+          "name": "user_id",
+          "in": "path",
+          "description": "User row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AdminResetPassword"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Password reset.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/announcements",
+    "operation": {
+      "tags": [
+        "announcements"
+      ],
+      "summary": "List enabled announcements from the existing auth database.",
+      "description": "# Arguments\n\n* `state` - Shared API state containing storage paths.\n\n# Returns\n\nJSON announcement list ordered like the Python API.",
+      "operationId": "get_announcements",
+      "responses": {
+        "200": {
+          "description": "Enabled announcements.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AnnouncementInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/articles",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List articles with filters, FTS, and cursor pagination.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `raw_query` - Raw query string so repeated fields remain available.\n\n# Returns\n\nPaginated articles.",
+      "operationId": "list_articles",
+      "parameters": [
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under data/index.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        {
+          "name": "journal_id",
+          "in": "query",
+          "description": "Repeated journal identifier filters.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "maxItems": 500
+          }
+        },
+        {
+          "name": "area",
+          "in": "query",
+          "description": "Repeated area filters.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500
+          }
+        },
+        {
+          "name": "utd_rating",
+          "in": "query",
+          "description": "Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500
+          }
+        },
+        {
+          "name": "abs_rating",
+          "in": "query",
+          "description": "Repeated exact ABS grades, including literal 4*.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500
+          }
+        },
+        {
+          "name": "fms_rating",
+          "in": "query",
+          "description": "Repeated exact FMS grades.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500
+          }
+        },
+        {
+          "name": "fmscn_rating",
+          "in": "query",
+          "description": "Repeated exact FMS China grades.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500
+          }
+        },
+        {
+          "name": "issue_id",
+          "in": "query",
+          "description": "Issue identifier filter.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "year",
+          "in": "query",
+          "description": "Publication year filter.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "in_press",
+          "in": "query",
+          "description": "In-press filter.",
+          "required": false,
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "open_access",
+          "in": "query",
+          "description": "Open-access filter.",
+          "required": false,
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "date_from",
+          "in": "query",
+          "description": "Start date filter.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        {
+          "name": "date_to",
+          "in": "query",
+          "description": "End date filter.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        {
+          "name": "doi",
+          "in": "query",
+          "description": "DOI filter.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        {
+          "name": "pmid",
+          "in": "query",
+          "description": "PubMed identifier filter.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        {
+          "name": "q",
+          "in": "query",
+          "description": "Full-text query.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        {
+          "name": "search_mode",
+          "in": "query",
+          "description": "Full-text query interpretation mode; defaults to simple.",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/ArticleSearchMode"
+          }
+        },
+        {
+          "name": "sort",
+          "in": "query",
+          "description": "Sort expression.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Page size.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "offset",
+          "in": "query",
+          "description": "Offset row count.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "cursor",
+          "in": "query",
+          "description": "Keyset cursor.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        {
+          "name": "include_total",
+          "in": "query",
+          "description": "Whether to include the full filtered row count; defaults to true without a cursor and false with a cursor.",
+          "required": false,
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Paginated articles.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArticlePage"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid filters or advanced search expression.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/articles/{article_id}",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "Return one article record.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `article_id` - Article identifier.\n* `query` - Database selector.\n\n# Returns\n\nArticle record.",
+      "operationId": "get_article",
+      "parameters": [
+        {
+          "name": "article_id",
+          "in": "path",
+          "description": "Article identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Article record.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArticleRecord"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/articles/{article_id}/abstract",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "Resolve and redirect to an article abstract page online.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `article_id` - Article identifier.\n* `query` - Database selector.\n\n# Returns\n\nNo-store temporary redirect.",
+      "operationId": "redirect_article_abstract",
+      "parameters": [
+        {
+          "name": "article_id",
+          "in": "path",
+          "description": "Article identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "307": {
+          "description": "Temporary online abstract-page redirect."
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/articles/{article_id}/access",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "Return access actions for one article.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `article_id` - Article identifier.\n* `query` - Database selector.\n\n# Returns\n\nArticle access response.",
+      "operationId": "get_article_access",
+      "parameters": [
+        {
+          "name": "article_id",
+          "in": "path",
+          "description": "Article identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Article access actions.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArticleAccessResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/articles/{article_id}/fulltext",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "Redirect to an article full-text target.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `article_id` - Article identifier.\n* `query` - Database selector.\n\n# Returns\n\nTemporary redirect response.",
+      "operationId": "redirect_article_fulltext",
+      "parameters": [
+        {
+          "name": "article_id",
+          "in": "path",
+          "description": "Article identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Full-text file download."
+        },
+        "307": {
+          "description": "Temporary redirect to a full-text target."
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/change-password",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Change the current user's password.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `body` - Password change request.\n\n# Returns\n\nOK response.",
+      "operationId": "change_password",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ChangePasswordRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Password changed.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/invite-code",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Get the invite code generated by the current user.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nInvite code response or null.",
+      "operationId": "get_invite_code",
+      "responses": {
+        "200": {
+          "description": "Current user's invite code.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/InviteCodeResponse"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/invite-code",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Generate a one-time invite code.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nInvite code response.",
+      "operationId": "generate_invite_code",
+      "responses": {
+        "200": {
+          "description": "Generated invite code.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteCodeResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/auth/invite-code",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Revoke the current user's unrevoked invite code.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `request_id` - Server-generated request identifier.\n\n# Returns\n\nOK response when an invite was revoked.",
+      "operationId": "revoke_invite_code",
+      "responses": {
+        "200": {
+          "description": "Invite code revoked.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "No unrevoked invite code exists.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/invite-code/rotate",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Revoke any prior issuance and create one replacement invite code.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `request_id` - Server-generated request identifier.\n\n# Returns\n\nNewly issued replacement invite code.",
+      "operationId": "rotate_invite_code",
+      "responses": {
+        "200": {
+          "description": "Invite code rotated.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteCodeResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/invite-required",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Return whether registration requires an invite code.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n\n# Returns\n\nInvite requirement response.",
+      "operationId": "check_invite_required",
+      "responses": {
+        "200": {
+          "description": "Invite requirement.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteRequiredResponse"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/login",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Authenticate a user and set a session cookie.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `body` - Login request.\n\n# Returns\n\nLogin response without the raw token.",
+      "operationId": "login",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/LoginRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Login response.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginResponse"
+              }
+            }
+          }
+        },
+        "429": {
+          "description": "Authentication rate limit exceeded.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/logout",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Logout the current session token and clear the browser cookie.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nLogout response.",
+      "operationId": "logout",
+      "responses": {
+        "200": {
+          "description": "Logged out.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutResponse"
+              }
+            }
+          }
+        },
+        "503": {
+          "description": "The browser cookie was cleared but durable token revocation was not confirmed.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRevocationErrorResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/logout-all",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Revoke every session and personal access token for the current user.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `request_id` - Server-generated request identifier.\n\n# Returns\n\nLogout response after every token is durably revoked.",
+      "operationId": "logout_all",
+      "responses": {
+        "200": {
+          "description": "All sessions and personal access tokens were revoked.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutResponse"
+              }
+            }
+          }
+        },
+        "503": {
+          "description": "The browser cookie was cleared but durable token revocation was not confirmed.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRevocationErrorResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/me",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Return the current authenticated user.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nCurrent user response.",
+      "operationId": "get_me",
+      "responses": {
+        "200": {
+          "description": "Current user.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/register",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Register a new user account.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `body` - Registration request.\n\n# Returns\n\nCreated user response.",
+      "operationId": "register",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RegisterRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Registered user.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserResponse"
+              }
+            }
+          }
+        },
+        "429": {
+          "description": "Authentication rate limit exceeded.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/tokens",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "List active access tokens for the current user.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nActive token metadata.",
+      "operationId": "get_tokens",
+      "responses": {
+        "200": {
+          "description": "Active access tokens.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TokenInfo"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/tokens",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Create an access token for the current user.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `body` - Token creation request.\n\n# Returns\n\nCreated token response.",
+      "operationId": "create_token",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/TokenCreateRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Created access token.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenCreateResponse"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Errors: Access token name must be at most 100 Unicode code points; Access token name \"login\" is reserved; Access token TTL must be between 3600 and 31536000 seconds.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "409": {
+          "description": "Validation order: authentication, raw name length, normalized reserved name, TTL, then quota. Error: Active access token limit of 50 reached; revoke a token before creating another.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/auth/tokens/{token_id}",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Delete an access token by row id.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `token_id` - Token row identifier.\n\n# Returns\n\nOK response.",
+      "operationId": "delete_token",
+      "parameters": [
+        {
+          "name": "token_id",
+          "in": "path",
+          "description": "Token row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Token deleted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/cfp/journals",
+    "operation": {
+      "tags": [
+        "cfp"
+      ],
+      "summary": "List every maintained journal, including those with no indexed articles or CFP adapter.",
+      "operationId": "list_cfp_journals",
+      "parameters": [
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database filename, such as english_journals.sqlite.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "q",
+          "in": "query",
+          "description": "Case-insensitive journal title, ID or subject search, limited to 256 characters.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Lightweight journal catalog and source coverage.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CfpCatalogResponse"
+              }
+            }
+          }
+        },
+        "401": {
+          "description": "Authentication required."
+        },
+        "404": {
+          "description": "Database catalog not found."
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/cfp/journals/{catalog_id}/notices",
+    "operation": {
+      "tags": [
+        "cfp"
+      ],
+      "summary": "Read original notices and backend-calculated availability at a cursor's fixed instant.",
+      "operationId": "list_cfp_notices",
+      "parameters": [
+        {
+          "name": "catalog_id",
+          "in": "path",
+          "description": "Canonical maintained catalog ID or its alias.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database filename containing the maintained journal.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "include_closed",
+          "in": "query",
+          "description": "Include closed and historical records; defaults to false.",
+          "required": false,
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Page size, default 50 and maximum 200.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        {
+          "name": "cursor",
+          "in": "query",
+          "description": "Opaque cursor returned by this journal/filter's previous page.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Original notices, coverage and pagination.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CfpNoticePage"
+              }
+            }
+          }
+        },
+        "401": {
+          "description": "Authentication required."
+        },
+        "404": {
+          "description": "Database or journal not found."
+        },
+        "409": {
+          "description": "Stale or incompatible cursor; reload the first page."
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/cnki/login/poll",
+    "operation": {
+      "tags": [
+        "cnki"
+      ],
+      "summary": "Poll a QR login session.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `body` - Polling parameters.\n\n# Returns\n\nPolling result and safe session status.",
+      "operationId": "poll_login",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CnkiLoginPollRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "CNKI QR login polling result.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CnkiLoginPollResponse"
+              }
+            }
+          }
+        },
+        "409": {
+          "description": "The login operation was superseded by a newer start or clear request."
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/cnki/login/start",
+    "operation": {
+      "tags": [
+        "cnki"
+      ],
+      "summary": "Start a QR login session.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nQR login challenge and safe session status.",
+      "operationId": "start_login",
+      "responses": {
+        "200": {
+          "description": "CNKI QR login challenge.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CnkiLoginStartResponse"
+              }
+            }
+          }
+        },
+        "409": {
+          "description": "The login operation was superseded by a newer start or clear request."
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/cnki/session",
+    "operation": {
+      "tags": [
+        "cnki"
+      ],
+      "summary": "Return the current user's CNKI session status.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nSafe CNKI session status.",
+      "operationId": "get_session",
+      "responses": {
+        "200": {
+          "description": "Current CNKI session status.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CnkiSessionStatusResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/cnki/session",
+    "operation": {
+      "tags": [
+        "cnki"
+      ],
+      "summary": "Clear the current user's CNKI session.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nEmpty safe CNKI session status.",
+      "operationId": "clear_session",
+      "responses": {
+        "200": {
+          "description": "Cleared CNKI session status.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CnkiSessionStatusResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/favorites/check",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Check which folders contain an article.",
+      "operationId": "check_favorite",
+      "parameters": [
+        {
+          "name": "article_id",
+          "in": "query",
+          "description": "Article identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "db_name",
+          "in": "query",
+          "description": "Source database name.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Favorite folder memberships.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FavoriteCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/favorites/check/batch",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Batch check which folders contain articles.",
+      "operationId": "check_favorites_batch",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FavoriteBatchCheckRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Batch favorite folder memberships.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FavoriteBatchCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/favorites/folders",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "List all folders for the authenticated user.",
+      "operationId": "list_folders",
+      "responses": {
+        "200": {
+          "description": "Favorite folders.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FolderResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/favorites/folders",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Create a new folder.",
+      "operationId": "create_folder",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FolderCreate"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Created favorite folder.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/favorites/folders/{folder_id}",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Rename an existing folder.",
+      "operationId": "rename_folder",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FolderRename"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Folder renamed.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/favorites/folders/{folder_id}",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Delete an existing folder.",
+      "operationId": "delete_folder",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Folder deleted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "The tracking folder is required by active PushPlus synchronization.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/favorites/folders/{folder_id}/articles",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "List favorited articles in a folder.",
+      "operationId": "list_folder_articles",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Maximum row count.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "offset",
+          "in": "query",
+          "description": "Offset row count.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Favorite articles.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FavoriteArticleResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/favorites/folders/{folder_id}/articles",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Add one favorite to a folder.",
+      "operationId": "add_favorite",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FavoriteAdd"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Created favorite row.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/favorites/folders/{folder_id}/articles/bulk",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Bulk add favorites to a folder.",
+      "operationId": "bulk_add",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FavoriteBulkAdd"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Bulk favorite add result.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteBulkAddResult"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/favorites/folders/{folder_id}/articles/bulk-move",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Bulk move favorites between folders.",
+      "operationId": "bulk_move",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FavoriteBulkMove"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Bulk favorite move result.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteBulkResult"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/favorites/folders/{folder_id}/articles/bulk-remove",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Bulk remove favorites from a folder.",
+      "operationId": "bulk_remove",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/FavoriteBulkRemove"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Bulk favorite remove result.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteBulkResult"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/favorites/folders/{folder_id}/articles/page",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Return one stable cursor page from an owned favorite folder.",
+      "operationId": "list_folder_article_page",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Maximum row count, defaulting to fifty.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 500,
+            "minimum": 1
+          }
+        },
+        {
+          "name": "cursor",
+          "in": "query",
+          "description": "Opaque continuation bound to this user and folder.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Stable favorite article page.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteArticlePage"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid limit or cursor.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Owned folder not found.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/favorites/folders/{folder_id}/articles/{article_id}",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Remove one favorite from a folder.",
+      "operationId": "remove_favorite",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "article_id",
+          "in": "path",
+          "description": "Article identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "db_name",
+          "in": "query",
+          "description": "Source database name.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Favorite removed.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/favorites/folders/{folder_id}/count",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Get the favorite count for a folder.",
+      "operationId": "folder_count",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Favorite count.",
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/favorites/folders/{folder_id}/export",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Export one folder's favorites in a citation format.",
+      "operationId": "export_folder",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "in": "path",
+          "description": "Folder row identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "format",
+          "in": "query",
+          "description": "Export format.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Complete citation export download."
+        },
+        "400": {
+          "description": "The export format is invalid.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "The favorite folder does not exist for the user.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "413": {
+          "description": "The item or final UTF-8 byte limit was exceeded; no partial export is returned.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "500": {
+          "description": "Citation metadata could not be read safely.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/favorites/tracking",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Get the current tracking folder for the user.",
+      "operationId": "get_tracking",
+      "responses": {
+        "200": {
+          "description": "Current favorite tracking folder.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteTrackingResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/favorites/tracking",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Set a folder as the current tracking folder.",
+      "operationId": "set_tracking",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/TrackingSetRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Tracking folder updated.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/issues",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List issues with filters and offset pagination.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Issue list filters.\n\n# Returns\n\nPaginated issues.",
+      "operationId": "list_issues",
+      "parameters": [
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "journal_id",
+          "in": "query",
+          "description": "Journal identifier filter.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "year",
+          "in": "query",
+          "description": "Publication year filter.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "sort",
+          "in": "query",
+          "description": "Sort expression.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Page size.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "offset",
+          "in": "query",
+          "description": "Offset row count.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Paginated issues.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssuePage"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/issues/{issue_id}",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "Return one issue record.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `issue_id` - Issue identifier.\n* `query` - Database selector.\n\n# Returns\n\nIssue record.",
+      "operationId": "get_issue",
+      "parameters": [
+        {
+          "name": "issue_id",
+          "in": "path",
+          "description": "Issue identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Issue record.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueRecord"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/journals",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List journals with filters and offset pagination.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Journal list filters.\n* `raw_query` - Repeated rating fields; scalar parsing retains its existing contract.\n\n# Returns\n\nPaginated journals.",
+      "operationId": "list_journals",
+      "parameters": [
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "area",
+          "in": "query",
+          "description": "Area filter.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "has_articles",
+          "in": "query",
+          "description": "Has-articles filter.",
+          "required": false,
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "year",
+          "in": "query",
+          "description": "Publication year filter.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "sort",
+          "in": "query",
+          "description": "Sort expression.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Page size.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "offset",
+          "in": "query",
+          "description": "Offset row count.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "utd_rating",
+          "in": "query",
+          "description": "Repeated exact UTD grades; OR within a system and AND across systems/other filters. Blank values are invalid; all filter items share a 500-item bound.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500
+          }
+        },
+        {
+          "name": "abs_rating",
+          "in": "query",
+          "description": "Repeated exact ABS grades, including literal 4*.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500
+          }
+        },
+        {
+          "name": "fms_rating",
+          "in": "query",
+          "description": "Repeated exact FMS grades.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500
+          }
+        },
+        {
+          "name": "fmscn_rating",
+          "in": "query",
+          "description": "Repeated exact FMS China grades.",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Paginated journals.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalPage"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/journals/{journal_id}",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "Return one journal record.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `journal_id` - Journal identifier.\n* `query` - Database selector.\n\n# Returns\n\nJournal record.",
+      "operationId": "get_journal",
+      "parameters": [
+        {
+          "name": "journal_id",
+          "in": "path",
+          "description": "Journal identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Journal record.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalRecord"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/meta/areas",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List journal area counts.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Database selector.\n\n# Returns\n\nJournal area counts.",
+      "operationId": "list_areas",
+      "parameters": [
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Journal area counts.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ValueCount"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/meta/databases",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List index database filenames.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nJSON list of database filenames.",
+      "operationId": "list_databases",
+      "responses": {
+        "200": {
+          "description": "Index database filenames.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/meta/journals",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List journal selector options.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Database selector.\n\n# Returns\n\nJournal option records.",
+      "operationId": "list_journal_options",
+      "parameters": [
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Journal selector options.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/JournalOption"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/meta/ratings",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List available journal grades with database-wide journal counts.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Database selector.\n\n# Returns\n\nFour exact rating groups, excluding unrated journals and counting journals without articles.",
+      "operationId": "list_journal_ratings",
+      "parameters": [
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Exact grade options and journal counts per system.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalRatingOptions"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/tracking/ai-endpoints",
+    "operation": {
+      "tags": [
+        "tracking"
+      ],
+      "summary": "Get the administrator-approved AI endpoint catalog.",
+      "operationId": "get_ai_endpoints",
+      "responses": {
+        "200": {
+          "description": "Approved AI base URLs.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/tracking/notification-settings",
+    "operation": {
+      "tags": [
+        "tracking"
+      ],
+      "summary": "Get the user's notification settings.",
+      "operationId": "get_notification_settings",
+      "responses": {
+        "200": {
+          "description": "Notification settings.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NotificationSettingsResponse"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/tracking/notification-settings",
+    "operation": {
+      "tags": [
+        "tracking"
+      ],
+      "summary": "Create or update the user's notification settings.",
+      "operationId": "update_notification_settings",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NotificationSettingsUpdate"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "Updated notification settings.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationSettingsResponse"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "The effective notification settings are invalid or lack a required PushPlus token or tracking folder.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/tracking/push-weekly",
+    "operation": {
+      "tags": [
+        "tracking"
+      ],
+      "summary": "Start one manual weekly-push job for the authenticated user.",
+      "operationId": "push_weekly_to_tracking",
+      "responses": {
+        "202": {
+          "description": "Queued or existing active manual weekly push.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualWeeklyPushStatus"
+              }
+            }
+          }
+        },
+        "409": {
+          "description": "The latest manual push has an ambiguous outcome.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/tracking/push-weekly/runs/{run_id}",
+    "operation": {
+      "tags": [
+        "tracking"
+      ],
+      "summary": "Get one durable manual weekly-push run visible to its owner or an administrator.",
+      "operationId": "get_push_weekly_run",
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "description": "Opaque manual push job id.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Durable manual weekly push status.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualWeeklyPushStatus"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Manual push job not found.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/tracking/push-weekly/runs/{run_id}/acknowledge",
+    "operation": {
+      "tags": [
+        "tracking"
+      ],
+      "summary": "Acknowledge the latest ambiguous manual push and enqueue a safe new attempt.",
+      "operationId": "acknowledge_unknown_push_weekly_run",
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "description": "Opaque ambiguous manual push job id.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "202": {
+          "description": "Ambiguous outcome acknowledged and a replacement queued.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualWeeklyPushStatus"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Owner-visible manual push job not found.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "409": {
+          "description": "The job is stale or no longer the latest unknown outcome.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/tracking/push-weekly/runs/{run_id}/cancel",
+    "operation": {
+      "tags": [
+        "tracking"
+      ],
+      "summary": "Request cancellation of one durable manual weekly-push run.",
+      "operationId": "cancel_push_weekly_run",
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "description": "Opaque manual push job id.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Cancellation state.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualWeeklyPushStatus"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Manual push job not found.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/tracking/push-weekly/status",
+    "operation": {
+      "tags": [
+        "tracking"
+      ],
+      "summary": "Get the current manual weekly-push job status for the authenticated user.",
+      "operationId": "get_push_weekly_status",
+      "responses": {
+        "200": {
+          "description": "Manual weekly push status.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualWeeklyPushStatus"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/tracking/status",
+    "operation": {
+      "tags": [
+        "tracking"
+      ],
+      "summary": "Get tracking status for the authenticated user.",
+      "operationId": "status",
+      "responses": {
+        "200": {
+          "description": "Tracking status.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackingStatusResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/weekly-updates",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List weekly article updates grouped by database and journal.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nWeekly update response.",
+      "operationId": "get_weekly_updates",
+      "responses": {
+        "200": {
+          "description": "Weekly article updates.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WeeklyUpdatesResponse"
+              }
+            }
+          }
+        },
+        "413": {
+          "description": "Legacy weekly article ceiling exceeded; use bounded endpoints.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/weekly-updates/articles",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List one bounded page of weekly articles from a fixed manifest window.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `raw_query` - Raw weekly page query.\n\n# Returns\n\nCursor-paginated weekly articles.",
+      "operationId": "get_weekly_update_articles",
+      "parameters": [
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under data/index.",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        {
+          "name": "journal_id",
+          "in": "query",
+          "description": "Positive journal identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        },
+        {
+          "name": "window_end",
+          "in": "query",
+          "description": "RFC3339 fixed weekly window end.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "q",
+          "in": "query",
+          "description": "Optional simple full-text phrase.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Page size from 1 through 200.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 200,
+            "minimum": 1
+          }
+        },
+        {
+          "name": "cursor",
+          "in": "query",
+          "description": "Descending date|article_id cursor.",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Bounded weekly article page.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WeeklyArticlePage"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid weekly page query.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Database or journal not found.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/weekly-updates/summary",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "Summarize weekly updates without returning article bodies.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n\n# Returns\n\nFixed-window database and journal counts.",
+      "operationId": "get_weekly_updates_summary",
+      "responses": {
+        "200": {
+          "description": "Weekly update counts without article bodies.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WeeklyUpdatesSummaryResponse"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/years",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "List publication year summaries.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `query` - Database selector.\n\n# Returns\n\nYear summary records.",
+      "operationId": "list_years",
+      "parameters": [
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Publication year summaries.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/YearSummary"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/health/live",
+    "operation": {
+      "tags": [
+        "health"
+      ],
+      "summary": "Return application event-loop liveness.",
+      "description": "# Returns\n\nJSON health response.",
+      "operationId": "live",
+      "responses": {
+        "200": {
+          "description": "The application event loop is live.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealthResponse"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/health/ready",
+    "operation": {
+      "tags": [
+        "health"
+      ],
+      "summary": "Return whether the embedded scheduler has a recent persisted heartbeat.",
+      "description": "# Arguments\n\n* `state` - API state containing the shared scheduler database path.\n\n# Returns\n\nHTTP 200 when ready or 503 until the embedded scheduler heartbeat is healthy.",
+      "operationId": "ready",
+      "responses": {
+        "200": {
+          "description": "The embedded scheduler heartbeat is healthy.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealthResponse"
+              }
+            }
+          }
+        },
+        "503": {
+          "description": "The embedded scheduler is not ready.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealthResponse"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,4257 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LitRadar API",
+    "description": "Generated OpenAPI document for the Rust API.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "0.1.0"
+  },
+  "components": {
+    "schemas": {
+      "AdminInviteCodeCreate": {
+        "type": "object",
+        "description": "Optional administrator overrides for a newly issued invite code.",
+        "properties": {
+          "expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Absolute expiration timestamp; omitted values use the seven-day default."
+          },
+          "max_uses": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Registration quota; omitted values use one redemption.",
+            "maximum": 1000,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminInviteCodeInfo": {
+        "type": "object",
+        "description": "Admin invite code response payload.",
+        "required": [
+          "id",
+          "code",
+          "status",
+          "expires_at",
+          "max_uses",
+          "use_count",
+          "created_at"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Raw invite code."
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Creation timestamp."
+          },
+          "created_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UserId",
+                "description": "Creator user identifier."
+              }
+            ]
+          },
+          "created_by_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Creator username."
+          },
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Absolute expiration timestamp."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Invite code row identifier."
+          },
+          "max_uses": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum permitted registrations."
+          },
+          "revoked_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Optional irreversible revocation timestamp."
+          },
+          "status": {
+            "$ref": "#/components/schemas/InviteCodeStatus",
+            "description": "Current lifecycle state."
+          },
+          "use_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of committed registrations."
+          },
+          "used_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Consumption timestamp."
+          },
+          "used_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UserId",
+                "description": "Consumer user identifier."
+              }
+            ]
+          },
+          "used_by_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Consumer username."
+          }
+        }
+      },
+      "AdminResetPassword": {
+        "type": "object",
+        "description": "Admin password reset request payload.",
+        "required": [
+          "new_password"
+        ],
+        "properties": {
+          "new_password": {
+            "type": "string",
+            "description": "Replacement password."
+          }
+        }
+      },
+      "AdminSetAdmin": {
+        "type": "object",
+        "description": "Admin grant/revoke request payload.",
+        "required": [
+          "is_admin"
+        ],
+        "properties": {
+          "is_admin": {
+            "type": "boolean",
+            "description": "Replacement admin flag."
+          }
+        }
+      },
+      "AdminStatsResponse": {
+        "type": "object",
+        "description": "Admin stats response payload.",
+        "required": [
+          "auth",
+          "index",
+          "push"
+        ],
+        "properties": {
+          "auth": {
+            "$ref": "#/components/schemas/AuthStats",
+            "description": "Auth database statistics."
+          },
+          "index": {
+            "$ref": "#/components/schemas/IndexStats",
+            "description": "Index database statistics."
+          },
+          "push": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PushStats"
+            },
+            "description": "Push-state statistics."
+          }
+        }
+      },
+      "AdminUserInfo": {
+        "type": "object",
+        "description": "Admin user response payload.",
+        "required": [
+          "id",
+          "username",
+          "is_admin",
+          "created_at",
+          "updated_at",
+          "folder_count",
+          "favorite_count",
+          "notify_enabled"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Creation timestamp."
+          },
+          "favorite_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of favorites owned by the user."
+          },
+          "folder_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of folders owned by the user."
+          },
+          "id": {
+            "$ref": "#/components/schemas/UserId",
+            "description": "User row identifier."
+          },
+          "is_admin": {
+            "type": "boolean",
+            "description": "Whether the user has admin privileges."
+          },
+          "notify_enabled": {
+            "type": "boolean",
+            "description": "Whether enabled notification settings exist."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Last update timestamp."
+          },
+          "username": {
+            "type": "string",
+            "description": "Username."
+          }
+        }
+      },
+      "AnnouncementCreate": {
+        "type": "object",
+        "description": "Announcement creation payload.",
+        "required": [
+          "title",
+          "message"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the announcement is visible."
+          },
+          "message": {
+            "type": "string",
+            "description": "Announcement message body.",
+            "maxLength": 10000,
+            "minLength": 1
+          },
+          "priority": {
+            "type": "string",
+            "description": "Priority label.",
+            "maxLength": 16,
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "description": "Announcement title.",
+            "maxLength": 200,
+            "minLength": 1
+          }
+        }
+      },
+      "AnnouncementInfo": {
+        "type": "object",
+        "description": "Public announcement payload returned by the API.",
+        "required": [
+          "id",
+          "title",
+          "message",
+          "priority",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Creation timestamp as a Unix epoch float."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the announcement is visible to public clients."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Announcement identifier."
+          },
+          "message": {
+            "type": "string",
+            "description": "Announcement body text."
+          },
+          "priority": {
+            "type": "string",
+            "description": "Priority label used for display ordering."
+          },
+          "title": {
+            "type": "string",
+            "description": "Announcement title."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Last update timestamp as a Unix epoch float."
+          }
+        }
+      },
+      "AnnouncementUpdate": {
+        "type": "object",
+        "description": "Announcement update payload.",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Optional enabled flag."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional replacement message.",
+            "maxLength": 10000,
+            "minLength": 1
+          },
+          "priority": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional replacement priority.",
+            "maxLength": 16,
+            "minLength": 1
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional replacement title.",
+            "maxLength": 200,
+            "minLength": 1
+          }
+        }
+      },
+      "ArticleAccessAction": {
+        "type": "object",
+        "description": "Article access action.",
+        "required": [
+          "available",
+          "label",
+          "requires_login"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "Whether the action is available."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display label."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional message."
+          },
+          "requires_login": {
+            "type": "boolean",
+            "description": "Whether login is required."
+          }
+        }
+      },
+      "ArticleAccessResponse": {
+        "type": "object",
+        "description": "Article access response.",
+        "required": [
+          "abstract_page",
+          "fulltext"
+        ],
+        "properties": {
+          "abstract_page": {
+            "$ref": "#/components/schemas/ArticleAccessAction",
+            "description": "Abstract-page action."
+          },
+          "fulltext": {
+            "$ref": "#/components/schemas/ArticleAccessAction",
+            "description": "Full-text action."
+          }
+        }
+      },
+      "ArticleId": {
+        "type": "string",
+        "description": "Article identifier stored internally as a SQLite integer."
+      },
+      "ArticlePage": {
+        "type": "object",
+        "description": "Paginated articles response.",
+        "required": [
+          "items",
+          "page"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArticleRecord"
+            },
+            "description": "Article records."
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "Pagination metadata."
+          }
+        }
+      },
+      "ArticleRecord": {
+        "type": "object",
+        "description": "Article record.",
+        "required": [
+          "article_id",
+          "journal_id",
+          "title",
+          "authors",
+          "retraction_dois",
+          "journal_title"
+        ],
+        "properties": {
+          "abstract": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Abstract text."
+          },
+          "article_id": {
+            "$ref": "#/components/schemas/ArticleId",
+            "description": "Article identifier."
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Authors text."
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Article date."
+          },
+          "date_precision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DatePrecision",
+                "description": "Precision represented by the article date."
+              }
+            ]
+          },
+          "doi": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "DOI."
+          },
+          "end_page": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "End page."
+          },
+          "in_press": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "In-press flag."
+          },
+          "issue_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Issue identifier."
+          },
+          "journal_id": {
+            "$ref": "#/components/schemas/JournalId",
+            "description": "Journal identifier."
+          },
+          "journal_title": {
+            "type": "string",
+            "description": "Journal title."
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue number."
+          },
+          "open_access": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Open-access flag."
+          },
+          "pmid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "PubMed identifier."
+          },
+          "publication_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Publication year."
+          },
+          "retraction_dois": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Retraction DOIs in lexical order without duplicates."
+          },
+          "start_page": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Start page."
+          },
+          "title": {
+            "type": "string",
+            "description": "Source title; an empty string means unavailable title metadata on a DOI-identified record."
+          },
+          "volume": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue volume."
+          }
+        }
+      },
+      "ArticleSearchMode": {
+        "type": "string",
+        "description": "Full-text search interpretation mode.",
+        "enum": [
+          "simple",
+          "advanced"
+        ]
+      },
+      "AuthStats": {
+        "type": "object",
+        "description": "Auth database statistics payload.",
+        "required": [
+          "total_users",
+          "admin_count",
+          "total_folders",
+          "total_favorites",
+          "total_invite_codes",
+          "used_invite_codes",
+          "unused_invite_codes",
+          "active_tokens",
+          "notification_subscribers",
+          "scheduled_tasks",
+          "active_announcements"
+        ],
+        "properties": {
+          "active_announcements": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Enabled announcement count."
+          },
+          "active_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unexpired access tokens."
+          },
+          "admin_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Users with admin privileges."
+          },
+          "notification_subscribers": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Enabled notification settings."
+          },
+          "scheduled_tasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scheduled task count."
+          },
+          "total_favorites": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total favorites."
+          },
+          "total_folders": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total folders."
+          },
+          "total_invite_codes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total invite codes."
+          },
+          "total_users": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total registered users."
+          },
+          "unused_invite_codes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unused invite codes."
+          },
+          "used_invite_codes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Used invite codes."
+          }
+        }
+      },
+      "CfpCatalogResponse": {
+        "type": "object",
+        "description": "Complete lightweight CFP journal catalog for one database.",
+        "required": [
+          "database",
+          "evaluatedAt",
+          "summary",
+          "items"
+        ],
+        "properties": {
+          "database": {
+            "type": "string",
+            "description": "Canonical selected database filename."
+          },
+          "evaluatedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "UTC Unix instant used to evaluate every state in this response."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfpJournalSummary"
+            },
+            "description": "Lightweight journals matching the optional search, without notice bodies."
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CfpCatalogSummary",
+            "description": "Whole-database summary."
+          }
+        }
+      },
+      "CfpCatalogSummary": {
+        "type": "object",
+        "description": "Aggregate counts for the selected database before the journal-name search filter.",
+        "required": [
+          "journals",
+          "adaptedJournals",
+          "notices",
+          "currentNotices"
+        ],
+        "properties": {
+          "adaptedJournals": {
+            "type": "integer",
+            "description": "Journals with a reviewed snapshot or scoped empty statement.",
+            "minimum": 0
+          },
+          "currentNotices": {
+            "type": "integer",
+            "description": "Notices excluding closed and historical calls.",
+            "minimum": 0
+          },
+          "journals": {
+            "type": "integer",
+            "description": "Complete maintained journal count, including journals without indexed articles.",
+            "minimum": 0
+          },
+          "notices": {
+            "type": "integer",
+            "description": "All stored notices associated with this database.",
+            "minimum": 0
+          }
+        }
+      },
+      "CfpCoverage": {
+        "type": "string",
+        "description": "Coverage of a journal's reviewed original-source data.",
+        "enum": [
+          "adapted",
+          "unadapted"
+        ]
+      },
+      "CfpDate": {
+        "type": "object",
+        "description": "A valid calendar date and its original clause.",
+        "required": [
+          "date",
+          "stage",
+          "originalText",
+          "isExclusive",
+          "isOptional"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "ISO calendar date, with no invented time of day."
+          },
+          "isExclusive": {
+            "type": "boolean",
+            "description": "Whether the source says strictly before this date."
+          },
+          "isOptional": {
+            "type": "boolean",
+            "description": "Whether this milestone is optional."
+          },
+          "originalText": {
+            "type": "string",
+            "description": "Untranslated source clause."
+          },
+          "stage": {
+            "$ref": "#/components/schemas/CfpDateStage",
+            "description": "Purpose of this date."
+          }
+        }
+      },
+      "CfpDateStage": {
+        "type": "string",
+        "description": "Purpose of a dated milestone, independent of whether it is required.",
+        "enum": [
+          "paper",
+          "abstract",
+          "proposal",
+          "opens",
+          "revision",
+          "decision",
+          "publication",
+          "event",
+          "registration"
+        ]
+      },
+      "CfpJournalSummary": {
+        "type": "object",
+        "description": "Lightweight journal metadata and backend-calculated CFP summary.",
+        "required": [
+          "catalogId",
+          "catalogAliases",
+          "allIssns",
+          "titleAliases",
+          "title",
+          "coverage",
+          "noticeCount",
+          "currentCount",
+          "stateCounts",
+          "canRefresh",
+          "refreshStatus"
+        ],
+        "properties": {
+          "allIssns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All maintained print and electronic ISSNs for display and journal search."
+          },
+          "area": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Maintained subject area, if available."
+          },
+          "canRefresh": {
+            "type": "boolean",
+            "description": "Whether a backend discovery adapter can attempt automatic refresh."
+          },
+          "catalogAliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Maintained historical aliases in the selected catalog."
+          },
+          "catalogId": {
+            "type": "string",
+            "description": "Canonical maintained catalog ID used by the notice endpoint."
+          },
+          "checkedOn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last verified original-source date, if adapted."
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/CfpCoverage",
+            "description": "Reviewed-source coverage."
+          },
+          "currentCount": {
+            "type": "integer",
+            "description": "Notices remaining after the default closed/historical filter.",
+            "minimum": 0
+          },
+          "lastAttempt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Latest acquisition attempt Unix timestamp."
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sanitized latest failure reason."
+          },
+          "lastSuccess": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Last successful live acquisition Unix timestamp."
+          },
+          "noticeCount": {
+            "type": "integer",
+            "description": "Total stored notices, including closed and historical calls.",
+            "minimum": 0
+          },
+          "refreshStatus": {
+            "$ref": "#/components/schemas/CfpRefreshStatus",
+            "description": "Latest acquisition status, including interrupted lease detection."
+          },
+          "sourceStatement": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Untranslated scoped statement that no matching calls are listed."
+          },
+          "sourceUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Original source URL associated with a scoped publisher statement."
+          },
+          "stateCounts": {
+            "type": "object",
+            "description": "Backend-computed counts for each availability state.",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string",
+              "description": "Availability evaluated at a specified instant, without translating source text.",
+              "enum": [
+                "open",
+                "upcoming",
+                "closed",
+                "historical",
+                "invitation_only",
+                "undated",
+                "uncertain"
+              ]
+            }
+          },
+          "title": {
+            "type": "string",
+            "description": "Journal title from the selected metadata database."
+          },
+          "titleAliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Maintained journal title aliases for search."
+          }
+        }
+      },
+      "CfpKind": {
+        "type": "string",
+        "description": "Submission purpose supported by the original announcement.",
+        "enum": [
+          "special_issue",
+          "general",
+          "proposal",
+          "conference_linked"
+        ]
+      },
+      "CfpNotice": {
+        "type": "object",
+        "description": "Normalized notice persisted by the backend; availability is evaluated on read.",
+        "required": [
+          "id",
+          "title",
+          "scope",
+          "requirements",
+          "kind",
+          "sourceUrl",
+          "checkedOn",
+          "dates",
+          "entryStage",
+          "isHistorical",
+          "rawDateText"
+        ],
+        "properties": {
+          "checkedOn": {
+            "type": "string",
+            "description": "Last verified original-source date."
+          },
+          "dates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfpDate"
+            },
+            "description": "Validated dates, including non-submission milestones."
+          },
+          "entryStage": {
+            "$ref": "#/components/schemas/CfpDateStage",
+            "description": "Default initial submission stage."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable legacy-compatible URL/title identity within a journal."
+          },
+          "isHistorical": {
+            "type": "boolean",
+            "description": "Whether this announcement is an archival record."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CfpKind",
+            "description": "Classified kind of call."
+          },
+          "rawDateText": {
+            "type": "string",
+            "description": "Unresolved original timeline; never interpreted as perpetual availability."
+          },
+          "requirements": {
+            "type": "string",
+            "description": "Original instructions, empty if unavailable."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Original topic excerpt, empty if unavailable."
+          },
+          "sourceStatus": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CfpState",
+                "description": "Explicit closed or invitation-only source constraint."
+              }
+            ]
+          },
+          "sourceUrl": {
+            "type": "string",
+            "description": "Original public announcement URL."
+          },
+          "timeZone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicit IANA timezone, if supplied by the source."
+          },
+          "title": {
+            "type": "string",
+            "description": "Original announcement title."
+          },
+          "topicYear": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Explicit annual topic year, when applicable."
+          }
+        }
+      },
+      "CfpNoticePage": {
+        "type": "object",
+        "description": "A revision-consistent page of original notices for one maintained catalog member.",
+        "required": [
+          "journal",
+          "evaluatedAt",
+          "items",
+          "page"
+        ],
+        "properties": {
+          "evaluatedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fixed UTC Unix evaluation instant shared across cursor pages."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CfpNoticeView"
+            },
+            "description": "Original notice records in stable source order."
+          },
+          "journal": {
+            "$ref": "#/components/schemas/CfpJournalSummary",
+            "description": "Metadata, coverage and source freshness for the journal."
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "Standard API pagination metadata, with a scope-bound next cursor."
+          }
+        }
+      },
+      "CfpNoticeView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CfpNotice",
+            "description": "Original normalized notice fields."
+          },
+          {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "entryDeadline": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CfpDate",
+                    "description": "Earliest mandatory initial submission deadline."
+                  }
+                ]
+              },
+              "state": {
+                "$ref": "#/components/schemas/CfpState",
+                "description": "Availability evaluated at the page's fixed instant."
+              }
+            }
+          }
+        ],
+        "description": "One original notice with its authoritative backend-evaluated state and initial gate."
+      },
+      "CfpRefreshStatus": {
+        "type": "string",
+        "description": "Source refresh freshness, independent of a notice's submission availability.",
+        "enum": [
+          "snapshot",
+          "success",
+          "failed",
+          "refreshing",
+          "unsupported",
+          "unadapted"
+        ]
+      },
+      "CfpState": {
+        "type": "string",
+        "description": "Availability evaluated at a specified instant, without translating source text.",
+        "enum": [
+          "open",
+          "upcoming",
+          "closed",
+          "historical",
+          "invitation_only",
+          "undated",
+          "uncertain"
+        ]
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "description": "Password change request.",
+        "required": [
+          "old_password",
+          "new_password"
+        ],
+        "properties": {
+          "new_password": {
+            "type": "string",
+            "description": "Replacement password."
+          },
+          "old_password": {
+            "type": "string",
+            "description": "Current password."
+          }
+        }
+      },
+      "CnkiErrorDetail": {
+        "type": "object",
+        "description": "Structured CNKI route error detail.",
+        "required": [
+          "code",
+          "phase",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable error code."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable message."
+          },
+          "phase": {
+            "type": "string",
+            "description": "CNKI phase that failed."
+          }
+        }
+      },
+      "CnkiLoginPollRequest": {
+        "type": "object",
+        "description": "Zhejiang Library QR login polling parameters.",
+        "properties": {
+          "interval_seconds": {
+            "type": "number",
+            "format": "double",
+            "description": "Poll interval in seconds."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Poll timeout in seconds."
+          }
+        }
+      },
+      "CnkiLoginPollResponse": {
+        "type": "object",
+        "description": "Zhejiang Library QR login polling response.",
+        "required": [
+          "status",
+          "session"
+        ],
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/CnkiSessionStatusResponse",
+            "description": "Safe session status."
+          },
+          "status": {
+            "type": "string",
+            "description": "Poll status."
+          }
+        }
+      },
+      "CnkiLoginStartResponse": {
+        "type": "object",
+        "description": "Zhejiang Library QR login challenge response.",
+        "required": [
+          "uuid",
+          "status",
+          "qr_code",
+          "session"
+        ],
+        "properties": {
+          "qr_code": {
+            "type": "string",
+            "description": "QR code URL or payload."
+          },
+          "session": {
+            "$ref": "#/components/schemas/CnkiSessionStatusResponse",
+            "description": "Safe session status."
+          },
+          "status": {
+            "type": "string",
+            "description": "Upstream login status."
+          },
+          "uuid": {
+            "type": "string",
+            "description": "QR UUID."
+          }
+        }
+      },
+      "CnkiSessionStatusResponse": {
+        "type": "object",
+        "description": "Safe per-user Zhejiang Library CNKI session status.",
+        "required": [
+          "configured",
+          "status",
+          "has_bff_user_token",
+          "cookie_names"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Whether a session-like row is configured."
+          },
+          "cookie_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Stored cookie names without cookie values."
+          },
+          "expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Token expiration timestamp."
+          },
+          "has_bff_user_token": {
+            "type": "boolean",
+            "description": "Whether a BFF user token is present."
+          },
+          "last_used_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Last-use timestamp."
+          },
+          "seconds_remaining": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds remaining until expiration."
+          },
+          "status": {
+            "type": "string",
+            "description": "Safe status label."
+          },
+          "updated_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Row update timestamp."
+          }
+        }
+      },
+      "DatePrecision": {
+        "type": "string",
+        "description": "Precision retained by one canonical partial publication date.",
+        "enum": [
+          "year",
+          "month",
+          "day"
+        ]
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "description": "FastAPI-compatible error envelope.",
+        "required": [
+          "detail",
+          "code",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable machine-readable error category."
+          },
+          "detail": {
+            "type": "string",
+            "description": "Error detail payload."
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether retrying the request may succeed without user correction."
+          }
+        }
+      },
+      "FavoriteAdd": {
+        "type": "object",
+        "description": "Favorite creation request payload.",
+        "required": [
+          "article_id"
+        ],
+        "properties": {
+          "article_id": {
+            "$ref": "#/components/schemas/ArticleId",
+            "description": "Article identifier."
+          },
+          "db_name": {
+            "type": "string",
+            "description": "Source index database name.",
+            "maxLength": 255
+          },
+          "note": {
+            "type": "string",
+            "description": "User note text.",
+            "maxLength": 2000
+          }
+        }
+      },
+      "FavoriteArticlePage": {
+        "type": "object",
+        "description": "Stable cursor page of favorite references and available article metadata.",
+        "required": [
+          "items",
+          "page"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteArticleResponse"
+            },
+            "description": "Favorite rows in descending creation time and row-id order."
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "Cursor continuation metadata without an expensive total count."
+          }
+        }
+      },
+      "FavoriteArticleRef": {
+        "type": "object",
+        "description": "Favorite article reference used by bulk operations.",
+        "required": [
+          "article_id"
+        ],
+        "properties": {
+          "article_id": {
+            "$ref": "#/components/schemas/ArticleId",
+            "description": "Article identifier."
+          },
+          "db_name": {
+            "type": "string",
+            "description": "Source index database name.",
+            "maxLength": 255
+          }
+        }
+      },
+      "FavoriteArticleResponse": {
+        "type": "object",
+        "description": "Favorite row enriched with optional article metadata.",
+        "required": [
+          "id",
+          "folder_id",
+          "article_id",
+          "db_name",
+          "note",
+          "created_at",
+          "metadata_status"
+        ],
+        "properties": {
+          "abstract": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Article abstract text."
+          },
+          "article_id": {
+            "$ref": "#/components/schemas/ArticleId",
+            "description": "Article identifier."
+          },
+          "authors": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered article author names."
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Favorite creation timestamp."
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Article publication date."
+          },
+          "db_name": {
+            "type": "string",
+            "description": "Source index database name."
+          },
+          "doi": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Article DOI."
+          },
+          "eissn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Journal electronic ISSN."
+          },
+          "folder_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Folder row identifier."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Favorite row identifier."
+          },
+          "in_press": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "In-press flag from the index database."
+          },
+          "issn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Journal ISSN."
+          },
+          "issue_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Issue identifier from the index database."
+          },
+          "journal_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JournalId",
+                "description": "Journal identifier from the index database."
+              }
+            ]
+          },
+          "journal_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Journal title."
+          },
+          "metadata_status": {
+            "$ref": "#/components/schemas/FavoriteMetadataStatus",
+            "description": "Availability of the referenced index article metadata."
+          },
+          "note": {
+            "type": "string",
+            "description": "User note text."
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue number."
+          },
+          "open_access": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Open-access flag from the index database."
+          },
+          "publication_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Article publication year."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Article title from the index database."
+          },
+          "volume": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue volume."
+          }
+        }
+      },
+      "FavoriteBatchCheckRequest": {
+        "type": "object",
+        "description": "Batch favorite check request.",
+        "required": [
+          "article_ids"
+        ],
+        "properties": {
+          "article_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArticleId"
+            },
+            "description": "Article identifiers to check.",
+            "maxItems": 500
+          },
+          "db_name": {
+            "type": "string",
+            "description": "Source index database name.",
+            "maxLength": 255
+          }
+        }
+      },
+      "FavoriteBatchCheckResponse": {
+        "type": "object",
+        "description": "Batch favorite check response item.",
+        "required": [
+          "article_id",
+          "folders"
+        ],
+        "properties": {
+          "article_id": {
+            "$ref": "#/components/schemas/ArticleId",
+            "description": "Article identifier that was checked."
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteCheckResponse"
+            },
+            "description": "Folder memberships for the article."
+          }
+        }
+      },
+      "FavoriteBulkAdd": {
+        "type": "object",
+        "description": "Bulk favorite add request.",
+        "required": [
+          "articles"
+        ],
+        "properties": {
+          "articles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteAdd"
+            },
+            "description": "Favorite articles to add.",
+            "maxItems": 500
+          }
+        }
+      },
+      "FavoriteBulkAddResult": {
+        "type": "object",
+        "description": "Bulk add response preserving the existing `added` key.",
+        "required": [
+          "added"
+        ],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of inserted favorite rows."
+          }
+        }
+      },
+      "FavoriteBulkMove": {
+        "type": "object",
+        "description": "Bulk favorite move request.",
+        "required": [
+          "target_folder_id",
+          "articles"
+        ],
+        "properties": {
+          "articles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteArticleRef"
+            },
+            "description": "Favorite articles to move.",
+            "maxItems": 500
+          },
+          "target_folder_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Target folder row identifier."
+          }
+        }
+      },
+      "FavoriteBulkRemove": {
+        "type": "object",
+        "description": "Bulk favorite remove request.",
+        "required": [
+          "articles"
+        ],
+        "properties": {
+          "articles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteArticleRef"
+            },
+            "description": "Favorite articles to remove.",
+            "maxItems": 500
+          }
+        }
+      },
+      "FavoriteBulkResult": {
+        "type": "object",
+        "description": "Bulk operation count response.",
+        "required": [
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of affected favorite rows."
+          }
+        }
+      },
+      "FavoriteCheckResponse": {
+        "type": "object",
+        "description": "Favorite membership row returned by check endpoints.",
+        "required": [
+          "folder_id",
+          "folder_name"
+        ],
+        "properties": {
+          "folder_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Folder row identifier."
+          },
+          "folder_name": {
+            "type": "string",
+            "description": "Folder display name."
+          }
+        }
+      },
+      "FavoriteMetadataStatus": {
+        "type": "string",
+        "description": "Availability of index metadata for a stored favorite reference.",
+        "enum": [
+          "available",
+          "missing",
+          "unavailable"
+        ]
+      },
+      "FavoriteResponse": {
+        "type": "object",
+        "description": "Favorite row response payload.",
+        "required": [
+          "id",
+          "folder_id",
+          "article_id",
+          "db_name",
+          "note",
+          "created_at"
+        ],
+        "properties": {
+          "article_id": {
+            "$ref": "#/components/schemas/ArticleId",
+            "description": "Article identifier."
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Creation timestamp."
+          },
+          "db_name": {
+            "type": "string",
+            "description": "Source index database name."
+          },
+          "folder_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Folder row identifier."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Favorite row identifier."
+          },
+          "note": {
+            "type": "string",
+            "description": "User note text."
+          }
+        }
+      },
+      "FavoriteTrackingResponse": {
+        "type": "object",
+        "description": "Current favorite tracking folder payload.",
+        "properties": {
+          "folder_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Tracking folder identifier, or null when none is configured."
+          },
+          "folder_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Tracking folder display name, or null when none is configured."
+          }
+        }
+      },
+      "FolderCreate": {
+        "type": "object",
+        "description": "Create-folder request payload.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "is_tracking": {
+            "type": "boolean",
+            "description": "Whether the folder should become the user's tracking folder."
+          },
+          "name": {
+            "type": "string",
+            "description": "Folder display name.",
+            "maxLength": 100,
+            "minLength": 1
+          }
+        }
+      },
+      "FolderRename": {
+        "type": "object",
+        "description": "Rename-folder request payload.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Replacement folder display name.",
+            "maxLength": 100,
+            "minLength": 1
+          }
+        }
+      },
+      "FolderResponse": {
+        "type": "object",
+        "description": "Folder response payload.",
+        "required": [
+          "id",
+          "name",
+          "is_tracking",
+          "article_count",
+          "created_at"
+        ],
+        "properties": {
+          "article_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of favorite rows in the folder."
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Creation timestamp."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Folder row identifier."
+          },
+          "is_tracking": {
+            "type": "boolean",
+            "description": "Whether the folder receives tracking pushes."
+          },
+          "name": {
+            "type": "string",
+            "description": "Folder display name."
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "Health check payload returned by the API.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/HealthStatus",
+            "description": "Service status value."
+          }
+        }
+      },
+      "HealthStatus": {
+        "type": "string",
+        "description": "Application-owned service health state.",
+        "enum": [
+          "ok",
+          "unhealthy"
+        ]
+      },
+      "IndexDatabaseStats": {
+        "type": "object",
+        "description": "Per-index database statistics payload.",
+        "required": [
+          "db_name",
+          "articles",
+          "journals",
+          "issues"
+        ],
+        "properties": {
+          "articles": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Article count."
+          },
+          "db_name": {
+            "type": "string",
+            "description": "Database file name."
+          },
+          "error": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the database failed to read."
+          },
+          "issues": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issue count."
+          },
+          "journals": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Journal count."
+          }
+        }
+      },
+      "IndexStats": {
+        "type": "object",
+        "description": "Aggregate index statistics payload.",
+        "required": [
+          "databases",
+          "total_articles",
+          "total_journals"
+        ],
+        "properties": {
+          "databases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IndexDatabaseStats"
+            },
+            "description": "Per-database statistics."
+          },
+          "total_articles": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total article count."
+          },
+          "total_journals": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total journal count."
+          }
+        }
+      },
+      "InviteCodeResponse": {
+        "type": "object",
+        "description": "Invite code response.",
+        "required": [
+          "id",
+          "code",
+          "used",
+          "status",
+          "expires_at",
+          "max_uses",
+          "use_count",
+          "created_at"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Raw invite code."
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Invite code creation timestamp."
+          },
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Absolute expiration timestamp."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Invite code row identifier."
+          },
+          "max_uses": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum permitted registrations."
+          },
+          "revoked_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Optional irreversible revocation timestamp."
+          },
+          "status": {
+            "$ref": "#/components/schemas/InviteCodeStatus",
+            "description": "Current lifecycle state."
+          },
+          "use_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of committed registrations."
+          },
+          "used": {
+            "type": "boolean",
+            "description": "Whether the invite code has been consumed."
+          }
+        }
+      },
+      "InviteCodeStatus": {
+        "type": "string",
+        "description": "Public lifecycle state for an invite code.",
+        "enum": [
+          "active",
+          "expired",
+          "revoked",
+          "exhausted"
+        ]
+      },
+      "InviteRequiredResponse": {
+        "type": "object",
+        "description": "Invite requirement response.",
+        "required": [
+          "required",
+          "bootstrap_required"
+        ],
+        "properties": {
+          "bootstrap_required": {
+            "type": "boolean",
+            "description": "Whether a local administrator bootstrap must run before invites can be issued."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether registration requires an invite code."
+          }
+        }
+      },
+      "IssuePage": {
+        "type": "object",
+        "description": "Paginated issues response.",
+        "required": [
+          "items",
+          "page"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueRecord"
+            },
+            "description": "Issue records."
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "Pagination metadata."
+          }
+        }
+      },
+      "IssueRecord": {
+        "type": "object",
+        "description": "Issue record.",
+        "required": [
+          "issue_id",
+          "journal_id"
+        ],
+        "properties": {
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue date."
+          },
+          "date_precision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DatePrecision",
+                "description": "Precision represented by the issue date."
+              }
+            ]
+          },
+          "issue_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issue identifier."
+          },
+          "journal_id": {
+            "$ref": "#/components/schemas/JournalId",
+            "description": "Journal identifier."
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Number."
+          },
+          "publication_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Publication year."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue title."
+          },
+          "volume": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Volume."
+          }
+        }
+      },
+      "JournalId": {
+        "type": "string",
+        "description": "Journal identifier stored internally as a SQLite integer."
+      },
+      "JournalOption": {
+        "type": "object",
+        "description": "Journal option for selection lists.",
+        "required": [
+          "journal_id",
+          "title"
+        ],
+        "properties": {
+          "journal_id": {
+            "$ref": "#/components/schemas/JournalId",
+            "description": "Journal identifier."
+          },
+          "title": {
+            "type": "string",
+            "description": "Journal title."
+          }
+        }
+      },
+      "JournalPage": {
+        "type": "object",
+        "description": "Paginated journals response.",
+        "required": [
+          "items",
+          "page"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JournalRecord"
+            },
+            "description": "Journal records."
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "Pagination metadata."
+          }
+        }
+      },
+      "JournalRatingOptions": {
+        "type": "object",
+        "description": "Available exact grades and database-wide journal counts for each rating system.",
+        "required": [
+          "utd_rating",
+          "abs_rating",
+          "fms_rating",
+          "fmscn_rating"
+        ],
+        "properties": {
+          "abs_rating": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValueCount"
+            },
+            "description": "ABS grade choices; `4*` is an exact label rather than a wildcard."
+          },
+          "fms_rating": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValueCount"
+            },
+            "description": "FMS grade choices."
+          },
+          "fmscn_rating": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValueCount"
+            },
+            "description": "FMS China grade choices."
+          },
+          "utd_rating": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValueCount"
+            },
+            "description": "UTD grade choices, excluding unrated journals."
+          }
+        }
+      },
+      "JournalRecord": {
+        "type": "object",
+        "description": "Provider-neutral journal record.",
+        "required": [
+          "journal_id",
+          "catalog_id",
+          "title",
+          "title_aliases",
+          "issns",
+          "has_articles"
+        ],
+        "properties": {
+          "abs_rank": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ABS rank."
+          },
+          "abs_rating": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ABS rating."
+          },
+          "area": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Journal area."
+          },
+          "catalog_id": {
+            "type": "string",
+            "description": "Immutable maintained catalog identifier."
+          },
+          "eissn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Electronic ISSN."
+          },
+          "fms_rank": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "FMS rank."
+          },
+          "fms_rating": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "FMS rating."
+          },
+          "fmscn_rank": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "FMS China rank."
+          },
+          "fmscn_rating": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "FMS China rating."
+          },
+          "has_articles": {
+            "type": "boolean",
+            "description": "Whether the content database currently contains articles for the journal."
+          },
+          "issn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Print ISSN."
+          },
+          "issns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All maintained ISSNs."
+          },
+          "journal_id": {
+            "$ref": "#/components/schemas/JournalId",
+            "description": "Journal identifier."
+          },
+          "title": {
+            "type": "string",
+            "description": "Journal title."
+          },
+          "title_aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Maintained title aliases."
+          },
+          "utd_rank": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "UTD rank."
+          },
+          "utd_rating": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "UTD rating."
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "description": "Login request.",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Password."
+          },
+          "username": {
+            "type": "string",
+            "description": "Username."
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "description": "Login response that intentionally omits the raw session token.",
+        "required": [
+          "user",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Session expiration timestamp."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse",
+            "description": "Authenticated user."
+          }
+        }
+      },
+      "LogoutResponse": {
+        "type": "object",
+        "description": "Logout response.",
+        "required": [
+          "ok",
+          "user_id"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Whether the operation succeeded."
+          },
+          "user_id": {
+            "$ref": "#/components/schemas/UserId",
+            "description": "Authenticated user identifier."
+          }
+        }
+      },
+      "ManualPushState": {
+        "type": "string",
+        "description": "Application-owned state of a manual weekly push.",
+        "enum": [
+          "idle",
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "cancelled",
+          "timed_out",
+          "unknown"
+        ]
+      },
+      "ManualWeeklyPushStatus": {
+        "type": "object",
+        "description": "Manual weekly push job status payload.",
+        "required": [
+          "status",
+          "message",
+          "cancellation_requested",
+          "can_cancel",
+          "can_retry",
+          "pushed",
+          "selected",
+          "summary"
+        ],
+        "properties": {
+          "can_cancel": {
+            "type": "boolean",
+            "description": "Whether the current job still accepts cancellation."
+          },
+          "can_retry": {
+            "type": "boolean",
+            "description": "Whether starting a new run cannot replay an ambiguous external outcome."
+          },
+          "cancellation_requested": {
+            "type": "boolean",
+            "description": "Whether durable cancellation has been requested."
+          },
+          "deadline_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Absolute Unix timestamp after which the job must stop."
+          },
+          "finished_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Unix timestamp when the job finished."
+          },
+          "folder_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Tracking folder identifier when applicable."
+          },
+          "folder_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Tracking folder name when applicable."
+          },
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Background job identifier."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable status message."
+          },
+          "pushed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of pushed or tracking-folder-synced articles."
+          },
+          "selected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of selected articles."
+          },
+          "started_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Unix timestamp when the job started."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ManualPushState",
+            "description": "Durable job status."
+          },
+          "summary": {
+            "type": "string",
+            "description": "AI-generated summary text when available."
+          },
+          "total_candidates": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Number of candidate articles considered by AI selection."
+          }
+        }
+      },
+      "NotificationSettingsResponse": {
+        "type": "object",
+        "description": "Notification settings response payload.",
+        "required": [
+          "id",
+          "user_id",
+          "keywords",
+          "directions",
+          "selected_databases",
+          "delivery_method",
+          "has_pushplus_token",
+          "pushplus_token_mask",
+          "pushplus_template",
+          "pushplus_topic",
+          "pushplus_channel",
+          "sync_to_tracking_folder",
+          "ai_base_url",
+          "has_ai_api_key",
+          "ai_api_key_mask",
+          "ai_model",
+          "ai_system_prompt",
+          "ai_backup_base_url",
+          "has_ai_backup_api_key",
+          "ai_backup_api_key_mask",
+          "ai_backup_model",
+          "ai_backup_system_prompt",
+          "ai_retry_attempts",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "ai_api_key_mask": {
+            "type": "string",
+            "description": "Fixed non-secret mask when a primary AI API key is configured."
+          },
+          "ai_backup_api_key_mask": {
+            "type": "string",
+            "description": "Fixed non-secret mask when a backup AI API key is configured."
+          },
+          "ai_backup_base_url": {
+            "type": "string",
+            "description": "Backup AI endpoint base URL."
+          },
+          "ai_backup_model": {
+            "type": "string",
+            "description": "Backup AI model."
+          },
+          "ai_backup_system_prompt": {
+            "type": "string",
+            "description": "Backup AI system prompt."
+          },
+          "ai_base_url": {
+            "type": "string",
+            "description": "Primary AI endpoint base URL."
+          },
+          "ai_model": {
+            "type": "string",
+            "description": "Primary AI model."
+          },
+          "ai_retry_attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Retry attempts per AI endpoint."
+          },
+          "ai_system_prompt": {
+            "type": "string",
+            "description": "Primary AI system prompt."
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Creation timestamp."
+          },
+          "delivery_method": {
+            "type": "string",
+            "description": "Delivery method."
+          },
+          "directions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Research direction preferences."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether recommendations are enabled."
+          },
+          "has_ai_api_key": {
+            "type": "boolean",
+            "description": "Whether a primary AI API key is configured."
+          },
+          "has_ai_backup_api_key": {
+            "type": "boolean",
+            "description": "Whether a backup AI API key is configured."
+          },
+          "has_pushplus_token": {
+            "type": "boolean",
+            "description": "Whether a PushPlus token is configured."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Settings row identifier."
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Keyword preferences."
+          },
+          "pushplus_channel": {
+            "type": "string",
+            "description": "PushPlus channel."
+          },
+          "pushplus_template": {
+            "type": "string",
+            "description": "PushPlus template."
+          },
+          "pushplus_token_mask": {
+            "type": "string",
+            "description": "Fixed non-secret mask when a PushPlus token is configured."
+          },
+          "pushplus_topic": {
+            "type": "string",
+            "description": "PushPlus topic."
+          },
+          "selected_databases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Selected index database names."
+          },
+          "sync_to_tracking_folder": {
+            "type": "boolean",
+            "description": "Whether PushPlus delivery also syncs to the tracking folder."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Last update timestamp."
+          },
+          "user_id": {
+            "$ref": "#/components/schemas/UserId",
+            "description": "User row identifier."
+          }
+        }
+      },
+      "NotificationSettingsUpdate": {
+        "type": "object",
+        "description": "Notification settings update payload.",
+        "properties": {
+          "ai_api_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Primary AI API key update: omitted preserves, null clears, and non-empty replaces."
+          },
+          "ai_backup_api_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Backup AI API key update: omitted preserves, null clears, and non-empty replaces."
+          },
+          "ai_backup_base_url": {
+            "type": "string",
+            "description": "Backup AI endpoint base URL.",
+            "maxLength": 2048
+          },
+          "ai_backup_model": {
+            "type": "string",
+            "description": "Backup AI model.",
+            "maxLength": 200
+          },
+          "ai_backup_system_prompt": {
+            "type": "string",
+            "description": "Backup AI system prompt.",
+            "maxLength": 10000
+          },
+          "ai_base_url": {
+            "type": "string",
+            "description": "Primary AI endpoint base URL.",
+            "maxLength": 2048
+          },
+          "ai_model": {
+            "type": "string",
+            "description": "Primary AI model.",
+            "maxLength": 200
+          },
+          "ai_retry_attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Retry attempts per AI endpoint.",
+            "maximum": 10,
+            "minimum": 1
+          },
+          "ai_system_prompt": {
+            "type": "string",
+            "description": "Primary AI system prompt.",
+            "maxLength": 10000
+          },
+          "delivery_method": {
+            "type": "string",
+            "description": "Delivery method."
+          },
+          "directions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Research direction preferences.",
+            "maxItems": 100
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether recommendations are enabled."
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Keyword preferences.",
+            "maxItems": 100
+          },
+          "pushplus_channel": {
+            "type": "string",
+            "description": "PushPlus channel.",
+            "maxLength": 64
+          },
+          "pushplus_template": {
+            "type": "string",
+            "description": "PushPlus template.",
+            "maxLength": 64
+          },
+          "pushplus_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "PushPlus token update: omitted preserves, null clears, and non-empty replaces."
+          },
+          "pushplus_topic": {
+            "type": "string",
+            "description": "PushPlus topic.",
+            "maxLength": 200
+          },
+          "selected_databases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Selected index database names.",
+            "maxItems": 500
+          },
+          "sync_to_tracking_folder": {
+            "type": "boolean",
+            "description": "Whether PushPlus delivery also syncs to the tracking folder."
+          }
+        }
+      },
+      "OkResponse": {
+        "type": "object",
+        "description": "Boolean ok response.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Whether the operation succeeded."
+          }
+        }
+      },
+      "PageMeta": {
+        "type": "object",
+        "description": "Pagination metadata.",
+        "required": [
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "has_more": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether another page may exist."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Page size."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Keyset cursor for the next page."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Offset row count."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Total rows when requested."
+          }
+        }
+      },
+      "ProviderCapabilityInfo": {
+        "type": "object",
+        "description": "Aggregated capabilities for one logical Provider.",
+        "required": [
+          "name",
+          "index_content",
+          "article_abstract",
+          "article_full_text"
+        ],
+        "properties": {
+          "article_abstract": {
+            "type": "boolean",
+            "description": "Whether the Provider can resolve an online abstract page."
+          },
+          "article_full_text": {
+            "type": "boolean",
+            "description": "Whether the Provider can resolve online full text."
+          },
+          "index_content": {
+            "type": "boolean",
+            "description": "Whether the Provider can build canonical index content."
+          },
+          "name": {
+            "type": "string",
+            "description": "Stable lowercase runtime Provider name."
+          }
+        }
+      },
+      "ProviderCatalogInfo": {
+        "type": "object",
+        "description": "Safe catalog file metadata visible to administrators.",
+        "required": [
+          "stem"
+        ],
+        "properties": {
+          "csv_filename": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Metadata CSV filename when present."
+          },
+          "database_filename": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Content SQLite filename when present."
+          },
+          "stem": {
+            "type": "string",
+            "description": "Canonical catalog stem shared by CSV and SQLite files."
+          }
+        }
+      },
+      "ProviderCatalogResponse": {
+        "type": "object",
+        "description": "Administrator Provider and catalog capability response.",
+        "required": [
+          "providers",
+          "catalogs"
+        ],
+        "properties": {
+          "catalogs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderCatalogInfo"
+            },
+            "description": "Discovered metadata and content catalogs."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderCapabilityInfo"
+            },
+            "description": "Logical Providers and their aggregate capabilities."
+          }
+        }
+      },
+      "ProviderOrderConfiguration": {
+        "type": "object",
+        "description": "Ordered online Provider configuration with optional catalog overrides.",
+        "required": [
+          "default",
+          "catalogs"
+        ],
+        "properties": {
+          "catalogs": {
+            "type": "object",
+            "description": "Complete per-catalog replacement orders keyed by canonical catalog stem.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "default": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Default Provider order used when a catalog has no explicit override."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PushStats": {
+        "type": "object",
+        "description": "Push-state statistics payload.",
+        "required": [
+          "db_name",
+          "status"
+        ],
+        "properties": {
+          "db_name": {
+            "type": "string",
+            "description": "State file stem."
+          },
+          "delivered_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Delivered article count.",
+            "minimum": 0
+          },
+          "last_completed": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last completed run timestamp."
+          },
+          "status": {
+            "$ref": "#/components/schemas/PushStatsState",
+            "description": "Push state status."
+          },
+          "user_results": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "User result count.",
+            "minimum": 0
+          }
+        }
+      },
+      "PushStatsState": {
+        "type": "string",
+        "description": "Application-owned state exposed for legacy push statistics.",
+        "enum": [
+          "idle",
+          "running",
+          "completed",
+          "failed",
+          "skipped",
+          "unknown",
+          "error"
+        ]
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "description": "Account registration request.",
+        "required": [
+          "username",
+          "password",
+          "invite_code"
+        ],
+        "properties": {
+          "invite_code": {
+            "type": "string",
+            "description": "Invite code text required for every public registration."
+          },
+          "password": {
+            "type": "string",
+            "description": "Requested password."
+          },
+          "username": {
+            "type": "string",
+            "description": "Requested username."
+          }
+        }
+      },
+      "RuntimeSecretItemInfo": {
+        "type": "object",
+        "description": "Individually manageable secret-pool item metadata.",
+        "required": [
+          "reference",
+          "masked_value"
+        ],
+        "properties": {
+          "masked_value": {
+            "type": "string",
+            "description": "Human-readable prefix mask that never contains the complete secret."
+          },
+          "reference": {
+            "type": "string",
+            "description": "Opaque authenticated reference accepted by a pool removal update."
+          }
+        }
+      },
+      "RuntimeSecretPoolUpdate": {
+        "type": "object",
+        "description": "Additions and removals applied to one secret runtime pool.",
+        "properties": {
+          "add": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "New plaintext entries to normalize and append."
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Opaque item references to remove."
+          }
+        }
+      },
+      "RuntimeSettingApplyMode": {
+        "type": "string",
+        "description": "Lifecycle point at which a saved runtime setting becomes effective.",
+        "enum": [
+          "next_request",
+          "next_command",
+          "restart_required"
+        ]
+      },
+      "RuntimeSettingControl": {
+        "type": "string",
+        "description": "Frontend control requested for a runtime setting.",
+        "enum": [
+          "text",
+          "secret_pool",
+          "string_list",
+          "boolean",
+          "select",
+          "index_provider_routes",
+          "provider_order",
+          "provider_proxy_policy"
+        ]
+      },
+      "RuntimeSettingGroup": {
+        "type": "string",
+        "description": "Functional section used to group runtime settings in administrator clients.",
+        "enum": [
+          "source_access",
+          "provider_routing",
+          "server_security",
+          "observability"
+        ]
+      },
+      "RuntimeSettingInfo": {
+        "type": "object",
+        "description": "Runtime setting response payload.",
+        "required": [
+          "field",
+          "label",
+          "description",
+          "group",
+          "control",
+          "apply_mode",
+          "allowed_values",
+          "input_type",
+          "is_secret",
+          "value",
+          "has_value",
+          "masked_value",
+          "source"
+        ],
+        "properties": {
+          "allowed_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Finite allowed values for selection controls."
+          },
+          "apply_mode": {
+            "$ref": "#/components/schemas/RuntimeSettingApplyMode",
+            "description": "Lifecycle point at which changes become effective."
+          },
+          "control": {
+            "$ref": "#/components/schemas/RuntimeSettingControl",
+            "description": "Requested frontend control."
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable description."
+          },
+          "field": {
+            "type": "string",
+            "description": "API field name."
+          },
+          "group": {
+            "$ref": "#/components/schemas/RuntimeSettingGroup",
+            "description": "Functional administrator configuration group."
+          },
+          "has_value": {
+            "type": "boolean",
+            "description": "Whether a credential value is configured."
+          },
+          "input_type": {
+            "type": "string",
+            "description": "Frontend input type."
+          },
+          "is_secret": {
+            "type": "boolean",
+            "description": "Whether the value contains credentials."
+          },
+          "label": {
+            "type": "string",
+            "description": "Human-readable label."
+          },
+          "masked_value": {
+            "type": "string",
+            "description": "Fixed non-secret mask when a credential value is configured."
+          },
+          "secret_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeSecretItemInfo"
+            },
+            "description": "Individually manageable masked entries for a secret pool."
+          },
+          "source": {
+            "type": "string",
+            "description": "Effective setting source."
+          },
+          "updated_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Database update timestamp."
+          },
+          "value": {
+            "type": "string",
+            "description": "Effective setting value."
+          }
+        }
+      },
+      "RuntimeSettingsUpdate": {
+        "type": "object",
+        "description": "Runtime settings update payload.",
+        "properties": {
+          "secret_pool_updates": {
+            "type": "object",
+            "description": "Incremental secret-pool mutations keyed by API field name.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuntimeSecretPoolUpdate"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "values": {
+            "type": "object",
+            "description": "Values keyed by API field name; null clears and a blank secret preserves.",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ScheduledDeliveryJob": {
+        "type": "object",
+        "description": "Arguments accepted by a notification or push scheduled job.",
+        "properties": {
+          "database": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional index database basename.",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$"
+          },
+          "max_candidates": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Optional upper bound for recommendation candidates.",
+            "maximum": 1000,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScheduledIndexJob": {
+        "type": "object",
+        "description": "Arguments accepted by an index scheduled job.",
+        "properties": {
+          "metadata_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional metadata CSV basename.",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.csv$"
+          },
+          "notify": {
+            "type": "boolean",
+            "description": "Whether notification delivery runs after indexing succeeds."
+          },
+          "push": {
+            "type": "boolean",
+            "description": "Whether push delivery runs after indexing succeeds."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScheduledJobSpec": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledIndexJob",
+                "description": "Refresh the index and optionally run delivery workflows."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "index"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "Refresh the index and optionally run delivery workflows."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledDeliveryJob",
+                "description": "Run notification delivery."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "notify"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "Run notification delivery."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledDeliveryJob",
+                "description": "Run push delivery."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "push"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "Run push delivery."
+          }
+        ],
+        "description": "Strictly typed scheduled job specification."
+      },
+      "ScheduledTaskCreate": {
+        "type": "object",
+        "description": "Scheduled task creation payload.",
+        "required": [
+          "name",
+          "job",
+          "cron"
+        ],
+        "properties": {
+          "coalesce": {
+            "type": "boolean",
+            "description": "Whether missed slots are collapsed to the latest slot."
+          },
+          "cron": {
+            "type": "string",
+            "description": "Five-field cron expression."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the task is enabled."
+          },
+          "job": {
+            "$ref": "#/components/schemas/ScheduledJobSpec",
+            "description": "Validated job specification."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum execution time in seconds.",
+            "maximum": 86400,
+            "minimum": 1
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Explicit IANA time zone used for cron evaluation."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScheduledTaskInfo": {
+        "type": "object",
+        "description": "Scheduled task response payload.",
+        "required": [
+          "id",
+          "name",
+          "cron",
+          "timezone",
+          "timeout_seconds",
+          "coalesce",
+          "enabled",
+          "last_status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "coalesce": {
+            "type": "boolean",
+            "description": "Whether missed slots are collapsed to the latest slot."
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Creation timestamp."
+          },
+          "cron": {
+            "type": "string",
+            "description": "Five-field cron expression."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the task is enabled."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scheduled task row identifier."
+          },
+          "job": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScheduledJobSpec",
+                "description": "Validated job specification, absent only for a migrated legacy row."
+              }
+            ]
+          },
+          "last_run_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Last run timestamp."
+          },
+          "last_status": {
+            "$ref": "#/components/schemas/SchedulerRunState",
+            "description": "Last run status."
+          },
+          "legacy_command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Read-only command text retained from a legacy row for administrator review."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum execution time in seconds.",
+            "minimum": 0
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Explicit IANA time zone used for cron evaluation."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Last update timestamp."
+          }
+        }
+      },
+      "ScheduledTaskRunInfo": {
+        "type": "object",
+        "description": "Persisted scheduled task run visible to administrators.",
+        "required": [
+          "id",
+          "task_id",
+          "task_name",
+          "scheduled_for",
+          "status"
+        ],
+        "properties": {
+          "claimed_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Claim timestamp."
+          },
+          "finished_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Terminal or unknown-state timestamp."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Run row identifier."
+          },
+          "scheduled_for": {
+            "type": "integer",
+            "format": "int64",
+            "description": "UTC Unix timestamp of the scheduled minute or explicit manual request."
+          },
+          "started_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Execution start timestamp."
+          },
+          "status": {
+            "$ref": "#/components/schemas/SchedulerRunState",
+            "description": "Durable run status."
+          },
+          "task_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scheduled task row identifier."
+          },
+          "task_name": {
+            "type": "string",
+            "description": "Task name captured when the slot was queued."
+          },
+          "worker_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Worker identifier currently owning the run."
+          }
+        }
+      },
+      "ScheduledTaskUpdate": {
+        "type": "object",
+        "description": "Scheduled task update payload.",
+        "properties": {
+          "coalesce": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Optional coalescing flag."
+          },
+          "cron": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional replacement cron expression."
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Optional enabled flag."
+          },
+          "job": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScheduledJobSpec",
+                "description": "Optional replacement job specification."
+              }
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional replacement display name."
+          },
+          "timeout_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Optional replacement timeout in seconds.",
+            "maximum": 86400,
+            "minimum": 1
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional replacement IANA time zone."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SchedulerRunState": {
+        "type": "string",
+        "description": "Application-owned durable scheduler run state.",
+        "enum": [
+          "idle",
+          "pending",
+          "claimed",
+          "running",
+          "success",
+          "failed",
+          "timed_out",
+          "error",
+          "unknown",
+          "cancelled"
+        ]
+      },
+      "SchedulerStatusResponse": {
+        "type": "object",
+        "description": "Administrator scheduler status response.",
+        "required": [
+          "workers",
+          "recent_runs"
+        ],
+        "properties": {
+          "last_checked_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Last completed scheduler wall-clock check."
+          },
+          "recent_runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduledTaskRunInfo"
+            },
+            "description": "Recent durable task runs ordered from newest to oldest."
+          },
+          "workers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SchedulerWorkerInfo"
+            },
+            "description": "Known worker heartbeats ordered from newest to oldest."
+          }
+        }
+      },
+      "SchedulerWorkerInfo": {
+        "type": "object",
+        "description": "Persisted scheduler worker heartbeat visible to administrators.",
+        "required": [
+          "worker_id",
+          "started_at",
+          "heartbeat_at",
+          "is_healthy"
+        ],
+        "properties": {
+          "heartbeat_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Most recent heartbeat timestamp."
+          },
+          "is_healthy": {
+            "type": "boolean",
+            "description": "Whether the heartbeat is within the health threshold."
+          },
+          "started_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Worker start timestamp."
+          },
+          "worker_id": {
+            "type": "string",
+            "description": "Stable worker process identifier."
+          }
+        }
+      },
+      "SessionRevocationErrorDetail": {
+        "type": "object",
+        "description": "Stable detail returned when durable session revocation cannot be confirmed.",
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable client classification."
+          },
+          "message": {
+            "type": "string",
+            "description": "Safe user-facing failure summary."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Server-generated request identifier for audit correlation."
+          }
+        }
+      },
+      "SessionRevocationErrorResponse": {
+        "type": "object",
+        "description": "Error envelope for an unconfirmed session revocation.",
+        "required": [
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/SessionRevocationErrorDetail",
+            "description": "Structured revocation failure detail."
+          }
+        }
+      },
+      "TokenCreateRequest": {
+        "type": "object",
+        "description": "Access token creation request.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Token display name.",
+            "maxLength": 100
+          },
+          "ttl": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requested token TTL in seconds.",
+            "maximum": 31536000,
+            "minimum": 3600
+          }
+        }
+      },
+      "TokenCreateResponse": {
+        "type": "object",
+        "description": "Access token creation response.",
+        "required": [
+          "id",
+          "token",
+          "name",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Token expiration timestamp."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Token row identifier."
+          },
+          "name": {
+            "type": "string",
+            "description": "Token display name."
+          },
+          "token": {
+            "type": "string",
+            "description": "Raw token value returned only at creation time."
+          }
+        }
+      },
+      "TokenInfo": {
+        "type": "object",
+        "description": "Access token metadata response.",
+        "required": [
+          "id",
+          "name",
+          "expires_at",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Token creation timestamp."
+          },
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Token expiration timestamp."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Token row identifier."
+          },
+          "name": {
+            "type": "string",
+            "description": "Token display name."
+          }
+        }
+      },
+      "TrackingFolderSummary": {
+        "type": "object",
+        "description": "Tracking folder summary for `/api/tracking/status`.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Folder row identifier."
+          },
+          "name": {
+            "type": "string",
+            "description": "Folder display name."
+          }
+        }
+      },
+      "TrackingSetRequest": {
+        "type": "object",
+        "description": "Set-tracking-folder request payload.",
+        "required": [
+          "folder_id"
+        ],
+        "properties": {
+          "folder_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Folder row identifier to mark as tracking."
+          }
+        }
+      },
+      "TrackingStatusResponse": {
+        "type": "object",
+        "description": "Tracking status response payload.",
+        "required": [
+          "total_folders",
+          "weekly_articles_available",
+          "notification_configured"
+        ],
+        "properties": {
+          "notification_configured": {
+            "type": "boolean",
+            "description": "Whether notification settings exist for the user."
+          },
+          "total_folders": {
+            "type": "integer",
+            "description": "Total folder count.",
+            "minimum": 0
+          },
+          "tracking_folder": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TrackingFolderSummary",
+                "description": "Current tracking folder summary."
+              }
+            ]
+          },
+          "weekly_articles_available": {
+            "type": "integer",
+            "description": "Number of weekly article ids currently available.",
+            "minimum": 0
+          }
+        }
+      },
+      "UserId": {
+        "type": "integer",
+        "format": "int64",
+        "description": "Auth user identifier stored as an ordinary SQLite integer."
+      },
+      "UserResponse": {
+        "type": "object",
+        "description": "User profile returned by auth endpoints.",
+        "required": [
+          "id",
+          "username",
+          "is_admin"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UserId",
+            "description": "User identifier."
+          },
+          "is_admin": {
+            "type": "boolean",
+            "description": "Whether the user has admin privileges."
+          },
+          "username": {
+            "type": "string",
+            "description": "Login username."
+          }
+        }
+      },
+      "ValueCount": {
+        "type": "object",
+        "description": "Label/count tuple.",
+        "required": [
+          "value",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row count."
+          },
+          "value": {
+            "type": "string",
+            "description": "Label value."
+          }
+        }
+      },
+      "WeeklyArticlePage": {
+        "type": "object",
+        "description": "Cursor-paginated weekly articles for one database and journal.",
+        "required": [
+          "items",
+          "page"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyArticleRecord"
+            },
+            "description": "Weekly article records."
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMeta",
+            "description": "Descending date and article-id pagination metadata."
+          }
+        }
+      },
+      "WeeklyArticleRecord": {
+        "type": "object",
+        "description": "Weekly article record.",
+        "required": [
+          "article_id",
+          "journal_id",
+          "title",
+          "authors",
+          "journal_title"
+        ],
+        "properties": {
+          "abstract": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Abstract text."
+          },
+          "article_id": {
+            "$ref": "#/components/schemas/ArticleId",
+            "description": "Article identifier."
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Authors text."
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Article date."
+          },
+          "date_precision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DatePrecision",
+                "description": "Precision represented by the article date."
+              }
+            ]
+          },
+          "doi": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "DOI."
+          },
+          "in_press": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "In-press flag."
+          },
+          "issue_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Issue identifier."
+          },
+          "journal_id": {
+            "$ref": "#/components/schemas/JournalId",
+            "description": "Journal identifier."
+          },
+          "journal_title": {
+            "type": "string",
+            "description": "Journal title."
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue number."
+          },
+          "open_access": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Open-access flag."
+          },
+          "publication_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Publication year."
+          },
+          "title": {
+            "type": "string",
+            "description": "Article title."
+          },
+          "volume": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue volume."
+          }
+        }
+      },
+      "WeeklyDatabaseSummary": {
+        "type": "object",
+        "description": "Weekly article counts for one database without article bodies.",
+        "required": [
+          "db_name",
+          "generated_at",
+          "new_article_count",
+          "journals"
+        ],
+        "properties": {
+          "db_name": {
+            "type": "string",
+            "description": "Database filename."
+          },
+          "generated_at": {
+            "type": "string",
+            "description": "Generated timestamp from the newest included manifest."
+          },
+          "journals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyJournalSummary"
+            },
+            "description": "Journal summaries ordered by count and label."
+          },
+          "new_article_count": {
+            "type": "integer",
+            "description": "New article count within the fixed window.",
+            "minimum": 0
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Source run identifier from the newest included manifest."
+          }
+        }
+      },
+      "WeeklyDatabaseUpdate": {
+        "type": "object",
+        "description": "Weekly update summary for one database.",
+        "required": [
+          "db_name",
+          "generated_at",
+          "new_article_count",
+          "journals"
+        ],
+        "properties": {
+          "db_name": {
+            "type": "string",
+            "description": "Database filename."
+          },
+          "generated_at": {
+            "type": "string",
+            "description": "Generated timestamp."
+          },
+          "journals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyJournalUpdate"
+            },
+            "description": "Journal groups."
+          },
+          "new_article_count": {
+            "type": "integer",
+            "description": "New article count.",
+            "minimum": 0
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Source run identifier."
+          }
+        }
+      },
+      "WeeklyJournalSummary": {
+        "type": "object",
+        "description": "Weekly article counts for one journal without article bodies.",
+        "required": [
+          "journal_id",
+          "new_article_count"
+        ],
+        "properties": {
+          "journal_id": {
+            "$ref": "#/components/schemas/JournalId",
+            "description": "Journal identifier."
+          },
+          "journal_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Journal title."
+          },
+          "new_article_count": {
+            "type": "integer",
+            "description": "New article count within the fixed window.",
+            "minimum": 0
+          }
+        }
+      },
+      "WeeklyJournalUpdate": {
+        "type": "object",
+        "description": "Weekly update summary for one journal.",
+        "required": [
+          "journal_id",
+          "new_article_count",
+          "articles"
+        ],
+        "properties": {
+          "articles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyArticleRecord"
+            },
+            "description": "Weekly articles."
+          },
+          "journal_id": {
+            "$ref": "#/components/schemas/JournalId",
+            "description": "Journal identifier."
+          },
+          "journal_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Journal title."
+          },
+          "new_article_count": {
+            "type": "integer",
+            "description": "New article count.",
+            "minimum": 0
+          }
+        }
+      },
+      "WeeklyUpdatesResponse": {
+        "type": "object",
+        "description": "Weekly updates response.",
+        "required": [
+          "generated_at",
+          "window_start",
+          "window_end",
+          "databases"
+        ],
+        "properties": {
+          "databases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyDatabaseUpdate"
+            },
+            "description": "Database update groups."
+          },
+          "generated_at": {
+            "type": "string",
+            "description": "Response generated timestamp."
+          },
+          "window_end": {
+            "type": "string",
+            "description": "Window end timestamp."
+          },
+          "window_start": {
+            "type": "string",
+            "description": "Window start timestamp."
+          }
+        }
+      },
+      "WeeklyUpdatesSummaryResponse": {
+        "type": "object",
+        "description": "Bounded weekly update summary without article bodies.",
+        "required": [
+          "generated_at",
+          "window_start",
+          "window_end",
+          "databases"
+        ],
+        "properties": {
+          "databases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeeklyDatabaseSummary"
+            },
+            "description": "Database update summaries."
+          },
+          "generated_at": {
+            "type": "string",
+            "description": "Response generated timestamp."
+          },
+          "window_end": {
+            "type": "string",
+            "description": "Fixed window end timestamp for article-page requests."
+          },
+          "window_start": {
+            "type": "string",
+            "description": "Window start timestamp."
+          }
+        }
+      },
+      "YearSummary": {
+        "type": "object",
+        "description": "Publication year summary.",
+        "required": [
+          "year",
+          "issue_count",
+          "journal_count"
+        ],
+        "properties": {
+          "issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issue count."
+          },
+          "journal_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Journal count."
+          },
+          "year": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Publication year."
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer_auth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "session_cookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "litradar_session"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "health",
+      "description": "Service health endpoints."
+    },
+    {
+      "name": "announcements",
+      "description": "Public announcement endpoints."
+    },
+    {
+      "name": "index",
+      "description": "Index database read endpoints."
+    },
+    {
+      "name": "auth",
+      "description": "Authentication and access token endpoints."
+    },
+    {
+      "name": "cnki",
+      "description": "Zhejiang Library CNKI session endpoints."
+    },
+    {
+      "name": "favorites",
+      "description": "Favorite folder endpoints."
+    },
+    {
+      "name": "tracking",
+      "description": "Tracking and notification endpoints."
+    },
+    {
+      "name": "admin",
+      "description": "Administrative endpoints."
+    }
+  ]
+}

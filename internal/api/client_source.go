@@ -1,0 +1,111 @@
+package api
+
+import (
+	"net/http"
+	"net/netip"
+	"strings"
+)
+
+func resolveAuthClientSource(peer netip.Addr, headers http.Header, trusted []netip.Prefix) authClientSource {
+	if !peer.IsValid() {
+		return authClientSource{netip.IPv6Unspecified(), "missing_peer"}
+	}
+	peer = peer.Unmap()
+	if !isTrustedProxy(peer, trusted) {
+		class := "direct"
+		if headers.Values("Forwarded") != nil || headers.Values("X-Forwarded-For") != nil {
+			class = "untrusted_forwarding_header"
+		}
+		return authClientSource{peer, class}
+	}
+	chain, class := parseForwardingChain(headers)
+	if class != "trusted_forwarding_chain" {
+		return authClientSource{peer, class}
+	}
+	client := peer
+	for index := len(chain) - 1; index >= 0; index-- {
+		if !isTrustedProxy(client, trusted) {
+			break
+		}
+		client = chain[index].Unmap()
+	}
+	return authClientSource{client, class}
+}
+
+func isTrustedProxy(address netip.Addr, trusted []netip.Prefix) bool {
+	for _, network := range trusted {
+		if network.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseForwardingChain(headers http.Header) ([]netip.Addr, string) {
+	values := headers.Values("Forwarded")
+	isForwarded := len(values) != 0
+	if !isForwarded {
+		values = headers.Values("X-Forwarded-For")
+	}
+	if len(values) == 0 {
+		return nil, "trusted_proxy_without_header"
+	}
+	chain := []netip.Addr{}
+	for _, value := range values {
+		for _, character := range []byte(value) {
+			if (character < 32 && character != '\t') || character >= 127 {
+				return nil, "trusted_proxy_invalid_header"
+			}
+		}
+		for _, element := range strings.Split(value, ",") {
+			var address netip.Addr
+			if isForwarded {
+				for _, parameter := range strings.Split(element, ";") {
+					name, raw, hasEquals := strings.Cut(strings.TrimSpace(parameter), "=")
+					if !hasEquals {
+						return nil, "trusted_proxy_invalid_header"
+					}
+					if asciiLower(strings.TrimSpace(name)) == "for" {
+						if address.IsValid() {
+							return nil, "trusted_proxy_invalid_header"
+						}
+						address = parseForwardedNode(strings.TrimSpace(raw))
+						if !address.IsValid() {
+							return nil, "trusted_proxy_invalid_header"
+						}
+					}
+				}
+			} else {
+				address = parseForwardedNode(strings.TrimSpace(element))
+			}
+			if !address.IsValid() {
+				return nil, "trusted_proxy_invalid_header"
+			}
+			chain = append(chain, address)
+		}
+	}
+	return chain, "trusted_forwarding_chain"
+}
+
+func parseForwardedNode(value string) netip.Addr {
+	if len(value) >= 2 && strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
+		value = value[1 : len(value)-1]
+		if strings.ContainsAny(value, "\"\\") {
+			return netip.Addr{}
+		}
+	} else if strings.Contains(value, "\"") {
+		return netip.Addr{}
+	}
+	if address, err := netip.ParseAddr(value); err == nil && address.Zone() == "" {
+		return address.Unmap()
+	}
+	if endpoint, err := netip.ParseAddrPort(value); err == nil && endpoint.Addr().Zone() == "" {
+		return endpoint.Addr().Unmap()
+	}
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		if address, err := netip.ParseAddr(value[1 : len(value)-1]); err == nil && address.Zone() == "" {
+			return address.Unmap()
+		}
+	}
+	return netip.Addr{}
+}

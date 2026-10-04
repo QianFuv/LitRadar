@@ -92,7 +92,7 @@ func NewWithPolicy(server *mcp.Server, authorize Authorize, policy HostOriginPol
 			return nil, auth.ErrInvalidToken
 		}
 		return &auth.TokenInfo{Expiration: principal.ExpiresAt, Extra: map[string]any{principalExtra: principal, versionExtra: ctx.Value(versionKey{})}}, nil
-	}, nil)(transport)
+	}, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(transport)
 	return &Handler{transport: transport, next: verified, authorize: authorize, policy: HostOriginPolicy{AllowedHosts: append([]string(nil), policy.AllowedHosts...), AllowedOrigins: append([]string(nil), policy.AllowedOrigins...)}}
 }
 

@@ -1,0 +1,402 @@
+{
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "exporter_sha256": "c16cce0ed4f1a01fa51594d7b67b87a89a7d41237490ed00aab5481d37be2f39",
+  "cases": [
+    {
+      "method": "GET",
+      "url": "/api/favorites/check",
+      "body": "",
+      "authenticated": false,
+      "status": 400,
+      "content_type": "text/plain; charset=utf-8",
+      "response": "Failed to deserialize query string: missing field `article_id`"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/check",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "text/plain; charset=utf-8",
+      "response": "Failed to deserialize query string: missing field `article_id`"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/check?article_id=0",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/check?article_id=0",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"article_id must be a positive integer\",\"code\":\"bad_request\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/check?article_id=9007199254740993",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/check?article_id=9007199254740993",
+      "body": "",
+      "authenticated": true,
+      "status": 200,
+      "content_type": "application/json",
+      "response": "[]"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/check?article_id=x",
+      "body": "",
+      "authenticated": false,
+      "status": 400,
+      "content_type": "text/plain; charset=utf-8",
+      "response": "Failed to deserialize query string: article_id: invalid digit found in string"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/check?article_id=x",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "text/plain; charset=utf-8",
+      "response": "Failed to deserialize query string: article_id: invalid digit found in string"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles",
+      "body": "",
+      "authenticated": true,
+      "status": 200,
+      "content_type": "application/json",
+      "response": "[]"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles?limit=0",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles?limit=0",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"limit must be between 1 and 500\",\"code\":\"bad_request\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles?offset=-1",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles?offset=-1",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"offset must be greater than or equal to 0\",\"code\":\"bad_request\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles/page?limit=501",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles/page?limit=501",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"limit must be between 1 and 500\",\"code\":\"bad_request\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles/page?cursor=x",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/articles/page?cursor=x",
+      "body": "",
+      "authenticated": true,
+      "status": 404,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Folder not found\",\"code\":\"not_found\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/-1/articles/page?limit=0",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/-1/articles/page?limit=0",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"limit must be between 1 and 500\",\"code\":\"bad_request\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/count",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/count",
+      "body": "",
+      "authenticated": true,
+      "status": 200,
+      "content_type": "application/json",
+      "response": "{\"count\":0}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/export?format=RIS",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/export?format=RIS",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Invalid export format\",\"code\":\"bad_request\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/export",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "GET",
+      "url": "/api/favorites/folders/99999/export",
+      "body": "",
+      "authenticated": true,
+      "status": 404,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Folder not found\",\"code\":\"not_found\",\"retryable\":false}"
+    },
+    {
+      "method": "DELETE",
+      "url": "/api/favorites/folders/99999/articles/no",
+      "body": "",
+      "authenticated": false,
+      "status": 400,
+      "content_type": "text/plain; charset=utf-8",
+      "response": "Invalid URL: Cannot parse value at index 1 with value `no` to a `i64`"
+    },
+    {
+      "method": "DELETE",
+      "url": "/api/favorites/folders/99999/articles/no",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "text/plain; charset=utf-8",
+      "response": "Invalid URL: Cannot parse value at index 1 with value `no` to a `i64`"
+    },
+    {
+      "method": "DELETE",
+      "url": "/api/favorites/folders/no/articles/1",
+      "body": "",
+      "authenticated": false,
+      "status": 400,
+      "content_type": "text/plain; charset=utf-8",
+      "response": "Invalid URL: Cannot parse value at index 0 with value `no` to a `i64`"
+    },
+    {
+      "method": "DELETE",
+      "url": "/api/favorites/folders/no/articles/1",
+      "body": "",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "text/plain; charset=utf-8",
+      "response": "Invalid URL: Cannot parse value at index 0 with value `no` to a `i64`"
+    },
+    {
+      "method": "DELETE",
+      "url": "/api/favorites/folders/99999/articles/1",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "DELETE",
+      "url": "/api/favorites/folders/99999/articles/1",
+      "body": "",
+      "authenticated": true,
+      "status": 404,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Favorite not found\",\"code\":\"not_found\",\"retryable\":false}"
+    },
+    {
+      "method": "POST",
+      "url": "/api/favorites/folders/99999/articles",
+      "body": "{\"article_id\":1}",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "POST",
+      "url": "/api/favorites/folders/99999/articles",
+      "body": "{\"article_id\":1}",
+      "authenticated": true,
+      "status": 404,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Folder not found\",\"code\":\"not_found\",\"retryable\":false}"
+    },
+    {
+      "method": "POST",
+      "url": "/api/favorites/folders",
+      "body": "{\"name\":\"\"}",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "POST",
+      "url": "/api/favorites/folders",
+      "body": "{\"name\":\"\"}",
+      "authenticated": true,
+      "status": 400,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Folder name must be 1-100 characters\",\"code\":\"bad_request\",\"retryable\":false}"
+    },
+    {
+      "method": "PUT",
+      "url": "/api/favorites/folders/99999",
+      "body": "{\"name\":\"x\"}",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "PUT",
+      "url": "/api/favorites/folders/99999",
+      "body": "{\"name\":\"x\"}",
+      "authenticated": true,
+      "status": 404,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Folder not found\",\"code\":\"not_found\",\"retryable\":false}"
+    },
+    {
+      "method": "DELETE",
+      "url": "/api/favorites/folders/99999",
+      "body": "",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "DELETE",
+      "url": "/api/favorites/folders/99999",
+      "body": "",
+      "authenticated": true,
+      "status": 404,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Folder not found\",\"code\":\"not_found\",\"retryable\":false}"
+    },
+    {
+      "method": "POST",
+      "url": "/api/favorites/folders/99999/articles/bulk",
+      "body": "{\"articles\":[]}",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "POST",
+      "url": "/api/favorites/folders/99999/articles/bulk",
+      "body": "{\"articles\":[]}",
+      "authenticated": true,
+      "status": 404,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Folder not found\",\"code\":\"not_found\",\"retryable\":false}"
+    },
+    {
+      "method": "POST",
+      "url": "/api/favorites/check/batch",
+      "body": "{\"article_ids\":[0,-1,9007199254740993]}",
+      "authenticated": false,
+      "status": 401,
+      "content_type": "application/json",
+      "response": "{\"detail\":\"Authentication required\",\"code\":\"unauthorized\",\"retryable\":false}"
+    },
+    {
+      "method": "POST",
+      "url": "/api/favorites/check/batch",
+      "body": "{\"article_ids\":[0,-1,9007199254740993]}",
+      "authenticated": true,
+      "status": 200,
+      "content_type": "application/json",
+      "response": "[{\"article_id\":\"9007199254740993\",\"folders\":[]}]"
+    }
+  ]
+}

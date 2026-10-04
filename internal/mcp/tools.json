@@ -1,0 +1,341 @@
+[
+  {
+    "name": "add_favorite",
+    "description": "Add an article to a favorite folder for the authenticated user.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "article_id": {
+          "type": "string"
+        },
+        "db_name": {
+          "type": ["string", "null"]
+        },
+        "folder_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": ["article_id", "folder_id"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_article",
+    "description": "Get a single article by ID.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "article_id": {
+          "type": "string"
+        },
+        "db": {
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["article_id"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_journal",
+    "description": "Get a single journal by ID.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "db": {
+          "type": ["string", "null"]
+        },
+        "journal_id": {
+          "type": "string"
+        }
+      },
+      "required": ["journal_id"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_weekly_updates",
+    "description": "Get weekly update summaries across all LitRadar databases.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_areas",
+    "description": "List research areas for the selected LitRadar database.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "db": {
+          "type": ["string", "null"]
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_databases",
+    "description": "List available LitRadar SQLite databases.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_folders",
+    "description": "List favorite folders for the authenticated LitRadar user.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_journal_options",
+    "description": "List journal filter options for the selected LitRadar database.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "db": {
+          "type": ["string", "null"]
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_journal_ratings",
+    "description": "List exact UTD, ABS, FMS and FMS China grades with journal counts for the selected database. Empty groups mean no rating information.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "db": {
+          "type": ["string", "null"]
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_journals",
+    "description": "List journals from the selected LitRadar database.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "abs_rating": {
+          "description": "Exact ABS grades; 4* is a literal grade, not a wildcard.",
+          "items": {
+            "type": "string"
+          },
+          "type": ["array", "null"]
+        },
+        "area": {
+          "type": ["string", "null"]
+        },
+        "db": {
+          "type": ["string", "null"]
+        },
+        "fms_rating": {
+          "description": "Exact FMS grades.",
+          "items": {
+            "type": "string"
+          },
+          "type": ["array", "null"]
+        },
+        "fmscn_rating": {
+          "description": "Exact FMS China grades.",
+          "items": {
+            "type": "string"
+          },
+          "type": ["array", "null"]
+        },
+        "has_articles": {
+          "type": ["boolean", "null"]
+        },
+        "limit": {
+          "format": "int64",
+          "type": ["integer", "null"]
+        },
+        "offset": {
+          "format": "int64",
+          "type": ["integer", "null"]
+        },
+        "sort": {
+          "type": ["string", "null"]
+        },
+        "utd_rating": {
+          "description": "Exact UTD grades; OR within a system, AND across systems and other filters.",
+          "items": {
+            "type": "string"
+          },
+          "type": ["array", "null"]
+        },
+        "year": {
+          "format": "int64",
+          "type": ["integer", "null"]
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_years",
+    "description": "List publication years for the selected LitRadar database.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "db": {
+          "type": ["string", "null"]
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "remove_favorite",
+    "description": "Remove an article from a favorite folder for the authenticated user.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "article_id": {
+          "type": "string"
+        },
+        "db_name": {
+          "type": ["string", "null"]
+        },
+        "folder_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": ["article_id", "folder_id"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "search_articles",
+    "description": "Search articles in the LitRadar index.",
+    "inputSchema": {
+      "$defs": {
+        "StringOrStrings": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "abs_rating": {
+          "description": "Exact ABS grades; 4* is a literal grade, not a wildcard.",
+          "items": {
+            "type": "string"
+          },
+          "type": ["array", "null"]
+        },
+        "area": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StringOrStrings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cursor": {
+          "type": ["string", "null"]
+        },
+        "date_from": {
+          "type": ["string", "null"]
+        },
+        "date_to": {
+          "type": ["string", "null"]
+        },
+        "db": {
+          "type": ["string", "null"]
+        },
+        "doi": {
+          "type": ["string", "null"]
+        },
+        "fms_rating": {
+          "description": "Exact FMS grades.",
+          "items": {
+            "type": "string"
+          },
+          "type": ["array", "null"]
+        },
+        "fmscn_rating": {
+          "description": "Exact FMS China grades.",
+          "items": {
+            "type": "string"
+          },
+          "type": ["array", "null"]
+        },
+        "in_press": {
+          "type": ["boolean", "null"]
+        },
+        "include_total": {
+          "type": ["boolean", "null"]
+        },
+        "issue_id": {
+          "format": "int64",
+          "type": ["integer", "null"]
+        },
+        "journal_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StringOrStrings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "format": "int64",
+          "type": ["integer", "null"]
+        },
+        "offset": {
+          "format": "int64",
+          "type": ["integer", "null"]
+        },
+        "open_access": {
+          "type": ["boolean", "null"]
+        },
+        "pmid": {
+          "type": ["string", "null"]
+        },
+        "q": {
+          "type": ["string", "null"]
+        },
+        "search_mode": {
+          "type": ["string", "null"]
+        },
+        "sort": {
+          "type": ["string", "null"]
+        },
+        "utd_rating": {
+          "description": "Exact UTD grades; OR within a system, AND across systems and other filters.",
+          "items": {
+            "type": "string"
+          },
+          "type": ["array", "null"]
+        },
+        "year": {
+          "format": "int64",
+          "type": ["integer", "null"]
+        }
+      },
+      "type": "object"
+    }
+  }
+]

@@ -36,7 +36,7 @@ func AuditFailureCount() uint64 { return auditFailureCount.Load() }
 // ReportAuditFailure logs a fixed classification, never the original error or request values.
 func ReportAuditFailure(kind string) uint64 {
 	switch kind {
-	case "sqlite", "io", "invalid_event", "invalid_retention_days", "join":
+	case "sqlite", "io", "invalid_event", "invalid_retention_days", "join", "executor_unavailable":
 	default:
 		kind = "execution"
 	}

@@ -31,7 +31,7 @@ func TestLegacyVersionsCurrentIdentityAndTextResults(t *testing.T) {
 	})
 	handler := New(server, func(writer http.ResponseWriter, request *http.Request) (Principal, bool) {
 		authorizeCalls.Add(1)
-		principal := Principal{ExpiresAt: time.Now().Add(time.Hour)}
+		principal := Principal{}
 		switch request.Header.Get("Authorization") {
 		case "Bearer alice":
 			principal.UserId = 9007199254740993
