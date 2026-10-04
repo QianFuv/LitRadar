@@ -21,6 +21,7 @@ type Config struct {
 	OutputLimit   int
 	StreamStdout  bool
 	InheritStderr bool
+	InheritStdin  bool
 }
 
 type retainedOutput struct {
@@ -105,6 +106,9 @@ func startWithHook(ctx context.Context, config Config, hook startHook) (*Child, 
 		return nil, err
 	}
 	command.Stdin, command.Stdout, command.Stderr = inputReader, outputWriter, errorWriter
+	if config.InheritStdin {
+		command.Stdin = os.Stdin
+	}
 	if config.InheritStderr {
 		command.Stderr = os.Stderr
 	}
@@ -185,6 +189,16 @@ func (child *Child) Wait(ctx context.Context) error {
 	}
 }
 
+// Poll observes leader completion without blocking or racing cancellation against an already observed exit.
+func (child *Child) Poll() (bool, error) {
+	select {
+	case <-child.done:
+		return true, child.waitError
+	default:
+		return false, nil
+	}
+}
+
 // Output returns retained stdout; excess bytes are drained rather than blocking children.
 func (child *Child) Output() ([]byte, bool) {
 	child.output.mu.Lock()
@@ -230,7 +244,7 @@ func (child *Child) Terminate(grace time.Duration) (Termination, error) {
 			}
 			<-child.drained
 		}
-		child.closeError = errors.Join(killError, waitError, treeError, child.tree.close())
+		child.closeError = errors.Join(killError, classifiedError("wait_failed", errors.Join(waitError, treeError)), classifiedError("kill_failed", child.tree.close()))
 		if child.Stdout != nil {
 			child.Stdout.Close()
 		}

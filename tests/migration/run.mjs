@@ -90,6 +90,15 @@ if (phase === "delivery") {
   console.log(await runDelivery());
   process.exit(0);
 }
+if (phase === "scheduler") {
+  assert(
+    !requested.has("--candidate"),
+    "Scheduler must execute its own checks",
+  );
+  const { runScheduler } = await import("./scheduler/run.mjs");
+  console.log(await runScheduler());
+  process.exit(0);
+}
 assert.equal(
   phase,
   "baseline",

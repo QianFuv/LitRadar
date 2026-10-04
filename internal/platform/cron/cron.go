@@ -126,8 +126,8 @@ func (schedule Schedule) Slots(timezone string, checkedFrom, checkedTo float64) 
 	if checkedFrom >= checkedTo {
 		return result, nil
 	}
-	location, err := time.LoadLocation(timezone)
-	if err != nil || timezone == "" || timezone == "Local" {
+	location, err := Location(timezone)
+	if err != nil {
 		return nil, fmt.Errorf("timezone must be a valid IANA name")
 	}
 	if math.IsNaN(checkedFrom) || math.IsNaN(checkedTo) || math.IsInf(checkedFrom, 0) || math.IsInf(checkedTo, 0) {

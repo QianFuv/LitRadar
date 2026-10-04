@@ -120,7 +120,7 @@ func (tree *nativeTree) retainProcesses() error {
 
 func (tree *nativeTree) kill() error {
 	err := tree.retainProcesses()
-	return errors.Join(err, windows.TerminateJobObject(tree.job, 1))
+	return classifiedError("kill_failed", errors.Join(err, windows.TerminateJobObject(tree.job, 1)))
 }
 
 func (tree *nativeTree) close() error {
@@ -138,7 +138,7 @@ func (tree *nativeTree) terminate(time.Duration) (Termination, error) {
 	if err == nil && information.ActiveProcesses == 0 {
 		return AlreadyExited, nil
 	}
-	return Forced, errors.Join(err, tree.kill())
+	return Forced, errors.Join(classifiedError("wait_failed", err), tree.kill())
 }
 
 type jobAccountingInformation struct {

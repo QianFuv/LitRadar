@@ -35,7 +35,7 @@ func (tree *nativeTree) kill() error {
 	if errors.Is(err, syscall.ESRCH) {
 		return nil
 	}
-	return err
+	return classifiedError("kill_failed", err)
 }
 func (tree *nativeTree) hasRunningMembers() (bool, error) {
 	if tree.group <= 0 {
@@ -61,16 +61,9 @@ func (tree *nativeTree) hasRunningMembers() (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		fields := strings.Fields(string(data[strings.LastIndexByte(string(data), ')')+1:]))
-		if len(fields) < 3 {
-			return false, errors.New("invalid process status")
-		}
-		group, err := strconv.Atoi(fields[2])
-		if err != nil {
-			return false, err
-		}
-		if group == tree.group && fields[0] != "Z" && fields[0] != "X" {
-			return true, nil
+		isActive, err := isProcessGroupActive(data, tree.group)
+		if err != nil || isActive {
+			return isActive, err
 		}
 	}
 	finalEntries, err := os.ReadDir("/proc")
@@ -83,17 +76,37 @@ func (tree *nativeTree) hasRunningMembers() (bool, error) {
 	return false, nil
 }
 
+// isProcessGroupActive retains zombie leaders while other threads can still own shared descriptors.
+func isProcessGroupActive(data []byte, expectedGroup int) (bool, error) {
+	fields := strings.Fields(string(data[strings.LastIndexByte(string(data), ')')+1:]))
+	if len(fields) < 18 {
+		return false, errors.New("invalid process status")
+	}
+	group, err := strconv.Atoi(fields[2])
+	if err != nil {
+		return false, err
+	}
+	if group != expectedGroup {
+		return false, nil
+	}
+	threads, err := strconv.Atoi(fields[17])
+	if err != nil || threads < 1 {
+		return false, errors.New("invalid process thread count")
+	}
+	return fields[0] != "Z" && fields[0] != "X" || threads > 1, nil
+}
+
 func (tree *nativeTree) terminate(grace time.Duration) (Termination, error) {
 	running, err := tree.hasRunningMembers()
 	if err != nil {
-		return Forced, errors.Join(err, tree.kill())
+		return Forced, errors.Join(classifiedError("wait_failed", err), tree.kill())
 	}
 	if !running {
 		return AlreadyExited, nil
 	}
 	if grace > 0 {
 		if err := syscall.Kill(-tree.group, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-			return Forced, errors.Join(err, tree.kill())
+			return Forced, errors.Join(classifiedError("terminate_failed", err), tree.kill())
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), grace)
 		err := tree.waitEmpty(ctx)
