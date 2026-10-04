@@ -14,8 +14,8 @@ app/playwright-report/
 app/*.tsbuildinfo
 target/
 output/
-data/index/
-data/push_state/
+data/
+test-results/
 litradar.egg-info/
 backup/
 backups/
@@ -25,7 +25,12 @@ docs/
 !docs/third-party/
 !docs/third-party/**
 *.md
+!docs/third-party/**
 !README.md
+!third_party/**
+!cmd/**
+!internal/**
+!assets/**
 .idea/
 .vscode/
 .env

@@ -25,7 +25,14 @@ for (const command of ["litradar", "litradar-fixture"]) {
     ],
     {
       cwd: ROOT,
-      env: { ...process.env, CGO_ENABLED: "1" },
+      env: {
+        ...process.env,
+        CGO_ENABLED: "1",
+        GOWORK: "off",
+        GOENV: "off",
+        GOFLAGS: "",
+        GOTOOLCHAIN: "go1.27.1",
+      },
       stdio: "inherit",
       windowsHide: true,
       timeout: 300000,

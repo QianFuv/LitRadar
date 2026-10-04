@@ -6,18 +6,18 @@
 
 | 层级                    | 主要工具与位置                                                                                             | 适用问题                                                                                         | 不应承担                          |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------- |
-| 1. 单元                 | Rust 模块内 `#[cfg(test)]`；Vitest 的纯 helper 测试                                                        | 解析、规范化、状态机、序列化、错误映射和纯业务规则                                               | HTTP、真实浏览器或进程装配        |
-| 2. 契约与适配器         | Rust crate 集成测试、临时 SQLite、Axum router、MCP、loopback transport、共享 JSON 场景                     | 路由/存储/迁移/Provider/CLI 边界，以及真实响应与 OpenAPI 场景的一致性                            | 页面交互和浏览器语义              |
+| 1. 单元                 | Go 包内 `*_test.go`；Vitest 的纯 helper 测试                                                               | 解析、规范化、状态机、序列化、错误映射和纯业务规则                                               | HTTP、真实浏览器或进程装配        |
+| 2. 契约与适配器         | Go 集成测试、临时 SQLite、net/http 与 httptest、MCP、loopback transport、共享 JSON 场景                    | 路由/存储/迁移/Provider/CLI 边界，以及真实响应与 OpenAPI 场景的一致性                            | 页面交互和浏览器语义              |
 | 3. 前端功能组件         | `app/tests/*.test.tsx` 的 Vitest/jsdom/MSW；仅必要时使用 `app/tests/browser-components/*.browser.test.tsx` | 页面状态、mutation、缓存、路由、错误呈现；焦点、Clipboard、IntersectionObserver 等浏览器原生语义 | 完整后端或部署拓扑                |
 | 4. 浏览器 fixture smoke | `app/tests/e2e/local-fixtures.spec.tsx` 的 Playwright Chromium                                             | 少量跨页面 UI、可访问导航、主题和响应式关键流；API 由显式页面 fixture 提供                       | 后端、Cookie、SQLite 持久化真实性 |
-| 5. 真实系统边界         | `app/tests/e2e/full-stack/`、`crates/litradar/tests/`、`tests/container-smoke.mjs`                         | 前端导出 → 实际 Rust listener → 临时 SQLite，以及真实进程、信号、镜像安全和清理                  | 组合式边界条件枚举                |
+| 5. 真实系统边界         | `app/tests/e2e/full-stack/`、`cmd/litradar/`、`tests/container-smoke.mjs`                                  | 前端导出 → 实际 Go listener → 临时 SQLite，以及真实进程、信号、镜像安全和清理                    | 组合式边界条件枚举                |
 
 一个改动可以由多层共同拥有，但每条业务规则必须有一个最低充分所有者。高层 smoke 只证明关键装配，不复制低层的全部输入组合。
 
 ## 放置与处置规则
 
-- Rust 私有实现规则放在所属模块旁；跨 crate 公共行为放在对应 crate 的 `tests/`；真实 `litradar` 进程边界放在 `crates/litradar/tests/`。
-- REST 路由场景放在 `crates/litradar-api/src/tests/`；MCP 协议和工具行为留在 `mcp.rs` 的现有测试所有者中。
+- Go 规则与适配器测试放在所属包旁的 `*_test.go`；真实 `litradar` 进程边界放在 `cmd/litradar/main_test.go`。
+- REST 路由场景放在 `internal/api/`；MCP 协议和工具测试放在 `internal/mcp/` 与 `internal/platform/mcpcompat/`。
 - 普通前端行为放在 `app/tests/*.test.tsx`。只有 jsdom 无法忠实提供的浏览器 API 或事件链，才进入 `browser-components/`。
 - fixture Playwright 放在 `local-fixtures.spec.tsx`；真实后端 Playwright 只放在 `e2e/full-stack/`，且禁止 `page.route`、`context.route`、`route.fulfill`、`route.abort` 等拦截。
 - 跨栈稳定 JSON 放在 `tests/data/scenarios/api/`；运行时生成物、随机凭据和数据库快照不得签入该目录。
@@ -32,10 +32,10 @@
 
 ## OpenAPI、共享场景与 MSW
 
-Rust OpenAPI 注解是 HTTP schema 的唯一来源：
+Go 的 `internal/openapi/` 声明与真实路由绑定共同约束 HTTP schema：
 
 ```text
-Rust OpenAPI annotations
+Go OpenAPI definitions + operations + route bindings
   -> app/lib/generated/openapi.json
   -> app/lib/generated/api-schema.tsx
   -> typed scenario imports and MSW handlers
@@ -43,11 +43,11 @@ Rust OpenAPI annotations
 
 当前共享语料仅包含登录、文章页、每周更新、掩码通知设置和标准错误五类稳定响应。规则如下：
 
-1. Rust router 测试构造真实临时存储，取得响应并与共享 JSON 比较；必要的时间字段只可规范化为固定哨兵值。
+1. Go 路由测试构造真实临时存储，通过原版迁移观测语料和响应断言验证兼容性；前端消费这里的共享 JSON。当前 Go 测试不直接加载这些前端共享场景，不能将两条证据链混为一谈。
 2. TypeScript 通过生成的 `components['schemas']` 类型约束 JSON；认证、秘密设置等敏感响应还必须经过 `app/lib/api-contract.tsx` 的现有运行时解析器。
 3. 共享 JSON 不得包含 token、Cookie、密码、凭据、绝对路径、随机 ID 或运行时生成时间，也不得成为第二套 schema。
-4. 修改路由、DTO 或 OpenAPI 注解后，在 `app/` 运行 `pnpm generate:api:check`；不要手工编辑 `lib/generated/`。
-5. 不增加跨 Rust/TypeScript 的共享 helper、Pact 或另一套 schema 生成器来替代该链路。
+4. 修改路由、DTO 或 OpenAPI 声明后，在 `app/` 运行 `pnpm generate:api:check`；不要手工编辑 `lib/generated/`。
+5. 不增加跨 Go/TypeScript 的共享 helper、Pact 或另一套 schema 生成器来替代该链路。
 
 MSW 的全局 server 不安装登录态或业务默认值，并以 `onUnhandledRequest: 'error'` 拒绝未声明请求。测试从 `app/tests/mocks/handlers/` 显式安装 auth、discovery/index、favorites、tracking 或 admin 场景 bundle；单个失败场景只覆盖必要 handler，测试结束后由公共 setup 重置。这样每个请求依赖在套件中可见，不会由其他测试留下的状态暗中满足。
 
@@ -71,72 +71,46 @@ Playwright 有两个独立角色：
 
 ## 功能所有权矩阵
 
-| 功能                   | 最低充分所有者                                                                                                   | 契约/适配器所有者                                                              | 真实关键边界                                                        |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| 认证与账户             | `litradar-auth` 单元测试；`login-page`、`auth-context`、`user-menu`、`account-settings`                          | `litradar-api` auth route、rate-limit 和共享 login/error 场景                  | full-stack 登录、HttpOnly 会话、退出、匿名 401 与非管理员 403       |
-| 检索、文章、周报与公告 | `litradar-index`；`results-list`、`search-filter-ui`、`article-dialog`、`weekly-updates`、`announcements-dialog` | index/weekly REST、文章访问、共享 article/weekly 场景                          | full-stack SQLite 文章检索；管理员公告写入后 refetch                |
-| 收藏与导出             | `favorite-flow`、`favorite-checks`、citation helper                                                              | favorites REST 的 folder、batch、BibTeX/RIS/EndNote 与用户隔离                 | full-stack 收藏后刷新仍持久化                                       |
-| 追踪与投递             | `tracking-page`、`tracking-polling`；`litradar-worker` delivery/retry                                            | tracking REST、notify/push CLI 的本地空变更状态                                | fixture tracking push smoke；真实 CLI 子命令进程边界                |
-| 管理后台               | `admin-users`、`admin-mutations`、`admin-announcements`、runtime secret suites                                   | admin REST、调度存储、密码/邀请码/角色/运行设置校验                            | full-stack 用户角色、邀请码和公告 mutation 持久化                   |
-| REST 与 MCP            | API route/unit suites；MCP initialize/index/favorites tool suites                                                | OpenAPI 完整路由检查、共享场景、临时 router/storage                            | `crates/litradar/tests/service.rs` 的实际 listener；full-stack REST |
-| CLI 与统一服务         | `litradar-cli` parser/runner；`litradar` runtime 单元测试                                                        | `crates/litradar/tests/cli.rs` 的真实二进制副作用                              | `service.rs` 启动、readiness、认证、信号、端口与临时根清理          |
-| Provider 与索引        | `litradar-domain`、`litradar-provider`、`litradar-index`                                                         | source fixture、实际 ZJLIB transport 的 bounded loopback、迁移/identity/outbox | 真实 CLI index 对本地已完成 catalog 的恢复                          |
-| 调度与 worker          | worker scheduler/delivery/AI/PushPlus fixture 测试；runtime 协调测试                                             | 租约、时区、超时、取消、去重、持久状态和安全日志                               | scheduler run-once 启动实际类型化子命令并等待结果                   |
-| 容器运行时             | Dockerfile/Compose 静态检查                                                                                      | `tests/container-smoke.mjs` 的 HTTP 与 inspect 断言                            | CI 对将要推送的同一镜像 ID 执行硬化启动和完整清理                   |
+| 功能                   | 最低充分所有者                                                                                                   | 契约/适配器所有者                                                              | 真实关键边界                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| 认证与账户             | `internal/auth` 单元测试；`login-page`、`auth-context`、`user-menu`、`account-settings`                          | `internal/api` auth route、rate-limit 和共享 login/error 场景                  | full-stack 登录、HttpOnly 会话、退出、匿名 401 与非管理员 403             |
+| 检索、文章、周报与公告 | `internal/index`；`results-list`、`search-filter-ui`、`article-dialog`、`weekly-updates`、`announcements-dialog` | index/weekly REST、文章访问、共享 article/weekly 场景                          | full-stack SQLite 文章检索；管理员公告写入后 refetch                      |
+| 收藏与导出             | `favorite-flow`、`favorite-checks`、citation helper                                                              | favorites REST 的 folder、batch、BibTeX/RIS/EndNote 与用户隔离                 | full-stack 收藏后刷新仍持久化                                             |
+| 追踪与投递             | `tracking-page`、`tracking-polling`；`internal/delivery` / `internal/scheduler` delivery/retry                   | tracking REST、notify/push CLI 的本地空变更状态                                | fixture tracking push smoke；真实 CLI 子命令进程边界                      |
+| 管理后台               | `admin-users`、`admin-mutations`、`admin-announcements`、runtime secret suites                                   | admin REST、调度存储、密码/邀请码/角色/运行设置校验                            | full-stack 用户角色、邀请码和公告 mutation 持久化                         |
+| REST 与 MCP            | API route/unit suites；MCP initialize/index/favorites tool suites                                                | OpenAPI 完整路由检查、共享场景、临时 router/storage                            | `cmd/litradar/main_test.go` 的实际 listener；full-stack REST              |
+| CLI 与统一服务         | `internal/cli` parser/runner；`internal/runtime` 单元测试                                                        | `cmd/litradar/main_test.go` 的真实二进制副作用                                 | `cmd/litradar/main_test.go` 启动、readiness、认证、信号、端口与临时根清理 |
+| Provider 与索引        | `internal/domain`、`internal/provider`、`internal/index`                                                         | source fixture、实际 ZJLIB transport 的 bounded loopback、迁移/identity/outbox | 真实 CLI index 对本地已完成 catalog 的恢复                                |
+| 调度与 worker          | worker scheduler/delivery/AI/PushPlus fixture 测试；runtime 协调测试                                             | 租约、时区、超时、取消、去重、持久状态和安全日志                               | scheduler run-once 启动实际类型化子命令并等待结果                         |
+| 容器运行时             | Dockerfile/Compose 静态检查                                                                                      | `tests/container-smoke.mjs` 的 HTTP 与 inspect 断言                            | CI 对将要推送的同一镜像 ID 执行硬化启动和完整清理                         |
 
-征稿领域的最低充分测试分别位于[领域规则](../crates/litradar-domain/tests/cfp.rs)、[来源解析](../crates/litradar-sources/tests/cfp.rs)、[持久化](../crates/litradar-storage/tests/cfp.rs)、[API](../crates/litradar-api/src/routes/cfp/tests.rs)和[前端状态](../app/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
+征稿领域的最低充分测试分别位于[领域规则](../internal/domain/cfp/oracle_test.go)、[来源解析](../internal/cfp/oracle_test.go)、[持久化](../internal/storage/cfp/oracle_test.go)、[API](../internal/api/cfp_test.go)和[前端状态](../app/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
 
 ## 统一命令
 
-先安装前端依赖和本地执行工具：
+先安装 Go 1.27.1、CGO 所需的 C 编译器、Node.js 24 和前端锁定依赖。Linux 先运行 `node scripts/build-simple-tokenizer.mjs`；Windows 使用仓库提供的 DLL。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.1`。
 
 ```bash
-cd app
 corepack enable pnpm
-pnpm install --frozen-lockfile
-cd ..
-cargo install cargo-nextest --version 0.9.137 --locked
-cargo install cargo-sort --version 2.1.4 --locked
+pnpm --dir app install --frozen-lockfile
+node tests/test.mjs all
+node scripts/check-go.mjs
 ```
 
-需要覆盖率时另装固定版本：
+所有统一命令从仓库根运行，任一子步骤失败即停止，并转发 SIGINT/SIGTERM：
 
-```bash
-cargo install cargo-llvm-cov --version 0.8.7 --locked
-```
+| 命令                              | 精确职责                                                                                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node tests/test.mjs fast`        | Go `-short -count=1` 与 Vitest jsdom；当前仍包含真实进程测试                                                                                      |
+| `node tests/test.mjs integration` | Go 常规全包测试、OpenAPI 幂等和前端 API contract suite                                                                                            |
+| `node tests/test.mjs e2e-smoke`   | 构建静态前端和 Go 应用/fixture，运行真实后端 Chromium 旅程                                                                                        |
+| `node tests/test.mjs all`         | Go 格式、module verify、vet，前端 lint/format/typecheck，integration、jsdom、Browser Mode、fixture 与 full-stack                                  |
+| `node tests/test.mjs diagnostics` | Go 与前端分别生成无阈值覆盖率报告                                                                                                                 |
+| `node scripts/check-go.mjs`       | Windows/Linux 后端发布检查：工具链、native 输入、格式、模块/补丁完整性、vet、无缓存 regular/race，以及 SDK/SQLite 自身模块和根模块的 regular/race |
 
-所有统一命令都从仓库根运行，任一子步骤失败即停止，并转发 SIGINT/SIGTERM：
+`all` 不包含 race 或替换依赖包测试；后两者由 `check-go.mjs` 提供。`--ci` 设置 CI 环境与前端 JUnit 路径，不生成 Go JUnit，也不切换 nextest。安装浏览器依赖使用 `pnpm --dir app exec playwright install --with-deps chromium`。
 
-| 命令                              | 精确职责                                                                                                  |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `node tests/test.mjs fast`        | Cargo workspace 的 library/binary 测试，加 Vitest jsdom；不构建浏览器，不运行 E2E。                       |
-| `node tests/test.mjs integration` | cargo-nextest workspace、独立 doctest、OpenAPI 生成幂等和共享前端 API contract。                          |
-| `node tests/test.mjs e2e-smoke`   | 构建/导出前端，并运行真实后端 Chromium 关键旅程。                                                         |
-| `node tests/test.mjs all`         | Rust/前端静态检查、完整 nextest/doctest、jsdom、Browser Mode、fixture 和 full-stack 冒烟测试 和前端构建。 |
-| `node tests/test.mjs diagnostics` | 分别生成 Rust 和前端覆盖率报告；不应用百分比阈值。                                                        |
-
-在命令末尾加 `--ci` 会选择 nextest CI profile、固定报告路径和浏览器 CI 诊断策略。`--ci` 不是额外测试层，也不会让统一脚本自行重试失败命令。
-
-## 直接命令
-
-聚焦排障时可直接运行所属框架。下面 Rust 命令从仓库根目录运行，将 `<crate>` 和 `<filter>` 替换为目标包与测试过滤条件；前端命令从 `app/` 运行：
-
-```bash
-# Rust
-cargo test -p <crate> --locked <filter>
-cargo nextest run --workspace --locked
-cargo test --workspace --doc --locked
-
-# Frontend (from app/)
-pnpm generate:api:check
-pnpm test:unit
-pnpm test:browser-components
-pnpm test:e2e:fixtures
-pnpm test:e2e:full-stack
-pnpm build
-```
-
-`cargo test --workspace --locked` 保留为完整计划/发布前的一次 Cargo 兼容门禁；普通 PR 的 Rust 主执行器是 nextest，doctest 单独运行。安装浏览器依赖使用 `cd app && pnpm exec playwright install --with-deps chromium`。
+聚焦 Go 检查使用 `go test -count=1 -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./相关包`；涉及并发时增加 `-race`。前端可在 `app/` 单独运行 `pnpm generate:api:check`、`pnpm test:unit`、`pnpm test:browser-components`、`pnpm test:e2e:fixtures` 或 `pnpm test:e2e:full-stack`。
 
 容器边界必须测试将要发布的确切本地镜像：
 
@@ -157,27 +131,20 @@ docker compose \
 
 ## 供应链与静态安全
 
-发布前的本地依赖门禁使用固定工具版本：
+发布前使用与 CI 相同的固定版本工具和实际双架构镜像：
 
 ```bash
-cargo install cargo-audit --version 0.22.2 --locked
-cargo install cargo-deny --version 0.20.2 --locked
-
-cargo audit --deny warnings
-cargo deny check
-osv-scanner scan source \
-  --config=./osv-scanner.toml \
-  --lockfile=./Cargo.lock \
-  --lockfile=./app/pnpm-lock.yaml
-actionlint
-gitleaks git --redact .
+node scripts/install-security-tools.mjs
+docker buildx build --platform linux/amd64 --load --provenance=false -t litradar:go-test-amd64 .
+docker buildx build --platform linux/arm64 --load --provenance=false -t litradar:go-test-arm64 .
+node tests/migration/run.mjs --phase security
 ```
 
-OSV-Scanner、actionlint 和 Gitleaks 在 CI 中下载固定版本发行包，并用同一 release 的 SHA-256 清单验证后执行；本地安装也应遵循同样校验。任何新 advisory、未允许许可证/来源、过期例外、secret、非 SHA Action 引用或 CodeQL 告警都使门禁失败。不要通过通配 ignore、整组 dev dependency 排除、降低 severity 或 `continue-on-error` 恢复绿色状态。
+arm64 的执行需原生 arm64 主机或已配置的模拟器。工具发行包按 `scripts/security-tools.json` 的版本和 SHA-256 校验。门禁覆盖 govulncheck 源码/产物、OSV 的 Go/前端锁文件、Gitleaks 全历史、Action pin 和 actionlint。镜像中的 Go 构建身份必须与当前输入匹配；保留 Debian/native 清单，每架构输出 SPDX 2.3 SBOM。Obscura 使用官方 v0.2.4 render + stealth 二进制，用户已豁免其供应链检查（A13）；报告明确记录豁免，不声称 helper 依赖或原生引擎通过审计。helper 的功能、渲染、隔离和双架构运行检查仍适用。
 
-`.github/workflows/security.yaml` 上传 cargo-audit JSON、cargo-deny 输出、OSV JSON、Gitleaks SARIF 和 Action pin 清单；`.github/workflows/codeql.yaml` 为 Rust 与 JavaScript/TypeScript 分别上传 SARIF。`docker.yaml` 仅在 backend、frontend、supply-chain 和 CodeQL 四类前置工作流全部成功后构建镜像。
+限时例外只允许 `scripts/security-exceptions.json` 中批准的精确公告、包名和版本，复核期为 2026-11-04；未列明公告和过期例外失败。OpenPGP 例外还要求应用不引入该包。`.gitleaksignore` 只保留有说明和复核期的精确指纹，包括来源仍未核实的历史 weipu 值，不代表该值已被证明公开。
 
-容器发布 job 在 backend、frontend、security 和 CodeQL 检查通过后构建并加载同一个本地镜像，打上 `ghcr.io/qianfuv/litradar:latest` 和 `sha-<提交 SHA 前 6 位>` 两个 tag。它先运行 `node tests/container-smoke.mjs ghcr.io/qianfuv/litradar:latest`，成功且核对本地 tag 集合后才一次推送两个 tag；失败时不推送镜像。
+`.github/workflows/security.yaml` 上传 `supply-chain-results`；CodeQL 分别分析 Go 与 JavaScript/TypeScript。发布 workflow 等待 backend、frontend、supply-chain 和 CodeQL，通过两架构实际镜像的 smoke 与安全门禁后，先推送架构 tag，再创建 `latest` 与 `sha-<提交 SHA 前 6 位>` 的双架构 manifest。远端 workflow/CodeQL 只能以实际运行结果作为通过证据。
 
 ## 报告与失败诊断
 
@@ -185,7 +152,7 @@ OSV-Scanner、actionlint 和 Gitleaks 在 CI 中下载固定版本发行包，�
 
 | 报告                                               | 路径                                                                     |
 | -------------------------------------------------- | ------------------------------------------------------------------------ |
-| nextest JUnit                                      | `target/nextest/ci/junit.xml`                                            |
+| Go 发布检查                                        | `test-results/go/results.json`、各项 `.log` 与 `native-inputs.json`      |
 | Vitest jsdom JUnit                                 | `app/test-results/vitest/junit.xml`                                      |
 | Vitest Browser Mode JUnit                          | `app/test-results/vitest-browser/junit.xml`                              |
 | Browser Mode 截图                                  | `app/test-results/browser-components/screenshots/`                       |
@@ -193,43 +160,43 @@ OSV-Scanner、actionlint 和 Gitleaks 在 CI 中下载固定版本发行包，�
 | fixture Playwright HTML                            | `app/playwright-report/fixtures/`                                        |
 | full-stack Playwright JUnit/trace/screenshot/video | `app/test-results/playwright-full-stack/`                                |
 | full-stack Playwright HTML                         | `app/playwright-report/full-stack/`                                      |
-| Rust coverage                                      | `target/llvm-cov/html/`、`target/llvm-cov/lcov.info`                     |
+| Go coverage                                        | `target/go-coverage/coverage.out`、`target/go-coverage/index.html`       |
 | Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                                |
 | Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`     |
 | Container release                                  | workflow artifact `container-release`，含 Compose 解析结果与容器冒烟报告 |
-| Rust/OSV supply chain                              | workflow artifacts `rust-supply-chain-results`、`osv-lockfile-results`   |
-| Secret scanning                                    | workflow artifact `gitleaks-results` 与 GitHub code scanning SARIF       |
+| Go/frontend/image release checks                         | workflow artifact `supply-chain-results`，本地 `output/security/`        |
+| Secret scanning                                    | `supply-chain-results` 与 GitHub code scanning SARIF                     |
 | CodeQL                                             | workflow artifacts `codeql-<language>-sarif` 与 Security 页面            |
-| Immutable Action inventory                         | workflow artifact `immutable-action-inventory`                           |
+| Immutable Actions                                  | shared security runner 的 pin 检查与 actionlint 日志                     |
 
 CI 的 artifact upload 使用 `if: always()`。失败时先看 workflow summary 的层级状态和时长，再看 JUnit 的失败 owner；浏览器问题打开对应 HTML，并使用失败截图、第一次重试的 trace/video。容器问题先看安全清理摘要，再看已脱敏的尾部日志。报告目录均为生成物，不应提交。
 
 ## 重试、flaky 与时长
 
-- Rust 本地和 CI 都是零重试；`flaky-result = "fail"`。CI 不 fail-fast，以便收集完整失败；本地默认在首个失败停止。单测超过 60 秒会被标记 slow，连续三个周期后终止。
+- Go 本地和 CI 不自动重试，`-count=1` 禁用结果缓存；后端发布脚本每条命令上限 15 分钟，失败即停止。
 - Playwright 本地零重试；CI 最多一次重试，只用于取得 trace/video。`failOnFlakyTests` 已启用，因此 retry-pass 仍使 CI 失败，不能作为稳定完成证据。
 - Vitest 和统一脚本不自动重试。不要通过重复运行直到通过来关闭缺陷。
-- backend、frontend 和 container workflow summary 记录各层状态与时长；nextest JUnit 记录测试时长。只有持续数据证明某层成为瓶颈后，才讨论 shard/partition。
+- backend、frontend 和 container workflow summary 记录各层状态与时长；Go JSON 日志记录测试时长。只有持续数据证明某层成为瓶颈后，才讨论 shard/partition。
 
 ## 覆盖率策略
 
 覆盖率是独立、信息性的诊断，不是完成标准：
 
 - `.github/workflows/test-diagnostics.yaml` 每周一 02:00 UTC（`0 2 * * 1`）或手动运行；不由 pull request 触发。
-- Rust 与前端报告分开保留，不合并百分比，也不比较两种语言。
+- Go 与前端报告分开保留，不合并百分比，也不比较两种语言。
 - 不设置总量、changed-line 或目录阈值；百分比变化不单独使任务通过或失败。
 - 使用报告定位无所有者的高风险行为，再以功能、权限、失败和装配断言补测试。
 
 ## 延后工具及采用条件
 
-| 工具/策略                         | 当前决定 | 重新评估条件                                                                  |
-| --------------------------------- | -------- | ----------------------------------------------------------------------------- |
-| Pact 或另一套消费者契约           | 延后     | 出现独立部署、独立版本的消费者，并先定义兼容/破坏策略。                       |
-| Testcontainers                    | 延后     | 自动测试引入 SQLite/临时文件无法替代的外部数据库、队列或服务。                |
-| Firefox/WebKit 门禁               | 延后     | 产品声明支持对应浏览器，或真实缺陷/使用数据要求覆盖。                         |
-| Playwright shard / Rust partition | 延后     | 多次 workflow 时长证明明确瓶颈，并能在不隐藏 flaky 的前提下稳定拆分。         |
-| mutation testing                  | 延后     | 稳定核心规则仍发生断言逃逸，且有可接受的定时预算与结果 owner。                |
-| property testing                  | 延后     | 解析、身份或状态机存在可表达的不变量，示例测试已证明覆盖不足。                |
-| fuzzing                           | 延后     | 面向不可信输入的 parser 暴露安全风险，并具备 corpus、资源上限和崩溃归档流程。 |
+| 工具/策略                           | 当前决定 | 重新评估条件                                                                  |
+| ----------------------------------- | -------- | ----------------------------------------------------------------------------- |
+| Pact 或另一套消费者契约             | 延后     | 出现独立部署、独立版本的消费者，并先定义兼容/破坏策略。                       |
+| Testcontainers                      | 延后     | 自动测试引入 SQLite/临时文件无法替代的外部数据库、队列或服务。                |
+| Firefox/WebKit 门禁                 | 延后     | 产品声明支持对应浏览器，或真实缺陷/使用数据要求覆盖。                         |
+| Playwright shard / Go package split | 延后     | 多次 workflow 时长证明明确瓶颈，并能在不隐藏 flaky 的前提下稳定拆分。         |
+| mutation testing                    | 延后     | 稳定核心规则仍发生断言逃逸，且有可接受的定时预算与结果 owner。                |
+| property testing                    | 延后     | 解析、身份或状态机存在可表达的不变量，示例测试已证明覆盖不足。                |
+| fuzzing                             | 延后     | 面向不可信输入的 parser 暴露安全风险，并具备 corpus、资源上限和崩溃归档流程。 |
 
 这些工具必须解决已观测的问题，不能仅因测试数量或覆盖率数字而引入。

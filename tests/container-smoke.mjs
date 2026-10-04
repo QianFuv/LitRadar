@@ -6,9 +6,10 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { inflateSync } from "node:zlib";
 
 const WORKSPACE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -51,6 +52,84 @@ let secretInitializerName;
 let secretVolumeName;
 let shutdownSignal;
 let volumeName;
+const profile =
+  process.argv[3] === "--profile"
+    ? {
+        workload: "four frozen historical articles; authenticated FTS requests",
+        requests: [],
+      }
+    : undefined;
+
+/** Read application RSS and whole-container cgroup counters without confusing their scopes. */
+async function resourceSnapshot() {
+  const result = await runDocker([
+    "exec",
+    containerName,
+    "sh",
+    "-c",
+    "cat /proc/1/status; printf '\\n__CGROUP__\\n'; cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.events",
+  ]);
+  const [status, counters] = result.stdout.split("__CGROUP__");
+  const lines = counters.trim().split(/\r?\n/);
+  const rss = Number(status.match(/^VmRSS:\s+(\d+) kB/m)?.[1]) * 1024;
+  assertInvariant(
+    Number.isFinite(rss) && rss > 0,
+    "application RSS unavailable",
+  );
+  assertInvariant(
+    !/^oom(?:_kill|_group_kill)? [1-9]/m.test(counters),
+    "container OOM during measured workload",
+  );
+  return {
+    rssBytes: rss,
+    cgroupCurrentBytes: Number(lines[0]),
+    cgroupPeakBytes: Number(lines[1]),
+    cgroupLimitBytes: Number(lines[2]),
+    events: lines.slice(3),
+  };
+}
+
+/** Measure successful fixed FTS work at one and four simultaneous requests. */
+async function profileQueries(baseUrl, sessionCookie) {
+  for (const concurrency of [1, 4]) {
+    const latencies = [];
+    const started = performance.now();
+    await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        for (let index = 0; index < 100 / concurrency; index += 1) {
+          const requestStarted = performance.now();
+          const response = await fetch(
+            `${baseUrl}/api/articles?db=smoke.sqlite&q=${encodeURIComponent("科技金融")}`,
+            {
+              headers: { cookie: sessionCookie },
+              signal: AbortSignal.timeout(10000),
+            },
+          );
+          assertInvariant(response.ok, "profile query failed");
+          const body = await response.json();
+          assertInvariant(
+            body.items.length === 1 &&
+              String(body.items[0].article_id) === "1" &&
+              body.items[0].title === SEARCH_SMOKE_TITLES[0],
+            "profile query returned incorrect data",
+          );
+          latencies.push(performance.now() - requestStarted);
+        }
+      }),
+    );
+    const elapsedMs = performance.now() - started;
+    latencies.sort((first, second) => first - second);
+    profile.requests.push({
+      concurrency,
+      completed: latencies.length,
+      elapsedMs,
+      requestsPerSecond: (latencies.length * 1000) / elapsedMs,
+      p50Ms: latencies[49],
+      p95Ms: latencies[94],
+      resources: await resourceSnapshot(),
+    });
+  }
+}
 
 /**
  * Wait for a bounded interval.
@@ -111,6 +190,19 @@ function terminateActiveChild() {
  * @returns {Promise<{code: number, stdout: string, stderr: string}>} Captured command result.
  */
 async function runDocker(args, options = {}) {
+  const runId = process.env.LITRADAR_SMOKE_RUN_ID;
+  if (runId) {
+    assertInvariant(
+      /^[a-f0-9-]{36}$/.test(runId),
+      "Invalid managed smoke run ID",
+    );
+    const label = `org.litradar.smoke-run=${runId}`;
+    if (["run", "create"].includes(args[0])) {
+      args = [args[0], "--label", label, ...args.slice(1)];
+    } else if (args[0] === "volume" && args[1] === "create") {
+      args = ["volume", "create", "--label", label, ...args.slice(2)];
+    }
+  }
   const timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT_MS;
   const hasInput = typeof options.input === "string";
   activeChild = spawn("docker", args, {
@@ -555,6 +647,7 @@ async function enableSecureCookies(imageReference) {
     "smoke login omitted the session cookie",
   );
   const search = await verifySearchQueries(baseUrl, sessionCookie);
+  if (profile) await profileQueries(baseUrl, sessionCookie);
   const updateResponse = await fetch(`${baseUrl}/api/admin/runtime-settings`, {
     body: JSON.stringify({ values: { secure_cookies: "true" } }),
     headers: {
@@ -585,16 +678,24 @@ async function enableSecureCookies(imageReference) {
  * @returns {Promise<void>} Resolves after the isolated volume contains the migrated index.
  */
 async function installLegacySearchFixture(imageReference) {
-  const schemaSource = await fs.readFile(
-    path.join(WORKSPACE_ROOT, "crates/litradar-storage/src/index_schema.rs"),
-    "utf8",
+  const fixtureRoot = path.join(WORKSPACE_ROOT, "tests/data/migration");
+  const schemaBytes = await fs.readFile(
+    path.join(fixtureRoot, "rust/content-schema.sql"),
   );
-  const schema = schemaSource.match(
-    /pub const INDEX_CONTENT_TABLES_SQL: &str = "([\s\S]*?)";/,
-  )?.[1];
+  const manifest = JSON.parse(
+    await fs.readFile(path.join(fixtureRoot, "portable-fixtures.json"), "utf8"),
+  );
+  const expected = manifest.files.find(
+    (entry) => entry.path === "rust/content-schema.sql",
+  );
+  assertInvariant(
+    expected?.sha256 === createHash("sha256").update(schemaBytes).digest("hex"),
+    "independent historical search schema checksum mismatch",
+  );
+  const schema = schemaBytes.toString("utf8");
   assertInvariant(
     schema?.includes("tokenize = 'simple 0'"),
-    "current search schema is unavailable",
+    "independent historical search schema is unavailable",
   );
   const fixturePath = path.join(REPORT_ROOT, "search-fixture.sqlite");
   await fs.rm(fixturePath, { force: true });
@@ -755,6 +856,32 @@ function createCfpSmokePdf() {
   return document;
 }
 
+/** Decode screenshot image data so metadata changes cannot satisfy the rendering probe. */
+function screenshotPixels(encoded) {
+  const png = Buffer.from(encoded, "base64");
+  assertInvariant(
+    png.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")),
+    "Renderer did not produce PNG",
+  );
+  assertInvariant(
+    png.readUInt32BE(16) === 32 && png.readUInt32BE(20) === 24,
+    "Renderer viewport differs",
+  );
+  const chunks = [];
+  let hasEnd = false;
+  for (let offset = 8; offset + 12 <= png.length; ) {
+    const length = png.readUInt32BE(offset);
+    assertInvariant(offset + 12 + length <= png.length, "Truncated screenshot");
+    const type = png.toString("ascii", offset + 4, offset + 8);
+    if (type === "IDAT")
+      chunks.push(png.subarray(offset + 8, offset + 8 + length));
+    if (type === "IEND") hasEnd = true;
+    offset += length + 12;
+  }
+  assertInvariant(chunks.length > 0 && hasEnd, "Incomplete screenshot");
+  return inflateSync(Buffer.concat(chunks));
+}
+
 /**
  * Execute the packaged browser protocol and PDF parser inside the hardened service.
  *
@@ -768,8 +895,8 @@ async function verifyCfpHelpers() {
     "--version",
   ]);
   assertInvariant(
-    browserVersion.stdout === "obscura 0.2.2+litradar.1",
-    "CFP browser is not the pinned build with the TLS dependency fix",
+    browserVersion.stdout === "obscura 0.2.4",
+    "CFP browser is not the pinned official release",
   );
   const blockedPrivateFetch = await runDocker(
     [
@@ -831,6 +958,49 @@ async function verifyCfpHelpers() {
     "CFP browser did not evaluate the original-HTML protocol",
   );
   await runDocker(["exec", containerName, "rm", "/tmp/cfp-browser-smoke.json"]);
+  const renderUrl =
+    "data:text/html," +
+    encodeURIComponent(
+      '<html style="margin:0"><body style="margin:0"><div id="probe" style="width:32px;height:24px;background:red"></div></body></html>',
+    );
+  const frames = [];
+  for (const color of ["red", "blue"]) {
+    const filename = "/tmp/cfp-render-" + color + ".png";
+    await runDocker([
+      "exec",
+      "--env",
+      "OBSCURA_SHOT_W=32",
+      "--env",
+      "OBSCURA_SHOT_H=24",
+      containerName,
+      "obscura",
+      "fetch",
+      renderUrl,
+      "--stealth",
+      "--timeout",
+      "10",
+      "--wait",
+      "0",
+      "--quiet",
+      "--screenshot",
+      filename,
+      "--eval",
+      "document.querySelector('#probe').style.background = '" + color + "'",
+    ]);
+    const encoded = await runDocker([
+      "exec",
+      containerName,
+      "base64",
+      "-w0",
+      filename,
+    ]);
+    frames.push(screenshotPixels(encoded.stdout));
+    await runDocker(["exec", containerName, "rm", filename]);
+  }
+  assertInvariant(
+    !frames[0].equals(frames[1]),
+    "Screenshot did not reflect evaluated style changes",
+  );
   const pdfVersion = await runDocker([
     "exec",
     containerName,
@@ -861,6 +1031,8 @@ async function verifyCfpHelpers() {
     obscuraVersion: browserVersion.stdout,
     pdfVersion: (pdfVersion.stderr || pdfVersion.stdout).split("\n")[0],
     browserJavaScript: true,
+    browserRendering: true,
+    postEvalScreenshot: true,
     originalHtmlProtocol: true,
     privateNetworkDenied: true,
     originalPdfText: true,
@@ -920,13 +1092,31 @@ async function runSmoke(imageReference) {
   ]);
   await installLegacySearchFixture(imageReference);
   const search = await enableSecureCookies(imageReference);
+  const started = performance.now();
   await runDocker(buildServiceRunArguments(imageReference, true));
 
   hostPort = await resolvePublishedPort();
   const baseUrl = `http://127.0.0.1:${hostPort}`;
   await waitForReadiness(baseUrl);
+  if (profile) {
+    profile.startupMs = performance.now() - started;
+    profile.ready = await resourceSnapshot();
+    await delay(15000);
+    profile.idle = await resourceSnapshot();
+  }
   await waitForContainerHealth();
+  const helperStarted = performance.now();
   const cfpHelpers = await verifyCfpHelpers();
+  if (profile) {
+    profile.helpers = {
+      elapsedMs: performance.now() - helperStarted,
+      resources: await resourceSnapshot(),
+      scope:
+        "whole hardened container; separate helper RSS peak is not sampled",
+      memoryBoundBytes: 160 * 1024 * 1024,
+      tmpfsBoundBytes: 64 * 1024 * 1024,
+    };
+  }
 
   await runDocker([
     "exec",
@@ -1104,10 +1294,43 @@ async function runSmoke(imageReference) {
     "container declares removed application environment overrides",
   );
 
+  if (profile) {
+    const stopStarted = performance.now();
+    await runDocker(["stop", "--time", "10", containerName]);
+    const stopped = JSON.parse(
+      (
+        await runDocker([
+          "inspect",
+          "--format",
+          "{{json .State}}",
+          containerName,
+        ])
+      ).stdout,
+    );
+    assertInvariant(
+      stopped.ExitCode === 0 &&
+        !stopped.OOMKilled &&
+        !stopped.Running &&
+        stopped.Pid === 0,
+      "profile service did not exit cleanly after SIGTERM",
+    );
+    assertInvariant(
+      await waitForPortClosure(),
+      "profile service listener survived shutdown",
+    );
+    profile.cancellation = {
+      elapsedMs: performance.now() - stopStarted,
+      exitCode: stopped.ExitCode,
+      processGone: true,
+      listenerClosed: true,
+    };
+  }
   return {
     status: "passed",
     imageReference,
     imageId,
+    architecture: imageInspection.Architecture,
+    ...(profile ? { profile } : {}),
     containerUser: inspection.Config.User,
     endpoints: ["/", "/health/ready", "/openapi.json", "/api/auth/me"],
     managedMetaPrepared: true,
@@ -1144,8 +1367,14 @@ const args = process.argv.slice(2);
 let report;
 let failure;
 
-if (args.length !== 1 || !args[0].trim()) {
-  failure = new Error("Usage: node tests/container-smoke.mjs <image-tag>");
+if (
+  ![1, 2].includes(args.length) ||
+  !args[0].trim() ||
+  (args.length === 2 && args[1] !== "--profile")
+) {
+  failure = new Error(
+    "Usage: node tests/container-smoke.mjs <image-tag> [--profile]",
+  );
 } else {
   try {
     report = await runSmoke(args[0].trim());

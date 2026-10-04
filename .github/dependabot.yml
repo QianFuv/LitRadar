@@ -14,7 +14,7 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: cargo
+  - package-ecosystem: gomod
     directory: "/"
     schedule:
       interval: weekly
@@ -23,7 +23,7 @@ updates:
       timezone: Asia/Shanghai
     open-pull-requests-limit: 5
     groups:
-      rust-minor-and-patch:
+      go-minor-and-patch:
         update-types:
           - minor
           - patch

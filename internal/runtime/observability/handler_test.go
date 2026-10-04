@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/QianFuv/LitRadar/internal/runtime/logfilter"
 )
@@ -143,6 +144,11 @@ func TestLossyQueueKeepsBoundAndReportsExactDropsAfterDrain(t *testing.T) {
 	close(writer.release)
 	guard.Shutdown()
 	guard.Shutdown()
+	select {
+	case <-guard.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("released writer did not drain")
+	}
 	lines := bytes.Split(bytes.TrimSpace(writer.buffer.Bytes()), []byte{'\n'})
 	if len(lines) != 4098 {
 		t.Fatal("buffer did not drain or report duplicated", len(lines))
@@ -150,6 +156,29 @@ func TestLossyQueueKeepsBoundAndReportsExactDropsAfterDrain(t *testing.T) {
 	if string(lines[len(lines)-1]) != "{\"component\":\"logging\",\"dropped_count\":17,\"event\":\"logging.events_dropped\",\"level\":\"WARN\",\"target\":\"litradar\"}" {
 		t.Fatal(string(lines[len(lines)-1]))
 	}
+}
+
+func TestShutdownRemainsBoundedWhenDroppedWarningWriterIsBlocked(t *testing.T) {
+	writer := &gatedWriter{started: make(chan struct{}), release: make(chan struct{})}
+	guard, logger, err := New("info", "json", writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger.Info("blocked")
+	<-writer.started
+	for range 4097 {
+		logger.Info("queued")
+	}
+	finished := make(chan struct{})
+	go func() { guard.Shutdown(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Error("shutdown blocked beyond the flush budget while reporting dropped events")
+	}
+	close(writer.release)
+	<-finished
+	<-guard.done
 }
 
 func TestStartupLoggingUsesReadOnlyDefaultsAndFixedErrors(t *testing.T) {

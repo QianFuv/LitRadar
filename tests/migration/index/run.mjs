@@ -139,6 +139,15 @@ async function requireRecoveryEvidence(result, platform) {
     );
   for (const test of required)
     assert(
+      !events.some(
+        (event) =>
+          event.Action === "skip" &&
+          (event.Test === test || event.Test?.startsWith(`${test}/`)),
+      ),
+      `Skipped required ${platform} proof: ${test}`,
+    );
+  for (const test of required)
+    assert(
       events.some((event) => event.Test === test && event.Action === "pass"),
       `Missing ${platform} proof: ${test}`,
     );
@@ -275,7 +284,7 @@ export async function runIndex() {
               "GOTOOLCHAIN=local",
               "GOENV=off",
               "GOFLAGS=",
-              "GOMODCACHE=/mnt/c/Users/57676/go/pkg/mod",
+              "GOMODCACHE=/mnt/d/BuildCache/Go/modules",
               "GOCACHE=/home/qianfuv/.cache/litradar-migration/go-cache",
               "/home/qianfuv/.cache/litradar-migration/go1.27.1/go/bin/go",
               ...args,

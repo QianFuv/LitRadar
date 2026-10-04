@@ -20,21 +20,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install 1.96 --profile minimal --component llvm-tools-preview
-          rustup default 1.96
-
-      - name: Install pinned cargo-llvm-cov
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          tool: cargo-llvm-cov@0.8.7
-
-      - name: Verify cargo-llvm-cov version
-        run: |
-          version="$(cargo llvm-cov --version)"
-          echo "$version"
-          test "$version" = "cargo-llvm-cov 0.8.7"
+          go-version: "1.27.1"
+          cache: true
 
       - name: Install pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -51,6 +41,9 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm --dir app install --frozen-lockfile
 
+      - name: Build pinned search tokenizer
+        run: node scripts/build-simple-tokenizer.mjs
+
       - name: Generate threshold-free coverage diagnostics
         id: diagnostics
         run: |
@@ -62,12 +55,12 @@ jobs:
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
           exit "$status"
 
-      - name: Upload Rust coverage
+      - name: Upload Go coverage
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: rust-coverage-diagnostics
-          path: target/llvm-cov/
+          name: go-coverage-diagnostics
+          path: target/go-coverage/
           if-no-files-found: warn
           retention-days: 14
 
@@ -91,7 +84,7 @@ jobs:
             echo
             echo "- Status: ${DIAGNOSTICS_RESULT:-not run}"
             echo "- Duration: ${DIAGNOSTICS_DURATION:-n/a}s"
-            echo "- Rust report: target/llvm-cov/"
+            echo "- Go report: target/go-coverage/"
             echo "- Frontend report: app/coverage/"
             echo "- Policy: informational only; no threshold or pull-request gate."
           } >> "$GITHUB_STEP_SUMMARY"

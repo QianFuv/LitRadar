@@ -4,15 +4,18 @@ on:
   push:
     branches: [main]
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "third_party/**"
       - "deny.toml"
       - "osv-scanner.toml"
       - ".gitleaksignore"
-      - ".config/nextest.toml"
-      - "crates/**"
+      - "scripts/check-go.mjs"
+      - "assets/**"
       - "libs/**"
-      - "data/meta/**"
+      - "assets/meta/**"
       - ".dockerignore"
       - "Dockerfile"
       - "README.md"
@@ -48,17 +51,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
         with:
           filters: |
             runtime_image:
-              - "Cargo.toml"
-              - "Cargo.lock"
-              - "crates/**"
+              - "go.mod"
+              - "go.sum"
+              - "cmd/**"
+              - "internal/**"
+              - "third_party/**"
+              - "assets/**"
               - "libs/**"
-              - "data/meta/**"
+              - "assets/meta/**"
               - ".dockerignore"
               - "Dockerfile"
               - "README.md"
@@ -67,19 +74,23 @@ jobs:
               - "app/**"
               - "tests/container-smoke.mjs"
               - "tests/data/**"
-              - "scripts/build-simple-tokenizer.mjs"
+              - "scripts/**"
+              - "tests/migration/**"
               - ".github/workflows/docker.yaml"
             backend_workflow:
-              - ".config/nextest.toml"
+              - "scripts/check-go.mjs"
               - "tests/test.mjs"
               - ".github/workflows/backend.yaml"
             frontend_workflow:
               - "tests/test.mjs"
               - ".github/workflows/frontend.yaml"
             security_workflow:
-              - "Cargo.toml"
-              - "Cargo.lock"
-              - "crates/**/Cargo.toml"
+              - "go.mod"
+              - "go.sum"
+              - "cmd/**"
+              - "internal/**"
+              - "third_party/**"
+              - "docs/third-party/**"
               - "app/package.json"
               - "app/pnpm-lock.yaml"
               - "deny.toml"
@@ -88,9 +99,12 @@ jobs:
               - ".github/dependabot.yml"
               - ".github/workflows/**"
             codeql_workflow:
-              - "Cargo.toml"
-              - "Cargo.lock"
-              - "crates/**"
+              - "go.mod"
+              - "go.sum"
+              - "cmd/**"
+              - "internal/**"
+              - "third_party/**"
+              - "assets/**"
               - "app/**"
               - "tests/filter-codeql-sarif.test.mjs"
               - "scripts/filter-codeql-sarif.mjs"
@@ -149,10 +163,24 @@ jobs:
       contents: read
       packages: write
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Enable arm64 execution
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+          image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.27.1"
+          cache: true
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
@@ -219,6 +247,7 @@ jobs:
           tags: |
             ${{ steps.image.outputs.image_tag }}
             ${{ steps.image.outputs.commit_tag }}
+          platforms: linux/amd64
           load: true
           labels: |
             org.opencontainers.image.created=${{ steps.image.outputs.created_at }}
@@ -245,20 +274,43 @@ jobs:
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
           exit "$status"
 
-      - name: Push both tested image tags
+      - name: Preserve amd64 smoke evidence
+        run: cp test-results/container-smoke/summary.json release-results/smoke-amd64.json
+
+      - name: Build arm64 image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/arm64
+          tags: ${{ steps.image.outputs.commit_tag }}-arm64
+          load: true
+          provenance: false
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,scope=arm64,mode=max
+
+      - name: Verify arm64 and the exact release supply chain
+        env:
+          COMMIT_TAG: ${{ steps.image.outputs.commit_tag }}
+        run: |
+          node tests/container-smoke.mjs "$COMMIT_TAG-arm64"
+          cp test-results/container-smoke/summary.json release-results/smoke-arm64.json
+          docker tag "$COMMIT_TAG" litradar:go-test-amd64
+          docker tag "$COMMIT_TAG-arm64" litradar:go-test-arm64
+          node scripts/install-security-tools.mjs
+          node tests/migration/run.mjs --phase security
+
+      - name: Publish both tested architectures
         id: publish
         env:
           COMMIT_TAG: ${{ steps.image.outputs.commit_tag }}
-          IMAGE_NAME: ${{ steps.image.outputs.image_name }}
           IMAGE_TAG: ${{ steps.image.outputs.image_tag }}
         run: |
-          actual_tags="$(docker image ls --format '{{.Repository}}:{{.Tag}}' "$IMAGE_NAME" | LC_ALL=C sort -u)"
-          expected_tags="$(printf '%s\n%s\n' "$COMMIT_TAG" "$IMAGE_TAG" | LC_ALL=C sort -u)"
-          if [[ "$actual_tags" != "$expected_tags" ]]; then
-            echo "Local image tags differ from the two release tags" >&2
-            exit 1
-          fi
-          docker push --all-tags "$IMAGE_NAME"
+          docker tag "$COMMIT_TAG" "$COMMIT_TAG-amd64"
+          docker push "$COMMIT_TAG-amd64"
+          docker push "$COMMIT_TAG-arm64"
+          docker image inspect "$COMMIT_TAG-amd64" "$COMMIT_TAG-arm64" > release-results/local-image-identities.json
+          docker buildx imagetools create --tag "$COMMIT_TAG" --tag "$IMAGE_TAG" "$COMMIT_TAG-amd64" "$COMMIT_TAG-arm64"
+          docker buildx imagetools inspect --raw "$COMMIT_TAG" > release-results/published-manifest.json
 
       - name: Upload container diagnostics
         if: always()
@@ -268,6 +320,9 @@ jobs:
           path: |
             test-results/container-smoke/
             release-results/
+            output/security/**/*.json
+            output/security/**/*.log
+            output/security/*.sarif
           if-no-files-found: warn
           retention-days: 14
 

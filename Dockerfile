@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 
-FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend-deps
+FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend-deps
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ RUN --mount=type=cache,id=litradar-pnpm,target=/pnpm/store \
     && pnpm install --frozen-lockfile
 
 
-FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend-build
+FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend-build
 
 WORKDIR /app
 
@@ -35,67 +35,61 @@ RUN apk add --no-cache gzip \
     \) -exec gzip --best --keep --no-name {} +
 
 
-FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS rust-build
+FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS go-build
 
 WORKDIR /app
 
-COPY Cargo.toml Cargo.lock ./
-COPY crates crates
+ARG TARGETARCH
+ARG BUILDARCH
+ENV CGO_ENABLED=1 GOTOOLCHAIN=local GOWORK=off GOENV=off GOFLAGS="" GOOS=linux GOARCH=$TARGETARCH
 
-RUN --mount=type=cache,id=litradar-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=litradar-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=litradar-cargo-target,target=/app/target \
-    cargo build --release --locked --bin litradar \
-    && cp /app/target/release/litradar /app/litradar
+RUN if [ "$TARGETARCH" != "$BUILDARCH" ]; then \
+        case "$TARGETARCH" in \
+            arm64) compiler=gcc-aarch64-linux-gnu; headers=libc6-dev-arm64-cross ;; \
+            amd64) compiler=gcc-x86-64-linux-gnu; headers=libc6-dev-amd64-cross ;; \
+            *) exit 1 ;; \
+        esac; \
+        apt-get update && apt-get install --yes --no-install-recommends "$compiler" "$headers" \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+COPY go.mod go.sum ./
+COPY third_party third_party
+RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod go mod download && go mod verify
+COPY cmd cmd
+COPY internal internal
+COPY assets assets
+COPY scripts/go-build-inventory.sh /usr/local/bin/go-build-inventory
+
+RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod \
+    --mount=type=cache,id=litradar-go-build-${TARGETARCH},target=/root/.cache/go-build \
+    if [ "$TARGETARCH" = "$BUILDARCH" ]; then export CC=gcc; \
+    elif [ "$TARGETARCH" = arm64 ]; then export CC=aarch64-linux-gnu-gcc; \
+    elif [ "$TARGETARCH" = amd64 ]; then export CC=x86_64-linux-gnu-gcc; \
+    else exit 1; fi \
+    && mkdir -p /out \
+    && go build -mod=readonly -trimpath -tags sqlite_fts5,sqlite_dbstat -o /out/litradar ./cmd/litradar \
+    && sh /usr/local/bin/go-build-inventory
 
 
-FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS obscura-build
-
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends cmake clang fonts-dejavu-core fonts-liberation libclang-dev llvm-dev python3 \
-    && rm -rf /var/lib/apt/lists/*
-
-ADD --checksum=sha256:92e742e3c1f4d030561b0df559c4a0a5707b3f3c977bee1307c38d988404003c \
-    https://codeload.github.com/h4ckf0r0day/obscura/tar.gz/a1e09de68c7617b8079fbb1661b0548c501971c1 /tmp/obscura.tar.gz
-COPY docs/third-party/obscura-rustls.patch /tmp/obscura-rustls.patch
+FROM --platform=$BUILDPLATFORM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd AS obscura-release
 
 ARG TARGETARCH
-
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
 RUN case "$TARGETARCH" in \
-        amd64) v8_target=x86_64-unknown-linux-gnu; v8_sha256=a2681fde53018abd3366018f132617dd598002df78f156c7bc6d2ff608b56567 ;; \
-        arm64) v8_target=aarch64-unknown-linux-gnu; v8_sha256=e368d0cb41c179c43a990e4ec4a55e44dd9762f1d34be15696acc4433f8a6c92 ;; \
+        amd64) asset=obscura-x86_64-linux-stealth.tar.gz; archive_sha256=49b53f74a509764c42a35c8e73a37301399e1500d43564fad4cb641721efc753 ;; \
+        arm64) asset=obscura-aarch64-linux-stealth.tar.gz; archive_sha256=56eacea66e4a5b0ab0f39343183c308816b426f604259b9cc41402488bf998f7 ;; \
         *) exit 1 ;; \
     esac \
-    && curl --fail --location --retry 3 --max-time 120 \
-        "https://github.com/denoland/rusty_v8/releases/download/v137.3.0/librusty_v8_release_${v8_target}.a.gz" \
-        --output /tmp/librusty_v8.a.gz \
-    && printf '%s  /tmp/librusty_v8.a.gz\n' "$v8_sha256" | sha256sum --check --strict
-
-WORKDIR /obscura
-
-RUN tar -xzf /tmp/obscura.tar.gz --strip-components=1 \
-    && patch --fuzz=0 --strip=1 < /tmp/obscura-rustls.patch \
-    && rm /tmp/obscura.tar.gz /tmp/obscura-rustls.patch
-
-RUN --mount=type=cache,id=litradar-obscura-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=litradar-obscura-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=litradar-obscura-target,target=/obscura/target \
-    OBSCURA_VERSION=0.2.2+litradar.1 RUSTY_V8_ARCHIVE=/tmp/librusty_v8.a.gz \
-    CARGO_BUILD_JOBS=2 CARGO_PROFILE_RELEASE_STRIP=symbols \
-    cargo build --release --locked -p obscura-cli --bin obscura --no-default-features --features render,stealth \
-    && cp target/release/obscura /usr/local/bin/obscura \
-    && cargo tree --locked -p obscura-cli --no-default-features --features render,stealth --edges normal --prefix none \
-        > /obscura/dependencies.txt \
-    && mkdir /obscura/licenses \
-    && cp /usr/share/doc/fonts-dejavu-core/copyright /obscura/licenses/DejaVu-copyright \
-    && cp /usr/share/doc/fonts-liberation/copyright /obscura/licenses/Liberation-copyright \
-    && cp crates/obscura-render/assets/LICENSE-NOTO-COLOR-EMOJI.txt /obscura/licenses/ \
-    && cp crates/obscura-render/assets/FONT-PROVENANCE.md /obscura/licenses/ \
-    && find vendor -type f \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
-        -exec cp --parents --target-directory=/obscura/licenses {} + \
-    && cd /usr/local/cargo/registry/src \
-    && find . -type f \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
-        -exec cp --parents --target-directory=/obscura/licenses {} +
+    && curl --fail --location --retry 3 --max-time 300 \
+        "https://github.com/h4ckf0r0day/obscura/releases/download/v0.2.4/$asset" \
+        --output /tmp/obscura.tar.gz \
+    && printf '%s  /tmp/obscura.tar.gz\n' "$archive_sha256" | sha256sum --check --strict \
+    && mkdir /out \
+    && tar -xzf /tmp/obscura.tar.gz -C /out obscura obscura-worker \
+    && chmod 755 /out/obscura /out/obscura-worker
 
 
 FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS simple-tokenizer-build
@@ -127,12 +121,15 @@ RUN apt-get update \
     && mkdir -p /app/data \
     && chown -R litradar:litradar /app
 
-COPY --from=obscura-build /usr/local/bin/obscura /usr/local/bin/obscura
+COPY --from=obscura-release /out/obscura /out/obscura-worker /usr/local/bin/
 COPY --from=simple-tokenizer-build /simple/output/libsimple.so /usr/lib/litradar/libsimple.so
 
 COPY docs/third-party /usr/share/doc/litradar/third-party
-COPY --from=obscura-build /obscura/licenses /usr/share/doc/litradar/third-party/obscura-dependencies
-COPY --from=obscura-build /obscura/dependencies.txt /usr/share/doc/litradar/third-party/Obscura-dependencies.txt
+COPY --from=go-build /out/inventory /usr/share/doc/litradar/third-party/go-inventory
+
+RUN sha256sum /usr/lib/litradar/libsimple.so /usr/bin/pdftotext /etc/ssl/certs/ca-certificates.crt \
+    > /usr/share/doc/litradar/third-party/native.sha256 \
+    && dpkg-query -W > /usr/share/doc/litradar/third-party/debian-packages.txt
 
 ENV HOME=/tmp \
     LITRADAR_OBSCURA_PATH=/usr/local/bin/obscura \
@@ -143,9 +140,9 @@ USER 10001:10001
 
 FROM runtime-base
 
-COPY --from=rust-build /app/litradar /usr/local/bin/litradar
+COPY --from=go-build /out/litradar /usr/local/bin/litradar
 
-COPY data/meta /usr/share/litradar/meta
+COPY assets/meta /usr/share/litradar/meta
 COPY --chown=litradar:litradar --from=frontend-build /app/out web
 
 EXPOSE 8000

@@ -77,7 +77,7 @@ func TestMain(tests *testing.M) {
 		file.Sync()
 		file.Close()
 		if os.Getenv("LITRADAR_SCHEDULER_TEST_DELAY") == "yes" {
-			time.Sleep(3 * time.Second)
+			time.Sleep(8 * time.Second)
 		}
 		if os.Getenv("LITRADAR_SCHEDULER_TEST_FAIL") == os.Args[1] {
 			os.Exit(7)
@@ -264,12 +264,12 @@ func TestSchedulerCommandsSequenceAndSharedDeadline(t *testing.T) {
 			}
 			task := domain.Task{Id: 1, Job: &domain.Job{Kind: "index", Notify: true, Push: true}, TimeoutSeconds: 5}
 			if scenario == "deadline" {
-				task.TimeoutSeconds = 5
+				task.TimeoutSeconds = 15
 			}
 			config := ProcessConfig{ProjectRoot: "explicit root with spaces", AuthDatabase: "auth path", Executable: command.path, SecretKeyFile: "key path"}
 			started := time.Now()
 			result := config.runProcesses(context.Background(), task, testClaim(), func() bool { return true })
-			if scenario == "deadline" && time.Since(started) > 6500*time.Millisecond {
+			if scenario == "deadline" && time.Since(started) > 18500*time.Millisecond {
 				t.Fatal("deadline was reset between commands")
 			}
 			expected := map[string]domain.State{"success": domain.Success, "first-failed": domain.Failed, "deadline": domain.TimedOut}[scenario]

@@ -47,20 +47,20 @@ SIGINT/SIGTERM 会协调关闭 HTTP 与调度组件。若任务子进程正在�
 
 ## 镜像内容
 
-根 Dockerfile 包含以下构建阶段；Dockerfile frontend、Node、Rust 和 Debian 引用都同时保留可读 tag 与不可变 digest：
+根 Dockerfile 包含以下构建阶段；Dockerfile frontend、Node、Go、Rust 和 Debian 引用都同时保留可读 tag 与不可变 digest：
 
 1. Node.js 24 Alpine 只复制 `app/package.json` 和 lockfile，使用缓存安装依赖。
 2. 独立前端构建阶段复制 `app/` 源码，生成 `out/`，并为 HTML、CSS、JavaScript、JSON、SVG、TXT、XML 和 source map 保留原文件及确定性 gzip 兄弟文件。
-3. `rust:1.96-bookworm` 只构建 release `litradar` 目标；workspace release profile 执行 symbol stripping，并用 BuildKit cache mount 复用 Cargo registry、git 与 target 产物。
-4. 独立 Rust 阶段从固定校验和的源码构建 Obscura `0.2.2+litradar.1`，提供原生 JavaScript/DOM、渲染和 stealth 支持。其 lockfile 包含 rustls/webpki 安全修复，V8 压缩包也固定校验和。征稿采集使用 fetch 命令，因此不构建并行 scrape worker。
+3. `golang:1.27.1-bookworm` 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat` 构建唯一 Go 应用；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
+4. 下载 Obscura 官方 v0.2.4 对应 amd64/arm64 的 render + stealth 二进制归档，固定版本和 SHA-256，并一起安装 `obscura` 与 `obscura-worker`。无需本地构建 Rust/V8/ICU。
 5. 分词器阶段从固定上游源码构建目标架构的 `simple` 扩展，关闭 Jieba 和示例构建。
-6. `debian:trixie-slim` 接收应用、Obscura、`/usr/lib/litradar/libsimple.so`、`/usr/share/litradar/meta` 中的不可变期刊目录，以及 `/app/web` 静态站点。Debian 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。
+6. `debian:trixie-slim` 接收应用、Obscura、`/usr/lib/litradar/libsimple.so`、`/usr/share/litradar/meta` 中来自 `assets/meta/` 的不可变期刊目录，以及 `/app/web` 静态站点。Debian 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。
 
 镜像把 `LITRADAR_OBSCURA_PATH` 和 `LITRADAR_PDFTOTEXT_PATH` 指向打包的辅助程序。征稿刷新可在服务器直接采集 HTML 和 PDF，无需安装 Chromium 或在运行时下载浏览器。发布冒烟测试在非特权、只读服务容器中验证原始 HTML 的 JavaScript 协议、真实 PDF 提取和默认私网拒绝；loopback 例外仅限该次临时测试。
 
 运行层安装 CA 证书、`curl` 和非 root 账户所需的最小系统包，随后切换到固定 UID/GID `10001:10001`。当前二进制新建内容 schema v9，并在 rollout 窗口内读写精确 v6/v7/v8/v9；旧 v6/v7/v8 仍使用 SQLite 内建 `unicode61`，v9 使用固定打包的 `simple 0` 分词库并禁用拼音别名。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
 
-release profile 没有设置 LTO、codegen unit 或 `panic = "abort"`，保留 Cargo 默认 codegen/链接并使用 unwind，使现有任务监管和清理路径不因发布优化而改变。历史 T22 记录中的 Thin LTO + 单 codegen unit 冷容器构建在 30 分钟硬上限内没有产出镜像，因此被拒绝；不能仅凭理论体积收益接受不可执行的构建成本，也不能牺牲进程树、任务取消或容器 smoke 门禁。当前只保留 symbol stripping。
+Go 应用保持运行时取消、进程监管和清理语义。镜像在 `/usr/share/doc/litradar/third-party` 保存 Go 构建清单、许可证与 Obscura 官方发行包信息。安全门禁核对 Go 源码和二进制身份，并为两种实际镜像生成 SPDX 2.3 SBOM。用户已明确豁免 Obscura 供应链检查（A13）；清单将其标记为上游二进制，不声称验证其传递依赖、原生引擎或许可证/对应源码完整性。功能、渲染和运行隔离检查仍保留。
 
 历史 T22 在 Windows Docker Desktop 29.6.1 的本地冷构建中，最终策略总耗时 218.5 秒，其中 Rust release 208.7 秒；stripped 可执行文件为 35,217,016 字节，无预置 provenance 的 smoke 镜像为 83,901,821 字节。全部层命中缓存后，同一 manifest 的重建为 6.3 秒。硬件与远端缓存会改变时长，这些数值来自当时的构建，不代表加入当前原生辅助程序后的镜像体积，也不构成跨机器性能承诺。
 
@@ -265,6 +265,10 @@ docker compose logs --no-log-prefix litradar | jq -c 'select(.level == "ERROR")'
 
 删除容器会连同其驱动日志一起删除；需要跨轮转或跨容器保留的事故证据必须在窗口内导出。不要直接读取 Docker 内部 driver 文件。事件 schema、request/run ID 关联、丢失语义、浏览器本地范围和事故流程见[日志运维](logging.md)。
 
+## Go 迁移画像
+
+先构建 `litradar:go-test-amd64`，再运行 `node tests/migration/run.mjs --phase profile`。它在原生 amd64 主机上执行三轮隔离工作负载，使用 160 MiB 容器上限和 64 MiB tmpfs，验证固定历史文章的认证检索、真实 helper 与退出清理，分别报告应用 RSS 和整个 cgroup 的当前/峰值用量；不把两者相加，也不声称单独测得 helper RSS。结果保存在 `output/migration/profile/`，不能直接与旧 Windows Rust 测量比较。
+
 ## 内存画像与门禁
 
 仓库提供 PowerShell 7 脚本 `tests/profiling/profile_docker_memory.ps1`。脚本为每次运行生成唯一的 Compose 项目、容器和网络，只删除这些具名测试资源，并把不含命令参数和密钥值的 JSON 写入已忽略的 `output/memory/`。Docker 必须使用 cgroup v2，目标镜像必须先构建：
@@ -406,7 +410,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 
 ### 1. 确认镜像发布
 
-`Build and Push Docker Image` 工作流通过 backend、frontend、security 和 CodeQL 检查后，为同一次构建添加 `ghcr.io/qianfuv/litradar:latest` 和 `ghcr.io/qianfuv/litradar:sha-<提交 SHA 前 6 位>` 两个 tag。容器冒烟测试成功且本地只有这两个目标 tag 时，一次推送两者。部署前确认工作流成功及其源码 commit 符合预期；`latest` 是可变 tag，后续发布会更新它。
+`Build and Push Docker Image` 工作流通过 backend、frontend、security 和 CodeQL 检查后，为同一次构建添加 `ghcr.io/qianfuv/litradar:latest` 和 `ghcr.io/qianfuv/litradar:sha-<提交 SHA 前 6 位>` 两个 tag。amd64 与 arm64 镜像分别通过冒烟和实际产物供应链检查后，先推送两个架构 tag，再发布指向它们的双架构 manifest。部署前确认工作流成功及其源码 commit 符合预期；`latest` 是可变 tag，后续发布会更新它。
 
 ### 2. 配置 HTTPS 访问
 

@@ -1,0 +1,20 @@
+{
+  "version": "0.2.4",
+  "release": "https://github.com/h4ckf0r0day/obscura/releases/tag/v0.2.4",
+  "variant": "render,stealth",
+  "supplyChainReview": {
+    "status": "Waived by user",
+    "approval": "A13: explicit user instruction on 2026-10-05",
+    "scope": "Obscura and its bundled dependencies only; functionality and container runtime validation remain required."
+  },
+  "assets": {
+    "amd64": {
+      "file": "obscura-x86_64-linux-stealth.tar.gz",
+      "sha256": "49b53f74a509764c42a35c8e73a37301399e1500d43564fad4cb641721efc753"
+    },
+    "arm64": {
+      "file": "obscura-aarch64-linux-stealth.tar.gz",
+      "sha256": "56eacea66e4a5b0ab0f39343183c308816b426f604259b9cc41402488bf998f7"
+    }
+  }
+}

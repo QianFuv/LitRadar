@@ -31,7 +31,7 @@ const LINUX_ENVIRONMENT = [
   "GOTOOLCHAIN=local",
   "GOENV=off",
   "GOFLAGS=",
-  "GOMODCACHE=/mnt/c/Users/57676/go/pkg/mod",
+  "GOMODCACHE=/mnt/d/BuildCache/Go/modules",
   "GOCACHE=/home/qianfuv/.cache/litradar-migration/go-cache",
 ];
 

@@ -66,6 +66,7 @@ func New(filterText, format string, writer io.Writer) (*Guard, *slog.Logger, err
 		for line := range guard.queue {
 			_, _ = writer.Write(line)
 		}
+		guard.reportDropped()
 		if flusher, exists := writer.(interface{ Flush() error }); exists {
 			_ = flusher.Flush()
 		}
@@ -91,7 +92,7 @@ func (guard *Guard) enqueue(line []byte) {
 	}
 }
 
-// Shutdown closes admission, permits one second for flushing, then reports overload loss unfiltered.
+// Shutdown closes admission and permits one second for the writer to drain and report overload loss.
 func (guard *Guard) Shutdown() {
 	guard.mutex.Lock()
 	if guard.isClosed {
@@ -107,6 +108,9 @@ func (guard *Guard) Shutdown() {
 	case <-guard.done:
 	case <-timer.C:
 	}
+}
+
+func (guard *Guard) reportDropped() {
 	if dropped := guard.dropped.Load(); dropped > 0 {
 		if guard.format == "compact" {
 			_, _ = fmt.Fprintf(guard.writer, "WARN litradar logging.events_dropped component=logging dropped_count=%d\n", dropped)

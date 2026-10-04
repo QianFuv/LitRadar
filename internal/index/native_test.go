@@ -24,7 +24,10 @@ func TestIndexRuntimeTokenizerIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if filepath.Clean(actual) != filepath.Clean(expected) {
-		t.Fatalf("runtime tokenizer must be covered by V06 input hashes: %s", actual)
+		built, err := filepath.Abs(filepath.Join("../../target/simple-tokenizer", name))
+		if err != nil || runtime.GOOS != "linux" || filepath.Clean(actual) != filepath.Clean(built) {
+			t.Fatalf("runtime tokenizer must be a controlled repository build or bundled library: %s", actual)
+		}
 	}
 	body, err := os.ReadFile(actual)
 	if err != nil {

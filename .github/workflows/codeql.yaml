@@ -6,18 +6,28 @@ on:
     branches-ignore:
       - "main"
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "assets/**"
+      - "third_party/**"
+      - "libs/**"
+      - "scripts/**"
       - "app/**"
       - "tests/filter-codeql-sarif.test.mjs"
       - "scripts/filter-codeql-sarif.mjs"
       - ".github/workflows/codeql.yaml"
   pull_request:
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "assets/**"
+      - "third_party/**"
+      - "libs/**"
+      - "scripts/**"
       - "app/**"
       - "tests/filter-codeql-sarif.test.mjs"
       - "scripts/filter-codeql-sarif.mjs"
@@ -44,14 +54,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - language: rust
-            build_mode: none
+          - language: go
+            build_mode: manual
           - language: javascript-typescript
             build_mode: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Install Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.27.1"
+          cache: true
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
@@ -60,6 +77,17 @@ jobs:
           build-mode: ${{ matrix.build_mode }}
           queries: security-extended
 
+      - name: Build Go application with production SQLite features
+        if: matrix.language == 'go'
+        env:
+          CGO_ENABLED: "1"
+          GOWORK: "off"
+          GOTOOLCHAIN: local
+          GOENV: "off"
+          GOFLAGS: ""
+          CODEQL_EXTRACTOR_GO_BUILD_TRACING: "on"
+        run: go build -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar
+
       - name: Analyze source
         id: analysis
         uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
@@ -67,15 +95,6 @@ jobs:
           category: "/language:${{ matrix.language }}"
           output: codeql-results/${{ matrix.language }}
           upload: never
-
-      - name: Filter reviewed Rust test fixture findings
-        if: matrix.language == 'rust'
-        env:
-          SARIF_DIRECTORY: ${{ steps.analysis.outputs.sarif-output }}
-        run: |
-          node --test tests/filter-codeql-sarif.test.mjs
-          node scripts/filter-codeql-sarif.mjs "$SARIF_DIRECTORY" .github/codeql-reviewed-fixtures.json
-          node scripts/filter-codeql-sarif.mjs "$SARIF_DIRECTORY" .github/codeql-reviewed-http-fixture.json
 
       - name: Fail on CodeQL alerts
         env:
@@ -98,7 +117,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           test "$alert_count" -eq 0
 
-      - name: Upload filtered CodeQL results
+      - name: Upload CodeQL results
         if: always() && steps.analysis.outcome == 'success'
         uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:

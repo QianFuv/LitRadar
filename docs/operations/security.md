@@ -243,24 +243,24 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 ## 供应链门禁
 
-所有 pull request、非 `main` 分支推送和每周计划任务运行 `.github/workflows/security.yaml` 与 `.github/workflows/codeql.yaml`。`main` 的镜像发布工作流复用这两个工作流；RustSec、cargo-deny、OSV、完整 Git 历史 Gitleaks、workflow pin 检查或任一语言 CodeQL 非零告警失败时，不会进入镜像构建与推送。
+所有 pull request、非 `main` 分支推送和每周计划任务运行 `.github/workflows/security.yaml` 与 `.github/workflows/codeql.yaml`。`main` 镜像发布工作流复用这两个工作流，并在发布前复查实际双架构产物。门禁失败时不会推送镜像。
 
 执行边界如下：
 
-- `cargo-audit 0.22.2` 使用 `--deny warnings` 检查 `Cargo.lock`；`cargo-deny 0.20.2` 同时执行 advisory、license、ban 和 source policy。
-- `OSV-Scanner 2.3.8` 只读取已提交的 `Cargo.lock` 与 `app/pnpm-lock.yaml`；发行二进制先按上游 SHA-256 清单验证。
-- `Gitleaks 8.30.1` 在 `fetch-depth: 0` checkout 上扫描所有可达提交，SARIF 同时进入 artifact 和 GitHub code scanning。
-- CodeQL 使用 `security-extended` 分别分析 Rust 与 JavaScript/TypeScript；SARIF 上传后，本工作流统计结果并要求零告警。
-- `actionlint 1.7.12` 校验所有 workflow。第三方 `uses:` 必须是 40 位小写提交 SHA，并保留已审核版本注释；同仓库 `./.github/workflows/...` 是唯一不需要 SHA 的引用。
-- GitHub Action、Cargo、pnpm 和 Docker 更新由 `.github/dependabot.yml` 每周提出；更新 pull request 必须重新通过上述门禁，不能把执行引用改回 tag 或 branch。
+- `govulncheck` 检查 Go 源码和实际镜像中的应用二进制；镜像清单核对 Go 工具链、模块、补丁、应用源码和 SQLite build tags。
+- `OSV-Scanner 2.3.8` 检查 Go 和前端锁定依赖；只接受 `scripts/security-exceptions.json` 中具有 owner、精确版本和到期日的已批准例外。
+- `Gitleaks 8.30.1` 在 `fetch-depth: 0` checkout 上扫描所有可达提交和当前任务工作区；SARIF 进入 artifact 和 GitHub code scanning。`.gitleaksignore` 只保留逐历史指纹例外及复核日期。
+- CodeQL 使用 `security-extended` 分别分析 Go 与 JavaScript/TypeScript；本地 workflow 校验不代表远程 CodeQL 已执行。
+- `actionlint 1.7.12` 校验所有 workflow。第三方 `uses:` 必须固定为 40 位提交 SHA，并保留版本注释。
+- Syft 为实际镜像生成 SPDX 2.3 SBOM，保留 Simple、SQLite、Debian 包和原生文件身份；包清单不等于独立 OS 漏洞扫描。
+- Obscura 直接采用官方 v0.2.4 render + stealth 二进制。用户已明确豁免 Obscura 及其内置依赖的供应链检查（A13），因此不执行该 helper 的 RustSec、许可证/来源、V8/ICU 和对应源码门禁；SBOM 不声称其传递依赖完整或已获安全认证。版本和发行包校验和用于可复现下载，功能与容器隔离验收仍保留。
+- GitHub Action、Go、pnpm 和 Docker 更新由 `.github/dependabot.yml` 提出；更新仍需通过适用门禁。
 
-`deny.toml` 默认拒绝未允许的许可证、未知 registry/git source、wildcard 外部依赖和任何 advisory。`osv-scanner.toml` 只允许逐 advisory 例外。每个例外必须包含 owner、具体不可利用理由和到期日；版本或作用域扩大时必须新审，过期后扫描自动恢复阻断。当前没有 RustSec/source 忽略，唯一 cargo-deny 许可证例外精确限定到 `webpki-roots@1.0.8` 的 TLS 根数据许可证。`.gitleaksignore` 只能保存逐 commit/path/rule/line fingerprint，并同样记录 owner、非凭据证据和复审日期；禁止按整条规则或路径排除。
-
-仓库管理员还必须在 GitHub ruleset 中把四个 supply-chain job 和两个 CodeQL language job 设为 required checks，并启用 code-scanning merge protection、secret scanning 与 push protection。workflow 文件不能替代这些仓库级设置；Gitleaks 是独立的纵深防御，而不是关闭 GitHub secret scanning 的理由。
+除上述 Obscura 豁免外，未批准的告警和过期的精确例外仍会阻止发布。仓库级 required checks、code-scanning merge protection、secret scanning 与 push protection 由管理员管理，workflow 文件不能代替这些设置。
 
 容器发布工作流同样属于阻断门禁：
 
-- Dockerfile frontend 与 Node/Rust/Debian 基础镜像都固定到 reviewed digest；tag 只保留可读性和 Dependabot 更新入口。
+- Dockerfile frontend 与 Node/Go/原生分词构建/Debian 基础镜像都固定到 reviewed digest；tag 只保留可读性和 Dependabot 更新入口。
 - Buildx 构建并加载带 `latest` 和 `sha-<提交 SHA 前 6 位>` 两个 tag 的本地镜像；hardened smoke 验证镜像 ID、固定 UID/GID、只读根、完整 capability drop、no-new-privileges、loopback 端口、Docker health、只读密钥和唯一持久可写数据卷。
 - smoke 成功且本地 tag 集合符合预期后，工作流才一次将短 SHA tag 和 `latest` 推送到 GHCR。`latest` 会随下一次成功发布更新。
 - `docker-compose.yml` 只向宿主机 loopback 发布端口，并保留非特权、只读根文件系统等容器边界。
@@ -271,7 +271,7 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 - `127.0.0.1:8000:8000`
 
-该 Rust 入口同时提供 Web、REST、Swagger/OpenAPI 和 MCP。容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要直接把宿主机端口改为所有网卡。
+该 Go 入口同时提供 Web、REST、Swagger/OpenAPI 和 MCP。容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要直接把宿主机端口改为所有网卡。
 
 ## 容器边界
 

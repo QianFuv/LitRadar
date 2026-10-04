@@ -6,27 +6,31 @@ on:
     branches-ignore:
       - "main"
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".config/nextest.toml"
-      - "crates/**"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "third_party/**"
       - "libs/**"
-      - "data/meta/**"
+      - "assets/**"
       - "tests/test.mjs"
       - "tests/data/**"
-      - "scripts/build-simple-tokenizer.mjs"
+      - "scripts/**"
+      - "tests/migration/**"
       - ".github/workflows/backend.yaml"
   pull_request:
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".config/nextest.toml"
-      - "crates/**"
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "internal/**"
+      - "third_party/**"
       - "libs/**"
-      - "data/meta/**"
+      - "assets/**"
       - "tests/test.mjs"
       - "tests/data/**"
-      - "scripts/build-simple-tokenizer.mjs"
+      - "scripts/**"
+      - "tests/migration/**"
       - ".github/workflows/backend.yaml"
 
 concurrency:
@@ -34,151 +38,55 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CARGO_TERM_COLOR: always
+  CGO_ENABLED: "1"
+  GOWORK: "off"
+  GOTOOLCHAIN: go1.27.1
+  GOENV: "off"
+  GOFLAGS: ""
 
 permissions:
   contents: read
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    name: Go checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install 1.96 --profile minimal --component rustfmt,clippy
-          rustup default 1.96
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.27.1"
+          cache: true
 
-      - name: Install cargo-sort
-        run: cargo install cargo-sort --version 2.1.4 --locked
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+
+      - name: Verify native compiler
+        run: gcc --version
 
       - name: Build pinned search tokenizer
+        if: runner.os == 'Linux'
         run: node scripts/build-simple-tokenizer.mjs
 
-      - name: Install pinned nextest
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
-        with:
-          tool: nextest@0.9.137
-
-      - name: Verify nextest version
-        run: |
-          version="$(cargo nextest --version)"
-          echo "$version"
-          printf '%s\n' "$version" | grep -q '^cargo-nextest 0\.9\.137 '
-
-      - name: Check Rust static quality
-        id: rust_static
-        run: |
-          started_at="$(date +%s)"
-          set +e
-          cargo fmt --all -- --check \
-            && cargo sort --workspace --check \
-            && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-          status="$?"
-          set -e
-          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
-          exit "$status"
-
-      - name: Test workspace with nextest
-        id: nextest
-        run: |
-          started_at="$(date +%s)"
-          set +e
-          cargo nextest run --workspace --locked --profile ci
-          status="$?"
-          set -e
-          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
-          exit "$status"
-
-      - name: Test Rust documentation
-        id: doctests
-        run: |
-          started_at="$(date +%s)"
-          set +e
-          cargo test --workspace --doc --locked
-          status="$?"
-          set -e
-          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
-          exit "$status"
-
-      - name: Build workspace
-        id: build
-        run: |
-          started_at="$(date +%s)"
-          set +e
-          cargo build --workspace --all-targets --locked
-          status="$?"
-          set -e
-          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
-          exit "$status"
+      - name: Run Go static, regular and race checks
+        run: node scripts/check-go.mjs
 
       - name: Upload backend diagnostics
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: backend-test-diagnostics
-          path: target/nextest/ci/junit.xml
-          if-no-files-found: warn
+          name: backend-${{ matrix.os }}
+          path: test-results/go/
+          if-no-files-found: error
           retention-days: 14
-
-      - name: Write backend summary
-        if: always()
-        env:
-          BUILD_DURATION: ${{ steps.build.outputs.duration_seconds }}
-          BUILD_RESULT: ${{ steps.build.outcome }}
-          DOCTEST_DURATION: ${{ steps.doctests.outputs.duration_seconds }}
-          DOCTEST_RESULT: ${{ steps.doctests.outcome }}
-          NEXTEST_DURATION: ${{ steps.nextest.outputs.duration_seconds }}
-          NEXTEST_RESULT: ${{ steps.nextest.outcome }}
-          STATIC_DURATION: ${{ steps.rust_static.outputs.duration_seconds }}
-          STATIC_RESULT: ${{ steps.rust_static.outcome }}
-        run: |
-          label() {
-            case "$1" in
-              success) printf 'Passed' ;;
-              failure) printf 'Failed' ;;
-              cancelled) printf 'Cancelled' ;;
-              skipped) printf 'Skipped' ;;
-              *) printf 'Not run' ;;
-            esac
-          }
-          {
-            echo "## Backend test layers"
-            echo
-            echo "| Layer | Status | Duration |"
-            echo "| --- | --- | ---: |"
-            echo "| Rust static checks | $(label "$STATIC_RESULT") | ${STATIC_DURATION:-n/a}s |"
-            echo "| nextest 0.9.137 | $(label "$NEXTEST_RESULT") | ${NEXTEST_DURATION:-n/a}s |"
-            echo "| Rust doctests | $(label "$DOCTEST_RESULT") | ${DOCTEST_DURATION:-n/a}s |"
-            echo "| Workspace build | $(label "$BUILD_RESULT") | ${BUILD_DURATION:-n/a}s |"
-            echo
-            echo "Rust retries: zero. JUnit: target/nextest/ci/junit.xml."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  process-trees:
-    name: Process trees (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install 1.96 --profile minimal
-          rustup default 1.96
-
-      - name: Verify complete process-tree termination
-        run: |
-          cargo test -p litradar-worker process_tree --locked -- --nocapture
-          cargo test -p litradar-worker scheduler_process --locked -- --nocapture
-          cargo test -p litradar-index parent_process --locked -- --nocapture

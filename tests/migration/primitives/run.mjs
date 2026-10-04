@@ -12,7 +12,7 @@ const linuxEnvironment = [
   "GOTOOLCHAIN=local",
   "GOENV=off",
   "GOFLAGS=",
-  "GOMODCACHE=/mnt/c/Users/57676/go/pkg/mod",
+  "GOMODCACHE=/mnt/d/BuildCache/Go/modules",
   "GOCACHE=/home/qianfuv/.cache/litradar-migration/go-cache",
 ];
 const destination = path.join(WORKSPACE_ROOT, "output/migration/execution");

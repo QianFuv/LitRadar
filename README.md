@@ -13,7 +13,7 @@ LitRadar 是面向学术期刊的自托管检索与订阅平台。它从 Crossre
 
 ## 运行组成
 
-应用入口是唯一的 `litradar` 可执行文件。`litradar serve` 同时承载静态 Web、REST、Swagger/OpenAPI、MCP 和持久化调度；任务需要隔离时，由它启动短生命周期的同名子命令。Next.js 前端构建后由 Rust 提供静态资源，部署时不需要单独运行 Node.js 服务。模块边界和数据流见[系统架构](docs/architecture.md)。
+应用入口是唯一的 `litradar` 可执行文件。`litradar serve` 同时承载静态 Web、REST、Swagger/OpenAPI、MCP 和持久化调度；任务需要隔离时，由它启动短生命周期的同名子命令。Next.js 前端构建后由 Go 提供静态资源，部署时不需要单独运行 Node.js 服务。模块边界和数据流见[系统架构](docs/architecture.md)。
 
 ## Docker 快速开始
 
@@ -94,7 +94,7 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 本地开发
 
-项目使用 Rust 1.96、Node.js 24 和 pnpm 10.32.0。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
+项目使用 Go 1.27.1（启用 CGO，并安装 C 编译器）、Node.js 24 和 pnpm 10.32.0。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
 
 ## 文档
 

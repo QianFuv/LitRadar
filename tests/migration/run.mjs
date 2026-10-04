@@ -144,6 +144,23 @@ if (phase === "api") {
   console.log(await runApi());
   process.exit(0);
 }
+if (phase === "profile") {
+  assert.equal(requested.size, 1, "Profile must execute its own image checks");
+  const { profileImage } = await import("../profiling/go-image.mjs");
+  try {
+    console.log(await profileImage());
+    process.exit(0);
+  } catch (error) {
+    console.error(error);
+    process.exit(error.exitCode ?? 1);
+  }
+}
+if (phase === "security") {
+  assert.equal(requested.size, 1, "Security must execute its own checks");
+  const { runSecurity } = await import("./security.mjs");
+  console.log(await runSecurity());
+  process.exit(0);
+}
 if (phase === "runtime") {
   assert(!requested.has("--candidate"), "Runtime must execute its own checks");
   const { runRuntime } = await import("./runtime/run.mjs");

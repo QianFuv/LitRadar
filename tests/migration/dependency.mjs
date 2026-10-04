@@ -123,6 +123,21 @@ export async function verifyDependency(name, generate = false) {
     "output/migration/upstream",
     `${name}.tar.gz`,
   );
+  try {
+    await fs.access(archive);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const repository =
+      name === "go-sdk" ? "modelcontextprotocol/go-sdk" : "mattn/go-sqlite3";
+    const url = `https://codeload.github.com/${repository}/tar.gz/${policy.commit}`;
+    assert.equal(upstream.archiveUrl, url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
+    assert(response.ok, `Upstream archive fetch failed: ${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assert.equal(digest(bytes), policy.archive, "Downloaded archive changed");
+    await fs.mkdir(path.dirname(archive), { recursive: true });
+    await fs.writeFile(archive, bytes, { flag: "wx" });
+  }
   assert.equal(
     digest(await fs.readFile(archive)),
     policy.archive,
@@ -276,6 +291,9 @@ export async function verifyDependency(name, generate = false) {
       licenseSha256: digest(await fs.readFile(path.join(local, "LICENSE"))),
       result: "Passed",
     };
+    await fs.mkdir(path.join(WORKSPACE_ROOT, "output/migration/execution"), {
+      recursive: true,
+    });
     await fs.writeFile(
       path.join(
         WORKSPACE_ROOT,

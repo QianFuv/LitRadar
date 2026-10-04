@@ -8,12 +8,14 @@ CI 和容器使用以下主版本：
 
 | 工具    | 版本/来源                                      |
 | ------- | ---------------------------------------------- |
-| Rust    | 1.96，workspace edition 2021                   |
+| Go      | 1.27.1，CGO_ENABLED=1，需 C 编译器             |
 | Node.js | 24                                             |
 | pnpm    | 10.32.0                                        |
 | Docker  | 当前 Docker Engine / Docker Desktop 与 Compose |
 
-Rust 依赖由 `Cargo.lock` 锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
+Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
+
+Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.1`。Windows 原生开发需把 GCC 放入 PATH；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
 
 ## 初始准备
 
@@ -41,7 +43,7 @@ wc -c secrets/litradar.key
 node scripts/build-simple-tokenizer.mjs
 ```
 
-脚本输出 `target/simple-tokenizer/libsimple.so`，不适用于非 Linux 系统。Windows x64 使用仓库提供的 DLL；其他原生部署的打包与发现规则见 [simple 分词器](../../libs/simple/README.md#原生构建与发现路径)。开发启动脚本只构建 Rust 应用，不代为准备扩展。
+脚本输出 `target/simple-tokenizer/libsimple.so`，不适用于非 Linux 系统。Windows x64 使用仓库提供的 DLL；其他原生部署的打包与发现规则见 [simple 分词器](../../libs/simple/README.md#原生构建与发现路径)。开发启动脚本只构建 Go 应用，不代为准备扩展。
 
 ### 前端依赖
 
@@ -61,7 +63,7 @@ pnpm install --frozen-lockfile
 node scripts/dev.mjs
 ```
 
-也可以在 `app/` 中运行 `pnpm dev:full`。脚本检查部署密钥和 8000/8001 端口，使用锁定依赖编译并启动 Rust 开发服务，同时启动 Next.js，最多等待 5 分钟确认两个服务就绪。浏览器入口为 `http://localhost:8000`，按 `Ctrl+C` 关闭前后端；任一服务启动失败或意外退出时，脚本也会停止另一服务。退出最多给予子进程 10 秒宽限，再终止仍存活的进程树。端口已被占用时直接报错，不终止已有服务。
+也可以在 `app/` 中运行 `pnpm dev:full`。脚本检查部署密钥和 8000/8001 端口，使用锁定依赖编译并启动 Go 开发服务，同时启动 Next.js，最多等待 5 分钟确认两个服务就绪。浏览器入口为 `http://localhost:8000`，按 `Ctrl+C` 关闭前后端；任一服务启动失败或意外退出时，脚本也会停止另一服务。退出最多给予子进程 10 秒宽限，再终止仍存活的进程树。端口已被占用时直接报错，不终止已有服务。
 
 该命令不需要前端发布构建、静态资源目录或目录连接。默认使用仓库中的数据和部署密钥；需要隔离数据时，使用 `node scripts/dev.mjs --project-root PATH`，该目录必须已有 `secrets/litradar.key`，源码和前端依赖仍从当前仓库读取。脚本不会生成或替换部署密钥。
 
@@ -70,7 +72,7 @@ node scripts/dev.mjs
 在仓库根目录运行：
 
 ```bash
-cargo run --bin litradar -- serve \
+go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar serve \
   --development \
   --host 127.0.0.1 \
   --port 8001 \
@@ -85,7 +87,7 @@ cargo run --bin litradar -- serve \
 - OpenAPI：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
-`--development` 显式选择不托管静态前端的本地模式：Rust 保留 API、认证、健康检查、接口文档、MCP、内嵌任务和基础安全响应头，但不读取 `web/` 或 `csp-hashes.json`；直接访问后端的页面路径返回 404。该模式只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合。省略 `--development` 时仍按静态托管模式运行，并严格校验 HTML 和 CSP 清单；缺失构建不会自动降级为开发模式。
+`--development` 显式选择不托管静态前端的本地模式：Go 保留 API、认证、健康检查、接口文档、MCP、内嵌任务和基础安全响应头，但不读取 `web/` 或 `csp-hashes.json`；直接访问后端的页面路径返回 404。该模式只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合。省略 `--development` 时仍按静态托管模式运行，并严格校验 HTML 和 CSP 清单；缺失构建不会自动降级为开发模式。
 
 服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查和静态流量被抑制。日志格式和 filter 是管理员“运行配置”中的持久设置，不接受进程环境覆盖：首次按默认 JSON 启动，登录管理页把 `log_format` 改为 `compact`，按需把 `log_filter` 改为例如 `warn,litradar=debug,litradar_api=debug`，再重启进程。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
 
@@ -97,7 +99,7 @@ cargo run --bin litradar -- serve \
 IFS= read -r -s -p 'Admin password: ' ADMIN_PASSWORD
 printf '\n'
 printf '%s\n' "$ADMIN_PASSWORD" |
-  cargo run --bin litradar -- admin bootstrap \
+  go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar admin bootstrap \
     --username admin \
     --password-stdin
 unset ADMIN_PASSWORD
@@ -120,19 +122,19 @@ pnpm dev
 
 默认地址为 `http://localhost:8000`。`next.config.ts` 只在开发 phase 把同源 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` rewrite 到固定 `http://127.0.0.1:8001`。浏览器始终使用当前 Origin，不存在构建时 API 地址或开发代理环境覆盖。
 
-发布构建执行静态导出，rewrite 不会进入产物；Rust 直接从 `/app/web` 提供页面和压缩资源，并在同一 8000 监听器处理后端命名空间。
+发布构建执行静态导出，rewrite 不会进入产物；Go 直接从 `/app/web` 提供页面和压缩资源，并在同一 8000 监听器处理后端命名空间。
 
 ### 索引和投递
 
 开发时优先选择单个小型 CSV 或离线 fixture。真实索引和投递会访问外部服务：
 
 ```bash
-cargo run --bin litradar -- index \
+go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar index \
   --secret-key-file secrets/litradar.key \
   --file chinese_journals.csv \
   --update
 
-cargo run --bin litradar -- notify \
+go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar notify \
   --secret-key-file secrets/litradar.key \
   --dry-run
 ```
@@ -143,23 +145,23 @@ Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 
 
 ## 修改位置
 
-| 任务                 | 主要位置                                                                                   |
-| -------------------- | ------------------------------------------------------------------------------------------ |
-| 进程入口与生命周期   | `crates/litradar/src/`                                                                     |
-| REST 路由或 OpenAPI  | `crates/litradar-api/src/routes/`、`crates/litradar-api/src/openapi.rs`                    |
-| 认证                 | `crates/litradar-auth/`、`crates/litradar-storage/src/auth.rs`                             |
-| 业务存储             | `crates/litradar-storage/src/business/`                                                    |
-| 数据库迁移与内容定义 | `crates/litradar-storage/src/migrations.rs`、`crates/litradar-storage/src/index_schema.rs` |
-| 索引执行与控制状态   | `crates/litradar-index/`                                                                   |
-| 上游数据源           | `crates/litradar-sources/`                                                                 |
-| 推荐、通知和调度     | `crates/litradar-recommend/`、`crates/litradar-worker/`                                    |
-| 前端 API facade      | `app/lib/api/`、`app/lib/api.tsx`                                                          |
-| 前端页面和组件       | `app/app/`、`app/components/`                                                              |
-| 前端测试             | `app/tests/`                                                                               |
+| 任务                 | 主要位置                                                             |
+| -------------------- | -------------------------------------------------------------------- |
+| 进程入口与生命周期   | `cmd/litradar/`、`internal/cli/`、`internal/runtime/`                |
+| REST 路由或 OpenAPI  | `internal/api/`、`internal/openapi/`                                 |
+| 认证                 | `internal/domain/auth/`、`internal/storage/auth/`                    |
+| 业务存储             | `internal/storage/`                                                  |
+| 数据库迁移与内容定义 | `internal/storage/migrations/auth/`、`internal/storage/indexschema/` |
+| 索引执行与控制状态   | `internal/index/`                                                    |
+| 上游数据源           | `internal/sources/`                                                  |
+| 推荐、通知和调度     | `internal/delivery/`、`internal/scheduler/`                          |
+| 前端 API facade      | `app/lib/api/`、`app/lib/api.tsx`                                    |
+| 前端页面和组件       | `app/app/`、`app/components/`                                        |
+| 前端测试             | `app/tests/`                                                         |
 
 ## OpenAPI 与前端类型
 
-库 crate `litradar-api` 是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由注解、DTO 或响应 schema 后，在 `app/` 运行：
+`internal/openapi/` 中的声明及 `internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，在 `app/` 运行：
 
 ```bash
 pnpm generate:api
@@ -167,7 +169,7 @@ pnpm generate:api
 
 该命令：
 
-1. 运行 Rust `litradar openapi` 子命令
+1. 运行 Go `litradar openapi` 子命令
 2. 更新 `lib/generated/openapi.json`
 3. 用 `openapi-typescript` 更新 `lib/generated/api-schema.tsx`
 4. 格式化两个生成文件
@@ -182,11 +184,11 @@ pnpm generate:api:check
 
 ## 数据库变更
 
-认证库和内容库分别使用 `PRAGMA user_version`，但迁移事务的组织方式不同。认证库在 `migrations.rs` 按有序版本逐个执行，每个版本独立提交，并在同一事务末尾更新版本号；内容库由 `index_schema.rs` 统一定义 DDL、版本和校验规则，迁移可在一个事务中完成多步转换，最后更新到目标版本。
+认证库和内容库分别使用 `PRAGMA user_version`，但迁移事务的组织方式不同。认证库在 `internal/storage/migrations/auth/` 按有序版本逐个执行，每个版本独立提交，并在同一事务末尾更新版本号；内容库由 `internal/storage/indexschema/` 统一定义 DDL、版本和校验规则，迁移可在一个事务中完成多步转换，最后更新到目标版本。
 
 修改前先确定数据库类型，再更新相应定义与迁移路径。测试应覆盖空库、代表性旧库、当前版本幂等、失败回滚和未来版本拒绝；不要在查询函数或连接辅助函数中隐式执行迁移。
 
-`litradar-index` 使用共享内容定义初始化和写入新库，storage 负责既有库的迁移与预检。兼容版本、显式离线优化和控制库边界见[数据库参考](../reference/database.md)。
+`internal/index` 使用共享内容定义初始化和写入新库，storage 负责既有库的迁移与预检。兼容版本、显式离线优化和控制库边界见[数据库参考](../reference/database.md)。
 
 ## 调度变更
 
@@ -194,7 +196,7 @@ pnpm generate:api:check
 
 新增调度能力时必须同步更新：
 
-- `litradar-domain` 的 job 类型
+- `internal/domain` 的 job 类型
 - API 和存储校验
 - 内嵌调度的 argv 构造、运行认领、取消和持久状态
 - OpenAPI 和前端管理界面
@@ -202,7 +204,7 @@ pnpm generate:api:check
 
 不要恢复自由命令字段、独立 worker 服务或按功能拆分的可执行文件。
 
-## Rust 检查
+## Go 检查
 
 日常从仓库根选择最低充分的统一入口；完整职责和聚焦命令见[测试系统](../testing.md)：
 
@@ -212,9 +214,9 @@ node tests/test.mjs integration
 node tests/test.mjs all
 ```
 
-Backend CI 使用固定的 cargo-nextest 0.9.137、零重试和独立 doctest。`cargo test --workspace --locked` 保留为完整计划或发布前的一次 Cargo 兼容门禁，不在每个 PR 中与 nextest 重复。
+Backend CI 在 Windows 和 Linux 执行 `node scripts/check-go.mjs`，固定 Go 1.27.1、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。每条命令最多 15 分钟，失败即停止；不会自动重试。
 
-覆盖率只在每周/手动诊断中分别生成 Rust 和前端报告，不设阈值：
+覆盖率只在每周/手动诊断中分别生成 Go 和前端报告，不设阈值：
 
 ```bash
 node tests/test.mjs diagnostics
@@ -238,7 +240,7 @@ pnpm test:e2e:full-stack
 pnpm build
 ```
 
-Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Rust 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](../testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
+Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Go 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](../testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
 
 ## 部署检查
 
@@ -277,7 +279,7 @@ pwsh ./tests/profiling/profile_logging.ps1 -DataPath ./output/logging-fixture -R
 - notify/push 的可变状态都在 `data/auth.sqlite`；`data/push_state/*.changes.json` 只是候选输入，两个旧状态目录只用于一次性只读导入。
 - 每周更新和投递依赖 `*.changes.json`，不是按文章日期实时扫描。
 - 前端 API 入口是 `app/lib/api.tsx` 和 `app/lib/api/`。
-- 前端 API 始终同源；本地 Rust 服务需要监听固定的 `127.0.0.1:8001` 才能被 `pnpm dev` 代理。
+- 前端 API 始终同源；本地 Go 服务需要监听固定的 `127.0.0.1:8001` 才能被 `pnpm dev` 代理。
 - 全局 scholarly key 池与用户级 AI/PushPlus 设置是两套不同配置。
 
 <a id="weekly-manifest-cache-verification"></a>
@@ -289,14 +291,9 @@ API 在汇总与文章分页请求之间共享解析后的每周更新清单。�
 修改相关逻辑时，在仓库根运行正确性与确定性过期测试：
 
 ```bash
-cargo test -p litradar-storage --test weekly_manifest_cache --locked
-cargo test -p litradar-storage weekly_manifest_cache_expires --locked
+go test -count=1 -race -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./internal/storage/weekly ./internal/storage/query
 ```
 
-性能比较需要显式启用：
-
-```bash
-cargo test -p litradar-storage --test weekly_manifest_cache --release --locked -- --ignored --nocapture
-```
+Go 版本的容器性能画像使用 `node tests/migration/run.mjs --phase profile`，要求已构建 `litradar:go-test-amd64`；旧版 Rust 性能数字不能作为 Go 的提升结论。
 
 历史记录中，2026-09-05 的一次本地 Windows release 测试使用 8 个目录、每个目录 10,000 篇文章。10 次未缓存的续页请求总计 267.83 ms，预热缓存后为 198.03 ms；预热后的系列在初始 8 次解析之外没有新增解析。这是单次合成测试结果，仅说明当时的测试表现，不构成线上延迟承诺。目录元数据检查、成员分组和每次查询的临时 SQLite 成员表仍有开销。

@@ -273,7 +273,7 @@ export async function runSources() {
               "GOTOOLCHAIN=local",
               "GOENV=off",
               "GOFLAGS=",
-              "GOMODCACHE=/mnt/c/Users/57676/go/pkg/mod",
+              "GOMODCACHE=/mnt/d/BuildCache/Go/modules",
               "GOCACHE=/home/qianfuv/.cache/litradar-migration/go-cache",
               "/home/qianfuv/.cache/litradar-migration/go1.27.1/go/bin/go",
               ...args,

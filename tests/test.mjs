@@ -427,6 +427,10 @@ try {
   await prepareReportDirectories(mode, isCi);
   const sharedEnv = {
     CGO_ENABLED: "1",
+    GOWORK: "off",
+    GOENV: "off",
+    GOFLAGS: "",
+    GOTOOLCHAIN: "go1.27.1",
     ...(isCi ? { CI: "true", LITRADAR_TEST_CI: "true" } : {}),
   };
   for (const definition of stepsForMode(mode, isCi)) {
