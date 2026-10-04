@@ -20,6 +20,7 @@ type Config struct {
 	Environment   []string
 	OutputLimit   int
 	StreamStdout  bool
+	InheritStdout bool
 	InheritStderr bool
 	InheritStdin  bool
 }
@@ -84,6 +85,9 @@ func startWithHook(ctx context.Context, config Config, hook startHook) (*Child, 
 	if config.OutputLimit < 0 {
 		return nil, fmt.Errorf("invalid output limit")
 	}
+	if config.StreamStdout && config.InheritStdout {
+		return nil, fmt.Errorf("stdout cannot be both inherited and streamed")
+	}
 	command := exec.Command(config.Path, config.Args...)
 	command.Dir = config.Directory
 	command.Env = config.Environment
@@ -108,6 +112,9 @@ func startWithHook(ctx context.Context, config Config, hook startHook) (*Child, 
 	command.Stdin, command.Stdout, command.Stderr = inputReader, outputWriter, errorWriter
 	if config.InheritStdin {
 		command.Stdin = os.Stdin
+	}
+	if config.InheritStdout {
+		command.Stdout = os.Stdout
 	}
 	if config.InheritStderr {
 		command.Stderr = os.Stderr

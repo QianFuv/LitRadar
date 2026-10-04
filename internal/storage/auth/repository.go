@@ -84,7 +84,7 @@ func (repository *Repository) Immediate(ctx context.Context, isRevocation bool, 
 func InsertAudit(ctx context.Context, connection *sql.Conn, event *domain.AuditEvent) error {
 	err := insertAudit(ctx, connection, event)
 	if err != nil {
-		recordAuditError(err)
+		recordAuditError(ctx, err)
 	}
 	return err
 }

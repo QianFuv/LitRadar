@@ -1,14 +1,13 @@
 /**
- * Run the local Rust API and Next.js frontend with one shared lifecycle.
+ * Run the local Go API and Next.js frontend with one shared lifecycle.
  *
  * @module dev
  */
 
 import { spawn } from "node:child_process";
-import { access, stat } from "node:fs/promises";
+import { access, mkdir, stat } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
-import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
@@ -68,13 +67,14 @@ async function checkPort(port) {
  * @param {string} command - Executable path or name.
  * @param {string[]} args - Literal command arguments.
  * @param {string} cwd - Child working directory.
- * @param {boolean} shouldCaptureOutput - Whether Cargo JSON output should be parsed.
  * @returns {{child: import('node:child_process').ChildProcess, exited: Promise<object>}} Child lifecycle.
  */
-function startChild(label, command, args, cwd, shouldCaptureOutput = false) {
+function startChild(label, command, args, cwd) {
   const child = spawn(command, args, {
     cwd,
-    stdio: shouldCaptureOutput ? ["ignore", "pipe", "inherit"] : "inherit",
+    stdio: "inherit",
+    env: { ...process.env, CGO_ENABLED: "1" },
+    windowsHide: true,
     shell: false,
     detached: process.platform !== "win32",
   });
@@ -88,47 +88,35 @@ function startChild(label, command, args, cwd, shouldCaptureOutput = false) {
 }
 
 /**
- * Build the backend and discover its executable through Cargo's artifact output.
+ * Build the backend to one explicit platform-specific executable path.
  *
  * @returns {Promise<string | undefined>} Built executable, or undefined after interruption.
  */
 async function buildBackend() {
+  const directory = path.join(WORKSPACE_ROOT, "target", "go");
+  await mkdir(directory, { recursive: true });
+  const executable = path.join(
+    directory,
+    process.platform === "win32" ? "litradar.exe" : "litradar",
+  );
   const build = startChild(
-    "Rust build",
-    "cargo",
+    "Go build",
+    "go",
     [
       "build",
-      "--locked",
-      "--bin",
-      "litradar",
-      "--message-format=json-render-diagnostics",
+      "-mod=readonly",
+      "-tags",
+      "sqlite_fts5,sqlite_dbstat",
+      "-o",
+      executable,
+      "./cmd/litradar",
     ],
     WORKSPACE_ROOT,
-    true,
   );
-  let executable;
-  let outputError;
-  const output = createInterface({ input: build.child.stdout });
-  output.on("line", (line) => {
-    try {
-      const artifact = JSON.parse(line);
-      if (
-        artifact.reason === "compiler-artifact" &&
-        artifact.target.name === "litradar" &&
-        artifact.executable
-      ) {
-        executable = artifact.executable;
-      }
-    } catch (error) {
-      outputError = error;
-    }
-  });
   const result = await Promise.race([build.exited, INTERRUPTED]);
   if (isStopping) return;
-  if (result.error || result.code !== 0 || outputError || !executable) {
-    throw new Error(
-      `Rust build failed: ${result.error?.message ?? outputError?.message ?? result.code}`,
-    );
+  if (result.error || result.code !== 0) {
+    throw new Error(`Go build failed: ${result.error?.message ?? result.code}`);
   }
   CHILDREN.splice(CHILDREN.indexOf(build), 1);
   return executable;

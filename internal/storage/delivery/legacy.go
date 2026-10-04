@@ -198,7 +198,7 @@ func ImportLegacyFiles(ctx context.Context, config storageconfig.Config, now flo
 	started := time.Now()
 	inputs, err := collectLegacy(config.ProjectRoot)
 	if err != nil {
-		emitLegacyImportFailure(started, err)
+		emitLegacyImportFailure(ctx, started, err)
 		return LegacyImportResult{}, err
 	}
 	repository, err := Open(config.AuthDbPath)
@@ -208,14 +208,14 @@ func ImportLegacyFiles(ctx context.Context, config storageconfig.Config, now flo
 	defer repository.Close()
 	result, err := repository.importLegacy(ctx, inputs, now)
 	if err != nil {
-		emitLegacyImportFailure(started, err)
+		emitLegacyImportFailure(ctx, started, err)
 		return result, err
 	}
-	slog.Info("", "event", "delivery.legacy_import.completed", "component", "delivery", "outcome", "success", "discovered_count", result.DiscoveredCount, "imported_count", result.ImportedCount, "skipped_count", result.SkippedCount, "item_count", result.ItemCount, "dedupe_count", result.DedupeCount, "duration_ms", time.Since(started).Milliseconds())
+	slog.InfoContext(ctx, "", "event", "delivery.legacy_import.completed", "component", "delivery", "outcome", "success", "discovered_count", result.DiscoveredCount, "imported_count", result.ImportedCount, "skipped_count", result.SkippedCount, "item_count", result.ItemCount, "dedupe_count", result.DedupeCount, "duration_ms", time.Since(started).Milliseconds())
 	return result, nil
 }
 
-func emitLegacyImportFailure(started time.Time, err error) {
+func emitLegacyImportFailure(ctx context.Context, started time.Time, err error) {
 	kind := "sqlite"
 	var classified *Error
 	if errors.As(err, &classified) {
@@ -242,5 +242,5 @@ func emitLegacyImportFailure(started time.Time, err error) {
 			kind = "legacy_state_too_large"
 		}
 	}
-	slog.Error("", "event", "delivery.legacy_import.failed", "component", "delivery", "outcome", "failure", "error_kind", kind, "duration_ms", time.Since(started).Milliseconds())
+	slog.ErrorContext(ctx, "", "event", "delivery.legacy_import.failed", "component", "delivery", "outcome", "failure", "error_kind", kind, "duration_ms", time.Since(started).Milliseconds())
 }

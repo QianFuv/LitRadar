@@ -110,7 +110,7 @@ func Enrich(ctx context.Context, configuration config.Config, favorites []Favori
 			}
 		}
 		unavailable[name] = true
-		slog.Warn("Favorite metadata lookup is unavailable", "event", "favorites.metadata_unavailable", "database", safeName(name), "error_category", category)
+		slog.WarnContext(ctx, "Favorite metadata lookup is unavailable", "event", "favorites.metadata_unavailable", "database", safeName(name), "error_category", category)
 	}
 	result := make([]Article, 0, len(favorites))
 	for _, favorite := range favorites {

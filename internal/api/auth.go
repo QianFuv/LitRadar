@@ -138,11 +138,11 @@ func (handlers *authHandlers) persistAudit(request *http.Request, event domain.A
 	}
 	type result struct{ err error }
 	value, err := executor.Run(request.Context(), handlers.pool, func() (result, error) {
-		_, err := handlers.repository.AppendAudit(context.Background(), event)
+		_, err := handlers.repository.AppendAudit(context.WithoutCancel(request.Context()), event)
 		return result{err}, nil
 	})
 	if err != nil {
-		storage.ReportAuditFailure("executor_unavailable")
+		storage.ReportAuditFailureContext(request.Context(), "executor_unavailable")
 		return serviceUnavailable()
 	}
 	if value.err != nil {
@@ -152,7 +152,7 @@ func (handlers *authHandlers) persistAudit(request *http.Request, event domain.A
 }
 
 func (handlers *authHandlers) handle(writer http.ResponseWriter, request *http.Request, name string) {
-	ctx := context.Background()
+	ctx := context.WithoutCancel(request.Context())
 	if name == "check_invite_required" {
 		bootstrap, err := runAuth(request, handlers.pool, func() (bool, error) { return handlers.service.BootstrapRequired(ctx) })
 		if err != nil {
@@ -255,11 +255,11 @@ func (handlers *authHandlers) handle(writer http.ResponseWriter, request *http.R
 			})
 		})
 		if err != nil {
-			slog.Warn("security.auth.revocation_unconfirmed", "event", "security.auth.revocation_unconfirmed", "component", "security", "action", event.Action, "actor_id", actor, "request_id", event.RequestId)
+			slog.WarnContext(request.Context(), "security.auth.revocation_unconfirmed", "event", "security.auth.revocation_unconfirmed", "component", "security", "action", event.Action, "actor_id", actor, "request_id", event.RequestId)
 			rejection := event
 			rejection.Outcome, rejection.Reason = "rejected", "operation_failed"
 			if handlers.persistAudit(request, rejection) != nil {
-				slog.Error("security.audit.persistence_failed", "event", "security.audit.persistence_failed", "component", "security", "action", event.Action, "request_id", event.RequestId)
+				slog.ErrorContext(request.Context(), "security.audit.persistence_failed", "event", "security.audit.persistence_failed", "component", "security", "action", event.Action, "request_id", event.RequestId)
 			}
 			logAuth(request, event, "operation_failed")
 			(&apiError{status: 503, structured: map[string]string{"code": "session_revocation_unconfirmed", "message": "Session revocation could not be confirmed", "request_id": event.RequestId}}).write(writer)

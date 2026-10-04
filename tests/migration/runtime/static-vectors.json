@@ -1,0 +1,4008 @@
+{
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "exporter_sha256": "1d8423e79fdbcca829922f39049ce8ec6ea9696a909c6e1eb6b4fa892f8f81fa",
+  "modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+  "files": {
+    "index.html": "<html>home</html>",
+    "404.html": "<html>missing</html>",
+    "page.html": "<html>page</html>",
+    "folder/index.html": "<html>folder</html>",
+    "asset.js": "console.log('fixture');\n",
+    "asset.css": "body{color:red}\n",
+    "route.txt": "route data\n",
+    "font.woff2": "font data",
+    "unknown.xyzabc": "unknown data",
+    ".hidden": "hidden data",
+    "empty.txt": "",
+    "source.map": "source map",
+    "module.mjs": "module script",
+    "font.woff": "legacy font",
+    "font.otf": "open font",
+    "site.webmanifest": "{}",
+    "assets.css/index.html": "<html>directory</html>"
+  },
+  "gzip_base64": "H4sIAAAAAAAACkvOzyvOz0nVy8lP11BPy6woKS1KVde05gIAHWi3URgAAAA=",
+  "cases": [
+    {
+      "path": "/",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "17",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-11\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "9688652bae9c8806e4e0ed8597b6a7d825ee36143116a3e038af2cc663411f77",
+        "body_length": 17
+      }
+    },
+    {
+      "path": "/",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "17",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-11\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/index.html",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "17",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-11\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "9688652bae9c8806e4e0ed8597b6a7d825ee36143116a3e038af2cc663411f77",
+        "body_length": 17
+      }
+    },
+    {
+      "path": "/index.html",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "17",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-11\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/index.html",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/index.html",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/page?query=1",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "17",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-11\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "639cf5f89793ec65e282fe1de4de829b3ffe7095c04517cf64156d0d35579f56",
+        "body_length": 17
+      }
+    },
+    {
+      "path": "/page?query=1",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "17",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-11\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/page?query=1",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/page?query=1",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/page/",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 308,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "location": "/page"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/page/",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 308,
+        "headers": {
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "location": "/page"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/page/",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/page/",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "862407852321a59e5bd2f01a75c7696907a625023f8f0db13f32983158228dc9",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/folder",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder/",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 308,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "location": "/folder"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder/",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 308,
+        "headers": {
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "location": "/folder"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder/",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder/",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder/index.html",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "19",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-13\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "9c37b6f7cea802c7b149238378d3a7a8619de3508286b45a1ef633fd07294f88",
+        "body_length": 19
+      }
+    },
+    {
+      "path": "/folder/index.html",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "19",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-13\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder/index.html",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/folder/index.html",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.css",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/css",
+          "content-length": "16",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-10\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "74d94aede163ac74eb42fe7cac4066626820fa15001ddf02c3b2d25df8e6c771",
+        "body_length": 16
+      }
+    },
+    {
+      "path": "/asset.css",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/css",
+          "content-length": "16",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-10\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.css",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.css",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/route.txt",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/plain",
+          "content-length": "11",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-b\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "7fbbdc964925934bf70e680781745e62dc70555b631a64599b3fb4c61f06d331",
+        "body_length": 11
+      }
+    },
+    {
+      "path": "/route.txt",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/plain",
+          "content-length": "11",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-b\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/route.txt",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/route.txt",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/font.woff2",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "font/woff2",
+          "content-length": "9",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-9\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "ca4ac612772ec1e1d0b21557bf0af0165703ca45f2bb81ec6e033664976dffc3",
+        "body_length": 9
+      }
+    },
+    {
+      "path": "/font.woff2",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "font/woff2",
+          "content-length": "9",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-9\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/font.woff2",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/font.woff2",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/unknown.xyzabc",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/octet-stream",
+          "content-length": "12",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "ce3d08fe53c7ec2a96b9bd5fe33aca28efe90f20927f45ea4bc8b79bfc653744",
+        "body_length": 12
+      }
+    },
+    {
+      "path": "/unknown.xyzabc",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/octet-stream",
+          "content-length": "12",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/unknown.xyzabc",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/unknown.xyzabc",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/.hidden",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "862407852321a59e5bd2f01a75c7696907a625023f8f0db13f32983158228dc9",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/.hidden",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/.hidden",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/.hidden",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/missing",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "862407852321a59e5bd2f01a75c7696907a625023f8f0db13f32983158228dc9",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/missing",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/missing",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/missing",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/api/missing",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/api/missing",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/api/missing",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/api/missing",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e/asset.js",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "862407852321a59e5bd2f01a75c7696907a625023f8f0db13f32983158228dc9",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/%2e%2e/asset.js",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e/asset.js",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e/asset.js",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e%2fasset.js",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "862407852321a59e5bd2f01a75c7696907a625023f8f0db13f32983158228dc9",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/%2e%2e%2fasset.js",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e%2fasset.js",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e%2fasset.js",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e%5casset.js",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "862407852321a59e5bd2f01a75c7696907a625023f8f0db13f32983158228dc9",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/%2e%2e%5casset.js",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e%5casset.js",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e%5casset.js",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%61sset.js",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/%61sset.js",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%61sset.js",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%61sset.js",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/bad%FF",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "862407852321a59e5bd2f01a75c7696907a625023f8f0db13f32983158228dc9",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/bad%FF",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/bad%FF",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/bad%FF",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js%00",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "862407852321a59e5bd2f01a75c7696907a625023f8f0db13f32983158228dc9",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/asset.js%00",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 500,
+        "headers": {
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js%00",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js%00",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "//asset.js",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "//asset.js",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "//asset.js",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "//asset.js",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/source.map",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/plain",
+          "content-length": "10",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-a\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "a53cb7b2cd9ae3de4ec5521ad2e41f4ded5320672c646ad8df116c66b0916972",
+        "body_length": 10
+      }
+    },
+    {
+      "path": "/source.map",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/plain",
+          "content-length": "10",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-a\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/source.map",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/source.map",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/module.mjs",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/javascript",
+          "content-length": "13",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-d\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "129abb70245a6731558552d054d82df6c34dec0352da285290b3d8da68c96924",
+        "body_length": 13
+      }
+    },
+    {
+      "path": "/module.mjs",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/javascript",
+          "content-length": "13",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-d\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/module.mjs",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/module.mjs",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/font.woff",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/font-woff",
+          "content-length": "11",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-b\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "7e0235fc7c1192fea6ef0adbfc4ba03d93b1c921f251f371877436ca123bb5cf",
+        "body_length": 11
+      }
+    },
+    {
+      "path": "/font.woff",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/font-woff",
+          "content-length": "11",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-b\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/font.woff",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/font.woff",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/font.otf",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/font-sfnt",
+          "content-length": "9",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-9\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "7538a1ae59ce9599e2215dd8e187a8ef26a13eefaeb0280ac2841cd6bf109fb5",
+        "body_length": 9
+      }
+    },
+    {
+      "path": "/font.otf",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/font-sfnt",
+          "content-length": "9",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-9\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/font.otf",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/font.otf",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/site.webmanifest",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/manifest+json",
+          "content-length": "2",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "body_length": 2
+      }
+    },
+    {
+      "path": "/site.webmanifest",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/manifest+json",
+          "content-length": "2",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/site.webmanifest",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/site.webmanifest",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/assets.css?x=1",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 307,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "location": "/assets.css/?x=1"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/assets.css?x=1",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 307,
+        "headers": {
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "location": "/assets.css/?x=1"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/assets.css?x=1",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/assets.css?x=1",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e/%00file.js",
+      "method": "GET",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "862407852321a59e5bd2f01a75c7696907a625023f8f0db13f32983158228dc9",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/%2e%2e/%00file.js",
+      "method": "HEAD",
+      "headers": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e/%00file.js",
+      "method": "POST",
+      "headers": {},
+      "response": {
+        "status": 405,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "allow": "GET,HEAD"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/%2e%2e/%00file.js",
+      "method": "OPTIONS",
+      "headers": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": "gzip"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "44",
+          "content-encoding": "gzip",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "cdb67c85122f0455676fb3a73acb4a801b548fe2c2d4b2602fd8f773e079bcb6",
+        "body_length": 44
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": "gzip"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "44",
+          "content-encoding": "gzip",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": "gzip;q=0"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": "gzip;q=0"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": "*"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": "*"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": "GZIP"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "44",
+          "content-encoding": "gzip",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "cdb67c85122f0455676fb3a73acb4a801b548fe2c2d4b2602fd8f773e079bcb6",
+        "body_length": 44
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": "GZIP"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "44",
+          "content-encoding": "gzip",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": "gzip;q=0.1, identity;q=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": "gzip;q=0.1, identity;q=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": "gzip;q=1, identity;q=0"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "44",
+          "content-encoding": "gzip",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "cdb67c85122f0455676fb3a73acb4a801b548fe2c2d4b2602fd8f773e079bcb6",
+        "body_length": 44
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": "gzip;q=1, identity;q=0"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "44",
+          "content-encoding": "gzip",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": "gzip;q=bad"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": "gzip;q=bad"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-3"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-range": "bytes 0-3/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "a6e9c460a6f6d9bda9b3b2e6d909437a32b7629dede0e897bc382a24d86b499e",
+        "body_length": 4
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-3"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-range": "bytes 0-3/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=-5"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "5",
+          "content-range": "bytes 19-23/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "fb0d25962629c9f5944aa3b4fa2366d9408477ba86421a85fe98597b12af5bc4",
+        "body_length": 5
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=-5"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "5",
+          "content-range": "bytes 19-23/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=4-"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "20",
+          "content-range": "bytes 4-23/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "2f48fc938c3f52e2a283c44d486e0b8a6711bdeee35e875a4ae988a66e2900dc",
+        "body_length": 20
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=4-"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "20",
+          "content-range": "bytes 4-23/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=999-"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "0",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=999-"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-1,4-5"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "37",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "bf44c08b22ff5a181c263b9dca1bc0160f98dcd17f5cbe4d16799c61c8cb5aea",
+        "body_length": 37
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-1,4-5"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "37",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "invalid"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "0",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "invalid"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=5-2"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "0",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=5-2"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-999"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "content-range": "bytes 0-23/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-999"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "content-range": "bytes 0-23/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-modified-since": "Mon, 03 Aug 2026 12:00:00 GMT"
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-modified-since": "Mon, 03 Aug 2026 12:00:00 GMT"
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-modified-since": "Mon, 01 Jan 2024 00:00:00 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-modified-since": "Mon, 01 Jan 2024 00:00:00 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-unmodified-since": "Mon, 01 Jan 2024 00:00:00 GMT"
+      },
+      "response": {
+        "status": 412,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-unmodified-since": "Mon, 01 Jan 2024 00:00:00 GMT"
+      },
+      "response": {
+        "status": 412,
+        "headers": {
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-3",
+        "if-range": "Mon, 03 Aug 2026 12:00:00 GMT"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-range": "bytes 0-3/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "a6e9c460a6f6d9bda9b3b2e6d909437a32b7629dede0e897bc382a24d86b499e",
+        "body_length": 4
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-3",
+        "if-range": "Mon, 03 Aug 2026 12:00:00 GMT"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-range": "bytes 0-3/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-3",
+        "if-range": "Mon, 01 Jan 2024 00:00:00 GMT"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-range": "bytes 0-3/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "a6e9c460a6f6d9bda9b3b2e6d909437a32b7629dede0e897bc382a24d86b499e",
+        "body_length": 4
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-3",
+        "if-range": "Mon, 01 Jan 2024 00:00:00 GMT"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-range": "bytes 0-3/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-3",
+        "if-range": "\"tag\""
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-range": "bytes 0-3/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "a6e9c460a6f6d9bda9b3b2e6d909437a32b7629dede0e897bc382a24d86b499e",
+        "body_length": 4
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-3",
+        "if-range": "\"tag\""
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-range": "bytes 0-3/24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-3",
+        "accept-encoding": "gzip"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-encoding": "gzip",
+          "content-range": "bytes 0-3/44",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "fd72d30440b0bae1b1c6db6c8ad807f238ef3ca613aa7e8d5329e1e8ddf7da72",
+        "body_length": 4
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-3",
+        "accept-encoding": "gzip"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "4",
+          "content-encoding": "gzip",
+          "content-range": "bytes 0-3/44",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "cookie": "litradar_session=fixture"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "private, no-store"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "cookie": "litradar_session=fixture"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "private, no-store"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": "x-gzip;Q=0.999"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "44",
+          "content-encoding": "gzip",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "cdb67c85122f0455676fb3a73acb4a801b548fe2c2d4b2602fd8f773e079bcb6",
+        "body_length": 44
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": "x-gzip;Q=0.999"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "44",
+          "content-encoding": "gzip",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-2c\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": "gzip;q=0.9999"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": "gzip;q=0.9999"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "accept-encoding": " gzip"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "accept-encoding": " gzip"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-1, 3-4"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-1, 3-4"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=00-1"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "0",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=00-1"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-1, 3-4"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "37",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "bf44c08b22ff5a181c263b9dca1bc0160f98dcd17f5cbe4d16799c61c8cb5aea",
+        "body_length": 37
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-1, 3-4"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "37",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-1,3-4,"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "0",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-1,3-4,"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=-99"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "0",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=-99"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=-0"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "0",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=-0"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-3,2-4"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "0",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-3,2-4"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-1,99-"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "0",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-1,99-"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-range": "bytes */24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-match": "\"6a7082c0.00000000-18\""
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-match": "\"6a7082c0.00000000-18\""
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-match": "W/\"6a7082c0.00000000-18\""
+      },
+      "response": {
+        "status": 412,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-match": "W/\"6a7082c0.00000000-18\""
+      },
+      "response": {
+        "status": 412,
+        "headers": {
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-match": "*",
+        "if-unmodified-since": "Mon, 01 Jan 2024 00:00:00 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-match": "*",
+        "if-unmodified-since": "Mon, 01 Jan 2024 00:00:00 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-none-match": "W/\"6a7082c0.00000000-18\""
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-none-match": "W/\"6a7082c0.00000000-18\""
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-none-match": "\"other,tag\", \"6a7082c0.00000000-18\""
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-none-match": "\"other,tag\", \"6a7082c0.00000000-18\""
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-none-match": "\"other\"",
+        "if-modified-since": "Mon, 03 Aug 2026 12:00:00 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-none-match": "\"other\"",
+        "if-modified-since": "Mon, 03 Aug 2026 12:00:00 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-unmodified-since": "Sun, 07 Nov 1994 08:48:37 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-unmodified-since": "Sun, 07 Nov 1994 08:48:37 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-unmodified-since": "Mon, 07 Nov 1994 08:48:37 GMT"
+      },
+      "response": {
+        "status": 412,
+        "headers": {
+          "content-length": "0",
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-unmodified-since": "Mon, 07 Nov 1994 08:48:37 GMT"
+      },
+      "response": {
+        "status": 412,
+        "headers": {
+          "vary": "origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-modified-since": "Sunday, 06-Nov-69 08:49:37 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "08d1da44a8d0c6268ea62115b6ee248b96a97f5b57ff949dd08a443daea5af77",
+        "body_length": 24
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-modified-since": "Sunday, 06-Nov-69 08:49:37 GMT"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/javascript",
+          "content-length": "24",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-modified-since": "Wednesday, 06-Nov-69 08:49:37 GMT"
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-modified-since": "Wednesday, 06-Nov-69 08:49:37 GMT"
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-modified-since": "Mon Aug  3 12:00:00 2026"
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-modified-since": "Mon Aug  3 12:00:00 2026"
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "GET",
+      "headers": {
+        "if-modified-since": "Mon Aug 03 12:00:00 2026"
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/asset.js",
+      "method": "HEAD",
+      "headers": {
+        "if-modified-since": "Mon Aug 03 12:00:00 2026"
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-18\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/empty.txt",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-0"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/plain",
+          "content-length": "0",
+          "content-range": "bytes 0-0/0",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-0\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/empty.txt",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-0"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/plain",
+          "content-length": "0",
+          "content-range": "bytes 0-0/0",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-0\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/empty.txt",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/plain",
+          "content-length": "0",
+          "content-range": "bytes 0-0/0",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-0\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/empty.txt",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=0-"
+      },
+      "response": {
+        "status": 206,
+        "headers": {
+          "content-type": "text/plain",
+          "content-length": "0",
+          "content-range": "bytes 0-0/0",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-0\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/empty.txt",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=-1"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/plain",
+          "content-length": "0",
+          "content-range": "bytes */0",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-0\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/empty.txt",
+      "method": "HEAD",
+      "headers": {
+        "range": "bytes=-1"
+      },
+      "response": {
+        "status": 416,
+        "headers": {
+          "content-type": "text/plain",
+          "content-range": "bytes */0",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-0\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/missing",
+      "method": "GET",
+      "headers": {
+        "range": "bytes=0-3"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "4",
+          "content-range": "bytes 0-3/20",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "866f65abf2a0335f9e7fefd4835957eb652abd3e7ee4ed57a2ddf4cbdf3d0554",
+        "body_length": 4
+      }
+    },
+    {
+      "path": "/missing",
+      "method": "GET",
+      "headers": {
+        "if-modified-since": "Mon, 03 Aug 2026 12:00:00 GMT"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-length": "0",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-14\"",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "no-cache"
+        },
+        "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "body_length": 0
+      }
+    },
+    {
+      "path": "/page",
+      "method": "GET",
+      "headers": {
+        "cookie": "litradar_session=fixture"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html",
+          "content-length": "17",
+          "accept-ranges": "bytes",
+          "last-modified": "Mon, 03 Aug 2026 12:00:00 GMT",
+          "etag": "\"6a7082c0.00000000-11\"",
+          "vary": "accept-encoding, origin, access-control-request-method, access-control-request-headers",
+          "cache-control": "private, no-store"
+        },
+        "body_sha256": "639cf5f89793ec65e282fe1de4de829b3ffe7095c04517cf64156d0d35579f56",
+        "body_length": 17
+      }
+    }
+  ]
+}

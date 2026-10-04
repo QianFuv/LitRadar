@@ -51,19 +51,21 @@ function pnpmStep(label, args, env = {}) {
 }
 
 /**
- * Return the Rust and jsdom quick-feedback steps.
+ * Return the Go and jsdom quick-feedback steps.
  *
  * @param {boolean} isCi - Whether CI reporters are enabled.
  * @returns {ReturnType<typeof step>[]} Ordered steps.
  */
 function fastSteps(isCi) {
   return [
-    step("Rust library and binary tests", "cargo", [
+    step("Go quick tests", "go", [
       "test",
-      "--workspace",
-      "--lib",
-      "--bins",
-      "--locked",
+      "-short",
+      "-count=1",
+      "-mod=readonly",
+      "-tags",
+      "sqlite_fts5,sqlite_dbstat",
+      "./...",
     ]),
     pnpmStep(
       "Vitest jsdom",
@@ -76,21 +78,17 @@ function fastSteps(isCi) {
 /**
  * Return the workspace integration and contract steps.
  *
- * @param {boolean} isCi - Whether the nextest CI profile is selected.
  * @returns {ReturnType<typeof step>[]} Ordered steps.
  */
-function integrationSteps(isCi) {
-  const nextestArgs = ["nextest", "run", "--workspace", "--locked"];
-  if (isCi) {
-    nextestArgs.push("--profile", "ci");
-  }
+function integrationSteps() {
   return [
-    step("Rust workspace through nextest", "cargo", nextestArgs),
-    step("Rust doctests", "cargo", [
+    step("Go integration and contract tests", "go", [
       "test",
-      "--workspace",
-      "--doc",
-      "--locked",
+      "-count=1",
+      "-mod=readonly",
+      "-tags",
+      "sqlite_fts5,sqlite_dbstat",
+      "./...",
     ]),
     pnpmStep("Generated OpenAPI idempotence", ["generate:api:check"]),
     pnpmStep("Shared frontend API contract", [
@@ -118,31 +116,28 @@ function e2eSmokeSteps() {
 /**
  * Return every static, test, browser, and build step.
  *
- * @param {boolean} isCi - Whether CI reporters and the nextest CI profile are selected.
+ * @param {boolean} isCi - Whether CI reporters are selected.
  * @returns {ReturnType<typeof step>[]} Ordered steps.
  */
 function allSteps(isCi) {
   return [
-    step("Rust formatting", "cargo", ["fmt", "--all", "--", "--check"]),
-    step("Rust dependency ordering", "cargo", [
-      "sort",
-      "--workspace",
-      "--check",
+    step("Go formatting", process.execPath, [
+      "tests/migration/run.mjs",
+      "--phase",
+      "go-format",
     ]),
-    step("Rust Clippy", "cargo", [
-      "clippy",
-      "--workspace",
-      "--all-targets",
-      "--all-features",
-      "--locked",
-      "--",
-      "-D",
-      "warnings",
+    step("Go module integrity", "go", ["mod", "verify"]),
+    step("Go vet", "go", [
+      "vet",
+      "-mod=readonly",
+      "-tags",
+      "sqlite_fts5,sqlite_dbstat",
+      "./...",
     ]),
     pnpmStep("Frontend lint", ["lint"]),
     pnpmStep("Frontend formatting", ["format:check"]),
     pnpmStep("Frontend type checking", ["exec", "tsc", "--noEmit"]),
-    ...integrationSteps(isCi),
+    ...integrationSteps(),
     pnpmStep(
       "Vitest jsdom",
       ["test:unit"],
@@ -161,32 +156,32 @@ function allSteps(isCi) {
 }
 
 /**
- * Return separate threshold-free Rust and frontend coverage steps.
+ * Return separate threshold-free Go and frontend coverage steps.
  *
  * @returns {ReturnType<typeof step>[]} Ordered steps.
  */
 function diagnosticsSteps() {
   return [
-    step("Rust coverage execution", "cargo", [
-      "llvm-cov",
-      "--workspace",
-      "--all-features",
-      "--locked",
-      "--no-report",
+    step("Go coverage execution", "go", [
+      "test",
+      "-count=1",
+      "-mod=readonly",
+      "-tags",
+      "sqlite_fts5,sqlite_dbstat",
+      "-coverprofile=target/go-coverage/coverage.out",
+      "./...",
     ]),
-    step("Rust coverage HTML", "cargo", [
-      "llvm-cov",
-      "report",
-      "--html",
-      "--output-dir",
-      "target/llvm-cov",
+    step("Go coverage HTML", "go", [
+      "tool",
+      "cover",
+      "-html=target/go-coverage/coverage.out",
+      "-o",
+      "target/go-coverage/index.html",
     ]),
-    step("Rust coverage LCOV", "cargo", [
-      "llvm-cov",
-      "report",
-      "--lcov",
-      "--output-path",
-      "target/llvm-cov/lcov.info",
+    step("Go coverage summary", "go", [
+      "tool",
+      "cover",
+      "-func=target/go-coverage/coverage.out",
     ]),
     pnpmStep("Frontend coverage", ["test:coverage"]),
   ];
@@ -204,7 +199,7 @@ function stepsForMode(mode, isCi) {
     return fastSteps(isCi);
   }
   if (mode === "integration") {
-    return integrationSteps(isCi);
+    return integrationSteps();
   }
   if (mode === "e2e-smoke") {
     return e2eSmokeSteps();
@@ -396,7 +391,6 @@ async function prepareReportDirectories(mode, isCi) {
   const directories = [];
   if (isCi) {
     directories.push(
-      path.join(WORKSPACE_ROOT, "target", "nextest", "ci"),
       path.join(APP_ROOT, "test-results", "vitest"),
       path.join(APP_ROOT, "test-results", "vitest-browser"),
       path.join(APP_ROOT, "test-results", "playwright-fixtures"),
@@ -407,7 +401,7 @@ async function prepareReportDirectories(mode, isCi) {
   }
   if (mode === "diagnostics") {
     directories.push(
-      path.join(WORKSPACE_ROOT, "target", "llvm-cov"),
+      path.join(WORKSPACE_ROOT, "target", "go-coverage"),
       path.join(APP_ROOT, "coverage"),
     );
   }
@@ -431,7 +425,10 @@ try {
   const { mode, isCi } = parseArguments(process.argv.slice(2));
   selectedMode = mode;
   await prepareReportDirectories(mode, isCi);
-  const sharedEnv = isCi ? { CI: "true", LITRADAR_TEST_CI: "true" } : {};
+  const sharedEnv = {
+    CGO_ENABLED: "1",
+    ...(isCi ? { CI: "true", LITRADAR_TEST_CI: "true" } : {}),
+  };
   for (const definition of stepsForMode(mode, isCi)) {
     try {
       results.push(await runStep(definition, sharedEnv));

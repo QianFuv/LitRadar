@@ -33,7 +33,7 @@ func (handlers *publicHandlers) routes() []route {
 func (handlers *publicHandlers) ready(writer http.ResponseWriter, request *http.Request) {
 	now := currentTimestamp()
 	isHealthy, err := executor.RunWithQueueTimeout(request.Context(), handlers.pool, time.Second, func() (bool, error) {
-		status, err := handlers.scheduler.Status(context.Background(), now, scheduler.HealthWindowSeconds, 0)
+		status, err := handlers.scheduler.Status(context.WithoutCancel(request.Context()), now, scheduler.HealthWindowSeconds, 0)
 		if err != nil {
 			return false, err
 		}
@@ -57,7 +57,7 @@ func (handlers *publicHandlers) announcements(writer http.ResponseWriter, reques
 		err  error
 	}
 	value, err := executor.Run(request.Context(), handlers.pool, func() (result, error) {
-		rows, err := announcements.ListActive(context.Background(), handlers.storage.AuthDbPath)
+		rows, err := announcements.ListActive(context.WithoutCancel(request.Context()), handlers.storage.AuthDbPath)
 		return result{rows, err}, nil
 	})
 	if err != nil {

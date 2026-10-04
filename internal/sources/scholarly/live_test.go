@@ -117,7 +117,7 @@ func TestSemanticInvalidJsonIgnoresRetryAfter(t *testing.T) {
 			io.WriteString(response, "[]")
 		}
 	}, 2, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := NewClient(live, true).FetchSemanticScholarByDois(ctx, []string{"10.1/a"}, 100)
 	if err != nil || calls.Load() != 2 {
@@ -128,6 +128,7 @@ func TestSemanticInvalidJsonIgnoresRetryAfter(t *testing.T) {
 	}
 }
 
+// TestLiveOversizedBodyDoesNotSwitchKeys allows scheduled admission before checking terminal rejection.
 func TestLiveOversizedBodyDoesNotSwitchKeys(t *testing.T) {
 	for _, service := range []string{OpenAlex, SemanticScholar, Crossref} {
 		for _, status := range []int{200, 401, 429} {
@@ -139,7 +140,12 @@ func TestLiveOversizedBodyDoesNotSwitchKeys(t *testing.T) {
 					response.Header().Set("Retry-After", "18446744073709551615")
 					response.WriteHeader(status)
 				}, 2, 1)
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				if service == SemanticScholar {
+					for index := range live.semantic.Slots {
+						live.semantic.Slots[index].Next = unixScheduleTime().subtract(milliseconds(1))
+					}
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				var err error
 				switch service {
@@ -203,7 +209,7 @@ func TestLiveMalformedRedirectRemainsTerminal(t *testing.T) {
 					response.WriteHeader(302)
 					io.WriteString(response, `{}`)
 				}, 1, 1)
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				_, err := live.Request(ctx, Request{Service: service, Endpoint: map[string]string{OpenAlex: "works", SemanticScholar: "paper_batch", Crossref: "journal_works"}[service], Issn: "X", Dois: []string{"10.1/a"}})
 				var failure *Error

@@ -55,6 +55,28 @@ func TestProcessFixture(t *testing.T) {
 		return
 	}
 	directory := os.Getenv("LITRADAR_PROCESS_DIRECTORY")
+	if mode == "inherit-stdout" {
+		config := fixtureConfig("stderr-flood", directory)
+		config.InheritStdout = true
+		child, err := Start(context.Background(), config)
+		if err != nil {
+			os.Exit(10)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := child.Wait(ctx); err != nil {
+			child.Close()
+			os.Exit(11)
+		}
+		if err := child.Close(); err != nil {
+			os.Exit(12)
+		}
+		output, _ := child.Output()
+		if len(output) != 0 {
+			os.Exit(13)
+		}
+		os.Exit(0)
+	}
 	if mode == "stderr-flood" {
 		os.Stderr.Write(bytes.Repeat([]byte("e"), 8192))
 		fmt.Fprint(os.Stdout, "result")
@@ -150,6 +172,20 @@ func TestProcessFixture(t *testing.T) {
 			return
 		}
 		connection.Close()
+	}
+}
+
+func TestInheritedStdoutReachesParentAndIsNotRetained(t *testing.T) {
+	command := fixtureCommand("inherit-stdout", t.TempDir())
+	output, err := command.Output()
+	if err != nil || string(output) != "result" {
+		t.Fatalf("inherited stdout %q: %v", output, err)
+	}
+	config := fixtureConfig("output", t.TempDir())
+	config.InheritStdout, config.StreamStdout = true, true
+	if child, err := Start(context.Background(), config); err == nil {
+		child.Close()
+		t.Fatal("conflicting stdout ownership accepted")
 	}
 }
 

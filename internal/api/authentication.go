@@ -44,7 +44,7 @@ func (authenticator *Authenticator) requireUser(request *http.Request) (currentI
 		err           error
 	}
 	result, err := executor.Run(request.Context(), authenticator.pool, func() (outcome, error) {
-		authorization, err := authenticator.service.VerifyToken(context.Background(), token)
+		authorization, err := authenticator.service.VerifyToken(context.WithoutCancel(request.Context()), token)
 		return outcome{authorization, err}, nil
 	})
 	if err != nil {

@@ -32,6 +32,34 @@ function options(args) {
 
 const requested = options(process.argv.slice(2));
 const phase = requested.get("--phase");
+if (phase === "go-format") {
+  assert.equal(requested.size, 1, "Formatting accepts only --phase");
+  const files = [];
+  /** Collect authored Go sources without vendored dependency rewrites. */
+  async function collect(directory) {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const filename = path.join(directory, entry.name);
+      if (entry.isDirectory()) await collect(filename);
+      else if (entry.isFile() && entry.name.endsWith(".go"))
+        files.push(filename);
+    }
+  }
+  for (const directory of ["cmd", "internal"]) await collect(directory);
+  const result = spawnSync("gofmt", ["-l", ...files.sort()], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 60000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout.trim(),
+    "",
+    `Unformatted Go source:\n${result.stdout}`,
+  );
+  console.log(`Go formatting passed: ${files.length} files`);
+  process.exit(0);
+}
 assert(
   !requested.has("--reuse-driver-proof") || phase === "auth",
   "Driver proof reuse is limited to auth",
@@ -114,6 +142,12 @@ if (phase === "api") {
   assert(!requested.has("--candidate"), "API must execute its own checks");
   const { runApi } = await import("./api/run.mjs");
   console.log(await runApi());
+  process.exit(0);
+}
+if (phase === "runtime") {
+  assert(!requested.has("--candidate"), "Runtime must execute its own checks");
+  const { runRuntime } = await import("./runtime/run.mjs");
+  console.log(await runRuntime());
   process.exit(0);
 }
 assert.equal(

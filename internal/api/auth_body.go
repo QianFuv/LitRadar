@@ -34,7 +34,7 @@ func (handlers *authHandlers) handleBody(writer http.ResponseWriter, request *ht
 	}
 	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestId: requestId(request)}
 	reject := func(reason string, failure *apiError) { handlers.reject(request, event, reason, failure).write(writer) }
-	ctx := context.Background()
+	ctx := context.WithoutCancel(request.Context())
 	var payload any
 	if name == "login" || name == "register" {
 		kind := loginAttempt
@@ -58,7 +58,7 @@ func (handlers *authHandlers) handleBody(writer http.ResponseWriter, request *ht
 				}
 			}
 			started, _ := request.Context().Value(auditStartKey{}).(time.Time)
-			slog.Warn("security.auth.rate_limited", "event", "security.auth.rate_limited", "component", "security", "action", action, "outcome", "rate_limited", "actor_id", 0, "target_id", 0, "reason", rejection.reason, "bucket", rejection.bucket, "source_class", rejection.sourceClass, "rejected_count", rejection.rejectedCount, "request_id", event.RequestId, "retry_after_seconds", rejection.retryAfter, "duration_ms", time.Since(started).Milliseconds())
+			slog.WarnContext(request.Context(), "security.auth.rate_limited", "event", "security.auth.rate_limited", "component", "security", "action", action, "outcome", "rate_limited", "actor_id", 0, "target_id", 0, "reason", rejection.reason, "bucket", rejection.bucket, "source_class", rejection.sourceClass, "rejected_count", rejection.rejectedCount, "request_id", event.RequestId, "retry_after_seconds", rejection.retryAfter, "duration_ms", time.Since(started).Milliseconds())
 			(&apiError{status: 429, detail: "Too many authentication attempts; try again later", retryAfter: &rejection.retryAfter}).write(writer)
 			return
 		}

@@ -35,6 +35,11 @@ func AuditFailureCount() uint64 { return auditFailureCount.Load() }
 
 // ReportAuditFailure logs a fixed classification, never the original error or request values.
 func ReportAuditFailure(kind string) uint64 {
+	return ReportAuditFailureContext(context.Background(), kind)
+}
+
+// ReportAuditFailureContext retains the originating scope while reporting fixed classifications.
+func ReportAuditFailureContext(ctx context.Context, kind string) uint64 {
 	switch kind {
 	case "sqlite", "io", "invalid_event", "invalid_retention_days", "join", "executor_unavailable":
 	default:
@@ -44,7 +49,7 @@ func ReportAuditFailure(kind string) uint64 {
 	if count == 0 {
 		count = math.MaxUint64
 	}
-	slog.Error("audit.persistence_failed", "event", "audit.persistence_failed", "component", "security", "outcome", "failure", "error_kind", kind, "failure_count", count)
+	slog.ErrorContext(ctx, "audit.persistence_failed", "event", "audit.persistence_failed", "component", "security", "outcome", "failure", "error_kind", kind, "failure_count", count)
 	return count
 }
 
@@ -67,7 +72,7 @@ func (repository *Repository) AppendAudit(ctx context.Context, event domain.Audi
 		return connection.QueryRowContext(ctx, "SELECT last_insert_rowid()").Scan(&id)
 	})
 	if err != nil {
-		recordAuditError(err)
+		recordAuditError(ctx, err)
 		return 0, safeAuditError(err)
 	}
 	return id, nil
@@ -97,7 +102,7 @@ func (repository *Repository) ListAudit(ctx context.Context) ([]AuditRecord, err
 // CleanupAudit deletes at most 10,000 expired rows, advancing the daily marker only after drainage.
 func (repository *Repository) CleanupAudit(ctx context.Context, retentionDays uint32, now float64) (RetentionResult, error) {
 	if retentionDays < 1 || retentionDays > 3650 || math.IsNaN(now) || math.IsInf(now, 0) {
-		recordAuditError(ErrAuditRetention)
+		recordAuditError(ctx, ErrAuditRetention)
 		return RetentionResult{}, ErrAuditRetention
 	}
 	result := RetentionResult{Cutoff: now - float64(retentionDays)*86400}
@@ -137,7 +142,7 @@ func (repository *Repository) CleanupAudit(ctx context.Context, retentionDays ui
 		return nil
 	})
 	if err != nil {
-		recordAuditError(err)
+		recordAuditError(ctx, err)
 		return RetentionResult{}, safeAuditError(err)
 	}
 	return result, nil
@@ -150,7 +155,7 @@ func safeAuditError(err error) error {
 	return AuditFailure{cause: err}
 }
 
-func recordAuditError(err error) {
+func recordAuditError(ctx context.Context, err error) {
 	kind := "sqlite"
 	if errors.Is(err, ErrAuditEvent) {
 		kind = "invalid_event"
@@ -158,5 +163,5 @@ func recordAuditError(err error) {
 	if errors.Is(err, ErrAuditRetention) {
 		kind = "invalid_retention_days"
 	}
-	ReportAuditFailure(kind)
+	ReportAuditFailureContext(ctx, kind)
 }

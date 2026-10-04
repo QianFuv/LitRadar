@@ -81,7 +81,7 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 		return nil, badRequest("delivery_method must be one of: folder, pushplus")
 	}
 	existing, failure := trackingStorage(ctx, handlers.pool, func() (*domain.NotificationSettings, error) {
-		return handlers.repository.GetNotificationSettings(context.Background(), handlers.codec, user)
+		return handlers.repository.GetNotificationSettings(context.WithoutCancel(ctx), handlers.codec, user)
 	})
 	if failure != nil {
 		return nil, failure
@@ -98,7 +98,7 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 	if update.DeliveryMethod == "folder" || update.SyncToTrackingFolder {
 		var failure *apiError
 		hasFolder, failure = trackingStorage(ctx, handlers.pool, func() (bool, error) {
-			folder, err := handlers.favorites.TrackingFolder(context.Background(), identity.Id(user))
+			folder, err := handlers.favorites.TrackingFolder(context.WithoutCancel(ctx), identity.Id(user))
 			return folder != nil, err
 		})
 		if failure != nil {
@@ -114,7 +114,7 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 	if update.DeliveryMethod == "pushplus" && update.SyncToTrackingFolder && !hasFolder {
 		return nil, badRequest("A tracking folder is required before enabling PushPlus sync to tracking")
 	}
-	allowed, failure := trackingStorage(ctx, handlers.pool, func() ([]string, error) { return handlers.settings.AiBaseUrls(context.Background()) })
+	allowed, failure := trackingStorage(ctx, handlers.pool, func() ([]string, error) { return handlers.settings.AiBaseUrls(context.WithoutCancel(ctx)) })
 	if failure != nil {
 		return nil, failure
 	}
@@ -160,7 +160,7 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 		if err := domain.ValidateNotificationSettings(update); err != nil {
 			return result{err: err, isInvalid: true}, nil
 		}
-		value, err := handlers.repository.UpsertNotificationSettings(context.Background(), handlers.codec, user, update)
+		value, err := handlers.repository.UpsertNotificationSettings(context.WithoutCancel(ctx), handlers.codec, user, update)
 		return result{value: value, err: err}, nil
 	})
 	if failure != nil {

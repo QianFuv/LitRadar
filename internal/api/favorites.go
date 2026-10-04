@@ -136,7 +136,7 @@ func (handlers *favoriteHandlers) handle(writer http.ResponseWriter, request *ht
 		err     error
 	}
 	value, err := executor.Run(request.Context(), handlers.pool, func() (result, error) {
-		payload, err := handlers.perform(context.Background(), name, owner, folder, article, query, body)
+		payload, err := handlers.perform(context.WithoutCancel(request.Context()), name, owner, folder, article, query, body)
 		return result{payload, err}, nil
 	})
 	if err != nil {

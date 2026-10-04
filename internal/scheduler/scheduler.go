@@ -10,6 +10,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/QianFuv/LitRadar/internal/runtime/observability"
+
 	domain "github.com/QianFuv/LitRadar/internal/domain/scheduler"
 	"github.com/QianFuv/LitRadar/internal/platform/cron"
 	store "github.com/QianFuv/LitRadar/internal/storage/scheduler"
@@ -129,6 +131,7 @@ func PrepareRuns(ctx context.Context, repository *store.Repository, worker strin
 
 // PrepareRunsAt exposes the wall clock explicitly for recovery and deterministic service integration.
 func PrepareRunsAt(ctx context.Context, repository *store.Repository, worker string, capacity uint64, now float64) (TickResult, []store.Claim, error) {
+	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.tick", map[string]any{"component": "scheduler", "worker_id": worker})
 	result := TickResult{Mode: Execute, Status: domain.Running, MinuteEpoch: int64(math.Floor(math.Trunc(now) / 60)), CheckedTo: now, Skipped: []SkippedTask{}, Executed: []TaskExecution{}}
 	if err := repository.RecordHeartbeat(ctx, worker, now); err != nil {
 		return result, nil, err
@@ -203,6 +206,7 @@ func RunClaim(ctx context.Context, repository *store.Repository, config ProcessC
 }
 
 func runClaim(ctx context.Context, repository *store.Repository, claim store.Claim, runner jobRunner) (TaskExecution, bool, error) {
+	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.claim", map[string]any{"component": "scheduler", "worker_id": claim.WorkerId, "task_id": claim.Task.Id, "run_id": fmt.Sprint(claim.RunId), "job_id": jobId(claim.Task.Id)})
 	result := TaskExecution{claim.Task.Id, jobId(claim.Task.Id), claim.Task.Name, domain.Unknown}
 	started := time.Now()
 	fields := []any{"component", "scheduler", "worker_id", claim.WorkerId, "task_id", claim.Task.Id, "run_id", fmt.Sprint(claim.RunId), "job_id", result.JobId}

@@ -90,9 +90,9 @@ func publishCatalogManifest(ctx context.Context, config LiveConfig, input storag
 	}
 	removed, err := storage.PruneContentChangeHistory(history, time.Now().Unix()-8*24*60*60)
 	if err != nil {
-		slog.Warn("index.batch.manifest_history_cleanup_failed", "component", "index", "catalog", input.CatalogName)
+		slog.WarnContext(ctx, "index.batch.manifest_history_cleanup_failed", "component", "index", "catalog", input.CatalogName)
 	} else if removed > 0 {
-		slog.Info("index.batch.manifest_history_pruned", "component", "index", "catalog", input.CatalogName, "removed", removed)
+		slog.InfoContext(ctx, "index.batch.manifest_history_pruned", "component", "index", "catalog", input.CatalogName, "removed", removed)
 	}
 	return nil
 }

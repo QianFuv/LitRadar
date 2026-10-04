@@ -104,7 +104,7 @@ func (handlers *articleHandlers) handle(writer http.ResponseWriter, request *htt
 		if err != nil {
 			return locatorResult{err: err}, nil
 		}
-		article, err := sources.GetArticleLocator(context.Background(), handlers.storage, query.database(), identity.Id(articleId))
+		article, err := sources.GetArticleLocator(context.WithoutCancel(request.Context()), handlers.storage, query.database(), identity.Id(articleId))
 		return locatorResult{article, stem, err}, nil
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func (handlers *articleHandlers) loadOrders(ctx context.Context) (articleOrders,
 		err    error
 	}
 	value, err := executor.Run(ctx, handlers.pool, func() (result, error) {
-		values, err := handlers.settings.Load(context.Background())
+		values, err := handlers.settings.Load(context.WithoutCancel(ctx))
 		return result{values, err}, nil
 	})
 	if err != nil {
@@ -193,7 +193,7 @@ func (handlers *articleHandlers) status(ctx context.Context, article domain.Arti
 		err        error
 	}
 	session, err := executor.Run(ctx, handlers.pool, func() (sessionResult, error) {
-		value, err := handlers.sessions.Data(context.Background(), user, true)
+		value, err := handlers.sessions.Data(context.WithoutCancel(ctx), user, true)
 		return sessionResult{value != nil, err}, nil
 	})
 	if err != nil {
@@ -246,7 +246,7 @@ func (handlers *articleHandlers) actionStatus(order []string, article domain.Art
 
 type articleFailures struct{ hasAuthentication, hasRetryable, hasGateway bool }
 
-func (failures *articleFailures) record(name, action string, kind provider.ErrorKind, reason string) {
+func (failures *articleFailures) record(ctx context.Context, name, action string, kind provider.ErrorKind, reason string) {
 	switch kind {
 	case provider.AuthenticationRequired:
 		failures.hasAuthentication = true
@@ -255,16 +255,16 @@ func (failures *articleFailures) record(name, action string, kind provider.Error
 	case provider.InvalidResponse, provider.Internal:
 		failures.hasGateway = true
 	}
-	slog.Debug("article.access.fallback", "event", "article.access.fallback", "component", "article_access", "provider", name, "action", action, "reason", reason)
+	slog.DebugContext(ctx, "article.access.fallback", "event", "article.access.fallback", "component", "article_access", "provider", name, "action", action, "reason", reason)
 }
-func (failures *articleFailures) providerError(name, action string, err error) {
+func (failures *articleFailures) providerError(ctx context.Context, name, action string, err error) {
 	var failure *provider.Error
 	kind := provider.Internal
 	if errors.As(err, &failure) {
 		kind = failure.Kind
 	}
 	reason := map[provider.ErrorKind]string{provider.NotFound: "not_found", provider.AuthenticationRequired: "authentication_required", provider.TemporarilyUnavailable: "temporarily_unavailable", provider.InvalidResponse: "invalid_response", provider.Internal: "internal"}[kind]
-	failures.record(name, action, kind, reason)
+	failures.record(ctx, name, action, kind, reason)
 }
 func (failures articleFailures) response(action string) *apiError {
 	if failures.hasAuthentication {
@@ -306,7 +306,7 @@ func (handlers *articleHandlers) resolve(ctx context.Context, article domain.Art
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			failures.record(name, action, provider.TemporarilyUnavailable, "deadline_expired")
+			failures.record(ctx, name, action, provider.TemporarilyUnavailable, "deadline_expired")
 			break
 		}
 		type result struct {
@@ -315,20 +315,20 @@ func (handlers *articleHandlers) resolve(ctx context.Context, article domain.Art
 		}
 		value, err := executor.RunWithQueueTimeout(ctx, handlers.upstream, min(30*time.Second, remaining), func() (result, error) {
 			if action == "abstract" {
-				redirect, err := registration.ArticleAbstract().ResolveAbstract(context.Background(), article, request)
+				redirect, err := registration.ArticleAbstract().ResolveAbstract(context.WithoutCancel(ctx), article, request)
 				return result{domain.ArticleFullTextResolution{Redirect: &redirect}, err}, nil
 			}
-			resolution, err := registration.ArticleFullText().ResolveFullText(context.Background(), article, request)
+			resolution, err := registration.ArticleFullText().ResolveFullText(context.WithoutCancel(ctx), article, request)
 			return result{resolution, err}, nil
 		})
 		if err != nil {
 			switch {
 			case errors.Is(err, admission.ErrClosed):
-				failures.record(name, action, provider.TemporarilyUnavailable, "executor_closed")
+				failures.record(ctx, name, action, provider.TemporarilyUnavailable, "executor_closed")
 			case errors.Is(err, context.DeadlineExceeded):
-				failures.record(name, action, provider.TemporarilyUnavailable, "queue_timeout")
+				failures.record(ctx, name, action, provider.TemporarilyUnavailable, "queue_timeout")
 			default:
-				failures.record(name, action, provider.Internal, "executor_join_failed")
+				failures.record(ctx, name, action, provider.Internal, "executor_join_failed")
 			}
 			if errors.Is(err, admission.ErrClosed) || time.Until(deadline) <= 0 || ctx.Err() != nil {
 				break
@@ -337,13 +337,13 @@ func (handlers *articleHandlers) resolve(ctx context.Context, article domain.Art
 		}
 		if time.Until(deadline) <= 0 {
 			if value.err != nil {
-				failures.providerError(name, action, value.err)
+				failures.providerError(ctx, name, action, value.err)
 			}
-			failures.record(name, action, provider.TemporarilyUnavailable, "deadline_expired")
+			failures.record(ctx, name, action, provider.TemporarilyUnavailable, "deadline_expired")
 			break
 		}
 		if value.err != nil {
-			failures.providerError(name, action, value.err)
+			failures.providerError(ctx, name, action, value.err)
 			continue
 		}
 		isValid := provider.ValidateFullTextResolution(value.resolution, 32*1024*1024) == nil
@@ -355,7 +355,7 @@ func (handlers *articleHandlers) resolve(ctx context.Context, article domain.Art
 		if isValid {
 			return value.resolution, nil
 		}
-		failures.record(name, action, provider.InvalidResponse, "invalid_response")
+		failures.record(ctx, name, action, provider.InvalidResponse, "invalid_response")
 	}
 	return empty, failures.response(action)
 }

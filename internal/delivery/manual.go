@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QianFuv/LitRadar/internal/runtime/observability"
+
 	domain "github.com/QianFuv/LitRadar/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/internal/recommend"
@@ -62,12 +64,13 @@ func RunManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig) (Ma
 }
 
 func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, deliver func(context.Context, RunConfig, *int64, *recommend.ChangeManifest) (RunOutcome, error)) (result ManualWeeklyPushOutcome, resultError error) {
+	ctx = observability.StartSpan(ctx, "litradar_worker::delivery::orchestration", "delivery.manual", map[string]any{"component": "delivery", "workflow": "manual_weekly_push", "mode": "execute", "user_id": config.UserId})
 	started := time.Now()
 	logger := slog.Default().With("component", "delivery", "workflow", "manual_weekly_push", "mode", "execute", "user_id", config.UserId)
-	logger.Info("delivery.manual.started", "event", "delivery.manual.started", "outcome", "started")
+	logger.InfoContext(ctx, "delivery.manual.started", "event", "delivery.manual.started", "outcome", "started")
 	defer func() {
 		if resultError != nil {
-			logger.Warn("delivery.manual.failed", "event", "delivery.manual.failed", "outcome", "failure", "status", "error", "error_kind", deliveryErrorKind(resultError), "duration_ms", time.Since(started).Milliseconds())
+			logger.WarnContext(ctx, "delivery.manual.failed", "event", "delivery.manual.failed", "outcome", "failure", "status", "error", "error_kind", deliveryErrorKind(resultError), "duration_ms", time.Since(started).Milliseconds())
 			return
 		}
 		count := int64(0)
@@ -76,9 +79,9 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 		}
 		attributes := []any{"status", result.Status, "selected_count", result.Selected, "delivered_count", result.Pushed, "candidate_count", count, "duration_ms", time.Since(started).Milliseconds()}
 		if result.Status == "failed" || result.Status == "unknown" {
-			logger.Warn("delivery.manual.failed", append(attributes, "event", "delivery.manual.failed", "outcome", "failure")...)
+			logger.WarnContext(ctx, "delivery.manual.failed", append(attributes, "event", "delivery.manual.failed", "outcome", "failure")...)
 		} else {
-			logger.Info("delivery.manual.completed", append(attributes, "event", "delivery.manual.completed", "outcome", "success")...)
+			logger.InfoContext(ctx, "delivery.manual.completed", append(attributes, "event", "delivery.manual.completed", "outcome", "success")...)
 		}
 	}()
 	if config.ExecutionControl != nil {

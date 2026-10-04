@@ -114,6 +114,22 @@ func New(services Services, options Options) (*Handler, error) {
 // Close closes MCP sessions; borrowed repositories and executors remain owned by the host.
 func (handler *Handler) Close() error { return handler.mcp.Close() }
 
+// GenerateOpenAPI verifies the real handler declarations without opening deployment resources.
+func GenerateOpenAPI() ([]byte, error) {
+	groups := [][]route{
+		(&authHandlers{}).routes(), (&indexHandlers{}).routes(), (&favoriteHandlers{}).routes(),
+		(&publicHandlers{}).routes(), (&cnkiHandlers{}).routes(), (&adminHandlers{}).routes(),
+		(&cfpHandlers{}).routes(), (&articleHandlers{}).routes(), (&trackingHandlers{}).routes(),
+	}
+	bindings := []openapi.Operation{}
+	for _, group := range groups {
+		for _, route := range group {
+			bindings = append(bindings, route.operation)
+		}
+	}
+	return openapi.Generate(bindings)
+}
+
 func (handler *Handler) route(request *http.Request) (http.Handler, string, string) {
 	path := request.URL.EscapedPath()
 	if path == "/mcp" || strings.HasPrefix(path, "/mcp/") {

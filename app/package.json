@@ -10,7 +10,7 @@
     "lint": "eslint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "generate:api": "cargo run --manifest-path ../Cargo.toml --quiet --bin litradar -- openapi --output lib/generated/openapi.json && openapi-typescript lib/generated/openapi.json -o lib/generated/api-schema.tsx --alphabetize && prettier --write lib/generated/openapi.json lib/generated/api-schema.tsx",
+    "generate:api": "node scripts/check-generated-api.mjs --write",
     "generate:api:check": "node scripts/check-generated-api.mjs",
     "test": "pnpm test:unit",
     "test:unit": "vitest run --config vitest.config.tsx --project unit-jsdom",
@@ -19,7 +19,7 @@
     "test:watch": "vitest --config vitest.config.tsx --project unit-jsdom",
     "test:e2e": "pnpm test:e2e:fixtures",
     "test:e2e:fixtures": "playwright test --config playwright.config.tsx",
-    "test:e2e:full-stack": "pnpm build && cargo build --manifest-path ../Cargo.toml -p litradar --bin litradar --example full_stack_fixture && node tests/e2e/support/full-stack-server.mjs"
+    "test:e2e:full-stack": "pnpm build && node ../scripts/build-go.mjs && node tests/e2e/support/full-stack-server.mjs"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.19",

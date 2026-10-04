@@ -83,7 +83,7 @@ func optimize(ctx context.Context, options Options, now int64, hook hooks) (Repo
 	} else {
 		temporary += overhead
 	}
-	slog.Info("", "event", "storage.index_optimization.estimate", "component", "storage", "database_count", len(source.databases), "source_bytes", source.bytes, "temporary_bytes_required", temporary)
+	slog.InfoContext(ctx, "", "event", "storage.index_optimization.estimate", "component", "storage", "database_count", len(source.databases), "source_bytes", source.bytes, "temporary_bytes_required", temporary)
 	if err := acquireMarker(paths, now); err != nil {
 		if present, _ := exists(paths.Marker); present {
 			return empty, withRecovery(err, paths)

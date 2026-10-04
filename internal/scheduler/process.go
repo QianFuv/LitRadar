@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QianFuv/LitRadar/internal/runtime/observability"
+
 	domain "github.com/QianFuv/LitRadar/internal/domain/scheduler"
 	"github.com/QianFuv/LitRadar/internal/platform/process"
 	store "github.com/QianFuv/LitRadar/internal/storage/scheduler"
@@ -68,6 +70,7 @@ func (config ProcessConfig) run(ctx context.Context, task domain.Task, claim sto
 		return processResult{domain.Error, "Legacy task requires a typed job"}
 	}
 	started := time.Now()
+	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.run", map[string]any{"component": "scheduler", "worker_id": claim.WorkerId, "task_id": task.Id, "run_id": fmt.Sprint(claim.RunId), "job_id": jobId(task.Id), "job_kind": task.Job.Kind})
 	fields := []any{"worker_id", claim.WorkerId, "task_id", task.Id, "run_id", fmt.Sprint(claim.RunId), "job_id", jobId(task.Id), "job_kind", task.Job.Kind}
 	slog.InfoContext(ctx, "scheduler.run.started", append(fields, "event", "scheduler.run.started", "component", "scheduler", "outcome", "started")...)
 	execution := config.runProcesses(ctx, task, claim, heartbeat)
@@ -99,6 +102,7 @@ func (config ProcessConfig) runProcesses(ctx context.Context, task domain.Task, 
 }
 
 func executeProcess(ctx context.Context, command scheduledProcess, claim store.Claim, ordinal int, deadline time.Time, heartbeatInterval time.Duration, heartbeat func() bool) (result processResult) {
+	ctx = observability.StartSpan(ctx, "litradar_worker::scheduler", "scheduler.child", map[string]any{"component": "scheduler", "worker_id": claim.WorkerId, "task_id": claim.Task.Id, "run_id": fmt.Sprint(claim.RunId), "job_id": jobId(claim.Task.Id), "command": command.command, "process_number": ordinal})
 	started := time.Now()
 	fields := []any{"component", "scheduler", "worker_id", claim.WorkerId, "task_id", claim.Task.Id, "run_id", fmt.Sprint(claim.RunId), "job_id", jobId(claim.Task.Id), "command", command.command, "process_number", ordinal}
 	slog.InfoContext(ctx, "scheduler.child.started", append(fields, "event", "scheduler.child.started", "outcome", "started")...)

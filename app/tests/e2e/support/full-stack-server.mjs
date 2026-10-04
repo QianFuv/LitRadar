@@ -12,10 +12,10 @@ import { fileURLToPath } from 'node:url';
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const WORKSPACE_ROOT = path.resolve(APP_ROOT, '..');
-const TARGET_ROOT = path.join(WORKSPACE_ROOT, 'target', 'debug');
+const TARGET_ROOT = path.join(WORKSPACE_ROOT, 'target', 'go');
 const EXECUTABLE_SUFFIX = process.platform === 'win32' ? '.exe' : '';
 const SERVICE_BINARY = path.join(TARGET_ROOT, `litradar${EXECUTABLE_SUFFIX}`);
-const SEEDER_BINARY = path.join(TARGET_ROOT, 'examples', `full_stack_fixture${EXECUTABLE_SUFFIX}`);
+const SEEDER_BINARY = path.join(TARGET_ROOT, `litradar-fixture${EXECUTABLE_SUFFIX}`);
 const MARKER_FILE = '.litradar-e2e-root';
 const MARKER_CONTENT = 'litradar-full-stack-e2e-v1\n';
 const READY_TIMEOUT_MS = 30_000;
@@ -150,7 +150,7 @@ async function reserveLoopbackPort() {
 }
 
 /**
- * Wait until the Rust readiness endpoint succeeds or the bound expires.
+ * Wait until the Go readiness endpoint succeeds or the bound expires.
  *
  * @param {string} baseUrl - Service base URL.
  * @returns {Promise<void>} Promise resolved when the service is ready.
@@ -161,7 +161,7 @@ async function waitForReadiness(baseUrl) {
   while (Date.now() < deadline) {
     assertNotShuttingDown();
     if (serviceProcess.exitCode !== null || serviceProcess.signalCode !== null) {
-      throw new Error('Rust service exited before becoming ready');
+      throw new Error('Go service exited before becoming ready');
     }
     try {
       const response = await fetch(`${baseUrl}/health/ready`, {
@@ -176,7 +176,7 @@ async function waitForReadiness(baseUrl) {
     }
     await delay(POLL_INTERVAL_MS);
   }
-  throw new Error(`Rust service readiness timed out: ${lastError}`);
+  throw new Error(`Go service readiness timed out: ${lastError}`);
 }
 
 /**
@@ -312,7 +312,7 @@ async function removeFixtureRoot() {
 /**
  * Run Playwright through the package manager executable used for this script.
  *
- * @param {string} baseUrl - Rust service base URL.
+ * @param {string} baseUrl - Go service base URL.
  * @param {string[]} playwrightArguments - Explicit Playwright CLI arguments.
  * @returns {Promise<number>} Playwright exit code.
  */
@@ -414,7 +414,7 @@ async function main(playwrightArguments) {
 
   try {
     await waitForReadiness(baseUrl);
-    process.stdout.write(`[full-stack] Rust service ready at ${baseUrl}\n`);
+    process.stdout.write(`[full-stack] Go service ready at ${baseUrl}\n`);
     return await runPlaywright(baseUrl, playwrightArguments);
   } finally {
     await terminateProcessTree(testProcess);

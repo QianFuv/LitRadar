@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QianFuv/LitRadar/internal/runtime/observability"
+
 	"github.com/QianFuv/LitRadar/internal/delivery/outbound"
 	domain "github.com/QianFuv/LitRadar/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/internal/domain/sources"
@@ -81,17 +83,18 @@ func NewPushplusClient(retryAttempts int, timeout time.Duration, control *domain
 
 // Send preserves success message IDs and stops after any potentially delivered attempt.
 func (client *PushplusClient) Send(ctx context.Context, message PushplusMessage) (messageId string, resultError error) {
+	ctx = observability.StartSpan(ctx, "litradar_worker::pushplus", "pushplus.delivery", map[string]any{"component": "delivery", "provider": "pushplus", "endpoint": "send"})
 	started := time.Now()
 	logger := slog.Default().With("component", "delivery", "provider", "pushplus", "endpoint", "send")
-	logger.Info("pushplus.delivery.started", "event", "pushplus.delivery.started", "outcome", "started")
+	logger.InfoContext(ctx, "pushplus.delivery.started", "event", "pushplus.delivery.started", "outcome", "started")
 	defer func() {
 		if resultError == nil {
-			logger.Info("pushplus.delivery.completed", "event", "pushplus.delivery.completed", "outcome", "success", "duration_ms", time.Since(started).Milliseconds())
+			logger.InfoContext(ctx, "pushplus.delivery.completed", "event", "pushplus.delivery.completed", "outcome", "success", "duration_ms", time.Since(started).Milliseconds())
 			return
 		}
 		var failure *PushplusError
 		errors.As(resultError, &failure)
-		logger.Warn("pushplus.delivery.failed", "event", "pushplus.delivery.failed", "outcome", "failure", "error_kind", failure.Kind, "duration_ms", time.Since(started).Milliseconds())
+		logger.WarnContext(ctx, "pushplus.delivery.failed", "event", "pushplus.delivery.failed", "outcome", "failure", "error_kind", failure.Kind, "duration_ms", time.Since(started).Milliseconds())
 	}()
 	for attempt := 0; attempt <= client.retryAttempts; attempt++ {
 		timeout := client.timeout
@@ -121,7 +124,7 @@ func (client *PushplusClient) Send(ctx context.Context, message PushplusMessage)
 			messageId, failure = pushplusResponse(response)
 		}
 		if failure == nil {
-			logger.Info("pushplus.request.completed", "event", "pushplus.request.completed", "outcome", "success", "attempt", attempt+1, "http_status", response.StatusCode, "duration_ms", time.Since(attemptStarted).Milliseconds())
+			logger.InfoContext(ctx, "pushplus.request.completed", "event", "pushplus.request.completed", "outcome", "success", "attempt", attempt+1, "http_status", response.StatusCode, "duration_ms", time.Since(attemptStarted).Milliseconds())
 			return messageId, nil
 		}
 		willRetry := attempt < client.retryAttempts && failure.Kind == "connect_failed"
@@ -129,7 +132,7 @@ func (client *PushplusClient) Send(ctx context.Context, message PushplusMessage)
 		if failure.Kind == "http_status" {
 			attributes = append(attributes, "http_status", failure.StatusCode)
 		}
-		logger.Warn("pushplus.request.failed", attributes...)
+		logger.WarnContext(ctx, "pushplus.request.failed", attributes...)
 		if !willRetry {
 			return "", failure
 		}

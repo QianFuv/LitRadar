@@ -140,7 +140,7 @@ func (handlers *cfpHandlers) catalog(writer http.ResponseWriter, request *http.R
 		if failure != nil {
 			return nil, failure
 		}
-		snapshots, err := handlers.repository.LoadJournals(context.Background())
+		snapshots, err := handlers.repository.LoadJournals(context.WithoutCancel(request.Context()))
 		if err != nil {
 			return nil, internalError()
 		}
@@ -195,7 +195,7 @@ func (handlers *cfpHandlers) notices(writer http.ResponseWriter, request *http.R
 		if entry == nil {
 			return nil, &apiError{status: 404, detail: "CFP journal catalog member not found"}
 		}
-		snapshots, err := handlers.repository.LoadJournals(context.Background())
+		snapshots, err := handlers.repository.LoadJournals(context.WithoutCancel(request.Context()))
 		if err != nil {
 			return nil, internalError()
 		}

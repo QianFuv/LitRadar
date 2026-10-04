@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QianFuv/LitRadar/internal/runtime/observability"
+
 	"github.com/QianFuv/LitRadar/internal/delivery/outbound"
 	domain "github.com/QianFuv/LitRadar/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/internal/domain/sources"
@@ -101,14 +103,15 @@ func (client *AiClient) SummarizeSelectedArticles(ctx context.Context, config Ai
 }
 
 func (client *AiClient) complete(ctx context.Context, config AiRuntimeConfig, name string, schema any, system string, payload any, kind PayloadKind) (result map[string]any, resultError error) {
+	ctx = observability.StartSpan(ctx, "litradar_worker::ai", "ai.completion", map[string]any{"component": "delivery", "provider": "openai_compatible", "endpoint": "chat_completions", "operation": string(kind)})
 	started := time.Now()
 	logger := slog.Default().With("component", "delivery", "provider", "openai_compatible", "endpoint", "chat_completions", "operation", string(kind))
-	logger.Info("ai.completion.started", "event", "ai.completion.started", "outcome", "started")
+	logger.InfoContext(ctx, "ai.completion.started", "event", "ai.completion.started", "outcome", "started")
 	defer func() {
 		if resultError != nil {
-			logger.Warn("ai.completion.failed", "event", "ai.completion.failed", "outcome", "failure", "error_kind", aiErrorKind(resultError), "duration_ms", time.Since(started).Milliseconds())
+			logger.WarnContext(ctx, "ai.completion.failed", "event", "ai.completion.failed", "outcome", "failure", "error_kind", aiErrorKind(resultError), "duration_ms", time.Since(started).Milliseconds())
 		} else {
-			logger.Info("ai.completion.completed", "event", "ai.completion.completed", "outcome", "success", "duration_ms", time.Since(started).Milliseconds())
+			logger.InfoContext(ctx, "ai.completion.completed", "event", "ai.completion.completed", "outcome", "success", "duration_ms", time.Since(started).Milliseconds())
 		}
 	}()
 	location, err := completionUrl(config.BaseUrl)
@@ -125,7 +128,7 @@ func (client *AiClient) complete(ctx context.Context, config AiRuntimeConfig, na
 	}
 	for formatIndex, format := range formats {
 		if formatIndex > 0 {
-			logger.Warn("ai.response_format.fallback", "event", "ai.response_format.fallback", "outcome", "fallback", "from_format", formats[formatIndex-1], "to_format", format)
+			logger.WarnContext(ctx, "ai.response_format.fallback", "event", "ai.response_format.fallback", "outcome", "fallback", "from_format", formats[formatIndex-1], "to_format", format)
 		}
 		for attempt := 0; attempt <= client.retryAttempts; attempt++ {
 			timeout := client.timeout
@@ -151,7 +154,7 @@ func (client *AiClient) complete(ctx context.Context, config AiRuntimeConfig, na
 				}
 			}
 			if requestError == nil {
-				logger.Info("ai.request.completed", "event", "ai.request.completed", "outcome", "success", "response_format", format, "attempt", attempt+1, "http_status", response.StatusCode, "duration_ms", time.Since(attemptStarted).Milliseconds())
+				logger.InfoContext(ctx, "ai.request.completed", "event", "ai.request.completed", "outcome", "success", "response_format", format, "attempt", attempt+1, "http_status", response.StatusCode, "duration_ms", time.Since(attemptStarted).Milliseconds())
 				return result, nil
 			}
 			isRetryable := requestError.Kind == "connect_failed" || requestError.Kind == "timeout" || requestError.Kind == "http_status" && (requestError.StatusCode == 429 || requestError.StatusCode == 502 || requestError.StatusCode == 503 || requestError.StatusCode == 504)
@@ -161,7 +164,7 @@ func (client *AiClient) complete(ctx context.Context, config AiRuntimeConfig, na
 			if requestError.Kind == "http_status" {
 				attributes = append(attributes, "http_status", requestError.StatusCode)
 			}
-			logger.Warn("ai.request.failed", attributes...)
+			logger.WarnContext(ctx, "ai.request.failed", attributes...)
 			if willRetry {
 				delay := outbound.RetryDelay(attempt, requestError.RetryAfterSeconds)
 				if client.control != nil {

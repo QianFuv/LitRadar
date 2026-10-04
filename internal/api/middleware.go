@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/QianFuv/LitRadar/internal/runtime/observability"
 )
 
 // ServeHTTP applies the public security, correlation, CORS and cache contract.
@@ -21,10 +23,11 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	id := fmt.Sprintf("%x-%x-%x-%x-%x", identifier[:4], identifier[4:6], identifier[6:8], identifier[8:10], identifier[10:])
 	request = withRequestId(request, id)
 	selected, label, allow := handler.route(request)
+	request = request.WithContext(observability.StartSpan(request.Context(), "litradar_api::http_observability", "http.request", map[string]any{"component": "http", "request_id": id, "method": methodLabel(request.Method), "route": label}))
 	response := &policyResponse{ResponseWriter: writer, isHead: request.Method == "HEAD"}
 	isPreflight := request.Method == "OPTIONS"
 	redirect := frontendRedirect(request)
-	response.hasMatchedHead = redirect == "" && (selected != nil || allow != "")
+	response.hasMatchedHead = redirect == "" && (selected != nil || allow != "") && label != "static.frontend" && label != "static.asset"
 	response.prepare = func(status int) {
 		headers := writer.Header()
 		headers.Set("X-Request-Id", id)
@@ -170,10 +173,7 @@ func logRequest(request *http.Request, id, route string, status int, duration ti
 	if (status >= 200 && status < 300 || status == 304) && slices.Contains([]string{"/health/live", "/health/ready", "static.asset", "static.frontend"}, route) {
 		return
 	}
-	method := request.Method
-	if !slices.Contains([]string{"GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"}, method) {
-		method = "OTHER"
-	}
+	method := methodLabel(request.Method)
 	level, outcome := slog.LevelInfo, "success"
 	switch {
 	case status >= 500:
@@ -184,4 +184,11 @@ func logRequest(request *http.Request, id, route string, status int, duration ti
 		outcome = "redirect"
 	}
 	slog.Log(request.Context(), level, "http.request.completed", "event", "http.request.completed", "component", "http", "request_id", id, "method", method, "route", route, "status", status, "outcome", outcome, "duration_ms", duration.Milliseconds())
+}
+
+func methodLabel(method string) string {
+	if !slices.Contains([]string{"GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"}, method) {
+		method = "OTHER"
+	}
+	return method
 }

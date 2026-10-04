@@ -15,6 +15,7 @@ import (
 	domain "github.com/QianFuv/LitRadar/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/internal/recommend"
+	"github.com/QianFuv/LitRadar/internal/runtime/observability"
 	"github.com/QianFuv/LitRadar/internal/storage/auth"
 	store "github.com/QianFuv/LitRadar/internal/storage/delivery"
 	"github.com/QianFuv/LitRadar/internal/storage/favorites"
@@ -68,7 +69,9 @@ func RunRecommendationDelivery(ctx context.Context, config RunConfig) (RunOutcom
 }
 
 func runRecommendationDelivery(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
-	return observeDelivery(config, func() (RunOutcome, error) { return openAndExecuteDelivery(ctx, config, userId, manifest) })
+	return observeDelivery(ctx, config, userId, func(ctx context.Context) (RunOutcome, error) {
+		return openAndExecuteDelivery(ctx, config, userId, manifest)
+	})
 }
 
 func openAndExecuteDelivery(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
@@ -103,16 +106,23 @@ func openAndExecuteDelivery(ctx context.Context, config RunConfig, userId *int64
 }
 
 func (engine *deliveryEngine) execute(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
-	return observeDelivery(config, func() (RunOutcome, error) { return engine.executeInner(ctx, config, userId, manifest) })
+	return observeDelivery(ctx, config, userId, func(ctx context.Context) (RunOutcome, error) {
+		return engine.executeInner(ctx, config, userId, manifest)
+	})
 }
 
-func observeDelivery(config RunConfig, execute func() (RunOutcome, error)) (result RunOutcome, resultError error) {
+func observeDelivery(ctx context.Context, config RunConfig, userId *int64, execute func(context.Context) (RunOutcome, error)) (result RunOutcome, resultError error) {
+	fields := map[string]any{"component": "delivery", "workflow": string(config.Workflow), "mode": string(config.Mode), "user_id": nil}
+	if userId != nil {
+		fields["user_id"] = *userId
+	}
+	ctx = observability.StartSpan(ctx, "litradar_worker::delivery::orchestration", "delivery.workflow", fields)
 	started := time.Now()
 	logger := slog.Default().With("component", "delivery", "workflow", config.Workflow, "mode", config.Mode)
-	logger.Info("delivery.workflow.started", "event", "delivery.workflow.started", "outcome", "started")
+	logger.InfoContext(ctx, "delivery.workflow.started", "event", "delivery.workflow.started", "outcome", "started")
 	defer func() {
 		if resultError != nil {
-			logger.Warn("delivery.workflow.failed", "event", "delivery.workflow.failed", "outcome", "failure", "status", "error", "error_kind", deliveryErrorKind(resultError), "duration_ms", time.Since(started).Milliseconds())
+			logger.WarnContext(ctx, "delivery.workflow.failed", "event", "delivery.workflow.failed", "outcome", "failure", "status", "error", "error_kind", deliveryErrorKind(resultError), "duration_ms", time.Since(started).Milliseconds())
 			return
 		}
 		selected, messages, failed := 0, 0, 0
@@ -129,12 +139,12 @@ func observeDelivery(config RunConfig, execute func() (RunOutcome, error)) (resu
 		}
 		attributes := []any{"status", result.Status, "candidate_count", len(result.CandidateArticleIds), "subscriber_count", len(result.Subscribers), "selected_count", selected, "folder_synced_count", synced, "message_count", messages, "failed_subscriber_count", failed, "duration_ms", time.Since(started).Milliseconds()}
 		if result.Status == "failed" || result.Status == "unknown" {
-			logger.Warn("delivery.workflow.failed", append(attributes, "event", "delivery.workflow.failed", "outcome", "failure")...)
+			logger.WarnContext(ctx, "delivery.workflow.failed", append(attributes, "event", "delivery.workflow.failed", "outcome", "failure")...)
 		} else {
-			logger.Info("delivery.workflow.completed", append(attributes, "event", "delivery.workflow.completed", "outcome", "success")...)
+			logger.InfoContext(ctx, "delivery.workflow.completed", append(attributes, "event", "delivery.workflow.completed", "outcome", "success")...)
 		}
 	}()
-	return execute()
+	return execute(ctx)
 }
 
 func (engine *deliveryEngine) executeInner(ctx context.Context, config RunConfig, userId *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {

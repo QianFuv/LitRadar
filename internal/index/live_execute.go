@@ -126,7 +126,7 @@ func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input sto
 		if err == nil {
 			failed = FailureMetrics(uint64(len(input.Entries)), state.Completed, state.InFlight)
 		}
-		emitMetrics(writerContext, failed, "failure")
+		emitMetrics(ctx, writerContext, failed, "failure")
 		return LiveCatalogOutcome{}, executionError
 	}
 	if !isMultiprocess {
@@ -151,7 +151,7 @@ func runLiveCatalogWithFactory(ctx context.Context, config LiveConfig, input sto
 	if releaseError != nil {
 		return LiveCatalogOutcome{}, releaseError
 	}
-	emitMetrics(writerContext, metrics, "success")
+	emitMetrics(ctx, writerContext, metrics, "success")
 	return LiveCatalogOutcome{CsvPath: input.Path, DbPath: contentPath, RunId: runId, Status: "succeeded", JournalCount: uint64(len(input.Entries)), WrittenArticleCount: int64(min(metrics.ArticlesChanged, uint64(math.MaxInt64))), SourceAttemptCount: metrics.PagesCommitted, Concurrency: concurrency}, nil
 }
 
@@ -231,6 +231,6 @@ func indexEntries(ctx context.Context, content, control *sql.Conn, writer Writer
 	}
 	return metrics, nil
 }
-func emitMetrics(writer WriterContext, metrics RunMetrics, outcome string) {
-	slog.Info("index.run.completed", "event", "index.run.completed", "component", "index", "run_id", writer.RunId, "catalog", writer.CatalogName, "provider", writer.ProviderName, "worker_id", "all", "outcome", outcome, "journals_total", metrics.JournalsTotal, "journals_succeeded", metrics.JournalsSucceeded, "journals_resumed", metrics.JournalsResumed, "journals_failed", metrics.JournalsFailed, "pages_committed", metrics.PagesCommitted, "articles_seen", metrics.ArticlesSeen, "articles_changed", metrics.ArticlesChanged, "identity_aliases_added", metrics.IdentityAliasesAdded, "change_events_emitted", metrics.ChangeEventsEmitted)
+func emitMetrics(ctx context.Context, writer WriterContext, metrics RunMetrics, outcome string) {
+	slog.InfoContext(ctx, "index.run.completed", "event", "index.run.completed", "component", "index", "run_id", writer.RunId, "catalog", writer.CatalogName, "provider", writer.ProviderName, "worker_id", "all", "outcome", outcome, "journals_total", metrics.JournalsTotal, "journals_succeeded", metrics.JournalsSucceeded, "journals_resumed", metrics.JournalsResumed, "journals_failed", metrics.JournalsFailed, "pages_committed", metrics.PagesCommitted, "articles_seen", metrics.ArticlesSeen, "articles_changed", metrics.ArticlesChanged, "identity_aliases_added", metrics.IdentityAliasesAdded, "change_events_emitted", metrics.ChangeEventsEmitted)
 }

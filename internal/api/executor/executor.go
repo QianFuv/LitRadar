@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QianFuv/LitRadar/internal/platform/admission"
+	"github.com/QianFuv/LitRadar/internal/runtime/observability"
 )
 
 // ErrWorkerFailed hides panic contents at public API boundaries.
@@ -26,6 +27,9 @@ func New(capacity int, queueTimeout time.Duration) *Pool {
 // Close wakes queued callers and rejects new work while active workers finish.
 func (pool *Pool) Close() { pool.gate.Close() }
 
+// Wait closes admission and waits for actual workers before the host releases borrowed resources.
+func (pool *Pool) Wait() { pool.gate.Wait() }
+
 // Run bounds queue time and converts worker panics into a safe executor failure.
 // Work must own its captured inputs and use its own operation context because it
 // can outlive cancellation of the request waiting for its result.
@@ -40,6 +44,7 @@ func RunWithQueueTimeout[Value any](ctx context.Context, pool *Pool, timeout tim
 	return admission.RunQueued(ctx, queueContext, pool.gate, func() (value Value, err error) {
 		defer func() {
 			if recover() != nil {
+				observability.ReportPanic(ctx)
 				var zero Value
 				value, err = zero, ErrWorkerFailed
 			}

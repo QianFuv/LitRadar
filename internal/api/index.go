@@ -81,7 +81,7 @@ func (handlers *indexHandlers) handle(writer http.ResponseWriter, request *http.
 		return
 	}
 	database := values.database()
-	workContext := context.Background()
+	workContext := context.WithoutCancel(request.Context())
 	var work func() (any, error)
 	switch name {
 	case "list_databases":

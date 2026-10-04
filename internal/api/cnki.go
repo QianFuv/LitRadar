@@ -101,7 +101,7 @@ func (handlers *cnkiHandlers) handle(writer http.ResponseWriter, request *http.R
 		return
 	}
 	owner := current.authorization.User.Id
-	ctx := context.Background()
+	ctx := context.WithoutCancel(request.Context())
 	if name == "get_session" || name == "clear_session" {
 		status, failure := runCnki(request, handlers.pool, func() (storage.CnkiStatus, error) {
 			if name == "clear_session" {

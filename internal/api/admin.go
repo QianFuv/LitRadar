@@ -253,7 +253,7 @@ func (handlers *adminHandlers) handle(writer http.ResponseWriter, request *http.
 		err     error
 	}
 	observed, err := executor.Run(request.Context(), pool, func() (result, error) {
-		value, err := handlers.perform(context.Background(), name, actor, target, body, event)
+		value, err := handlers.perform(context.WithoutCancel(request.Context()), name, actor, target, body, event)
 		return result{value, err}, nil
 	})
 	if err != nil {

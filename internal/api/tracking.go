@@ -104,7 +104,7 @@ func (handlers *trackingHandlers) handle(writer http.ResponseWriter, request *ht
 		failure *apiError
 	}
 	value, err := executor.Run(request.Context(), handlers.pool, func() (result, error) {
-		payload, failure := handlers.perform(context.Background(), operation, current.authorization.User, runId, requestId(request))
+		payload, failure := handlers.perform(context.WithoutCancel(request.Context()), operation, current.authorization.User, runId, requestId(request))
 		return result{payload, failure}, nil
 	})
 	if err != nil {
