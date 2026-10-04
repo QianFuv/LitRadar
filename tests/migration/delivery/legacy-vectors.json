@@ -1,0 +1,6344 @@
+{
+  "schema": 1,
+  "provenance": {
+    "binary": "output/migration/execution/delivery-oracle/legacy.exe",
+    "binary_sha256": "3affeb35c91b1d8206518e96930abd7250eaf94e90e7849ba25245cab101ff88",
+    "builder_sha256": "3206343bd19d5b0e724fb08c4ff1fd0d95d7a236b3a3bd0d74d6618071a489c6",
+    "command": "rustc",
+    "args": [
+      "--edition=2024",
+      "tests/migration/delivery/legacy-oracle.rs",
+      "-L",
+      "dependency=target/debug/deps",
+      "--extern",
+      "litradar_storage=D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_storage.rlib",
+      "--extern",
+      "rusqlite=D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\librusqlite-8d31b4d1855dac1b.rlib",
+      "--extern",
+      "serde_json=D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libserde_json-aef12c909ad483bc.rlib",
+      "-o",
+      "output/migration/execution/delivery-oracle/legacy.exe"
+    ],
+    "inputs": [
+      {
+        "path": "Cargo.toml",
+        "sha256": "7db39286ee4f93fef1364ea1d2d4ba50e8adc41148e932173220a55772afc795"
+      },
+      {
+        "path": "Cargo.lock",
+        "sha256": "a572dd66f03daa1f9243d27caa45799c9e21bfa3007e07449f51586e226e5318"
+      },
+      {
+        "path": "crates/litradar-storage/Cargo.toml",
+        "sha256": "5694e4a3c45cd798c6910d695773208bf8da696acdedd31cefa75d5b08f37d4e"
+      },
+      {
+        "path": "crates/litradar-storage/src/business/delivery.rs",
+        "sha256": "6f2aca2bee85817569c796a8a0e770dd6051b336c421bf7cb36bf706a3fcfcd2"
+      },
+      {
+        "path": "crates/litradar-storage/src/business/security_audit.rs",
+        "sha256": "fff1e98f9999c44344bfdb3547812be2a2555f51a40d0c425e113bdafd194c8e"
+      },
+      {
+        "path": "crates/litradar-storage/src/migrations.rs",
+        "sha256": "3a633ccf868e97d55b839f271fd782ae24948f8b83f5e62c2995751c0ab24bea"
+      },
+      {
+        "path": "crates/litradar-storage/src/config.rs",
+        "sha256": "8a49e5b7a4a0fabfe5c26da409d13eaa9dc9e5077b4aa09ed06b46f15103e247"
+      },
+      {
+        "path": "tests/migration/delivery/legacy-oracle.rs",
+        "sha256": "b30ba09ba39ef7e44705c9c000a6d90ce37781168835568b710c9bdd37c0e8ab"
+      }
+    ],
+    "dependencies": [
+      {
+        "name": "litradar_storage",
+        "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_storage.rlib",
+        "sha256": "b384eddb422127af96de82921fb69c60466d900cad44fde649c465093d2b4ed7"
+      },
+      {
+        "name": "rusqlite",
+        "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\librusqlite-8d31b4d1855dac1b.rlib",
+        "sha256": "abeb06c01a7a9f141c2d86e995c08e8f4c4ee19727548cf7fb648d580211d8ac"
+      },
+      {
+        "name": "serde_json",
+        "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libserde_json-aef12c909ad483bc.rlib",
+        "sha256": "6aceac67e37a84c62f11be9c12963ec4f154d1e9f979ea6d21d247a6ae108bb7"
+      }
+    ]
+  },
+  "exporter_sha256": "4964315d19c80e8eb7049a53d2254f57b26bda459b2df79749733edd316c9fc1",
+  "cases": [
+    {
+      "name": "fresh-and-idempotent",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\"}"
+            }
+          ],
+          "now": 100.25
+        },
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\"}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 0,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "bd04b8cf9a3103f40c82a030f9060838d4e0e050d694dc0b3d471635f34f0fbf"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        },
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 0,
+            "item_count": 0,
+            "skipped_count": 1
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "bd04b8cf9a3103f40c82a030f9060838d4e0e050d694dc0b3d471635f34f0fbf"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "raw-byte-conflict",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\"}"
+            }
+          ],
+          "now": 100.25
+        },
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\"}\n"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 0,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "bd04b8cf9a3103f40c82a030f9060838d4e0e050d694dc0b3d471635f34f0fbf"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        },
+        {
+          "outcome": {
+            "error": "Legacy delivery state changed after import"
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "bd04b8cf9a3103f40c82a030f9060838d4e0e050d694dc0b3d471635f34f0fbf"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "6d39a45ae91d546fdda0add124e2c5a5a6e024db09f6a28e55f62bbe1d48b358"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-idle",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"idle\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"idle\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"idle\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "4cc2f532e6f169ce2af82da4dc0114f0a66253ae93025c617bf5e06397eedc37"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-running",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"running\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"running\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"running\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "abandoned_active"
+                },
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "573313f332379422fe432cf3c0092173ea54b1e6741fd1c3c1932506c9eedb6a"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "abandoned_active"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-claimed",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"claimed\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"claimed\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"claimed\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "92cdf3d6f8b09f780ba6bd49146ff0289183fc47f031730b909df4254b1300be"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "abandoned_active"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-completed",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"completed\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"completed\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"completed\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "completed"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "ae8b659dbf775b7479a0f69888a7c019bab7a76a91bd60687be610f4713b57d7"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "completed"
+                },
+                null,
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-failed",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"failed\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"failed\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"failed\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "failed"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "8110cc1a220bd86f3b756198ba46376231d9893e8475acb75519696cb9ee4639"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "failed"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "failed"
+                },
+                null,
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-skipped",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"skipped\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"skipped\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"skipped\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "skipped"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "7788e941664ccf4e88e720f5b30483fc604a276eaee4148f7d36a8eba2adb852"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "skipped"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "skipped"
+                },
+                null,
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-unknown",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"unknown\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"unknown\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"unknown\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "unknown"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "bd557626a71160a132380b1d59a91cd5edbd80b55cf1ba47acf589fae5c7f6ba"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                null,
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-timed_out",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"timed_out\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"timed_out\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"timed_out\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "78e8e568e1bcd9ba78c272892287d48383c5d27ca735d0f12bab547611498ef4"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "timed_out"
+                },
+                null,
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses-custom",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"custom\",\"run\":{\"run_id\":\"legacy-run\",\"status\":\"custom\",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\"custom\"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "abdf759a8093d6d31a2ff64a5f49aa2dac3b13728c4a00fbb0e5cb519f7ce895"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "statuses- completed ",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\" completed \",\"run\":{\"run_id\":\"legacy-run\",\"status\":\" completed \",\"pending_issue_keys\":[\"+1:02\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"done_inpress_keys\":[\"2\"],\"delivered_article_ids\":[12],\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":3,\"pushed_count\":2,\"folder_synced_count\":1,\"status\":\" completed \"}]},\"delivery_dedupe\":{\"1:12\":\"original-date\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 5,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "completed"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "20351b85633fb1c8709f3730de6032388bef92a2caa5134af4d131fd58a44bad"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "12"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "original-date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "+1:02"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "issue"
+                },
+                {
+                  "text": "1:3"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "3"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "01"
+                },
+                null,
+                null,
+                {
+                  "text": "pending"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                null
+              ],
+              [
+                {
+                  "integer": "4"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "inpress"
+                },
+                {
+                  "text": "2"
+                },
+                null,
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "5"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":1,\"pushed_count\":2,\"selected_count\":3}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "legacy-run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "completed"
+                },
+                null,
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[12],\"done_inpress_keys\":[\"2\"],\"done_issue_keys\":[\"1:3\"],\"pending_inpress_keys\":[\"01\"],\"pending_issue_keys\":[\"+1:02\"],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "sequence-minimal",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "[\"fixture.sqlite\"]"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 0,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "c385a1a3734d686cd3a406a89ebe91971741174d1c25fb060f40c88be60da563"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "sequence-complete",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "[\"fixture.sqlite\",\"completed\",null,[{\"+1:02\":3},{\"01\":2}],[\"run\",\"completed\",[],[],[],[],[],[[\"1\",2,1,null,\"ok\"]]],{\"1:2\":\"date\"}]"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 1,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "completed"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{\"+1:02\":3},\"inpress_article_counts\":{\"01\":2}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "3b91fb150965f4d2f4aeabb2aea135ebed9a0758e3acab20b31537b3ae2b9425"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "2"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "succeeded"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":null,\"pushed_count\":1,\"selected_count\":2}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "run"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "completed"
+                },
+                null,
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[],\"done_inpress_keys\":[],\"done_issue_keys\":[],\"pending_inpress_keys\":[],\"pending_issue_keys\":[],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown-fields",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"extra\":{\"x\":[1,true]}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 0,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "8ace357e9565ff8736aa8478c18540661330a0be63ac5cb0dabaaff3825e34b6"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown-huge-number",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"extra\":1e999}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 0,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "be4e4b0acd5c2b660e5c76e901269b11e8431049796fabd47936f89fd6246a1d"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown-lone-surrogate",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"extra\":\"\\ud800\"}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 0,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "bc75a7dbc975222efaf798ccf40c234b649a2f2ae7d918153ddfe8a0edcd4f89"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate-known",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":\"idle\",\"status\":\"completed\"}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate-map",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"snapshot\":{\"issue_article_counts\":{\"1:2\":1,\"1:2\":2}}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 0,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{\"1:2\":2},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "4042fdec251150495e59aa9ecdc0811fbddcefbaaa258da6bd071f5dce5c9160"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate-map-bad-first",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"snapshot\":{\"issue_article_counts\":{\"1:2\":\"bad\",\"1:2\":2}}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "empty",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": ""
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "null",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "null"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "array-empty",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "[]"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "wrong-name",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"other.sqlite\"}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "signed-zero-count",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"snapshot\":{\"issue_article_counts\":{\"1:2\":-0}}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "float-count",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"snapshot\":{\"issue_article_counts\":{\"1:2\":1.0}}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "huge-count",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":18446744073709551615}]}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 1,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "3a43ce45c11bd58618e82e7941374e5e92655abbed4459f92949e481d300c7d6"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":null,\"pushed_count\":0,\"selected_count\":18446744073709551615}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "r"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[],\"done_inpress_keys\":[],\"done_issue_keys\":[],\"pending_inpress_keys\":[],\"pending_issue_keys\":[],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "overflow-count",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"user_results\":[{\"subscriber_id\":\"1\",\"selected_count\":18446744073709551616}]}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "null-status",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"status\":null}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "null-snapshot",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"snapshot\":null}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "null-delivery_dedupe",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"delivery_dedupe\":null}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-null-status",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"status\":null}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-null-pending_issue_keys",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"pending_issue_keys\":null}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-null-done_issue_keys",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"done_issue_keys\":null}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-null-pending_inpress_keys",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"pending_inpress_keys\":null}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-null-done_inpress_keys",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"done_inpress_keys\":null}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-null-delivered_article_ids",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"delivered_article_ids\":null}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-null-user_results",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"user_results\":null}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "cross-list-conflict",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"pending_issue_keys\":[\"1:2\"],\"done_issue_keys\":[\"1:2\"]}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate-progress",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"pending_issue_keys\":[\"1:2\",\"1:2\"]}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate-subscriber",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"user_results\":[{\"subscriber_id\":\"1\"},{\"subscriber_id\":\"1\"}]}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Delivery storage operation failed"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-user",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"user_results\":[{\"subscriber_id\":\"99\"}]}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 1,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "3160167aad4fff552cc360deb1328b0f90213f1c6c87e6c9510367f534882426"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "subscriber"
+                },
+                {
+                  "text": "99"
+                },
+                {
+                  "integer": "99"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"folder_synced_count\":null,\"pushed_count\":0,\"selected_count\":0}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_runs": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "r"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "legacy"
+                },
+                {
+                  "text": "execute"
+                },
+                null,
+                {
+                  "text": "unknown"
+                },
+                {
+                  "text": "unrecognized"
+                },
+                null,
+                null,
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "{\"delivered_article_ids\":[],\"done_inpress_keys\":[],\"done_issue_keys\":[],\"pending_inpress_keys\":[],\"pending_issue_keys\":[],\"subscriber_count\":1}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                null,
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "negative-article",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"run\":{\"run_id\":\"r\",\"delivered_article_ids\":[-1]}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "bad-key",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"snapshot\":{\"issue_article_counts\":{\"1:0\":1}}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "negative-count",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"snapshot\":{\"inpress_article_counts\":{\"1\":-1}}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "noncanonical-keys",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"snapshot\":{\"issue_article_counts\":{\"+1:02\":1},\"inpress_article_counts\":{\"01\":2}}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 0,
+            "discovered_count": 1,
+            "imported_count": 1,
+            "item_count": 0,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{\"+1:02\":1},\"inpress_article_counts\":{\"01\":2}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "7bf825fc0c68ba178ddb8c6c2205cb4e6ece984b550e8ff4612475d01b4228f4"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "dedupe-canonical-collision",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"delivery_dedupe\":{\"1:02\":\"a\",\"+1:2\":\"b\"}}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Delivery storage operation failed"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "empty-timestamp",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"last_completed_run_at\":\"\"}"
+            }
+          ],
+          "now": 100.25
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy completion timestamp is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "all-files-parse-before-write",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/first.json",
+              "body": "{\"db_name\":\"first.sqlite\"}"
+            },
+            {
+              "path": "data/push_state/second.json",
+              "body": "invalid"
+            },
+            {
+              "path": "data/push_state/ignored.changes.json",
+              "body": "invalid"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state is invalid"
+          },
+          "tables": {
+            "delivery_checkpoints": [],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "cross-workflow-atomic-sql-failure",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\"}"
+            },
+            {
+              "path": "data/folder_push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\",\"delivery_dedupe\":{\"99:1\":\"date\"}}"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "dedupe_count": 1,
+            "discovered_count": 2,
+            "imported_count": 2,
+            "item_count": 0,
+            "skipped_count": 0
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "bd04b8cf9a3103f40c82a030f9060838d4e0e050d694dc0b3d471635f34f0fbf"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ],
+              [
+                {
+                  "integer": "2"
+                },
+                {
+                  "text": "push"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{\"issue_article_counts\":{},\"inpress_article_counts\":{}}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                {
+                  "text": "25d2c8602599e62ecbbe5041f3d69afbd387812efe1edd6883b170e49c4197eb"
+                },
+                {
+                  "text": "fixture.json"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_dedupe": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "push"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "integer": "99"
+                },
+                {
+                  "integer": "1"
+                },
+                null,
+                {
+                  "text": "confirmed"
+                },
+                null,
+                null,
+                {
+                  "text": "date"
+                },
+                {
+                  "integer": "0"
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                },
+                {
+                  "real": 100.25
+                }
+              ]
+            ],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "existing-nonlegacy-checkpoint",
+      "steps": [
+        {
+          "files": [
+            {
+              "path": "data/push_state/fixture.json",
+              "body": "{\"db_name\":\"fixture.sqlite\"}"
+            }
+          ],
+          "now": 100.25,
+          "sql": "INSERT INTO delivery_checkpoints(workflow,db_name,status,snapshot_json,revision,created_at,updated_at) VALUES('notify','fixture.sqlite','idle','{}',0,1,1)"
+        }
+      ],
+      "output": [
+        {
+          "outcome": {
+            "error": "Legacy delivery state changed after import"
+          },
+          "tables": {
+            "delivery_checkpoints": [
+              [
+                {
+                  "integer": "1"
+                },
+                {
+                  "text": "notify"
+                },
+                {
+                  "text": "fixture.sqlite"
+                },
+                {
+                  "text": "idle"
+                },
+                null,
+                {
+                  "text": "{}"
+                },
+                null,
+                {
+                  "integer": "0"
+                },
+                null,
+                null,
+                null,
+                {
+                  "real": 1
+                },
+                {
+                  "real": 1
+                }
+              ]
+            ],
+            "delivery_dedupe": [],
+            "delivery_leases": [],
+            "delivery_run_items": [],
+            "delivery_runs": []
+          }
+        }
+      ]
+    }
+  ]
+}

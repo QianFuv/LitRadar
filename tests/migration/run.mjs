@@ -84,6 +84,12 @@ if (phase === "index") {
   console.log(await runIndex());
   process.exit(0);
 }
+if (phase === "delivery") {
+  assert(!requested.has("--candidate"), "Delivery must execute its own checks");
+  const { runDelivery } = await import("./delivery/run.mjs");
+  console.log(await runDelivery());
+  process.exit(0);
+}
 assert.equal(
   phase,
   "baseline",
