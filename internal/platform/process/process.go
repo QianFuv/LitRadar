@@ -14,12 +14,13 @@ import (
 
 // Config supplies an executable directly without shell expansion or environment inheritance overrides.
 type Config struct {
-	Path         string
-	Args         []string
-	Directory    string
-	Environment  []string
-	OutputLimit  int
-	StreamStdout bool
+	Path          string
+	Args          []string
+	Directory     string
+	Environment   []string
+	OutputLimit   int
+	StreamStdout  bool
+	InheritStderr bool
 }
 
 type retainedOutput struct {
@@ -104,6 +105,9 @@ func startWithHook(ctx context.Context, config Config, hook startHook) (*Child, 
 		return nil, err
 	}
 	command.Stdin, command.Stdout, command.Stderr = inputReader, outputWriter, errorWriter
+	if config.InheritStderr {
+		command.Stderr = os.Stderr
+	}
 	tree, err := prepareTree(command)
 	if err != nil {
 		inputReader.Close()

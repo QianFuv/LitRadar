@@ -78,6 +78,12 @@ if (phase === "sources") {
   console.log(await runSources());
   process.exit(0);
 }
+if (phase === "index") {
+  assert(!requested.has("--candidate"), "Index must execute its own checks");
+  const { runIndex } = await import("./index/run.mjs");
+  console.log(await runIndex());
+  process.exit(0);
+}
 assert.equal(
   phase,
   "baseline",
