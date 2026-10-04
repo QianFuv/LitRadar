@@ -40,6 +40,14 @@ func (client *Client) connect(ctx, requestContext context.Context, network, addr
 	return secured, nil
 }
 
+// DialResolved connects only to the caller's validated addresses, racing address families after 300 ms.
+func DialResolved(ctx context.Context, network, port string, addresses []netip.Addr, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	if len(addresses) == 0 {
+		return nil, &net.DNSError{Err: "no addresses"}
+	}
+	return dialResolved(ctx, network, port, addresses, dial)
+}
+
 func dialResolved(ctx context.Context, network, port string, addresses []netip.Addr, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
 	preferred, fallback := []netip.Addr{}, []netip.Addr{}
 	for _, address := range addresses {

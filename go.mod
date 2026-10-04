@@ -5,6 +5,8 @@ go 1.26.0
 toolchain go1.27.1
 
 require (
+	github.com/PuerkitoBio/goquery v1.13.0
+	github.com/google/jsonschema-go v0.4.3
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/nlnwa/whatwg-url v0.6.2
@@ -15,8 +17,8 @@ require (
 )
 
 require (
+	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/bits-and-blooms/bitset v1.20.0 // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect

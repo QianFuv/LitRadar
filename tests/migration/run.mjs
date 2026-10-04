@@ -37,6 +37,17 @@ assert(
   "Driver proof reuse is limited to auth",
 );
 assert.equal(requested.get("--baseline") ?? BASELINE, BASELINE);
+if (phase === "cfp" || phase === "cfp-live") {
+  assert(!requested.has("--candidate"), "CFP must execute its own checks");
+  if (phase === "cfp") {
+    const { runCfp } = await import("./cfp/run.mjs");
+    console.log(await runCfp());
+  } else {
+    const { runCfpLive } = await import("./cfp/live.mjs");
+    console.log(await runCfpLive());
+  }
+  process.exit(0);
+}
 if (["sdk-integrity", "sqlite-driver-integrity"].includes(phase)) {
   assert(
     !requested.has("--candidate"),
