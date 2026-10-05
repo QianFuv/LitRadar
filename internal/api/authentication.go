@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/auth"
 	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/platform/mcpcompat"
 )
 

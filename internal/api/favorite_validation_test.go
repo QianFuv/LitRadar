@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 )
 
 func TestFavoriteValidationPrecedesBusinessAdmission(t *testing.T) {

@@ -1,13 +1,12 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"path/filepath"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/openapi"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/platform/httpwire"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	"github.com/QianFuv/LitRadar/internal/storage/query"
@@ -81,7 +80,7 @@ func (handlers *indexHandlers) handle(writer http.ResponseWriter, request *http.
 		return
 	}
 	database := values.database()
-	workContext := context.WithoutCancel(request.Context())
+	workContext := request.Context()
 	var work func() (any, error)
 	switch name {
 	case "list_databases":

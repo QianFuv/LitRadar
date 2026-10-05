@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/internal/openapi"
 	"github.com/QianFuv/LitRadar/internal/platform/admission"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/provider"
 	"github.com/QianFuv/LitRadar/internal/sources"
 	storage "github.com/QianFuv/LitRadar/internal/storage/auth"

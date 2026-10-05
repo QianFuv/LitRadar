@@ -11,10 +11,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/domain/auth"
 	domain "github.com/QianFuv/LitRadar/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/internal/openapi"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/platform/httpwire"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	storage "github.com/QianFuv/LitRadar/internal/storage/delivery"

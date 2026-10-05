@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/citation"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	domain "github.com/QianFuv/LitRadar/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/internal/openapi"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	"github.com/QianFuv/LitRadar/internal/storage/favorites"
 )

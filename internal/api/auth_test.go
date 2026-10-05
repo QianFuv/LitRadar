@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/auth"
 	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	storage "github.com/QianFuv/LitRadar/internal/storage/auth"
 	migration "github.com/QianFuv/LitRadar/internal/storage/migrations/auth"
 	"github.com/QianFuv/LitRadar/internal/storage/settings"

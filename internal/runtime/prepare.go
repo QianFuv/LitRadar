@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/QianFuv/LitRadar/internal/api"
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/cfp"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/sources"
 	"github.com/QianFuv/LitRadar/internal/storage/auth"
 	cfpstorage "github.com/QianFuv/LitRadar/internal/storage/cfp"

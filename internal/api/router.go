@@ -9,10 +9,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/auth"
 	"github.com/QianFuv/LitRadar/internal/mcp"
 	"github.com/QianFuv/LitRadar/internal/openapi"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/platform/mcpcompat"
 	"github.com/QianFuv/LitRadar/internal/sources"
 	authstorage "github.com/QianFuv/LitRadar/internal/storage/auth"

@@ -82,6 +82,55 @@ import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
 const SHARED_ARTICLE: Article = createArticlePageScenario().items[0];
+
+/** Verify obsolete filter queries and unmounted lists abort their network requests. */
+async function abortsObsoleteArticleRequests(): Promise<void> {
+  const signals: AbortSignal[] = [];
+  let releaseRequests: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    releaseRequests = resolve;
+  });
+  server.use(
+    http.get('http://localhost/api/articles', async ({ request }) => {
+      signals.push(request.signal);
+      await pending;
+      return HttpResponse.json(
+        createArticlePage([{ ...SHARED_ARTICLE, title: 'Obsolete result' }]),
+      );
+    }),
+  );
+  const user = userEvent.setup();
+  const view = renderWithQuery(
+    <NuqsTestingAdapter searchParams="?abs_rating=4*" hasMemory>
+      <ResultsList />
+      <RatingChangeControl />
+    </NuqsTestingAdapter>,
+  );
+  try {
+    await waitFor(() => expect(signals).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: 'Change rating' }));
+    await waitFor(() => expect(signals).toHaveLength(2));
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    view.unmount();
+    expect(signals[1].aborted).toBe(true);
+    await act(async () => {
+      releaseRequests?.();
+      await pending;
+    });
+    expect(screen.queryByText('Obsolete result')).not.toBeInTheDocument();
+    expect(
+      view.queryClient
+        .getQueryCache()
+        .getAll()
+        .every((query) => query.state.error === null),
+    ).toBe(true);
+  } finally {
+    releaseRequests?.();
+    view.unmount();
+  }
+}
 const FILTER_SUMMARY = (
   <section aria-label="已应用筛选" data-testid="filter-summary">
     已应用
@@ -420,6 +469,7 @@ beforeEach(() => {
 });
 
 describe('results list', () => {
+  test('aborts obsolete filter and unmounted article requests', abortsObsoleteArticleRequests);
   test(
     'keeps ratings on later pages and resets results when a grade changes',
     retainsRatingsAcrossPagesAndResetsTheirCache,

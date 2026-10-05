@@ -3,7 +3,7 @@
  */
 
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vitest';
@@ -184,8 +184,44 @@ async function serializesFavoriteCursor(): Promise<void> {
 }
 
 describe('article query flows', () => {
+  test('forwards article query cancellation to fetch', forwardsArticleCancellation);
   test('serializes favorite cursor pagination', serializesFavoriteCursor);
   test('serializes filters and cursor parameters', serializesArticleQuery);
   test('loads cursor pages through an infinite query', loadsInfinitePages);
   test('preserves partial publication-date precision', preservesPartialDatePrecision);
 });
+
+/** Verify a pending article request rejects with the original abort classification. */
+async function forwardsArticleCancellation(): Promise<void> {
+  let didStart = false;
+  let release: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  server.use(
+    http.get('http://localhost/api/articles', async () => {
+      didStart = true;
+      await pending;
+      return HttpResponse.json({
+        items: [],
+        page: { total: 0, limit: 20, offset: 0, next_cursor: null, has_more: false },
+      });
+    }),
+  );
+  const controller = new AbortController();
+  const result = getArticles(
+    new URLSearchParams(),
+    null,
+    false,
+    'fixture.sqlite',
+    controller.signal,
+  );
+  const rejected = expect(result).rejects.toMatchObject({ name: 'AbortError' });
+  try {
+    await waitFor(() => expect(didStart).toBe(true));
+    controller.abort();
+    await rejected;
+  } finally {
+    release?.();
+  }
+}

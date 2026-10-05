@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/sources/zjlib"
 	storage "github.com/QianFuv/LitRadar/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/internal/storage/secrets"

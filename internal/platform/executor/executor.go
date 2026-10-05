@@ -31,8 +31,8 @@ func (pool *Pool) Close() { pool.gate.Close() }
 func (pool *Pool) Wait() { pool.gate.Wait() }
 
 // Run bounds queue time and converts worker panics into a safe executor failure.
-// Work must own its captured inputs and use its own operation context because it
-// can outlive cancellation of the request waiting for its result.
+// Work must own its captured inputs. Reads may use ctx; admitted writes must
+// choose an operation context that survives cancellation of the waiting caller.
 func Run[Value any](ctx context.Context, pool *Pool, work func() (Value, error)) (Value, error) {
 	return RunWithQueueTimeout(ctx, pool, pool.queueTimeout, work)
 }

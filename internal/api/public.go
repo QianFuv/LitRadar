@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/openapi"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/platform/httpwire"
 	"github.com/QianFuv/LitRadar/internal/scheduler"
 	"github.com/QianFuv/LitRadar/internal/storage/announcements"

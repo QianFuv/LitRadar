@@ -117,8 +117,8 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
       string | null
     >({
       queryKey,
-      queryFn: async ({ pageParam }) => {
-        const page = await getArticles(params, pageParam, false, currentDb);
+      queryFn: async ({ pageParam, signal }) => {
+        const page = await getArticles(params, pageParam, false, currentDb, signal);
         const cachedData =
           queryClient.getQueryData<InfiniteData<ArticlePage, string | null>>(queryKey);
         return validateArticlePageCursor(page, pageParam, cachedData?.pageParams ?? []);

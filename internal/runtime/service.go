@@ -10,7 +10,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/runtime/observability"
 	"github.com/QianFuv/LitRadar/internal/storage/backup"
 )
@@ -127,7 +126,7 @@ func isOnlyCancellation(err error) bool {
 func (prepared *Prepared) runHttp(ctx context.Context) error {
 	instance := fmt.Sprintf("api-%d-%d", os.Getpid(), time.Now().UnixNano())
 	filename := prepared.configuration.Storage.AuthDbPath
-	if err := backup.RecordHeartbeat(ctx, filename, backup.Api, instance, unixTime()); err != nil {
+	if err := prepared.recordHeartbeat(ctx, instance); err != nil {
 		return err
 	}
 	heartbeatContext, cancelHeartbeat := context.WithCancel(observability.WithoutSpans(ctx))
@@ -197,11 +196,22 @@ func redactHttpPanics(next http.Handler) http.Handler {
 }
 
 func (prepared *Prepared) runHeartbeat(ctx context.Context, instance string, interval time.Duration) error {
+	return heartbeatLoop(ctx, interval, func(ctx context.Context) error { return prepared.recordHeartbeat(ctx, instance) })
+}
+
+func (prepared *Prepared) recordHeartbeat(ctx context.Context, instance string) error {
+	operationContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return backup.RecordHeartbeat(operationContext, prepared.configuration.Storage.AuthDbPath, backup.Api, instance, unixTime())
+}
+
+func heartbeatLoop(ctx context.Context, interval time.Duration, record func(context.Context) error) error {
 	for waitDuration(ctx, interval) {
-		_, err := executor.Run(context.Background(), prepared.services.StoragePool, func() (struct{}, error) {
-			return struct{}{}, backup.RecordHeartbeat(context.Background(), prepared.configuration.Storage.AuthDbPath, backup.Api, instance, unixTime())
-		})
+		err := record(ctx)
 		if err != nil {
+			if ctx.Err() != nil && isOnlyCancellation(err) {
+				return nil
+			}
 			return errors.New("API heartbeat persistence failed")
 		}
 	}

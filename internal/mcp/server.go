@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/platform/mcpcompat"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	"github.com/QianFuv/LitRadar/internal/storage/favorites"
@@ -78,7 +78,7 @@ func knownTool(name string) bool {
 
 func (services Services) call(ctx context.Context, request *sdk.CallToolRequest, name string, input *toolInput) (*sdk.CallToolResult, error) {
 	var work func() (any, error)
-	workContext := context.Background()
+	workContext := ctx
 	switch name {
 	case "list_databases":
 		work = func() (any, error) {
@@ -137,6 +137,7 @@ func (services Services) call(ctx context.Context, request *sdk.CallToolRequest,
 			work = func() (any, error) { return services.Favorites.ListFolders(workContext, principal.UserId) }
 			break
 		}
+		workContext = context.WithoutCancel(ctx)
 		folder := *input.integer("folder_id")
 		if folder <= 0 {
 			input.fail("folder_id must be a positive integer")

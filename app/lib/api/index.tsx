@@ -98,6 +98,7 @@ export function getJournalOptions(dbName = readSelectedDatabase()): Promise<Jour
  * @param pageParam - Cursor or offset page parameter.
  * @param includeTotal - Whether to include total on the first page.
  * @param dbName - Database name. Defaults to the selected database.
+ * @param signal - Cancellation signal for an obsolete query.
  * @returns Article page.
  */
 export function getArticles(
@@ -105,6 +106,7 @@ export function getArticles(
   pageParam: string | number | null = null,
   includeTotal = false,
   dbName = readSelectedDatabase(),
+  signal?: AbortSignal,
 ): Promise<ArticlePage> {
   const nextParams = new URLSearchParams(params);
   if (typeof pageParam === 'string' && pageParam.length > 0) {
@@ -120,7 +122,7 @@ export function getArticles(
   nextParams.set('include_total', includeTotal ? '1' : '0');
   return requestJson<ArticlePage>(
     buildDatabaseUrl('/api/articles', dbName, nextParams),
-    undefined,
+    { signal },
     '获取文章失败',
   );
 }

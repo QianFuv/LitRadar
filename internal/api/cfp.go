@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	acquisition "github.com/QianFuv/LitRadar/internal/cfp"
 	"github.com/QianFuv/LitRadar/internal/domain/auth"
 	domain "github.com/QianFuv/LitRadar/internal/domain/cfp"
@@ -19,6 +18,7 @@ import (
 	metadata "github.com/QianFuv/LitRadar/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/internal/index"
 	"github.com/QianFuv/LitRadar/internal/openapi"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	storage "github.com/QianFuv/LitRadar/internal/storage/cfp"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	"github.com/QianFuv/LitRadar/internal/storage/secrets"

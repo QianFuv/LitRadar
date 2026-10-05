@@ -7,10 +7,10 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/auth"
 	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/internal/openapi"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/platform/httpwire"
 	storage "github.com/QianFuv/LitRadar/internal/storage/auth"
 )

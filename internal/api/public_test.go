@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	storageauth "github.com/QianFuv/LitRadar/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	migration "github.com/QianFuv/LitRadar/internal/storage/migrations/auth"

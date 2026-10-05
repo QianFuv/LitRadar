@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/provider"
 	"github.com/QianFuv/LitRadar/internal/sources"
 	storage "github.com/QianFuv/LitRadar/internal/storage/auth"

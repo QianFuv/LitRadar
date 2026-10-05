@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/internal/openapi"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/sources/zjlib"
 	storage "github.com/QianFuv/LitRadar/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/internal/transport"

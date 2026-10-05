@@ -10,12 +10,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	scheduled "github.com/QianFuv/LitRadar/internal/domain/scheduler"
 	"github.com/QianFuv/LitRadar/internal/openapi"
 	"github.com/QianFuv/LitRadar/internal/platform/cryptography"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/storage/announcements"
 	storage "github.com/QianFuv/LitRadar/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/internal/storage/config"

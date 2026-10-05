@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/QianFuv/LitRadar/internal/api"
-	"github.com/QianFuv/LitRadar/internal/api/executor"
 	"github.com/QianFuv/LitRadar/internal/auth"
 	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/internal/mcp"
+	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/platform/mcpcompat"
 	storageauth "github.com/QianFuv/LitRadar/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
