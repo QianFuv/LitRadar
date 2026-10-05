@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"slices"
 	"strconv"
 	"strings"
@@ -100,18 +101,56 @@ func fetchCandidates(ctx context.Context, filename, column string, ids []int64, 
 		return nil, err
 	}
 	defer database.Close()
-	return collect(ctx, database, `SELECT a.article_id,a.journal_id,a.issue_id,a.title,a.abstract_text,a.date,a.open_access,a.in_press,a.doi,j.title FROM articles a JOIN journals j ON j.journal_id=a.journal_id WHERE `+prefix+column+" IN ("+placeholders(len(ids))+") ORDER BY a.date DESC,a.article_id DESC", arguments(ids), func(row scanner) (domain.ArticleCandidate, error) {
-		var id, journal storage.Integer
-		var issue, openAccess, inPress storage.OptionalInteger
-		var title, journalTitle storage.Text
-		var abstract, date, doi storage.OptionalText
-		if err := row.Scan(&id, &journal, &issue, &title, &abstract, &date, &openAccess, &inPress, &doi, &journalTitle); err != nil {
-			return domain.ArticleCandidate{}, err
+	if len(ids) <= 500 {
+		return collect(ctx, database, `SELECT a.article_id,a.journal_id,a.issue_id,a.title,a.abstract_text,a.date,a.open_access,a.in_press,a.doi,j.title FROM articles a JOIN journals j ON j.journal_id=a.journal_id WHERE `+prefix+column+" IN ("+placeholders(len(ids))+") ORDER BY a.date DESC,a.article_id DESC", arguments(ids), candidateFromRow)
+	}
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer connection.Close()
+	return largeCandidateRows(ctx, connection, column, ids, prefix)
+}
+
+func largeCandidateRows(ctx context.Context, connection *sql.Conn, column string, ids []int64, prefix string) ([]domain.ArticleCandidate, error) {
+	if _, err := connection.ExecContext(ctx, "CREATE TEMP TABLE candidate_membership(id INTEGER PRIMARY KEY) WITHOUT ROWID"); err != nil {
+		return nil, err
+	}
+	defer connection.ExecContext(context.Background(), "DROP TABLE temp.candidate_membership")
+	statement, err := connection.PrepareContext(ctx, "INSERT INTO temp.candidate_membership(id) VALUES "+strings.TrimSuffix(strings.Repeat("(?),", 500), ","))
+	if err != nil {
+		return nil, err
+	}
+	defer statement.Close()
+	for len(ids) >= 500 {
+		if _, err := statement.ExecContext(ctx, arguments(ids[:500])...); err != nil {
+			return nil, err
 		}
-		text := ""
-		if abstract.Value != nil {
-			text = *abstract.Value
+		ids = ids[500:]
+	}
+	if len(ids) > 0 {
+		if _, err := connection.ExecContext(ctx, "INSERT INTO temp.candidate_membership(id) VALUES "+strings.TrimSuffix(strings.Repeat("(?),", len(ids)), ","), arguments(ids)...); err != nil {
+			return nil, err
 		}
-		return domain.ArticleCandidate{ArticleId: int64(id), JournalId: int64(journal), IssueId: issue.Value, Title: string(title), Abstract: text, Date: date.Value, JournalTitle: string(journalTitle), Doi: doi.Value, OpenAccess: openAccess.Value != nil && *openAccess.Value != 0, InPress: inPress.Value != nil && *inPress.Value != 0}, nil
-	})
+	}
+	return candidateRows(ctx, connection, column+" IN (SELECT id FROM temp.candidate_membership)", prefix, nil)
+}
+
+func candidateRows(ctx context.Context, database rowQuerier, membership, prefix string, values []any) ([]domain.ArticleCandidate, error) {
+	return collect(ctx, database, `SELECT a.article_id,a.journal_id,a.issue_id,a.title,a.abstract_text,a.date,a.open_access,a.in_press,a.doi,j.title FROM articles a JOIN journals j ON j.journal_id=a.journal_id WHERE `+prefix+membership+" ORDER BY a.date DESC,a.article_id DESC", values, candidateFromRow)
+}
+
+func candidateFromRow(row scanner) (domain.ArticleCandidate, error) {
+	var id, journal storage.Integer
+	var issue, openAccess, inPress storage.OptionalInteger
+	var title, journalTitle storage.Text
+	var abstract, date, doi storage.OptionalText
+	if err := row.Scan(&id, &journal, &issue, &title, &abstract, &date, &openAccess, &inPress, &doi, &journalTitle); err != nil {
+		return domain.ArticleCandidate{}, err
+	}
+	text := ""
+	if abstract.Value != nil {
+		text = *abstract.Value
+	}
+	return domain.ArticleCandidate{ArticleId: int64(id), JournalId: int64(journal), IssueId: issue.Value, Title: string(title), Abstract: text, Date: date.Value, JournalTitle: string(journalTitle), Doi: doi.Value, OpenAccess: openAccess.Value != nil && *openAccess.Value != 0, InPress: inPress.Value != nil && *inPress.Value != 0}, nil
 }

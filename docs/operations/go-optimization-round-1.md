@@ -74,6 +74,30 @@ not prove a compatible query rewrite for divergent projections. Physical-open
 and warm-select timings are diagnostics with different lifetimes, not promised
 production savings.
 
+## Candidate membership correction
+
+All three selectors now accept 32,767 and 65,536 distinct IDs. Above 500 IDs,
+bounded inserts populate a connection-local TEMP table and one SELECT retains
+SQLite's original date/ID ordering, journal join and exact in-press predicate.
+There is no result truncation, persistent schema change or connection pool.
+Executing-query cancellation and insert failures clean membership before the
+same connection is reused; caller identifiers remain unchanged.
+
+The initial rerun showed substantial host timing variation, including unchanged
+lookup code. After retaining the original direct SQL construction for small sets,
+a controlled comparison ran both implementations on the same fixture in one
+process (five samples each):
+
+| IDs | Old median ns/op | New median ns/op | Old/new allocs/op |
+|---|---:|---:|---:|
+| 120 | 5151863 | 4956910 | 3219 / 3218 |
+| 500 | 5833909 | 6242977 | 13430 / 13430 |
+
+The small-set difference stays within the 10% regression threshold. Large-set
+timings varied and do not demonstrate a speedup; this change removes parameter
+overflow while keeping individual SQL statements bounded. Raw initial, controlled
+and final small-case samples are retained in `t6-*.log` and `t6-summary.json`.
+
 ## Deferred work
 
 Persistent query pools need explicit ownership, TEMP cleanup, file-generation and
