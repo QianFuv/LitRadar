@@ -1,5 +1,7 @@
 # 测试系统
 
+Go 迁移的最终镜像交接与回滚入口为 `node tests/migration/run.mjs --phase cutover` 和 `--phase rollback`。它们使用隔离网络、合成凭据及完整复制卷，保留精确镜像与历史程序身份；运行条件、证据位置和恢复边界见[迁移与回滚手册](migration-to-go.md)。历史库级互操作证明与最终镜像证明分别记录，不能互相冒充。
+
 本文档是 LitRadar 测试分层、数据契约、执行命令和诊断策略的唯一完整说明。日常开发先选择能证明行为的最低层；只有跨进程、浏览器或容器装配本身是风险时，才上移到更昂贵的层。
 
 ## 五层模型
@@ -164,7 +166,7 @@ arm64 的执行需原生 arm64 主机或已配置的模拟器。工具发行包�
 | Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                                |
 | Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`     |
 | Container release                                  | workflow artifact `container-release`，含 Compose 解析结果与容器冒烟报告 |
-| Go/frontend/image release checks                         | workflow artifact `supply-chain-results`，本地 `output/security/`        |
+| Go/frontend/image release checks                   | workflow artifact `supply-chain-results`，本地 `output/security/`        |
 | Secret scanning                                    | `supply-chain-results` 与 GitHub code scanning SARIF                     |
 | CodeQL                                             | workflow artifacts `codeql-<language>-sarif` 与 Security 页面            |
 | Immutable Actions                                  | shared security runner 的 pin 检查与 actionlint 日志                     |

@@ -32,6 +32,23 @@ function options(args) {
 
 const requested = options(process.argv.slice(2));
 const phase = requested.get("--phase");
+if (["cutover", "rollback"].includes(phase)) {
+  assert.equal(
+    requested.size,
+    1,
+    "Cutover executes its own final-image checks",
+  );
+  const { runCutover } = await import("./cutover/run.mjs");
+  const result = await runCutover(phase);
+  console.log(
+    JSON.stringify({
+      status: result.status,
+      image: result.image,
+      runId: result.runId,
+    }),
+  );
+  process.exit(0);
+}
 if (phase === "go-format") {
   assert.equal(requested.size, 1, "Formatting accepts only --phase");
   const files = [];

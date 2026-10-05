@@ -98,6 +98,8 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 文档
 
+已有部署切换到 Go 前，请阅读[迁移与回滚手册](docs/migration-to-go.md)，保留完整状态卷、匹配密钥和旧版本程序。
+
 从[文档中心](docs/README.md)选择阅读路径：
 
 - 开发：[系统架构](docs/architecture.md)、[开发指南](docs/guides/development.md)、[测试系统](docs/testing.md)。

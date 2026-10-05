@@ -103,10 +103,13 @@ func TestProcessFixture(t *testing.T) {
 		}
 		os.Exit(0)
 	}
-	if mode == "owner" || mode == "owner-late-guard" {
+	if mode == "owner" || mode == "owner-late-guard" || mode == "owner-stopped-guard" {
 		workerMode := "parent"
 		if mode == "owner-late-guard" {
 			workerMode = "late-guard"
+		}
+		if mode == "owner-stopped-guard" {
+			workerMode = "stopped-guard"
 		}
 		config := fixtureConfig(workerMode, directory)
 		config.Environment = append(config.Environment, ParentEnvironment+"="+strconv.Itoa(os.Getpid()))
@@ -123,6 +126,13 @@ func TestProcessFixture(t *testing.T) {
 		if err != nil {
 			os.Exit(4)
 		}
+		if mode == "stopped-guard" {
+			started := time.Now()
+			stop()
+			if time.Since(started) >= 500*time.Millisecond {
+				os.Exit(5)
+			}
+		}
 		defer stop()
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -134,7 +144,7 @@ func TestProcessFixture(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, mode+".json"), data, 0600); err != nil {
 		panic(err)
 	}
-	if mode == "parent" || mode == "leader-exit" || mode == "term-parent" || mode == "detached-pipes" || mode == "late-guard" {
+	if mode == "parent" || mode == "leader-exit" || mode == "term-parent" || mode == "detached-pipes" || mode == "late-guard" || mode == "stopped-guard" {
 		grandMode := "grandchild"
 		if mode == "term-parent" {
 			grandMode = "ignore-term"

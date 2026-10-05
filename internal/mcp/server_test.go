@@ -273,6 +273,7 @@ func TestAuthenticatedToolsUseFrozenContractsAndCurrentIdentity(t *testing.T) {
 	}
 	toolNames := map[string]string{"areas": "list_areas", "ratings": "list_journal_ratings", "years": "list_years", "options": "list_journal_options", "journal": "get_journal", "article": "get_article", "journals": "list_journals", "articles": "search_articles"}
 	checked := 0
+	filtered := map[string]int{}
 	for _, vector := range vectors.Cases {
 		name, supported := toolNames[vector.Operation]
 		if !supported || vector.Error != nil {
@@ -286,10 +287,33 @@ func TestAuthenticatedToolsUseFrozenContractsAndCurrentIdentity(t *testing.T) {
 			arguments["article_id"] = strconv.FormatInt(vector.Id, 10)
 		}
 		if vector.Params != nil {
-			if len(vector.Params) != 1 || vector.Params["limit"] != float64(50) {
+			ratings, hasRatings := vector.Params["ratings"].(map[string]any)
+			if vector.Operation == "articles" && hasRatings {
+				for key, value := range vector.Params {
+					if key != "ratings" {
+						arguments[key] = value
+					}
+				}
+				if identifiers, ok := arguments["journal_id"].([]any); ok {
+					values := make([]string, len(identifiers))
+					for index, identifier := range identifiers {
+						values[index] = strconv.FormatInt(int64(identifier.(float64)), 10)
+					}
+					arguments["journal_id"] = values
+				}
+			} else if len(vector.Params) > 2 || vector.Params["limit"] != float64(50) {
+				continue
+			} else {
+				arguments["limit"] = 50
+			}
+			if hasRatings {
+				for name, values := range ratings {
+					arguments[name] = values
+				}
+				filtered[vector.Operation]++
+			} else if len(vector.Params) != 1 {
 				continue
 			}
-			arguments["limit"] = 50
 		}
 		result := client.call(adminToken.Token, name, arguments)
 		if result["isError"] == true {
@@ -309,6 +333,9 @@ func TestAuthenticatedToolsUseFrozenContractsAndCurrentIdentity(t *testing.T) {
 	}
 	if checked < 8 {
 		t.Fatalf("metadata coverage only %d", checked)
+	}
+	if filtered["articles"] != 5 || filtered["journals"] != 3 {
+		t.Fatalf("filtered membership coverage changed: %v", filtered)
 	}
 	databases := client.call(adminToken.Token, "list_databases", map[string]any{})
 	if toolText(t, databases) != "[\n  \"metadata.sqlite\"\n]" {
