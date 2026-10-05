@@ -382,14 +382,29 @@ func TestLitRadarActivityRefreshesSessionWithoutRefreshingOnMalformedResume(t *t
 	}
 }
 
+func newLitRadarBackpressureServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	server := httptest.NewUnstartedServer(handler)
+	server.Config.ConnState = func(connection net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			if err := connection.(*net.TCPConn).SetWriteBuffer(1024); err != nil {
+				t.Errorf("limit server send buffer: %v", err)
+				connection.Close()
+			}
+		}
+	}
+	server.Start()
+	t.Cleanup(server.Close)
+	return server
+}
+
 func TestLitRadarEventStopsWritingToNonreadingTcpPeer(t *testing.T) {
 	started, done := make(chan struct{}), make(chan error, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newLitRadarBackpressureServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		close(started)
 		done <- writeLitRadarEvent(writer, []byte(strings.Repeat("x", 16<<20)), "1", "")
 	}))
-	defer server.Close()
 	connection, err := net.Dial("tcp", server.Listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -444,7 +459,8 @@ func TestLitRadarHealthyStreamOutlivesPerWriteDeadline(t *testing.T) {
 
 func TestLitRadarNonreadingSessionReleasesItsHttpLease(t *testing.T) {
 	fixture := newLitRadarFixture(t, true, nil)
-	connection, err := net.Dial("tcp", fixture.listener.Listener.Addr().String())
+	server := newLitRadarBackpressureServer(t, fixture.handler)
+	connection, err := net.Dial("tcp", server.Listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
