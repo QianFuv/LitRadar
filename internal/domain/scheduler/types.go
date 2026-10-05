@@ -7,7 +7,7 @@ import (
 	"errors"
 	"strings"
 
-	auth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/platform/cron"
 )
 
@@ -45,14 +45,14 @@ func (job Job) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, errors.New("invalid scheduled job kind")
 	}
-	encoded, err := auth.EncodeJson(value)
+	encoded, err := jsonvalue.EncodeJson(value)
 	return []byte(encoded), err
 }
 
 // UnmarshalJSON rejects unknown fields, duplicate fields, null booleans and lossy strings.
 func (job *Job) UnmarshalJSON(data []byte) error {
 	invalid := errors.New("invalid scheduled job JSON")
-	if !auth.ValidJson(string(data)) {
+	if !jsonvalue.ValidJson(string(data)) {
 		return invalid
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -171,7 +171,7 @@ type State string
 // UnmarshalJSON accepts declared enum values while keeping permissive legacy mapping storage-only.
 func (state *State) UnmarshalJSON(data []byte) error {
 	invalid := errors.New("invalid scheduler state JSON")
-	if !auth.ValidJson(string(data)) {
+	if !jsonvalue.ValidJson(string(data)) {
 		return invalid
 	}
 	data = bytes.TrimSpace(data)

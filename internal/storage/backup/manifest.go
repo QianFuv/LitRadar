@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	auth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
@@ -42,7 +42,7 @@ func fields(raw []byte, names []string, minimum int) (map[string]json.RawMessage
 				return nil, ErrManifestJson
 			}
 			rawKey := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(raw[start:decoder.InputOffset()]), []byte(",")))
-			if !auth.ValidJson(string(rawKey)) {
+			if !jsonvalue.ValidJson(string(rawKey)) {
 				return nil, ErrManifestJson
 			}
 			name, ok := key.(string)
@@ -68,7 +68,7 @@ func fields(raw []byte, names []string, minimum int) (map[string]json.RawMessage
 }
 func required[T any](values map[string]json.RawMessage, key string, target *T) error {
 	raw := values[key]
-	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || !auth.ValidJson("["+string(raw)+"]") || json.Unmarshal(raw, target) != nil {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || !jsonvalue.ValidJson("["+string(raw)+"]") || json.Unmarshal(raw, target) != nil {
 		return ErrManifestJson
 	}
 	return nil
@@ -138,7 +138,7 @@ func parsePath(value string) (string, error) {
 	return filepath.FromSlash(value), nil
 }
 func componentKind(raw []byte) (string, error) {
-	if !auth.ValidJson(string(raw)) {
+	if !jsonvalue.ValidJson(string(raw)) {
 		return "", ErrManifestJson
 	}
 	var name string

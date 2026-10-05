@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
 	"golang.org/x/text/encoding/unicode"
 )
@@ -61,7 +61,7 @@ func LossyUtf8(body []byte) string {
 // ParseJson retains exact integer tokens and rejects serde-incompatible lossy input.
 func ParseJson(body []byte) (any, error) {
 	masked, isValid := maskJsonNumbers(body)
-	if !isValid || !jsoncompat.ValidJson(string(masked)) {
+	if !isValid || !jsonvalue.ValidJson(string(masked)) {
 		return nil, ErrInvalidJson
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))

@@ -8,7 +8,7 @@ import (
 	"errors"
 	"strings"
 
-	auth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
@@ -18,7 +18,7 @@ var ErrInvalidAuthors = errors.New("invalid article author JSON")
 // DecodeAuthorNames accepts either complete canonical author objects or a complete legacy string array.
 func DecodeAuthorNames(payload string) ([]string, error) {
 	invalid := ErrInvalidAuthors
-	if !auth.ValidJson(payload) || !strings.HasPrefix(strings.TrimSpace(payload), "[") {
+	if !jsonvalue.ValidJson(payload) || !strings.HasPrefix(strings.TrimSpace(payload), "[") {
 		return nil, invalid
 	}
 	var authors []json.RawMessage

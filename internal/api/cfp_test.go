@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/cfp"
 	"github.com/QianFuv/LitRadar/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/internal/index"
@@ -64,7 +64,7 @@ func TestCfpMatchesOriginalResponsesAndReadsOriginalCursor(t *testing.T) {
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	encoded, err := auth.EncodeJson(catalog)
+	encoded, err := jsonvalue.EncodeJson(catalog)
 	if err != nil || encoded != corpus.Catalog.Body {
 		t.Fatal("original catalog differs", encoded, corpus.Catalog.Body, err)
 	}
@@ -90,7 +90,7 @@ func TestCfpMatchesOriginalResponsesAndReadsOriginalCursor(t *testing.T) {
 		t.Fatal("cursor plaintext/revision differs", ours, original, err)
 	}
 	page.Page.NextCursor = first.Page.NextCursor
-	encoded, err = auth.EncodeJson(page)
+	encoded, err = jsonvalue.EncodeJson(page)
 	if err != nil || encoded != corpus.First.Body {
 		t.Fatal("original first page differs", encoded, corpus.First.Body, err)
 	}
@@ -98,7 +98,7 @@ func TestCfpMatchesOriginalResponsesAndReadsOriginalCursor(t *testing.T) {
 	if failure != nil {
 		t.Fatal("original cursor rejected", failure)
 	}
-	encoded, err = auth.EncodeJson(page)
+	encoded, err = jsonvalue.EncodeJson(page)
 	if err != nil || encoded != corpus.Next.Body {
 		t.Fatal("original continuation differs", encoded, corpus.Next.Body, err)
 	}
@@ -256,7 +256,7 @@ func TestCfpCursorBindsRevisionFilterAndTimeButNotLimit(t *testing.T) {
 	}
 	for _, position := range []uint64{2, 3, ^uint64(0)} {
 		cursor.Position = position
-		plaintext, _ := auth.EncodeJson(cursor)
+		plaintext, _ := jsonvalue.EncodeJson(cursor)
 		ciphertext, _ := handlers.codec.Encrypt(plaintext, cfpCursorContext)
 		page, failure := cfpPage(handlers.codec, "fixture.sqlite", entries[0], snapshot, false, &ciphertext, 1, now)
 		if position == 2 {
@@ -289,7 +289,7 @@ func TestCfpSummaryKeepsSourceTiesLeaseClockAndStateOrder(t *testing.T) {
 	if _, failure := cfpFindSnapshot(entry, []storage.JournalSnapshot{snapshot, snapshot}); failure == nil {
 		t.Fatal("ambiguous source snapshot accepted")
 	}
-	encoded, err := auth.EncodeJson(cfpStateCounts{domain.Uncertain: 1, domain.Closed: 2, domain.Open: 3})
+	encoded, err := jsonvalue.EncodeJson(cfpStateCounts{domain.Uncertain: 1, domain.Closed: 2, domain.Open: 3})
 	if err != nil || encoded != `{"open":3,"closed":2,"uncertain":1}` {
 		t.Fatal(encoded, err)
 	}

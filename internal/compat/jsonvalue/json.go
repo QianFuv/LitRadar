@@ -1,4 +1,5 @@
-package auth
+// Package jsonvalue preserves persisted and wire JSON compatibility.
+package jsonvalue
 
 import (
 	"bytes"

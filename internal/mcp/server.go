@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/internal/platform/executor"
@@ -210,7 +210,7 @@ func encodeToolPayload(payload any) (string, error) {
 		}
 		payload = favoriteWire{value, encoded}
 	}
-	encoded, err := domain.EncodeJson(payload)
+	encoded, err := jsonvalue.EncodeJson(payload)
 	var pretty bytes.Buffer
 	if err == nil {
 		err = json.Indent(&pretty, []byte(encoded), "", "  ")

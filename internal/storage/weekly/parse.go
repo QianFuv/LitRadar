@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	auth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 )
 
@@ -56,7 +56,7 @@ func ParseManifest(data []byte) (*Manifest, error) {
 			}
 			rawKey := bytes.TrimSpace(data[start:decoder.InputOffset()])
 			rawKey = bytes.TrimSpace(bytes.TrimPrefix(rawKey, []byte(",")))
-			if !auth.ValidJson(string(rawKey)) {
+			if !jsonvalue.ValidJson(string(rawKey)) {
 				return nil, ErrManifestJson
 			}
 			var value json.RawMessage
@@ -76,7 +76,7 @@ func ParseManifest(data []byte) (*Manifest, error) {
 	}
 	optional := make([]*string, 3)
 	for _, value := range fields {
-		if !auth.ValidJson("[" + string(value) + "]") {
+		if !jsonvalue.ValidJson("[" + string(value) + "]") {
 			return nil, ErrManifestJson
 		}
 	}

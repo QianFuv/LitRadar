@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/internal/storage/secrets"
 )
@@ -75,7 +75,7 @@ func (sessions *CnkiSessions) row(ctx context.Context, user identity.Id) (*cnkiR
 }
 
 func decodeSession(raw string) (any, error) {
-	if !domain.ValidJson(raw) {
+	if !jsonvalue.ValidJson(raw) {
 		return nil, errors.New("invalid CNKI session JSON")
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
@@ -141,7 +141,7 @@ func (sessions *CnkiSessions) prepare(user identity.Id, data json.RawMessage, st
 	if err != nil {
 		return cnkiRow{}, "", nil, err
 	}
-	plaintext, err := domain.EncodeJson(value)
+	plaintext, err := jsonvalue.EncodeJson(value)
 	if err != nil {
 		return cnkiRow{}, "", nil, err
 	}

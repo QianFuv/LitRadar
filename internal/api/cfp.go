@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 
 	acquisition "github.com/QianFuv/LitRadar/internal/cfp"
-	"github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/cfp"
 	"github.com/QianFuv/LitRadar/internal/domain/sources"
 	metadata "github.com/QianFuv/LitRadar/internal/domain/storage"
@@ -45,7 +45,7 @@ func (counts cfpStateCounts) MarshalJSON() ([]byte, error) {
 			if result.Len() > 1 {
 				result.WriteByte(',')
 			}
-			encoded, err := auth.EncodeJson(count)
+			encoded, err := jsonvalue.EncodeJson(count)
 			if err != nil {
 				return nil, err
 			}
@@ -362,7 +362,7 @@ func cfpRevision(entry sources.JournalCatalogEntry, snapshot *storage.JournalSna
 	if entry.TitleAliases == nil {
 		entry.TitleAliases = []string{}
 	}
-	encoded, err := auth.EncodeJson([2]any{revisionEntry(entry), revisions})
+	encoded, err := jsonvalue.EncodeJson([2]any{revisionEntry(entry), revisions})
 	if err != nil {
 		return "", err
 	}
@@ -422,7 +422,7 @@ func cfpPage(codec *secrets.Codec, database string, entry sources.JournalCatalog
 	var nextCursor *string
 	if hasMore {
 		cursor.Position = next
-		encoded, err := auth.EncodeJson(cursor)
+		encoded, err := jsonvalue.EncodeJson(cursor)
 		if err != nil {
 			return nil, internalError()
 		}

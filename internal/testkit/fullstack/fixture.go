@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/QianFuv/LitRadar/internal/auth"
-	authdomain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	cfpdomain "github.com/QianFuv/LitRadar/internal/domain/cfp"
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/internal/storage/announcements"
@@ -67,7 +67,7 @@ func Run(ctx context.Context, values []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := authdomain.EncodeJson(report)
+	encoded, err := jsonvalue.EncodeJson(report)
 	if err != nil {
 		return err
 	}
@@ -235,7 +235,7 @@ func seedCfp(ctx context.Context, storage config.Config, catalog domain.JournalC
 	}
 	source := cfpdomain.Source{CatalogIds: []string{catalog.CatalogId}, JournalTitle: catalog.Title, Title: "Initial original CFP", Scope: "Original research on reproducible evidence synthesis.", Requirements: "Original manuscripts are welcome.", TypeText: "Special Issue", DateText: "Submission deadline: 30 November 2099", SourceUrl: cfpUrl, CheckedOn: "2026-09-15"}
 	seed := cfpdomain.Seed{FormatVersion: 1, Sources: []cfpdomain.Source{source}, EmptyJournals: []cfpdomain.EmptyJournal{}, ExpectedJournals: pointer(uint64(1)), ExpectedNotices: pointer(uint64(1))}
-	encoded, err := authdomain.EncodeJson(seed)
+	encoded, err := jsonvalue.EncodeJson(seed)
 	if err != nil {
 		return err
 	}

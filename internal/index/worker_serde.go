@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
 )
 
@@ -19,7 +19,7 @@ func decodeWorkerStruct(body []byte, target any, defaultTail int) error {
 }
 
 func decodeWorkerFields(body []byte, target any, defaultTail int, shouldIgnoreUnknown bool) error {
-	if !jsoncompat.ValidJson(string(body)) {
+	if !jsonvalue.ValidJson(string(body)) {
 		return errWorkerJson
 	}
 	body = bytes.TrimSpace(body)
@@ -158,7 +158,7 @@ func (value *WorkerFailure) UnmarshalJSON(body []byte) error {
 }
 
 func decodeWorkerEnum(body []byte, variants []string) (string, error) {
-	if !jsoncompat.ValidJson(string(body)) {
+	if !jsonvalue.ValidJson(string(body)) {
 		return "", errWorkerJson
 	}
 	body = bytes.TrimSpace(body)
@@ -206,7 +206,7 @@ func (value *WorkerOperation) UnmarshalJSON(body []byte) error {
 }
 
 func workerVariant(body []byte) (string, []byte, error) {
-	if !jsoncompat.ValidJson(string(body)) {
+	if !jsonvalue.ValidJson(string(body)) {
 		return "", nil, errWorkerJson
 	}
 	body = bytes.TrimSpace(body)

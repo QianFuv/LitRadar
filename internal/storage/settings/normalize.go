@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 // Normalize validates a managed setting and returns its persisted canonical representation.
@@ -54,7 +54,7 @@ func Normalize(field, value string) (canonical string, err error) {
 		if err != nil {
 			return "", err
 		}
-		return domain.EncodeJson(policy)
+		return jsonvalue.EncodeJson(policy)
 	case "AuditRetentionDays":
 		return normalizeBoundedInteger(value, 3650, "Security audit retention days must be between 1 and 3650")
 	case "DeliveryWorkerConcurrency":

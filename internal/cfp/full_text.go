@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/cfp"
 	storage "github.com/QianFuv/LitRadar/internal/storage/cfp"
 	whatwg "github.com/nlnwa/whatwg-url/url"
@@ -160,7 +160,7 @@ func (cache *captureCache) resume(path, sourceKey string) error {
 	if err != nil {
 		return &storage.InvalidError{Message: fmt.Sprintf("Could not read the saved capture: %v", err)}
 	}
-	if !jsoncompat.ValidJson(string(data)) {
+	if !jsonvalue.ValidJson(string(data)) {
 		return &storage.PayloadError{Cause: fmt.Errorf("invalid saved capture JSON")}
 	}
 	var saved map[string]json.RawMessage
@@ -284,7 +284,7 @@ func RefreshFullTextSource(ctx context.Context, repository *storage.Repository, 
 		}
 	}
 	documents := cache.evidence()
-	capture, err := jsoncompat.EncodeJson(documents)
+	capture, err := jsonvalue.EncodeJson(documents)
 	if err != nil {
 		return FullTextResult{}, &storage.PayloadError{Cause: err}
 	}
@@ -312,7 +312,7 @@ func RefreshFullTextSource(ctx context.Context, repository *storage.Repository, 
 		}
 	}
 	if capturePath != "" {
-		evidence, err := jsoncompat.EncodeJson(map[string]any{"result": result, "sources": sources, "documents": documents, "browserAttempts": sortedMapKeys(cache.browserAttempts)})
+		evidence, err := jsonvalue.EncodeJson(map[string]any{"result": result, "sources": sources, "documents": documents, "browserAttempts": sortedMapKeys(cache.browserAttempts)})
 		if err != nil {
 			return FullTextResult{}, &storage.PayloadError{Cause: err}
 		}

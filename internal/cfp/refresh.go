@@ -9,7 +9,7 @@ import (
 	"time"
 
 	assets "github.com/QianFuv/LitRadar/assets/cfp"
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/cfp"
 	storage "github.com/QianFuv/LitRadar/internal/storage/cfp"
 )
@@ -101,7 +101,7 @@ func RefreshSource(ctx context.Context, repository *storage.Repository, config S
 	for _, document := range acquired.Documents {
 		documents = append(documents, map[string]string{"url": document.FinalUrl, "format": document.Format, "text": document.Text})
 	}
-	capture, err := jsoncompat.EncodeJson(documents)
+	capture, err := jsonvalue.EncodeJson(documents)
 	if err != nil {
 		return RefreshResult{}, &storage.PayloadError{Cause: err}
 	}

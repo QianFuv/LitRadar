@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 func manifestTempPath(path string) string {
@@ -152,7 +152,7 @@ func PruneContentChangeHistory(directory string, cutoff int64) (uint64, error) {
 		if err != nil {
 			return removed, err
 		}
-		if !jsoncompat.ValidJson(string(body)) {
+		if !jsonvalue.ValidJson(string(body)) {
 			return removed, errors.New("invalid change history JSON")
 		}
 		var document map[string]json.RawMessage

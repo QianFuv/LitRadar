@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 var errJsonShape = errors.New("invalid runtime JSON shape")
@@ -16,7 +16,7 @@ var errJsonShape = errors.New("invalid runtime JSON shape")
 // readObject validates every typed value before applying map duplicate-key semantics.
 // Struct callers additionally reject unknown, missing and duplicate members.
 func readObject(raw string, fields []string, consume func(string, json.RawMessage) error) error {
-	if !domain.ValidJson(raw) {
+	if !jsonvalue.ValidJson(raw) {
 		return errJsonShape
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
@@ -126,7 +126,7 @@ func normalizeProxyPolicy(raw string) (string, error) {
 			return "", invalid
 		}
 	}
-	return domain.EncodeJson(result)
+	return jsonvalue.EncodeJson(result)
 }
 
 func normalizeRoutes(raw string) (string, error) {
@@ -152,7 +152,7 @@ func normalizeRoutes(raw string) (string, error) {
 		}
 		result[catalog] = provider
 	}
-	return domain.EncodeJson(result)
+	return jsonvalue.EncodeJson(result)
 }
 
 // ProviderOrders preserves ordered fallbacks and deterministic catalog overrides.
@@ -205,7 +205,7 @@ func normalizeOrders(field, raw string) (string, error) {
 			return "", err
 		}
 	}
-	return domain.EncodeJson(result)
+	return jsonvalue.EncodeJson(result)
 }
 
 // TokenBucketPolicy is the exact integer policy used by authentication admission.

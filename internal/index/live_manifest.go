@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	storage "github.com/QianFuv/LitRadar/internal/storage/index"
 )
 
@@ -55,7 +55,7 @@ func shouldPublishManifest(config LiveConfig, input storage.CatalogInput, outcom
 		return false, err
 	}
 	var manifest map[string]json.RawMessage
-	if !jsoncompat.ValidJson(string(body)) {
+	if !jsonvalue.ValidJson(string(body)) {
 		return false, invalidWorker("existing change manifest is not valid LitRadar JSON")
 	}
 	if json.Unmarshal(body, &manifest) != nil {

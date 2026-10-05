@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	auth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/internal/storage/secrets"
 	"github.com/QianFuv/LitRadar/internal/storage/settings"
@@ -118,7 +118,7 @@ func encodeNotificationStrings(values []string) (string, error) {
 	if values == nil {
 		values = []string{}
 	}
-	encoded, err := auth.EncodeJson(values)
+	encoded, err := jsonvalue.EncodeJson(values)
 	return string(encoded), err
 }
 

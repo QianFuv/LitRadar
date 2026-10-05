@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	domainauth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/delivery"
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/internal/recommend"
@@ -209,7 +209,7 @@ func runOutcome(config RunConfig, id int64, status string, candidates []int64, s
 	return RunOutcome{config.DbName, config.Workflow, config.Mode, status, id, candidates, subscribers}
 }
 func resultJson(value any) (string, error) {
-	data, err := domainauth.EncodeJson(value)
+	data, err := jsonvalue.EncodeJson(value)
 	if err != nil {
 		return "", errors.New("Delivery result serialization failed")
 	}

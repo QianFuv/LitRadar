@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/QianFuv/LitRadar/internal/auth"
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	authstorage "github.com/QianFuv/LitRadar/internal/storage/auth"
 	"github.com/QianFuv/LitRadar/internal/storage/backup"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
@@ -31,7 +31,7 @@ var adminUsage = map[string]any{"usage": []string{
 }}
 
 func writeResult(output io.Writer, result any) error {
-	encoded, err := domain.EncodeJson(result)
+	encoded, err := jsonvalue.EncodeJson(result)
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func writeResult(output io.Writer, result any) error {
 }
 
 func usageError(value any) error {
-	encoded, err := domain.EncodeJson(value)
+	encoded, err := jsonvalue.EncodeJson(value)
 	if err != nil {
 		return err
 	}

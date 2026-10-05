@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 // ErrorEnvelope is the stable public error object, including an explicit retry flag.
@@ -18,7 +18,7 @@ type ErrorEnvelope struct {
 
 // JSON encodes before sending headers so serialization failure cannot emit partial success.
 func JSON(writer http.ResponseWriter, status int, value any) error {
-	encoded, err := domain.EncodeJson(value)
+	encoded, err := jsonvalue.EncodeJson(value)
 	if err != nil {
 		return err
 	}

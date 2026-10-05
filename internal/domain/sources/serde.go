@@ -7,13 +7,13 @@ import (
 	"reflect"
 	"strings"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 var errContractJson = errors.New("invalid canonical provider contract JSON")
 
 func decodeContractStruct(data []byte, target any) error {
-	if !jsoncompat.ValidJson(string(data)) {
+	if !jsonvalue.ValidJson(string(data)) {
 		return errContractJson
 	}
 	value := reflect.ValueOf(target).Elem()
@@ -228,7 +228,7 @@ func (value ProviderBatch) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON rejects synchronization modes outside the frozen enum.
 func (value *IndexSyncMode) UnmarshalJSON(data []byte) error {
 	var decoded string
-	if !jsoncompat.ValidJson(string(data)) {
+	if !jsonvalue.ValidJson(string(data)) {
 		return errContractJson
 	}
 	data = bytes.TrimSpace(data)
@@ -260,7 +260,7 @@ func (value *IndexSyncMode) UnmarshalJSON(data []byte) error {
 
 // UnmarshalJSON enforces variant-specific fields and required continuation checkpoints.
 func (value *ProviderProgress) UnmarshalJSON(data []byte) error {
-	if !jsoncompat.ValidJson(string(data)) {
+	if !jsonvalue.ValidJson(string(data)) {
 		return errContractJson
 	}
 	data = bytes.TrimSpace(data)

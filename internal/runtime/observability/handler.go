@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	apidomain "github.com/QianFuv/LitRadar/internal/domain/api"
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/internal/runtime/logfilter"
 	"github.com/QianFuv/LitRadar/internal/storage/settings"
 )
@@ -115,7 +115,7 @@ func (guard *Guard) reportDropped() {
 		if guard.format == "compact" {
 			_, _ = fmt.Fprintf(guard.writer, "WARN litradar logging.events_dropped component=logging dropped_count=%d\n", dropped)
 		} else {
-			encoded, _ := domain.EncodeJson(map[string]any{"level": "WARN", "target": "litradar", "event": "logging.events_dropped", "component": "logging", "dropped_count": dropped})
+			encoded, _ := jsonvalue.EncodeJson(map[string]any{"level": "WARN", "target": "litradar", "event": "logging.events_dropped", "component": "logging", "dropped_count": dropped})
 			_, _ = io.WriteString(guard.writer, encoded+"\n")
 		}
 	}
@@ -285,7 +285,7 @@ func (output *handler) Handle(ctx context.Context, record slog.Record) error {
 			payload["spans"] = spans
 		}
 	}
-	encoded, err := domain.EncodeJson(payload)
+	encoded, err := jsonvalue.EncodeJson(payload)
 	if err != nil {
 		return err
 	}

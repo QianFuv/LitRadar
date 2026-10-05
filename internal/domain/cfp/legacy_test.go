@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 // TestReviewedLegacyNotices compares every normalized field and state against the existing Rust fixture.
@@ -46,7 +46,7 @@ func TestReviewedLegacyNotices(t *testing.T) {
 			if notice == nil {
 				t.Fatalf("rejected %+v", source)
 			}
-			encoded, err := jsoncompat.EncodeJson(notice)
+			encoded, err := jsonvalue.EncodeJson(notice)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -54,7 +54,7 @@ func TestReviewedLegacyNotices(t *testing.T) {
 			if err = json.Unmarshal([]byte(encoded), &canonical); err != nil {
 				t.Fatal(err)
 			}
-			encoded, err = jsoncompat.EncodeJson(canonical)
+			encoded, err = jsonvalue.EncodeJson(canonical)
 			if err != nil {
 				t.Fatal(err)
 			}

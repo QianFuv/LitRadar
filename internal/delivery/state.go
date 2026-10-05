@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"time"
 
-	auth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/recommend"
 	store "github.com/QianFuv/LitRadar/internal/storage/delivery"
 )
@@ -50,7 +50,7 @@ func (run *durableRun) finalizeWithCheckpoint(ctx context.Context, repository *s
 	if snapshot.InpressArticleCounts == nil {
 		snapshot.InpressArticleCounts = map[string]int64{}
 	}
-	encoded, err := auth.EncodeJson(snapshot)
+	encoded, err := jsonvalue.EncodeJson(snapshot)
 	if err != nil {
 		return errors.New("Delivery checkpoint serialization failed")
 	}

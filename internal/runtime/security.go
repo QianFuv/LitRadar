@@ -15,7 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	domainauth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 const developmentCsp = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
@@ -270,7 +270,7 @@ func asciiEqualFold(first, second []byte) bool {
 }
 
 func cspFields(data []byte, names []string) ([]json.RawMessage, error) {
-	if !domainauth.ValidJson(string(data)) {
+	if !jsonvalue.ValidJson(string(data)) {
 		return nil, errors.New("invalid manifest JSON")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))

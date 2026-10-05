@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/platform/process"
 	whatwg "github.com/nlnwa/whatwg-url/url"
 )
@@ -140,7 +140,7 @@ func decodeObscura(config SourceConfig, data []byte) (Document, error) {
 	if len(data) > MaxPageBytes {
 		return Document{}, ErrTooLarge
 	}
-	if !jsoncompat.ValidJson(string(data)) {
+	if !jsonvalue.ValidJson(string(data)) {
 		return Document{}, ErrHelper
 	}
 	var fields []string

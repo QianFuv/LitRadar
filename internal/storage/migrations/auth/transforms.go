@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 type providerOrders struct {
@@ -19,7 +19,7 @@ type providerOrders struct {
 	Catalogs map[string][]string `json:"catalogs"`
 }
 
-func encodeJson(value any) (string, error) { return domain.EncodeJson(value) }
+func encodeJson(value any) (string, error) { return jsonvalue.EncodeJson(value) }
 
 func stringList(raw json.RawMessage) ([]string, error) {
 	if !validJson(string(raw)) {

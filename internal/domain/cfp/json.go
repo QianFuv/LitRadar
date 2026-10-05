@@ -8,7 +8,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 var errJson = errors.New("invalid CFP payload JSON")
@@ -111,7 +111,7 @@ func decodeValue(raw []byte, value reflect.Value) error {
 		}
 		return nil
 	}
-	if value.Kind() != reflect.Struct && !jsoncompat.ValidJson(string(raw)) {
+	if value.Kind() != reflect.Struct && !jsonvalue.ValidJson(string(raw)) {
 		return errJson
 	}
 	if json.Unmarshal(raw, value.Addr().Interface()) != nil {
@@ -129,12 +129,12 @@ func encodeStruct(value any) ([]byte, error) {
 			field.Set(reflect.MakeSlice(field.Type(), 0, 0))
 		}
 	}
-	encoded, err := jsoncompat.EncodeJson(copy.Interface())
+	encoded, err := jsonvalue.EncodeJson(copy.Interface())
 	return []byte(encoded), err
 }
 
 func decodeEnum(data []byte, allowed []string) (string, error) {
-	if !jsoncompat.ValidJson(string(data)) {
+	if !jsonvalue.ValidJson(string(data)) {
 		return "", errJson
 	}
 	data = bytes.TrimSpace(data)

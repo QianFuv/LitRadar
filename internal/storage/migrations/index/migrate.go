@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	auth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	"github.com/QianFuv/LitRadar/internal/storage/indexschema"
 	"github.com/QianFuv/LitRadar/internal/storage/search"
@@ -305,7 +305,7 @@ func versionFive(ctx context.Context, connection *sql.Conn) error {
 		if err := register("catalog_id", owner, owner); err != nil {
 			return err
 		}
-		if !auth.ValidJson(string(journal.payload)) || !strings.HasPrefix(strings.TrimSpace(string(journal.payload)), "[") {
+		if !jsonvalue.ValidJson(string(journal.payload)) || !strings.HasPrefix(strings.TrimSpace(string(journal.payload)), "[") {
 			return ErrIdentityState
 		}
 		var raw []json.RawMessage

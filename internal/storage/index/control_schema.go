@@ -5,7 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"io"
 
 	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
@@ -117,7 +117,7 @@ func migrateLegacyAnchors(ctx context.Context, connection *sql.Conn) error {
 }
 
 func isLegacyComplete(value string) bool {
-	if !jsoncompat.ValidJson(value) {
+	if !jsonvalue.ValidJson(value) {
 		return false
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(value))

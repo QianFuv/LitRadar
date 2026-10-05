@@ -5,18 +5,18 @@ import (
 	"database/sql"
 	"errors"
 
-	jsoncompat "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/cfp"
 	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
 func insertNotices(ctx context.Context, connection *sql.Conn, key, sourceKey string, notices []preparedNotice) error {
 	for order, pair := range notices {
-		source, err := jsoncompat.EncodeJson(pair.source)
+		source, err := jsonvalue.EncodeJson(pair.source)
 		if err != nil {
 			return err
 		}
-		notice, err := jsoncompat.EncodeJson(pair.notice)
+		notice, err := jsonvalue.EncodeJson(pair.notice)
 		if err != nil {
 			return err
 		}
@@ -79,7 +79,7 @@ func (repository *Repository) ImportPrepared(ctx context.Context, seedId string,
 			for _, pair := range journal.notices {
 				originals = append(originals, pair.source)
 			}
-			capture, err := jsoncompat.EncodeJson(originals)
+			capture, err := jsonvalue.EncodeJson(originals)
 			if err != nil {
 				return err
 			}

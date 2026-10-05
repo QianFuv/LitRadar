@@ -14,8 +14,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/delivery"
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/internal/runtime"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	store "github.com/QianFuv/LitRadar/internal/storage/delivery"
@@ -209,7 +209,7 @@ func deliveryTargets(configuration config.Config, indexPath, database, changes *
 		if err != nil {
 			return nil, err
 		}
-		if !domain.ValidJson(string(data)) {
+		if !jsonvalue.ValidJson(string(data)) {
 			return nil, errors.New("invalid change manifest JSON")
 		}
 		var payload map[string]json.RawMessage

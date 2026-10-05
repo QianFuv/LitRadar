@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/openapi"
 	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/sources/zjlib"
@@ -138,7 +138,7 @@ func (handlers *cnkiHandlers) handle(writer http.ResponseWriter, request *http.R
 			if err != nil {
 				return loginResult{}, cnkiFailure(502, "cnki_login_start_failed", "login", "CNKI login start failed")
 			}
-			state, err := domain.EncodeJson(client.StateData())
+			state, err := jsonvalue.EncodeJson(client.StateData())
 			return loginResult{qr, json.RawMessage(state)}, err
 		})
 		if failure != nil {
@@ -199,7 +199,7 @@ func (handlers *cnkiHandlers) handle(writer http.ResponseWriter, request *http.R
 		if _, err = client.WarmUpFulltextSession(ctx); err != nil {
 			return nil, cnkiFailure(502, "cnki_warmup_failed", "warmup", "CNKI full-text session warm-up failed")
 		}
-		encoded, err := domain.EncodeJson(client.StateData())
+		encoded, err := jsonvalue.EncodeJson(client.StateData())
 		return json.RawMessage(encoded), err
 	})
 	if failure != nil {

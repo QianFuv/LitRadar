@@ -14,7 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	auth "github.com/QianFuv/LitRadar/internal/domain/auth"
+	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 )
 
 const manifestFilename = "bundle-manifest.json"
@@ -89,7 +89,7 @@ func DiscoverPackagedDirectory() (string, error) {
 
 func object(raw []byte, fields ...string) (map[string]json.RawMessage, error) {
 	invalid := errors.New("invalid metadata bundle manifest")
-	if !auth.ValidJson(string(raw)) {
+	if !jsonvalue.ValidJson(string(raw)) {
 		return nil, invalid
 	}
 	if bytes.TrimSpace(raw)[0] == '[' {
