@@ -1,4 +1,8 @@
-/** Run the same uncached Go release checks on Linux and Windows. */
+/**
+ * Run the same uncached Go release checks on Linux and Windows.
+ * Root suites allow 20 minutes per package for durable large-collection tests;
+ * their 25-minute command budget also covers compilation and package scheduling.
+ */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -27,7 +31,16 @@ const checks = [
   [
     "regular",
     "go",
-    ["test", "-count=1", "-json", "-mod=readonly", "-tags", tags, "./..."],
+    [
+      "test",
+      "-count=1",
+      "-timeout=20m",
+      "-json",
+      "-mod=readonly",
+      "-tags",
+      tags,
+      "./...",
+    ],
   ],
   [
     "race",
@@ -36,6 +49,7 @@ const checks = [
       "test",
       "-count=1",
       "-race",
+      "-timeout=20m",
       "-json",
       "-mod=readonly",
       "-tags",
@@ -107,7 +121,7 @@ for (const [id, executable, argumentsList] of checks) {
   const result = spawnSync(executable, argumentsList, {
     env: environment,
     windowsHide: true,
-    timeout: 900000,
+    timeout: id === "regular" || id === "race" ? 1500000 : 900000,
     stdio: ["ignore", descriptor, descriptor],
   });
   fs.closeSync(descriptor);
