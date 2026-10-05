@@ -1,5 +1,9 @@
 /** Execute explicit migration proof phases; missing phase implementations fail closed. */
 import assert from "node:assert/strict";
+import {
+  verifyFrozenEvidence,
+  verifyHistoricalInput,
+} from "./frozen-evidence.mjs";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -32,6 +36,23 @@ function options(args) {
 
 const requested = options(process.argv.slice(2));
 const phase = requested.get("--phase");
+if (phase === "retirement") {
+  assert.equal(
+    requested.size,
+    1,
+    "Retirement executes its own clean-context checks",
+  );
+  const { runRetirement } = await import("./retirement.mjs");
+  const result = await runRetirement();
+  console.log(
+    JSON.stringify({
+      status: result.status,
+      root: result.root,
+      images: result.images,
+    }),
+  );
+  process.exit(0);
+}
 if (["cutover", "rollback"].includes(phase)) {
   assert.equal(
     requested.size,
@@ -267,13 +288,8 @@ for (const check of evidence.checks) {
 }
 assert.equal(evidence.exception.id, "A3");
 assert.equal(evidence.exception.files.length, 14);
-for (const file of evidence.exception.files) {
-  assert.equal(
-    digest(await fs.readFile(path.join(WORKSPACE_ROOT, file.path))),
-    file.sha256,
-    `Baseline formatting exception no longer applies: ${file.path}`,
-  );
-}
+await verifyFrozenEvidence();
+for (const file of evidence.exception.files) await verifyHistoricalInput(file);
 const controls = spawnSync(
   process.execPath,
   [

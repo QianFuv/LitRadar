@@ -256,8 +256,8 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 修改内置实现后，在仓库根目录运行以下检查；应通过相关测试且无 Clippy 警告：
 
 ```bash
-cargo test -p litradar-domain -p litradar-provider -p litradar-sources -p litradar-index
-cargo clippy -p litradar-provider -p litradar-sources -p litradar-index --all-targets --all-features -- -D warnings
+go test -count=1 -tags sqlite_fts5,sqlite_dbstat ./internal/domain/... ./internal/provider/... ./internal/sources/... ./internal/index/...
+go vet -tags sqlite_fts5,sqlite_dbstat ./internal/provider/... ./internal/sources/... ./internal/index/...
 ```
 
 ## 更换索引 Provider

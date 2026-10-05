@@ -156,7 +156,7 @@ HTTP 会话路径可能仍使用历史 `/api/cnki/*` 前缀，但 runtime Provid
 
 Share 页面返回的 `domainUrl`、`portalContextPath`，CNKI 结果页返回的 absolute detail/download URL，以及每个自动重定向 Location 都会在发送前重新验证。自动重定向不得跨 family，并保留最多十跳的上限；因此上游响应不能把表单签名、Cookie 或下载请求转发到其他 origin。
 
-reqwest 错误在转换为业务错误前移除完整 URL。需要诊断的响应地址会移除全部 query 与 fragment，避免 `enc`、用户标识、文章信息或 Cookie 内容进入日志/API。
+HTTP 传输错误在转换为业务错误前移除完整 URL。需要诊断的响应地址会移除全部 query 与 fragment，避免 `enc`、用户标识、文章信息或 Cookie 内容进入日志/API。
 
 ## 重试和可观测性
 

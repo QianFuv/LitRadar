@@ -94,11 +94,11 @@ CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attemp
 ### PushPlus
 
 ```bash
-cargo run --bin litradar -- notify \
+go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar notify \
   --secret-key-file secrets/litradar.key \
   --dry-run
 
-cargo run --bin litradar -- notify \
+go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar notify \
   --secret-key-file secrets/litradar.key \
   --db utd24.sqlite \
   --changes-file data/push_state/utd24.changes.json \
@@ -110,11 +110,11 @@ cargo run --bin litradar -- notify \
 ### 追踪文件夹
 
 ```bash
-cargo run --bin litradar -- push \
+go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar push \
   --secret-key-file secrets/litradar.key \
   --dry-run
 
-cargo run --bin litradar -- push \
+go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar push \
   --secret-key-file secrets/litradar.key \
   --db utd24.sqlite \
   --changes-file data/push_state/utd24.changes.json \

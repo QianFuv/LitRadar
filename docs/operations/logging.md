@@ -4,7 +4,7 @@
 
 ## 输出边界
 
-LitRadar 只有一个进程级 tracing subscriber：
+LitRadar 只有一个进程级 Go slog 日志处理器：
 
 - 服务端事件写入 `stderr`，默认每行一个 JSON 对象；CLI 的业务结果继续独占 `stdout`。
 - Docker 不在应用文件系统中写日志。Compose 收集容器 `stderr`，应用根文件系统仍为只读。
@@ -27,7 +27,7 @@ litradar openapi > openapi.json 2> litradar.log
 | ------------- | --------------------------------------------------------------------- |
 | `timestamp`   | UTC RFC 3339 时间                                                     |
 | `level`       | `TRACE`、`DEBUG`、`INFO`、`WARN` 或 `ERROR`                           |
-| `target`      | 产生事件的 Rust target                                                |
+| `target`      | 产生事件的兼容 target                                                |
 | `event`       | 稳定的点分事件名，例如 `http.request.completed`                       |
 | `component`   | 稳定组件名，例如 `runtime`、`http`、`index`、`scheduler`、`storage`   |
 | `outcome`     | 适用时的有限结果枚举，例如 `success`、`failure`、`client_error`       |

@@ -7,7 +7,7 @@ LitRadar 只发布一个可执行文件 `litradar`。本文档说明其公共子
 以下调用形式是语法示意，将 `<subcommand>` 和 `<arguments>` 替换为后文的命令与参数。在仓库根目录使用本地源码：
 
 ```bash
-cargo run --bin litradar -- <subcommand> <arguments>
+go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar <subcommand> <arguments>
 ```
 
 已安装二进制：
@@ -219,7 +219,7 @@ litradar index --secret-key-file PATH
 
 国内 CNKI 的 `processes` 并行期刊，`workers` 限制每刊固定详情线程池；定位、期次、列表页、检查点和 SQLite 提交保持有序。在途详情量受工作线程数、实际期刊执行器数、聚合容量和当前页文章数共同限制。
 
-索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。每个 worker 都在独立的 Unix process group 或 Windows Job Object 中启动，父进程错误、协议失败和清理路径会终止并等待整个进程树。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。手动投递 dispatcher 还会启动私有 `delivery-run --run-id ... --owner-id ...`，child 只从认证 SQLite 和部署密钥加载权威配置。私有命令必须同时携带内部 parent marker，不出现在 `--help`，也不是用户可配置的 CLI。同步公共 CLI 命令不创建 Tokio 工作线程池，只有 `serve` 使用固定为 2 个工作线程的小型异步运行时。
+索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。每个 worker 都在独立的 Unix process group 或 Windows Job Object 中启动，父进程错误、协议失败和清理路径会终止并等待整个进程树。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。手动投递 dispatcher 还会启动私有 `delivery-run --run-id ... --owner-id ...`，child 只从认证 SQLite 和部署密钥加载权威配置。私有命令必须同时携带内部 parent marker，不出现在 `--help`，也不是用户可配置的 CLI。所有命令使用 Go 运行时；服务端存储、上游和密码派生任务由独立的有界执行器限制容量。
 
 命令结果保留 `status`、`message`、`csvs` 和数值 `effective_concurrency`。每个 CSV 的 `concurrency` 包含解析后的 `configured_workers/processes/capacity`、`aggregate_limit`、`effective_workers`、`executor_count`、`child_process_count`、`inline_executor_count` 和 `effective_aggregate_capacity`。单个内联执行器计为 1 个执行器、0 个子进程；只有非空待处理分区计入工作组，已完成、跳过或仅恢复清单的目录活动容量为 0。顶层配置与实际摘要分别选择容量最大的目录元组，不会把不同目录的最大值相乘。空选择容量为 0，未指定的 `requested_workers/processes` 保留为 `null`。这些字段表示任务容量，不是实测 HTTP 重叠数。`source_attempt_count` 统计已提交的规范 Provider 页面，包括恢复时保存的计数，不是 HTTP 请求或重试次数；`written_article_count` 仍是固定大小计数。
 

@@ -31,7 +31,7 @@ litradar serve  (one long-running process)
                                                                -> *.changes.json -> litradar notify / litradar push
 ```
 
-系统没有 Python 运行时路径。Node.js 只在镜像构建阶段把 `app/` 导出为静态资源；运行镜像不包含 Node.js。Rust workspace 只发布 `litradar` 一个可执行文件，所有能力都通过它的公共子命令进入。
+系统没有 Python 运行时路径。Node.js 只在镜像构建阶段把 `app/` 导出为静态资源；运行镜像不包含 Node.js。Go 应用只发布 `litradar` 一个可执行文件，所有能力都通过它的公共子命令进入。
 
 ## 运行进程
 
@@ -52,7 +52,7 @@ SIGINT 或 SIGTERM 会同时通知 HTTP 与调度组件。若计划任务子进�
 
 ## 日志流
 
-唯一二进制在分发子命令前从 `data/auth.sqlite.runtime_settings` 只读加载 `log_format` 和 `log_filter`，再安装一个进程级 tracing subscriber。数据库或表尚不存在时使用安全默认值；已存在但非法的值会让进程在业务工作前失败。所有 crate 只产生结构化事件，不各自初始化 subscriber 或写应用日志文件：
+唯一二进制在分发子命令前从 `data/auth.sqlite.runtime_settings` 只读加载 `log_format` 和 `log_filter`，再安装一个进程级 Go slog 日志处理器。数据库或表尚不存在时使用安全默认值；已存在但非法的值会让进程在业务工作前失败。所有包 只产生结构化事件，不各自初始化日志处理器 或写应用日志文件：
 
 ```text
 process / request / workflow spans
@@ -73,23 +73,22 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 
 队列饱和时业务线程不等待；正常关闭在排空后直接报告精确丢失行数。浏览器静态客户端没有日志采集端点，只在本地控制台记录不含错误消息和内容的白名单对象。完整字段、配置、保留、隐私和事故流程以[日志运维](operations/logging.md)为准。
 
-## Rust workspace
+## Go packages
 
-| Crate                | 责任                                                        |
-| -------------------- | ----------------------------------------------------------- |
-| `litradar`           | 唯一二进制、公共子命令分发、服务组合、信号和组件生命周期    |
-| `litradar-api`       | 可准备和注入关闭信号的 Axum 库、OpenAPI、MCP 与请求异步边界 |
-| `litradar-auth`      | 密码、会话、访问令牌和认证服务                              |
-| `litradar-cli`       | `admin`、索引、投递和手动调度子命令的库级参数适配与编排     |
-| `litradar-domain`    | 规范目录、期刊/期次/文章、在线访问和响应类型                |
-| `litradar-provider`  | 可组合 Provider traits、注册表、错误分类和 conformance 检查 |
-| `litradar-index`     | 稳定身份、内容 schema、控制状态编排、统一写入和变更清单     |
-| `litradar-recommend` | 候选排序、AI 配置解析、消息内容和投递状态                   |
-| `litradar-sources`   | 把 Crossref/OpenAlex/S2/CNKI/ZJLib 适配到规范 Provider 能力 |
-| `litradar-storage`   | SQLite 迁移、查询、业务存储、密文和备份恢复                 |
-| `litradar-worker`    | 内嵌调度、认领、子进程取消、AI/PushPlus 传输和投递编排      |
+| Package | Responsibility |
+| --- | --- |
+| `cmd/litradar` | Application executable and public command dispatch |
+| `internal/runtime` | Service composition, signals, scheduling and process supervision |
+| `internal/api`, `internal/mcp`, `internal/openapi` | HTTP/MCP contracts, authentication boundaries and schema |
+| `internal/auth`, `internal/cli` | Identity services and command orchestration |
+| `internal/domain`, `internal/provider` | Domain values, provider interfaces and capability registry |
+| `internal/index`, `internal/sources` | Index execution and upstream adapters |
+| `internal/recommend`, `internal/delivery`, `internal/scheduler` | Recommendations, durable delivery and scheduled work |
+| `internal/cfp`, `internal/storage`, `internal/platform` | CFP collection, persistence and platform facilities |
 
-依赖方向以领域结构和存储接口为中心；只有 `crates/litradar` 拥有进程入口，其余 crate 都是库。
+The application has one public executable. Test fixture commands live separately
+under `cmd/litradar-fixture`. Native helpers remain explicit runtime dependencies;
+first-party Rust source is no longer part of application builds or normal tests.
 
 ## 持久化边界
 
@@ -237,7 +236,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 ### 检索
 
-1. 浏览器加载 Rust 提供的静态前端，并通过 `app/lib/api/` 同源调用 `/api/*`。
+1. 浏览器加载 Go 提供的静态前端，并通过 `app/lib/api/` 同源调用 `/api/*`。
 2. API 根据可选 `db` 选择一个 `data/index/*.sqlite`。
 3. 列表与过滤使用 `article_listing`，详情从规范关系表读取。
 4. `q` 默认先转义为一个 FTS5 字面短语再使用 `article_search MATCH`；只有显式 `search_mode=advanced` 才解释 FTS5 运算符，非法表达式作为可纠正的 400 输入错误返回。
@@ -284,9 +283,9 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 ## 同步工作与异步服务
 
-SQLite、密码派生、阻塞 HTTP 和文件系统操作通过有界执行器进入 Tokio 阻塞线程池。API 分别限制存储、上游请求和密码派生任务，避免慢网络请求或密码计算占满存储请求的执行容量；当前容量分别为 8、4、2，排队超时为 30 秒。定义见[API 共享状态](../crates/litradar-api/src/state.rs)。内嵌调度通过 `spawn_blocking` 运行，按需 CLI 命令使用同步作业模型。
+SQLite、密码派生、HTTP 和文件系统操作通过有界 Go 执行器运行。API 分别限制存储、上游请求和密码派生任务，容量分别为 8、4、2，排队超时为 30 秒；取消和关闭通过 context 与显式生命周期管理。定义见 [API 实现](../internal/api/)。内嵌调度与手动投递由运行时监督器管理。
 
-手动周报通过 SQLite 持久任务排队，API 返回 `202` 后由独立的[投递监督器](../crates/litradar/src/manual_delivery.rs)启动子进程。同一用户重复启动会复用当前排队或活动任务；不同用户可以排队并在实例容量内并行。并发池由 `delivery_worker_concurrency` 控制，租约、版本比较和去重仍由存储层保证。状态、取消和不确定结果的确认规则见[API 参考](reference/api.md#收藏与追踪)，配置见[运行配置](reference/configuration.md#用户通知配置)。
+手动周报通过 SQLite 持久任务排队，API 返回 `202` 后由独立的[投递监督器](../internal/runtime/manual_delivery.go)启动子进程。同一用户重复启动会复用当前排队或活动任务；不同用户可以排队并在实例容量内并行。并发池由 `delivery_worker_concurrency` 控制，租约、版本比较和去重仍由存储层保证。状态、取消和不确定结果的确认规则见[API 参考](reference/api.md#收藏与追踪)，配置见[运行配置](reference/configuration.md#用户通知配置)。
 
 <a id="scheduled-execution-across-service-ticks"></a>
 

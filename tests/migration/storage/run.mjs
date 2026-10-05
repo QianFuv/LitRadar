@@ -1,5 +1,9 @@
 /** Execute independent storage observations and current cross-platform native/race checks. */
 import assert from "node:assert/strict";
+import {
+  verifyFrozenEvidence,
+  verifyHistoricalInput,
+} from "../frozen-evidence.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BASELINE, WORKSPACE_ROOT, digest, loadOracle } from "../oracle.mjs";
@@ -21,9 +25,6 @@ const INPUTS = [
   "third_party/go-sqlite3-patches",
   "tests/data/migration",
   "tests/migration",
-  "crates",
-  "Cargo.toml",
-  "Cargo.lock",
 ];
 const LINUX_GO = "/home/qianfuv/.cache/litradar-migration/go1.27.1/go/bin/go";
 const LINUX_ENVIRONMENT = [
@@ -59,6 +60,7 @@ async function identities(paths) {
 
 /** Reject stale original-source or expected-fixture identities before testing a candidate. */
 export async function validateStorageInputs() {
+  await verifyFrozenEvidence();
   const oracle = await loadOracle(BASELINE);
   const counts = {};
   for (const name of [
@@ -83,20 +85,12 @@ export async function validateStorageInputs() {
     assert.equal(document.baseline, BASELINE);
     assert(document.cases.length > 0, `Empty corpus: ${name}`);
     counts[name] = document.cases.length;
-    for (const source of document.sources.filter(
-      (item) => !item.path.startsWith("target/"),
-    ))
-      assert.equal(
-        digest(await fs.readFile(path.join(WORKSPACE_ROOT, source.path))),
-        source.sha256,
-        `Changed ${name} oracle input: ${source.path}`,
-      );
+    for (const source of document.sources) await verifyHistoricalInput(source);
     for (const source of document.visibility_only_sources ?? [])
-      assert.equal(
-        digest(await fs.readFile(path.join(WORKSPACE_ROOT, source.path))),
-        source.original_sha256,
-        `Changed original weekly source: ${source.path}`,
-      );
+      await verifyHistoricalInput({
+        path: source.path,
+        sha256: source.original_sha256,
+      });
     if (name === "index")
       for (const fixture of document.cases)
         assert.equal(
@@ -194,60 +188,6 @@ export async function runStorage() {
   try {
     report.inputs = await validateStorageInputs();
     report.dependency = await verifyDependency("go-sqlite3");
-    const inventory = await record("storage-original-inventory", "git", [
-      "-c",
-      "core.quotePath=false",
-      "ls-tree",
-      "-r",
-      "--name-only",
-      "9f305d9b71dc3ea6a739a6598aa762a4533203f0",
-      "--",
-      "crates",
-      "Cargo.toml",
-      "Cargo.lock",
-    ]);
-    const expectedOriginalPaths = (
-      await fs.readFile(path.join(WORKSPACE_ROOT, inventory.log), "utf8")
-    )
-      .trim()
-      .split(/\r?\n/)
-      .sort();
-    const actualOriginalPaths = sourceIdentity
-      .filter(
-        (item) =>
-          item.path.startsWith("crates/") ||
-          item.path === "Cargo.toml" ||
-          item.path === "Cargo.lock",
-      )
-      .map((item) => item.path)
-      .sort();
-    assert.deepEqual(
-      actualOriginalPaths,
-      expectedOriginalPaths,
-      "Original Rust tree contains missing or added files, including ignored/untracked inputs",
-    );
-    await record("storage-original-source", "git", [
-      "diff",
-      "--exit-code",
-      BASELINE,
-      "--",
-      "crates",
-      "Cargo.toml",
-      "Cargo.lock",
-      ":(exclude)crates/litradar/examples/migration_fixture.rs",
-    ]);
-    await record("storage-original-fixture", "git", [
-      "diff",
-      "--exit-code",
-      "9f305d9b71dc3ea6a739a6598aa762a4533203f0",
-      "--",
-      "crates/litradar/examples/migration_fixture.rs",
-    ]);
-    await record("storage-build-oracles", process.execPath, [
-      "tests/migration/storage/build-oracles.mjs",
-      "backup",
-      "database",
-    ]);
     report.oracles = [];
     for (const name of ["backup", "database"]) {
       const filename = `output/migration/execution/${name}-oracle.exe`;

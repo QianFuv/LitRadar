@@ -36,3 +36,17 @@ If publication is interrupted, retain the `.preparing-*` directory and error log
 JSON comparison preserves types, omission versus null, array order and identity; unsafe integer JSON must be compared as original bytes or decimal strings. Only registered scenario-specific wall-clock fields can be normalized, with an explicit reason. Durable scheduler creation times, slots, IDs, attempts and checkpoints are never covered by those exclusions. Persisted manifests and wire bytes use exact byte comparison. Ordered transition/effect traces reject replay, altered unknown states and duplicate side effects.
 
 Random-nonce envelopes are frozen decryption/interoperability vectors; candidate encryption must preserve the algorithm, encoding and AAD contract, not reproduce a random nonce. The auth-v19 fixture reconstructs the actual historical scheduler table and preserves an unknown row plus an elevated AUTOINCREMENT sequence. It does not replace later all-status, empty-table, repeated-upgrade and conflict tests.
+
+## Retired source boundary
+
+The current Go checkout does not rebuild historical Rust observers. Phase runners
+verify `tests/data/migration/frozen-evidence.json` before consuming retained
+corpora, compiler records and binaries. Historical source and linked-library
+hashes remain provenance, not dependencies on the current filesystem. Missing or
+changed retained artifacts fail closed. The secret handoff still runs freshly
+generated Go envelopes through the preserved original executable.
+
+The explicit `build-*`, `export-*` and baseline preparation programs below are
+historical reproduction tools. Run them only in a separate checkout of the
+recorded baseline with its matching compiler and dependencies. They are not
+normal application build/test paths and must not overwrite the accepted archive.

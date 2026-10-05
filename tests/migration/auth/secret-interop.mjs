@@ -1,5 +1,6 @@
-/** Build independent original Rust verification and pass current synthetic Go envelopes through stdin. */
+/** Pass current synthetic Go envelopes through the independently frozen original Rust observer. */
 import assert from "node:assert/strict";
+import { verifyFrozenEvidence } from "../frozen-evidence.mjs";
 import fs from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { WORKSPACE_ROOT, digest } from "../oracle.mjs";
@@ -27,46 +28,8 @@ function execute(executable, args, input) {
   return result.stdout;
 }
 
-const build = execute("cargo", [
-  "build",
-  "-p",
-  "litradar-storage",
-  "--locked",
-  "--message-format=json",
-]);
-const artifacts = build
-  .split(/\r?\n/)
-  .filter((line) => line.startsWith("{"))
-  .map((line) => JSON.parse(line));
-/** Select the actual non-test library from Cargo's verified build rather than guessing an artifact hash. */
-function library(name) {
-  const candidates = artifacts
-    .filter(
-      (item) =>
-        item.reason === "compiler-artifact" &&
-        item.target.name === name &&
-        !item.profile.test,
-    )
-    .flatMap((item) => item.filenames)
-    .filter((name) => name.endsWith(".rlib"));
-  assert.equal(candidates.length, 1, `Ambiguous Rust artifact: ${name}`);
-  return candidates[0];
-}
-const storage = library("litradar_storage"),
-  serde = library("serde_json");
+await verifyFrozenEvidence();
 const destination = "output/migration/execution/secret-oracle.exe";
-execute("rustc", [
-  "--edition=2024",
-  "tests/migration/auth/secret-oracle.rs",
-  "-L",
-  "dependency=target/debug/deps",
-  "--extern",
-  `litradar_storage=${storage}`,
-  "--extern",
-  `serde_json=${serde}`,
-  "-o",
-  destination,
-]);
 const candidate = execute("go", [
   "run",
   "-mod=readonly",
@@ -78,12 +41,9 @@ const result = JSON.parse(execute(destination, [], candidate));
 assert.equal(result.verified, 28);
 const sources = [];
 for (const filename of [
-  "Cargo.lock",
-  "crates/litradar-storage/src/secrets.rs",
   "tests/migration/auth/secret-oracle.rs",
   "tests/migration/auth/secret-candidate/main.go",
-  storage,
-  serde,
+  destination,
 ])
   sources.push({ path: filename, sha256: digest(await fs.readFile(filename)) });
 await fs.writeFile(

@@ -13,16 +13,16 @@
 
 CI 与前端构建阶段使用：
 
-| 工具              | 版本                              |
-| ----------------- | --------------------------------- |
-| Node.js           | 24                                |
-| pnpm              | 10.32.0                           |
-| Next.js           | 16.3.3                            |
-| React / React DOM | 19.2.3                            |
-| Motion for React  | 13.1.1                            |
-| TypeScript        | 5.x                               |
-| Tailwind CSS      | 4.x                               |
-| Rust              | 1.96；只在生成 OpenAPI 契约时需要 |
+| 工具              | 版本                                  |
+| ----------------- | ------------------------------------- |
+| Node.js           | 24                                    |
+| pnpm              | 10.32.0                               |
+| Next.js           | 16.3.6                                |
+| React / React DOM | 19.2.3                                |
+| Motion for React  | 13.1.1                                |
+| TypeScript        | 5.x                                   |
+| Tailwind CSS      | 4.x                                   |
+| Go                | 1.27.1；生成 OpenAPI 和启动后端时需要 |
 
 依赖由 `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Query、nuqs、next-themes、Radix UI、Motion、class-variance-authority 和 lucide-react。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡仍由共享 CSS motion token 驱动。
 
@@ -32,10 +32,10 @@ CI 与前端构建阶段使用：
 
 需要分开启动时，使用以下命令。
 
-先在仓库根目录启动只监听 loopback 8001 的统一 Rust 应用；HTTP 和内嵌调度共享该进程：
+先在仓库根目录启动只监听 loopback 8001 的统一 Go 应用；HTTP 和内嵌调度共享该进程：
 
 ```bash
-cargo run --bin litradar -- serve \
+go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar serve \
   --development \
   --host 127.0.0.1 \
   --port 8001 \
@@ -50,7 +50,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-默认浏览器入口统一为 `http://localhost:8000`。Next.js 开发服务器保留 HMR，并把 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` 代理到固定内部 Rust 地址 `http://127.0.0.1:8001`；浏览器不需要访问第二个端口。
+默认浏览器入口统一为 `http://localhost:8000`。Next.js 开发服务器保留 HMR，并把 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` 代理到固定内部 Go 地址 `http://127.0.0.1:8001`；浏览器不需要访问第二个端口。
 
 - Web：`http://localhost:8000/`
 - REST API：`http://localhost:8000/api`
@@ -58,7 +58,7 @@ pnpm dev
 - OpenAPI JSON：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
-发布构建执行 `pnpm build` 并写入 `out/`。导出的静态文件和后端路由由同一个 Rust 监听器提供，不使用 Next.js rewrite，也没有 `pnpm start`/`next start` 路径。
+发布构建执行 `pnpm build` 并写入 `out/`。导出的静态文件和后端路由由同一个 Go 监听器提供，不使用 Next.js rewrite，也没有 `pnpm start`/`next start` 路径。
 
 ## 前端网络配置
 
@@ -66,7 +66,7 @@ pnpm dev
 
 - 浏览器始终从 `window.location.origin` 生成同源 API URL。
 - `pnpm dev` 只使用 `next.config.ts` 中固定的 `http://127.0.0.1:8001` 开发代理。
-- `pnpm build` 始终静态导出，由 Rust 与 API 共用一个 Origin。
+- `pnpm build` 始终静态导出，由 Go 与 API 共用一个 Origin。
 - 浏览器跨源直连和构建时 API 地址覆盖不再受支持；需要不同公网入口时，应在同一 Origin 前部署反向代理。
 
 ## 路由
@@ -130,7 +130,7 @@ app/
     ├── mocks/             按领域组织的 typed scenario handlers
     └── e2e/
         ├── local-fixtures.spec.tsx  使用显式 API 场景的 UI 冒烟测试
-        └── full-stack/              真实 Rust/SQLite 关键旅程
+        └── full-stack/              真实 Go/SQLite 关键旅程
 ```
 
 新增业务逻辑时优先放入对应 feature 目录；可复用的视觉原语放入 `components/ui/`。新应用 TypeScript 源文件默认使用 `.tsx`，即使不含 JSX；既有扩展名、声明文件和工具要求的配置文件按仓库约定保留。
@@ -162,12 +162,12 @@ route/global Error Boundary、`window.error` 和 `unhandledrejection` 共用 `cl
 
 ## API 契约
 
-Rust API 注解是 REST schema 的来源。前端生成物：
+`internal/openapi` 的契约构造代码是 REST schema 的来源。前端生成物：
 
 - `lib/generated/openapi.json`
 - `lib/generated/api-schema.tsx`
 
-后端路由、DTO 或 OpenAPI 注解变化后运行：
+后端路由、DTO 或 OpenAPI 契约变化后运行：
 
 ```bash
 pnpm generate:api
@@ -179,7 +179,7 @@ CI 使用：
 pnpm generate:api:check
 ```
 
-生成命令会运行 Rust `litradar openapi` 子命令、生成 TypeScript 类型并格式化产物。不要手工修改 `lib/generated/`。
+生成命令会运行 Go `litradar openapi` 子命令、生成 TypeScript 类型并格式化产物。不要手工修改 `lib/generated/`。
 
 `lib/api/` 提供面向页面的请求 facade；`lib/api-contract.tsx` 对认证、运行设置元数据、Provider 能力目录、计划任务和手动推送等控制面响应再做运行时校验。管理页按后端返回的 group、control、apply mode 和 allowed values 渲染全部设置，并按 capability 过滤 Provider 选项。普通页面不应绕过共享 transport 自行复制 Cookie、Bearer、数据库选择或错误解析逻辑。
 
@@ -204,7 +204,7 @@ pnpm build
 
 - `unit-jsdom` 通过 `tests/setup.tsx` 注册 handler-free MSW server；每个套件显式安装所需领域场景，未声明请求直接失败。
 - `component-browser` 运行需要真实 Chromium 的原生语义与动效套件；普通组件行为仍留在 jsdom。动效套件验证真实退出生命周期、reduced-motion override 与抽屉焦点归还。
-- `fixture-chromium` 在 `127.0.0.1:3100` 启动隔离 Next.js server 并使用页面路由 fixture；`full-stack-chromium` 构建静态导出并启动实际 Rust 服务和临时 SQLite，目录内禁止请求拦截。
+- `fixture-chromium` 在 `127.0.0.1:3100` 启动隔离 Next.js server 并使用页面路由 fixture；`full-stack-chromium` 构建静态导出并启动实际 Go 服务和临时 SQLite，目录内禁止请求拦截。
 - Playwright 本地零重试；CI 最多一次重试以保留 trace/video，并通过 `failOnFlakyTests` 让 retry-pass 仍失败。
 - 覆盖率排除生成代码和 `components/ui/`，只作独立诊断，不设置完成阈值。
 

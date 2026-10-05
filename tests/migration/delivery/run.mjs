@@ -1,5 +1,9 @@
 /** Verify original Rust delivery evidence and execute bounded native compatibility and recovery checks. */
 import assert from "node:assert/strict";
+import {
+  verifyFrozenEvidence,
+  verifyHistoricalInput,
+} from "../frozen-evidence.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BASELINE, WORKSPACE_ROOT, digest, loadOracle } from "../oracle.mjs";
@@ -20,9 +24,6 @@ const INPUTS = [
   "third_party/go-sqlite3-patches",
   "tests/data/migration",
   "tests/migration",
-  "crates",
-  "Cargo.toml",
-  "Cargo.lock",
 ];
 const CORPORA = {
   recommend: {
@@ -77,7 +78,8 @@ function compilationInputs(build) {
 }
 
 /** Reject stale corpus exporters, source revisions, builders and linked locked dependencies. */
-async function validateSources() {
+export async function validateSources() {
+  await verifyFrozenEvidence();
   const original = await loadOracle(BASELINE),
     counts = {};
   for (const [name, specification] of Object.entries(CORPORA)) {
@@ -123,11 +125,7 @@ async function validateSources() {
       `Stale ${name} compilation inputs`,
     );
     for (const input of [...build.inputs, ...build.dependencies])
-      assert.equal(
-        input.sha256,
-        digest(await fs.readFile(input.path)),
-        `Changed oracle input: ${input.path}`,
-      );
+      await verifyHistoricalInput(input);
     counts[name] = specification.count;
     if (name === "durable") {
       counts.durableTransitions = corpus.cases.reduce(
@@ -234,57 +232,7 @@ export async function runDelivery() {
   };
   const previousOracle = process.env.LITRADAR_DELIVERY_ORACLE;
   try {
-    const inventory = await record("delivery-original-inventory", "git", [
-      "-c",
-      "core.quotePath=false",
-      "ls-tree",
-      "-r",
-      "--name-only",
-      "9f305d9b71dc3ea6a739a6598aa762a4533203f0",
-      "--",
-      "crates",
-      "Cargo.toml",
-      "Cargo.lock",
-    ]);
-    const expected = (await fs.readFile(inventory.log, "utf8"))
-      .trim()
-      .split(/\r?\n/)
-      .sort();
-    const actual = sourceIdentity
-      .filter(
-        (item) =>
-          item.path.startsWith("crates/") ||
-          ["Cargo.toml", "Cargo.lock"].includes(item.path),
-      )
-      .map((item) => item.path)
-      .sort();
-    assert.deepEqual(
-      actual,
-      expected,
-      "Original Rust source inventory changed",
-    );
-    await record("delivery-original-source", "git", [
-      "diff",
-      "--exit-code",
-      BASELINE,
-      "--",
-      "crates",
-      "Cargo.toml",
-      "Cargo.lock",
-      ":(exclude)crates/litradar/examples/migration_fixture.rs",
-    ]);
-    await record("delivery-original-fixture", "git", [
-      "diff",
-      "--exit-code",
-      "9f305d9b71dc3ea6a739a6598aa762a4533203f0",
-      "--",
-      "crates/litradar/examples/migration_fixture.rs",
-    ]);
     report.dependency = await verifyDependency("go-sqlite3");
-    for (const [name, specification] of Object.entries(CORPORA))
-      await record(`delivery-build-${name}`, process.execPath, [
-        `tests/migration/delivery/${specification.builder}`,
-      ]);
     report.inputs = await validateSources();
     await save();
     const owned = sourceIdentity

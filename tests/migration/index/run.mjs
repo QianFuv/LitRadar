@@ -1,5 +1,9 @@
 /** Verify frozen Rust indexing evidence and execute native Windows/Linux recovery checks. */
 import assert from "node:assert/strict";
+import {
+  verifyFrozenEvidence,
+  verifyHistoricalInput,
+} from "../frozen-evidence.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BASELINE, WORKSPACE_ROOT, digest, loadOracle } from "../oracle.mjs";
@@ -21,9 +25,6 @@ const INPUTS = [
   "third_party/go-sqlite3-patches",
   "tests/data/migration",
   "tests/migration",
-  "crates",
-  "Cargo.toml",
-  "Cargo.lock",
 ];
 const CORPORA = {
   identity: 574,
@@ -65,7 +66,8 @@ function compilationInputs(build) {
 }
 
 /** Refuse stale exporters, original sources, linked dependencies or generated observer sections. */
-async function validateSources() {
+export async function validateSources() {
+  await verifyFrozenEvidence();
   const baseline = await loadOracle(BASELINE);
   const build = JSON.parse(
     await fs.readFile(
@@ -79,11 +81,7 @@ async function validateSources() {
   );
   assert.equal(build.binary_sha256, digest(await fs.readFile(build.binary)));
   for (const input of [...build.inputs, ...build.dependencies])
-    assert.equal(
-      input.sha256,
-      digest(await fs.readFile(input.path)),
-      `Changed oracle input: ${input.path}`,
-    );
+    await verifyHistoricalInput(input);
   for (const [name, count] of Object.entries(CORPORA)) {
     const corpus = JSON.parse(
       await fs.readFile(`tests/migration/index/${name}-vectors.json`, "utf8"),
@@ -197,56 +195,7 @@ export async function runIndex() {
     return result;
   };
   try {
-    const inventory = await record("index-original-inventory", "git", [
-      "-c",
-      "core.quotePath=false",
-      "ls-tree",
-      "-r",
-      "--name-only",
-      "9f305d9b71dc3ea6a739a6598aa762a4533203f0",
-      "--",
-      "crates",
-      "Cargo.toml",
-      "Cargo.lock",
-    ]);
-    const expected = (await fs.readFile(inventory.log, "utf8"))
-      .trim()
-      .split(/\r?\n/)
-      .sort();
-    const actual = sourceIdentity
-      .filter(
-        (item) =>
-          item.path.startsWith("crates/") ||
-          ["Cargo.toml", "Cargo.lock"].includes(item.path),
-      )
-      .map((item) => item.path)
-      .sort();
-    assert.deepEqual(
-      actual,
-      expected,
-      "Original Rust source inventory changed",
-    );
-    await record("index-original-source", "git", [
-      "diff",
-      "--exit-code",
-      BASELINE,
-      "--",
-      "crates",
-      "Cargo.toml",
-      "Cargo.lock",
-      ":(exclude)crates/litradar/examples/migration_fixture.rs",
-    ]);
-    await record("index-original-fixture", "git", [
-      "diff",
-      "--exit-code",
-      "9f305d9b71dc3ea6a739a6598aa762a4533203f0",
-      "--",
-      "crates/litradar/examples/migration_fixture.rs",
-    ]);
     report.dependency = await verifyDependency("go-sqlite3");
-    await record("index-build-oracles", process.execPath, [
-      "tests/migration/index/build-oracles.mjs",
-    ]);
     report.inputs = await validateSources();
     await save();
     const owned = sourceIdentity

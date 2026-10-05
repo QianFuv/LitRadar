@@ -1,5 +1,9 @@
 /** Verify public Go runtime behavior and frozen original logging/static contracts. */
 import assert from "node:assert/strict";
+import {
+  verifyFrozenEvidence,
+  verifyHistoricalInput,
+} from "../frozen-evidence.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BASELINE, WORKSPACE_ROOT, digest, loadOracle } from "../oracle.mjs";
@@ -38,9 +42,6 @@ const INPUTS = [
   "app/scripts",
   "app/lib",
   "app/tests",
-  "crates",
-  "Cargo.toml",
-  "Cargo.lock",
 ];
 
 /** Capture relevant tracked and untracked bytes, rejecting links in source inputs. */
@@ -66,7 +67,8 @@ async function identities(paths) {
 }
 
 /** Require unchanged independent observer sources and exporter identities. */
-async function validateCorpora() {
+export async function validateCorpora() {
+  await verifyFrozenEvidence();
   const oracle = await loadOracle(BASELINE);
   const read = async (name) =>
     JSON.parse(
@@ -94,11 +96,7 @@ async function validateCorpora() {
     digest(await fs.readFile("output/migration/execution/logging-oracle.exe")),
   );
   for (const dependency of build.dependencies)
-    assert.equal(
-      dependency.sha256,
-      digest(await fs.readFile(dependency.path)),
-      `Changed observer dependency: ${dependency.name}`,
-    );
+    await verifyHistoricalInput(dependency);
   const counts = { static: 217 };
   for (const name of ["log-regex", "log-filter"]) {
     const corpus = await read(name);
@@ -216,16 +214,6 @@ export async function runRuntime() {
     return result;
   };
   try {
-    await record("runtime-original-source", "git", [
-      "diff",
-      "--exit-code",
-      BASELINE,
-      "--",
-      "crates",
-      "Cargo.toml",
-      "Cargo.lock",
-      ":(exclude)crates/litradar/examples/migration_fixture.rs",
-    ]);
     report.dependencies = [
       await verifyDependency("go-sdk"),
       await verifyDependency("go-sqlite3"),

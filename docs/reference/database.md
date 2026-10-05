@@ -270,7 +270,7 @@ delivery_runs -- delivery_run_items
       +-- delivery_leases
 ```
 
-时间字段大多是 Rust 生成的 Unix 秒数 `REAL`；`scheduled_for` 是按分钟对齐的 UTC Unix 秒数。
+时间字段大多是 Go 生成的 Unix 秒数 `REAL`；`scheduled_for` 是按分钟对齐的 UTC Unix 秒数。
 
 ### 用户、令牌和邀请码
 

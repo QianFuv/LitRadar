@@ -273,7 +273,7 @@ Scholarly 默认每个期刊执行器使用 6 个来源工作线程，同时运�
 
 默认调度间隔为 30 秒，可用 `--scheduler-interval-seconds N` 覆盖；N 必须大于 0。任一组件意外失败都会使整个 `serve` 调用失败。
 
-`--development` 是显式启动参数，不是数据库运行设置或环境覆盖，只允许 `--host 127.0.0.1`，且与 `--require-secure-cookies` 互斥。检查在存储准备前完成；省略参数时，静态构建缺失或 CSP 清单不匹配仍会导致启动失败。本地可通过 `node scripts/dev.mjs` 同时启动 Rust 开发模式和 Next.js，并在同一终端统一停止。
+`--development` 是显式启动参数，不是数据库运行设置或环境覆盖，只允许 `--host 127.0.0.1`，且与 `--require-secure-cookies` 互斥。检查在存储准备前完成；省略参数时，静态构建缺失或 CSP 清单不匹配仍会导致启动失败。本地可通过 `node scripts/dev.mjs` 同时启动 Go 开发模式和 Next.js，并在同一终端统一停止。
 
 `--require-secure-cookies` 同时选择 hardened HTTPS 响应模式：在 Secure Cookie 启动门通过后，应用为所有响应增加 `Strict-Transport-Security: max-age=31536000`。未传该参数的 loopback HTTP 模式不发送 HSTS。CSP 清单由 `pnpm --dir app build` 自动生成；打包或部署不得绕过该构建步骤，也不得把不同构建的 HTML 与清单混用。
 
@@ -301,7 +301,7 @@ AI 凭据和 PushPlus 是用户级设置。每个用户在 `notification_setting
 
 ## 前端网络边界
 
-前端没有应用专用环境配置。浏览器始终从 `window.location.origin` 生成同源 API URL；`next dev` 通过 Next phase 固定把 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 代理到 `http://127.0.0.1:8001`；其他 phase 始终 `output: 'export'`。导出的静态文件和 API 由同一 Rust 监听器提供。
+前端没有应用专用环境配置。浏览器始终从 `window.location.origin` 生成同源 API URL；`next dev` 通过 Next phase 固定把 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 代理到 `http://127.0.0.1:8001`；其他 phase 始终 `output: 'export'`。导出的静态文件和 API 由同一 Go 监听器提供。
 
 跨源静态前端部署和构建时 API 地址覆盖不再受支持。需要外部域名时，应在同一 Origin 前放置 TLS 反向代理；`cors_allowed_origins` 只服务确有需要的非第一方客户端，不改变第一方浏览器的同源策略。
 
@@ -315,7 +315,7 @@ AI 凭据和 PushPlus 是用户级设置。每个用户在 `notification_setting
 warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litradar_sources=info,litradar_storage=info,litradar_worker=info
 ```
 
-`off` 完全关闭服务端事件。API 保存时和每个进程启动时都会严格验证；无效 filter、其他 format 值或认证库不可读会让进程在业务工作前失败。日志 bootstrap 只读这两个非秘密字段，不迁移数据库、不解密 key 池，也不读取通用 Rust 日志变量。完整事件、级别、关联和丢失语义见[日志运维](../operations/logging.md)。
+`off` 完全关闭服务端事件。API 保存时和每个进程启动时都会严格验证；无效 filter、其他 format 值或认证库不可读会让进程在业务工作前失败。日志 bootstrap 只读这两个非秘密字段，不迁移数据库、不解密 key 池，也不读取RUST_LOG 等通用日志环境变量。完整事件、级别、关联和丢失语义见[日志运维](../operations/logging.md)。
 
 ## 路径默认值
 

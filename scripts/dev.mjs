@@ -231,7 +231,7 @@ async function main() {
   const executable = await buildBackend();
   if (isStopping) return;
   const backend = startChild(
-    "Rust API",
+    "Go API",
     executable,
     [
       "serve",

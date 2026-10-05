@@ -333,3 +333,9 @@ f806423a09ff41b7ce9bc8d2d27537cd6ed3e151:crates/litradar-sources/src/cnki_domest
 f806423a09ff41b7ce9bc8d2d27537cd6ed3e151:crates/litradar-sources/src/jfbym.rs:generic-api-key:457
 f806423a09ff41b7ce9bc8d2d27537cd6ed3e151:crates/litradar-storage/src/cnki.rs:generic-api-key:707
 f806423a09ff41b7ce9bc8d2d27537cd6ed3e151:crates/litradar-storage/src/cnki.rs:generic-api-key:726
+
+# Owner: LitRadar security maintainers
+# Rationale: T13 synthetic expired-token fixture; literal header/signature and
+# payload {"exp":1} cannot authenticate an external service. A15 reviewed.
+# Review by: 2026-11-04
+5b4aef4d1d855f8e49eaa8d92ecb5a72b330918b:internal/api/migration_regression_test.go:generic-api-key:84

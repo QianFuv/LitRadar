@@ -218,6 +218,7 @@ export async function runSecurity() {
     const diff = execute("working-diff", "git", [
       "diff",
       "--no-ext-diff",
+      "--diff-filter=d",
       "HEAD",
       "--",
       ".",

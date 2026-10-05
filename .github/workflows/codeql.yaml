@@ -15,8 +15,6 @@ on:
       - "libs/**"
       - "scripts/**"
       - "app/**"
-      - "tests/filter-codeql-sarif.test.mjs"
-      - "scripts/filter-codeql-sarif.mjs"
       - ".github/workflows/codeql.yaml"
   pull_request:
     paths:
@@ -29,8 +27,6 @@ on:
       - "libs/**"
       - "scripts/**"
       - "app/**"
-      - "tests/filter-codeql-sarif.test.mjs"
-      - "scripts/filter-codeql-sarif.mjs"
       - ".github/workflows/codeql.yaml"
   schedule:
     - cron: "45 3 * * 1"

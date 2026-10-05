@@ -1,5 +1,6 @@
 /** Verify frozen original HTTP/MCP contracts and current native API composition. */
 import assert from "node:assert/strict";
+import { verifyFrozenEvidence } from "../frozen-evidence.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BASELINE, WORKSPACE_ROOT, digest, loadOracle } from "../oracle.mjs";
@@ -24,9 +25,6 @@ const INPUTS = [
   "third_party/go-sqlite3-patches",
   "tests/data/migration",
   "tests/migration",
-  "crates",
-  "Cargo.toml",
-  "Cargo.lock",
 ];
 const COUNTS = {
   "http-favorite": 44,
@@ -60,7 +58,8 @@ async function identities(paths) {
 }
 
 /** Verify the independent original manifest, exporter identities and frozen fixture bytes. */
-async function validateCorpora() {
+export async function validateCorpora() {
+  await verifyFrozenEvidence();
   const oracle = await loadOracle(BASELINE);
   for (const [name, count] of Object.entries(COUNTS)) {
     const corpus = JSON.parse(
@@ -172,23 +171,6 @@ export async function runApi() {
     return result;
   };
   try {
-    await record("api-original-source", "git", [
-      "diff",
-      "--exit-code",
-      BASELINE,
-      "--",
-      "crates",
-      "Cargo.toml",
-      "Cargo.lock",
-      ":(exclude)crates/litradar/examples/migration_fixture.rs",
-    ]);
-    await record("api-original-fixture", "git", [
-      "diff",
-      "--exit-code",
-      "9f305d9b71dc3ea6a739a6598aa762a4533203f0",
-      "--",
-      "crates/litradar/examples/migration_fixture.rs",
-    ]);
     report.dependencies = [
       await verifyDependency("go-sdk"),
       await verifyDependency("go-sqlite3"),

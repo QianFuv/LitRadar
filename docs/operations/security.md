@@ -178,7 +178,7 @@ unset ADMIN_PASSWORD
 
 默认 `secure_cookies=false`，适合 loopback HTTP。通过 HTTPS 对外访问前应把数据库设置改为 `true`。直接运行二进制时可用 `litradar serve --require-secure-cookies` 作为启动门；不满足时应用在绑定端口前失败。默认 Compose 不添加该参数，因此开放入口前要核对数据库设置。
 
-部署后的 Web 静态资源和后端命名空间由同一个 Rust 监听器直接提供，因此浏览器默认同源调用 API，不经过 Next.js 服务或 rewrite。本地开发由 Next.js 8000 端口代理内部 Rust 8001；浏览器跨源直连时：
+部署后的 Web 静态资源和后端命名空间由同一个 Go 监听器直接提供，因此浏览器默认同源调用 API，不经过 Next.js 服务或 rewrite。本地开发由 Next.js 8000 端口代理内部 Go 8001；浏览器跨源直连时：
 
 - 在 `cors_allowed_origins` 列出准确 Origin
 - credentialed CORS 拒绝 `*` wildcard，避免把任意网站纳入携带 Cookie 的信任边界
@@ -214,7 +214,7 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 ### 静态 Web 缓存
 
-导出的 Web 文件是公开构建产物，不得包含部署密钥或用户秘密。Rust 按以下边界设置缓存：
+导出的 Web 文件是公开构建产物，不得包含部署密钥或用户秘密。Go 按以下边界设置缓存：
 
 - 成功的 `/_next/static/*` 哈希资源使用 `public, max-age=31536000, immutable`，即使请求携带会话 Cookie 也不会变成用户专属内容。
 - 页面、导航 payload 和导出的 404 使用 `no-cache`，以便浏览器重新验证版本。

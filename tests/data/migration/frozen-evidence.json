@@ -1,0 +1,1577 @@
+{
+  "format": 1,
+  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
+  "origin": "Frozen after validated T02-T13 proofs, before first-party Rust source retirement. Historical compiler inputs are provenance only; retained files and binaries are mandatory current inputs.",
+  "files": [
+    {
+      "path": "output/migration/execution/backup-oracle.exe",
+      "sha256": "3b260f2ad0cebf4f5562038e9a0c14f1c48562693b0197ef0fdc32df80ff8923"
+    },
+    {
+      "path": "output/migration/execution/cfp-oracle/source-build.json",
+      "sha256": "fc61e2c488d6267171ce790a18a22bf8157d5ee5da38cb1ca377a48e0e2e04d0"
+    },
+    {
+      "path": "output/migration/execution/cfp-oracle/source.exe",
+      "sha256": "d4881b0e56bd54bfc671aefc729c3f3de3e019b1faffb3969a19fd23e1002daf"
+    },
+    {
+      "path": "output/migration/execution/cfp-oracle/storage-build.json",
+      "sha256": "179568fe15855e2d32b05ff0199c0fd10519eab2ef4b2f769460e46c84697d26"
+    },
+    {
+      "path": "output/migration/execution/cfp-oracle/storage.exe",
+      "sha256": "cc7defc3bd1fec2649f56b6b30e85429c03818da01ca44fb7d617855fac6ce18"
+    },
+    {
+      "path": "output/migration/execution/cfp-oracle/worker-build.json",
+      "sha256": "def108c8ae590af15e32a21b30bebf59fc3f0559bae33c86e547d07423e3b7c4"
+    },
+    {
+      "path": "output/migration/execution/cfp-oracle/worker.exe",
+      "sha256": "3268429a3465fdf605645819afcf4924277adb16b6a90d8c3d89a3d11fa6ae6b"
+    },
+    {
+      "path": "output/migration/execution/citation-oracle.exe",
+      "sha256": "01306f2a3600adf87c2b3815af3bdcb01904d94978ff1bda7085b6a9a39a95fb"
+    },
+    {
+      "path": "output/migration/execution/database-oracle.exe",
+      "sha256": "2b8dc05df403cbd5877a0c6857906c56d8884a70d1c85bf9abf2ff9c3dbc0e44"
+    },
+    {
+      "path": "output/migration/execution/delivery-oracle/client-build.json",
+      "sha256": "2df7de30735f1e6c287b52694dcef71f60a5f4bb5d13f689d7b4bc2beea4d021"
+    },
+    {
+      "path": "output/migration/execution/delivery-oracle/client.exe",
+      "sha256": "581467f8deb1756a50216e70609e70efbe32d81a6c5b3a50d8fc378a481d4773"
+    },
+    {
+      "path": "output/migration/execution/delivery-oracle/durable-build.json",
+      "sha256": "6d3fadf762242d59f1830e80e2bb2b87948c642cb1858f94e1c218a656061833"
+    },
+    {
+      "path": "output/migration/execution/delivery-oracle/durable.exe",
+      "sha256": "149efa7b96c397c502614de633b9b3ef517e5eea6d094bb543a5f92cb42a0563"
+    },
+    {
+      "path": "output/migration/execution/delivery-oracle/legacy-build.json",
+      "sha256": "b3e88d59cf7d60b0c55e0bd960c8c48e2a348dd1c9566cc52a0408b39213860b"
+    },
+    {
+      "path": "output/migration/execution/delivery-oracle/legacy.exe",
+      "sha256": "a88d27f9ea08cc46539284d0c4a75b203a7d883be683120bf9cbc84954ccf193"
+    },
+    {
+      "path": "output/migration/execution/delivery-oracle/recommend-build.json",
+      "sha256": "ccebe1b4432ddbe6cb17dbb324394acf8fe8544cc2b48aee1c805108a4a9d9d4"
+    },
+    {
+      "path": "output/migration/execution/delivery-oracle/recommend.exe",
+      "sha256": "ba4868f3c6624767fea74925254fe6e2fa6753df1e5954ca71888746fe2c65c7"
+    },
+    {
+      "path": "output/migration/execution/favorites-oracle.exe",
+      "sha256": "0419c43f700e779a2a67f1a1fb4700e02bea7f0dfbca86dc6f4ce72438314a5c"
+    },
+    {
+      "path": "output/migration/execution/index-oracle.exe",
+      "sha256": "664da2ce0f791b188ecfe0affc031602c66c08000dfd6ab2e2714b6239b066d1"
+    },
+    {
+      "path": "output/migration/execution/index-oracle/identity-build.json",
+      "sha256": "1941b1855a65be93d18d401b89179e000ac0c5b595418ec52623a9958039f7c4"
+    },
+    {
+      "path": "output/migration/execution/index-oracle/identity.exe",
+      "sha256": "65add2b38792f69f61bea04fd5c49a01d08502b1846ac7809736c1f4d7951329"
+    },
+    {
+      "path": "output/migration/execution/json-oracle.exe",
+      "sha256": "98d2126b07a7d3040de04b1d939e1b6ff02d868fb5c428f55c4593fa1346ac10"
+    },
+    {
+      "path": "output/migration/execution/logging-oracle.exe",
+      "sha256": "f02cebf3456bd0f72cf346d1b5e78aa24721d73041461132358920bbe875b9dc"
+    },
+    {
+      "path": "output/migration/execution/metadata-oracle.exe",
+      "sha256": "7802ef6398b773ee1a8e411c6420f55e37cd10ea8a307225c4cf414a672de89b"
+    },
+    {
+      "path": "output/migration/execution/scheduler-oracle/storage-build.json",
+      "sha256": "bd6bdd183b8f95dcf16c46771dbb7c1f33d8fdcb3c22bb4e9be7eb7f61e51bba"
+    },
+    {
+      "path": "output/migration/execution/scheduler-oracle/storage.exe",
+      "sha256": "815f9dbdf4353dc0762ab5b0737fdc550e758440944111b0e06a4ce6248598bd"
+    },
+    {
+      "path": "output/migration/execution/scheduler-oracle/worker-build.json",
+      "sha256": "4c108b446b0d907fccdebc11f45e40fb564ac70d38cb007e44a77ef1cc5f62b4"
+    },
+    {
+      "path": "output/migration/execution/scheduler-oracle/worker.exe",
+      "sha256": "0324da19fbc27b985227db54fa676b730f4c10d05cdac3c58fcc723065c15313"
+    },
+    {
+      "path": "output/migration/execution/search-oracle.exe",
+      "sha256": "c667846de2ea60b74e08c332dd2bb106422d20ab3515702ef396171bae593a89"
+    },
+    {
+      "path": "output/migration/execution/secret-oracle.exe",
+      "sha256": "d123e41c467fe56fab09ff88bcce62f7f80e9e89eca2d9c8600c7eb93a3abc25"
+    },
+    {
+      "path": "output/migration/execution/settings-oracle.exe",
+      "sha256": "c66103e2b427cff6b02b15f63d4edd6f8af402061b1106b5bd6304b7c685ae1c"
+    },
+    {
+      "path": "output/migration/execution/sources-access-oracle.exe",
+      "sha256": "4783e1f91e5bb11304cb0fb61e90ba89b6754ab5b4a01803bc0282298191e901"
+    },
+    {
+      "path": "output/migration/execution/sources-cnki-oracle.exe",
+      "sha256": "9b43a6eabfd6a1dcfc3022fd62c1184719ceade28fd45f15f0d3af7d7997295a"
+    },
+    {
+      "path": "output/migration/execution/sources-index-oracle.exe",
+      "sha256": "2929aaeb8ea22a1e77ba22cc00bec269a6b3ee390766571016f43ecfbd5d337b"
+    },
+    {
+      "path": "output/migration/execution/sources-provider-oracle.exe",
+      "sha256": "93726e420c7102ad6f75120e48ecf0b634c055e54b0e1e2869270d80282f6c6f"
+    },
+    {
+      "path": "output/migration/execution/sources-scheduler-oracle.exe",
+      "sha256": "99e4260df6455a29b22a06a99ad7a33881787b3e5d57da4be921678aea36b990"
+    },
+    {
+      "path": "output/migration/execution/sources-scholarly-oracle.exe",
+      "sha256": "f7e5c43d8987951ddc6b3babbffa277a4095e001970fa478ce47ff6315d5a9f2"
+    },
+    {
+      "path": "output/migration/execution/sources-transport-oracle.exe",
+      "sha256": "3643354bb6286d659193a07bedda28985f6cf2832f4e75a44b20387be9b885d3"
+    },
+    {
+      "path": "output/migration/execution/sources-workset-oracle.exe",
+      "sha256": "59f58cd211eaee4567783825fb403ed63217acedf448f9af77521d1442ffd443"
+    },
+    {
+      "path": "output/migration/execution/sources-zjlib-oracle.exe",
+      "sha256": "df81d6be32352f89a21b052a6759c66d5c2e874f0a29c6ca4d855ec2c0b4b856"
+    },
+    {
+      "path": "output/migration/execution/t04-backup-oracle-build.json",
+      "sha256": "86020e96b16ca3efc945f97877ef649b7387517696b1f2558156f2569e2da078"
+    },
+    {
+      "path": "output/migration/execution/t04-database-oracle-build.json",
+      "sha256": "9915706c184014633c96931109ee7c7e9b5417061ba5f2bb4ad905f604d9b954"
+    },
+    {
+      "path": "output/migration/execution/t04-favorites-oracle-build.json",
+      "sha256": "205d8a670967bea6db40da146f4820d2ed0bc003d9c71e93d5eded17310e4baa"
+    },
+    {
+      "path": "output/migration/execution/t04-index-oracle-build.json",
+      "sha256": "6f18ee0d97b38b1f5336abd310871a6efc5a155d5e8085fdd0cf8829d79383f7"
+    },
+    {
+      "path": "output/migration/execution/t04-weekly-oracle-build.json",
+      "sha256": "7c9a105749dd2e9fdde2e403df3fbd230a6013d4ea5c47142b77fe3ab4f63318"
+    },
+    {
+      "path": "output/migration/execution/t04-weekly-query-oracle-build.json",
+      "sha256": "f93f1a281a5b1c845134c50f99deae6b47e9b1a5c8e75ac5aff875c9e8298462"
+    },
+    {
+      "path": "output/migration/execution/t05-access-oracle-build.json",
+      "sha256": "c458bd6aafbd1cbe9a6e97f62f26bc1c8ee5f2a252159098192946d4b444b83b"
+    },
+    {
+      "path": "output/migration/execution/t05-cnki-oracle-build.json",
+      "sha256": "7cfac68617a999db323deb9fc0f2e1eac7447e5eb300ee6274b46e71e5ee93e9"
+    },
+    {
+      "path": "output/migration/execution/t05-index-oracle-build.json",
+      "sha256": "7ea30e7fa8811c7a58d719bb1ad159a66fb17f4dfac1423a56b6c8d1fa010460"
+    },
+    {
+      "path": "output/migration/execution/t05-provider-oracle-build.json",
+      "sha256": "ed41b773903f971923761386ebdf0ad8d3a0ab764c51457fe716f3e4b9192292"
+    },
+    {
+      "path": "output/migration/execution/t05-scheduler-oracle-build.json",
+      "sha256": "952e4f8f93255d38bfef44f3e70efe878ffc454fcdd61d47ad36d2173b8eb4c3"
+    },
+    {
+      "path": "output/migration/execution/t05-scholarly-oracle-build.json",
+      "sha256": "1ad598027f82c16823ef54ab0c380379cdf54d7b332b5a577ad637fbaba9e391"
+    },
+    {
+      "path": "output/migration/execution/t05-transport-oracle-build.json",
+      "sha256": "2c605f1160b3002886ff9dd1254f341631f77b7a1ea4b6b52370a4d54e0b846f"
+    },
+    {
+      "path": "output/migration/execution/t05-workset-oracle-build.json",
+      "sha256": "b48f5ad96bcaac1acf5566b58110a32a1a59db16eecb36ac01523f5be89b221d"
+    },
+    {
+      "path": "output/migration/execution/t05-zjlib-oracle-build.json",
+      "sha256": "355b14f8144f1dd1c57dfbf5ca1dfb6e65f3a02b8b9984ff04ba264aedc36d68"
+    },
+    {
+      "path": "output/migration/execution/t11-logging-oracle-build.json",
+      "sha256": "935ed1a41f9744ef99ee8c7b8c7026bcaae0e06c02a90278d2db911848a15849"
+    },
+    {
+      "path": "output/migration/execution/weekly-oracle.exe",
+      "sha256": "66bc8bdd858f063b9f4bb3660744dcc1e302a688b7e1afc0bcba24c5ea406903"
+    },
+    {
+      "path": "output/migration/execution/weekly-query-oracle.exe",
+      "sha256": "d17922bdcaaf31a66aa97a6193fb7be301260d28b14e7310a553e941087668e8"
+    },
+    {
+      "path": "tests/migration/api/cfp-vectors.json",
+      "sha256": "6027c5cd287a0cc6810a79847121817a24f63a4d3360b8a7fcb709e9b763a8c0"
+    },
+    {
+      "path": "tests/migration/api/export-cfp.mjs",
+      "sha256": "cc2b6a18a6dfcd2f7471b8a7d9f2abe1fee8fb8fe71b7751d2182c348a353dad"
+    },
+    {
+      "path": "tests/migration/api/export-mcp.mjs",
+      "sha256": "c16cce0ed4f1a01fa51594d7b67b87a89a7d41237490ed00aab5481d37be2f39"
+    },
+    {
+      "path": "tests/migration/api/export-router.mjs",
+      "sha256": "91d7e9ed2b12b3f015e499671ece9d3e13ce9e397c7f67b16e16819c5f65e19b"
+    },
+    {
+      "path": "tests/migration/api/fixtures/full-stack.sqlite.fixture",
+      "sha256": "28d15635c2edc33ed452d5adb2a99beadaeda26280816de0d1243ccf02f98106"
+    },
+    {
+      "path": "tests/migration/api/http-favorite-vectors.json",
+      "sha256": "1f2b936d3ae6f3e475f004d9ba4e28b861345f5eb0093c69a5a1fa7d52c91f7b"
+    },
+    {
+      "path": "tests/migration/api/http-json-vectors.json",
+      "sha256": "b0cfda64c1b6ad5de0da885056e0c478e31af6abbdad48041de02591da820a47"
+    },
+    {
+      "path": "tests/migration/api/http-query-vectors.json",
+      "sha256": "b65bc3a93959d69889991da5e94801c9bc6811ea1eae945b0948eb0e62a6ec6a"
+    },
+    {
+      "path": "tests/migration/api/mcp-float-vectors.json",
+      "sha256": "a5242239214de0cca8cabf0542221692b913a12874becc3512be8a0757d58ef6"
+    },
+    {
+      "path": "tests/migration/api/mcp-vectors.json",
+      "sha256": "b56f10d0c184d6c05d341e61b094f6bf8a8ce4ee2435039248130695af8b221d"
+    },
+    {
+      "path": "tests/migration/api/router-vectors.json",
+      "sha256": "1e78d67a6e66d44aa1bc6e583df11123d5da8463921d3372259b11a94f574a83"
+    },
+    {
+      "path": "tests/migration/auth/export-settings.mjs",
+      "sha256": "7cce06252a340897a13a037c6c47d2e004a345e0c514537ca03a8af09fe53211"
+    },
+    {
+      "path": "tests/migration/auth/export-urls.mjs",
+      "sha256": "be9dc62543db407aeaacb29469340d499bdf784a760cd810ad74e9f51c0ee6bc"
+    },
+    {
+      "path": "tests/migration/auth/secret-oracle.rs",
+      "sha256": "d1f70fb557febe0c4396faf8a97ba893f0a03990c0c7ebe071831f96c9ecbe5a"
+    },
+    {
+      "path": "tests/migration/auth/settings-oracle.rs",
+      "sha256": "0d87459072260f7665bd6555587487344fb5ffe395537db97b2610c36c507313"
+    },
+    {
+      "path": "tests/migration/auth/settings-vectors.json",
+      "sha256": "21cf1861c1fe4aa8a943db2f33d3a66f589ebd34ed5477a26bc39d0e531d669e"
+    },
+    {
+      "path": "tests/migration/auth/url-vectors.json",
+      "sha256": "7c455ed2f8538567e2bfccb0585d7bf14593eb2708f0b797f8342e2fa2b6d807"
+    },
+    {
+      "path": "tests/migration/cfp/build-source.mjs",
+      "sha256": "c0defb87ab1a37c2ee214647a8e09ef9a9faf11ef7dd6ec7446192b278b354e7"
+    },
+    {
+      "path": "tests/migration/cfp/build-storage.mjs",
+      "sha256": "e7c4b01b92ee095d74d28a36665f220d4f889e17587e1053a57119d0f362f545"
+    },
+    {
+      "path": "tests/migration/cfp/build-worker.mjs",
+      "sha256": "1dcf0cf96f3fd2ab3d87463409ba97af74444931ac8368a6d1c178049d04cbc5"
+    },
+    {
+      "path": "tests/migration/cfp/export-source.mjs",
+      "sha256": "e512df1cf7d5d54d880283084a90d1a134b90d1503d0ef011be7ed46b2458168"
+    },
+    {
+      "path": "tests/migration/cfp/export-storage.mjs",
+      "sha256": "2db758e5bf8d3f30d89b8ae807398fb2d2ce870120bf1aa3d45feb4c44cdc1a1"
+    },
+    {
+      "path": "tests/migration/cfp/export-worker.mjs",
+      "sha256": "6ca4eeabdb2eb33806e15558ac9b4b0752cb8084abdbba47b78887c8b73653af"
+    },
+    {
+      "path": "tests/migration/cfp/full-text-observer.rs",
+      "sha256": "239ee9281a97cad434d39bdd2620a1051cb6ed53ac5f3e7ca05f62444c6d02d7"
+    },
+    {
+      "path": "tests/migration/cfp/legacy.json",
+      "sha256": "aaa551710a2b5795711c2bca6523c464c669ee1a302e70c55b9f99ff68ce52e9"
+    },
+    {
+      "path": "tests/migration/cfp/source-observer.rs",
+      "sha256": "2898ec92ecf34625a18ae199e2da03268aaa9060dfcb076eb6153c03253937c9"
+    },
+    {
+      "path": "tests/migration/cfp/source-vectors.json",
+      "sha256": "808fa4d4fe3b2a1b600eaea5402acdb2dc87ada5cb5132577ab672fc741e0ccc"
+    },
+    {
+      "path": "tests/migration/cfp/storage-oracle.rs",
+      "sha256": "0e773ec78f60e2630493a8967fd38a3b96f908d6a4f886efee0fe2e6f4872622"
+    },
+    {
+      "path": "tests/migration/cfp/storage-vectors.json",
+      "sha256": "ec39fb1cf971c1223130fdb521121de1bfca123997f189e868af81fb5cf9cb46"
+    },
+    {
+      "path": "tests/migration/cfp/worker-observer.rs",
+      "sha256": "30bc410cb29833f258da7c1be7d50590e2435fd3f62ba03c59328680dca75275"
+    },
+    {
+      "path": "tests/migration/cfp/worker-oracle.rs",
+      "sha256": "3de6d6123915f4fa9d70c5921e59fe7174c3b9a956012468ea93afbed13b2e31"
+    },
+    {
+      "path": "tests/migration/cfp/worker-vectors.json",
+      "sha256": "d346956f380aec87b76c2b697b5f9f13011e904397b41089dc1e3d08ccd06710"
+    },
+    {
+      "path": "tests/migration/delivery/build-clients.mjs",
+      "sha256": "82b54d3a7d7e8e971563e0be932dd83a602972c0608d1e1a27d1bad1b8898815"
+    },
+    {
+      "path": "tests/migration/delivery/build-durable.mjs",
+      "sha256": "936085fb87a966c6fb9504674387cc4c52313a44a3e6cdda8a201d87f57d3463"
+    },
+    {
+      "path": "tests/migration/delivery/build-legacy.mjs",
+      "sha256": "3206343bd19d5b0e724fb08c4ff1fd0d95d7a236b3a3bd0d74d6618071a489c6"
+    },
+    {
+      "path": "tests/migration/delivery/build-oracles.mjs",
+      "sha256": "8a02a6b940684122f0b22fe0b37b57657b936ea0b2ff435f008d90412cca54a3"
+    },
+    {
+      "path": "tests/migration/delivery/client-oracle.rs",
+      "sha256": "a337f0d5318e435d690064739053dd20a8b2d62b93098d90dae1a14711c190d8"
+    },
+    {
+      "path": "tests/migration/delivery/client-vectors.json",
+      "sha256": "8d36b700207ff8608dda5b267392c9fa0e8300930c6f717f140e6c06d7469fa8"
+    },
+    {
+      "path": "tests/migration/delivery/durable-oracle.rs",
+      "sha256": "2cd0b270c2d485c1343063884f44790f3ec316dfaa066db6f1ce7392b9c56ff3"
+    },
+    {
+      "path": "tests/migration/delivery/durable-vectors.json",
+      "sha256": "46daab0c9c6f7389c0cd13a60d068dd88ce53bb47e5102ac3bf17fac441e214e"
+    },
+    {
+      "path": "tests/migration/delivery/export-clients.mjs",
+      "sha256": "be24cc2ff389e5435b5da9433464ff97a42f6241bdac2f5b47c1b1af352793b6"
+    },
+    {
+      "path": "tests/migration/delivery/export-durable.mjs",
+      "sha256": "3294db158f1aafdb75be5a9774cb92cba81b83408cde86f3a21ff65c1d149f61"
+    },
+    {
+      "path": "tests/migration/delivery/export-legacy.mjs",
+      "sha256": "4964315d19c80e8eb7049a53d2254f57b26bda459b2df79749733edd316c9fc1"
+    },
+    {
+      "path": "tests/migration/delivery/export-recommend.mjs",
+      "sha256": "80353bc71ff885fa00270664356c9a2b72e8443e2041db536f85be439fb7c2d3"
+    },
+    {
+      "path": "tests/migration/delivery/legacy-oracle.rs",
+      "sha256": "b30ba09ba39ef7e44705c9c000a6d90ce37781168835568b710c9bdd37c0e8ab"
+    },
+    {
+      "path": "tests/migration/delivery/legacy-vectors.json",
+      "sha256": "77f4e9fcf314a9c6003ff9959d979ba54c559b1fd864a52355243dcd5eeb7e71"
+    },
+    {
+      "path": "tests/migration/delivery/recommend-oracle.rs",
+      "sha256": "026608ed741cb055c94c7c6062941b23938bb5a0a8dc774d8a8d82b2dc6c0253"
+    },
+    {
+      "path": "tests/migration/delivery/recommend-vectors.json",
+      "sha256": "98be0cd9a0403945bb87098621bccc171b8db1a68923aee7a39e88e52bf4377d"
+    },
+    {
+      "path": "tests/migration/index/batch-observer.rs",
+      "sha256": "e7ab4e2470106ea734823dfc92e935a151ac630c4383e425e1421277c71159ac"
+    },
+    {
+      "path": "tests/migration/index/batch-vectors.json",
+      "sha256": "b8c9aab10bb1d71881f84121234e5c3c9fbe6350cba5acb61934ca701bbff02c"
+    },
+    {
+      "path": "tests/migration/index/build-oracles.mjs",
+      "sha256": "9c272889d03b2950b7acee46d69e62f0bc00a5ca64ff6f5cd16be1e1d36e1ad8"
+    },
+    {
+      "path": "tests/migration/index/content-vectors.json",
+      "sha256": "f55286956a177fc48fc4683a7f2abbdb8aa59a6bb982a07b97df83cbef7a439f"
+    },
+    {
+      "path": "tests/migration/index/control-observer.rs",
+      "sha256": "a5ed8711fe0a1626e362ac9253045e7079468cb8cfc786aea3410bbd0beac725"
+    },
+    {
+      "path": "tests/migration/index/control-vectors.json",
+      "sha256": "4757c37cc704fb5584613a2e3286b6844b261b423258a8026a68c24f3ee5aace"
+    },
+    {
+      "path": "tests/migration/index/export-batch.mjs",
+      "sha256": "798f9231856b5ec91d13d8065bf9786495a911ff7c37e53484211e5ba1738f97"
+    },
+    {
+      "path": "tests/migration/index/export-content.mjs",
+      "sha256": "f933be2a997d57c29191d4a43d77d7f1c97b2dd5c53f3bd715b50f397f63c10a"
+    },
+    {
+      "path": "tests/migration/index/export-control.mjs",
+      "sha256": "5dc27ed8959b07bbc3bc134223be2ccdf5c25fb52bd74f30f0a0662a552b6352"
+    },
+    {
+      "path": "tests/migration/index/export-identity.mjs",
+      "sha256": "01f29b9450ba8997d6f6f913a0070895735bdf2f56ab9d131aa865333606e7a8"
+    },
+    {
+      "path": "tests/migration/index/export-manifest.mjs",
+      "sha256": "f2cee0d2f7b74c3a9bc712b90cd176eca2cd455dbb3b0542d89f0531134df13f"
+    },
+    {
+      "path": "tests/migration/index/export-notify.mjs",
+      "sha256": "78daaf9189d7f0a1366f8fbdf1c7aa10866b8b3612e9fdb1a4a4f8d9a6f5e25b"
+    },
+    {
+      "path": "tests/migration/index/export-worker.mjs",
+      "sha256": "de9316cb0d7cf64de2921bd372be7e1a4e3d88c2f7d873b4df54e16560be8e98"
+    },
+    {
+      "path": "tests/migration/index/identity-oracle.rs",
+      "sha256": "644c20e6b1b250f57f96a2da6308aedb462dd5c98bd080b0c400ba5898eb44d5"
+    },
+    {
+      "path": "tests/migration/index/identity-vectors.json",
+      "sha256": "2d3bbaa5948bf5e7eb52d50c94e9c093ecc4c7904b2da0879b71db64d20eb3d9"
+    },
+    {
+      "path": "tests/migration/index/manifest-vectors.json",
+      "sha256": "cee0cabefac078ff7f18ad5cd9ea99dd800a6192ab397aacd163bd9429cb418b"
+    },
+    {
+      "path": "tests/migration/index/notify-observer.rs",
+      "sha256": "281c3d7dcd45f7bdd8412761eddce709413e926f06f7484be4b68ac0a6d32114"
+    },
+    {
+      "path": "tests/migration/index/notify-vectors.json",
+      "sha256": "06e503f904652d17fd5995ccbb5aa1880df3aec24e8a84c803df1bfa901ab159"
+    },
+    {
+      "path": "tests/migration/index/worker-observer.rs",
+      "sha256": "9ba2bde81022aa8512991257a0f02bf2dc91831b1072efcde213f7b0457c138c"
+    },
+    {
+      "path": "tests/migration/index/worker-vectors.json",
+      "sha256": "211783b1b94ab05c392ddfd638abb3d7fbd7b16c06b56d2397c8a91107deeb51"
+    },
+    {
+      "path": "tests/migration/runtime/build-logging-oracle.mjs",
+      "sha256": "c7cbe21595a431ea0b6f55ec5f064ffe7a5bd8ef6771f96a5cf2131bba9639fe"
+    },
+    {
+      "path": "tests/migration/runtime/export-log-compact.mjs",
+      "sha256": "5caf718cf1da59a490b9540484e36a774c7fdd717b388b341df88fdc3ea2d08e"
+    },
+    {
+      "path": "tests/migration/runtime/export-log-filter.mjs",
+      "sha256": "74a156d05e124b6176ba8f0a624c41b616a4c8864661ceb96408719e2158497f"
+    },
+    {
+      "path": "tests/migration/runtime/export-log-regex.mjs",
+      "sha256": "ea895d592e3aaab0601adc86dfe3b892f11df2b6bb20fd69df73647125a42418"
+    },
+    {
+      "path": "tests/migration/runtime/export-log-unicode.mjs",
+      "sha256": "431db4d79eb70bf410c0378a6cc0346a6bfb1caccee8eb893aa01cf0c313e328"
+    },
+    {
+      "path": "tests/migration/runtime/export-mime.mjs",
+      "sha256": "7c883cdd65d4a9eb515bb50e214292adfcffe3b9dec036f23e4ee3ff672a6bb5"
+    },
+    {
+      "path": "tests/migration/runtime/export-static.mjs",
+      "sha256": "1d8423e79fdbcca829922f39049ce8ec6ea9696a909c6e1eb6b4fa892f8f81fa"
+    },
+    {
+      "path": "tests/migration/runtime/log-compact-vectors.json",
+      "sha256": "c505fd01a8c94ddf16385feed76757a2b6270d54852a95f66999189a845ed671"
+    },
+    {
+      "path": "tests/migration/runtime/log-filter-vectors.json",
+      "sha256": "241fd376bf581aa1a3afd5c16816ded6f55b10e71eb60edeef8432ecd1ce804c"
+    },
+    {
+      "path": "tests/migration/runtime/log-regex-vectors.json",
+      "sha256": "22a1f61d137c7012ced3272f183df9977f3f7964ef70307d34b488533c1e4b91"
+    },
+    {
+      "path": "tests/migration/runtime/logging-oracle.rs",
+      "sha256": "0b919ff82476bec9f7279b4b83904a7b3c2f9c29626729dc5531eda92daa7c85"
+    },
+    {
+      "path": "tests/migration/runtime/static-vectors.json",
+      "sha256": "296757747db984c2e6b3adc225d4b10fce861f636bc54c32678483159d87b1fd"
+    },
+    {
+      "path": "tests/migration/scheduler/build-storage.mjs",
+      "sha256": "9be5a21fb13b6fb40d3825cd39879fa6bde403a24f9fe1112117d3b06e2acb16"
+    },
+    {
+      "path": "tests/migration/scheduler/build-worker.mjs",
+      "sha256": "a97034bbf512d48e298fac5baec48d067863ddd6a2447a41be900bf9b0563d59"
+    },
+    {
+      "path": "tests/migration/scheduler/export-storage.mjs",
+      "sha256": "f32cd19299dd8887b7c23337c29f404780db1d6a17cc27c9eedb2a07ba3bf128"
+    },
+    {
+      "path": "tests/migration/scheduler/export-worker.mjs",
+      "sha256": "31e76c5f7c16fcb1d965bcd925919435020482d4a57dede6fa7f25f7a442f760"
+    },
+    {
+      "path": "tests/migration/scheduler/storage-oracle.rs",
+      "sha256": "f51cbe8693408c038a9acc6c8d85cb6594c1037db70e248e42469e0c2384fda5"
+    },
+    {
+      "path": "tests/migration/scheduler/storage-vectors.json",
+      "sha256": "d702299137a39f98b0ba9ac7b8734849e7c867b7125507748c7a429c38b59b18"
+    },
+    {
+      "path": "tests/migration/scheduler/worker-observer.rs",
+      "sha256": "670f3b8ced51490914d412a71df9d285ce49e0c5e2895018b565426e182112ab"
+    },
+    {
+      "path": "tests/migration/scheduler/worker-oracle.rs",
+      "sha256": "4a89cb398be13a767d1edc1f2a38202df753653fbd62028cdc6d20d50b2f8e7f"
+    },
+    {
+      "path": "tests/migration/scheduler/worker-vectors.json",
+      "sha256": "35ae4eafa988cbc1aa9d9a73003ff1064f5f85fb2ca96a7afe5b0c0cf06533b2"
+    },
+    {
+      "path": "tests/migration/sources/access-oracle.rs",
+      "sha256": "d2f506ef1468fdfda51dd4f3d639b45ff0ab611fe2e79ceadbb1da8d5d653f5d"
+    },
+    {
+      "path": "tests/migration/sources/access-vectors.json",
+      "sha256": "b38f561574ad34ca0bfabb9049a48dc0616c44f520eb79a2d35473318b690d51"
+    },
+    {
+      "path": "tests/migration/sources/build-oracles.mjs",
+      "sha256": "70592d14d5a8783b19a74bec28c30fb792ffe39a7264afb29f3049767b088e67"
+    },
+    {
+      "path": "tests/migration/sources/cnki-flow-vectors.json",
+      "sha256": "246d26408cd50c86ed18fd37c61b54d713bf75a266a34794c8aa389e5b4ff0ae"
+    },
+    {
+      "path": "tests/migration/sources/cnki-index-vectors.json",
+      "sha256": "e29e72a7fa670cb5091145d04c7b0d4997f60ed06bedcd07f67e74463aedf05e"
+    },
+    {
+      "path": "tests/migration/sources/cnki-oracle.rs",
+      "sha256": "8d940398e6001040f24ddbd12688b63faa343bed39b9bb979f8ca242c11b41e2"
+    },
+    {
+      "path": "tests/migration/sources/cnki-vectors.json",
+      "sha256": "ca56744abf46b01c53389255cb15f97a2f88d4ae76a6470d547d7a66d853c30f"
+    },
+    {
+      "path": "tests/migration/sources/export-access.mjs",
+      "sha256": "3c1d95a065f7b36c464d53ee46b84c467e65b8bbe70d4fa87bca0285302e01e4"
+    },
+    {
+      "path": "tests/migration/sources/export-cnki-flows.mjs",
+      "sha256": "4ce7a895b030e47b77b4d36d1fce3dda977ea2ccb356dff5a2f2b641db17745a"
+    },
+    {
+      "path": "tests/migration/sources/export-cnki-index.mjs",
+      "sha256": "0fb6631903c0c298bbea3ed119e0ba1eb28a84b353dabdb830cee6fe3b4590ba"
+    },
+    {
+      "path": "tests/migration/sources/export-cnki.mjs",
+      "sha256": "37329c8f8ac498d6d9b0f5f1bbd9209d55706154f7eba4149d2f8f9d45847fb0"
+    },
+    {
+      "path": "tests/migration/sources/export-index-flows.mjs",
+      "sha256": "e70f45e06aa53235cf7bce155774d2b250f94df11017bbccbbfcc347d271d308"
+    },
+    {
+      "path": "tests/migration/sources/export-index.mjs",
+      "sha256": "45da43972fc0860c66e296f9b09414d96fc82d64400874f7c03f8b033c411a25"
+    },
+    {
+      "path": "tests/migration/sources/export-jfbym.mjs",
+      "sha256": "2ef009c59d3161cd7a43bd87fc6820b82918cd2bdd5ec634b3e687461a525dbf"
+    },
+    {
+      "path": "tests/migration/sources/export-numbers.mjs",
+      "sha256": "5e08d8004a65ed6c1581d1979576f43c032404473ecbc08dc6a9ddb312caaa46"
+    },
+    {
+      "path": "tests/migration/sources/export-provider.mjs",
+      "sha256": "ad11db2a0845374d9b2ee8387d58d6fefb2295cfc121f2bb2ff00b52a48ff715"
+    },
+    {
+      "path": "tests/migration/sources/export-schedulers.mjs",
+      "sha256": "373be7f910bff85ac13c6aa3b7f5d4e5abdd98199debd78644755d101b4fb5d0"
+    },
+    {
+      "path": "tests/migration/sources/export-scholarly-decode.mjs",
+      "sha256": "872afd8f14364e6eeadbea208097711fbe53f1f1792b10c2ecb94ea509002f4c"
+    },
+    {
+      "path": "tests/migration/sources/export-scholarly.mjs",
+      "sha256": "51e9fc5b0bee70768655c05ed3b4fffd88e97bbcbdf1fa7d6667bcd6d73a5f73"
+    },
+    {
+      "path": "tests/migration/sources/export-transport.mjs",
+      "sha256": "0d332b701178d6f73bfb120a340168b85d21e6b1a74cc496d27ee553b94f40c2"
+    },
+    {
+      "path": "tests/migration/sources/export-wire.mjs",
+      "sha256": "7c82e831e94659bbd687896d474955f19afde72cfd27de2f5d26cc88200d4ca3"
+    },
+    {
+      "path": "tests/migration/sources/export-workset-flows.mjs",
+      "sha256": "195d5329fab334314181c2abde5263a5f82eccb61f9e67ebd4b4ca3bfff58346"
+    },
+    {
+      "path": "tests/migration/sources/export-workset.mjs",
+      "sha256": "3406d571695fd18b56850ba30823087f791abe9863fa4d5497e230c446a7a72f"
+    },
+    {
+      "path": "tests/migration/sources/export-zjlib.mjs",
+      "sha256": "38ea1bb499d876253d386db3e3626754835b4c091b0f96fb84e0de287553e4e4"
+    },
+    {
+      "path": "tests/migration/sources/index-flow-vectors.json",
+      "sha256": "fcbc545006ec7f633ff4c18106874d0f9d6a3c63053a463230c95bcafd03ba7f"
+    },
+    {
+      "path": "tests/migration/sources/index-observer.rs",
+      "sha256": "433a724fca3edd22c4110ce56794e990c3b67de492e95455ad8496aaba16e7dc"
+    },
+    {
+      "path": "tests/migration/sources/index-oracle.rs",
+      "sha256": "3c35cf124663ee503dcf53ae0a27f15ce87840aa96afda5b39e00427b3877aed"
+    },
+    {
+      "path": "tests/migration/sources/index-vectors.json",
+      "sha256": "c31a9ea3fa198ee3ef727fd4caa5d7e9a56f2a93c3dff2049f44a54bfa92b342"
+    },
+    {
+      "path": "tests/migration/sources/jfbym-vectors.json",
+      "sha256": "ac57bc7d989ad6e0f5b9321424953c245bbb5501ecfdc3d2002fcf87678c1daf"
+    },
+    {
+      "path": "tests/migration/sources/number-vectors.json",
+      "sha256": "0dc64f9f9b7c9a0c35cebdc4e0175f9e4c47ede762b6385c90c5165fd387e731"
+    },
+    {
+      "path": "tests/migration/sources/provider-oracle.rs",
+      "sha256": "da36dd9a800a7e98137635ce42ac62c6af2ffd27a22448b989d623977025f6e4"
+    },
+    {
+      "path": "tests/migration/sources/provider-vectors.json",
+      "sha256": "7132dc84f88b54f72fcdf8bf7349c4ef7d94bd3ad5f2723e472f03903de84d98"
+    },
+    {
+      "path": "tests/migration/sources/scheduler-oracle.rs",
+      "sha256": "7404ac1a8975df2740e0f8b4cbd746843234d68b5ebcb6a918c4dd02e47f215a"
+    },
+    {
+      "path": "tests/migration/sources/scheduler-vectors.json.gz",
+      "sha256": "69e836d3f9f480420d7e61632465ea03a3088035f886f5652532078ec72d8c8e"
+    },
+    {
+      "path": "tests/migration/sources/scholarly-decode-vectors.json",
+      "sha256": "f21d499a51eda244bf68cd730eed09be54ca93268c77132468856ba0b999cc8c"
+    },
+    {
+      "path": "tests/migration/sources/scholarly-oracle.rs",
+      "sha256": "9dc3f089f440a3d49805d6ffb6ee7e3af69e21b11785942cf3fe18970795f3e4"
+    },
+    {
+      "path": "tests/migration/sources/scholarly-vectors.json",
+      "sha256": "2891d07bec004128ebdf7275e9dd097987d7f8f9fa35eb6ba175440a27ed9d50"
+    },
+    {
+      "path": "tests/migration/sources/transport-oracle.rs",
+      "sha256": "b7856894aa945bd01726baa5b68108c717d989ee6c1d77185f679907d286c175"
+    },
+    {
+      "path": "tests/migration/sources/transport-vectors.json",
+      "sha256": "f1ce8a98957ffa51087a8057e13e0388a835cff6d44ac3fe240ad5f532e53b66"
+    },
+    {
+      "path": "tests/migration/sources/wire-vectors.json",
+      "sha256": "62fbc4da52838149c7479ea6e93d92b2fa378291a05e390cd34dc590e83987b5"
+    },
+    {
+      "path": "tests/migration/sources/workset-flow-vectors.json",
+      "sha256": "bd7863ab24297c99f5b13b10322061abca40aba2f20b75ef7533a9728a090cbd"
+    },
+    {
+      "path": "tests/migration/sources/workset-observer.rs",
+      "sha256": "474def51b03c99e8c993a60cabdbdbe91089ec9defe190b30b3bdef9d4cdbed9"
+    },
+    {
+      "path": "tests/migration/sources/workset-oracle.rs",
+      "sha256": "2cdf92ae58ed6f9ae7a2203e42a3ec4b4d920d282f0ba44045ea29c932b6771d"
+    },
+    {
+      "path": "tests/migration/sources/workset-vectors.json",
+      "sha256": "36f414015bc9374e26d0a7ed22951b3df4eff0421d9ff5ca880b0b7cb2c009dc"
+    },
+    {
+      "path": "tests/migration/sources/zjlib-observer.rs",
+      "sha256": "08b1a90df26f8855b6ae3a270f8f26c19680c95cde4f6b46f16785e2381966d9"
+    },
+    {
+      "path": "tests/migration/sources/zjlib-oracle.rs",
+      "sha256": "d283fc6a914f76b4210c9fd7fef9e699d5033ba9991287fba4ed037bf7694dee"
+    },
+    {
+      "path": "tests/migration/sources/zjlib-vectors.json",
+      "sha256": "25bb742ee2a6115cf71ef6f15b4138299c776e8c86cf6c5c158300e3695e0e3f"
+    },
+    {
+      "path": "tests/migration/storage/backup-oracle.rs",
+      "sha256": "ddb16f8547385afd6011cfb6824884a47e408577c325a44934e2df82e1646a30"
+    },
+    {
+      "path": "tests/migration/storage/backup-vectors.json",
+      "sha256": "85a6c8b2aa996341f184f22c636e3790985841d240e3b52167ab49d6aea9be53"
+    },
+    {
+      "path": "tests/migration/storage/build-oracles.mjs",
+      "sha256": "59db39032d9afd4f7251bb5a6e3a368997d6bcfd29ea7034d322dada3a5f9b98"
+    },
+    {
+      "path": "tests/migration/storage/citation-oracle.rs",
+      "sha256": "a7cec36956701268f4727761b8f8984ce105dafd827ee0a4926f063df992a61b"
+    },
+    {
+      "path": "tests/migration/storage/citation-vectors.json",
+      "sha256": "173ec8c5d8412aff9754d9667b5607d32a4c4fc7b337f447849dced7f062a286"
+    },
+    {
+      "path": "tests/migration/storage/database-oracle.rs",
+      "sha256": "1041264a3cfd85f2c9ec6fcd8e31d214cbea11dbf41881b567bcb2595181ce9b"
+    },
+    {
+      "path": "tests/migration/storage/export-backup.mjs",
+      "sha256": "2799ef45c7b9ed4aeddc7522dd036eddaa6afaba7410336211b3e1e17b433168"
+    },
+    {
+      "path": "tests/migration/storage/export-citations.mjs",
+      "sha256": "21ceb65f378e9ea4c88b2a55f6b9c58ead4300f55c7b08efb326a88155fe4157"
+    },
+    {
+      "path": "tests/migration/storage/export-favorites.mjs",
+      "sha256": "33fd970c32a2e1f6b2b0b4305b5194361055651b698985b140d6707887a3ad0e"
+    },
+    {
+      "path": "tests/migration/storage/export-metadata.mjs",
+      "sha256": "0157bfab715d2068c0efa8a7f0426c52a2848fbbb82b1bf3757925c65be8d552"
+    },
+    {
+      "path": "tests/migration/storage/export-search.mjs",
+      "sha256": "874da7d07cd236ce96edfa9bdbbf3e46354b6dc11a894c99b2c768c087ea4218"
+    },
+    {
+      "path": "tests/migration/storage/export-weekly-query.mjs",
+      "sha256": "f0a4f879ea1f233e93a99f4e0ad42e582f73bcd7c67785408c0fb79ecc236f1e"
+    },
+    {
+      "path": "tests/migration/storage/export-weekly.mjs",
+      "sha256": "18dd7ea8177e7e30cee7cd50cfd0bd2886aa97d643ee378e05a5b84a89dcfa0f"
+    },
+    {
+      "path": "tests/migration/storage/favorites-oracle.rs",
+      "sha256": "bc27cf07941a18f5e396d2b7332eff04b7ba9cff486f158db67377e068e7b0cb"
+    },
+    {
+      "path": "tests/migration/storage/favorites-vectors.json",
+      "sha256": "0c0ad0701b8675d027226eae75ef0b72cabbda5859d3c90ec5cdab307b3f5139"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/backup-v2/auth.sqlite",
+      "sha256": "2f4f871b8c8d99aa274e9da00506f4d9d40eb9238bd358bc24d9b79ea6051e66"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/backup-v2/index/metadata.sqlite",
+      "sha256": "1c91cfdff5505b75ec4b177acf76914a2fa3f8f709d2fe389fa56d7d14e1d8d8"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/backup-v2/manifest.json",
+      "sha256": "929017df4b5d8a614acb02213892504460287543f4b696d65bafdb59909f3904"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/backup-v2/push_state/publication.json",
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/content-v4.sqlite.fixture",
+      "sha256": "2530acd955749f4cb5443b2cce8c547cbf81b28dc42838165ba1dc0de3329005"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/content-v5.sqlite.fixture",
+      "sha256": "8db12bfaa9ba9b96a7482c8e5fcb454de58f7854d1dce097860688aed09df94d"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/content-v6.sqlite.fixture",
+      "sha256": "9a6c6fee80762b7adca088c46979579e6edea326096703caad39a5fca4c83b5e"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/content-v7.sqlite.fixture",
+      "sha256": "3dcba7de3989eebea017df262f3f6a8fcb0de436236cb87dc7af4f5a57cf1e97"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/content-v8.sqlite.fixture",
+      "sha256": "956e74d2a5f3b223a775961bde6ac4fc8da8b62e22ed3a9bbc45ea493bd9a850"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/content-v9.sqlite.fixture",
+      "sha256": "ef5c8e5d87a10c411217a61c65deacd72e0f2ad65ade16fd5c64ceeabd29d224"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/favorites-auth.sqlite.fixture",
+      "sha256": "929a3128b6e3d9c916b70b43426030f7ca8417c0a5a90a4af1aecf37f3b78fcb"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/metadata.sqlite.fixture",
+      "sha256": "aa1e552eb8dc28ee0493d267395ed67c7091331c5d0e6fef8ec14e6db5448bb4"
+    },
+    {
+      "path": "tests/migration/storage/index-oracle.rs",
+      "sha256": "ac2e97043efc179f1e0d1e9730e3fb14b3f819ee07190b02ab840f22271c0ad9"
+    },
+    {
+      "path": "tests/migration/storage/index-vectors.json",
+      "sha256": "5a594774db9e93824bf480acc3034d3e6435094ced3563b528ce9cb1e72886e0"
+    },
+    {
+      "path": "tests/migration/storage/metadata-oracle.rs",
+      "sha256": "ef3eed0ae141de486fa63fbd1c05445b47c8aadb905b9bad6140759c59afb8df"
+    },
+    {
+      "path": "tests/migration/storage/metadata-vectors.json",
+      "sha256": "955aad23b412a30d08979f05688ca60c081095dc9dbb45377a9de058d774320f"
+    },
+    {
+      "path": "tests/migration/storage/search-oracle.rs",
+      "sha256": "ff99308f330ee0943a2fc7f62df8250262653ba7a30bd036f90bf6888c6970a1"
+    },
+    {
+      "path": "tests/migration/storage/search-vectors.json",
+      "sha256": "f334104777fd360bb1929fc1befbe45a4e09496d1effe8ae73379e4651bb67d6"
+    },
+    {
+      "path": "tests/migration/storage/weekly-oracle.rs",
+      "sha256": "f835f2b8746873bcac97f5cfe23221d4250f400d52bb4530581d91b0be6a5e41"
+    },
+    {
+      "path": "tests/migration/storage/weekly-query-oracle.rs",
+      "sha256": "fffdcde635373a2398c15e0f57a7d87ef8fdc4e0c2156391697304f3207ed76d"
+    },
+    {
+      "path": "tests/migration/storage/weekly-query-vectors.json",
+      "sha256": "e3595f0122898440e64846e0587850ac8bee8e747a6555ba5641447df6f6f3e7"
+    },
+    {
+      "path": "tests/migration/storage/weekly-vectors.json",
+      "sha256": "4d62679a05c1df86327e4234edb7b5fdce6d61caf7550209bce6ffba3891828f"
+    }
+  ],
+  "historicalInputs": [
+    {
+      "path": "app/components/admin/overview-card.tsx",
+      "sha256": "b8ad662951b54f17ee4d1bbd0fbcb647f7e6dfce82ae0f21afd53fad84f94adc"
+    },
+    {
+      "path": "app/components/cfp/cfp-notice-card.tsx",
+      "sha256": "b033cb724e488a87589554bcec0b6bae0a967a0ce99c2d2ab036db755e764d54"
+    },
+    {
+      "path": "app/components/cfp/cfp-tracking-view.tsx",
+      "sha256": "3087e3eded902bec80f5eae72f812fcfe88a14c08e75422e11e2e539f183a0f9"
+    },
+    {
+      "path": "app/components/favorites/favorites-page-content.tsx",
+      "sha256": "9e2a8253338a1013a82d3865e76b45b9ed3433aa282ab1468e6f4208d095614e"
+    },
+    {
+      "path": "app/components/feature/active-filter-chips.tsx",
+      "sha256": "61a24abec4bfe42f0b9f20508bc5133787a9a8384075b0beb4b5ddff6a289823"
+    },
+    {
+      "path": "app/components/feature/article-detail-dialog-content.tsx",
+      "sha256": "bd5204b4ef2e0475f87ae9b94e1cf1d7d37c5984a0c2ac760c69a333762f9035"
+    },
+    {
+      "path": "app/components/feature/article-list-card.tsx",
+      "sha256": "48f25bf68f540d8f6dc49a7c1b2ee037a0863f989491a8a0a38a82093949de11"
+    },
+    {
+      "path": "app/components/feature/favorite-button.tsx",
+      "sha256": "97eaf032cf45bcf5121673e69b62352e28ee7e8aa800beba6e6ba46bcb37de51"
+    },
+    {
+      "path": "app/components/feature/sectioned-dialog.tsx",
+      "sha256": "c760354ac4b4dc16ffa2144cf49088c672527b6f62f18d60b884b7e6aa22b07f"
+    },
+    {
+      "path": "app/components/feature/sidebar-navigation.tsx",
+      "sha256": "530a4cd8dc0a968e337aba5be256c740c63570f3eb01a1d8f65adf56c9b2b4e4"
+    },
+    {
+      "path": "app/components/settings/general-settings-section.tsx",
+      "sha256": "fdc3970069b1fa56ff222b14de42462bf33f14644a3edbbb8a5bf5aa23d617f3"
+    },
+    {
+      "path": "app/components/weekly/weekly-updates-view.tsx",
+      "sha256": "bb71209c326ecfc9509d0d50ed379d3a420828b713d6166babf5ba0dbf072cb1"
+    },
+    {
+      "path": "app/tests/e2e/local-fixtures.spec.tsx",
+      "sha256": "37646a144868572b6ffc0c210d08b0615325d2a9e689f50faf879438569722dd"
+    },
+    {
+      "path": "app/tests/favorite-flow.test.tsx",
+      "sha256": "34aeb3c84cbdade1023037a5fdcd13b3bbf77e2e35a1a9ccfbc17c27e0ab0e10"
+    },
+    {
+      "path": "auth.sqlite",
+      "sha256": "2f4f871b8c8d99aa274e9da00506f4d9d40eb9238bd358bc24d9b79ea6051e66"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "a572dd66f03daa1f9243d27caa45799c9e21bfa3007e07449f51586e226e5318"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "7db39286ee4f93fef1364ea1d2d4ba50e8adc41148e932173220a55772afc795"
+    },
+    {
+      "path": "crates/litradar-api/src/citation.rs",
+      "sha256": "30ebc01e5620c9c275344ddfe885456d82ad8d59eed5a02d33263785a167cb17"
+    },
+    {
+      "path": "crates/litradar-domain/src/business.rs",
+      "sha256": "5dbc0746f43a8094b9a5215e3704bda9f9a23bc2da69cab3ad57d293446806e8"
+    },
+    {
+      "path": "crates/litradar-domain/src/cfp.rs",
+      "sha256": "ac0ee1ed22dacdc9aadd8b6fab8c144c865d208eb0fdbd3b52f1aeca82bea3f9"
+    },
+    {
+      "path": "crates/litradar-domain/src/cfp/dates.rs",
+      "sha256": "23869c31c0fc5e0146d25df2d59f0cde7ef81d4138ccc16ee8c719ac8c6e8130"
+    },
+    {
+      "path": "crates/litradar-domain/src/ids.rs",
+      "sha256": "95e4edb12af450618a6895eaf2a47d208425dd550a6cc5b43a04027474897bf9"
+    },
+    {
+      "path": "crates/litradar-domain/src/index_contract.rs",
+      "sha256": "c80d185dab2780f478d42f6c2f9e7bf1c25eaa67fa255b6ab5fb6d5c4ae12021"
+    },
+    {
+      "path": "crates/litradar-domain/src/recommend.rs",
+      "sha256": "57b62362c8ad1507d20b8770adbef96cdfa4fb14678a68bbb6696a81e765b77c"
+    },
+    {
+      "path": "crates/litradar-domain/src/validation.rs",
+      "sha256": "0a06d0b2ea1f1b14dc0cb166ac148eb65733310205af0d34b41b6d6f6c7d3cf4"
+    },
+    {
+      "path": "crates/litradar-index/src/batch.rs",
+      "sha256": "2cfb2a98c1b870c43ba0299eebc83c0160aee87b63ec00ec75679fc577d1fb1a"
+    },
+    {
+      "path": "crates/litradar-index/src/changes.rs",
+      "sha256": "2901dd1d9e6e833222f84fdaa9a108f56c9ccdbb7d9467217314ead82f169ed1"
+    },
+    {
+      "path": "crates/litradar-index/src/control.rs",
+      "sha256": "0da76c4f079f60e0f64aaee18164d3c54668d99641c21c5728d2abaf5bd5f63c"
+    },
+    {
+      "path": "crates/litradar-index/src/identity.rs",
+      "sha256": "68b02aae84b9ac6be6345ae64a88295a4ad5409f2c42d9baf34ab00f2d8c5006"
+    },
+    {
+      "path": "crates/litradar-index/src/live.rs",
+      "sha256": "bf7f5bc9f778020f4c4a392a65ebb78a23ab3f1ad5f7ab0056f0681601c24ece"
+    },
+    {
+      "path": "crates/litradar-index/src/schema.rs",
+      "sha256": "3e62db042bbae8facc43ccb7815df42c325b3c5ba08801278d9764afb4ca28b6"
+    },
+    {
+      "path": "crates/litradar-index/src/transforms.rs",
+      "sha256": "17c5af6d638804ff303855fe45f02423ef18d7492670a44911924f6f8f69e62c"
+    },
+    {
+      "path": "crates/litradar-index/src/worker_protocol.rs",
+      "sha256": "18a698d31d1e93f68dc8d5d3c23441b3d120e9fb78b55f0278c1d49526a5cd0e"
+    },
+    {
+      "path": "crates/litradar-recommend/Cargo.toml",
+      "sha256": "5f4b6ebb4c3d301f706696999e5af520c992baa7069db5ff3f6f243328a447d3"
+    },
+    {
+      "path": "crates/litradar-recommend/src/lib.rs",
+      "sha256": "bd4fcd030b6d33a1da40c9ea9a66006737083c75b5e1cff49990bfede4f6b9d8"
+    },
+    {
+      "path": "crates/litradar-sources/assets/cfp-sources.json",
+      "sha256": "5d69961e8d76798f6763fc11d52d8b271d434de0e8858cc4ef27bd3857f99bcc"
+    },
+    {
+      "path": "crates/litradar-sources/src/cfp/html.rs",
+      "sha256": "a39999afa3b11ccf5ed7f139803080cb1bf2f27ad91f609d52157ba1131d438e"
+    },
+    {
+      "path": "crates/litradar-sources/src/cfp/http.rs",
+      "sha256": "694d264162604d4ac70e6e182f9b43cca4dd47fc5cc53b163502fdd8f8937bc5"
+    },
+    {
+      "path": "crates/litradar-sources/src/cfp/mod.rs",
+      "sha256": "84bc58c4d757e58ce3eab702af2922cb77befa69bdbc3fd0541eb73e40b70b84"
+    },
+    {
+      "path": "crates/litradar-sources/src/cnki_domestic.rs",
+      "sha256": "c0f5d55d6fc4963d4ba7b4906247a670347f07a9aa34f0f6a9874a94be0d0a6d"
+    },
+    {
+      "path": "crates/litradar-sources/src/crossref_workset.rs",
+      "sha256": "443013880179e71db2ddb475e2dc0b1c26ef176f99f1e2a9fff833ba2c7b202c"
+    },
+    {
+      "path": "crates/litradar-sources/src/http_retry.rs",
+      "sha256": "84e1832df4ac7de9ffb4f5e3c13da41a940596a6a5838769eb9eec9e98ad9dae"
+    },
+    {
+      "path": "crates/litradar-sources/src/providers.rs",
+      "sha256": "c612184dff107996f022c63f0f3d4dc8723380c86a984c49ca52af73f619814e"
+    },
+    {
+      "path": "crates/litradar-sources/src/scholarly.rs",
+      "sha256": "4d06cc69d86e5f0329399424632df9b02b4b808eec7de453b32084b8b7574818"
+    },
+    {
+      "path": "crates/litradar-sources/src/zjlib.rs",
+      "sha256": "53f92182ba5aeea3fe6c02270429a70cee94ac511f915e013a522a7de8e2024c"
+    },
+    {
+      "path": "crates/litradar-sources/tests/cfp.rs",
+      "sha256": "aa57bea94332b8d91e01ed7ae4616ac2dab1b66adab565e47d2175bd56b6a7ed"
+    },
+    {
+      "path": "crates/litradar-sources/tests/fixtures/cfp-elsevier.txt",
+      "sha256": "617a2417793715bb49857bcf20c0101618a3aa1af3981537cd3212e113cdd850"
+    },
+    {
+      "path": "crates/litradar-sources/tests/fixtures/cfp-keai.txt",
+      "sha256": "7ed8961af4ed98b579c118d4f0279b11226d090f83de18ff95628fd6a39cd23d"
+    },
+    {
+      "path": "crates/litradar-sources/tests/fixtures/cfp-springer.txt",
+      "sha256": "9e6ed62562c2fc03e9e7000186fd5c4ea2276ae6280ef703df181c22a59564e0"
+    },
+    {
+      "path": "crates/litradar-storage/Cargo.toml",
+      "sha256": "5694e4a3c45cd798c6910d695773208bf8da696acdedd31cefa75d5b08f37d4e"
+    },
+    {
+      "path": "crates/litradar-storage/src/article_authors.rs",
+      "sha256": "ac577a00ee884ffe7445400e0fee0ea8cc9d1ba946743ce53af39ef528903e5e"
+    },
+    {
+      "path": "crates/litradar-storage/src/backup.rs",
+      "sha256": "9cb714f32b42cbcc01f88f9e6e7a802e05dd60d564e449ca07fe7cf78949e024"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/cfp.rs",
+      "sha256": "db4abd68f0675ab0c90e9a9221edd14fab9ca9c514902b2ce4578fc154e9f618"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/delivery.rs",
+      "sha256": "6f2aca2bee85817569c796a8a0e770dd6051b336c421bf7cb36bf706a3fcfcd2"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/favorites.rs",
+      "sha256": "8645a78f4415f56e349d459a1b6d40368aabdfb0fb1b51b9878faad072622ad1"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/runtime_settings.rs",
+      "sha256": "7f41ae14857a1b0fa9183afda03d2b2591580a9aa9eca2f7e514a1ec104ad73c"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/scheduled_tasks.rs",
+      "sha256": "1aece680ab867a9fd9552a755e6f77a0ff2818a45fa290061f6228ceaf46eb0e"
+    },
+    {
+      "path": "crates/litradar-storage/src/business/security_audit.rs",
+      "sha256": "fff1e98f9999c44344bfdb3547812be2a2555f51a40d0c425e113bdafd194c8e"
+    },
+    {
+      "path": "crates/litradar-storage/src/config.rs",
+      "sha256": "8a49e5b7a4a0fabfe5c26da409d13eaa9dc9e5077b4aa09ed06b46f15103e247"
+    },
+    {
+      "path": "crates/litradar-storage/src/index_schema.rs",
+      "sha256": "ef475b43ab1042a9f8268611cfff5f115fa5eb1869a3193e9f005d4c4f07a78a"
+    },
+    {
+      "path": "crates/litradar-storage/src/index/articles.rs",
+      "sha256": "f1ec985c002e4eba62aa3a98f94715af3f32e8188cc828e00d02165650f19e49"
+    },
+    {
+      "path": "crates/litradar-storage/src/index/fulltext.rs",
+      "sha256": "8b89315033c5526593cd75296637e19aee5d861caaf108e5feea3bd86b4c785c"
+    },
+    {
+      "path": "crates/litradar-storage/src/index/metadata.rs",
+      "sha256": "d25ae23fa46be48c3290dc141ddaba23ffa7880dda81116cbdec3d94af5fa213"
+    },
+    {
+      "path": "crates/litradar-storage/src/index/mod.rs",
+      "sha256": "107819219494a70944b9b5379261ae83abb22d0f90ed61628e5a28e60aa0575c"
+    },
+    {
+      "path": "crates/litradar-storage/src/index/shared.rs",
+      "sha256": "6a532179c1552fa1d0b8c29db0bf77d0905bc25ad9d45380d76b58d809d4cd49"
+    },
+    {
+      "path": "crates/litradar-storage/src/index/test_support.rs",
+      "sha256": "756b95ff740ba51d74d3df10b1c936b6c5731d859d19a6c87971d2dbad2aacfe"
+    },
+    {
+      "path": "crates/litradar-storage/src/index/weekly.rs",
+      "sha256": "45341c773ac90eefa79652acc4a5a80b165d509e201884079d455bbad843a3b8"
+    },
+    {
+      "path": "crates/litradar-storage/src/migrations.rs",
+      "sha256": "3a633ccf868e97d55b839f271fd782ae24948f8b83f5e62c2995751c0ab24bea"
+    },
+    {
+      "path": "crates/litradar-storage/src/search_text.rs",
+      "sha256": "25fca6ec18bd1e8cb5578af4ecd1722e875a1334aef2ad3b73e4959a7dd5534d"
+    },
+    {
+      "path": "crates/litradar-storage/src/secrets.rs",
+      "sha256": "a67ab1be4215fecf776901e92891bb1ea198798b79ead992eab6b0e7267c77c7"
+    },
+    {
+      "path": "crates/litradar-storage/src/weekly_manifest.rs",
+      "sha256": "324da5c482e169014e0d6a44859a4a0d0a622372e77d8678c87117578fbe94d4"
+    },
+    {
+      "path": "crates/litradar-storage/tests/migrations.rs",
+      "sha256": "92d4b6a6f8eaa0c65575545325cd5604358cf52389c4b1c12ed46d7515163544"
+    },
+    {
+      "path": "crates/litradar-worker/Cargo.toml",
+      "sha256": "e81d3190eaa88984cb072a1c323dfcafd3021256cca9b4987d82293e0ea381fb"
+    },
+    {
+      "path": "crates/litradar-worker/src/ai.rs",
+      "sha256": "b49fa84eb6f63780ec4743ba92bc706d83c24f93bd30eb2289babe8684e88ff9"
+    },
+    {
+      "path": "crates/litradar-worker/src/cfp.rs",
+      "sha256": "9f034d5819064dccebc780a121e7ad5c2e19b61bb6c3640e57b168164f04a4f5"
+    },
+    {
+      "path": "crates/litradar-worker/src/cfp/full_text.rs",
+      "sha256": "328cc38401bcd8529b47b12ec85cb57fb883a49cf5250a494510a2f903b874e2"
+    },
+    {
+      "path": "crates/litradar-worker/src/http.rs",
+      "sha256": "9c105b2f630bd28a4044775b27cb26cfbd4f8b7521330e4c650bdcbb09290355"
+    },
+    {
+      "path": "crates/litradar-worker/src/lib.rs",
+      "sha256": "3dca13274b7e9af99ec735dc20dd01177514c457dcbee9a19464d586c9c35c34"
+    },
+    {
+      "path": "crates/litradar-worker/src/process_supervisor.rs",
+      "sha256": "22b223a2f85b711e06ce9cac7683dad862155f640cf85f8b8aae896ea94ceafd"
+    },
+    {
+      "path": "crates/litradar-worker/src/pushplus.rs",
+      "sha256": "f16010324ebfb28476fbf77d28b7c53eeccd288256bfcefa4689259b086cfd57"
+    },
+    {
+      "path": "crates/litradar-worker/src/retry.rs",
+      "sha256": "a10112b815e6b6101fb135d6866adbbd74f267a6ae568e8e628f97519b912ab7"
+    },
+    {
+      "path": "crates/litradar-worker/src/scheduler.rs",
+      "sha256": "39e4a79d3ce014fd147af83a21bf89298602183c40379bb5ae2d94ab755ca895"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libchrono_tz-337da77e18eb9c24.rlib",
+      "sha256": "7b885c058c2389b261a5ef4a98e85abd31d9fadcf57e40f127d6d5b8554b7a5c"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libchrono-8309b2c0b3f67ba3.rlib",
+      "sha256": "d355e6b6b5c41f7cc02156be175b643726bac4d88f4ae6174bbccc458bcbd810"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libcommand_group-c8a15b4d73c09932.rlib",
+      "sha256": "8b1ea50bdb4cdb2f5b18de87f75ed194fe4576d12cd4eeaa64b0f0a286f6ec41"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libgetrandom-5f8eef5d1255928b.rlib",
+      "sha256": "9fb805cf45127e3d69f787b4486e9d376337f27babaa1378883356d720ef1f2d"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\liblitradar_domain-284f9b3bb52027e5.rlib",
+      "sha256": "51cdf2cf3a265b836e0c5dd4308a7cadaee5c1a2752b3e927dc3315d67944814"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\liblitradar_domain-4211ea37a044a605.rlib",
+      "sha256": "1d6d6a78cf24aa57f1a5b19275660c4489f544bd98ca7bdfbe3b553541f8ba23"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\liblitradar_domain-79fdb13e7239aeb2.rlib",
+      "sha256": "05d4b90c867942732f9653851d51a066ef31535db212d1fec8c0db5769d2fd53"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\liblitradar_domain-f22992a4f26994ca.rlib",
+      "sha256": "636346e9b785d3ef9a0fb51034bec13b62c0a22e1e75c987969b072d34a442fc"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\liblitradar_provider-09c658c318f7a4d6.rlib",
+      "sha256": "12dcc72d4cf689857826062599575e4ee8f063b49a9c13822a659defd94343b3"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\liblitradar_recommend-fb04c4642529c616.rlib",
+      "sha256": "e58df6df7387568f7ccfae7a0f51d7032312183c0cdbef8ebd1220dc36ca4a92"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\liblitradar_sources-654acaccdd82d940.rlib",
+      "sha256": "ea8426552a9899e8cc4ae95ace8544b896365bdca74848166c95619f76459df6"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\liblitradar_storage-66c25bc1d7939278.rlib",
+      "sha256": "5ae5fabfff8535d62da6b130ee2817fdcf638a3387689219756710d524e17fc3"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libmatchers-231592afac9735ca.rlib",
+      "sha256": "89035ee09adf6c3726332b5625cb62a5bec44912e0403a2a58bcb0950f38d45d"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libregex-92ef3b3d5ab65be5.rlib",
+      "sha256": "af8e73e98e1bbb98e4b4c1e4f6986b41c6f2a5ba6e9404a82b100e35fe5aa2b2"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libreqwest-21c2450f1cde0c75.rlib",
+      "sha256": "cde6337782c5ac0de9a6f74b09efbf299bf0113d783b34a02c6ff092ac2ad128"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libreqwest-ae67dbb303310ab5.rlib",
+      "sha256": "cd96850237b53121db853aa0e076a6b9415dc81609d659d80b1dace349aac673"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\librusqlite-4bcfd1dc6b3aabcf.rlib",
+      "sha256": "8478f6ed0fcee9e4c6bfc371003b889dfe5cde159f687ac5743531e695f5a2c4"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\librusqlite-8d31b4d1855dac1b.rlib",
+      "sha256": "abeb06c01a7a9f141c2d86e995c08e8f4c4ee19727548cf7fb648d580211d8ac"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libserde_json-4b04879bb0b79b6d.rlib",
+      "sha256": "e4ef37031e60d61e1811cc3726bf3789b557804d6f5d17a894c14dd00f6ee752"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libserde_json-834eb156830364b5.rlib",
+      "sha256": "2f59ddf34b2b266b0a278381ef891639bd62950e17276420a1edbb85772ff22d"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libserde_json-aef12c909ad483bc.rlib",
+      "sha256": "6aceac67e37a84c62f11be9c12963ec4f154d1e9f979ea6d21d247a6ae108bb7"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libserde-74694dd041cac879.rlib",
+      "sha256": "7304d624e9cc64fe54c33cae71752db87b3874292c404fd9274fdf1b0602f49d"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libsha2-457dce7b24b19f08.rlib",
+      "sha256": "9b8b3c5f73d75c4fb777c7391329d67aa65cb5c1b5096284f832f9357f73bcea"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libtempfile-cd8b16cab9bfaaa0.rlib",
+      "sha256": "0675d672cebb65124dd7d6cfb0876d687507803d9dfef195bbf9578702ef8129"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libtracing_subscriber-ed0cd57f57c56845.rlib",
+      "sha256": "b6815fbd2db01285afa408022f1cd7fccb102e91002159f800cc56245a9126a5"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libtracing-0661159c98c01890.rlib",
+      "sha256": "942d7e6e06f12a1c8f407c17a41ea4a52eecbf9537c70c5c4eb32219285ff7a3"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libtracing-4ad7605a39b73cf6.rlib",
+      "sha256": "a5749877248351cb84515575ee636791b106ab0c7e1642298e1407c2f84da83a"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\deps\\libtracing-797664b689a6e7d3.rlib",
+      "sha256": "216ce9f1e4622379a74fc893d32973e05d774e86d2e048198baec829bf15599f"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_index.rlib",
+      "sha256": "ead7eb88b04476172487c1eaf38fbf9a13d9a69cfa9ac4db661d80e708ed0657"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_recommend.rlib",
+      "sha256": "e036ee9800855870d480eab6dc543561218d17bce78e606bc80d938c752fbe74"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_sources.rlib",
+      "sha256": "e40c6f8f0c7bdcd7b2a49b68156bc3f1a8c69954085ac7cfd560756c5b89fdea"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_sources.rlib",
+      "sha256": "ea8426552a9899e8cc4ae95ace8544b896365bdca74848166c95619f76459df6"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_storage.rlib",
+      "sha256": "5ae5fabfff8535d62da6b130ee2817fdcf638a3387689219756710d524e17fc3"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_storage.rlib",
+      "sha256": "b384eddb422127af96de82921fb69c60466d900cad44fde649c465093d2b4ed7"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_storage.rlib",
+      "sha256": "e22bab13e56c553f6fda2172492c093ff3fa20679f437c189d8664e547de4573"
+    },
+    {
+      "path": "D:\\QianFuv\\Rust\\LitRadar\\target\\debug\\liblitradar_worker.rlib",
+      "sha256": "f157b857b6480c6f2cb8398699e4a006acc8bd95c22c6e39635819eee972b8d9"
+    },
+    {
+      "path": "index/metadata.sqlite",
+      "sha256": "1c91cfdff5505b75ec4b177acf76914a2fa3f8f709d2fe389fa56d7d14e1d8d8"
+    },
+    {
+      "path": "meta/nested/catalog.csv",
+      "sha256": "5cc8a50af0cafb41b31397c7b6d391289876839805816fa21636427578560d23"
+    },
+    {
+      "path": "output/migration/execution/index-oracle/notify-original.rs",
+      "sha256": "90f8c3b40c7776f1485b29569c58412c1cd234bb90baa9c6a0e7fc794e1206fe"
+    },
+    {
+      "path": "push_state/publication.json",
+      "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+    },
+    {
+      "path": "target/debug/deps/libserde_json-aef12c909ad483bc.rlib",
+      "sha256": "6aceac67e37a84c62f11be9c12963ec4f154d1e9f979ea6d21d247a6ae108bb7"
+    },
+    {
+      "path": "target/debug/liblitradar_storage.rlib",
+      "sha256": "e22bab13e56c553f6fda2172492c093ff3fa20679f437c189d8664e547de4573"
+    },
+    {
+      "path": "testdata/IdnaTestV2.json",
+      "sha256": "05570bca335634cf4dca999445e4125ae2b9bb55bfed6f4dca0e63005c6cf88f"
+    },
+    {
+      "path": "testdata/urltestdata.json",
+      "sha256": "3f71e188f21f6cc0bbc25c7f6cc997fe2847de6893262c8bee539778e46117d2"
+    },
+    {
+      "path": "tests/migration/api/fixtures/full-stack.sqlite.fixture",
+      "sha256": "28d15635c2edc33ed452d5adb2a99beadaeda26280816de0d1243ccf02f98106"
+    },
+    {
+      "path": "tests/migration/auth/secret-candidate/main.go",
+      "sha256": "b7d7c69edaa81ee467c2fb84117360f8973de1293189275d4b8f7832d670cabf"
+    },
+    {
+      "path": "tests/migration/auth/secret-oracle.rs",
+      "sha256": "d1f70fb557febe0c4396faf8a97ba893f0a03990c0c7ebe071831f96c9ecbe5a"
+    },
+    {
+      "path": "tests/migration/auth/settings-oracle.rs",
+      "sha256": "0d87459072260f7665bd6555587487344fb5ffe395537db97b2610c36c507313"
+    },
+    {
+      "path": "tests/migration/cfp/full-text-observer.rs",
+      "sha256": "239ee9281a97cad434d39bdd2620a1051cb6ed53ac5f3e7ca05f62444c6d02d7"
+    },
+    {
+      "path": "tests/migration/cfp/source-observer.rs",
+      "sha256": "2898ec92ecf34625a18ae199e2da03268aaa9060dfcb076eb6153c03253937c9"
+    },
+    {
+      "path": "tests/migration/cfp/storage-oracle.rs",
+      "sha256": "0e773ec78f60e2630493a8967fd38a3b96f908d6a4f886efee0fe2e6f4872622"
+    },
+    {
+      "path": "tests/migration/cfp/worker-observer.rs",
+      "sha256": "30bc410cb29833f258da7c1be7d50590e2435fd3f62ba03c59328680dca75275"
+    },
+    {
+      "path": "tests/migration/cfp/worker-oracle.rs",
+      "sha256": "3de6d6123915f4fa9d70c5921e59fe7174c3b9a956012468ea93afbed13b2e31"
+    },
+    {
+      "path": "tests/migration/delivery/client-oracle.rs",
+      "sha256": "a337f0d5318e435d690064739053dd20a8b2d62b93098d90dae1a14711c190d8"
+    },
+    {
+      "path": "tests/migration/delivery/durable-oracle.rs",
+      "sha256": "2cd0b270c2d485c1343063884f44790f3ec316dfaa066db6f1ce7392b9c56ff3"
+    },
+    {
+      "path": "tests/migration/delivery/legacy-oracle.rs",
+      "sha256": "b30ba09ba39ef7e44705c9c000a6d90ce37781168835568b710c9bdd37c0e8ab"
+    },
+    {
+      "path": "tests/migration/delivery/recommend-oracle.rs",
+      "sha256": "026608ed741cb055c94c7c6062941b23938bb5a0a8dc774d8a8d82b2dc6c0253"
+    },
+    {
+      "path": "tests/migration/index/batch-observer.rs",
+      "sha256": "e7ab4e2470106ea734823dfc92e935a151ac630c4383e425e1421277c71159ac"
+    },
+    {
+      "path": "tests/migration/index/control-observer.rs",
+      "sha256": "a5ed8711fe0a1626e362ac9253045e7079468cb8cfc786aea3410bbd0beac725"
+    },
+    {
+      "path": "tests/migration/index/identity-oracle.rs",
+      "sha256": "644c20e6b1b250f57f96a2da6308aedb462dd5c98bd080b0c400ba5898eb44d5"
+    },
+    {
+      "path": "tests/migration/index/notify-observer.rs",
+      "sha256": "281c3d7dcd45f7bdd8412761eddce709413e926f06f7484be4b68ac0a6d32114"
+    },
+    {
+      "path": "tests/migration/index/worker-observer.rs",
+      "sha256": "9ba2bde81022aa8512991257a0f02bf2dc91831b1072efcde213f7b0457c138c"
+    },
+    {
+      "path": "tests/migration/scheduler/storage-oracle.rs",
+      "sha256": "f51cbe8693408c038a9acc6c8d85cb6594c1037db70e248e42469e0c2384fda5"
+    },
+    {
+      "path": "tests/migration/scheduler/worker-observer.rs",
+      "sha256": "670f3b8ced51490914d412a71df9d285ce49e0c5e2895018b565426e182112ab"
+    },
+    {
+      "path": "tests/migration/scheduler/worker-oracle.rs",
+      "sha256": "4a89cb398be13a767d1edc1f2a38202df753653fbd62028cdc6d20d50b2f8e7f"
+    },
+    {
+      "path": "tests/migration/storage/backup-oracle.rs",
+      "sha256": "ddb16f8547385afd6011cfb6824884a47e408577c325a44934e2df82e1646a30"
+    },
+    {
+      "path": "tests/migration/storage/build-oracles.mjs",
+      "sha256": "59db39032d9afd4f7251bb5a6e3a368997d6bcfd29ea7034d322dada3a5f9b98"
+    },
+    {
+      "path": "tests/migration/storage/citation-oracle.rs",
+      "sha256": "a7cec36956701268f4727761b8f8984ce105dafd827ee0a4926f063df992a61b"
+    },
+    {
+      "path": "tests/migration/storage/export-backup.mjs",
+      "sha256": "2799ef45c7b9ed4aeddc7522dd036eddaa6afaba7410336211b3e1e17b433168"
+    },
+    {
+      "path": "tests/migration/storage/export-favorites.mjs",
+      "sha256": "33fd970c32a2e1f6b2b0b4305b5194361055651b698985b140d6707887a3ad0e"
+    },
+    {
+      "path": "tests/migration/storage/export-weekly-query.mjs",
+      "sha256": "f0a4f879ea1f233e93a99f4e0ad42e582f73bcd7c67785408c0fb79ecc236f1e"
+    },
+    {
+      "path": "tests/migration/storage/favorites-oracle.rs",
+      "sha256": "bc27cf07941a18f5e396d2b7332eff04b7ba9cff486f158db67377e068e7b0cb"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/backup-v2/manifest.json",
+      "sha256": "929017df4b5d8a614acb02213892504460287543f4b696d65bafdb59909f3904"
+    },
+    {
+      "path": "tests/migration/storage/fixtures/metadata.sqlite.fixture",
+      "sha256": "aa1e552eb8dc28ee0493d267395ed67c7091331c5d0e6fef8ec14e6db5448bb4"
+    },
+    {
+      "path": "tests/migration/storage/index-oracle.rs",
+      "sha256": "ac2e97043efc179f1e0d1e9730e3fb14b3f819ee07190b02ab840f22271c0ad9"
+    },
+    {
+      "path": "tests/migration/storage/metadata-oracle.rs",
+      "sha256": "ef3eed0ae141de486fa63fbd1c05445b47c8aadb905b9bad6140759c59afb8df"
+    },
+    {
+      "path": "tests/migration/storage/search-oracle.rs",
+      "sha256": "ff99308f330ee0943a2fc7f62df8250262653ba7a30bd036f90bf6888c6970a1"
+    },
+    {
+      "path": "tests/migration/storage/weekly-oracle.rs",
+      "sha256": "f835f2b8746873bcac97f5cfe23221d4250f400d52bb4530581d91b0be6a5e41"
+    },
+    {
+      "path": "tests/migration/storage/weekly-query-oracle.rs",
+      "sha256": "fffdcde635373a2398c15e0f57a7d87ef8fdc4e0c2156391697304f3207ed76d"
+    }
+  ]
+}

@@ -9,8 +9,6 @@ on:
       - "cmd/**"
       - "internal/**"
       - "third_party/**"
-      - "deny.toml"
-      - "osv-scanner.toml"
       - ".gitleaksignore"
       - "scripts/check-go.mjs"
       - "assets/**"
@@ -93,8 +91,6 @@ jobs:
               - "docs/third-party/**"
               - "app/package.json"
               - "app/pnpm-lock.yaml"
-              - "deny.toml"
-              - "osv-scanner.toml"
               - ".gitleaksignore"
               - ".github/dependabot.yml"
               - ".github/workflows/**"
@@ -106,8 +102,6 @@ jobs:
               - "third_party/**"
               - "assets/**"
               - "app/**"
-              - "tests/filter-codeql-sarif.test.mjs"
-              - "scripts/filter-codeql-sarif.mjs"
               - ".github/workflows/codeql.yaml"
 
   backend-quality:

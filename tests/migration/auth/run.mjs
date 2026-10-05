@@ -1,5 +1,9 @@
 /** Execute fresh identity, persistence and bounded SQLite-patch proof on Windows and Linux. */
 import assert from "node:assert/strict";
+import {
+  verifyFrozenEvidence,
+  verifyHistoricalInput,
+} from "../frozen-evidence.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BASELINE, WORKSPACE_ROOT, digest, loadOracle } from "../oracle.mjs";
@@ -57,7 +61,8 @@ async function identities(paths) {
 }
 
 /** Validate frozen portable inputs and supplemental parser observations before executing Go. */
-async function validateInputs() {
+export async function validateInputs() {
+  await verifyFrozenEvidence();
   const oracle = await loadOracle(BASELINE);
   const portable = JSON.parse(
     await fs.readFile(
@@ -94,14 +99,7 @@ async function validateInputs() {
     settings.cases.length >= 1524,
     "Settings differential corpus is incomplete",
   );
-  for (const source of settings.sources.filter(
-    (item) => !item.path.startsWith("target/"),
-  ))
-    assert.equal(
-      digest(await fs.readFile(path.join(WORKSPACE_ROOT, source.path))),
-      source.sha256,
-      `Changed settings oracle source: ${source.path}`,
-    );
+  for (const source of settings.sources) await verifyHistoricalInput(source);
   const urls = JSON.parse(
     await fs.readFile(
       path.join(WORKSPACE_ROOT, "tests/migration/auth/url-vectors.json"),
@@ -110,14 +108,7 @@ async function validateInputs() {
   );
   assert.equal(urls.baseline, BASELINE);
   assert.equal(urls.cases.length, 3670);
-  for (const source of urls.sources.filter(
-    (item) => !item.path.startsWith("target/"),
-  ))
-    assert.equal(
-      digest(await fs.readFile(path.join(WORKSPACE_ROOT, source.path))),
-      source.sha256,
-      `Changed URL oracle source: ${source.path}`,
-    );
+  for (const source of urls.sources) await verifyHistoricalInput(source);
   return {
     oracleManifestSha256: digest(
       await fs.readFile(path.join(oracle.directory, "manifest.json")),

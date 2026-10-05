@@ -6,11 +6,11 @@
 - OpenAPI JSON：`/openapi.json`
 - 前端生成基线：`app/lib/generated/openapi.json`
 
-Rust handler 上的 OpenAPI 注解是 REST 契约的实现来源。修改 REST 接口后，应重新生成前端基线；不要在本文重复维护完整 schema。
+`internal/openapi` 的契约构造代码是 REST schema 的实现来源。修改 REST 接口后，应重新生成前端基线；不要在本文重复维护完整 schema。
 
 ## 地址与认证
 
-本地默认地址为 `http://localhost:8000`。同一 Rust 监听器还提供 Web 根路径、`/docs/`、`/openapi.json` 和 `/mcp`，REST 路径统一以 `/api` 开头。支持两种认证方式：
+本地默认地址为 `http://localhost:8000`。同一 Go 监听器还提供 Web 根路径、`/docs/`、`/openapi.json` 和 `/mcp`，REST 路径统一以 `/api` 开头。支持两种认证方式：
 
 | 使用场景                      | 凭据                                                  |
 | ----------------------------- | ----------------------------------------------------- |
@@ -327,9 +327,9 @@ Pragma: no-cache
 
 前文列出的免认证端点在成功响应时保持现有缓存头行为；本策略不会为它们新增共享缓存 TTL。
 
-部署后的 Web 由 Rust 从 `/app/web` 直接提供，浏览器同源访问 `/api/*`，不依赖 Next.js 运行时或 rewrite。只有本地开发的 Next.js 8000 入口会把后端命名空间代理到内部 Rust 8001。第一方前端始终同源。确需跨源访问的其他浏览器客户端必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie 凭据。
+部署后的 Web 由 Go 从 `/app/web` 直接提供，浏览器同源访问 `/api/*`，不依赖 Next.js 运行时或 rewrite。只有本地开发的 Next.js 8000 入口会把后端命名空间代理到内部 Go 8001。第一方前端始终同源。确需跨源访问的其他浏览器客户端必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie 凭据。
 
-成功的 `/_next/static/*` 哈希文件使用 `public, max-age=31536000, immutable`；页面、导航 payload 和导出的 404 使用 `no-cache`。客户端声明支持 gzip 时，Rust 优先返回镜像内预压缩文件并保留正确 MIME；原文件仍供不支持 gzip 的客户端和 Range 请求使用。后端保留 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 的路由优先级。
+成功的 `/_next/static/*` 哈希文件使用 `public, max-age=31536000, immutable`；页面、导航 payload 和导出的 404 使用 `no-cache`。客户端声明支持 gzip 时，Go 优先返回镜像内预压缩文件并保留正确 MIME；原文件仍供不支持 gzip 的客户端和 Range 请求使用。后端保留 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 的路由优先级。
 
 ## Streamable HTTP MCP
 
