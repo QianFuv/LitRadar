@@ -1,3 +1,4 @@
+*.go text eol=lf
 /third_party/go-sdk/** -text
 /third_party/go-sqlite3/** -text
 /third_party/go-sdk-patches/** -text

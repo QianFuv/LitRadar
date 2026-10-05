@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".gitattributes"
       - "go.mod"
       - "go.sum"
       - "cmd/**"
@@ -51,6 +52,7 @@ jobs:
         with:
           filters: |
             runtime_image:
+              - ".gitattributes"
               - "go.mod"
               - "go.sum"
               - "cmd/**"

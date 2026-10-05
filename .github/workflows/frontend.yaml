@@ -6,6 +6,7 @@ on:
     branches-ignore:
       - "main"
     paths:
+      - ".gitattributes"
       - "go.mod"
       - "go.sum"
       - "cmd/**"
@@ -21,6 +22,7 @@ on:
       - ".github/workflows/frontend.yaml"
   pull_request:
     paths:
+      - ".gitattributes"
       - "go.mod"
       - "go.sum"
       - "cmd/**"
