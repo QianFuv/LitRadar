@@ -60,7 +60,7 @@ SIGINT/SIGTERM 会协调关闭 HTTP 与调度组件。若任务子进程正在�
 
 运行层安装 CA 证书、`curl` 和非 root 账户所需的最小系统包，随后切换到固定 UID/GID `10001:10001`。当前二进制新建内容 schema v9，并在 rollout 窗口内读写精确 v6/v7/v8/v9；旧 v6/v7/v8 仍使用 SQLite 内建 `unicode61`，v9 使用固定打包的 `simple 0` 分词库并禁用拼音别名。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
 
-Go 应用保持运行时取消、进程监管和清理语义。镜像在 `/usr/share/doc/litradar/third-party` 保存 Go 构建清单、许可证与 Obscura 官方发行包信息。安全门禁核对 Go 源码和二进制身份，并为两种实际镜像生成 SPDX 2.3 SBOM。用户已明确豁免 Obscura 供应链检查（A13）；清单将其标记为上游二进制，不声称验证其传递依赖、原生引擎或许可证/对应源码完整性。功能、渲染和运行隔离检查仍保留。
+Go 应用保持运行时取消、进程监管和清理语义。镜像在 `/usr/share/doc/litradar/third-party` 保存 Go 构建清单、许可证与 Obscura 官方发行包信息。构建清单用于记录 Go 源码和二进制身份。用户已明确豁免 Obscura 供应链检查（A13）；清单将其标记为上游二进制，不声称验证其传递依赖、原生引擎或许可证/对应源码完整性。功能、渲染和运行隔离检查仍保留。
 
 历史 T22 在 Windows Docker Desktop 29.6.1 的本地冷构建中，最终策略总耗时 218.5 秒，其中 Rust release 208.7 秒；stripped 可执行文件为 35,217,016 字节，无预置 provenance 的 smoke 镜像为 83,901,821 字节。全部层命中缓存后，同一 manifest 的重建为 6.3 秒。硬件与远端缓存会改变时长，这些数值来自当时的构建，不代表加入当前原生辅助程序后的镜像体积，也不构成跨机器性能承诺。
 
@@ -410,7 +410,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 
 ### 1. 确认镜像发布
 
-`Build and Push Docker Image` 工作流通过 backend、frontend、security 和 CodeQL 检查后，为同一次构建添加 `ghcr.io/qianfuv/litradar:latest` 和 `ghcr.io/qianfuv/litradar:sha-<提交 SHA 前 6 位>` 两个 tag。amd64 与 arm64 镜像分别通过冒烟和实际产物供应链检查后，先推送两个架构 tag，再发布指向它们的双架构 manifest。部署前确认工作流成功及其源码 commit 符合预期；`latest` 是可变 tag，后续发布会更新它。
+`Build and Push Docker Image` 工作流通过 backend 和 frontend 检查后，为同一次构建添加 `ghcr.io/qianfuv/litradar:latest` 和 `ghcr.io/qianfuv/litradar:sha-<提交 SHA 前 6 位>` 两个 tag。amd64 与 arm64 镜像分别通过容器冒烟测试后，先推送两个架构 tag，再发布指向它们的双架构 manifest。部署前确认工作流成功及其源码 commit 符合预期；`latest` 是可变 tag，后续发布会更新它。
 
 ### 2. 配置 HTTPS 访问
 

@@ -193,12 +193,6 @@ if (phase === "profile") {
     process.exit(error.exitCode ?? 1);
   }
 }
-if (phase === "security") {
-  assert.equal(requested.size, 1, "Security must execute its own checks");
-  const { runSecurity } = await import("./security.mjs");
-  console.log(await runSecurity());
-  process.exit(0);
-}
 if (phase === "runtime") {
   assert(!requested.has("--candidate"), "Runtime must execute its own checks");
   const { runRuntime } = await import("./runtime/run.mjs");

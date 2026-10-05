@@ -241,29 +241,11 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 应用层策略不能替代基础设施隔离。对外访问时仍应在容器、主机或云网络层设置 egress ACL，只放行确有需要的 AI/PushPlus 目标和 DNS/TLS 基础设施。
 
-## 供应链门禁
+## 构建与发布验证
 
-所有 pull request、非 `main` 分支推送和每周计划任务运行 `.github/workflows/security.yaml` 与 `.github/workflows/codeql.yaml`。`main` 镜像发布工作流复用这两个工作流，并在发布前复查实际双架构产物。门禁失败时不会推送镜像。
+发布工作流运行后端、前端检查及 amd64/arm64 容器冒烟测试，通过后发布双架构镜像。仓库不再提供漏洞、密钥或 CodeQL 扫描工作流和本地扫描入口。GitHub 仓库级保护设置独立于这些文件管理。
 
-执行边界如下：
-
-- `govulncheck` 检查 Go 源码和实际镜像中的应用二进制；镜像清单核对 Go 工具链、模块、补丁、应用源码和 SQLite build tags。
-- `OSV-Scanner 2.3.8` 检查 Go 和前端锁定依赖；只接受 `scripts/security-exceptions.json` 中具有 owner、精确版本和到期日的已批准例外。
-- `Gitleaks 8.30.1` 在 `fetch-depth: 0` checkout 上扫描所有可达提交和当前任务工作区；SARIF 进入 artifact 和 GitHub code scanning。`.gitleaksignore` 只保留逐历史指纹例外及复核日期。
-- CodeQL 使用 `security-extended` 分别分析 Go 与 JavaScript/TypeScript；本地 workflow 校验不代表远程 CodeQL 已执行。
-- `actionlint 1.7.12` 校验所有 workflow。第三方 `uses:` 必须固定为 40 位提交 SHA，并保留版本注释。
-- Syft 为实际镜像生成 SPDX 2.3 SBOM，保留 Simple、SQLite、Debian 包和原生文件身份；包清单不等于独立 OS 漏洞扫描。
-- Obscura 直接采用官方 v0.2.4 render + stealth 二进制。用户已明确豁免 Obscura 及其内置依赖的供应链检查（A13），因此不执行该 helper 的 RustSec、许可证/来源、V8/ICU 和对应源码门禁；SBOM 不声称其传递依赖完整或已获安全认证。版本和发行包校验和用于可复现下载，功能与容器隔离验收仍保留。
-- GitHub Action、Go、pnpm 和 Docker 更新由 `.github/dependabot.yml` 提出；更新仍需通过适用门禁。
-
-除上述 Obscura 豁免外，未批准的告警和过期的精确例外仍会阻止发布。仓库级 required checks、code-scanning merge protection、secret scanning 与 push protection 由管理员管理，workflow 文件不能代替这些设置。
-
-容器发布工作流同样属于阻断门禁：
-
-- Dockerfile frontend 与 Node/Go/原生分词构建/Debian 基础镜像都固定到 reviewed digest；tag 只保留可读性和 Dependabot 更新入口。
-- Buildx 构建并加载带 `latest` 和 `sha-<提交 SHA 前 6 位>` 两个 tag 的本地镜像；hardened smoke 验证镜像 ID、固定 UID/GID、只读根、完整 capability drop、no-new-privileges、loopback 端口、Docker health、只读密钥和唯一持久可写数据卷。
-- smoke 成功且本地 tag 集合符合预期后，工作流才一次将短 SHA tag 和 `latest` 推送到 GHCR。`latest` 会随下一次成功发布更新。
-- `docker-compose.yml` 只向宿主机 loopback 发布端口，并保留非特权、只读根文件系统等容器边界。
+构建继续使用固定依赖、基础镜像摘要和发行包校验和。Obscura 使用官方 v0.2.4 render + stealth 二进制；下载校验用于可复现构建，功能、渲染和容器隔离仍由冒烟测试验证。Dependabot 继续提出常规依赖更新。
 
 ## 网络暴露
 

@@ -131,22 +131,9 @@ docker compose \
   config --format json
 ```
 
-## 供应链与静态安全
+## 发布检查
 
-发布前使用与 CI 相同的固定版本工具和实际双架构镜像：
-
-```bash
-node scripts/install-security-tools.mjs
-docker buildx build --platform linux/amd64 --load --provenance=false -t litradar:go-test-amd64 .
-docker buildx build --platform linux/arm64 --load --provenance=false -t litradar:go-test-arm64 .
-node tests/migration/run.mjs --phase security
-```
-
-arm64 的执行需原生 arm64 主机或已配置的模拟器。工具发行包按 `scripts/security-tools.json` 的版本和 SHA-256 校验。门禁覆盖 govulncheck 源码/产物、OSV 的 Go/前端锁文件、Gitleaks 全历史、Action pin 和 actionlint。镜像中的 Go 构建身份必须与当前输入匹配；保留 Debian/native 清单，每架构输出 SPDX 2.3 SBOM。Obscura 使用官方 v0.2.4 render + stealth 二进制，用户已豁免其供应链检查（A13）；报告明确记录豁免，不声称 helper 依赖或原生引擎通过审计。helper 的功能、渲染、隔离和双架构运行检查仍适用。
-
-限时例外只允许 `scripts/security-exceptions.json` 中批准的精确公告、包名和版本，复核期为 2026-11-04；未列明公告和过期例外失败。OpenPGP 例外还要求应用不引入该包。`.gitleaksignore` 只保留有说明和复核期的精确指纹，包括来源仍未核实的历史 weipu 值，不代表该值已被证明公开。
-
-`.github/workflows/security.yaml` 上传 `supply-chain-results`；CodeQL 分别分析 Go 与 JavaScript/TypeScript。发布 workflow 等待 backend、frontend、supply-chain 和 CodeQL，通过两架构实际镜像的 smoke 与安全门禁后，先推送架构 tag，再创建 `latest` 与 `sha-<提交 SHA 前 6 位>` 的双架构 manifest。远端 workflow/CodeQL 只能以实际运行结果作为通过证据。
+发布工作流等待后端和前端检查，并对 amd64 与 arm64 实际镜像分别运行容器冒烟测试，通过后发布双架构 manifest。arm64 执行需要原生主机或已配置的模拟器。仓库不再提供安全扫描工作流或本地扫描入口。
 
 ## 报告与失败诊断
 
@@ -166,10 +153,6 @@ arm64 的执行需原生 arm64 主机或已配置的模拟器。工具发行包�
 | Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                                |
 | Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`     |
 | Container release                                  | workflow artifact `container-release`，含 Compose 解析结果与容器冒烟报告 |
-| Go/frontend/image release checks                   | workflow artifact `supply-chain-results`，本地 `output/security/`        |
-| Secret scanning                                    | `supply-chain-results` 与 GitHub code scanning SARIF                     |
-| CodeQL                                             | workflow artifacts `codeql-<language>-sarif` 与 Security 页面            |
-| Immutable Actions                                  | shared security runner 的 pin 检查与 actionlint 日志                     |
 
 CI 的 artifact upload 使用 `if: always()`。失败时先看 workflow summary 的层级状态和时长，再看 JUnit 的失败 owner；浏览器问题打开对应 HTML，并使用失败截图、第一次重试的 trace/video。容器问题先看安全清理摘要，再看已脱敏的尾部日志。报告目录均为生成物，不应提交。
 

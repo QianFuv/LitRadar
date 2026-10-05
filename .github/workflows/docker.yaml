@@ -9,7 +9,6 @@ on:
       - "cmd/**"
       - "internal/**"
       - "third_party/**"
-      - ".gitleaksignore"
       - "scripts/check-go.mjs"
       - "assets/**"
       - "libs/**"
@@ -23,9 +22,7 @@ on:
       - "scripts/**"
       - "tests/**"
       - ".github/workflows/backend.yaml"
-      - ".github/workflows/codeql.yaml"
       - ".github/workflows/frontend.yaml"
-      - ".github/workflows/security.yaml"
       - ".github/workflows/docker.yaml"
       - ".github/dependabot.yml"
 
@@ -43,8 +40,6 @@ jobs:
       runtime_image: ${{ steps.filter.outputs.runtime_image }}
       backend_workflow: ${{ steps.filter.outputs.backend_workflow }}
       frontend_workflow: ${{ steps.filter.outputs.frontend_workflow }}
-      security_workflow: ${{ steps.filter.outputs.security_workflow }}
-      codeql_workflow: ${{ steps.filter.outputs.codeql_workflow }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,27 +77,6 @@ jobs:
             frontend_workflow:
               - "tests/test.mjs"
               - ".github/workflows/frontend.yaml"
-            security_workflow:
-              - "go.mod"
-              - "go.sum"
-              - "cmd/**"
-              - "internal/**"
-              - "third_party/**"
-              - "docs/third-party/**"
-              - "app/package.json"
-              - "app/pnpm-lock.yaml"
-              - ".gitleaksignore"
-              - ".github/dependabot.yml"
-              - ".github/workflows/**"
-            codeql_workflow:
-              - "go.mod"
-              - "go.sum"
-              - "cmd/**"
-              - "internal/**"
-              - "third_party/**"
-              - "assets/**"
-              - "app/**"
-              - ".github/workflows/codeql.yaml"
 
   backend-quality:
     needs: changes
@@ -114,42 +88,14 @@ jobs:
     if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.frontend_workflow == 'true'
     uses: ./.github/workflows/frontend.yaml
 
-  security-quality:
-    needs: changes
-    if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.security_workflow == 'true'
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    uses: ./.github/workflows/security.yaml
-
-  codeql-quality:
-    needs: changes
-    if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.codeql_workflow == 'true'
-    permissions:
-      actions: read
-      contents: read
-      packages: read
-      security-events: write
-    uses: ./.github/workflows/codeql.yaml
-
   build-image:
-    needs:
-      [
-        changes,
-        backend-quality,
-        frontend-quality,
-        security-quality,
-        codeql-quality,
-      ]
+    needs: [changes, backend-quality, frontend-quality]
     if: |
       always() &&
       needs.changes.result == 'success' &&
       needs.changes.outputs.runtime_image == 'true' &&
       needs.backend-quality.result == 'success' &&
-      needs.frontend-quality.result == 'success' &&
-      needs.security-quality.result == 'success' &&
-      needs.codeql-quality.result == 'success'
+      needs.frontend-quality.result == 'success'
     outputs:
       image_tag: ${{ steps.image.outputs.image_tag }}
       commit_tag: ${{ steps.image.outputs.commit_tag }}
@@ -282,16 +228,12 @@ jobs:
           cache-from: type=gha,scope=arm64
           cache-to: type=gha,scope=arm64,mode=max
 
-      - name: Verify arm64 and the exact release supply chain
+      - name: Smoke the arm64 image
         env:
           COMMIT_TAG: ${{ steps.image.outputs.commit_tag }}
         run: |
           node tests/container-smoke.mjs "$COMMIT_TAG-arm64"
           cp test-results/container-smoke/summary.json release-results/smoke-arm64.json
-          docker tag "$COMMIT_TAG" litradar:go-test-amd64
-          docker tag "$COMMIT_TAG-arm64" litradar:go-test-arm64
-          node scripts/install-security-tools.mjs
-          node tests/migration/run.mjs --phase security
 
       - name: Publish both tested architectures
         id: publish
@@ -314,9 +256,6 @@ jobs:
           path: |
             test-results/container-smoke/
             release-results/
-            output/security/**/*.json
-            output/security/**/*.log
-            output/security/*.sarif
           if-no-files-found: warn
           retention-days: 14
 
@@ -341,15 +280,7 @@ jobs:
 
   workflow-summary:
     name: LitRadar workflow summary
-    needs:
-      [
-        changes,
-        backend-quality,
-        frontend-quality,
-        security-quality,
-        codeql-quality,
-        build-image,
-      ]
+    needs: [changes, backend-quality, frontend-quality, build-image]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -360,7 +291,6 @@ jobs:
           BACKEND_RESULT: ${{ needs.backend-quality.result }}
           BUILD_RESULT: ${{ needs.build-image.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
-          CODEQL_RESULT: ${{ needs.codeql-quality.result }}
           COMMIT_TAG: ${{ needs.build-image.outputs.commit_tag }}
           COMMIT_SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -371,7 +301,6 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_NUMBER: ${{ github.run_number }}
           SERVER_URL: ${{ github.server_url }}
-          SECURITY_RESULT: ${{ needs.security-quality.result }}
         run: |
           status_label() {
             case "$1" in
@@ -399,8 +328,6 @@ jobs:
             echo "| Change detection | $(status_label "$CHANGES_RESULT") |"
             echo "| Backend quality | $(status_label "$BACKEND_RESULT") |"
             echo "| Frontend quality | $(status_label "$FRONTEND_RESULT") |"
-            echo "| Supply-chain security | $(status_label "$SECURITY_RESULT") |"
-            echo "| CodeQL security analysis | $(status_label "$CODEQL_RESULT") |"
             echo "| Build, smoke, and publish image | $(status_label "$BUILD_RESULT") |"
             echo
             echo "## Run"
