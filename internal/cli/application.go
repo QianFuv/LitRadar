@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/QianFuv/LitRadar"
 	"github.com/QianFuv/LitRadar/internal/api"
 	"github.com/QianFuv/LitRadar/internal/runtime"
 	"github.com/QianFuv/LitRadar/internal/runtime/logfilter"
@@ -35,7 +36,7 @@ func Run(ctx context.Context, values []string, executable string, input io.Reade
 	parent, parentError := parentRunId(&args)
 	command := commandName(args)
 	started := time.Now()
-	fields := map[string]any{"component": "runtime", "command": command, "process_id": uint64(os.Getpid()), "version": "0.1.0", "parent_run_id": nil}
+	fields := map[string]any{"component": "runtime", "command": command, "process_id": uint64(os.Getpid()), "version": litradar.Version(), "parent_run_id": nil}
 	if parentError == nil && parent != "" {
 		fields["parent_run_id"] = parent
 	}

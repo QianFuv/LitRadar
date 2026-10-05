@@ -6,6 +6,8 @@ on:
     branches-ignore:
       - "main"
     paths:
+      - "VERSION"
+      - "version.go"
       - ".gitattributes"
       - "go.mod"
       - "go.sum"
@@ -16,11 +18,14 @@ on:
       - "assets/**"
       - "tests/test.mjs"
       - "tests/go-dependency.test.mjs"
+      - "tests/release.test.mjs"
       - "tests/data/**"
       - "scripts/**"
       - ".github/workflows/backend.yaml"
   pull_request:
     paths:
+      - "VERSION"
+      - "version.go"
       - ".gitattributes"
       - "go.mod"
       - "go.sum"
@@ -31,12 +36,13 @@ on:
       - "assets/**"
       - "tests/test.mjs"
       - "tests/go-dependency.test.mjs"
+      - "tests/release.test.mjs"
       - "tests/data/**"
       - "scripts/**"
       - ".github/workflows/backend.yaml"
 
 concurrency:
-  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 env:
@@ -83,6 +89,9 @@ jobs:
 
       - name: Run Go static, regular and race checks
         run: node scripts/check-go.mjs
+
+      - name: Verify release rules
+        run: node --test tests/release.test.mjs
 
       - name: Upload backend diagnostics
         if: always()

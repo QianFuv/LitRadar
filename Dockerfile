@@ -53,7 +53,7 @@ RUN if [ "$TARGETARCH" != "$BUILDARCH" ]; then \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 
-COPY go.mod go.sum ./
+COPY go.mod go.sum VERSION version.go ./
 COPY third_party third_party
 RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod go mod download && go mod verify
 COPY cmd cmd

@@ -11,6 +11,7 @@ import (
 	goRuntime "runtime"
 	"syscall"
 
+	"github.com/QianFuv/LitRadar"
 	"github.com/QianFuv/LitRadar/internal/cli"
 	"github.com/QianFuv/LitRadar/internal/runtime"
 	"github.com/QianFuv/LitRadar/internal/runtime/observability"
@@ -32,6 +33,10 @@ func (termination terminationSignal) SignalName() string {
 }
 
 func run(args []string) (exitCode int) {
+	if len(args) == 1 && args[0] == "--version" {
+		fmt.Fprintln(os.Stdout, "litradar "+litradar.Version())
+		return 0
+	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	storage, err := runtime.ProcessStorage(args)
 	if err != nil {

@@ -74,17 +74,27 @@ func CanonicalSha256(data []byte) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-// DiscoverPackagedDirectory checks only the fixed immutable runtime bundle location.
+// DiscoverPackagedDirectory checks system and executable-relative immutable bundles.
 func DiscoverPackagedDirectory() (string, error) {
-	directory := "/usr/share/litradar/meta"
-	_, err := os.Stat(filepath.Join(directory, manifestFilename))
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
+	executable, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	return directory, nil
+	return findPackagedDirectory([]string{"/usr/share/litradar/meta", filepath.Join(filepath.Dir(executable), "assets", "meta")})
+}
+
+func findPackagedDirectory(directories []string) (string, error) {
+	for _, directory := range directories {
+		_, err := os.Stat(filepath.Join(directory, manifestFilename))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return directory, nil
+	}
+	return "", nil
 }
 
 func object(raw []byte, fields ...string) (map[string]json.RawMessage, error) {

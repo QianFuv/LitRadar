@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QianFuv/LitRadar"
 	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/internal/testkit/fullstack"
 )
@@ -55,6 +56,14 @@ func TestExecutableOwnsPublicCommandsAndLogging(t *testing.T) {
 		t.Fatal(err, string(output))
 	}
 	working := t.TempDir()
+	version := exec.CommandContext(ctx, binary, "--version")
+	version.Dir = working
+	if output, err := version.CombinedOutput(); err != nil || string(output) != "litradar "+litradar.Version()+"\n" {
+		t.Fatalf("release identity: %q, %v", output, err)
+	}
+	if entries, err := os.ReadDir(working); err != nil || len(entries) != 0 {
+		t.Fatalf("version command created runtime state: %v, %v", entries, err)
+	}
 	invoke := func(t *testing.T, input string, code int, args ...string) (string, string) {
 		t.Helper()
 		command := exec.CommandContext(ctx, binary, args...)

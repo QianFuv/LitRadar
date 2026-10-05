@@ -1,9 +1,11 @@
-name: Build and Push Docker Image
+name: Quality Checks and Versioned Release
 
 on:
   push:
     branches: [main]
     paths:
+      - "VERSION"
+      - "version.go"
       - ".gitattributes"
       - "go.mod"
       - "go.sum"
@@ -30,14 +32,16 @@ on:
 env:
   REGISTRY: ghcr.io
 
-concurrency:
-  group: container-release-${{ github.ref }}
-  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      published: ${{ steps.release.outputs.published }}
       runtime_image: ${{ steps.filter.outputs.runtime_image }}
       backend_workflow: ${{ steps.filter.outputs.backend_workflow }}
       frontend_workflow: ${{ steps.filter.outputs.frontend_workflow }}
@@ -47,11 +51,35 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+
+      - name: Verify release rules
+        run: node --test tests/release.test.mjs
+
+      - name: Detect version increase
+        id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/release-version.mjs
+
+      - name: Check release identity
+        id: release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/release-github.mjs check
+
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
         with:
           filters: |
             runtime_image:
+              - "VERSION"
+              - "version.go"
               - ".gitattributes"
               - "go.mod"
               - "go.sum"
@@ -75,6 +103,7 @@ jobs:
               - "scripts/check-go.mjs"
               - "tests/test.mjs"
               - "tests/go-dependency.test.mjs"
+              - "tests/release.test.mjs"
               - ".github/workflows/backend.yaml"
             frontend_workflow:
               - "tests/test.mjs"
@@ -91,18 +120,22 @@ jobs:
     uses: ./.github/workflows/frontend.yaml
 
   build-image:
+    concurrency:
+      group: version-release-${{ needs.changes.outputs.version }}
+      cancel-in-progress: false
     needs: [changes, backend-quality, frontend-quality]
     if: |
       always() &&
       needs.changes.result == 'success' &&
-      needs.changes.outputs.runtime_image == 'true' &&
+      needs.changes.outputs.release == 'true' &&
+      needs.changes.outputs.published != 'true' &&
       needs.backend-quality.result == 'success' &&
       needs.frontend-quality.result == 'success'
     outputs:
       image_tag: ${{ steps.image.outputs.image_tag }}
       commit_tag: ${{ steps.image.outputs.commit_tag }}
     permissions:
-      contents: read
+      contents: write
       packages: write
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -161,10 +194,11 @@ jobs:
         id: image
         env:
           SOURCE_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.changes.outputs.version }}
         run: |
           image_name="${REGISTRY}/${SOURCE_REPOSITORY,,}"
           image_tag="${image_name}:latest"
-          commit_tag="${image_name}:sha-${GITHUB_SHA:0:6}"
+          commit_tag="${image_name}:v${RELEASE_VERSION}"
           created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
           description="$(awk 'NR > 1 && NF { print; exit }' README.md)"
           description_bytes="$(printf '%s' "$description" | wc -c)"
@@ -198,6 +232,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.title=LitRadar
+            org.opencontainers.image.version=${{ needs.changes.outputs.version }}
           provenance: false
           sbom: false
           cache-from: type=gha
@@ -219,6 +254,14 @@ jobs:
       - name: Preserve amd64 smoke evidence
         run: cp test-results/container-smoke/summary.json release-results/smoke-amd64.json
 
+      - name: Package tested amd64 binaries
+        env:
+          COMMIT_TAG: ${{ steps.image.outputs.commit_tag }}
+          RELEASE_VERSION: ${{ needs.changes.outputs.version }}
+        run: |
+          test "$(docker run --rm --entrypoint litradar "$COMMIT_TAG" --version)" = "litradar $RELEASE_VERSION"
+          node scripts/package-release.mjs "$COMMIT_TAG" amd64 "$RELEASE_VERSION"
+
       - name: Build arm64 image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -227,6 +270,10 @@ jobs:
           tags: ${{ steps.image.outputs.commit_tag }}-arm64
           load: true
           provenance: false
+          labels: |
+            org.opencontainers.image.version=${{ needs.changes.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha,scope=arm64
           cache-to: type=gha,scope=arm64,mode=max
 
@@ -236,6 +283,20 @@ jobs:
         run: |
           node tests/container-smoke.mjs "$COMMIT_TAG-arm64"
           cp test-results/container-smoke/summary.json release-results/smoke-arm64.json
+
+      - name: Package tested arm64 binaries
+        env:
+          COMMIT_TAG: ${{ steps.image.outputs.commit_tag }}
+          RELEASE_VERSION: ${{ needs.changes.outputs.version }}
+        run: |
+          test "$(docker run --rm --entrypoint litradar "$COMMIT_TAG-arm64" --version)" = "litradar $RELEASE_VERSION"
+          node scripts/package-release.mjs "$COMMIT_TAG-arm64" arm64 "$RELEASE_VERSION"
+
+      - name: Prepare binary release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.changes.outputs.version }}
+        run: node scripts/release-github.mjs prepare
 
       - name: Publish both tested architectures
         id: publish
@@ -247,8 +308,14 @@ jobs:
           docker push "$COMMIT_TAG-amd64"
           docker push "$COMMIT_TAG-arm64"
           docker image inspect "$COMMIT_TAG-amd64" "$COMMIT_TAG-arm64" > release-results/local-image-identities.json
-          docker buildx imagetools create --tag "$COMMIT_TAG" --tag "$IMAGE_TAG" "$COMMIT_TAG-amd64" "$COMMIT_TAG-arm64"
+          docker buildx imagetools create --tag "$COMMIT_TAG" "$COMMIT_TAG-amd64" "$COMMIT_TAG-arm64"
           docker buildx imagetools inspect --raw "$COMMIT_TAG" > release-results/published-manifest.json
+
+      - name: Publish binary release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.changes.outputs.version }}
+        run: node scripts/release-github.mjs publish
 
       - name: Upload container diagnostics
         if: always()
@@ -280,9 +347,41 @@ jobs:
             echo "- Push status: ${PUBLISH_RESULT:-not run}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  promote-latest:
+    needs: [changes, build-image]
+    if: |
+      always() && needs.changes.outputs.release == 'true' &&
+      (needs.build-image.result == 'success' || needs.changes.outputs.published == 'true')
+    concurrency:
+      group: release-latest
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote the highest published stable version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release-github.mjs promote
+
   workflow-summary:
     name: LitRadar workflow summary
-    needs: [changes, backend-quality, frontend-quality, build-image]
+    needs:
+      [changes, backend-quality, frontend-quality, build-image, promote-latest]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -292,6 +391,7 @@ jobs:
         env:
           BACKEND_RESULT: ${{ needs.backend-quality.result }}
           BUILD_RESULT: ${{ needs.build-image.result }}
+          LATEST_RESULT: ${{ needs.promote-latest.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           COMMIT_TAG: ${{ needs.build-image.outputs.commit_tag }}
           COMMIT_SHA: ${{ github.sha }}
@@ -303,6 +403,8 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_NUMBER: ${{ github.run_number }}
           SERVER_URL: ${{ github.server_url }}
+          VERSION_CHANGED: ${{ needs.changes.outputs.release }}
+          ALREADY_PUBLISHED: ${{ needs.changes.outputs.published }}
         run: |
           status_label() {
             case "$1" in
@@ -331,6 +433,7 @@ jobs:
             echo "| Backend quality | $(status_label "$BACKEND_RESULT") |"
             echo "| Frontend quality | $(status_label "$FRONTEND_RESULT") |"
             echo "| Build, smoke, and publish image | $(status_label "$BUILD_RESULT") |"
+            echo "| Promote latest stable version | $(status_label "$LATEST_RESULT") |"
             echo
             echo "## Run"
             echo
@@ -345,6 +448,12 @@ jobs:
               echo "- Commit tag: $COMMIT_TAG"
               echo "- Latest tag: $IMAGE_TAG"
             else
-              echo "No image was published by this run."
+              if [[ "$VERSION_CHANGED" != "true" ]]; then
+                echo "Version unchanged: quality checks only; no release build."
+              elif [[ "$ALREADY_PUBLISHED" == "true" ]]; then
+                echo "This version is already published for this commit."
+              else
+                echo "Release incomplete; inspect the failed job and rerun this workflow."
+              fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"

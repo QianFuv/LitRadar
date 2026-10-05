@@ -96,6 +96,10 @@ curl --fail --output /dev/null http://localhost:8000/
 
 项目使用 Go 1.27.1（启用 CGO，并安装 C 编译器）、Node.js 24 和 pnpm 10.32.0。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
 
+## 版本发布
+
+普通推送只运行质量检查；发布时修改根目录 `VERSION`（例如 `0.1.0` → `0.1.1`），提交并推送到 `main`。检查通过后自动发布 GitHub Release 二进制包及 `ghcr.io/qianfuv/litradar:v0.1.1`、`latest` 镜像，无需手动打标签。二进制包支持 Linux amd64/arm64，包含 Web 资源和原生辅助程序。版本规则、安装依赖和失败重试见[版本发布说明](docs/operations/releases.md)。
+
 ## 文档
 
 从[文档中心](docs/README.md)选择阅读路径：

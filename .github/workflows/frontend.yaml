@@ -6,6 +6,8 @@ on:
     branches-ignore:
       - "main"
     paths:
+      - "VERSION"
+      - "version.go"
       - ".gitattributes"
       - "go.mod"
       - "go.sum"
@@ -22,6 +24,8 @@ on:
       - ".github/workflows/frontend.yaml"
   pull_request:
     paths:
+      - "VERSION"
+      - "version.go"
       - ".gitattributes"
       - "go.mod"
       - "go.sum"
@@ -38,7 +42,7 @@ on:
       - ".github/workflows/frontend.yaml"
 
 concurrency:
-  group: frontend-ci-${{ github.workflow }}-${{ github.ref }}
+  group: frontend-ci-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 env:
