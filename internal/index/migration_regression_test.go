@@ -72,7 +72,7 @@ func TestResumedInlineAndWorkerFetchPreserveFrozenModeAnchorAndCheckpoint(t *tes
 			if err := storage.AdvanceRunCheckpoint(ctx, control.Conn, writer.syncRun(assignment), "cursor-frozen", "epoch"); err != nil {
 				t.Fatal(err)
 			}
-			requests, metrics, err := PrepareWorkerRequests(ctx, control.Conn, writer, []domain.JournalCatalogEntry{assignment.Entry}, mode, true, indexdomain.Concurrency{1, 1, 1}, 0, 30)
+			requests, metrics, err := PrepareWorkerRequests(ctx, control.Conn, writer, []domain.JournalCatalogEntry{assignment.Entry}, mode, true, indexdomain.Concurrency{WorkerCount: 1, ProcessCount: 1, AggregateCapacity: 1}, 0, 30)
 			if err != nil || len(requests) != 1 || metrics.JournalsResumed != 0 {
 				t.Fatal(requests, metrics, err)
 			}
