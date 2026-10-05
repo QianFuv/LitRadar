@@ -66,7 +66,7 @@ func decodeState(body []byte, names []string, target any) error {
 	return nil
 }
 
-// Encode preserves Rust's declared field order and non-HTML-escaped compact JSON.
+// Encode preserves declared field order and non-HTML-escaped compact JSON.
 func (anchor Anchor) Encode() (string, error) {
 	id, err := domain.Json(anchor.YearIssueId)
 	if err != nil {

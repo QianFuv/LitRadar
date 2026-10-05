@@ -41,7 +41,7 @@ func (connection *connector) Connect(ctx context.Context) (driver.Conn, error) {
 // Driver returns the same configured native driver used by Connect.
 func (connection *connector) Driver() driver.Driver { return connection.instance }
 
-// CompactSchema removes Rust whitespace and folds ASCII case for search declaration matching.
+// CompactSchema removes Unicode whitespace and folds ASCII case for search declaration matching.
 func CompactSchema(value string) string {
 	return strings.Map(func(character rune) rune {
 		if unicode.IsSpace(character) {

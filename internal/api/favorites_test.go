@@ -2,15 +2,14 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
+
 	"database/sql"
-	"encoding/hex"
+
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strconv"
+
 	"strings"
 	"testing"
 
@@ -30,47 +29,6 @@ func favoriteFixture(t *testing.T) (*authHandlers, *favoriteHandlers, *http.Serv
 		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
 	}
 	return auth, handlers, router, token
-}
-
-func TestFavoriteRoutesMatchOriginalResponses(t *testing.T) {
-	_, _, router, token := favoriteFixture(t)
-	data, err := os.ReadFile("../../tests/migration/api/http-favorite-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct {
-		ExporterSha256 string `json:"exporter_sha256"`
-		Cases          []struct {
-			Method, Url, Body string
-			Authenticated     bool
-			Status            int
-			ContentType       string `json:"content_type"`
-			Response          string
-		}
-	}
-	if err = json.Unmarshal(data, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	exporter, err := os.ReadFile("../../tests/migration/api/export-mcp.mjs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(exporter)
-	if hex.EncodeToString(digest[:]) != corpus.ExporterSha256 || len(corpus.Cases) != 44 {
-		t.Fatal("stale/incomplete favorite observations")
-	}
-	for index, scenario := range corpus.Cases {
-		t.Run(strconv.Itoa(index), func(t *testing.T) {
-			bearer := ""
-			if scenario.Authenticated {
-				bearer = token
-			}
-			response := authRequest(router, scenario.Method, scenario.Url, scenario.Body, bearer)
-			if response.Code != scenario.Status || response.Header().Get("Content-Type") != scenario.ContentType || response.Body.String() != scenario.Response {
-				t.Fatalf("got %d %s %s; want %d %s %s", response.Code, response.Header().Get("Content-Type"), response.Body.String(), scenario.Status, scenario.ContentType, scenario.Response)
-			}
-		})
-	}
 }
 
 func TestFavoriteLifecycleOwnerIsolationAndExport(t *testing.T) {

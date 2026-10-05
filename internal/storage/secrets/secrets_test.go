@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+
 	"errors"
 	"os"
 	"path/filepath"
@@ -44,36 +44,6 @@ func testCodec(t *testing.T, value byte) *Codec {
 	}
 	t.Cleanup(codec.Close)
 	return codec
-}
-
-func TestFrozenRustEnvelopesAndAllAssociatedDataBoundaries(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "data", "migration", "rust", "crypto.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Key       byte                                            `json:"keyByteRepeated32Times"`
-		Envelopes []struct{ Context, Envelope, Plaintext string } `json:"envelopes"`
-	}
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	codec := testCodec(t, fixture.Key)
-	for _, entry := range fixture.Envelopes {
-		plain, err := codec.Decrypt(entry.Envelope, entry.Context)
-		if err != nil || plain != entry.Plaintext {
-			t.Fatalf("frozen envelope mismatch: %v", err)
-		}
-		if _, err := codec.Decrypt(entry.Envelope, entry.Context+":wrong"); !errors.Is(err, ErrAuthentication) {
-			t.Fatal(err)
-		}
-	}
-	if NotificationContext(2, "ai_api_key") != fixture.Envelopes[0].Context || RuntimeContext("provider_proxy_url") != fixture.Envelopes[1].Context || CnkiContext(2) != fixture.Envelopes[2].Context {
-		t.Fatal("associated data format changed")
-	}
-	if _, err := codec.Decrypt("plaintext", RuntimeContext("provider_proxy_url")); !errors.Is(err, ErrLegacyPlaintext) {
-		t.Fatal(err)
-	}
 }
 
 func TestThreeTableMigrateVerifyAndRotatePreserveMetadata(t *testing.T) {

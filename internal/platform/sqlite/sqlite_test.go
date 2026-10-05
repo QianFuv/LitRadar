@@ -177,26 +177,19 @@ func TestEveryPhysicalConnectionLoadsSimpleAndDisablesExtensionSql(t *testing.T)
 	}
 }
 
-func TestTransactionsAndRustBackupInteroperate(t *testing.T) {
+func TestTransactionsAndBackupPreserveCommittedState(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	filename := filepath.Join(root, "rust-auth.sqlite")
-	fixture, err := os.ReadFile("../../../tests/data/migration/rust/auth-v19.sqlite.fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filename, fixture, 0600); err != nil {
-		t.Fatal(err)
-	}
-	database, err := Open(Config{Filename: filename, Mode: "rw", NoFollow: true, MaxConnections: 2})
+	filename := filepath.Join(root, "auth.sqlite")
+	database, err := Open(Config{Filename: filename, Mode: "rwc", NoFollow: true, MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	var sequence int64
-	if err := database.QueryRow("SELECT seq FROM sqlite_sequence WHERE name='scheduled_task_runs'").Scan(&sequence); err != nil || sequence != 1000 {
-		t.Fatalf("Rust sequence changed: %d %v", sequence, err)
+	if _, err := database.Exec("CREATE TABLE scheduled_task_runs(id INTEGER PRIMARY KEY AUTOINCREMENT); INSERT INTO scheduled_task_runs VALUES(1000); DELETE FROM scheduled_task_runs"); err != nil {
+		t.Fatal(err)
 	}
+
 	if _, err := database.Exec("CREATE TABLE atomic_test(id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE)"); err != nil {
 		t.Fatal(err)
 	}
@@ -245,6 +238,7 @@ func TestTransactionsAndRustBackupInteroperate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var sequence int64
 	if err := destination.QueryRowContext(ctx, "SELECT seq FROM sqlite_sequence WHERE name='scheduled_task_runs'").Scan(&sequence); err != nil || sequence != 1000 {
 		t.Fatalf("Backup sequence changed: %d %v", sequence, err)
 	}

@@ -4,19 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
+
 	"database/sql"
-	"encoding/hex"
-	"encoding/json"
+
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"reflect"
-	"regexp"
-	"strconv"
+
 	"strings"
 	"testing"
 	"time"
@@ -130,87 +126,6 @@ func completeRouter(t *testing.T) (*Handler, *authHandlers, string) {
 	}
 	t.Cleanup(func() { handler.Close() })
 	return handler, auth, token
-}
-
-func TestCompleteRouterMatchesOriginalWire(t *testing.T) {
-	handler, _, _ := completeRouter(t)
-	server := httptest.NewServer(handler)
-	defer server.Close()
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	data, err := os.ReadFile("../../tests/migration/api/router-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct {
-		ExporterSha256 string `json:"exporter_sha256"`
-		Cases          []struct {
-			Method, Path string
-			Headers      map[string]string
-			Response     struct {
-				Status     int
-				Headers    map[string]string
-				BodySha256 string `json:"body_sha256"`
-				BodyLength int    `json:"body_length"`
-			}
-		}
-	}
-	if err := json.Unmarshal(data, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	exporter, err := os.ReadFile("../../tests/migration/api/export-router.mjs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(exporter)
-	if hex.EncodeToString(digest[:]) != corpus.ExporterSha256 {
-		t.Fatal("stale original router observations")
-	}
-	if len(corpus.Cases) != 177 {
-		t.Fatal("original router inventory changed")
-	}
-	seen := map[string]bool{}
-	for index, scenario := range corpus.Cases {
-		t.Run(strconv.Itoa(index), func(t *testing.T) {
-			request, err := http.NewRequest(scenario.Method, server.URL+scenario.Path, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for name, value := range scenario.Headers {
-				request.Header.Set(name, value)
-			}
-			request.Header.Set("X-Request-Id", "untrusted-client-id")
-			response, err := client.Do(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer response.Body.Close()
-			body, err := io.ReadAll(response.Body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			id := response.Header.Get("X-Request-Id")
-			if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(id) || seen[id] {
-				t.Fatal("request id", id)
-			}
-			seen[id] = true
-			headers := map[string]string{}
-			for name, values := range response.Header {
-				lower := strings.ToLower(name)
-				switch lower {
-				case "date", "x-request-id", "connection", "keep-alive", "transfer-encoding", "content-length":
-					continue
-				}
-				headers[lower] = strings.Join(values, ", ")
-			}
-			if scenario.Method == "HEAD" && response.Header.Get("Content-Length") != "" {
-				headers["content-length"] = response.Header.Get("Content-Length")
-			}
-			digest := sha256.Sum256(body)
-			if response.StatusCode != scenario.Response.Status || !reflect.DeepEqual(headers, scenario.Response.Headers) || hex.EncodeToString(digest[:]) != scenario.Response.BodySha256 {
-				t.Fatalf("%s %s: status=%d headers=%v body=%s\nwant status=%d headers=%v digest=%s; got digest=%x", scenario.Method, scenario.Path, response.StatusCode, headers, string(body[:min(len(body), 300)]), scenario.Response.Status, scenario.Response.Headers, scenario.Response.BodySha256, digest)
-			}
-		})
-	}
 }
 
 func TestRouterSecurityCorsCacheAndPrivateLogs(t *testing.T) {

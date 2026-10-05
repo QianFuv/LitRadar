@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
+
 	"reflect"
 	"strconv"
 	"strings"
@@ -18,71 +18,6 @@ import (
 
 	"github.com/QianFuv/LitRadar/internal/transport"
 )
-
-func TestFrozenRustSolver(t *testing.T) {
-	body, err := os.ReadFile("../../../tests/migration/sources/jfbym-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Observations []struct {
-			Kind, Input string
-			X, Y        int32
-			Output      struct {
-				Value json.RawMessage
-				Error string
-			}
-		}
-	}
-	if err := json.Unmarshal(body, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	for index, observation := range fixture.Observations {
-		t.Run(observation.Kind+"/"+strconv.Itoa(index), func(t *testing.T) {
-			var actual any
-			var err error
-			switch observation.Kind {
-			case "slider":
-				payload, parseErr := transport.ParseJson([]byte(observation.Input))
-				if parseErr != nil {
-					t.Fatal(parseErr)
-				}
-				actual, err = ParseSliderDistance(payload)
-			case "points":
-				value, parseErr := strconv.ParseFloat(observation.Input, 64)
-				if parseErr != nil {
-					t.Fatal(parseErr)
-				}
-				actual, err = PointXCandidates(value)
-			case "encrypt":
-				actual, err = EncryptPointJson(observation.Input, observation.X, observation.Y)
-			case "strip":
-				actual = StripDataUrlBase64(observation.Input)
-			default:
-				t.Fatal("unknown observation")
-			}
-			if observation.Output.Error != "" {
-				if err == nil || err.Error() != observation.Output.Error {
-					t.Fatalf("%q: %v want %s", observation.Input, err, observation.Output.Error)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			encoded, err := json.Marshal(actual)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var actualValue, wantedValue any
-			json.Unmarshal(encoded, &actualValue)
-			json.Unmarshal(observation.Output.Value, &wantedValue)
-			if !reflect.DeepEqual(actualValue, wantedValue) {
-				t.Fatalf("%q: %s want %s", observation.Input, encoded, observation.Output.Value)
-			}
-		})
-	}
-}
 
 func TestLiveRequestAndFailureBoundaries(t *testing.T) {
 	for _, test := range []struct {

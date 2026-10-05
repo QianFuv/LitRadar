@@ -75,7 +75,7 @@ func (fixture *FixtureTransport) StartQrLogin(context.Context) (QrLogin, error) 
 	if fixture.state.mode == StartFailure {
 		return QrLogin{}, &Error{Kind: "Request", Message: "fixture QR login start failed"}
 	}
-	return QrLogin{Uuid: "qr-rust-live-fixture", Status: "WAITING_SCAN", QrCode: "https://qr.test/qr-rust-live-fixture.png"}, nil
+	return QrLogin{Uuid: "qr-live-fixture", Status: "WAITING_SCAN", QrCode: "https://qr.test/qr-live-fixture.png"}, nil
 }
 
 // PollQrLogin preserves timeout formatting and creates the original unsigned fixture token.

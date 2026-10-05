@@ -92,7 +92,7 @@ RUN case "$TARGETARCH" in \
     && chmod 755 /out/obscura /out/obscura-worker
 
 
-FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS simple-tokenizer-build
+FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS simple-tokenizer-build
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends cmake g++ \

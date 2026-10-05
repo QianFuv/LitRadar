@@ -2,42 +2,47 @@ package identity
 
 import (
 	"encoding/json"
-	"os"
+
 	"testing"
 )
 
-func TestFrozenRustIdentityVectors(t *testing.T) {
-	bytes, err := os.ReadFile("../../../tests/data/migration/rust/identifiers.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Article Id `json:"article"`
-		Journal Id `json:"journal"`
-		Stable  []struct {
-			Input, Prefix string
-			Expected      Id `json:"expectedDecimal"`
-		} `json:"stable"`
-	}
-	if err := json.Unmarshal(bytes, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	if fixture.Article != 9223372036854775807 || fixture.Journal != 9007199254740993 {
-		t.Fatal("Identifier precision lost")
-	}
-	for _, vector := range fixture.Stable {
-		if actual := Stable(vector.Input, vector.Prefix); actual != vector.Expected {
-			t.Errorf("Stable(%q): %d != %d", vector.Input, actual, vector.Expected)
+func TestIdJsonPreservesPrecisionAndRejectsNonIntegers(t *testing.T) {
+	for _, decimal := range []string{"-9223372036854775808", "-1", "0", "9007199254740993", "9223372036854775807"} {
+		for _, input := range []string{decimal, `"` + decimal + `"`} {
+			var value Id
+			if err := json.Unmarshal([]byte(input), &value); err != nil {
+				t.Fatalf("decode %s: %v", input, err)
+			}
+			encoded, err := json.Marshal(value)
+			if err != nil || string(encoded) != `"`+decimal+`"` {
+				t.Fatalf("precision lost for %s: %s %v", input, encoded, err)
+			}
 		}
 	}
-	for _, invalid := range []string{`null`, `true`, `1.0`, `1e3`, `"9223372036854775808"`, `[]`} {
+	for _, invalid := range []string{`null`, `true`, `1.0`, `1e3`, `"9223372036854775808"`, `9223372036854775808`, `-9223372036854775809`, `[]`, `{}`, `""`} {
 		var value Id
 		if err := json.Unmarshal([]byte(invalid), &value); err == nil {
 			t.Errorf("Accepted invalid ID %s", invalid)
 		}
 	}
-	encoded, err := json.Marshal(fixture.Article)
-	if err != nil || string(encoded) != `"9223372036854775807"` {
-		t.Fatalf("Public wire precision changed: %s %v", encoded, err)
+}
+
+func TestStablePreservesNumericIdsAndSeparatesNamespaces(t *testing.T) {
+	for _, item := range []struct {
+		input string
+		want  Id
+	}{{"-9223372036854775808", -9223372036854775808}, {"0", 0}, {"0012", 12}, {"9223372036854775807", 9223372036854775807}} {
+		for _, prefix := range []string{"article", "journal"} {
+			if actual := Stable(item.input, prefix); actual != item.want {
+				t.Fatalf("numeric ID %s changed: %d", item.input, actual)
+			}
+		}
+	}
+	for _, input := range []string{"", "external-id", "中文标识符", "9223372036854775808"} {
+		article := Stable(input, "article")
+		journal := Stable(input, "journal")
+		if article <= 0 || journal <= 0 || article == journal || article != Stable(input, "article") {
+			t.Fatalf("unstable or unscoped identity for %q: %d %d", input, article, journal)
+		}
 	}
 }

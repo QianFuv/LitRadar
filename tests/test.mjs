@@ -121,11 +121,7 @@ function e2eSmokeSteps() {
  */
 function allSteps(isCi) {
   return [
-    step("Go formatting", process.execPath, [
-      "tests/migration/run.mjs",
-      "--phase",
-      "go-format",
-    ]),
+    step("Go formatting", process.execPath, ["scripts/check-go-format.mjs"]),
     step("Go module integrity", "go", ["mod", "verify"]),
     step("Go vet", "go", [
       "vet",

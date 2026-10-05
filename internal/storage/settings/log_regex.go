@@ -214,10 +214,10 @@ func (parser *logRegexParser) captureName() {
 	for parser.position < len(parser.input) && !parser.peek('>') {
 		character := parser.input[parser.position]
 		if parser.position == start {
-			if character != '_' && !isRustAlphabetic(character) {
+			if character != '_' && !isAlphabetic(character) {
 				parser.isValid = false
 			}
-		} else if character != '_' && character != '.' && character != '[' && character != ']' && !isRustAlphabetic(character) && !unicode.IsNumber(character) {
+		} else if character != '_' && character != '.' && character != '[' && character != ']' && !isAlphabetic(character) && !unicode.IsNumber(character) {
 			parser.isValid = false
 		}
 		parser.position++

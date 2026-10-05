@@ -1,54 +1,13 @@
 package indexschema
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
-	"os"
+
 	"path/filepath"
 	"testing"
 
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
-
-func TestFrozenContentSchemaValidatesWithoutChangingDatabase(t *testing.T) {
-	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "data", "migration", "rust", "content.sqlite.fixture"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	filename := filepath.Join(t.TempDir(), "content.sqlite")
-	if err := os.WriteFile(filename, fixture, 0600); err != nil {
-		t.Fatal(err)
-	}
-	database, err := storage.Open(filename, true, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
-	ctx := context.Background()
-	first, err := database.Conn(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer first.Close()
-	second, err := database.Conn(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer second.Close()
-	for _, connection := range []*sql.Conn{first, second} {
-		if err := Validate(ctx, connection, Version); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := connection.ExecContext(ctx, "SELECT load_extension('untrusted')"); err == nil {
-			t.Fatal("extension SQL remained enabled")
-		}
-	}
-	current, err := os.ReadFile(filename)
-	if err != nil || !bytes.Equal(fixture, current) {
-		t.Fatal("read-only structure check changed canonical bytes")
-	}
-}
 
 func TestNewSchemaInventoryAndForeignKeyValidationHaveDifferentScopes(t *testing.T) {
 	database, err := storage.OpenMigration(filepath.Join(t.TempDir(), "content.sqlite"))

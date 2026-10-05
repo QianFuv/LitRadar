@@ -2,10 +2,7 @@ package sources
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"os"
-	"reflect"
+
 	"testing"
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
@@ -13,63 +10,6 @@ import (
 	"github.com/QianFuv/LitRadar/internal/sources/cnki"
 	"github.com/QianFuv/LitRadar/internal/sources/scholarly"
 )
-
-func TestOriginalArticleAccessAdapters(t *testing.T) {
-	body, err := os.ReadFile("../../tests/migration/sources/access-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct {
-		Observations []struct {
-			Id, Kind string
-			Article  struct {
-				Title           string   `json:"title"`
-				JournalTitle    string   `json:"journal_title"`
-				JournalIssns    []string `json:"journal_issns"`
-				PublicationYear *int64   `json:"publication_year"`
-				IssueNumber     *string  `json:"issue_number"`
-				Doi             *string  `json:"doi"`
-				Pmid            *string  `json:"pmid"`
-			}
-			Fixture cnki.FixtureData
-			Output  json.RawMessage
-		} `json:"observations"`
-	}
-	if err := json.Unmarshal(body, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	for _, observation := range corpus.Observations {
-		t.Run(observation.Id, func(t *testing.T) {
-			input := observation.Article
-			article := domain.ArticleLocator{Title: input.Title, JournalTitle: input.JournalTitle, JournalIssns: input.JournalIssns, PublicationYear: input.PublicationYear, IssueNumber: input.IssueNumber, Doi: input.Doi, Pmid: input.Pmid}
-			var access provider.ArticleAbstract = ScholarlyArticleAccess{}
-			if observation.Kind == "cnki" {
-				access = NewCnkiArticleAccess(cnki.NewFixtureTransport(observation.Fixture))
-			}
-			supports := access.SupportsAbstract(article)
-			result, err := access.ResolveAbstract(context.Background(), article, domain.ArticleAccessContext{})
-			outcome := map[string]any{"location": result.Location}
-			if err != nil {
-				var failure *provider.Error
-				if !errors.As(err, &failure) {
-					t.Fatal(err)
-				}
-				outcome = map[string]any{"kind": failure.Kind, "error": failure.Message}
-			}
-			encoded, err := json.Marshal(map[string]any{"supports": supports, "outcome": outcome})
-			if err != nil {
-				t.Fatal(err)
-			}
-			var actual, expected any
-			if json.Unmarshal(encoded, &actual) != nil || json.Unmarshal(observation.Output, &expected) != nil {
-				t.Fatal("invalid oracle output")
-			}
-			if !reflect.DeepEqual(actual, expected) {
-				t.Fatalf("want %s\ngot %s", observation.Output, encoded)
-			}
-		})
-	}
-}
 
 type accessTransport struct {
 	cnki.Transport

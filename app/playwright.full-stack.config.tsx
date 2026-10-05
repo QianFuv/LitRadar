@@ -1,5 +1,5 @@
 /**
- * Playwright configuration for serial journeys against the real Rust service.
+ * Playwright configuration for serial journeys against the real Go service.
  */
 
 import { defineConfig, devices } from '@playwright/test';

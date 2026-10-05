@@ -8,43 +8,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
+
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/QianFuv/LitRadar/internal/runtime/logfilter"
 )
-
-func TestCompactFormatMatchesOriginalObserver(t *testing.T) {
-	data, err := os.ReadFile("../../../tests/migration/runtime/log-compact-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct{ Output string }
-	if err := json.Unmarshal(data, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	guard, logger, err := New("trace", "compact", &output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := slog.Default()
-	slog.SetDefault(logger)
-	defer slog.SetDefault(previous)
-	logger.Info("outside", "log_target", "litradar", "event", "outside", "component", "runtime")
-	ctx := StartSpan(context.Background(), "litradar", "process", map[string]any{"component": "runtime", "command": "admin", "version": "0.1.0", "process_id": uint64(123), "parent_run_id": "parent-1"})
-	logger.InfoContext(ctx, "process.completed", "log_target", "litradar", "event", "process.completed", "component", "runtime", "outcome", "success", "duration_ms", logfilter.DebugValue("7"))
-	ctx = StartSpan(ctx, "litradar_cli", "cli.command", map[string]any{"component": "cli", "command": "admin"})
-	logger.ErrorContext(ctx, "LitRadar process panicked", "log_target", "litradar::observability", "event", "process.panicked", "component", "runtime", "message", "LitRadar process panicked")
-	guard.Shutdown()
-	actual := regexp.MustCompile(`(?m)^\S+ `).ReplaceAllString(output.String(), "")
-	if actual != corpus.Output {
-		t.Fatalf("compact differs from original:\n%s\nexpected:\n%s", actual, corpus.Output)
-	}
-}
 
 func TestContextScopeActivatesTypedFilterAndNeverLeaksToOtherRequests(t *testing.T) {
 	var output bytes.Buffer

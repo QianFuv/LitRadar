@@ -3,8 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+
 	"encoding/json"
 	"net/http"
 	"os"
@@ -15,100 +14,12 @@ import (
 	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/cfp"
 	"github.com/QianFuv/LitRadar/internal/domain/sources"
-	"github.com/QianFuv/LitRadar/internal/index"
+
 	storage "github.com/QianFuv/LitRadar/internal/storage/cfp"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	migration "github.com/QianFuv/LitRadar/internal/storage/migrations/auth"
 	"github.com/QianFuv/LitRadar/internal/storage/secrets"
 )
-
-func TestCfpMatchesOriginalResponsesAndReadsOriginalCursor(t *testing.T) {
-	data, err := os.ReadFile("../../tests/migration/api/cfp-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	type observed struct {
-		Url           string
-		Authenticated bool
-		Status        int
-		Body          string
-	}
-	var corpus struct {
-		ExporterSha256       string `json:"exporter_sha256"`
-		CatalogCsv           string `json:"catalog_csv"`
-		Snapshot             storage.JournalSnapshot
-		Catalog, First, Next observed
-		Errors               []observed
-	}
-	if err := json.Unmarshal(data, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	exporter, err := os.ReadFile("../../tests/migration/api/export-cfp.mjs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(exporter)
-	if hex.EncodeToString(digest[:]) != corpus.ExporterSha256 {
-		t.Fatal("stale original CFP observations")
-	}
-	entries, err := index.ParseCatalogCsv(corpus.CatalogCsv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handlers, router, _ := cfpFixture(t)
-	var expectedCatalog cfpCatalogResponse
-	if err := json.Unmarshal([]byte(corpus.Catalog.Body), &expectedCatalog); err != nil {
-		t.Fatal(err)
-	}
-	catalog, failure := cfpCatalog("cfp_wire.sqlite", nil, entries, []storage.JournalSnapshot{corpus.Snapshot}, expectedCatalog.EvaluatedAt)
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	encoded, err := jsonvalue.EncodeJson(catalog)
-	if err != nil || encoded != corpus.Catalog.Body {
-		t.Fatal("original catalog differs", encoded, corpus.Catalog.Body, err)
-	}
-	var first struct {
-		EvaluatedAt int64 `json:"evaluatedAt"`
-		Page        struct {
-			NextCursor *string `json:"next_cursor"`
-		} `json:"page"`
-	}
-	if err := json.Unmarshal([]byte(corpus.First.Body), &first); err != nil || first.Page.NextCursor == nil {
-		t.Fatal(corpus.First.Body, err)
-	}
-	page, failure := cfpPage(handlers.codec, "cfp_wire.sqlite", entries[0], &corpus.Snapshot, true, nil, 1, first.EvaluatedAt)
-	if failure != nil || page.Page.NextCursor == nil {
-		t.Fatal(page, failure)
-	}
-	ours, err := handlers.codec.Decrypt(*page.Page.NextCursor, cfpCursorContext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	original, err := handlers.codec.Decrypt(*first.Page.NextCursor, cfpCursorContext)
-	if err != nil || ours != original {
-		t.Fatal("cursor plaintext/revision differs", ours, original, err)
-	}
-	page.Page.NextCursor = first.Page.NextCursor
-	encoded, err = jsonvalue.EncodeJson(page)
-	if err != nil || encoded != corpus.First.Body {
-		t.Fatal("original first page differs", encoded, corpus.First.Body, err)
-	}
-	page, failure = cfpPage(handlers.codec, "cfp_wire.sqlite", entries[0], &corpus.Snapshot, true, first.Page.NextCursor, 200, first.EvaluatedAt)
-	if failure != nil {
-		t.Fatal("original cursor rejected", failure)
-	}
-	encoded, err = jsonvalue.EncodeJson(page)
-	if err != nil || encoded != corpus.Next.Body {
-		t.Fatal("original continuation differs", encoded, corpus.Next.Body, err)
-	}
-	for _, observed := range corpus.Errors {
-		response := authRequest(router, "GET", observed.Url, "", "")
-		if response.Code != observed.Status || response.Body.String() != observed.Body {
-			t.Fatal(observed.Url, response.Code, response.Body.String(), "expected", observed.Status, observed.Body)
-		}
-	}
-}
 
 func cfpFixture(t *testing.T) (*cfpHandlers, *http.ServeMux, string) {
 	t.Helper()

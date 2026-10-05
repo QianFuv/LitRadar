@@ -12,7 +12,7 @@ const DEVELOPMENT_BACKEND_URL = 'http://127.0.0.1:8001';
 /**
  * Build the development-only backend rewrites.
  *
- * @returns Rewrites that proxy backend namespaces to the internal Rust listener.
+ * @returns Rewrites that proxy backend namespaces to the internal Go listener.
  */
 const DEVELOPMENT_REWRITES: NonNullable<NextConfig['rewrites']> = async () => ({
   beforeFiles: [],

@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { inflateSync } from "node:zlib";
@@ -672,30 +672,20 @@ async function enableSecureCookies(imageReference) {
 }
 
 /**
- * Rebuild a legacy search fixture through the packaged offline maintenance command.
+ * Rebuild a synthetic search fixture through the packaged offline maintenance command.
  *
  * @param {string} imageReference - Exact image under test.
  * @returns {Promise<void>} Resolves after the isolated volume contains the migrated index.
  */
-async function installLegacySearchFixture(imageReference) {
-  const fixtureRoot = path.join(WORKSPACE_ROOT, "tests/data/migration");
-  const schemaBytes = await fs.readFile(
-    path.join(fixtureRoot, "rust/content-schema.sql"),
+async function installSearchMaintenanceFixture(imageReference) {
+  const declaration = await fs.readFile(
+    path.join(WORKSPACE_ROOT, "internal/storage/indexschema/schema.go"),
+    "utf8",
   );
-  const manifest = JSON.parse(
-    await fs.readFile(path.join(fixtureRoot, "portable-fixtures.json"), "utf8"),
-  );
-  const expected = manifest.files.find(
-    (entry) => entry.path === "rust/content-schema.sql",
-  );
-  assertInvariant(
-    expected?.sha256 === createHash("sha256").update(schemaBytes).digest("hex"),
-    "independent historical search schema checksum mismatch",
-  );
-  const schema = schemaBytes.toString("utf8");
+  const schema = /const ContentTables = `([\s\S]*?)`/.exec(declaration)?.[1];
   assertInvariant(
     schema?.includes("tokenize = 'simple 0'"),
-    "independent historical search schema is unavailable",
+    "current content schema is unavailable",
   );
   const fixturePath = path.join(REPORT_ROOT, "search-fixture.sqlite");
   await fs.rm(fixturePath, { force: true });
@@ -725,7 +715,7 @@ async function installLegacySearchFixture(imageReference) {
           "SELECT COUNT(*) AS total FROM article_search WHERE article_search MATCH '科技金融'",
         )
         .get().total === 0,
-      "legacy fixture should reproduce the Chinese miss",
+      "synthetic index should reproduce the Chinese miss",
     );
   } finally {
     database.close();
@@ -1090,7 +1080,7 @@ async function runSmoke(imageReference) {
     "-c",
     'umask 077; head -c 32 /dev/urandom > /app/data/litradar_key; test "$(wc -c < /app/data/litradar_key)" -eq 32',
   ]);
-  await installLegacySearchFixture(imageReference);
+  await installSearchMaintenanceFixture(imageReference);
   const search = await enableSecureCookies(imageReference);
   const started = performance.now();
   await runDocker(buildServiceRunArguments(imageReference, true));

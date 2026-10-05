@@ -13,35 +13,6 @@ import (
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 )
 
-func TestPublicHelpAndInvalidCommandMatchFrozenOriginal(t *testing.T) {
-	data, err := os.ReadFile("../../tests/data/migration/surfaces.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var frozen struct {
-		Cli []struct {
-			Args     []string
-			ExitCode int
-			Stdout   string
-		}
-	}
-	if err := json.Unmarshal(data, &frozen); err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range frozen.Cli {
-		t.Run(strings.Join(test.Args, " "), func(t *testing.T) {
-			var output bytes.Buffer
-			err := Run(context.Background(), test.Args, "unused", strings.NewReader(""), &output)
-			if (err != nil) != (test.ExitCode != 0) {
-				t.Fatal("exit class changed", err)
-			}
-			if output.String() != test.Stdout {
-				t.Errorf("stdout mismatch\nactual %q\nexpected %q", output.String(), test.Stdout)
-			}
-		})
-	}
-}
-
 func TestAdminSubcommandsPreserveArgumentBoundaries(t *testing.T) {
 	for _, command := range []string{"secrets migrate", "secrets verify", "secrets rotate", "backup create", "backup verify", "backup restore", "index optimize-storage"} {
 		args := arguments{command}
@@ -51,7 +22,7 @@ func TestAdminSubcommandsPreserveArgumentBoundaries(t *testing.T) {
 	}
 }
 
-func TestIndexAndDeliveryPreserveRustPathComponents(t *testing.T) {
+func TestIndexAndDeliveryPreservePathComponents(t *testing.T) {
 	configuration := config.FromProjectRoot(t.TempDir())
 	selected := ".csv"
 	if err := preflightIndex(context.Background(), configuration, &selected); err == nil {
@@ -86,20 +57,14 @@ func TestOpenapiCommandUsesBindingsWithoutDeploymentMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected, err := os.ReadFile("../../tests/data/migration/rust/openapi.json")
-	if err != nil {
+	var document map[string]any
+	if err := json.Unmarshal(actual, &document); err != nil {
 		t.Fatal(err)
 	}
-	var first, second any
-	if err := json.Unmarshal(actual, &first); err != nil {
-		t.Fatal(err)
+	if document["openapi"] != "3.1.0" || document["paths"] == nil {
+		t.Fatal("missing API document")
 	}
-	if err := json.Unmarshal(expected, &second); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(first, second) {
-		t.Fatal("public OpenAPI changed")
-	}
+
 	var output bytes.Buffer
 	if err := Run(context.Background(), []string{"openapi"}, "unused", strings.NewReader(""), &output); err != nil || !bytes.Equal(output.Bytes(), actual) {
 		t.Fatal("file/stdout document disagreement", err)

@@ -40,7 +40,7 @@ func validLogDirective(value string) bool {
 			if character == '[' {
 				state = span
 				offset = index + 1
-			} else if character == '-' || character == ':' || character == '_' || isRustAlphabetic(character) || unicode.IsNumber(character) {
+			} else if character == '-' || character == ':' || character == '_' || isAlphabetic(character) || unicode.IsNumber(character) {
 				state = levelOrTarget
 				offset = index
 			} else {
@@ -138,6 +138,6 @@ func validLogField(value string) bool {
 	return validLogRegex(pattern)
 }
 
-func isRustAlphabetic(character rune) bool {
+func isAlphabetic(character rune) bool {
 	return unicode.IsLetter(character) || unicode.Is(unicode.Nl, character) || unicode.Is(unicode.Properties["Other_Alphabetic"], character)
 }

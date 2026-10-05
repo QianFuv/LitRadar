@@ -82,7 +82,7 @@ func NewBatchRequest(catalogs []CatalogInput, selection string, mode domain.Inde
 	return request, nil
 }
 
-// Fingerprint uses length-prefixed UTF-8 fields and ordered catalog descriptors, preserving the Rust hash contract.
+// Fingerprint uses length-prefixed UTF-8 fields and ordered catalog descriptors, preserving the persisted hash contract.
 func (request BatchRequest) Fingerprint() string {
 	hash := sha256.New()
 	field := func(value string) {

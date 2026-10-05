@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	contentfixture "github.com/QianFuv/LitRadar/internal/testkit/content"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strconv"
+
 	"strings"
 	"testing"
 	"time"
@@ -107,7 +107,7 @@ func toolText(t *testing.T, result map[string]any) string {
 	return entry["text"].(string)
 }
 
-func TestAuthenticatedToolsUseFrozenContractsAndCurrentIdentity(t *testing.T) {
+func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 	ctx := context.Background()
 	configuration := config.FromProjectRoot(t.TempDir())
 	if _, err := migration.Migrate(ctx, configuration.AuthDbPath); err != nil {
@@ -164,44 +164,10 @@ func TestAuthenticatedToolsUseFrozenContractsAndCurrentIdentity(t *testing.T) {
 		t.Fatal("real authentication did not initialize")
 	}
 	_, listed := client.post(adminToken.Token, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": map[string]any{}})
-	frozen, err := os.ReadFile("../../tests/data/migration/surfaces.json")
-	if err != nil {
-		t.Fatal(err)
+	if tools, ok := listed["result"].(map[string]any)["tools"].([]any); !ok || len(tools) != 13 {
+		t.Fatal("unexpected tool inventory", listed)
 	}
-	var contract struct{ Mcp struct{ Tools any } }
-	decoder := json.NewDecoder(bytes.NewReader(frozen))
-	decoder.UseNumber()
-	if err := decoder.Decode(&contract); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(listed["result"].(map[string]any)["tools"], contract.Mcp.Tools) {
-		t.Fatal("live tool inventory/schema differs from frozen Rust")
-	}
-	argumentVectors, err := os.ReadFile("../../tests/migration/api/mcp-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var original struct {
-		Cases []struct {
-			Name          string
-			ArgumentsJson string `json:"arguments_json"`
-			Result        map[string]any
-		}
-	}
-	if err := json.Unmarshal(argumentVectors, &original); err != nil {
-		t.Fatal(err)
-	}
-	if len(original.Cases) != 77 {
-		t.Fatal("original MCP argument inventory changed")
-	}
-	for index, scenario := range original.Cases {
-		t.Run("original-arguments-"+strconv.Itoa(index), func(t *testing.T) {
-			actual := client.call(adminToken.Token, scenario.Name, json.RawMessage(scenario.ArgumentsJson))
-			if !reflect.DeepEqual(actual, scenario.Result) {
-				t.Fatalf("%s %s: got %v; want %v", scenario.Name, scenario.ArgumentsJson, actual, scenario.Result)
-			}
-		})
-	}
+
 	for _, scenario := range []struct {
 		name    string
 		args    any
@@ -248,95 +214,10 @@ func TestAuthenticatedToolsUseFrozenContractsAndCurrentIdentity(t *testing.T) {
 	if err := os.MkdirAll(configuration.IndexDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	fixture, err := os.ReadFile("../../tests/migration/storage/fixtures/metadata.sqlite.fixture")
-	if err != nil {
+	if err := contentfixture.Create(filepath.Join(configuration.IndexDir, "metadata.sqlite"), 9); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configuration.IndexDir, "metadata.sqlite"), fixture, 0600); err != nil {
-		t.Fatal(err)
-	}
-	metadata, err := os.ReadFile("../../tests/migration/storage/metadata-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vectors struct {
-		Cases []struct {
-			Operation string
-			Id        int64
-			Params    map[string]any
-			Output    json.RawMessage
-			Error     *string
-		}
-	}
-	if err := json.Unmarshal(metadata, &vectors); err != nil {
-		t.Fatal(err)
-	}
-	toolNames := map[string]string{"areas": "list_areas", "ratings": "list_journal_ratings", "years": "list_years", "options": "list_journal_options", "journal": "get_journal", "article": "get_article", "journals": "list_journals", "articles": "search_articles"}
-	checked := 0
-	filtered := map[string]int{}
-	for _, vector := range vectors.Cases {
-		name, supported := toolNames[vector.Operation]
-		if !supported || vector.Error != nil {
-			continue
-		}
-		arguments := map[string]any{}
-		if vector.Operation == "journal" {
-			arguments["journal_id"] = strconv.FormatInt(vector.Id, 10)
-		}
-		if vector.Operation == "article" {
-			arguments["article_id"] = strconv.FormatInt(vector.Id, 10)
-		}
-		if vector.Params != nil {
-			ratings, hasRatings := vector.Params["ratings"].(map[string]any)
-			if vector.Operation == "articles" && hasRatings {
-				for key, value := range vector.Params {
-					if key != "ratings" {
-						arguments[key] = value
-					}
-				}
-				if identifiers, ok := arguments["journal_id"].([]any); ok {
-					values := make([]string, len(identifiers))
-					for index, identifier := range identifiers {
-						values[index] = strconv.FormatInt(int64(identifier.(float64)), 10)
-					}
-					arguments["journal_id"] = values
-				}
-			} else if len(vector.Params) > 2 || vector.Params["limit"] != float64(50) {
-				continue
-			} else {
-				arguments["limit"] = 50
-			}
-			if hasRatings {
-				for name, values := range ratings {
-					arguments[name] = values
-				}
-				filtered[vector.Operation]++
-			} else if len(vector.Params) != 1 {
-				continue
-			}
-		}
-		result := client.call(adminToken.Token, name, arguments)
-		if result["isError"] == true {
-			t.Fatalf("%s: %v", name, result)
-		}
-		var actual, expected any
-		if err := json.Unmarshal([]byte(toolText(t, result)), &actual); err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Unmarshal(vector.Output, &expected); err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(actual, expected) {
-			t.Fatalf("%s differs from original storage observation", name)
-		}
-		checked++
-	}
-	if checked < 8 {
-		t.Fatalf("metadata coverage only %d", checked)
-	}
-	if filtered["articles"] != 5 || filtered["journals"] != 3 {
-		t.Fatalf("filtered membership coverage changed: %v", filtered)
-	}
+
 	databases := client.call(adminToken.Token, "list_databases", map[string]any{})
 	if toolText(t, databases) != "[\n  \"metadata.sqlite\"\n]" {
 		t.Fatal("database tool leaked paths", databases)

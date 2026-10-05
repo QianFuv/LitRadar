@@ -1,5 +1,5 @@
 /**
- * Serial browser journeys through the real Rust listener and disposable SQLite state.
+ * Serial browser journeys through the real Go listener and disposable SQLite state.
  */
 
 import { expect, test, type Page, type TestInfo } from '@playwright/test';

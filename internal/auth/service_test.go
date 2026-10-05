@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
+
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,18 +21,10 @@ import (
 	migration "github.com/QianFuv/LitRadar/internal/storage/migrations/auth"
 )
 
-func testService(t *testing.T, useRustFixture bool) *Service {
+func testService(t *testing.T) *Service {
 	t.Helper()
 	filename := filepath.Join(t.TempDir(), "auth.sqlite")
-	if useRustFixture {
-		data, err := os.ReadFile(filepath.Join("..", "..", "tests", "data", "migration", "rust", "auth.sqlite.fixture"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filename, data, 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
+
 	if _, err := migration.Migrate(context.Background(), filename); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +39,7 @@ func testService(t *testing.T, useRustFixture bool) *Service {
 }
 
 func TestNewCredentialAndTokenValidationPriority(t *testing.T) {
-	service := testService(t, false)
+	service := testService(t)
 	ctx := context.Background()
 	if _, err := service.Bootstrap(ctx, "x", "short", nil); !errors.Is(err, domain.ErrUsername) {
 		t.Fatal(err)
@@ -83,41 +75,8 @@ func TestNewCredentialAndTokenValidationPriority(t *testing.T) {
 	}
 }
 
-func TestFrozenRustLegacyCredentialsUpgradeWithoutRevokingToken(t *testing.T) {
-	service := testService(t, true)
-	ctx := context.Background()
-	credentials, err := service.repository.CredentialsById(ctx, 1)
-	if err != nil || credentials == nil {
-		t.Fatal(err)
-	}
-	if strings.HasPrefix(credentials.PasswordHash, "$argon2") {
-		t.Fatal("fixture no longer has legacy credentials")
-	}
-	preexisting, err := service.CreateTrustedToken(ctx, 1, "kept", 3600, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	authorized, err := service.VerifyPasswordAuthorization(ctx, credentials.User.Username, "MigrationFixture!2026")
-	if err != nil || authorized == nil {
-		t.Fatalf("%v %v", authorized, err)
-	}
-	current, err := service.repository.CredentialsById(ctx, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(current.PasswordHash, "$argon2id$v=19$m=19456,t=2,p=1$") || current.Salt != "" || current.TokenGeneration != credentials.TokenGeneration {
-		t.Fatal("legacy upgrade format/generation changed")
-	}
-	if found, err := service.VerifyToken(ctx, preexisting.Token); err != nil || found == nil {
-		t.Fatalf("existing token lost: %v", err)
-	}
-	if found, err := service.VerifyPasswordAuthorization(ctx, credentials.User.Username, "wrong"); err != nil || found != nil {
-		t.Fatalf("%v %v", found, err)
-	}
-}
-
 func TestLegacyShortPasswordCanLoginButCannotBeNewPassword(t *testing.T) {
-	service := testService(t, false)
+	service := testService(t)
 	ctx := context.Background()
 	if _, err := service.repository.Bootstrap(ctx, "legacy", cryptography.LegacyHash("short", "salt"), "salt", 100, nil); err != nil {
 		t.Fatal(err)
@@ -131,7 +90,7 @@ func TestLegacyShortPasswordCanLoginButCannotBeNewPassword(t *testing.T) {
 }
 
 func TestLoginReplacementPublicAuthorizationAndGlobalRevocation(t *testing.T) {
-	service := testService(t, false)
+	service := testService(t)
 	ctx := context.Background()
 	password := "StrongPassword!2026"
 	user, err := service.Bootstrap(ctx, "admin", password, nil)
@@ -184,7 +143,7 @@ func TestLoginReplacementPublicAuthorizationAndGlobalRevocation(t *testing.T) {
 }
 
 func TestUnknownUserPerformsDummyPasswordWorkThroughAdmission(t *testing.T) {
-	service := testService(t, false)
+	service := testService(t)
 	service.passwordGate = admission.New(1)
 	if cryptography.VerifyPassword("irrelevant", "", dummyPasswordHash) != cryptography.Invalid {
 		t.Fatal("dummy credential accepted")
@@ -214,9 +173,12 @@ func TestUnknownUserPerformsDummyPasswordWorkThroughAdmission(t *testing.T) {
 func TestLostLegacyUpgradeReverifiesWinningCredentials(t *testing.T) {
 	for _, isReset := range []bool{false, true} {
 		t.Run(fmt.Sprint(isReset), func(t *testing.T) {
-			service := testService(t, true)
+			service := testService(t)
 			ctx := context.Background()
-			password := "MigrationFixture!2026"
+			password := "SyntheticLegacy!2026"
+			if _, err := service.repository.Bootstrap(ctx, "legacy", cryptography.LegacyHash(password, "synthetic salt"), "synthetic salt", 100, nil); err != nil {
+				t.Fatal(err)
+			}
 			observed, err := service.repository.CredentialsById(ctx, 1)
 			if err != nil || observed == nil {
 				t.Fatal(err)
@@ -245,7 +207,7 @@ func TestLostLegacyUpgradeReverifiesWinningCredentials(t *testing.T) {
 }
 
 func TestPasswordChangeAndResetRevokeOldSessions(t *testing.T) {
-	service := testService(t, false)
+	service := testService(t)
 	ctx := context.Background()
 	password := "StrongPassword!2026"
 	user, err := service.Bootstrap(ctx, "admin", password, nil)
@@ -280,7 +242,7 @@ func TestPasswordChangeAndResetRevokeOldSessions(t *testing.T) {
 }
 
 func TestInviteLifecycleProjectionAndOneTimeRegistration(t *testing.T) {
-	service := testService(t, false)
+	service := testService(t)
 	ctx := context.Background()
 	user, err := service.Bootstrap(ctx, "admin", "StrongPassword!2026", nil)
 	if err != nil {

@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
+	contentfixture "github.com/QianFuv/LitRadar/internal/testkit/content"
+
 	"errors"
 	"io"
-	"os"
+
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -28,31 +29,7 @@ func (function workerTestProvider) Fetch(ctx context.Context, entry domain.Journ
 
 func workerContentFixture(t *testing.T) (domain.JournalCatalogEntry, domain.ProviderBatch) {
 	t.Helper()
-	body, err := os.ReadFile("../../tests/migration/index/content-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct {
-		Observations []struct {
-			Input struct {
-				Name       string
-				Operations []struct {
-					Catalog domain.JournalCatalogEntry
-					Batch   domain.ProviderBatch
-				}
-			}
-		}
-	}
-	if err := json.Unmarshal(body, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	for _, item := range corpus.Observations {
-		if item.Input.Name == "first-and-replay" {
-			return item.Input.Operations[0].Catalog, item.Input.Operations[0].Batch
-		}
-	}
-	t.Fatal("missing positive writer fixture")
-	return domain.JournalCatalogEntry{}, domain.ProviderBatch{}
+	return contentfixture.Batch()
 }
 func workerFixtureRequest(t *testing.T) (WorkerRequest, domain.ProviderBatch) {
 	t.Helper()

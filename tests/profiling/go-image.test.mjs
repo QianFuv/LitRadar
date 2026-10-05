@@ -84,7 +84,7 @@ test("SIGTERM stops the active measurement and removes its containers and volume
       );
     }
     const report = JSON.parse(
-      fs.readFileSync("output/migration/profile/result.json", "utf8"),
+      fs.readFileSync("output/profiling/result.json", "utf8"),
     );
     assert.equal(report.status, "Failed");
     assert.equal(report.interruptedBy, "SIGTERM");

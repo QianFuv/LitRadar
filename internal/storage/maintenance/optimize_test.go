@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	contentfixture "github.com/QianFuv/LitRadar/internal/testkit/content"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,15 +17,7 @@ import (
 func fixture(t *testing.T, version int) config.Config {
 	t.Helper()
 	configuration := config.FromProjectRoot(t.TempDir())
-	if err := os.MkdirAll(configuration.IndexDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	source := filepath.Join("..", "..", "..", "tests", "migration", "storage", "fixtures", "content-v"+strconv.Itoa(version)+".sqlite.fixture")
-	raw, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configuration.IndexDir, "content.sqlite"), raw, 0600); err != nil {
+	if err := contentfixture.Create(filepath.Join(configuration.IndexDir, "content.sqlite"), version); err != nil {
 		t.Fatal(err)
 	}
 	return configuration

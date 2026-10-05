@@ -9,8 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -381,58 +379,6 @@ func TestLitRadarActivityRefreshesSessionWithoutRefreshingOnMalformedResume(t *t
 	case <-connection.done:
 	case <-time.After(300 * time.Millisecond):
 		t.Fatal("malformed resume refreshed session")
-	}
-}
-
-func TestLitRadarFrozenRustHttpBoundary(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "data", "migration", "mcp-http-boundary.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Baseline string
-		Cases    []struct {
-			Name, Method, Body string
-			Headers            map[string]string
-			Status             int
-			ResponseBody       string
-			ContentType        *string
-		}
-	}
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	if fixture.Baseline != "6bb1220059c82c19a53a1418fc376fc842fea834" {
-		t.Fatal("unexpected Rust baseline")
-	}
-	server := NewServer(&Implementation{Name: "primitive", Version: "1"}, nil)
-	handler := NewStreamableHTTPHandler(func(*http.Request) *Server { return server }, &StreamableHTTPOptions{LitRadarCompatibility: true, MaxRequestBodyBytes: -1})
-	listener := httptest.NewServer(handler)
-	defer listener.Close()
-	defer handler.closeAll()
-	client := &http.Client{Timeout: time.Second}
-	for _, scenario := range fixture.Cases {
-		t.Run(scenario.Name, func(t *testing.T) {
-			request, err := http.NewRequest(scenario.Method, listener.URL, strings.NewReader(scenario.Body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			for name, value := range scenario.Headers {
-				request.Header.Set(name, value)
-			}
-			response, err := client.Do(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer response.Body.Close()
-			body, err := io.ReadAll(response.Body)
-			if err != nil || response.StatusCode != scenario.Status || string(body) != scenario.ResponseBody {
-				t.Fatalf("HTTP boundary: status=%d body=%q error=%v; want %d %q", response.StatusCode, body, err, scenario.Status, scenario.ResponseBody)
-			}
-			if scenario.ContentType == nil && response.Header.Get("Content-Type") != "" {
-				t.Fatalf("introduced content type %q", response.Header.Get("Content-Type"))
-			}
-		})
 	}
 }
 

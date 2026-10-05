@@ -1,12 +1,11 @@
 package recommend
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
+
 	"strings"
 	"testing"
 	"time"
@@ -17,24 +16,6 @@ import (
 	storage "github.com/QianFuv/LitRadar/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/internal/transport"
 )
-
-func compareJson(t *testing.T, actual, expected []byte) {
-	t.Helper()
-	var left, right any
-	for _, target := range []struct {
-		data  []byte
-		value *any
-	}{{actual, &left}, {expected, &right}} {
-		decoder := json.NewDecoder(bytes.NewReader(target.data))
-		decoder.UseNumber()
-		if err := decoder.Decode(target.value); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if !equalObservation(left, right) {
-		t.Fatalf("client differs from original\nactual: %s\nexpected: %s", actual, expected)
-	}
-}
 
 type aiFixture struct {
 	responses []json.RawMessage
@@ -88,55 +69,6 @@ func (fixture *aiFixture) PostJson(ctx context.Context, location string, headers
 		}
 	}
 	return outbound.Response{StatusCode: response.Status, RequestId: response.RequestId, RetryAfterSeconds: response.RetryAfter, Body: parsed}, nil
-}
-
-func TestOriginalAiClientObservations(t *testing.T) {
-	data, err := os.ReadFile("../../tests/migration/delivery/client-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct {
-		Cases []struct{ Name, Input, Output string }
-	}
-	if err := json.Unmarshal(data, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	for _, vector := range corpus.Cases {
-		var input struct {
-			Op         string
-			Config     AiRuntimeConfig
-			Subscriber domain.Subscriber
-			Candidates []storage.ArticleCandidate
-			Responses  []json.RawMessage
-			Retries    int
-		}
-		if err := json.Unmarshal([]byte(vector.Input), &input); err != nil {
-			t.Fatal(err)
-		}
-		if input.Op == "pushplus" {
-			continue
-		}
-		t.Run(vector.Name, func(t *testing.T) {
-			fixture := &aiFixture{responses: input.Responses, requests: []any{}}
-			client := &AiClient{transport: fixture, allowedBaseUrls: func(context.Context) ([]string, error) { return []string{input.Config.BaseUrl}, nil }, retryAttempts: min(input.Retries, 10), temperature: 0.2, timeout: time.Second, wait: func(context.Context, time.Duration) error { return nil }}
-			var value any
-			var resultError error
-			if input.Op == "summary" {
-				value, resultError = client.SummarizeSelectedArticles(context.Background(), input.Config, input.Subscriber, input.Candidates)
-			} else {
-				value, resultError = client.SelectArticles(context.Background(), input.Config, input.Subscriber, Defaults{MaxCandidates: 120}, input.Candidates)
-			}
-			result := map[string]any{"value": value}
-			if resultError != nil {
-				result = map[string]any{"error": resultError.Error()}
-			}
-			actual, err := json.Marshal(map[string]any{"result": result, "requests": fixture.requests})
-			if err != nil {
-				t.Fatal(err)
-			}
-			compareJson(t, actual, []byte(vector.Output))
-		})
-	}
 }
 
 func TestAiRechecksAllowlistBeforeEachAttempt(t *testing.T) {

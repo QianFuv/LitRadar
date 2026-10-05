@@ -9,7 +9,7 @@ import (
 	"github.com/QianFuv/LitRadar/internal/transport"
 )
 
-// scheduleTime retains Rust Duration's range independently of Go timer limits.
+// scheduleTime retains the persisted duration range independently of Go timer limits.
 type scheduleTime struct {
 	Seconds     uint64
 	Nanoseconds uint32

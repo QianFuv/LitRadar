@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
-	"reflect"
+
 	"testing"
 	"time"
 
@@ -64,58 +63,6 @@ func (fixture *pushFixture) PostJson(ctx context.Context, location string, heade
 		}
 	}
 	return outbound.Response{StatusCode: response.Status, RequestId: response.RequestId, RetryAfterSeconds: response.RetryAfter, Body: parsed}, nil
-}
-
-func TestOriginalPushplusClientObservations(t *testing.T) {
-	data, err := os.ReadFile("../../tests/migration/delivery/client-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct {
-		Cases []struct{ Name, Input, Output string }
-	}
-	if err := json.Unmarshal(data, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	for _, vector := range corpus.Cases {
-		var input struct {
-			Op        string
-			Message   PushplusMessage
-			Responses []json.RawMessage
-			Retries   int
-		}
-		if err := json.Unmarshal([]byte(vector.Input), &input); err != nil {
-			t.Fatal(err)
-		}
-		if input.Op != "pushplus" {
-			continue
-		}
-		t.Run(vector.Name, func(t *testing.T) {
-			fixture := &pushFixture{responses: input.Responses, requests: []any{}}
-			client := NewPushplusClient(input.Retries, time.Second, nil)
-			client.transport = fixture
-			client.wait = func(context.Context, time.Duration) error { return nil }
-			value, err := client.Send(context.Background(), input.Message)
-			result := map[string]any{"value": value}
-			if err != nil {
-				result = map[string]any{"error": err.Error()}
-			}
-			actual, err := json.Marshal(map[string]any{"result": result, "requests": fixture.requests})
-			if err != nil {
-				t.Fatal(err)
-			}
-			var left, right any
-			if err := json.Unmarshal(actual, &left); err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal([]byte(vector.Output), &right); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(left, right) {
-				t.Fatalf("client differs from original\nactual: %s\nexpected: %s", actual, vector.Output)
-			}
-		})
-	}
 }
 
 func TestPushplusDoesNotConsumeAiBudgetAndCancellationStopsRetry(t *testing.T) {

@@ -294,6 +294,6 @@ API 在汇总与文章分页请求之间共享解析后的每周更新清单。�
 go test -count=1 -race -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./internal/storage/weekly ./internal/storage/query
 ```
 
-Go 版本的容器性能画像使用 `node tests/migration/run.mjs --phase profile`，要求已构建 `litradar:go-test-amd64`；旧版 Rust 性能数字不能作为 Go 的提升结论。
+Go 版本的容器性能画像使用 `node tests/profiling/go-image.mjs`，要求已构建 `litradar:go-test-amd64`。
 
 历史记录中，2026-09-05 的一次本地 Windows release 测试使用 8 个目录、每个目录 10,000 篇文章。10 次未缓存的续页请求总计 267.83 ms，预热缓存后为 198.03 ms；预热后的系列在初始 8 次解析之外没有新增解析。这是单次合成测试结果，仅说明当时的测试表现，不构成线上延迟承诺。目录元数据检查、成员分组和每次查询的临时 SQLite 成员表仍有开销。

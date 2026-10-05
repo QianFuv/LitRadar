@@ -3,91 +3,17 @@ package index
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	contentfixture "github.com/QianFuv/LitRadar/internal/testkit/content"
+
 	"errors"
-	"os"
+
 	"path/filepath"
-	"reflect"
+
 	"strconv"
 	"testing"
 
-	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
-
-func TestOriginalRustContentTransactions(t *testing.T) {
-	body, err := os.ReadFile("../../../tests/migration/index/content-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct {
-		Observations []struct {
-			Input struct {
-				Name       string
-				Operations []struct {
-					Op, Sql, Revision string
-					Catalog           domain.JournalCatalogEntry
-					Catalogs          []domain.JournalCatalogEntry
-					Batch             domain.ProviderBatch
-				}
-			}
-			Expected json.RawMessage
-		}
-	}
-	if err := json.Unmarshal(body, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	for _, item := range corpus.Observations {
-		t.Run(item.Input.Name, func(t *testing.T) {
-			ctx := context.Background()
-			connection, err := OpenContent(ctx, filepath.Join(t.TempDir(), "content.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer connection.Close()
-			operations := []any{}
-			for _, operation := range item.Input.Operations {
-				var value any
-				var err error
-				switch operation.Op {
-				case "sql":
-					_, err = connection.ExecContext(ctx, operation.Sql)
-					value = map[string]any{"ok": true}
-				case "reconcile":
-					err = ReconcileCatalogIdentities(ctx, connection.Conn, operation.Catalogs)
-					value = map[string]any{"ok": true}
-				case "write":
-					value, err = WriteContentBatch(ctx, connection.Conn, operation.Catalog, operation.Batch, operation.Revision, "2026-10-04T00:00:00Z")
-				default:
-					t.Fatal(operation.Op)
-				}
-				if err != nil {
-					value = map[string]any{"error": err.Error()}
-				}
-				operations = append(operations, value)
-			}
-			actual := map[string]any{"operations": operations, "tables": contentSnapshot(t, connection.Conn)}
-			encoded, err := json.Marshal(actual)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var got, want any
-			if err := json.Unmarshal(encoded, &got); err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(item.Expected, &want); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("actual=%s\nexpected=%s", encoded, item.Expected)
-			}
-		})
-	}
-}
-
-func contentSnapshot(t *testing.T, connection *sql.Conn) map[string]any {
-	return selectedSnapshot(t, connection, []string{"journals", "journal_identity_keys", "issues", "articles", "article_retraction_dois", "article_identity_keys", "article_listing", "article_search", "article_change_events"})
-}
 
 func selectedSnapshot(t *testing.T, connection *sql.Conn, selected []string) map[string]any {
 	t.Helper()
@@ -148,12 +74,7 @@ func TestContentRuntimeVersionBoundary(t *testing.T) {
 	for version := 4; version <= 9; version++ {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "content.sqlite")
-			fixture := "../../../tests/migration/storage/fixtures/content-v" + strconv.Itoa(version) + ".sqlite.fixture"
-			body, err := os.ReadFile(fixture)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, body, 0600); err != nil {
+			if err := contentfixture.Create(path, version); err != nil {
 				t.Fatal(err)
 			}
 			connection, err := OpenContent(ctx, path)

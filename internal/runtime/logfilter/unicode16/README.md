@@ -6,8 +6,6 @@ Upstream: https://github.com/rust-lang/regex/tree/regex-syntax-0.8.11/regex-synt
 
 Generated tables.json SHA-256: bb96f6a2785cb2d66bf9fc482144261a5d7898dcff545d08b9df012510c347fa
 
-Regenerate: node tests/migration/runtime/export-log-unicode.mjs PATH_TO_REGEX_SYNTAX_0.8.11
-
 Source hashes:
 
 - general_category.rs: 9488e3721f7c2ae20e1b77fcff9a59b4ed8f22954b8645ea6d8592eac1856423

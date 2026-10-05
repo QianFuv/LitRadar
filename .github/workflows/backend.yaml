@@ -14,9 +14,9 @@ on:
       - "libs/**"
       - "assets/**"
       - "tests/test.mjs"
+      - "tests/go-dependency.test.mjs"
       - "tests/data/**"
       - "scripts/**"
-      - "tests/migration/**"
       - ".github/workflows/backend.yaml"
   pull_request:
     paths:
@@ -28,9 +28,9 @@ on:
       - "libs/**"
       - "assets/**"
       - "tests/test.mjs"
+      - "tests/go-dependency.test.mjs"
       - "tests/data/**"
       - "scripts/**"
-      - "tests/migration/**"
       - ".github/workflows/backend.yaml"
 
 concurrency:

@@ -12,7 +12,7 @@ func TestTokenHashRetainsOriginalPythonCompatibleDigest(t *testing.T) {
 }
 
 func TestAbsentUserCompletesRealDummyVerificationWithoutCreatingIdentity(t *testing.T) {
-	service := testService(t, false)
+	service := testService(t)
 	if authorization, err := service.VerifyPasswordAuthorization(context.Background(), "missing", "password"); err != nil || authorization != nil {
 		t.Fatal(authorization, err)
 	}

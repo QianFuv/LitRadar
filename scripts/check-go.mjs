@@ -19,14 +19,10 @@ const environment = {
 const tags = "sqlite_fts5,sqlite_dbstat";
 const checks = [
   ["environment", "go", ["env", "-json"]],
-  ["format", "node", ["tests/migration/run.mjs", "--phase", "go-format"]],
+  ["format", "node", ["scripts/check-go-format.mjs"]],
   ["modules", "go", ["mod", "verify"]],
-  ["sdk", "node", ["tests/migration/run.mjs", "--phase", "sdk-integrity"]],
-  [
-    "sqlite",
-    "node",
-    ["tests/migration/run.mjs", "--phase", "sqlite-driver-integrity"],
-  ],
+  ["sdk", "node", ["scripts/verify-go-dependency.mjs", "go-sdk"]],
+  ["sqlite", "node", ["scripts/verify-go-dependency.mjs", "go-sqlite3"]],
   ["vet", "go", ["vet", "-mod=readonly", "-tags", tags, "./..."]],
   [
     "regular",

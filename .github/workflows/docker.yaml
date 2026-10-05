@@ -68,11 +68,11 @@ jobs:
               - "tests/container-smoke.mjs"
               - "tests/data/**"
               - "scripts/**"
-              - "tests/migration/**"
               - ".github/workflows/docker.yaml"
             backend_workflow:
               - "scripts/check-go.mjs"
               - "tests/test.mjs"
+              - "tests/go-dependency.test.mjs"
               - ".github/workflows/backend.yaml"
             frontend_workflow:
               - "tests/test.mjs"

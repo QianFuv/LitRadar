@@ -21,7 +21,7 @@ const (
 	Trace
 )
 
-// DebugValue contains the original typed value's Rust Debug representation.
+// DebugValue contains the original typed value's debug representation.
 type DebugValue string
 
 type valueMatch struct {
@@ -190,7 +190,7 @@ func parseDirective(value string) (directive, error) {
 	return result, nil
 }
 
-var rustFloat = regexp.MustCompile(`^[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|(?i:inf(?:inity)?|nan))$`)
+var floatSyntax = regexp.MustCompile(`^[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|(?i:inf(?:inity)?|nan))$`)
 
 func parseValue(value string) (*valueMatch, error) {
 	if value == "true" || value == "false" {
@@ -206,10 +206,10 @@ func parseValue(value string) (*valueMatch, error) {
 	if strings.EqualFold(strings.TrimLeft(value, "+-"), "infinity") {
 		numeric = strings.ReplaceAll(strings.ToLower(value), "infinity", "inf")
 	}
-	if rustFloat.MatchString(value) && strings.EqualFold(strings.TrimLeft(value, "+-"), "nan") {
+	if floatSyntax.MatchString(value) && strings.EqualFold(strings.TrimLeft(value, "+-"), "nan") {
 		return &valueMatch{kind: 'n'}, nil
 	}
-	if rustFloat.MatchString(value) {
+	if floatSyntax.MatchString(value) {
 		if number, err := strconv.ParseFloat(numeric, 64); err == nil || errors.Is(err, strconv.ErrRange) {
 			return &valueMatch{kind: 'f', value: number}, nil
 		}

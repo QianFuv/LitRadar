@@ -1,4 +1,5 @@
-/** Measure the actual production image using repeated isolated historical workloads. */
+/** Measure the actual production image using repeated isolated synthetic workloads. */
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
@@ -14,7 +15,7 @@ export async function profileImage() {
   const handlers = new Map(
     ["SIGINT", "SIGTERM"].map((signal) => [signal, () => interrupt(signal)]),
   );
-  const directory = "output/migration/profile";
+  const directory = "output/profiling";
   await fs.mkdir(directory, { recursive: true });
   const report = {
     status: "In Progress",
@@ -200,4 +201,16 @@ function runSmoke(image, runId, signal) {
       resolve(result);
     });
   });
+}
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  try {
+    console.log(await profileImage());
+  } catch (error) {
+    console.error(error);
+    process.exitCode = error.exitCode ?? 1;
+  }
 }

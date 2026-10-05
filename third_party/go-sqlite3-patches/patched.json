@@ -1,6 +1,6 @@
 {
   "upstreamCommit": "b0be46fa28d17ee0b65c79774ac0dad84b6db068",
-  "patchSha256": "be49a82cb1eec161d013733da52fa1050c190e1bd0098a909b0e2582781d7d76",
+  "patchSha256": "7b2f6f2ce71e431040b402dedcea0635b63c0eea65a63a28bacf1c27216a8970",
   "files": [
     {
       "path": "sqlite3.go",
@@ -8,7 +8,7 @@
     },
     {
       "path": "sqlite3_litradar_nofollow_test.go",
-      "sha256": "220d9a045057ea08ee4fc2185db52e42622de095bc4e001855b147d3e9dd3769"
+      "sha256": "41af12de6c50f297ac88cc09cdcb08a9f5b7e435bfab0f31e83f3bacdeca81e7"
     }
   ]
 }

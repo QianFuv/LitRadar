@@ -45,10 +45,10 @@ func TestLitRadarNoFollowPreservesDefault(t *testing.T) {
 	rejected, err := strict.Open(link)
 	if runtime.GOOS == "windows" {
 		if err != nil {
-			t.Fatalf("Windows native behavior differs from frozen Rust SQLite: %v", err)
+			t.Fatalf("Windows native symlink open failed: %v", err)
 		}
 		rejected.Close()
-		t.Log("Windows VFS accepts the final symlink even with NOFOLLOW, matching Rust SQLite 3.50.2; application path validation remains required")
+		t.Log("Windows VFS accepts the final symlink even with NOFOLLOW; application path validation remains required")
 	} else if err == nil {
 		rejected.Close()
 		t.Fatal("NOFOLLOW unexpectedly accepted a symbolic database path")

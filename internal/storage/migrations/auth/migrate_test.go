@@ -14,19 +14,6 @@ import (
 	"testing"
 )
 
-func fixturePath(name string) string {
-	return filepath.Join("..", "..", "..", "..", "tests", "data", "migration", "rust", name)
-}
-
-func readFixture(t *testing.T, name string) []byte {
-	t.Helper()
-	data, err := os.ReadFile(fixturePath(name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
-}
-
 func testConnection(t *testing.T, filename string) *sql.Conn {
 	t.Helper()
 	database, err := openMigrationDatabase(filename)
@@ -71,58 +58,6 @@ func historicalDatabase(t *testing.T, version int) (string, *sql.Conn) {
 	return filename, connection
 }
 
-func TestFreshSchemaMatchesFrozenRust(t *testing.T) {
-	filename := filepath.Join(t.TempDir(), "punctuation # & % 中文", "auth.sqlite")
-	summary, err := Migrate(context.Background(), filename)
-	if err != nil || summary != (Summary{0, 20}) {
-		t.Fatalf("%+v: %v", summary, err)
-	}
-	connection := testConnection(t, filename)
-	type object struct {
-		Name  string  `json:"name"`
-		Sql   *string `json:"sql"`
-		Table string  `json:"table"`
-		Type  string  `json:"type"`
-	}
-	var expected struct {
-		Objects     []object `json:"objects"`
-		UserVersion int      `json:"userVersion"`
-	}
-	if err := json.Unmarshal(readFixture(t, "auth-schema.json"), &expected); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := connection.QueryContext(context.Background(), "SELECT name,sql,tbl_name,type FROM sqlite_schema ORDER BY type,name")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	actual := []object{}
-	for rows.Next() {
-		var item object
-		if err := rows.Scan(&item.Name, &item.Sql, &item.Table, &item.Type); err != nil {
-			t.Fatal(err)
-		}
-		actual = append(actual, item)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if len(actual) != len(expected.Objects) {
-		t.Fatalf("objects: actual %d expected %d", len(actual), len(expected.Objects))
-	}
-	for index, item := range actual {
-		if !reflect.DeepEqual(item, expected.Objects[index]) {
-			t.Errorf("schema mismatch %s: actual %+v expected %+v", item.Name, item, expected.Objects[index])
-		}
-	}
-	if version := scalar[int](t, connection, "PRAGMA user_version"); version != expected.UserVersion {
-		t.Fatal(version)
-	}
-	if count := scalar[int](t, connection, "SELECT count(*) FROM runtime_settings"); count != 0 {
-		t.Fatalf("fresh database materialized legacy defaults: %d", count)
-	}
-}
-
 func TestUnversionedLegacyUsersPromoteOnlySmallestId(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "legacy.sqlite")
 	connection := testConnection(t, filename)
@@ -147,27 +82,6 @@ func TestExistingInviteLifecycleRequiresOriginalColumnOrder(t *testing.T) {
 	}
 	if version := scalar[int](t, connection, "PRAGMA user_version"); version != 11 {
 		t.Fatal("failed lifecycle validation advanced schema version")
-	}
-}
-
-func TestFrozenVersionNineteenPreservesHistoryAndSequence(t *testing.T) {
-	filename := filepath.Join(t.TempDir(), "auth.sqlite")
-	if err := os.WriteFile(filename, readFixture(t, "auth-v19-input.sqlite.fixture"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{19, 20}) {
-		t.Fatalf("%+v %v", summary, err)
-	}
-	connection := testConnection(t, filename)
-	if value := scalar[int64](t, connection, "SELECT seq FROM sqlite_sequence WHERE name='scheduled_task_runs'"); value != 1000 {
-		t.Fatal(value)
-	}
-	if value := scalar[string](t, connection, "SELECT status||':'||trigger_kind FROM scheduled_task_runs WHERE id=9"); value != "unknown:scheduled" {
-		t.Fatal(value)
-	}
-	mustExecute(t, connection, `INSERT INTO scheduled_task_runs(task_id,task_name,scheduled_for,status,trigger_kind) VALUES (1,'manual',600,'pending','manual'),(1,'manual',600,'pending','manual')`)
-	if value := scalar[int64](t, connection, "SELECT max(id) FROM scheduled_task_runs"); value != 1002 {
-		t.Fatal(value)
 	}
 }
 
@@ -322,6 +236,45 @@ func TestEmptySchedulerHistoryRetainsAutoincrementHighWater(t *testing.T) {
 	}
 	if err := execute(context.Background(), connection, `INSERT INTO scheduled_task_runs(task_id,task_name,scheduled_for,status) VALUES (1,'duplicate',1,'pending')`); err == nil {
 		t.Fatal("duplicate scheduled slot accepted")
+	}
+}
+
+func TestSchedulerMigrationPreservesNonemptyHistoryAndManualSlots(t *testing.T) {
+	filename, connection := historicalDatabase(t, 19)
+	mustExecute(t, connection, `INSERT INTO scheduled_task_runs
+		(id,task_id,task_name,scheduled_for,status,worker_id,claim_expires_at,claimed_at,started_at,finished_at,output_summary)
+		VALUES (7,42,'retained job',600,'unknown','worker-a',700.5,601.25,602.5,603.75,'ambiguous delivery');
+		INSERT INTO scheduled_task_runs(id,task_id,task_name,scheduled_for,status) VALUES (2000,42,'deleted job',900,'pending');
+		DELETE FROM scheduled_task_runs WHERE id=2000`)
+	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{19, 20}) {
+		t.Fatalf("migration failed: %+v %v", summary, err)
+	}
+	var id, taskId, scheduledFor int64
+	var taskName, status, worker, output, trigger string
+	var expiry, claimed, started, finished float64
+	err := connection.QueryRowContext(context.Background(), `SELECT id,task_id,task_name,scheduled_for,status,worker_id,
+		claim_expires_at,claimed_at,started_at,finished_at,output_summary,trigger_kind FROM scheduled_task_runs WHERE id=7`).Scan(
+		&id, &taskId, &taskName, &scheduledFor, &status, &worker, &expiry, &claimed, &started, &finished, &output, &trigger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 7 || taskId != 42 || taskName != "retained job" || scheduledFor != 600 || status != "unknown" || worker != "worker-a" ||
+		expiry != 700.5 || claimed != 601.25 || started != 602.5 || finished != 603.75 || output != "ambiguous delivery" || trigger != "scheduled" {
+		t.Fatal("migration changed persisted scheduler history")
+	}
+	if err := execute(context.Background(), connection, `INSERT INTO scheduled_task_runs(task_id,task_name,scheduled_for,status) VALUES (42,'duplicate',600,'pending')`); err == nil {
+		t.Fatal("duplicate scheduled slot accepted")
+	}
+	mustExecute(t, connection, `INSERT INTO scheduled_task_runs(task_id,task_name,scheduled_for,status,trigger_kind)
+		VALUES (42,'manual',600,'pending','manual'),(42,'manual',600,'pending','manual')`)
+	if value := scalar[int64](t, connection, "SELECT min(id) FROM scheduled_task_runs WHERE trigger_kind='manual'"); value != 2001 {
+		t.Fatalf("lost sequence high water: %d", value)
+	}
+	if count := scalar[int](t, connection, "SELECT count(*) FROM scheduled_task_runs"); count != 3 {
+		t.Fatalf("history or manual runs lost: %d", count)
+	}
+	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{20, 20}) {
+		t.Fatalf("repeat migration failed: %+v %v", summary, err)
 	}
 }
 

@@ -5,8 +5,9 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	contentfixture "github.com/QianFuv/LitRadar/internal/testkit/content"
 	"math"
-	"os"
+
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -64,14 +65,7 @@ func addFavorite(t *testing.T, repository *Repository, owner identity.Id, folder
 }
 func installMetadata(t *testing.T, configuration config.Config) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "migration", "storage", "fixtures", "metadata.sqlite.fixture"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(configuration.IndexDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configuration.IndexDir, "metadata.sqlite"), raw, 0600); err != nil {
+	if err := contentfixture.Create(filepath.Join(configuration.IndexDir, "metadata.sqlite"), 9); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -13,7 +13,7 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/internal/platform/executor"
-	"github.com/QianFuv/LitRadar/tests/migration/testlog"
+	"github.com/QianFuv/LitRadar/internal/testkit/testlog"
 )
 
 func TestHealthAndStaticSuccessLogsAreQuietButReadinessFailureIsVisible(t *testing.T) {

@@ -95,7 +95,7 @@ func (decoder *authorDecoder) token(expected string) (json.Token, error) {
 		}
 		description = kind + " `" + number.String() + "`"
 	case string:
-		description = "string " + rustDebugString(value)
+		description = "string " + debugString(value)
 	case json.Delim:
 		if value == '[' {
 			description = "sequence"
@@ -269,7 +269,7 @@ func (decoder *authorDecoder) author() (domain.ArticleAuthorDraft, error) {
 	}
 }
 
-func rustDebugString(value string) string {
+func debugString(value string) string {
 	var output strings.Builder
 	output.WriteByte('"')
 	for _, character := range value {

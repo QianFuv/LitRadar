@@ -1,9 +1,0 @@
-{
-  "row": {
-    "id": 9,
-    "scheduledFor": 600,
-    "status": "unknown",
-    "triggerKind": "scheduled"
-  },
-  "sequence": 1000
-}

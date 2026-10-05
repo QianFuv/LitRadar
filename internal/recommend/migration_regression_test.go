@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	domain "github.com/QianFuv/LitRadar/internal/domain/delivery"
 	storage "github.com/QianFuv/LitRadar/internal/domain/storage"
-	"github.com/QianFuv/LitRadar/tests/migration/testlog"
+	"github.com/QianFuv/LitRadar/internal/testkit/testlog"
 	"strings"
 	"testing"
 	"time"

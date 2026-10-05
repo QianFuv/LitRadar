@@ -1,4 +1,4 @@
-// Package httpwire implements the shared HTTP response conventions of the Rust API.
+// Package httpwire implements the shared HTTP response conventions of the API.
 package httpwire
 
 import (

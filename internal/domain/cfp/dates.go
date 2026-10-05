@@ -21,7 +21,7 @@ var expressions sync.Map
 // PatternCaptures applies the CFP parser's Unicode regex contract and returns byte offsets.
 func PatternCaptures(pattern, text string) [][]int { return captures(pattern, text) }
 
-// expression preserves Rust's Unicode character classes; boundary assertions are checked separately.
+// expression preserves Unicode character classes; boundary assertions are checked separately.
 func expression(pattern string) *regexp.Regexp {
 	if cached, ok := expressions.Load(pattern); ok {
 		return cached.(*regexp.Regexp)

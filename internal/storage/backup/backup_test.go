@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	authmigration "github.com/QianFuv/LitRadar/internal/storage/migrations/auth"
+	contentfixture "github.com/QianFuv/LitRadar/internal/testkit/content"
 	"math"
 	"os"
 	"path/filepath"
@@ -27,14 +29,26 @@ func write(t *testing.T, filename string, data []byte) {
 func fixtureConfig(t *testing.T) config.Config {
 	t.Helper()
 	configuration := config.FromProjectRoot(t.TempDir())
-	root := filepath.Join("..", "..", "..", "tests", "migration", "storage", "fixtures")
-	for _, file := range []struct{ source, destination string }{{"favorites-auth.sqlite.fixture", configuration.AuthDbPath}, {"metadata.sqlite.fixture", filepath.Join(configuration.IndexDir, "metadata.sqlite")}} {
-		raw, err := os.ReadFile(filepath.Join(root, file.source))
-		if err != nil {
-			t.Fatal(err)
-		}
-		write(t, file.destination, raw)
+	if _, err := authmigration.Migrate(context.Background(), configuration.AuthDbPath); err != nil {
+		t.Fatal(err)
 	}
+	database, err := storage.Open(configuration.AuthDbPath, false, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("INSERT INTO users(id,username,password_hash,salt,created_at,updated_at) VALUES(1,'synthetic','hash','salt',1,1)"); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("PRAGMA journal_mode=DELETE"); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	database.Close()
+	if err := contentfixture.Create(filepath.Join(configuration.IndexDir, "metadata.sqlite"), 9); err != nil {
+		t.Fatal(err)
+	}
+
 	write(t, filepath.Join(configuration.MetaDir, "nested", "custom.csv"), []byte("custom metadata\n"))
 	write(t, filepath.Join(configuration.ProjectRoot, "data", "push_state", "run.json"), []byte("{}"))
 	write(t, filepath.Join(configuration.ProjectRoot, "data", "index-control", "must-not-copy.sqlite"), []byte("control"))

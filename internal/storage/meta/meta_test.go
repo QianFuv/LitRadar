@@ -305,22 +305,6 @@ func TestConcurrentPreparationConvergesWithoutLosingState(t *testing.T) {
 	}
 }
 
-func TestPackagedCatalogsRetainFrozenRustBundle(t *testing.T) {
-	bundle, err := validateBundle(filepath.Join("..", "..", "..", "assets", "meta"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bundle.version != 8 || len(bundle.catalogs) != 3 {
-		t.Fatalf("unexpected packaged bundle: %d, %d", bundle.version, len(bundle.catalogs))
-	}
-	for _, catalog := range bundle.catalogs {
-		original, err := os.ReadFile(filepath.Join("..", "..", "..", "data", "meta", catalog.filename))
-		if err != nil || !bytes.Equal(original, catalog.data) {
-			t.Fatalf("packaged %s differs from original: %v", catalog.filename, err)
-		}
-	}
-}
-
 func TestManifestAcceptsOriginalSerdeSequences(t *testing.T) {
 	for _, sequence := range []string{"manifest", "catalog", "both"} {
 		t.Run(sequence, func(t *testing.T) {

@@ -1,7 +1,7 @@
 package zjlib
 
 import (
-	"github.com/QianFuv/LitRadar/tests/migration/testlog"
+	"github.com/QianFuv/LitRadar/internal/testkit/testlog"
 	"testing"
 )
 

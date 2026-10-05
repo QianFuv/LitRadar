@@ -24,7 +24,7 @@ func batchFixture(t *testing.T) (*Connection, IndexBatch, BatchRequest, string) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { connection.Close() })
-	entry, _ := frozenContentInput(t)
+	entry, _ := contentInput(t)
 	request, err := NewBatchRequest([]CatalogInput{{Filename: "journal.csv", CatalogName: "journal", CsvSha256: strings.Repeat("a", 64), ProviderName: "scholarly", Entries: []domain.JournalCatalogEntry{entry}}}, "all", domain.Incremental, 10, true, false)
 	if err != nil {
 		t.Fatal(err)

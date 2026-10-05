@@ -45,7 +45,7 @@ func names(ctx context.Context, connection *sql.Conn, statement string) ([]strin
 	return result, rows.Err()
 }
 
-// ValidateStructure checks only the inventories, column ordering and search storage enforced by Rust.
+// ValidateStructure checks only the inventories, column ordering and search storage required by the application.
 func ValidateStructure(ctx context.Context, connection *sql.Conn, version int) error {
 	var declaration string
 	err := connection.QueryRowContext(ctx, "SELECT sql FROM sqlite_schema WHERE type='table' AND name='article_search'").Scan(&declaration)

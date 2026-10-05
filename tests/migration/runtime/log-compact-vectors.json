@@ -1,7 +1,0 @@
-{
-  "baseline": "6bb1220059c82c19a53a1418fc376fc842fea834",
-  "exporter_sha256": "5caf718cf1da59a490b9540484e36a774c7fdd717b388b341df88fdc3ea2d08e",
-  "observer_source_sha256": "0b919ff82476bec9f7279b4b83904a7b3c2f9c29626729dc5531eda92daa7c85",
-  "observer_binary_sha256": "f02cebf3456bd0f72cf346d1b5e78aa24721d73041461132358920bbe875b9dc",
-  "output": " INFO litradar: event=\"outside\" component=\"runtime\"\n INFO process: litradar: event=\"process.completed\" component=\"runtime\" outcome=\"success\" duration_ms=7 component=\"runtime\" command=\"admin\" version=\"0.1.0\" process_id=123 parent_run_id=\"parent-1\"\nERROR process:cli.command: litradar::observability: event=\"process.panicked\" component=\"runtime\" LitRadar process panicked component=\"runtime\" command=\"admin\" version=\"0.1.0\" process_id=123 parent_run_id=\"parent-1\" component=\"cli\" command=\"admin\"\n"
-}

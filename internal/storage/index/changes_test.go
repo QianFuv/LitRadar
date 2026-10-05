@@ -2,108 +2,15 @@ package index
 
 import (
 	"context"
-	"encoding/json"
+
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
+
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
-
-func TestOriginalRustManifestBytes(t *testing.T) {
-	body, err := os.ReadFile("../../../tests/migration/index/manifest-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct {
-		Observations []struct {
-			Input struct {
-				Name, Database, Run, Generated string
-				Events                         []struct {
-					EventId   string  `json:"event_id"`
-					ArticleId string  `json:"article_id"`
-					JournalId string  `json:"journal_id"`
-					IssueId   *string `json:"issue_id"`
-					InPress   string  `json:"in_press"`
-					Kind      string
-				}
-			}
-			Expected struct {
-				Payload string
-				Through *string
-				Count   uint64
-				Limits  []map[string]any
-			}
-		}
-	}
-	if err := json.Unmarshal(body, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	for _, item := range corpus.Observations {
-		t.Run(item.Input.Name, func(t *testing.T) {
-			ctx := context.Background()
-			database, err := sqlite.OpenMigration(filepath.Join(t.TempDir(), "events.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer database.Close()
-			connection, err := database.Conn(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer connection.Close()
-			if _, err := connection.ExecContext(ctx, "CREATE TABLE article_change_events(event_id INTEGER PRIMARY KEY,content_revision TEXT,article_id INTEGER,change_kind TEXT,journal_id INTEGER,issue_id INTEGER,in_press INTEGER,created_at TEXT)"); err != nil {
-				t.Fatal(err)
-			}
-			if err := immediate(ctx, connection, func() error {
-				for _, event := range item.Input.Events {
-					parse := func(value string) int64 {
-						number, err := strconv.ParseInt(value, 10, 64)
-						if err != nil {
-							t.Fatal(err)
-						}
-						return number
-					}
-					var issue *int64
-					if event.IssueId != nil {
-						issue = ptr(parse(*event.IssueId))
-					}
-					if _, err := connection.ExecContext(ctx, "INSERT INTO article_change_events VALUES(?1,'revision',?2,?3,?4,?5,?6,'epoch')", parse(event.EventId), parse(event.ArticleId), event.Kind, parse(event.JournalId), issue, parse(event.InPress)); err != nil {
-						return err
-					}
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			prepared, err := PrepareContentChangeManifest(ctx, connection, item.Input.Database, item.Input.Run, item.Input.Generated)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var through *string
-			if prepared.ThroughEventId != nil {
-				through = ptr(strconv.FormatInt(*prepared.ThroughEventId, 10))
-			}
-			if string(prepared.Payload) != item.Expected.Payload || !reflect.DeepEqual(through, item.Expected.Through) || prepared.EventCount != item.Expected.Count {
-				t.Fatalf("actual=%s through=%v count=%d\nexpected=%+v", prepared.Payload, through, prepared.EventCount, item.Expected)
-			}
-			for position, limit := range []uint64{0, 1, 1000, 10000, 10001} {
-				events, err := ListContentChangeEvents(ctx, connection, 0, limit)
-				actual := map[string]any{"count": float64(len(events))}
-				if err != nil {
-					actual = map[string]any{"error": err.Error()}
-				}
-				if !reflect.DeepEqual(actual, item.Expected.Limits[position]) {
-					t.Fatalf("limit=%d actual=%v expected=%v", limit, actual, item.Expected.Limits[position])
-				}
-			}
-		})
-	}
-}
 
 func TestPublicationFailureRetainsOutboxAndPreparedCursor(t *testing.T) {
 	ctx := context.Background()
@@ -113,7 +20,7 @@ func TestPublicationFailureRetainsOutboxAndPreparedCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer content.Close()
-	catalog, batch := frozenContentInput(t)
+	catalog, batch := contentInput(t)
 	if _, err := WriteContentBatch(ctx, content.Conn, catalog, batch, "first", "epoch"); err != nil {
 		t.Fatal(err)
 	}

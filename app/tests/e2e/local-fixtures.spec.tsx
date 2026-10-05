@@ -2500,7 +2500,7 @@ function cfpFixtureJournal(catalogId: string, title: string): CfpJournalSummary 
   );
 }
 
-/** Build the same lightweight catalog envelope served by the Rust API. */
+/** Build the same lightweight catalog envelope served by the Go API. */
 function cfpFixtureCatalog(items: CfpJournalSummary[], database: string) {
   return {
     database,

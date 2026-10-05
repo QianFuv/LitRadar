@@ -43,7 +43,7 @@ func BoundedBytes(response *http.Response, maximum int64) ([]byte, error) {
 	return result.Bytes(), nil
 }
 
-// BoundedText decodes bounded bytes using Rust-compatible UTF-8 replacement groups.
+// BoundedText decodes bounded bytes using compatible UTF-8 replacement groups.
 func BoundedText(response *http.Response, maximum int64) (string, error) {
 	body, err := BoundedBytes(response, maximum)
 	if err != nil {

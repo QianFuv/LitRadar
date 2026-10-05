@@ -7,7 +7,7 @@ const Version = 9
 // MinimumSupportedVersion is the oldest layout accepted without an ordinary startup upgrade.
 const MinimumSupportedVersion = 6
 
-// ContentTables is copied from the frozen Rust canonical schema without altering table identities.
+// ContentTables defines the canonical persisted schema and table identities.
 const ContentTables = `
     CREATE TABLE journals (
         journal_id INTEGER PRIMARY KEY,

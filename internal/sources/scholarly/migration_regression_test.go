@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/QianFuv/LitRadar/tests/migration/testlog"
+	"github.com/QianFuv/LitRadar/internal/testkit/testlog"
 )
 
 func TestActualSourceFailureLogsRetainCorrelationWithoutRequestSecrets(t *testing.T) {

@@ -87,8 +87,7 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 | `internal/cfp`, `internal/storage`, `internal/platform` | CFP collection, persistence and platform facilities |
 
 The application has one public executable. Test fixture commands live separately
-under `cmd/litradar-fixture`. Native helpers remain explicit runtime dependencies;
-first-party Rust source is no longer part of application builds or normal tests.
+under `cmd/litradar-fixture`. Native helpers remain explicit runtime dependencies.
 
 ## 持久化边界
 

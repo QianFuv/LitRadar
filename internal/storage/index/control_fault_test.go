@@ -2,10 +2,11 @@ package index
 
 import (
 	"context"
-	"encoding/json"
+	contentfixture "github.com/QianFuv/LitRadar/internal/testkit/content"
+
 	"errors"
 	"fmt"
-	"os"
+
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,33 +15,9 @@ import (
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
 )
 
-func frozenContentInput(t *testing.T) (domain.JournalCatalogEntry, domain.ProviderBatch) {
+func contentInput(t *testing.T) (domain.JournalCatalogEntry, domain.ProviderBatch) {
 	t.Helper()
-	body, err := os.ReadFile("../../../tests/migration/index/content-vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct {
-		Observations []struct {
-			Input struct {
-				Name       string
-				Operations []struct {
-					Catalog domain.JournalCatalogEntry
-					Batch   domain.ProviderBatch
-				}
-			}
-		}
-	}
-	if err := json.Unmarshal(body, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	for _, item := range corpus.Observations {
-		if item.Input.Name == "first-and-replay" {
-			return item.Input.Operations[0].Catalog, item.Input.Operations[0].Batch
-		}
-	}
-	t.Fatal("missing independent fixture")
-	return domain.JournalCatalogEntry{}, domain.ProviderBatch{}
+	return contentfixture.Batch()
 }
 
 func preparedControl(t *testing.T) (*Connection, SyncRun, string) {
@@ -74,7 +51,7 @@ func TestContentCommitSurvivesProgressFailureAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer content.Close()
-	catalog, batch := frozenContentInput(t)
+	catalog, batch := contentInput(t)
 	if _, err := control.ExecContext(ctx, `CREATE TRIGGER fail_progress BEFORE INSERT ON provider_sync_anchors BEGIN SELECT RAISE(ABORT,'injected control'); END`); err != nil {
 		t.Fatal(err)
 	}

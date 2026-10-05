@@ -38,7 +38,7 @@ func NormalizeDate(value string) *PartialDate {
 	return &PartialDate{*normalized, *precision}
 }
 
-// Lowercase preserves Rust's Unicode string lowercase, including contextual final sigma.
+// Lowercase implements Unicode string lowercase, including contextual final sigma.
 func Lowercase(value string) string { return cases.Lower(language.Und).String(value) }
 
 // NormalizeDoi validates a canonical bibliographic DOI after stripping one known prefix.

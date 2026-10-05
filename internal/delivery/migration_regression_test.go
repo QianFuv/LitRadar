@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/QianFuv/LitRadar/tests/migration/testlog"
+	"github.com/QianFuv/LitRadar/internal/testkit/testlog"
 	"testing"
 	"time"
 )

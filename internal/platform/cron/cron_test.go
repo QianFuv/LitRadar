@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestRustCronCounterexamples(t *testing.T) {
+func TestCronBoundaryCases(t *testing.T) {
 	for _, scenario := range []struct {
 		expression string
 		instant    string
