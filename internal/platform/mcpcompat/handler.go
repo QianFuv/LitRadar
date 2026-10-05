@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QianFuv/LitRadar/internal/domain/identity"
@@ -39,10 +40,12 @@ type Authorize func(http.ResponseWriter, *http.Request) (Principal, bool)
 
 // Handler preserves SDK-owned sessions while attaching fresh authenticated identity to every request.
 type Handler struct {
-	transport *mcp.StreamableHTTPHandler
-	next      http.Handler
-	authorize Authorize
-	policy    HostOriginPolicy
+	transport  *mcp.StreamableHTTPHandler
+	next       http.Handler
+	authorize  Authorize
+	policy     HostOriginPolicy
+	closeOnce  sync.Once
+	closeError error
 }
 
 // New installs legacy initialization adaptation once on an application-owned server.
@@ -222,4 +225,7 @@ func objectFields(body []byte) (map[string]json.RawMessage, bool) {
 }
 
 // Close stops new MCP requests and drains the SDK-owned sessions.
-func (handler *Handler) Close() error { return handler.transport.CloseLitRadar() }
+func (handler *Handler) Close() error {
+	handler.closeOnce.Do(func() { handler.closeError = handler.transport.CloseLitRadar() })
+	return handler.closeError
+}

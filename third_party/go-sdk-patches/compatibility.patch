@@ -2,7 +2,7 @@ diff --git a/mcp/litradar_compat.go b/mcp/litradar_compat.go
 new file mode 100644
 --- /dev/null
 +++ b/mcp/litradar_compat.go
-@@ -0,0 +1,735 @@
+@@ -0,0 +1,767 @@
 +// Copyright 2026 LitRadar contributors. All rights reserved.
 +// Use of this source code is governed by the MIT-style license in the LICENSE file.
 +
@@ -574,23 +574,47 @@ new file mode 100644
 +}
 +
 +func writeLitRadarEvent(writer http.ResponseWriter, data []byte, id, retry string) error {
-+	if _, err := fmt.Fprintf(writer, "data: %s\n", data); err != nil {
-+		return err
-+	}
-+	if id != "" {
-+		if _, err := fmt.Fprintf(writer, "id: %s\n", id); err != nil {
++	return litradarWrite(writer, func(controller *http.ResponseController) error {
++		if _, err := fmt.Fprintf(writer, "data: %s\n", data); err != nil {
 +			return err
 +		}
-+	}
-+	if retry != "" {
-+		if _, err := fmt.Fprintf(writer, "retry: %s\n", retry); err != nil {
++		if id != "" {
++			if _, err := fmt.Fprintf(writer, "id: %s\n", id); err != nil {
++				return err
++			}
++		}
++		if retry != "" {
++			if _, err := fmt.Fprintf(writer, "retry: %s\n", retry); err != nil {
++				return err
++			}
++		}
++		if _, err := fmt.Fprint(writer, "\n"); err != nil {
 +			return err
 +		}
-+	}
-+	if _, err := fmt.Fprint(writer, "\n"); err != nil {
++		return controller.Flush()
++	})
++}
++
++func litradarWrite(writer http.ResponseWriter, write func(*http.ResponseController) error) error {
++	controller := http.NewResponseController(writer)
++	if err := controller.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
 +		return err
 +	}
-+	return http.NewResponseController(writer).Flush()
++	defer controller.SetWriteDeadline(time.Time{})
++	return write(controller)
++}
++
++func flushLitRadar(writer http.ResponseWriter) error {
++	return litradarWrite(writer, func(controller *http.ResponseController) error { return controller.Flush() })
++}
++
++func keepaliveLitRadar(writer http.ResponseWriter) error {
++	return litradarWrite(writer, func(controller *http.ResponseController) error {
++		if _, err := fmt.Fprint(writer, ":\n\n"); err != nil {
++			return err
++		}
++		return controller.Flush()
++	})
 +}
 +
 +// closeLitRadarLease requires the owning stream lock and tolerates SDK response completion.
@@ -637,9 +661,7 @@ new file mode 100644
 +			select {
 +			case <-lease.done:
 +			default:
-+				if _, err := fmt.Fprint(lease.writer, ":\n\n"); err != nil {
-+					closeLitRadarLease(lease)
-+				} else if err := http.NewResponseController(lease.writer).Flush(); err != nil {
++				if err := keepaliveLitRadar(lease.writer); err != nil {
 +					closeLitRadarLease(lease)
 +				}
 +			}
@@ -703,10 +725,14 @@ new file mode 100644
 +		}
 +		s.litradarShadows = append(s.litradarShadows, lease)
 +		writer.WriteHeader(http.StatusOK)
++		var writeError error
 +		if !hasResume {
-+			_ = writeLitRadarEvent(writer, nil, "0", "3000")
++			writeError = writeLitRadarEvent(writer, nil, "0", "3000")
 +		} else {
-+			_ = http.NewResponseController(writer).Flush()
++			writeError = flushLitRadar(writer)
++		}
++		if writeError != nil {
++			closeLitRadarLease(lease)
 +		}
 +		s.mu.Unlock()
 +		defer s.releaseLitRadar(lease)
@@ -722,18 +748,24 @@ new file mode 100644
 +	s.w = writer
 +	s.done = lease.done
 +	writer.WriteHeader(http.StatusOK)
++	var writeError error
 +	if !hasResume {
-+		_ = writeLitRadarEvent(writer, nil, "0", "3000")
++		writeError = writeLitRadarEvent(writer, nil, "0", "3000")
 +	}
 +	for _, event := range s.litradarCache {
++		if writeError != nil {
++			break
++		}
 +		if event.index >= index {
-+			if err := writeLitRadarEvent(writer, event.data, event.id, ""); err != nil {
-+				closeLitRadarLease(lease)
-+				break
-+			}
++			writeError = writeLitRadarEvent(writer, event.data, event.id, "")
 +		}
 +	}
-+	_ = http.NewResponseController(writer).Flush()
++	if writeError == nil {
++		writeError = flushLitRadar(writer)
++	}
++	if writeError != nil {
++		closeLitRadarLease(lease)
++	}
 +	s.mu.Unlock()
 +	defer s.releaseLitRadar(lease)
 +	c.hangLitRadar(request.Context(), s, lease)
@@ -742,14 +774,16 @@ diff --git a/mcp/litradar_compat_test.go b/mcp/litradar_compat_test.go
 new file mode 100644
 --- /dev/null
 +++ b/mcp/litradar_compat_test.go
-@@ -0,0 +1,435 @@
+@@ -0,0 +1,543 @@
 +package mcp
 +
 +import (
 +	"bufio"
 +	"context"
 +	"encoding/json"
++	"fmt"
 +	"io"
++	"net"
 +	"net/http"
 +	"net/http/httptest"
 +	"os"
@@ -1177,6 +1211,112 @@ new file mode 100644
 +			}
 +		})
 +	}
++}
++
++func TestLitRadarEventStopsWritingToNonreadingTcpPeer(t *testing.T) {
++	started, done := make(chan struct{}), make(chan error, 1)
++	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
++		writer.Header().Set("Content-Type", "text/event-stream")
++		close(started)
++		done <- writeLitRadarEvent(writer, []byte(strings.Repeat("x", 16<<20)), "1", "")
++	}))
++	defer server.Close()
++	connection, err := net.Dial("tcp", server.Listener.Addr().String())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer connection.Close()
++	if err := connection.(*net.TCPConn).SetReadBuffer(1024); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := fmt.Fprint(connection, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
++		t.Fatal(err)
++	}
++	<-started
++	began := time.Now()
++	select {
++	case err := <-done:
++		if err == nil {
++			t.Fatal("nonreader unexpectedly consumed oversized frame")
++		}
++		t.Logf("stalled event write ended after %s: %v", time.Since(began), err)
++	case <-time.After(13 * time.Second):
++		connection.Close()
++		<-done
++		t.Fatal("stalled event exceeded its 10s write budget")
++	}
++}
++
++func TestLitRadarHealthyStreamOutlivesPerWriteDeadline(t *testing.T) {
++	fixture := newLitRadarFixture(t, true, nil)
++	fixture.client.Timeout = 40 * time.Second
++	response := fixture.request(t, "GET", "", "")
++	reader := bufio.NewReader(response.Body)
++	if event := litradarReadEvent(t, reader); !strings.Contains(event, "retry: 3000") {
++		t.Fatal(event)
++	}
++	started := time.Now()
++	for range 2 {
++		if event := litradarReadEvent(t, reader); event != ":\n\n" {
++			t.Fatal("healthy stream lost keepalive", event)
++		}
++	}
++	if time.Since(started) < 10*time.Second {
++		t.Fatal("control did not exceed one write deadline")
++	}
++	if err := fixture.connection(t).Write(context.Background(), &jsonrpc.Request{Method: "notifications/after-keepalive"}); err != nil {
++		t.Fatal(err)
++	}
++	if event := litradarReadEvent(t, reader); !strings.Contains(event, "notifications/after-keepalive") {
++		t.Fatal("healthy stream lost later notification", event)
++	}
++	response.Body.Close()
++}
++
++func TestLitRadarNonreadingSessionReleasesItsHttpLease(t *testing.T) {
++	fixture := newLitRadarFixture(t, true, nil)
++	connection, err := net.Dial("tcp", fixture.listener.Listener.Addr().String())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer connection.Close()
++	if err := connection.(*net.TCPConn).SetReadBuffer(1024); err != nil {
++		t.Fatal(err)
++	}
++	connection.SetDeadline(time.Now().Add(20 * time.Second))
++	if _, err := fmt.Fprintf(connection, "GET / HTTP/1.1\r\nHost: localhost\r\nAccept: text/event-stream\r\nMcp-Session-Id: %s\r\nMcp-Protocol-Version: 2025-06-18\r\n\r\n", fixture.session); err != nil {
++		t.Fatal(err)
++	}
++	response, err := http.ReadResponse(bufio.NewReader(connection), &http.Request{Method: "GET"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	litradarReadEvent(t, bufio.NewReader(response.Body))
++	transport := fixture.connection(t)
++	done := make(chan error, 1)
++	go func() {
++		done <- transport.Write(context.Background(), &jsonrpc.Request{Method: "notifications/large", Params: json.RawMessage(`{"text":"` + strings.Repeat("x", 16<<20) + `"}`)})
++	}()
++	select {
++	case <-done:
++	case <-time.After(13 * time.Second):
++		connection.Close()
++		<-done
++		t.Fatal("session event write remained blocked")
++	}
++	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
++		transport.mu.Lock()
++		stream := transport.streams[""]
++		transport.mu.Unlock()
++		stream.mu.Lock()
++		isReleased := stream.litradarPrimary == nil
++		stream.mu.Unlock()
++		if isReleased {
++			return
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatal("failed network write left the HTTP lease running")
 +}
 diff --git a/mcp/streamable.go b/mcp/streamable.go
 index f24badb..115f256 100644

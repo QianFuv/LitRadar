@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -432,4 +434,110 @@ func TestLitRadarFrozenRustHttpBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLitRadarEventStopsWritingToNonreadingTcpPeer(t *testing.T) {
+	started, done := make(chan struct{}), make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		close(started)
+		done <- writeLitRadarEvent(writer, []byte(strings.Repeat("x", 16<<20)), "1", "")
+	}))
+	defer server.Close()
+	connection, err := net.Dial("tcp", server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if err := connection.(*net.TCPConn).SetReadBuffer(1024); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprint(connection, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	began := time.Now()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("nonreader unexpectedly consumed oversized frame")
+		}
+		t.Logf("stalled event write ended after %s: %v", time.Since(began), err)
+	case <-time.After(13 * time.Second):
+		connection.Close()
+		<-done
+		t.Fatal("stalled event exceeded its 10s write budget")
+	}
+}
+
+func TestLitRadarHealthyStreamOutlivesPerWriteDeadline(t *testing.T) {
+	fixture := newLitRadarFixture(t, true, nil)
+	fixture.client.Timeout = 40 * time.Second
+	response := fixture.request(t, "GET", "", "")
+	reader := bufio.NewReader(response.Body)
+	if event := litradarReadEvent(t, reader); !strings.Contains(event, "retry: 3000") {
+		t.Fatal(event)
+	}
+	started := time.Now()
+	for range 2 {
+		if event := litradarReadEvent(t, reader); event != ":\n\n" {
+			t.Fatal("healthy stream lost keepalive", event)
+		}
+	}
+	if time.Since(started) < 10*time.Second {
+		t.Fatal("control did not exceed one write deadline")
+	}
+	if err := fixture.connection(t).Write(context.Background(), &jsonrpc.Request{Method: "notifications/after-keepalive"}); err != nil {
+		t.Fatal(err)
+	}
+	if event := litradarReadEvent(t, reader); !strings.Contains(event, "notifications/after-keepalive") {
+		t.Fatal("healthy stream lost later notification", event)
+	}
+	response.Body.Close()
+}
+
+func TestLitRadarNonreadingSessionReleasesItsHttpLease(t *testing.T) {
+	fixture := newLitRadarFixture(t, true, nil)
+	connection, err := net.Dial("tcp", fixture.listener.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if err := connection.(*net.TCPConn).SetReadBuffer(1024); err != nil {
+		t.Fatal(err)
+	}
+	connection.SetDeadline(time.Now().Add(20 * time.Second))
+	if _, err := fmt.Fprintf(connection, "GET / HTTP/1.1\r\nHost: localhost\r\nAccept: text/event-stream\r\nMcp-Session-Id: %s\r\nMcp-Protocol-Version: 2025-06-18\r\n\r\n", fixture.session); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(connection), &http.Request{Method: "GET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	litradarReadEvent(t, bufio.NewReader(response.Body))
+	transport := fixture.connection(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- transport.Write(context.Background(), &jsonrpc.Request{Method: "notifications/large", Params: json.RawMessage(`{"text":"` + strings.Repeat("x", 16<<20) + `"}`)})
+	}()
+	select {
+	case <-done:
+	case <-time.After(13 * time.Second):
+		connection.Close()
+		<-done
+		t.Fatal("session event write remained blocked")
+	}
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		transport.mu.Lock()
+		stream := transport.streams[""]
+		transport.mu.Unlock()
+		stream.mu.Lock()
+		isReleased := stream.litradarPrimary == nil
+		stream.mu.Unlock()
+		if isReleased {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("failed network write left the HTTP lease running")
 }

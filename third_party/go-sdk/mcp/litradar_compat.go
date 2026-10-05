@@ -569,23 +569,47 @@ type litradarEvent struct {
 }
 
 func writeLitRadarEvent(writer http.ResponseWriter, data []byte, id, retry string) error {
-	if _, err := fmt.Fprintf(writer, "data: %s\n", data); err != nil {
-		return err
-	}
-	if id != "" {
-		if _, err := fmt.Fprintf(writer, "id: %s\n", id); err != nil {
+	return litradarWrite(writer, func(controller *http.ResponseController) error {
+		if _, err := fmt.Fprintf(writer, "data: %s\n", data); err != nil {
 			return err
 		}
-	}
-	if retry != "" {
-		if _, err := fmt.Fprintf(writer, "retry: %s\n", retry); err != nil {
+		if id != "" {
+			if _, err := fmt.Fprintf(writer, "id: %s\n", id); err != nil {
+				return err
+			}
+		}
+		if retry != "" {
+			if _, err := fmt.Fprintf(writer, "retry: %s\n", retry); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprint(writer, "\n"); err != nil {
 			return err
 		}
-	}
-	if _, err := fmt.Fprint(writer, "\n"); err != nil {
+		return controller.Flush()
+	})
+}
+
+func litradarWrite(writer http.ResponseWriter, write func(*http.ResponseController) error) error {
+	controller := http.NewResponseController(writer)
+	if err := controller.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		return err
 	}
-	return http.NewResponseController(writer).Flush()
+	defer controller.SetWriteDeadline(time.Time{})
+	return write(controller)
+}
+
+func flushLitRadar(writer http.ResponseWriter) error {
+	return litradarWrite(writer, func(controller *http.ResponseController) error { return controller.Flush() })
+}
+
+func keepaliveLitRadar(writer http.ResponseWriter) error {
+	return litradarWrite(writer, func(controller *http.ResponseController) error {
+		if _, err := fmt.Fprint(writer, ":\n\n"); err != nil {
+			return err
+		}
+		return controller.Flush()
+	})
 }
 
 // closeLitRadarLease requires the owning stream lock and tolerates SDK response completion.
@@ -632,9 +656,7 @@ func (c *streamableServerConn) hangLitRadar(ctx context.Context, s *stream, leas
 			select {
 			case <-lease.done:
 			default:
-				if _, err := fmt.Fprint(lease.writer, ":\n\n"); err != nil {
-					closeLitRadarLease(lease)
-				} else if err := http.NewResponseController(lease.writer).Flush(); err != nil {
+				if err := keepaliveLitRadar(lease.writer); err != nil {
 					closeLitRadarLease(lease)
 				}
 			}
@@ -698,10 +720,14 @@ func (c *streamableServerConn) serveLitRadarGET(writer http.ResponseWriter, requ
 		}
 		s.litradarShadows = append(s.litradarShadows, lease)
 		writer.WriteHeader(http.StatusOK)
+		var writeError error
 		if !hasResume {
-			_ = writeLitRadarEvent(writer, nil, "0", "3000")
+			writeError = writeLitRadarEvent(writer, nil, "0", "3000")
 		} else {
-			_ = http.NewResponseController(writer).Flush()
+			writeError = flushLitRadar(writer)
+		}
+		if writeError != nil {
+			closeLitRadarLease(lease)
 		}
 		s.mu.Unlock()
 		defer s.releaseLitRadar(lease)
@@ -717,18 +743,24 @@ func (c *streamableServerConn) serveLitRadarGET(writer http.ResponseWriter, requ
 	s.w = writer
 	s.done = lease.done
 	writer.WriteHeader(http.StatusOK)
+	var writeError error
 	if !hasResume {
-		_ = writeLitRadarEvent(writer, nil, "0", "3000")
+		writeError = writeLitRadarEvent(writer, nil, "0", "3000")
 	}
 	for _, event := range s.litradarCache {
+		if writeError != nil {
+			break
+		}
 		if event.index >= index {
-			if err := writeLitRadarEvent(writer, event.data, event.id, ""); err != nil {
-				closeLitRadarLease(lease)
-				break
-			}
+			writeError = writeLitRadarEvent(writer, event.data, event.id, "")
 		}
 	}
-	_ = http.NewResponseController(writer).Flush()
+	if writeError == nil {
+		writeError = flushLitRadar(writer)
+	}
+	if writeError != nil {
+		closeLitRadarLease(lease)
+	}
 	s.mu.Unlock()
 	defer s.releaseLitRadar(lease)
 	c.hangLitRadar(request.Context(), s, lease)

@@ -6,7 +6,7 @@ The opt-in mode adapts the existing SDK HTTP transport, session timers and strea
 
 The helper includes legacy JSON syntax and envelope classification because malformed-request HTTP diagnostics are observable. Independent `from_reader` observations from fixed serde_json 1.0.150/rmcp 2.1.0 and real baseline HTTP responses test those boundaries. This is a maintained compatibility component, not a claim that Go's standard JSON decoder exactly matches serde. Representative primitive proofs do not close every business tool or the final API matrix.
 
-The sole approved behavioral exception (A4) rejects a concurrent duplicate request ID within one session with HTTP 400 / JSON-RPC -32600, preserving the original response and avoiding duplicate execution. Completed IDs can be reused; sessions are independent.
+The original approved behavioral exception (A4) rejects a concurrent duplicate request ID within one session with HTTP 400 / JSON-RPC -32600, preserving the original response and avoiding duplicate execution. Completed IDs can be reused; sessions are independent.
 
 ## Verification and updates
 
@@ -15,3 +15,9 @@ Run `node tests/migration/run.mjs --phase sdk-integrity` from the repository roo
 Run both regular and race MCP tests inside the SDK's original module and under the application's build list, with `GOWORK=off`, on Windows and Linux. The `primitives` phase executes these and records the distinct build lists. Application-boundary and independent raw-client tests remain required in addition to upstream tests.
 
 For a security upgrade, inspect upstream changes, rebase only the approved patch files, regenerate identities deliberately, and rerun the same integrity, default-mode, compatibility and application-build-list gates. Upstream release activity does not establish that this patch can be removed. Do not update the copied upstream `go.mod` or `go.sum` to make a test pass.
+
+## Go optimization round 1
+
+The approved optimization contract adds a 10-second deadline to each compatibility SSE event, keepalive, and flush. Writes and their flush share a budget, cleared after completion so healthy streams can outlive it and the 15-second keepalive cadence. Failed replay/priming writes close the owning lease. The default SDK transport remains unchanged. Runtime shutdown starts a separate 30-second network-drain budget before joining MCP close, forces socket closure on expiry, and joins handlers before releasing borrowed resources. This is not a deadline for admitted database writes.
+
+The application adapter separately limits original MCP request bodies to 4 MiB (HTTP 413 on overflow), before decoding, and allows at most six times that size after legacy JSON normalization. Authentication and Host/Origin/header precedence remain intact. Compatibility byte identities are regenerated from the same fixed upstream archive.

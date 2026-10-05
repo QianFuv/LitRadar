@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/QianFuv/LitRadar/internal/runtime/observability"
@@ -137,7 +138,8 @@ func (prepared *Prepared) runHttp(ctx context.Context) error {
 	}()
 	requestContext, cancelRequests := context.WithCancel(ctx)
 	defer cancelRequests()
-	server := &http.Server{Handler: redactHttpPanics(prepared.handler), BaseContext: func(net.Listener) context.Context { return observability.WithoutSpans(requestContext) }}
+	requests := &networkHandlers{next: redactHttpPanics(prepared.handler)}
+	server := &http.Server{Handler: requests, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return observability.WithoutSpans(requestContext) }}
 	serverDone := make(chan error, 1)
 	go func() {
 		serverDone <- guardedTask(ctx, "API server task failed", func() error { return server.Serve(prepared.listener) })
@@ -154,10 +156,12 @@ func (prepared *Prepared) runHttp(ctx context.Context) error {
 			result = errors.New("API heartbeat stopped unexpectedly")
 		}
 	}
+	drainContext, cancelDrain := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelDrain()
+	requests.stop()
 	cancelHeartbeat()
 	cancelRequests()
-	result = errors.Join(result, prepared.handler.Close())
-	result = errors.Join(result, server.Shutdown(context.Background()))
+	result = errors.Join(result, drainHttp(drainContext, server, prepared.handler.Close, requests))
 	if !isServerDone {
 		serverError := <-serverDone
 		if !errors.Is(serverError, http.ErrServerClosed) {
@@ -168,6 +172,57 @@ func (prepared *Prepared) runHttp(ctx context.Context) error {
 		result = errors.Join(result, <-heartbeatDone)
 	}
 	result = errors.Join(result, backup.DeleteHeartbeat(context.Background(), filename, backup.Api, instance))
+	return result
+}
+
+type networkHandlers struct {
+	next     http.Handler
+	mutex    sync.Mutex
+	isClosed bool
+	active   sync.WaitGroup
+}
+
+func (handlers *networkHandlers) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	handlers.mutex.Lock()
+	if handlers.isClosed {
+		handlers.mutex.Unlock()
+		http.Error(writer, "server shutting down", http.StatusServiceUnavailable)
+		return
+	}
+	handlers.active.Add(1)
+	handlers.mutex.Unlock()
+	defer handlers.active.Done()
+	handlers.next.ServeHTTP(writer, request)
+}
+
+func (handlers *networkHandlers) stop() {
+	handlers.mutex.Lock()
+	handlers.isClosed = true
+	handlers.mutex.Unlock()
+}
+
+func drainHttp(ctx context.Context, server *http.Server, closeHandler func() error, handlers *networkHandlers) error {
+	completed := make(chan error, 2)
+	go func() { completed <- guardedTask(ctx, "API session close task failed", closeHandler) }()
+	go func() {
+		completed <- guardedTask(ctx, "API network shutdown task failed", func() error { return server.Shutdown(ctx) })
+	}()
+	deadline := ctx.Done()
+	var result error
+	for remaining := 2; remaining > 0; {
+		select {
+		case err := <-completed:
+			result = errors.Join(result, err)
+			remaining--
+		case <-deadline:
+			result = errors.Join(result, ctx.Err(), server.Close())
+			deadline = nil
+		}
+	}
+	if ctx.Err() != nil && deadline != nil {
+		result = errors.Join(result, ctx.Err(), server.Close())
+	}
+	handlers.active.Wait()
 	return result
 }
 
