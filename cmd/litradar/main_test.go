@@ -263,14 +263,21 @@ func verifyServiceSignal(t *testing.T, ctx context.Context, binary, working, roo
 		t.Fatal("listener never ready", string(data))
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health/ready", port))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = io.Copy(io.Discard, response.Body)
-	response.Body.Close()
-	if response.StatusCode != 200 {
-		t.Fatal("not ready", response.StatusCode)
+	for {
+		response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health/ready", port))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if response.StatusCode == http.StatusOK {
+			break
+		}
+		if time.Now().After(deadline) {
+			data, _ := os.ReadFile(logfile.Name())
+			t.Fatal("service never became ready", response.StatusCode, string(data))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
