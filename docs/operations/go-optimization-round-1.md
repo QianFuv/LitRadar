@@ -98,6 +98,24 @@ timings varied and do not demonstrate a speedup; this change removes parameter
 overflow while keeping individual SQL statements bounded. Raw initial, controlled
 and final small-case samples are retained in `t6-*.log` and `t6-summary.json`.
 
+## Rate-limit eviction
+
+Normal keyed access and eviction now use maps plus standard-library lists. Full
+maps reuse their oldest node; clearUsername removes both representations. The
+rare saturated sequence fallback retains the previous lexical tie behavior.
+List/key memory is bounded by the same configured capacities.
+
+Five-sample medians on the original churn fixtures:
+
+| Case | Before ns/op | After ns/op | Before/after B/op | Before/after allocs/op |
+|---|---:|---:|---:|---:|
+| Churn64_64 | 1604 | 335.2 | 70 / 22 | 3 / 1 |
+| Churn8192_4096 | 129766 | 399.5 | 71 / 23 | 3 / 1 |
+
+These measure full-capacity limiter churn, not overall HTTP throughput. The
+reference trace compares 18,000 mixed operations including saturation and clear;
+race and concurrent accounting tests pass. Raw samples: `t7-benchmark.log`.
+
 ## Deferred work
 
 Persistent query pools need explicit ownership, TEMP cleanup, file-generation and

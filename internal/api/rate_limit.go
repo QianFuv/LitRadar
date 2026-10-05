@@ -1,6 +1,7 @@
 package api
 
 import (
+	"container/list"
 	"net/netip"
 	"strings"
 	"sync"
@@ -39,12 +40,15 @@ type tokenBucket struct{ available, lastRefill uint64 }
 type trackedBucket struct {
 	bucket   tokenBucket
 	lastUsed uint64
+	key      bucketKey
+	element  *list.Element
 }
 type authRateLimiter struct {
 	mutex                       sync.Mutex
 	policy                      settings.RateLimitPolicy
 	started                     time.Time
 	ipBuckets, usernameBuckets  map[bucketKey]*trackedBucket
+	ipOrder, usernameOrder      list.List
 	globalLogin, globalRegister tokenBucket
 	nextSequence                uint64
 	rejectionCounts, lastAudit  map[rejectionKey]uint64
@@ -70,11 +74,11 @@ func (limiter *authRateLimiter) checkAt(kind authAttempt, source authClientSourc
 	if kind == registerAttempt {
 		ipPolicy = limiter.policy.RegisterIp
 	}
-	retry := acquireTracked(limiter.ipBuckets, bucketKey{kind: kind, address: source.address}, limiter.policy.IpKeyLimit, ipPolicy, now, limiter.nextSequence)
+	retry := acquireTracked(limiter.ipBuckets, &limiter.ipOrder, bucketKey{kind: kind, address: source.address}, limiter.policy.IpKeyLimit, ipPolicy, now, limiter.nextSequence)
 	if retry != 0 {
 		return limiter.rejection(kind, "client_ip", source.class, retry, now)
 	}
-	retry = acquireTracked(limiter.usernameBuckets, bucketKey{kind: kind, username: normalizeUsername(username)}, limiter.policy.UsernameKeyLimit, limiter.policy.Username, now, limiter.nextSequence)
+	retry = acquireTracked(limiter.usernameBuckets, &limiter.usernameOrder, bucketKey{kind: kind, username: normalizeUsername(username)}, limiter.policy.UsernameKeyLimit, limiter.policy.Username, now, limiter.nextSequence)
 	if retry != 0 {
 		return limiter.rejection(kind, "username", source.class, retry, now)
 	}
@@ -92,7 +96,11 @@ func (limiter *authRateLimiter) checkAt(kind authAttempt, source authClientSourc
 func (limiter *authRateLimiter) clearUsername(kind authAttempt, username string) {
 	limiter.mutex.Lock()
 	defer limiter.mutex.Unlock()
-	delete(limiter.usernameBuckets, bucketKey{kind: kind, username: normalizeUsername(username)})
+	key := bucketKey{kind: kind, username: normalizeUsername(username)}
+	if tracked := limiter.usernameBuckets[key]; tracked != nil {
+		limiter.usernameOrder.Remove(tracked.element)
+		delete(limiter.usernameBuckets, key)
+	}
 }
 
 func (limiter *authRateLimiter) rejection(kind authAttempt, bucket, source string, retry, now uint64) *rateLimitRejection {
@@ -130,23 +138,28 @@ func (bucket *tokenBucket) acquire(now uint64, policy settings.TokenBucketPolicy
 	return (policy.RefillSeconds - bucket.available + policy.RefillTokens - 1) / policy.RefillTokens
 }
 
-func acquireTracked(buckets map[bucketKey]*trackedBucket, key bucketKey, limit uint64, policy settings.TokenBucketPolicy, now, sequence uint64) uint64 {
+func acquireTracked(buckets map[bucketKey]*trackedBucket, order *list.List, key bucketKey, limit uint64, policy settings.TokenBucketPolicy, now, sequence uint64) uint64 {
 	tracked := buckets[key]
 	if tracked == nil {
-		if uint64(len(buckets)) >= limit {
-			var oldestKey bucketKey
-			var oldest *trackedBucket
-			for candidate, entry := range buckets {
-				if oldest == nil || entry.lastUsed < oldest.lastUsed || (entry.lastUsed == oldest.lastUsed && bucketKeyLess(candidate, oldestKey)) {
-					oldestKey, oldest = candidate, entry
+		if uint64(len(buckets)) >= limit && len(buckets) > 0 {
+			tracked = order.Front().Value.(*trackedBucket)
+			if sequence == ^uint64(0) {
+				for candidate, entry := range buckets {
+					if entry.lastUsed < tracked.lastUsed || (entry.lastUsed == tracked.lastUsed && bucketKeyLess(candidate, tracked.key)) {
+						tracked = entry
+					}
 				}
 			}
-			delete(buckets, oldestKey)
+			delete(buckets, tracked.key)
+		} else {
+			tracked = &trackedBucket{}
+			tracked.element = order.PushBack(tracked)
 		}
-		tracked = &trackedBucket{bucket: fullBucket(policy, now)}
+		tracked.key, tracked.bucket = key, fullBucket(policy, now)
 		buckets[key] = tracked
 	}
 	tracked.lastUsed = sequence
+	order.MoveToBack(tracked.element)
 	return tracked.bucket.acquire(now, policy)
 }
 
