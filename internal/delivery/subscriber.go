@@ -212,9 +212,9 @@ func (engine *deliveryEngine) terminalPlan(ctx context.Context, config RunConfig
 		for _, record := range records {
 			if record.DeliveryRunId != nil && *record.DeliveryRunId == item.DeliveryRunId && record.UserId == userId {
 				result.SelectedArticleIds = append(result.SelectedArticleIds, record.ArticleId)
-			}
-			if result.MessageId == nil && record.MessageId != nil {
-				result.MessageId = record.MessageId
+				if result.MessageId == nil && record.MessageId != nil {
+					result.MessageId = record.MessageId
+				}
 			}
 		}
 		slices.Sort(result.SelectedArticleIds)

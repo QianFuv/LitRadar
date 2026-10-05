@@ -97,9 +97,7 @@ func openAndExecuteDelivery(ctx context.Context, config RunConfig, userId *int64
 	selector := recommend.NewSelector(policy, timeout, config.RetryAttempts, config.ExecutionControl)
 	sender := NewPushplusClient(config.RetryAttempts, timeout, config.ExecutionControl)
 	folders := favorites.New(accounts)
-	engine := deliveryEngine{repository: repository, settings: policy, selectArticles: func(ctx context.Context, request recommend.SelectionRequest) (recommend.SelectionOutcome, error) {
-		return selector.SelectForSubscriber(ctx, request), nil
-	}, send: sender.Send, writeFavorites: func(ctx context.Context, writes []FavoriteWritePlan) error {
+	engine := deliveryEngine{repository: repository, settings: policy, selectArticles: selector.SelectForSubscriber, send: sender.Send, writeFavorites: func(ctx context.Context, writes []FavoriteWritePlan) error {
 		return executeFavoriteWrites(ctx, folders, writes)
 	}}
 	return engine.executeInner(ctx, config, userId, manifest)

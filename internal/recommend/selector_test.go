@@ -67,7 +67,10 @@ func TestSelectorRemovesModelIdsAndUsesFirstSummaryOnSummaryFailure(t *testing.T
 	client := &scriptedSelection{selections: []domain.SelectionResult{{Summary: " first ", Selections: []domain.RankedSelection{{ArticleId: 1, Score: 9}}}, {Summary: "second", Selections: []domain.RankedSelection{{ArticleId: 2, Score: 8}}}, {Selections: []domain.RankedSelection{{ArticleId: 3, Score: 7}}}}, summaryError: errors.New("summary failed")}
 	selector, request, _ := selectorFixture(client)
 	request.Dedupe["1:1"] = "delivered"
-	result := selector.SelectForSubscriber(context.Background(), request)
+	result, err := selector.SelectForSubscriber(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(client.batches, [][]int64{{1, 2, 3}, {2, 3}, {3}}) || result.Summary != " first " || result.SkipReason != nil || !reflect.DeepEqual(client.summarized, []int64{2, 3}) {
 		t.Fatalf("round/summary contract: batches=%v outcome=%+v summarized=%v", client.batches, result, client.summarized)
 	}
@@ -78,7 +81,10 @@ func TestSelectorBackupStartsFreshAfterPartialPrimaryFailure(t *testing.T) {
 	backup := &scriptedSelection{selections: []domain.SelectionResult{{Summary: "backup", Selections: []domain.RankedSelection{{ArticleId: 2, Score: 9}, {ArticleId: 3, Score: 8}, {ArticleId: 1, Score: 1}}}}, summary: " final "}
 	selector, request, builds := selectorFixture(primary, backup)
 	request.Subscriber.AiRetryAttempts = 999
-	result := selector.SelectForSubscriber(context.Background(), request)
+	result, err := selector.SelectForSubscriber(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(*builds, []int{10, 10}) || !reflect.DeepEqual(backup.batches, [][]int64{{1, 2, 3}}) || result.Summary != " final " || len(result.Accepted) != 3 || result.Accepted[0].ArticleId != 2 {
 		t.Fatalf("backup retained primary state: %v %v %+v", *builds, backup.batches, result)
 	}
@@ -91,7 +97,10 @@ func TestSelectorSuccessfulEmptyResultDoesNotFallback(t *testing.T) {
 		candidate.Title = "unrelated"
 		request.CandidatesById[id] = candidate
 	}
-	result := selector.SelectForSubscriber(context.Background(), request)
+	result, err := selector.SelectForSubscriber(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(*builds) != 1 || len(primary.batches) != 5 || len(result.Accepted) != 0 || result.SkipReason != nil {
 		t.Fatalf("empty selection treated as failure: builds=%v rounds=%d %+v", *builds, len(primary.batches), result)
 	}
@@ -104,7 +113,10 @@ func TestSelectorSupplementCanFinishFromCandidatesOutsideModelBatch(t *testing.T
 	for id := int64(4); id <= 25; id++ {
 		request.CandidatesById[id] = storage.ArticleCandidate{ArticleId: id, Title: "match"}
 	}
-	result := selector.SelectForSubscriber(context.Background(), request)
+	result, err := selector.SelectForSubscriber(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(primary.batches) != 1 || len(result.Accepted) != 20 || len(primary.summarized) != 20 || result.Accepted[0].ArticleId != 25 {
 		t.Fatalf("full candidate supplementation lost: rounds=%d count=%d", len(primary.batches), len(result.Accepted))
 	}
@@ -113,14 +125,50 @@ func TestSelectorSupplementCanFinishFromCandidatesOutsideModelBatch(t *testing.T
 func TestSelectorSkipsWithoutPreferencesOrApprovedConfiguration(t *testing.T) {
 	selector, request, builds := selectorFixture()
 	request.Subscriber.Keywords = nil
-	result := selector.SelectForSubscriber(context.Background(), request)
+	result, err := selector.SelectForSubscriber(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.SkipReason == nil || *result.SkipReason != "No keywords or directions configured" {
 		t.Fatal(result)
 	}
 	request.Subscriber.Keywords = []string{"match"}
 	request.Global.AiAllowedBaseUrls = nil
-	result = selector.SelectForSubscriber(context.Background(), request)
+	result, err = selector.SelectForSubscriber(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.SkipReason == nil || *result.SkipReason != "AI configuration is unavailable" || len(*builds) != 0 {
 		t.Fatal(result)
+	}
+}
+
+func TestSelectorEndpointExhaustionIsNotAnIntentionalSkip(t *testing.T) {
+	for _, failsDuringBuild := range []bool{false, true} {
+		var clients []*scriptedSelection
+		if !failsDuringBuild {
+			clients = []*scriptedSelection{{errorAt: 1}, {errorAt: 1}}
+		}
+		selector, request, builds := selectorFixture(clients...)
+		result, err := selector.SelectForSubscriber(context.Background(), request)
+		if err == nil {
+			t.Fatal("endpoint exhaustion did not return an error")
+		}
+		if result.SkipReason != nil {
+			t.Fatalf("endpoint failure was treated as an intentional skip: %s", *result.SkipReason)
+		}
+		if len(*builds) != 2 || len(result.Accepted) != 0 {
+			t.Fatal("endpoint exhaustion retained a partial selection")
+		}
+	}
+}
+
+func TestSelectorExhaustionPreservesFailureCause(t *testing.T) {
+	selector, request, _ := selectorFixture()
+	cause := errors.New("client construction failed")
+	selector.build = func(AiRuntimeConfig, int, float64) (selectionClient, error) { return nil, cause }
+	_, err := selector.SelectForSubscriber(context.Background(), request)
+	if !errors.Is(err, cause) {
+		t.Fatal("selection failure lost its cause", err)
 	}
 }

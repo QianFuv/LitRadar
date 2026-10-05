@@ -269,6 +269,67 @@ func TestWorkflowMissingSubscriberDoesNotConsumeSnapshot(t *testing.T) {
 	}
 }
 
+func TestWorkflowSelectionFailurePreservesProgressAndRetriesWithoutReplay(t *testing.T) {
+	engine, database, config := workflowFixture(t, store.WorkflowNotify)
+	ctx := context.Background()
+	sent := 0
+	engine.send = func(context.Context, PushplusMessage) (string, error) {
+		sent++
+		return "confirmed-message", nil
+	}
+	first, err := engine.execute(ctx, config, nil, nil)
+	if err != nil || first.Status != "completed" || sent != 1 {
+		t.Fatalf("initial delivery: %+v %v", first, err)
+	}
+	previous, err := engine.repository.LoadCheckpoint(ctx, config.Workflow, config.DbName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := platform.Open(platform.Config{Filename: config.IndexDbPath, Mode: "rwc", MaxConnections: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = index.Exec(`INSERT INTO articles VALUES(9,1,2,'science third','abstract','2026-10-03',0,0,NULL)`)
+	index.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectArticles := engine.selectArticles
+	engine.selectArticles = func(context.Context, recommend.SelectionRequest) (recommend.SelectionOutcome, error) {
+		return recommend.SelectionOutcome{}, errors.New("all endpoints failed")
+	}
+	failed, err := engine.execute(ctx, config, nil, nil)
+	if err != nil || failed.Status != "failed" || len(failed.Subscribers) != 1 || failed.Subscribers[0].Status != "error" {
+		t.Fatalf("selection failure: %+v %v", failed, err)
+	}
+	checkpoint, err := engine.repository.LoadCheckpoint(ctx, config.Workflow, config.DbName)
+	if err != nil || checkpoint.Status != store.CheckpointStatusFailed || checkpoint.SnapshotJson != previous.SnapshotJson || !reflect.DeepEqual(checkpoint.LastCompletedRunAt, previous.LastCompletedRunAt) {
+		t.Fatal("failed selection advanced progress", err)
+	}
+	items, err := engine.repository.ListRunItems(ctx, failed.DeliveryRunId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasFailedSubscriber := false
+	for _, item := range items {
+		if item.ItemKind == store.ItemKindSubscriber {
+			hasFailedSubscriber = item.Status == store.ItemStatusFailed && item.ErrorCode != nil && *item.ErrorCode == "selection_failed"
+		}
+	}
+	if !hasFailedSubscriber || sent != 1 || countRows(t, database, "favorites") != 2 || countRows(t, database, "delivery_dedupe") != 2 {
+		t.Fatal("failed selection changed durable effects or lost failure classification")
+	}
+	engine.selectArticles = selectArticles
+	retried, err := engine.execute(ctx, config, nil, nil)
+	if err != nil || retried.Status != "completed" || len(retried.Subscribers) != 1 || !reflect.DeepEqual(retried.Subscribers[0].SelectedArticleIds, []int64{9}) || sent != 2 || countRows(t, database, "favorites") != 3 || countRows(t, database, "delivery_dedupe") != 3 {
+		t.Fatalf("retry lost pending article or replayed confirmed delivery: %+v %v", retried, err)
+	}
+	idle, err := engine.execute(ctx, config, nil, nil)
+	if err != nil || idle.Status != "idle" || sent != 2 {
+		t.Fatal("successful retry did not advance progress", err)
+	}
+}
+
 func TestWorkflowMalformedManifestPrecedesFilesystemAdmission(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "invalid.json")

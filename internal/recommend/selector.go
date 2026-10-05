@@ -2,6 +2,7 @@ package recommend
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -57,26 +58,27 @@ func NewSelector(repository *settings.Repository, timeout time.Duration, retryAt
 	}, retryAttempts: retryAttempts, maxRounds: 5}
 }
 
-// SelectForSubscriber retries whole selections on backup endpoints, preserving successful empty selections and best-effort summaries.
-func (selector *Selector) SelectForSubscriber(ctx context.Context, request SelectionRequest) SelectionOutcome {
+// SelectForSubscriber retries endpoint failures and returns an error if no endpoint succeeds.
+// Successful empty selections, configuration skips and best-effort summaries remain distinct outcomes.
+func (selector *Selector) SelectForSubscriber(ctx context.Context, request SelectionRequest) (SelectionOutcome, error) {
 	if !HasSelectionPreferences(request.Subscriber) {
-		return skippedSelection("No keywords or directions configured")
+		return skippedSelection("No keywords or directions configured"), nil
 	}
 	configs := ResolveAiRuntimeConfigs(request.Subscriber, request.Global, request.Defaults, request.OverrideModel)
 	if len(configs) == 0 {
-		return skippedSelection("AI configuration is unavailable")
+		return skippedSelection("AI configuration is unavailable"), nil
 	}
 	retries := min(max(selector.retryAttempts, int(min(max(request.Subscriber.AiRetryAttempts, 0), 10))), 10)
-	lastError := ""
+	var lastError error
 	for _, config := range configs {
 		client, err := selector.build(config, retries, request.Defaults.Temperature)
 		if err != nil {
-			lastError = err.Error()
+			lastError = err
 			continue
 		}
 		selection, err := selectRounds(ctx, client, config, request, max(selector.maxRounds, 1))
 		if err != nil {
-			lastError = err.Error()
+			lastError = err
 			continue
 		}
 		accepted := ApplySelectionRules(selection, request.Subscriber, request.CandidatesById, request.Dedupe)
@@ -92,9 +94,9 @@ func (selector *Selector) SelectForSubscriber(ctx context.Context, request Selec
 				summary = updated
 			}
 		}
-		return SelectionOutcome{Accepted: accepted, Summary: summary}
+		return SelectionOutcome{Accepted: accepted, Summary: summary}, nil
 	}
-	return skippedSelection("AI selection failed across configured endpoints: " + lastError)
+	return SelectionOutcome{}, fmt.Errorf("AI selection failed across configured endpoints: %w", lastError)
 }
 
 func skippedSelection(reason string) SelectionOutcome {
