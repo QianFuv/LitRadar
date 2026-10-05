@@ -12,10 +12,11 @@ func BenchmarkRoute(b *testing.B) {
 		(&publicHandlers{}).routes(), (&cnkiHandlers{}).routes(), (&adminHandlers{}).routes(),
 		(&cfpHandlers{}).routes(), (&articleHandlers{}).routes(), (&trackingHandlers{}).routes(),
 	}
-	handler := &Handler{}
+	routes := []route{}
 	for _, group := range groups {
-		handler.routes = append(handler.routes, group...)
+		routes = append(routes, group...)
 	}
+	handler := &Handler{routes: compileRoutes(routes)}
 	for _, scenario := range []struct {
 		name  string
 		index int

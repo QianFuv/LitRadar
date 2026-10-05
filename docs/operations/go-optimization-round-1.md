@@ -3,8 +3,29 @@
 This round addresses delivery failure handling, query cancellation, MCP resource
 budgets, candidate selection, rate-limit eviction, shared package ownership and
 route matching. It does not change the database schema or introduce dependencies.
-Security scanning remains removed. Implementation and measurements are recorded
-incrementally below; planned improvements are not claimed complete.
+Security scanning remains removed. This note distinguishes correctness changes,
+local measurements, package organization and deferred work.
+
+## Correctness and resource ownership
+
+- Failed article selection returns its error and preserves retry checkpoints;
+  recovery attributes unknown deliveries only to the same run and subscriber.
+- REST index and MCP reads propagate cancellation, and obsolete frontend article
+  requests abort. Admitted writes retain ownership until completion. Heartbeat
+  execution no longer waits for user storage admission.
+- MCP first reads enforce a 4 MiB raw-body limit (413 above the limit). The bounded
+  normalized representation retains protocol/error compatibility. Authentication,
+  origin and header precedence remain covered by boundary tests.
+- HTTP header/idle budgets are 5/60 seconds. Each SSE event has a renewed 10-second
+  write budget, while consuming streams continue across multiple keepalives.
+  Network drain starts its 30-second deadline before session closure, force-closes
+  stalled sockets and joins owned handlers. It is not a 30-second bound on all
+  admitted database work or native SQLite lock latency.
+
+The executor is owned by `internal/platform/executor`. Shared JSON validation and
+encoding live in `internal/compat/jsonvalue`; 36 direct caller files migrated
+without changing byte/error policy. The original source-specific numeric encoder
+remains separate. These package moves are maintainability changes, not speedups.
 
 ## Reproducible performance baseline
 
@@ -40,8 +61,8 @@ from microbenchmarks.
 ## Current implementation status
 
 Baseline captured on Windows/amd64, Go 1.27.1, Intel Core i9-12900H, 20 logical
-processors. Each median below uses five one-second samples; application behavior
-is unchanged. Raw baseline and diagnostic logs are saved under
+processors. Each baseline median below uses five one-second samples of the
+original implementation. Raw baseline and diagnostic logs are saved under
 `output/go-optimization-round-1/`.
 
 | Case | Median ns/op | Median B/op | Median allocs/op |
@@ -115,6 +136,35 @@ Five-sample medians on the original churn fixtures:
 These measure full-capacity limiter churn, not overall HTTP throughput. The
 reference trace compares 18,000 mixed operations including saturation and clear;
 race and concurrent accounting tests pass. Raw samples: `t7-benchmark.log`.
+
+## Precompiled route matching
+
+Route patterns, lexicographic specificity and exact-template Allow metadata are
+compiled once at construction. Requests split their escaped path once, and only
+the selected route writes captures. Percent-escape validation can still allocate
+while checking candidates; this is not an allocation-free routing claim.
+
+| Case | Before ns/op | After ns/op | Before/after B/op | Before/after allocs/op |
+|---|---:|---:|---:|---:|
+| First | 12152 | 4449 | 14064 / 64 | 275 / 1 |
+| Middle | 12077 | 3449 | 14036 / 64 | 268 / 1 |
+| Last | 12051 | 3238 | 14036 / 64 | 268 / 1 |
+| Missing | 9411 | 2118 | 10795 / 64 | 187 / 2 |
+
+Each value is the median of five samples on the original 86-route fixtures;
+compilation is outside timing and request copies retain capture costs. These
+measure matching only, without invoking the selected handler. Raw full-suite
+samples are in `t9-benchmark.log` and `t9-summary.json`. Compatibility tests cover
+static priority, declaration-order HEAD/duplicate methods, 405 Allow ordering,
+encoded slashes, invalid bytes/escapes, repeated parameters and frontend fallback.
+
+## Integrated acceptance
+
+The final acceptance commands are `node scripts/check-go.mjs` and the existing
+frontend generated-API, lint, format, type, unit, browser-component, fixture and
+real-backend suites. Their actual outcomes and input identities are recorded in
+the task evidence; the microbenchmarks do not replace those checks. Windows is
+this round's required platform. No dual-architecture release result is implied.
 
 ## Deferred work
 

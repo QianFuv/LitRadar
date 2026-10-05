@@ -52,7 +52,7 @@ type Options struct {
 
 // Handler serves the complete REST and stateful MCP surface using borrowed services.
 type Handler struct {
-	routes   []route
+	routes   []compiledRoute
 	document []byte
 	mcp      *mcpcompat.Handler
 	options  Options
@@ -108,7 +108,7 @@ func New(services Services, options Options) (*Handler, error) {
 	options.McpHosts = slices.Clone(options.McpHosts)
 	options.McpOrigins = slices.Clone(options.McpOrigins)
 	handler := mcpcompat.NewWithPolicy(server, authenticator.McpAuthorize, mcpcompat.HostOriginPolicy{AllowedHosts: options.McpHosts, AllowedOrigins: options.McpOrigins})
-	return &Handler{routes: routes, document: document, mcp: handler, options: options}, nil
+	return &Handler{routes: compileRoutes(routes), document: document, mcp: handler, options: options}, nil
 }
 
 // Close closes MCP sessions; borrowed repositories and executors remain owned by the host.
@@ -150,40 +150,32 @@ func (handler *Handler) route(request *http.Request) (http.Handler, string, stri
 			_, _ = writer.Write(handler.document)
 		}), path, ""
 	}
-	var selected *route
-	var parameters map[string]string
+	pathParts := strings.Split(path, "/")
+	var selected *compiledRoute
 	best := ""
 	for index := range handler.routes {
 		candidate := &handler.routes[index]
-		values, score, matched := matchApiPath(candidate.operation.Path, path)
-		if !matched || score < best {
+		score := candidate.score
+		if score < best || !candidate.matches(pathParts) {
 			continue
 		}
 		if score > best {
 			selected = candidate
-			parameters = values
 			best = score
 		}
 		if candidate.operation.Method == request.Method || request.Method == "HEAD" && candidate.operation.Method == "GET" {
 			selected = candidate
-			parameters = values
 		}
 	}
 	if selected != nil {
 		if selected.operation.Method != request.Method && !(request.Method == "HEAD" && selected.operation.Method == "GET") {
-			methods := []string{}
-			for _, candidate := range handler.routes {
-				if candidate.operation.Path == selected.operation.Path {
-					methods = append(methods, candidate.operation.Method)
-					if candidate.operation.Method == "GET" {
-						methods = append(methods, "HEAD")
-					}
-				}
-			}
-			return nil, selected.operation.Path, strings.Join(methods, ",")
+			return nil, selected.operation.Path, selected.allow
 		}
-		for name, value := range parameters {
-			request.SetPathValue(name, value)
+		for index, part := range selected.parts {
+			if part.isParameter {
+				value, _ := url.PathUnescape(pathParts[index])
+				request.SetPathValue(part.text, value)
+			}
 		}
 		return selected.handler, selected.operation.Path, ""
 	}
@@ -193,32 +185,66 @@ func (handler *Handler) route(request *http.Request) (http.Handler, string, stri
 	return nil, unmatchedRoute(path), ""
 }
 
-func matchApiPath(pattern, path string) (map[string]string, string, bool) {
-	patternParts, pathParts := strings.Split(pattern, "/"), strings.Split(path, "/")
-	if len(patternParts) != len(pathParts) {
-		return nil, "", false
-	}
-	values := map[string]string{}
-	score := ""
-	for index, part := range patternParts {
-		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
-			if pathParts[index] == "" {
-				return nil, "", false
-			}
-			value, err := url.PathUnescape(pathParts[index])
-			if err != nil {
-				return nil, "", false
-			}
-			values[part[1:len(part)-1]] = value
-			score += "0"
-		} else {
-			if part != pathParts[index] {
-				return nil, "", false
-			}
-			score += "1"
+type routePart struct {
+	text        string
+	isParameter bool
+}
+
+type compiledRoute struct {
+	route
+	parts []routePart
+	score string
+	allow string
+}
+
+func compileRoutes(routes []route) []compiledRoute {
+	methods := make(map[string][]string)
+	for _, candidate := range routes {
+		path := candidate.operation.Path
+		methods[path] = append(methods[path], candidate.operation.Method)
+		if candidate.operation.Method == "GET" {
+			methods[path] = append(methods[path], "HEAD")
 		}
 	}
-	return values, score, true
+	result := make([]compiledRoute, len(routes))
+	for index, candidate := range routes {
+		compiled := compiledRoute{route: candidate, allow: strings.Join(methods[candidate.operation.Path], ",")}
+		var score strings.Builder
+		for _, text := range strings.Split(candidate.operation.Path, "/") {
+			part := routePart{text: text, isParameter: strings.HasPrefix(text, "{") && strings.HasSuffix(text, "}")}
+			if part.isParameter {
+				part.text = text[1 : len(text)-1]
+				score.WriteByte('0')
+			} else {
+				score.WriteByte('1')
+			}
+			compiled.parts = append(compiled.parts, part)
+		}
+		compiled.score = score.String()
+		result[index] = compiled
+	}
+	return result
+}
+
+func (candidate *compiledRoute) matches(pathParts []string) bool {
+	if len(candidate.parts) != len(pathParts) {
+		return false
+	}
+	for index, part := range candidate.parts {
+		if part.isParameter {
+			if pathParts[index] == "" {
+				return false
+			}
+			if strings.Contains(pathParts[index], "%") {
+				if _, err := url.PathUnescape(pathParts[index]); err != nil {
+					return false
+				}
+			}
+		} else if part.text != pathParts[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func unmatchedRoute(path string) string {
