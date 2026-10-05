@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -19,6 +20,10 @@ import (
 const internalVersion = "2025-06-18"
 const principalExtra = "litradar.verifiedPrincipal"
 const versionExtra = "litradar.initializeVersion"
+const maxRequestBodyBytes = 4 << 20
+
+// JSON normalization expands a raw byte by at most six bytes, including HTML escaping.
+const maxNormalizedBodyBytes = 6 * maxRequestBodyBytes
 
 // Principal comes only from the application's authentication result for this HTTP request.
 type Principal struct {
@@ -85,7 +90,7 @@ func NewWithPolicy(server *mcp.Server, authorize Authorize, policy HostOriginPol
 			return &copyResult, nil
 		}
 	})
-	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{LitRadarCompatibility: true, MaxRequestBodyBytes: -1, DisableLocalhostProtection: true})
+	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{LitRadarCompatibility: true, MaxRequestBodyBytes: maxNormalizedBodyBytes, DisableLocalhostProtection: true})
 	verified := auth.RequireBearerToken(func(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, error) {
 		principal, ok := ctx.Value(principalKey{}).(Principal)
 		if !ok {
@@ -130,8 +135,13 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		prepared.Header.Set("MCP-Protocol-Version", internalVersion)
 	}
 	if request.Method == http.MethodPost && strings.Contains(request.Header.Get("Accept"), "application/json") && strings.Contains(request.Header.Get("Accept"), "text/event-stream") && strings.HasPrefix(request.Header.Get("Content-Type"), "application/json") {
-		body, err := io.ReadAll(request.Body)
+		body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, maxRequestBodyBytes))
 		if err != nil {
+			var limitError *http.MaxBytesError
+			if errors.As(err, &limitError) {
+				http.Error(writer, "request body exceeds 4194304 bytes", http.StatusRequestEntityTooLarge)
+				return
+			}
 			writer.Header()["Content-Type"] = nil
 			writer.WriteHeader(500)
 			io.WriteString(writer, "Failed to read request body: "+err.Error())
@@ -143,8 +153,8 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 			io.WriteString(writer, "fail to deserialize request body "+err.Error())
 			return
 		}
-		var envelope map[string]json.RawMessage
-		if json.Unmarshal(body, &envelope) == nil && envelope != nil {
+		envelope, hasEnvelopeDuplicates := objectFields(body)
+		if envelope != nil {
 			var method string
 			_ = json.Unmarshal(envelope["method"], &method)
 			var params map[string]json.RawMessage
@@ -165,14 +175,50 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 					delete(metadata, mcp.MetaKeyProtocolVersion)
 					params["_meta"], _ = json.Marshal(metadata)
 				}
-				envelope["params"], _ = json.Marshal(params)
-				body, _ = json.Marshal(envelope)
+				normalizedParams, _ := json.Marshal(params)
+				if hasEnvelopeDuplicates || !bytes.Equal(normalizedParams, envelope["params"]) {
+					envelope["params"] = normalizedParams
+					body, _ = json.Marshal(envelope)
+				}
 			}
 		}
 		prepared.Body = io.NopCloser(bytes.NewReader(body))
 		prepared.ContentLength = int64(len(body))
 	}
 	handler.next.ServeHTTP(writer, prepared)
+}
+
+// objectFields preserves the adapter's last-key-wins normalization for duplicate fields.
+func objectFields(body []byte) (map[string]json.RawMessage, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, false
+	}
+	fields := map[string]json.RawMessage{}
+	hasDuplicates := false
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, false
+		}
+		name, ok := token.(string)
+		if !ok {
+			return nil, false
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, false
+		}
+		if _, exists := fields[name]; exists {
+			hasDuplicates = true
+		}
+		fields[name] = value
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, false
+	}
+	return fields, hasDuplicates
 }
 
 // Close stops new MCP requests and drains the SDK-owned sessions.
