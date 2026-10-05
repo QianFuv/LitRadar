@@ -135,7 +135,8 @@ func (reader *ProtocolReader) Read(target any) error {
 	return &ProtocolError{Kind: "json", Cause: err}
 }
 
-// WriteProtocol emits one JSON value, its newline separator and the caller's buffered flush.
+// WriteProtocol includes the newline in the JSON write so a peer can close after decoding,
+// then flushes the caller's buffer when present.
 func WriteProtocol(writer io.Writer, message any) error {
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
@@ -144,16 +145,10 @@ func WriteProtocol(writer io.Writer, message any) error {
 		return &ProtocolError{Kind: "json", Cause: err}
 	}
 	body := buffer.Bytes()
-	body = body[:len(body)-1]
 	if count, err := writer.Write(body); err != nil {
 		return &ProtocolError{Kind: "json", Cause: err}
 	} else if count != len(body) {
 		return &ProtocolError{Kind: "json", Cause: io.ErrShortWrite}
-	}
-	if count, err := writer.Write([]byte{'\n'}); err != nil {
-		return &ProtocolError{Kind: "io", Cause: err}
-	} else if count != 1 {
-		return &ProtocolError{Kind: "io", Cause: io.ErrShortWrite}
 	}
 	if buffered, ok := writer.(interface{ Flush() error }); ok {
 		if err := buffered.Flush(); err != nil {

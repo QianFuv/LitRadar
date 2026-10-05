@@ -1,25 +1,40 @@
 package index
 
 import (
+	"bytes"
 	"errors"
 	"io"
 
 	"testing"
 )
 
-type separatorFailureWriter struct{ hasWrittenBody bool }
+type protocolFailureWriter struct{ cause error }
 
-func (writer *separatorFailureWriter) Write(body []byte) (int, error) {
-	if writer.hasWrittenBody {
-		return 0, io.ErrClosedPipe
-	}
-	writer.hasWrittenBody = true
-	return len(body), nil
+func (writer protocolFailureWriter) Write(body []byte) (int, error) {
+	return len(body) - 1, writer.cause
 }
-func TestProtocolSeparatorFailureIsIo(t *testing.T) {
-	err := WriteProtocol(&separatorFailureWriter{}, ParentMessage{Type: "committed"})
+
+func TestProtocolWriteFailuresAreReturned(t *testing.T) {
+	for _, cause := range []error{nil, io.ErrClosedPipe} {
+		err := WriteProtocol(protocolFailureWriter{cause: cause}, ParentMessage{Type: "committed"})
+		expected := cause
+		if expected == nil {
+			expected = io.ErrShortWrite
+		}
+		if !errors.Is(err, expected) {
+			t.Fatalf("error=%v, expected cause=%v", err, expected)
+		}
+	}
+}
+
+type protocolFlushFailureWriter struct{ bytes.Buffer }
+
+func (writer *protocolFlushFailureWriter) Flush() error { return io.ErrClosedPipe }
+
+func TestProtocolFlushFailureIsIo(t *testing.T) {
+	err := WriteProtocol(&protocolFlushFailureWriter{}, ParentMessage{Type: "committed"})
 	var protocol *ProtocolError
-	if !errors.As(err, &protocol) || protocol.Kind != "io" {
+	if !errors.As(err, &protocol) || protocol.Kind != "io" || !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("error=%v", err)
 	}
 }
