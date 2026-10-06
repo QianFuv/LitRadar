@@ -16,6 +16,7 @@ while IFS= read -r module_directory; do
     find "$module_directory" -maxdepth 1 -type f \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
         -exec cp --parents --target-directory=/out/inventory/licenses {} +
 done
+find /out/inventory/licenses -type d -exec chmod u+w {} +
 cp /usr/local/go/LICENSE /out/inventory/licenses/Go-LICENSE
 find third_party -type f -print0 | sort -z | xargs -0 sha256sum > /out/inventory/patched-sources.sha256
 
