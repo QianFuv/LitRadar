@@ -12,9 +12,63 @@ import {
   versionChange,
 } from "../scripts/release-version.mjs";
 import {
+  findRelease,
   latestRelease,
   validateReleaseIdentity,
 } from "../scripts/release-github.mjs";
+
+test("draft lookup survives a missing tag endpoint and preserves ownership", async () => {
+  const commit = "a".repeat(40);
+  const draft = { tag_name: "v0.2.0", draft: true, target_commitish: commit };
+  const requests = [];
+  const found = await findRelease("v0.2.0", async (resource) => {
+    requests.push(resource);
+    if (resource === "releases/tags/v0.2.0") return null;
+    if (resource === "releases?per_page=100&page=1")
+      return Array.from({ length: 100 }, () => ({ tag_name: "v0.1.0" }));
+    assert.equal(resource, "releases?per_page=100&page=2");
+    return [draft];
+  });
+  assert.deepEqual(found, draft);
+  assert.deepEqual(requests, [
+    "releases/tags/v0.2.0",
+    "releases?per_page=100&page=1",
+    "releases?per_page=100&page=2",
+  ]);
+  assert.equal(validateReleaseIdentity(found, null, commit), false);
+  assert.throws(
+    () => validateReleaseIdentity(found, null, "b".repeat(40)),
+    /another commit/,
+  );
+});
+
+test("release lookup distinguishes published, absent and inaccessible releases", async () => {
+  const published = { tag_name: "v0.2.0", draft: false };
+  assert.equal(
+    await findRelease("v0.2.0", async (resource) => {
+      assert.equal(resource, "releases/tags/v0.2.0");
+      return published;
+    }),
+    published,
+  );
+  assert.equal(
+    await findRelease("v0.2.0", async (resource) =>
+      resource.startsWith("releases/tags/") ? null : [],
+    ),
+    null,
+  );
+  await assert.rejects(
+    findRelease("v0.2.0", async (resource) => {
+      if (resource.startsWith("releases/tags/")) return null;
+      throw new Error("GitHub metadata request failed: 403");
+    }),
+    /403/,
+  );
+  await assert.rejects(
+    findRelease("v0.2.0", async () => null),
+    /Cannot list releases/,
+  );
+});
 
 test("the checked-in release version is valid", () => {
   parseVersion(fs.readFileSync(new URL("../VERSION", import.meta.url), "utf8"));

@@ -63,6 +63,19 @@ export function validateReleaseIdentity(release, taggedCommit, commit) {
   return Boolean(release && !release.draft);
 }
 
+/** Find an exact release tag, including drafts omitted by the tag endpoint. */
+export async function findRelease(tag, request = github) {
+  const release = await request(`releases/tags/${tag}`);
+  if (release) return release;
+  for (let page = 1; ; page++) {
+    const batch = await request(`releases?per_page=100&page=${page}`);
+    assert(Array.isArray(batch), "Cannot list releases for draft lookup");
+    const draft = batch.find((candidate) => candidate.tag_name === tag);
+    if (draft) return draft;
+    if (batch.length < 100) return null;
+  }
+}
+
 /** Read GitHub metadata, distinguishing absence from authentication and service errors. */
 async function github(resource) {
   const response = await fetch(
@@ -92,7 +105,7 @@ async function main() {
   assert.match(commit, /^[a-f0-9]{40}$/);
   assert(process.env.GH_TOKEN && process.env.GITHUB_REPOSITORY);
   const [release, reference] = await Promise.all([
-    github(`releases/tags/${tag}`),
+    findRelease(tag),
     github(`git/ref/tags/${tag}`),
   ]);
   const tagged = reference ? await github(`commits/${tag}`) : null;

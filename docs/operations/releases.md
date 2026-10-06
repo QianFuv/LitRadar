@@ -47,12 +47,31 @@ quality suites and all build and smoke gates run again. Existing tags and drafts
 must belong to the same commit; this command cannot move release ownership to a
 different commit. Ordinary pushes still do not build or publish unchanged versions.
 
-If publication fails, rerun that original workflow on the same commit. The same
+For a transient publication failure, rerun that original workflow on the same commit. The same
 draft may be completed; an already published release is skipped. A version tag
 owned by a different commit is rejected. A later ordinary commit does not retry
 a release implicitly. Image and GitHub publication are separate services, so a
 failure between them can leave the image published while the release remains a
 draft. Never move a published version tag to repair a release; bump the version.
+
+If a deterministic publication-script defect occurs after a draft or versioned
+image exists, repair and verify the script without changing the release identity.
+Before recovery, verify the original run's quality, architecture smoke results,
+archive checksums, draft target commit and image revisions. With authenticated
+GitHub access, run only the corrected `release-github.mjs publish` command with
+`RELEASE_VERSION` and `GITHUB_SHA` set to that original version and full commit.
+Do not run `prepare`, re-upload assets, or dispatch the version from the repair
+commit. After publication, dispatch the promotion-only recovery workflow:
+
+```sh
+gh workflow run promote-release.yaml --ref main
+```
+
+It uses the normal `release-latest` concurrency lock and GitHub token, selects the
+highest public stable release, and never builds or replaces versioned assets.
+Record the release source
+commit and recovery-script commit separately. Preserve the failed CI run and
+record manual publication/promotion evidence instead of reporting it as green.
 
 ## Run a binary archive
 
