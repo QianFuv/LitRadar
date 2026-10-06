@@ -419,6 +419,7 @@ func requireStopped(t *testing.T, info fixtureInfo) {
 	t.Fatalf("descendant still listening: %+v", info)
 }
 
+// TestWholeTreeCleanupAfterLeaderExit allows race-runtime shutdown while retaining live descendants until cleanup.
 func TestWholeTreeCleanupAfterLeaderExit(t *testing.T) {
 	for _, mode := range []string{"parent", "leader-exit"} {
 		t.Run(mode, func(t *testing.T) {
@@ -432,11 +433,12 @@ func TestWholeTreeCleanupAfterLeaderExit(t *testing.T) {
 			grandchild := awaitFixture(t, directory, "grandchild")
 			requireReachable(t, grandchild)
 			if mode == "leader-exit" {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				if err := child.Wait(ctx); err != nil {
 					t.Fatalf("leader wait blocked on descendant pipe: %v", err)
 				}
+				requireReachable(t, grandchild)
 			}
 			var group sync.WaitGroup
 			for range 4 {
