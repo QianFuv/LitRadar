@@ -1,6 +1,12 @@
 name: Quality Checks and Versioned Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Retry the checked-in version on main; existing release ownership must match"
+        required: true
+        type: string
   push:
     branches: [main]
     paths:
@@ -63,6 +69,7 @@ jobs:
         id: version
         env:
           BEFORE_SHA: ${{ github.event.before }}
+          REQUESTED_VERSION: ${{ inputs.release_version }}
         run: node scripts/release-version.mjs
 
       - name: Check release identity
@@ -75,6 +82,7 @@ jobs:
 
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
+        if: github.event_name == 'push'
         with:
           filters: |
             runtime_image:
@@ -111,12 +119,12 @@ jobs:
 
   backend-quality:
     needs: changes
-    if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.backend_workflow == 'true'
+    if: needs.changes.outputs.release == 'true' || needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.backend_workflow == 'true'
     uses: ./.github/workflows/backend.yaml
 
   frontend-quality:
     needs: changes
-    if: needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.frontend_workflow == 'true'
+    if: needs.changes.outputs.release == 'true' || needs.changes.outputs.runtime_image == 'true' || needs.changes.outputs.frontend_workflow == 'true'
     uses: ./.github/workflows/frontend.yaml
 
   build-image:
@@ -348,9 +356,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   promote-latest:
-    needs: [changes, build-image]
+    needs: [changes, backend-quality, frontend-quality, build-image]
     if: |
       always() && needs.changes.outputs.release == 'true' &&
+      needs.changes.result == 'success' &&
+      needs.backend-quality.result == 'success' &&
+      needs.frontend-quality.result == 'success' &&
       (needs.build-image.result == 'success' || needs.changes.outputs.published == 'true')
     concurrency:
       group: release-latest

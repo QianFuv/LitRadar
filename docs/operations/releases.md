@@ -34,6 +34,19 @@ Version builds can run independently. A short serialized step selects the highes
 published stable version for both `latest` pointers, so retrying an older release
 cannot roll them back. Ordinary pushes cannot cancel a release's quality checks.
 
+If a code or workflow repair is needed before a version has acquired a tag or
+draft release, push the repair without changing `VERSION`, then explicitly retry
+the current version on `main`:
+
+```sh
+gh workflow run docker.yaml --ref main -f release_version=0.2.0
+```
+
+The requested version must match `VERSION` at that workflow's commit. Both
+quality suites and all build and smoke gates run again. Existing tags and drafts
+must belong to the same commit; this command cannot move release ownership to a
+different commit. Ordinary pushes still do not build or publish unchanged versions.
+
 If publication fails, rerun that original workflow on the same commit. The same
 draft may be completed; an already published release is skipped. A version tag
 owned by a different commit is rejected. A later ordinary commit does not retry

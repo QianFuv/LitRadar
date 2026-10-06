@@ -55,11 +55,41 @@ export function detectVersion(before, after, cwd = process.cwd()) {
   return versionChange(previous, git("show", `${after}:VERSION`));
 }
 
+/** Allow an explicit retry only for the selected main commit's checked-in version. */
+export function detectRelease(
+  { event, before, after, ref, version },
+  cwd = process.cwd(),
+) {
+  if (event === "push") return detectVersion(before, after, cwd);
+  assert.equal(event, "workflow_dispatch", "Unsupported release event");
+  assert.equal(ref, "refs/heads/main", "Release retries require main");
+  assert.match(after, /^[a-f0-9]{40}$/);
+  const requested = parseVersion(version);
+  const current = parseVersion(
+    execFileSync("git", ["show", `${after}:VERSION`], {
+      cwd,
+      encoding: "utf8",
+    }),
+  );
+  assert.equal(
+    requested,
+    current,
+    "Requested version must match VERSION at the selected commit",
+  );
+  return { version: current, tag: `v${current}`, release: true };
+}
+
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const result = detectVersion(process.env.BEFORE_SHA, process.env.GITHUB_SHA);
+  const result = detectRelease({
+    event: process.env.GITHUB_EVENT_NAME,
+    before: process.env.BEFORE_SHA,
+    after: process.env.GITHUB_SHA,
+    ref: process.env.GITHUB_REF,
+    version: process.env.REQUESTED_VERSION,
+  });
   fs.appendFileSync(
     process.env.GITHUB_OUTPUT,
     Object.entries(result)

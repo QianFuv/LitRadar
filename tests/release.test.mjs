@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   detectVersion,
+  detectRelease,
   parseVersion,
   versionChange,
 } from "../scripts/release-version.mjs";
@@ -90,6 +91,40 @@ test("version detection includes a bump before the last commit of a push", (cont
   const pushed = commit();
   assert.equal(detectVersion(established, pushed, directory).release, true);
   assert.equal(detectVersion(bumped, pushed, directory).release, false);
+  const retry = {
+    event: "workflow_dispatch",
+    after: pushed,
+    ref: "refs/heads/main",
+    version: "0.2.0",
+  };
+  assert.deepEqual(detectRelease(retry, directory), {
+    version: "0.2.0",
+    tag: "v0.2.0",
+    release: true,
+  });
+  assert.equal(
+    detectRelease({ event: "push", before: bumped, after: pushed }, directory)
+      .release,
+    false,
+  );
+  assert.equal(
+    detectRelease(
+      { event: "push", before: established, after: pushed },
+      directory,
+    ).release,
+    true,
+  );
+  for (const invalid of [
+    { version: "0.1.0" },
+    { version: "0.3.0" },
+    { version: "" },
+    { version: "v0.2.0" },
+    { ref: "refs/heads/develop" },
+    { ref: "refs/tags/v0.2.0" },
+    { after: "main" },
+    { event: "pull_request" },
+  ])
+    assert.throws(() => detectRelease({ ...retry, ...invalid }, directory));
   assert.throws(
     () => detectVersion("0".repeat(40), pushed, directory),
     /baseline/,
