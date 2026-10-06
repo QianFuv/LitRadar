@@ -1961,6 +1961,7 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
     );
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
+    await expect(card).toBeFocused();
     await scrollContainer.evaluate((element) => {
       element.scrollTop = 600;
     });
