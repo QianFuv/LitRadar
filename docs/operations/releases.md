@@ -17,13 +17,28 @@ initial `VERSION=0.1.0` establishes the existing version without publishing it.
 Version downgrades and malformed versions fail CI. Tags pushed separately do not
 trigger releases. No manual tag or release creation is needed.
 
-After both architectures pass container smoke tests, CI prepares a draft GitHub
-Release with the exact image binaries, publishes the multi-platform image, then
-publishes the draft. The release contains:
+After Windows archive smoke and both Linux architectures pass container and
+archive smoke tests, Release prepares a draft with all tested binaries, publishes
+the multi-platform Linux image, then publishes the draft. The release contains:
 
 - `litradar_<version>_linux_amd64.tar.gz`
 - `litradar_<version>_linux_arm64.tar.gz`
+- `litradar_<version>_windows_amd64.zip`
 - `SHA256SUMS`
+
+## Actions entrypoints
+
+| Workflow                                      | Trigger                          | Responsibility                                                                                               |
+| --------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| CI                                            | Push to main or pull request     | Release rule tests, Linux/Windows Go checks, frontend checks; calls Release only when main VERSION increases |
+| Release                                       | Called by CI or manually on main | Build, smoke, publish; explicit recovery operations below                                                    |
+| Reusable Go Checks / Reusable Frontend Checks | Internal calls only              | One implementation of each quality suite; no separate push triggers                                          |
+| Test Diagnostics                              | Weekly or manual                 | Informational coverage artifacts                                                                             |
+
+Normal CI never builds release archives or images for an unchanged version.
+Manual release operations rerun both quality suites at the selected source commit.
+The Windows supplement builds the original tag's product code using packaging
+tools from the selected main commit; `build.json` records both identities.
 
 Images are published as `ghcr.io/qianfuv/litradar:v<version>` and `:latest`, with
 architecture-specific version tags. Prefer the version tag for reproducible
@@ -39,7 +54,7 @@ draft release, push the repair without changing `VERSION`, then explicitly retry
 the current version on `main`:
 
 ```sh
-gh workflow run docker.yaml --ref main -f release_version=0.2.0
+gh workflow run release.yaml --ref main -f operation=release -f version=0.2.0
 ```
 
 The requested version must match `VERSION` at that workflow's commit. Both
@@ -64,7 +79,7 @@ Do not run `prepare`, re-upload assets, or dispatch the version from the repair
 commit. After publication, dispatch the promotion-only recovery workflow:
 
 ```sh
-gh workflow run promote-release.yaml --ref main
+gh workflow run release.yaml --ref main -f operation=promote
 ```
 
 It uses the normal `release-latest` concurrency lock and GitHub token, selects the
@@ -72,6 +87,24 @@ highest public stable release, and never builds or replaces versioned assets.
 Record the release source
 commit and recovery-script commit separately. Preserve the failed CI run and
 record manual publication/promotion evidence instead of reporting it as green.
+
+To add the missing Windows package to an already public version:
+
+```sh
+gh workflow run release.yaml --ref main -f operation=windows -f version=0.2.0
+```
+
+This requires a public stable tag reachable from main and matching the source
+VERSION. It adds only the Windows ZIP and `<zip-name>.sha256`. Existing Linux
+archives, `SHA256SUMS`, tag and images remain unchanged. If either Windows asset
+already exists, its size and digest must match; the workflow never overwrites it.
+The separate checksum is intentional for supplemented releases. Future normal
+releases list all three archives in their original `SHA256SUMS`.
+
+If upload stops after adding only one Windows asset, use **Re-run failed jobs**
+to reuse the already tested `windows-release` artifact. A full rebuild can change
+ZIP timestamps or build bytes and is deliberately rejected when it conflicts with
+an existing asset. Never delete the published file to work around this check.
 
 ## Run a binary archive
 
@@ -104,5 +137,33 @@ and back up its data before replacing executable/assets; never overwrite the
 data directory or regenerate an existing deployment key. The same admin, index,
 CFP and scheduling commands remain available through `run.sh`.
 
-Windows remains a supported development/test target; this release pipeline
-publishes the two Linux targets already exercised by the container release gate.
+## Run on Windows x64
+
+Extract the ZIP into a writable directory. Windows 10/11 or Windows Server with
+PowerShell 5.1 is required; Go, Node.js, Docker and development tools are not
+required. The distribution contains Obscura render/stealth, the search tokenizer,
+Poppler PDF extraction and their native runtime libraries. Normal Windows system
+fonts are used for rendering.
+
+In PowerShell, verify the ZIP against `SHA256SUMS` (or its `.zip.sha256` sidecar
+for a supplemented release), then extract it:
+
+```powershell
+Get-FileHash .\litradar_0.2.0_windows_amd64.zip -Algorithm SHA256
+Expand-Archive .\litradar_0.2.0_windows_amd64.zip -DestinationPath .
+Set-Location .\litradar_0.2.0_windows_amd64
+New-Item -ItemType Directory -Force secrets | Out-Null
+if (-not (Test-Path secrets/litradar.key)) {
+    $keyBytes = New-Object byte[] 32
+    $generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $generator.GetBytes($keyBytes) } finally { $generator.Dispose() }
+    [IO.File]::WriteAllBytes((Join-Path $PWD 'secrets/litradar.key'), $keyBytes)
+}
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 --version
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 serve --secret-key-file secrets/litradar.key
+```
+
+The execution-policy option applies only to this launcher process. The launcher
+selects its own directory and packaged helpers while preserving explicit helper
+overrides. All CLI commands remain available. Keep `data/` and `secrets/` across
+upgrades; do not unpack over a running service.

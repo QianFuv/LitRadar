@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { compareVersions, parseVersion } from "./release-version.mjs";
+import { pendingWindowsAssets, validateAssets } from "./release-assets.mjs";
 
 /** Select the highest published stable version, independent of completion order. */
 export function latestRelease(releases) {
@@ -77,7 +78,7 @@ export async function findRelease(tag, request = github) {
 }
 
 /** Read GitHub metadata, distinguishing absence from authentication and service errors. */
-async function github(resource) {
+export async function github(resource) {
   const response = await fetch(
     `${process.env.GITHUB_API_URL ?? "https://api.github.com"}/repos/${process.env.GITHUB_REPOSITORY}/${resource}`,
     {
@@ -96,12 +97,14 @@ async function github(resource) {
 /** Run release commands only for this version and immutable commit identity. */
 async function main() {
   const mode = process.argv[2];
-  assert(["check", "prepare", "publish", "promote"].includes(mode));
+  assert(
+    ["check", "prepare", "publish", "promote", "append-windows"].includes(mode),
+  );
   assert(process.env.GH_TOKEN && process.env.GITHUB_REPOSITORY);
   if (mode === "promote") return promoteLatest();
   const version = parseVersion(process.env.RELEASE_VERSION);
   const tag = `v${version}`;
-  const commit = process.env.GITHUB_SHA;
+  const commit = process.env.RELEASE_SOURCE_SHA || process.env.GITHUB_SHA;
   assert.match(commit, /^[a-f0-9]{40}$/);
   assert(process.env.GH_TOKEN && process.env.GITHUB_REPOSITORY);
   const [release, reference] = await Promise.all([
@@ -114,26 +117,43 @@ async function main() {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `published=${published}\n`);
     return;
   }
-  if (published) return;
   const gh = (...args) =>
     execFileSync("gh", args, { stdio: "inherit", timeout: 300000 });
+  if (mode === "append-windows") {
+    assert(published, "Windows supplement requires a published release");
+    const directory = "release-results/windows/assets";
+    const summary = JSON.parse(
+      fs.readFileSync("release-results/windows/smoke/summary.json", "utf8"),
+    );
+    assert.equal(summary.status, "passed");
+    assert.equal(summary.sourceCommit, commit);
+    assert.equal(summary.version, version);
+    const assets = validateAssets(directory, version, true);
+    for (const asset of pendingWindowsAssets(release, assets))
+      gh("release", "upload", tag, path.join(directory, asset.name));
+    const updated = await findRelease(tag);
+    assert.equal(
+      updated.id,
+      release.id,
+      "Release identity changed during supplement",
+    );
+    assert.deepEqual(pendingWindowsAssets(updated, assets), []);
+    for (const original of release.assets) {
+      const current = updated.assets.find((asset) => asset.id === original.id);
+      assert(
+        current &&
+          current.name === original.name &&
+          current.digest === original.digest &&
+          current.size === original.size,
+        "Existing release asset changed",
+      );
+    }
+    return;
+  }
+  if (published) return;
   if (mode === "prepare") {
     const directory = "release-results/assets";
-    const files = fs
-      .readdirSync(directory)
-      .filter((file) => file.endsWith(".tar.gz") || file === "SHA256SUMS");
-    assert.equal(
-      files.length,
-      3,
-      "Both architecture archives and checksums are required",
-    );
-    for (const filename of [
-      "SHA256SUMS",
-      `litradar_${version}_linux_amd64.tar.gz`,
-      `litradar_${version}_linux_arm64.tar.gz`,
-    ]) {
-      assert(files.includes(filename), `Missing release asset: ${filename}`);
-    }
+    const files = validateAssets(directory, version).map((asset) => asset.name);
     if (!release) {
       gh(
         "release",

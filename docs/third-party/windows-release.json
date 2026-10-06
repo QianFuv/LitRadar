@@ -1,0 +1,14 @@
+{
+  "obscura": {
+    "version": "0.2.4",
+    "url": "https://github.com/h4ckf0r0day/obscura/releases/download/v0.2.4/obscura-x86_64-windows-stealth.zip",
+    "sha256": "47d85a13fb1d19aca0fd71ebb3a1367248542f5344878b064c8586a193d604c9"
+  },
+  "poppler": {
+    "version": "26.09.0-0",
+    "distribution": "oschwartz10612/poppler-windows repackaging of conda-forge binaries",
+    "url": "https://github.com/oschwartz10612/poppler-windows/releases/download/v26.09.0-0/Release-26.09.0-0.zip",
+    "sha256": "7a6f256a0ddf7536182246a5733331bf4677cbcc34f4663774947ad34556c8d0",
+    "directory": "poppler-26.09.0"
+  }
+}

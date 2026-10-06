@@ -1,48 +1,15 @@
-name: Frontend CI
+name: Reusable Frontend Checks
 
 on:
   workflow_call:
-  push:
-    branches-ignore:
-      - "main"
-    paths:
-      - "VERSION"
-      - "version.go"
-      - ".gitattributes"
-      - "go.mod"
-      - "go.sum"
-      - "cmd/**"
-      - "internal/**"
-      - "assets/**"
-      - "third_party/**"
-      - "libs/**"
-      - "scripts/**"
-      - "app/**"
-      - "tests/test.mjs"
-      - "tests/data/**"
-      - "scripts/build-simple-tokenizer.mjs"
-      - ".github/workflows/frontend.yaml"
-  pull_request:
-    paths:
-      - "VERSION"
-      - "version.go"
-      - ".gitattributes"
-      - "go.mod"
-      - "go.sum"
-      - "cmd/**"
-      - "internal/**"
-      - "assets/**"
-      - "third_party/**"
-      - "libs/**"
-      - "scripts/**"
-      - "app/**"
-      - "tests/test.mjs"
-      - "tests/data/**"
-      - "scripts/build-simple-tokenizer.mjs"
-      - ".github/workflows/frontend.yaml"
+    inputs:
+      source_ref:
+        description: Exact product source commit; defaults to the caller commit
+        required: false
+        type: string
 
 concurrency:
-  group: frontend-ci-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  group: frontend-ci-${{ github.run_id }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
 env:
@@ -61,6 +28,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Install Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0

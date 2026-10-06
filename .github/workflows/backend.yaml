@@ -1,48 +1,15 @@
-name: Backend CI
+name: Reusable Go Checks
 
 on:
   workflow_call:
-  push:
-    branches-ignore:
-      - "main"
-    paths:
-      - "VERSION"
-      - "version.go"
-      - ".gitattributes"
-      - "go.mod"
-      - "go.sum"
-      - "cmd/**"
-      - "internal/**"
-      - "third_party/**"
-      - "libs/**"
-      - "assets/**"
-      - "tests/test.mjs"
-      - "tests/go-dependency.test.mjs"
-      - "tests/release.test.mjs"
-      - "tests/data/**"
-      - "scripts/**"
-      - ".github/workflows/backend.yaml"
-  pull_request:
-    paths:
-      - "VERSION"
-      - "version.go"
-      - ".gitattributes"
-      - "go.mod"
-      - "go.sum"
-      - "cmd/**"
-      - "internal/**"
-      - "third_party/**"
-      - "libs/**"
-      - "assets/**"
-      - "tests/test.mjs"
-      - "tests/go-dependency.test.mjs"
-      - "tests/release.test.mjs"
-      - "tests/data/**"
-      - "scripts/**"
-      - ".github/workflows/backend.yaml"
+    inputs:
+      source_ref:
+        description: Exact product source commit; defaults to the caller commit
+        required: false
+        type: string
 
 concurrency:
-  group: backend-ci-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  group: backend-ci-${{ github.run_id }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
 env:
@@ -68,6 +35,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Install Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -89,9 +57,6 @@ jobs:
 
       - name: Run Go static, regular and race checks
         run: node scripts/check-go.mjs
-
-      - name: Verify release rules
-        run: node --test tests/release.test.mjs
 
       - name: Upload backend diagnostics
         if: always()

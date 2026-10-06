@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  release-rules:
+    name: Release rules
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+      - name: Verify release contracts
+        run: node --test tests/release.test.mjs
+      - name: Detect version increase on main
+        id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/release-version.mjs
+
+  backend:
+    name: Backend
+    uses: ./.github/workflows/backend.yaml
+
+  frontend:
+    name: Frontend
+    uses: ./.github/workflows/frontend.yaml
+
+  release:
+    name: Version release
+    needs: [release-rules, backend, frontend]
+    if: needs.release-rules.outputs.release == 'true'
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/release.yaml
+    with:
+      version: ${{ needs.release-rules.outputs.version }}

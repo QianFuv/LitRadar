@@ -5,6 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createHash } from "node:crypto";
+import {
+  pendingWindowsAssets,
+  releaseAssetNames,
+  validateAssets,
+} from "../scripts/release-assets.mjs";
+import { resolveReleaseContext } from "../scripts/release-context.mjs";
 import {
   detectVersion,
   detectRelease,
@@ -72,6 +79,125 @@ test("release lookup distinguishes published, absent and inaccessible releases",
 
 test("the checked-in release version is valid", () => {
   parseVersion(fs.readFileSync(new URL("../VERSION", import.meta.url), "utf8"));
+});
+
+test("a release requires verified Linux and Windows archives before publication", (context) => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "litradar-assets-test-"),
+  );
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const archives = releaseAssetNames("0.2.0").slice(0, -1);
+  const lines = archives.map((name) => {
+    const bytes = Buffer.from(`tested ${name}`);
+    fs.writeFileSync(path.join(directory, name), bytes);
+    return `${createHash("sha256").update(bytes).digest("hex")}  ${name}\n`;
+  });
+  const checksum = path.join(directory, "SHA256SUMS");
+  fs.writeFileSync(checksum, lines.slice(0, 2).join(""));
+  assert.throws(() => validateAssets(directory, "0.2.0"), /expected platforms/);
+  fs.writeFileSync(checksum, lines.join(""));
+  assert.equal(validateAssets(directory, "0.2.0").length, 4);
+  fs.appendFileSync(checksum, lines[0]);
+  assert.throws(() => validateAssets(directory, "0.2.0"), /Duplicate/);
+  fs.writeFileSync(checksum, lines.join(""));
+  fs.appendFileSync(path.join(directory, archives[2]), "changed bytes");
+  assert.throws(() => validateAssets(directory, "0.2.0"), /Checksum differs/);
+});
+
+test("Windows supplementation resumes without overwriting published bytes", () => {
+  const assets = releaseAssetNames("0.2.0", true).map((name) => ({
+    name,
+    digest: "sha256:" + "a".repeat(64),
+    size: 42,
+  }));
+  const release = {
+    draft: false,
+    prerelease: false,
+    assets: [{ name: "SHA256SUMS", digest: "unchanged" }],
+  };
+  assert.deepEqual(pendingWindowsAssets(release, assets), assets);
+  release.assets.push({ ...assets[0] });
+  assert.deepEqual(pendingWindowsAssets(release, assets), [assets[1]]);
+  release.assets.push({ ...assets[1] });
+  assert.deepEqual(pendingWindowsAssets(release, assets), []);
+  assert.throws(
+    () => pendingWindowsAssets({ ...release, draft: true }, assets),
+    /public stable/,
+  );
+  assert.throws(
+    () => pendingWindowsAssets({ ...release, prerelease: true }, assets),
+    /public stable/,
+  );
+  release.assets[1].digest = "sha256:" + "b".repeat(64);
+  assert.throws(
+    () => pendingWindowsAssets(release, assets),
+    /Published asset differs/,
+  );
+});
+
+test("Windows recovery uses original tagged source and rejects unsafe release operations", async () => {
+  const source = "a".repeat(40);
+  const tooling = "b".repeat(40);
+  const options = {
+    ref: "refs/heads/main",
+    operation: "windows",
+    head: tooling,
+    version: "0.2.0",
+  };
+  const release = { draft: false, prerelease: false, tag_name: "v0.2.0" };
+  const request = async (resource) => {
+    if (resource.startsWith("releases/tags/")) return release;
+    if (resource.startsWith("git/ref/")) return { object: { sha: source } };
+    if (resource.startsWith("commits/")) return { sha: source };
+    throw new Error(`Unexpected resource ${resource}`);
+  };
+  const calls = [];
+  const readGit = (...args) => {
+    calls.push(args);
+    return args[0] === "show" ? "0.2.0\n" : "";
+  };
+  assert.deepEqual(await resolveReleaseContext(options, request, readGit), {
+    operation: "windows",
+    source,
+    published: true,
+    build: true,
+    version: "0.2.0",
+  });
+  assert.deepEqual(calls, [
+    ["merge-base", "--is-ancestor", source, tooling],
+    ["show", `${source}:VERSION`],
+  ]);
+  await assert.rejects(
+    resolveReleaseContext(
+      { ...options, operation: "release" },
+      request,
+      readGit,
+    ),
+    /another commit/,
+  );
+  await assert.rejects(
+    resolveReleaseContext(
+      { ...options, ref: "refs/heads/feature" },
+      request,
+      readGit,
+    ),
+    /require main/,
+  );
+  await assert.rejects(
+    resolveReleaseContext({ ...options, version: "0.3.0" }, request, readGit),
+    /match source VERSION/,
+  );
+  await assert.rejects(
+    resolveReleaseContext(options, request, () => {
+      throw new Error("Not an ancestor");
+    }),
+    /Not an ancestor/,
+  );
+  release.draft = true;
+  await assert.rejects(
+    resolveReleaseContext(options, request, readGit),
+    /existing public tag/,
+  );
 });
 
 test("an older release finishing later cannot move latest backwards", () => {

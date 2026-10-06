@@ -98,7 +98,7 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 版本发布
 
-普通推送只运行质量检查；发布时修改根目录 `VERSION`（例如 `0.1.0` → `0.1.1`），提交并推送到 `main`。检查通过后自动发布 GitHub Release 二进制包及 `ghcr.io/qianfuv/litradar:v0.1.1`、`latest` 镜像，无需手动打标签。二进制包支持 Linux amd64/arm64，包含 Web 资源和原生辅助程序。版本规则、安装依赖和失败重试见[版本发布说明](docs/operations/releases.md)。
+普通推送只运行质量检查；发布时修改根目录 `VERSION`（例如 `0.1.0` → `0.1.1`），提交并推送到 `main`。检查通过后自动发布 GitHub Release 二进制包及 `ghcr.io/qianfuv/litradar:v0.1.1`、`latest` 镜像，无需手动打标签。二进制包支持 Linux amd64/arm64 和 Windows x64，包含 Web 资源和原生辅助程序。Actions 的 `CI` 负责检查，`Release` 负责版本发布及手动恢复；版本规则、安装依赖和失败重试见[版本发布说明](docs/operations/releases.md)。
 
 ## 文档
 

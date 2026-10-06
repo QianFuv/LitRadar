@@ -21,6 +21,16 @@ does not certify its transitive dependencies or license/source completeness.
 Poppler's pdftotext and its libraries are installed from Debian packages. Their
 copyright and license notices remain under /usr/share/doc in the image.
 
+Windows distributions use the versioned conda-forge binary repackaging from
+https://github.com/oschwartz10612/poppler-windows, not an official Poppler Windows
+release. windows-release.json records the exact archive and SHA-256. The archive's
+original directory layout and included poppler-data notices are retained under
+native/poppler-26.09.0. Microsoft VC runtime DLLs from that distribution are also
+copied beside Obscura and Simple for app-local loading. The upstream archive does
+not provide a complete transitive license inventory. Poppler source and license:
+https://poppler.freedesktop.org/ ; packaging recipes and dependency sources:
+https://github.com/conda-forge/poppler-feedstock .
+
 SQLite simple tokenizer
 -----------------------
 Bundled Windows x64 and Linux ubuntu-latest libraries: Simple v0.7.1.

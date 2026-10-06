@@ -21,6 +21,7 @@
 /.antigravitycli/
 /test
 /test-results/
+/release-results/
 /target/
 /AGENTS.md
 /CLAUDE.md
