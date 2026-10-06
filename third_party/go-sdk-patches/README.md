@@ -10,6 +10,12 @@ The application rejects a concurrent duplicate request ID within one session wit
 
 ## Verification and updates
 
+Resource subscription tests wait for the protocol acknowledgement before emitting
+updates. The upstream handler callback runs before the subscription is registered,
+so observing that callback alone can lose updates under concurrent scheduling.
+This test-only change preserves update, subscription identity and unsubscribe
+assertions; production subscription behavior is unchanged.
+
 Run `node scripts/verify-go-dependency.mjs go-sdk` from the repository root. It verifies the hash-pinned upstream archive, every original and added file, unchanged upstream module manifests/license, patch hashes, and exact patch reconstruction. An unrelated edit or extra file fails this check. The downloaded archive is evidence input; its absence is an error, not a skipped check.
 
 Run both regular and race MCP tests inside the SDK's original module and under the application's build list, with `GOWORK=off`, on Windows and Linux. `node scripts/check-go.mjs` executes both configurations. Application-boundary and independent raw-client tests remain required in addition to upstream tests.

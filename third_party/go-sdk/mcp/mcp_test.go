@@ -2740,6 +2740,41 @@ type resourceSubEvent struct {
 	id  string // _meta subscription ID, stringified
 }
 
+// resourceAcknowledgements waits for protocol readiness because SubscribeHandler runs before registration.
+func resourceAcknowledgements(t *testing.T, client *Client) func(...string) {
+	t.Helper()
+	acknowledged := make(chan string, 8)
+	client.AddReceivingMiddleware(func(next MethodHandler) MethodHandler {
+		return func(ctx context.Context, method string, request Request) (Result, error) {
+			if method == notificationSubscriptionsAck {
+				if notification, ok := request.(*ClientRequest[*SubscriptionsAcknowledgedParams]); ok && notification.Params != nil {
+					for _, uri := range notification.Params.Notifications.ResourceSubscriptions {
+						acknowledged <- uri
+					}
+				}
+			}
+			return next(ctx, method, request)
+		}
+	})
+	return func(uris ...string) {
+		t.Helper()
+		pending := make(map[string]bool, len(uris))
+		for _, uri := range uris {
+			pending[uri] = true
+		}
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		for len(pending) > 0 {
+			select {
+			case uri := <-acknowledged:
+				delete(pending, uri)
+			case <-timer.C:
+				t.Fatalf("timed out waiting for subscription acknowledgements: %v", pending)
+			}
+		}
+	}
+}
+
 // TestResourceSubscriptionsSEP2575_Streamable verifies the Subscribe ->
 // ResourceUpdated path on a stateless Streamable HTTP server.
 //
@@ -2781,6 +2816,7 @@ func TestResourceSubscriptions_Streamable(t *testing.T) {
 			events <- resourceSubEvent{uri: req.Params.URI, id: id}
 		},
 	})
+	waitAcknowledged := resourceAcknowledgements(t, c)
 	cs, err := c.Connect(ctx, &StreamableClientTransport{Endpoint: httpServer.URL},
 		&ClientSessionOptions{ProtocolVersion: protocolVersion20260728})
 	if err != nil {
@@ -2799,6 +2835,7 @@ func TestResourceSubscriptions_Streamable(t *testing.T) {
 		t.Fatal("timed out waiting for SubscribeHandler")
 	}
 
+	waitAcknowledged("file:///r1")
 	server.ResourceUpdated(ctx, &ResourceUpdatedNotificationParams{URI: "file:///r1"})
 	select {
 	case e := <-events:
@@ -2851,6 +2888,7 @@ func TestResourceSubscriptions_InMemory(t *testing.T) {
 			events <- resourceSubEvent{uri: req.Params.URI, id: id}
 		},
 	})
+	waitAcknowledged := resourceAcknowledgements(t, c)
 	cs, err := c.Connect(ctx, ct, &ClientSessionOptions{ProtocolVersion: protocolVersion20260728})
 	if err != nil {
 		t.Fatalf("client connect: %v", err)
@@ -2872,6 +2910,7 @@ func TestResourceSubscriptions_InMemory(t *testing.T) {
 		}
 	}
 	waitURI(subCh, "file:///r1")
+	waitAcknowledged("file:///r1")
 
 	server.ResourceUpdated(ctx, &ResourceUpdatedNotificationParams{URI: "file:///r1"})
 	select {
@@ -3000,6 +3039,7 @@ func TestResourceSubscriptions_MultipleURIs(t *testing.T) {
 			events <- resourceSubEvent{uri: req.Params.URI, id: id}
 		},
 	})
+	waitAcknowledged := resourceAcknowledgements(t, c)
 	cs, err := c.Connect(ctx, ct, &ClientSessionOptions{ProtocolVersion: protocolVersion20260728})
 	if err != nil {
 		t.Fatalf("client connect: %v", err)
@@ -3029,6 +3069,7 @@ func TestResourceSubscriptions_MultipleURIs(t *testing.T) {
 
 	// Each update delivers exactly one event tagged with that URI's distinct
 	// subscription ID.
+	waitAcknowledged("file:///r1", "file:///r2")
 	server.ResourceUpdated(ctx, &ResourceUpdatedNotificationParams{URI: "file:///r1"})
 	ev1 := <-events
 	server.ResourceUpdated(ctx, &ResourceUpdatedNotificationParams{URI: "file:///r2"})
