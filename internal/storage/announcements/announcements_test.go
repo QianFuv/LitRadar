@@ -101,59 +101,20 @@ func TestPublicReadPreservesPlainConnectionAndMissingParent(t *testing.T) {
 	}
 }
 
+// TestAuditedCrudNormalizesFieldsAndRetainsCreation checks normalization, retained creation and transactional audits.
 func TestAuditedCrudNormalizesFieldsAndRetainsCreation(t *testing.T) {
 	repository, actor := testRepository(t)
 	ctx := context.Background()
 	actorValue := int64(actor)
 	audit := domain.AuditEvent{ActorId: &actorValue, Action: "announcement_create", Outcome: "completed", OccurredAt: 100.5}
-	created, err := Create(ctx, repository, &actor, "  公告  ", " body ", " HIGH ", true, &audit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created.Title != "公告" || created.Message != "body" || created.Priority != "high" || created.CreatedAt != created.UpdatedAt {
-		t.Fatalf("created=%+v", created)
-	}
-	title := " changed "
-	isEnabled := false
-	audit.Action = "announcement_update"
-	updated, err := Modify(ctx, repository, &actor, created.Id, Update{Title: &title, Enabled: &isEnabled}, &audit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if updated.Title != "changed" || updated.Message != "body" || updated.Enabled || updated.CreatedAt != created.CreatedAt {
-		t.Fatalf("updated=%+v", updated)
-	}
+	created := createNormalizedAnnouncement(t, ctx, repository, &actor, &audit)
+	assertAnnouncementUpdateRetainsCreation(t, ctx, repository, &actor, created, &audit)
 	audit.Action = "announcement_delete"
-	deleted, err := Delete(ctx, repository, &actor, created.Id, &audit)
-	if err != nil || !deleted {
-		t.Fatalf("delete=%t %v", deleted, err)
-	}
-	if item, err := Get(ctx, repository, created.Id); err != nil || item != nil {
-		t.Fatalf("deleted record=%+v %v", item, err)
-	}
-	if item, err := Modify(ctx, repository, &actor, created.Id, Update{}, &audit); err != nil || item != nil {
-		t.Fatalf("missing update=%+v %v", item, err)
-	}
-	if deleted, err := Delete(ctx, repository, &actor, created.Id, &audit); err != nil || deleted {
-		t.Fatalf("missing delete=%t %v", deleted, err)
-	}
-	events, err := repository.ListAudit(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 3 {
-		t.Fatalf("audit count=%d", len(events))
-	}
-	for _, event := range events {
-		if event.TargetId == nil || *event.TargetId != created.Id || event.ActorId == nil || *event.ActorId != actorValue {
-			t.Fatalf("audit=%+v", event)
-		}
-	}
-	if audit.TargetId != nil {
-		t.Fatal("caller audit template mutated")
-	}
+	assertDeletedAnnouncementStaysMissing(t, ctx, repository, &actor, created, &audit)
+	assertAnnouncementAuditTargets(t, ctx, repository, created, actorValue, &audit)
 }
 
+// TestAuditFailureRollsBackEveryAnnouncementMutation checks all mutation kinds against a rejecting audit trigger.
 func TestAuditFailureRollsBackEveryAnnouncementMutation(t *testing.T) {
 	repository, actor := testRepository(t)
 	ctx := context.Background()
@@ -163,13 +124,7 @@ func TestAuditFailureRollsBackEveryAnnouncementMutation(t *testing.T) {
 	}
 	execute(t, repository, `CREATE TRIGGER reject_announcement_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'private diagnostic'); END;`)
 	audit := domain.AuditEvent{Action: "announcement_update", Outcome: "completed", OccurredAt: 100}
-	title := "Changed"
-	if result, err := Create(ctx, repository, &actor, "New", "Body", "normal", true, &audit); !errors.Is(err, domain.ErrAudit) || result.Id != 0 || strings.Contains(err.Error(), "private") {
-		t.Fatalf("create failure=%+v %v", result, err)
-	}
-	if result, err := Modify(ctx, repository, &actor, created.Id, Update{Title: &title}, &audit); !errors.Is(err, domain.ErrAudit) || result != nil {
-		t.Fatalf("update failure=%+v %v", result, err)
-	}
+	assertAnnouncementAuditCreateAndUpdateFailures(t, ctx, repository, &actor, created, &audit)
 	if deleted, err := Delete(ctx, repository, &actor, created.Id, &audit); !errors.Is(err, domain.ErrAudit) || deleted {
 		t.Fatalf("delete failure=%t %v", deleted, err)
 	}
@@ -218,5 +173,83 @@ func TestUnicodeFieldLimitsApplyAfterTrim(t *testing.T) {
 		if _, err := Create(ctx, repository, &actor, input.title, input.message, input.priority, true, nil); err == nil || err.Error() != input.expected {
 			t.Fatalf("validation=%v expected=%s", err, input.expected)
 		}
+	}
+}
+
+// createNormalizedAnnouncement checks normalized fields and equal initial timestamps.
+func createNormalizedAnnouncement(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.Id, audit *domain.AuditEvent) Announcement {
+	t.Helper()
+	created, err := Create(ctx, repository, actor, "  公告  ", " body ", " HIGH ", true, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Title != "公告" || created.Message != "body" || created.Priority != "high" || created.CreatedAt != created.UpdatedAt {
+		t.Fatalf("created=%+v", created)
+	}
+	return created
+}
+
+// assertAnnouncementUpdateRetainsCreation checks explicit field updates without replacing creation time.
+func assertAnnouncementUpdateRetainsCreation(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.Id, created Announcement, audit *domain.AuditEvent) {
+	t.Helper()
+	title := " changed "
+	isEnabled := false
+	audit.Action = "announcement_update"
+	updated, err := Modify(ctx, repository, actor, created.Id, Update{Title: &title, Enabled: &isEnabled}, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Title != "changed" || updated.Message != "body" || updated.Enabled || updated.CreatedAt != created.CreatedAt {
+		t.Fatalf("updated=%+v", updated)
+	}
+}
+
+// assertDeletedAnnouncementStaysMissing checks deletion and subsequent absent reads and mutations.
+func assertDeletedAnnouncementStaysMissing(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.Id, created Announcement, audit *domain.AuditEvent) {
+	t.Helper()
+	deleted, err := Delete(ctx, repository, actor, created.Id, audit)
+	if err != nil || !deleted {
+		t.Fatalf("delete=%t %v", deleted, err)
+	}
+	if item, err := Get(ctx, repository, created.Id); err != nil || item != nil {
+		t.Fatalf("deleted record=%+v %v", item, err)
+	}
+	if item, err := Modify(ctx, repository, actor, created.Id, Update{}, audit); err != nil || item != nil {
+		t.Fatalf("missing update=%+v %v", item, err)
+	}
+	if deleted, err := Delete(ctx, repository, actor, created.Id, audit); err != nil || deleted {
+		t.Fatalf("missing delete=%t %v", deleted, err)
+	}
+}
+
+// assertAnnouncementAuditTargets checks exactly three target-bound events without mutating the caller template.
+func assertAnnouncementAuditTargets(t *testing.T, ctx context.Context, repository *auth.Repository, created Announcement, actorValue int64, audit *domain.AuditEvent) {
+	t.Helper()
+	events, err := repository.ListAudit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("audit count=%d", len(events))
+	}
+	for _, event := range events {
+		if event.TargetId == nil || *event.TargetId != created.Id || event.ActorId == nil || *event.ActorId != actorValue {
+			t.Fatalf("audit=%+v", event)
+		}
+	}
+	if audit.TargetId != nil {
+		t.Fatal("caller audit template mutated")
+	}
+}
+
+// assertAnnouncementAuditCreateAndUpdateFailures checks failed create and update with sanitized diagnostics.
+func assertAnnouncementAuditCreateAndUpdateFailures(t *testing.T, ctx context.Context, repository *auth.Repository, actor *identity.Id, created Announcement, audit *domain.AuditEvent) {
+	t.Helper()
+	title := "Changed"
+	if result, err := Create(ctx, repository, actor, "New", "Body", "normal", true, audit); !errors.Is(err, domain.ErrAudit) || result.Id != 0 || strings.Contains(err.Error(), "private") {
+		t.Fatalf("create failure=%+v %v", result, err)
+	}
+	if result, err := Modify(ctx, repository, actor, created.Id, Update{Title: &title}, audit); !errors.Is(err, domain.ErrAudit) || result != nil {
+		t.Fatalf("update failure=%+v %v", result, err)
 	}
 }
