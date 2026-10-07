@@ -3,6 +3,7 @@ package content
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,15 +41,30 @@ func Create(filename string, version int) error {
 		return err
 	}
 	defer connection.Close()
+	return writeFixtureContent(ctx, connection, version)
+}
+
+// fixtureContentSchema selects the historical search layout before any schema writes.
+func fixtureContentSchema(connection *sql.Conn, version int) (string, error) {
 	schema := indexschema.ContentTables
 	if version < 9 {
 		schema = strings.ReplaceAll(schema, "tokenize = 'simple 0'", "tokenize = 'unicode61 remove_diacritics 2'")
 	} else if err := storage.LoadSimple(connection); err != nil {
-		return err
+		return "", err
 	}
 	if version < 7 {
 		schema = strings.ReplaceAll(schema, "        content = '',\n        contentless_delete = 1,\n", "")
 	}
+	return schema, nil
+}
+
+// writeFixtureContent creates the schema and publishes fixed seed records in the original order.
+func writeFixtureContent(ctx context.Context, connection *sql.Conn, version int) error {
+	schema, err := fixtureContentSchema(connection, version)
+	if err != nil {
+		return err
+	}
+
 	if _, err := connection.ExecContext(ctx, schema); err != nil {
 		return err
 	}
