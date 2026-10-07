@@ -119,79 +119,122 @@ func parseLevel(value string) (int, bool) {
 	return int(number), err == nil && number <= 5
 }
 
-func parseDirective(value string) (directive, error) {
-	const (
-		start = iota
-		levelOrTarget
-		span
-		field
-		fields
-		target
-		level
-	)
-	state, offset := start, 0
-	result := directive{level: Trace}
-	textPointer := func(text string) *string { return &text }
-	for position, character := range strings.TrimSpace(value) {
-		switch state {
-		case start:
-			if character == '[' {
-				state, offset = span, position+1
-			} else {
-				state, offset = levelOrTarget, position
-			}
-		case levelOrTarget:
-			if character == '=' {
-				result.target = textPointer(value[offset:position])
-				state, offset = level, position+1
-			} else if character == '[' {
-				result.target = textPointer(value[offset:position])
-				state, offset = span, position+1
-			}
-		case span:
-			if character == ']' {
-				result.span = textPointer(value[offset:position])
-				state = target
-			} else if character == '{' {
-				if position > offset {
-					result.span = textPointer(value[offset:position])
-				}
-				state, offset = field, position+1
-			}
-		case field:
-			if character == '}' {
-				parts := strings.Split(value[offset:position], "=")
-				result.hasField = true
-				result.field = parts[0]
-				if len(parts) > 1 {
-					parsed, err := parseValue(parts[1])
-					if err != nil {
-						return result, err
-					}
-					result.value = parsed
-				}
-				state = fields
-			}
-		case fields:
-			state = target
-		case target:
-			state, offset = level, position+1
-		}
-	}
-	if state == levelOrTarget {
-		if parsed, exists := parseLevel(value[offset:]); exists {
-			result.level = parsed
-		} else {
-			result.target = textPointer(value[offset:])
-		}
-	} else if state == level && value[offset:] != "" {
-		result.level, _ = parseLevel(value[offset:])
-	}
-	return result, nil
+type directiveState int
+
+const (
+	directiveStart directiveState = iota
+	directiveLevelOrTarget
+	directiveSpan
+	directiveField
+	directiveFields
+	directiveTarget
+	directiveLevel
+)
+
+type directiveParser struct {
+	input  string
+	state  directiveState
+	offset int
+	result directive
 }
+
+// parseDirective compiles one validated directive using its original string offsets.
+func parseDirective(value string) (directive, error) {
+	parser := directiveParser{input: value, result: directive{level: Trace}}
+	for position, character := range strings.TrimSpace(value) {
+		if err := parser.consume(position, character); err != nil {
+			return parser.result, err
+		}
+	}
+	parser.finish()
+	return parser.result, nil
+}
+
+// consume advances the directive grammar by one rune while retaining byte offsets.
+func (parser *directiveParser) consume(position int, character rune) error {
+	switch parser.state {
+	case directiveStart:
+		if character == '[' {
+			parser.state, parser.offset = directiveSpan, position+1
+		} else {
+			parser.state, parser.offset = directiveLevelOrTarget, position
+		}
+	case directiveLevelOrTarget:
+		parser.consumeTarget(position, character)
+	case directiveSpan:
+		parser.consumeSpan(position, character)
+	case directiveField:
+		if character == '}' {
+			return parser.consumeField(position)
+		}
+	case directiveFields:
+		parser.state = directiveTarget
+	case directiveTarget:
+		parser.state, parser.offset = directiveLevel, position+1
+	}
+	return nil
+}
+
+// consumeTarget records an explicit target before a level or span selector.
+func (parser *directiveParser) consumeTarget(position int, character rune) {
+	if character == '=' {
+		parser.result.target = textPointer(parser.input[parser.offset:position])
+		parser.state, parser.offset = directiveLevel, position+1
+	} else if character == '[' {
+		parser.result.target = textPointer(parser.input[parser.offset:position])
+		parser.state, parser.offset = directiveSpan, position+1
+	}
+}
+
+// consumeSpan records a span name and enters its optional field selector.
+func (parser *directiveParser) consumeSpan(position int, character rune) {
+	if character == ']' {
+		parser.result.span = textPointer(parser.input[parser.offset:position])
+		parser.state = directiveTarget
+	} else if character == '{' {
+		if position > parser.offset {
+			parser.result.span = textPointer(parser.input[parser.offset:position])
+		}
+		parser.state, parser.offset = directiveField, position+1
+	}
+}
+
+// consumeField parses the first field value component and preserves partial errors.
+func (parser *directiveParser) consumeField(position int) error {
+	parts := strings.Split(parser.input[parser.offset:position], "=")
+	parser.result.hasField = true
+	parser.result.field = parts[0]
+	if len(parts) > 1 {
+		parsed, err := parseValue(parts[1])
+		if err != nil {
+			return err
+		}
+		parser.result.value = parsed
+	}
+	parser.state = directiveFields
+	return nil
+}
+
+// finish distinguishes a bare level from a target and leaves omitted levels at Trace.
+func (parser *directiveParser) finish() {
+	value := parser.input[parser.offset:]
+	if parser.state == directiveLevelOrTarget {
+		if parsed, exists := parseLevel(value); exists {
+			parser.result.level = parsed
+		} else {
+			parser.result.target = textPointer(value)
+		}
+	} else if parser.state == directiveLevel && value != "" {
+		parser.result.level, _ = parseLevel(value)
+	}
+}
+
+// textPointer retains an independent directive text value.
+func textPointer(text string) *string { return &text }
 
 var floatSyntax = regexp.MustCompile(`^[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|(?i:inf(?:inity)?|nan))$`)
 
+// parseValue preserves boolean, unsigned, signed, float and regex precedence.
 func parseValue(value string) (*valueMatch, error) {
 	if value == "true" || value == "false" {
 		return &valueMatch{kind: 'b', value: value == "true"}, nil
@@ -202,26 +245,54 @@ func parseValue(value string) (*valueMatch, error) {
 	if number, err := strconv.ParseInt(value, 10, 64); err == nil {
 		return &valueMatch{kind: 'i', value: number}, nil
 	}
-	numeric := value
-	if strings.EqualFold(strings.TrimLeft(value, "+-"), "infinity") {
-		numeric = strings.ReplaceAll(strings.ToLower(value), "infinity", "inf")
-	}
-	if floatSyntax.MatchString(value) && strings.EqualFold(strings.TrimLeft(value, "+-"), "nan") {
-		return &valueMatch{kind: 'n'}, nil
-	}
-	if floatSyntax.MatchString(value) {
-		if number, err := strconv.ParseFloat(numeric, 64); err == nil || errors.Is(err, strconv.ErrRange) {
-			return &valueMatch{kind: 'f', value: number}, nil
-		}
+	if pattern := parseFloatValue(value); pattern != nil {
+		return pattern, nil
 	}
 	expression, err := compileFieldRegex(value)
 	return &valueMatch{kind: 'r', value: value, expression: expression}, err
 }
 
+// parseFloatValue recognizes float syntax, including NaN and accepted range overflows.
+func parseFloatValue(value string) *valueMatch {
+	numeric := value
+	if strings.EqualFold(strings.TrimLeft(value, "+-"), "infinity") {
+		numeric = strings.ReplaceAll(strings.ToLower(value), "infinity", "inf")
+	}
+	if floatSyntax.MatchString(value) && strings.EqualFold(strings.TrimLeft(value, "+-"), "nan") {
+		return &valueMatch{kind: 'n'}
+	}
+	if floatSyntax.MatchString(value) {
+		if number, err := strconv.ParseFloat(numeric, 64); err == nil || errors.Is(err, strconv.ErrRange) {
+			return &valueMatch{kind: 'f', value: number}
+		}
+	}
+	return nil
+}
+
+// matches compares only the supported scalar and debug representation types.
 func (pattern *valueMatch) matches(value any) bool {
 	switch actual := value.(type) {
 	case bool:
 		return pattern.kind == 'b' && actual == pattern.value
+	case int, uint, int32, uint32:
+		return pattern.matchesInteger(actual)
+	case int64:
+		return pattern.matchesSigned(actual)
+	case uint64:
+		return pattern.kind == 'u' && actual == pattern.value
+	case float64:
+		return pattern.matchesFloat(actual)
+	case string:
+		return pattern.matchesText(actual)
+	case DebugValue:
+		return pattern.matchesText(string(actual))
+	}
+	return false
+}
+
+// matchesInteger converts only the supported narrow integer types to their full width.
+func (pattern *valueMatch) matchesInteger(value any) bool {
+	switch actual := value.(type) {
 	case int:
 		return pattern.matches(int64(actual))
 	case uint:
@@ -230,18 +301,23 @@ func (pattern *valueMatch) matches(value any) bool {
 		return pattern.matches(int64(actual))
 	case uint32:
 		return pattern.matches(uint64(actual))
-	case int64:
-		return pattern.kind == 'i' && actual == pattern.value || pattern.kind == 'u' && actual >= 0 && uint64(actual) == pattern.value
-	case uint64:
-		return pattern.kind == 'u' && actual == pattern.value
-	case float64:
-		return pattern.kind == 'n' && math.IsNaN(actual) || pattern.kind == 'f' && math.Abs(actual-pattern.value.(float64)) < 0x1p-52
-	case string:
-		return pattern.kind == 'r' && pattern.expression.matches(actual)
-	case DebugValue:
-		return pattern.kind == 'r' && pattern.expression.matches(string(actual))
 	}
 	return false
+}
+
+// matchesSigned permits unsigned patterns only for nonnegative signed values.
+func (pattern *valueMatch) matchesSigned(actual int64) bool {
+	return pattern.kind == 'i' && actual == pattern.value || pattern.kind == 'u' && actual >= 0 && uint64(actual) == pattern.value
+}
+
+// matchesFloat retains NaN recognition and the strict absolute epsilon comparison.
+func (pattern *valueMatch) matchesFloat(actual float64) bool {
+	return pattern.kind == 'n' && math.IsNaN(actual) || pattern.kind == 'f' && math.Abs(actual-pattern.value.(float64)) < 0x1p-52
+}
+
+// matchesText uses the ordered field regex for strings and debug representations.
+func (pattern *valueMatch) matchesText(actual string) bool {
+	return pattern.kind == 'r' && pattern.expression.matches(actual)
 }
 
 func (rule directive) cares(target, name string, values map[string]any, isSpan bool) bool {
@@ -298,32 +374,32 @@ func (filter *Filter) NewSpan(target, name string, level int, values map[string]
 		return nil
 	}
 	span := &Span{name: name, values: map[string]any{}}
-	for _, rule := range filter.dynamics {
-		if rule.cares(target, name, values, true) {
-			if rule.value == nil {
-				span.base = max(span.base, rule.level)
-			} else {
-				span.rules = append(span.rules, spanRule{directive: rule})
-			}
-		}
-	}
-	if len(span.rules) == 0 && span.base == Off {
-		hasMatch := false
-		for _, rule := range filter.dynamics {
-			if rule.cares(target, name, values, true) {
-				hasMatch = true
-				break
-			}
-		}
-		if !hasMatch && !filter.enabled(target, level, values, scope, true) {
-			return nil
-		}
+	hasMatch := filter.collectSpanRules(span, target, name, values)
+	if !hasMatch && !filter.enabled(target, level, values, scope, true) {
+		return nil
 	}
 	for name, value := range values {
 		span.values[name] = nil
 		span.record(name, value)
 	}
 	return span
+}
+
+// collectSpanRules retains matching Off directives as well as typed and base rules.
+func (filter *Filter) collectSpanRules(span *Span, target, name string, values map[string]any) bool {
+	hasMatch := false
+	for _, rule := range filter.dynamics {
+		if !rule.cares(target, name, values, true) {
+			continue
+		}
+		hasMatch = true
+		if rule.value == nil {
+			span.base = max(span.base, rule.level)
+		} else {
+			span.rules = append(span.rules, spanRule{directive: rule})
+		}
+	}
+	return hasMatch
 }
 
 func (span *Span) record(name string, value any) {

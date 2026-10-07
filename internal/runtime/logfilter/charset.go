@@ -92,65 +92,77 @@ func complementSet(set runeSet, isUnicode bool) runeSet {
 	return result
 }
 
+// foldSet normalizes the original set plus its Unicode or ASCII case alternatives.
 func foldSet(set runeSet, isUnicode bool) runeSet {
-	result := slices.Clone(set)
 	if isUnicode {
-		for character, alternatives := range unicodeTables.Folds {
-			if set.contains(character) {
-				for _, other := range alternatives {
-					result = append(result, other, other)
-				}
-			}
-		}
-	} else {
-		for character := 'A'; character <= 'Z'; character++ {
-			if set.contains(character) || set.contains(character+32) {
-				result = append(result, character, character, character+32, character+32)
-			}
-		}
+		return normalizeSet(unicodeFoldSet(set))
 	}
-	return normalizeSet(result)
+	return normalizeSet(asciiFoldSet(set))
 }
 
-func asciiClass(name string) runeSet {
-	result := runeSet{}
-	for value := rune(0); value < 128; value++ {
-		isDigit, isLower, isUpper := value >= '0' && value <= '9', value >= 'a' && value <= 'z', value >= 'A' && value <= 'Z'
-		isAlpha := isLower || isUpper
-		matches := false
-		switch name {
-		case "alnum":
-			matches = isAlpha || isDigit
-		case "alpha":
-			matches = isAlpha
-		case "ascii":
-			matches = true
-		case "blank":
-			matches = value == ' ' || value == '\t'
-		case "cntrl":
-			matches = value < 32 || value == 127
-		case "digit":
-			matches = isDigit
-		case "graph":
-			matches = value >= 33 && value <= 126
-		case "lower":
-			matches = isLower
-		case "print":
-			matches = value >= 32 && value <= 126
-		case "punct":
-			matches = value >= 33 && value <= 126 && !isAlpha && !isDigit
-		case "space":
-			matches = value == ' ' || value >= '\t' && value <= '\r'
-		case "upper":
-			matches = isUpper
-		case "word":
-			matches = isAlpha || isDigit || value == '_'
-		case "xdigit":
-			matches = isDigit || value >= 'a' && value <= 'f' || value >= 'A' && value <= 'F'
-		}
-		if matches {
-			result = append(result, value, value)
+// unicodeFoldSet expands membership using the original set and frozen fold tables.
+func unicodeFoldSet(set runeSet) runeSet {
+	result := slices.Clone(set)
+	for character, alternatives := range unicodeTables.Folds {
+		if set.contains(character) {
+			for _, other := range alternatives {
+				result = append(result, other, other)
+			}
 		}
 	}
-	return normalizeSet(result)
+	return result
+}
+
+// asciiFoldSet adds the opposite ASCII letter case without removing original members.
+func asciiFoldSet(set runeSet) runeSet {
+	result := slices.Clone(set)
+	for character := 'A'; character <= 'Z'; character++ {
+		if set.contains(character) || set.contains(character+32) {
+			result = append(result, character, character, character+32, character+32)
+		}
+	}
+	return result
+}
+
+// asciiClass builds the inclusive ASCII letter and digit ranges for a POSIX class.
+func asciiClass(name string) runeSet {
+	switch name {
+	case "alnum":
+		return runeSet{'0', '9', 'A', 'Z', 'a', 'z'}
+	case "alpha":
+		return runeSet{'A', 'Z', 'a', 'z'}
+	case "digit":
+		return runeSet{'0', '9'}
+	case "lower":
+		return runeSet{'a', 'z'}
+	case "upper":
+		return runeSet{'A', 'Z'}
+	case "word":
+		return runeSet{'0', '9', 'A', 'Z', '_', '_', 'a', 'z'}
+	case "xdigit":
+		return runeSet{'0', '9', 'A', 'F', 'a', 'f'}
+	default:
+		return asciiSpacingClass(name)
+	}
+}
+
+// asciiSpacingClass builds ASCII spacing, control, visible and punctuation ranges.
+func asciiSpacingClass(name string) runeSet {
+	switch name {
+	case "ascii":
+		return runeSet{0, 127}
+	case "blank":
+		return runeSet{'\t', '\t', ' ', ' '}
+	case "cntrl":
+		return runeSet{0, 31, 127, 127}
+	case "graph":
+		return runeSet{33, 126}
+	case "print":
+		return runeSet{32, 126}
+	case "punct":
+		return runeSet{33, 47, 58, 64, 91, 96, 123, 126}
+	case "space":
+		return runeSet{'\t', '\r', ' ', ' '}
+	}
+	return runeSet{}
 }

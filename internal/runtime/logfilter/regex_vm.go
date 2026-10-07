@@ -28,41 +28,57 @@ func (expression *fieldRegex) emit(value instruction) int {
 	return position
 }
 
+// compile lowers regex nodes to ordered VM instructions.
 func (expression *fieldRegex) compile(node *regexNode, next int) int {
 	switch node.kind {
 	case 'c', 'a':
 		return expression.emit(instruction{kind: node.kind, set: node.set, assertion: node.assertion, next: next})
 	case '|':
-		result := expression.compile(node.children[len(node.children)-1], next)
-		for position := len(node.children) - 2; position >= 0; position-- {
-			result = expression.emit(instruction{kind: 's', next: expression.compile(node.children[position], next), alternate: result})
-		}
-		return result
+		return expression.compileAlternatives(node, next)
 	case '*', '+':
-		branch := expression.emit(instruction{kind: 's'})
-		body := expression.compile(node.children[0], branch)
-		choice := instruction{kind: 's', next: body, alternate: next}
-		if node.isLazy {
-			choice.next, choice.alternate = choice.alternate, choice.next
-		}
-		expression.instructions[branch] = choice
-		if node.kind == '+' {
-			return body
-		}
-		return branch
+		return expression.compileRepetition(node, next)
 	case '?':
-		body := expression.compile(node.children[0], next)
-		choice := instruction{kind: 's', next: body, alternate: next}
-		if node.isLazy {
-			choice.next, choice.alternate = choice.alternate, choice.next
-		}
-		return expression.emit(choice)
+		return expression.compileOptional(node, next)
 	default:
 		for position := len(node.children) - 1; position >= 0; position-- {
 			next = expression.compile(node.children[position], next)
 		}
 		return next
 	}
+}
+
+// compileAlternatives emits earlier alternatives ahead of later alternatives.
+func (expression *fieldRegex) compileAlternatives(node *regexNode, next int) int {
+	result := expression.compile(node.children[len(node.children)-1], next)
+	for position := len(node.children) - 2; position >= 0; position-- {
+		result = expression.emit(instruction{kind: 's', next: expression.compile(node.children[position], next), alternate: result})
+	}
+	return result
+}
+
+// compileRepetition retains the loop back edge and greedy or lazy branch order.
+func (expression *fieldRegex) compileRepetition(node *regexNode, next int) int {
+	branch := expression.emit(instruction{kind: 's'})
+	body := expression.compile(node.children[0], branch)
+	choice := instruction{kind: 's', next: body, alternate: next}
+	if node.isLazy {
+		choice.next, choice.alternate = choice.alternate, choice.next
+	}
+	expression.instructions[branch] = choice
+	if node.kind == '+' {
+		return body
+	}
+	return branch
+}
+
+// compileOptional orders the optional body relative to its continuation.
+func (expression *fieldRegex) compileOptional(node *regexNode, next int) int {
+	body := expression.compile(node.children[0], next)
+	choice := instruction{kind: 's', next: body, alternate: next}
+	if node.isLazy {
+		choice.next, choice.alternate = choice.alternate, choice.next
+	}
+	return expression.emit(choice)
 }
 
 // matches follows ordered leftmost-first paths and accepts only a match ending at EOI.
@@ -118,6 +134,7 @@ func (expression *fieldRegex) matches(value string) bool {
 	return matchEnd == len(input)
 }
 
+// regexAssertion evaluates anchors against the adjacent input runes.
 func regexAssertion(kind string, input []rune, position int) bool {
 	previous, next := rune(-1), rune(-1)
 	if position > 0 {
@@ -126,30 +143,53 @@ func regexAssertion(kind string, input []rune, position int) bool {
 	if position < len(input) {
 		next = input[position]
 	}
-	isWord := func(value rune) bool {
-		return value == '_' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
-	}
 	switch kind {
 	case "start":
 		return position == 0
 	case "end":
 		return position == len(input)
-	case "line_start":
-		return position == 0 || previous == '\n'
-	case "line_end":
-		return position == len(input) || next == '\n'
-	case "crlf_start":
-		return position == 0 || previous == '\n' || previous == '\r' && next != '\n'
-	case "crlf_end":
-		return position == len(input) || next == '\r' || next == '\n' && previous != '\r'
+	case "line_start", "line_end":
+		return lineAssertion(kind, previous, next, position == 0, position == len(input))
+	case "crlf_start", "crlf_end":
+		return crlfAssertion(kind, previous, next, position == 0, position == len(input))
+	default:
+		return wordAssertion(kind, previous, next)
+	}
+}
+
+// lineAssertion recognizes LF line boundaries and input endpoints.
+func lineAssertion(kind string, previous, next rune, isStart, isEnd bool) bool {
+	if kind == "line_start" {
+		return isStart || previous == '\n'
+	}
+	return isEnd || next == '\n'
+}
+
+// crlfAssertion recognizes line boundaries outside the middle of CRLF pairs.
+func crlfAssertion(kind string, previous, next rune, isStart, isEnd bool) bool {
+	if kind == "crlf_start" {
+		return isStart || previous == '\n' || previous == '\r' && next != '\n'
+	}
+	return isEnd || next == '\r' || next == '\n' && previous != '\r'
+}
+
+// wordAssertion applies ASCII word membership even when the input contains Unicode.
+func wordAssertion(kind string, previous, next rune) bool {
+	isPreviousWord, isNextWord := asciiWord(previous), asciiWord(next)
+	switch kind {
 	case "boundary":
-		return isWord(previous) != isWord(next)
+		return isPreviousWord != isNextWord
 	case "not_boundary":
-		return isWord(previous) == isWord(next)
+		return isPreviousWord == isNextWord
 	case "word_start":
-		return !isWord(previous) && isWord(next)
+		return !isPreviousWord && isNextWord
 	case "word_end":
-		return isWord(previous) && !isWord(next)
+		return isPreviousWord && !isNextWord
 	}
 	return false
+}
+
+// asciiWord recognizes underscore and the ASCII letter and digit ranges.
+func asciiWord(value rune) bool {
+	return value == '_' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }
