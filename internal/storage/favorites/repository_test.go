@@ -70,6 +70,7 @@ func installMetadata(t *testing.T, configuration config.Config) {
 	}
 }
 
+// TestFolderTrackingOwnershipAndFailedInsertRollback retains duplicate, ownership and invalid-name admission ordering.
 func TestFolderTrackingOwnershipAndFailedInsertRollback(t *testing.T) {
 	repository, _, owner := fixtureRepository(t)
 	ctx := context.Background()
@@ -85,15 +86,7 @@ func TestFolderTrackingOwnershipAndFailedInsertRollback(t *testing.T) {
 	if err != nil || selected == nil || selected.Id != first.Id {
 		t.Fatalf("%+v %v", selected, err)
 	}
-	if changed, err := repository.SetTrackingFolder(ctx, owner+1, second.Id); err != nil || changed {
-		t.Fatalf("cross-owner %v %v", changed, err)
-	}
-	if changed, err := repository.SetTrackingFolder(ctx, owner, second.Id); err != nil || !changed {
-		t.Fatalf("tracking %v %v", changed, err)
-	}
-	if changed, err := repository.RenameFolder(ctx, owner+1, second.Id, "hidden"); err != nil || changed {
-		t.Fatalf("rename %v %v", changed, err)
-	}
+	assertTrackingOwnership(t, ctx, repository, owner, second.Id)
 	for _, name := range []string{" ", strings.Repeat("文", 101)} {
 		if _, err := repository.CreateFolder(ctx, owner, name, false); err == nil || err.Error() != "Folder name must be 1-100 characters" {
 			t.Fatal(err)
@@ -115,6 +108,7 @@ func TestIgnoredTrackingUpdateRollsBackPreviousSelection(t *testing.T) {
 	}
 }
 
+// TestRepeatedAddAndBulkMovePreserveInitialNotes checks full favorite identity before move and target-note retention.
 func TestRepeatedAddAndBulkMovePreserveInitialNotes(t *testing.T) {
 	repository, _, owner := fixtureRepository(t)
 	ctx := context.Background()
@@ -131,32 +125,17 @@ func TestRepeatedAddAndBulkMovePreserveInitialNotes(t *testing.T) {
 	if err != nil || count != 2 {
 		t.Fatalf("move %d %v", count, err)
 	}
-	items, err := repository.ListFavorites(ctx, owner, &target.Id, -1, 0)
-	if err != nil || len(items) != 2 {
-		t.Fatalf("%+v %v", items, err)
-	}
-	for _, item := range items {
-		if item.ArticleId == 1001 && !reflect.DeepEqual(item, existing) {
-			t.Fatalf("target overwritten %+v", item)
-		}
-	}
-	if count, err := repository.CountFavorites(ctx, owner, &source.Id); err != nil || count != 0 {
-		t.Fatalf("source=%d %v", count, err)
-	}
+	assertBulkMoveState(t, ctx, repository, owner, source.Id, target.Id, existing)
 }
 
+// TestBulkMutationsRollbackLateFailures retains late insert, move and remove rollback phases on one store.
 func TestBulkMutationsRollbackLateFailures(t *testing.T) {
 	repository, _, owner := fixtureRepository(t)
 	ctx := context.Background()
 	source := createFolder(t, repository, owner, "source", false)
 	target := createFolder(t, repository, owner, "target", false)
 	runSql(t, repository, `CREATE TRIGGER reject_second BEFORE INSERT ON favorites WHEN NEW.article_id=1002 BEGIN SELECT RAISE(ABORT,'late failure'); END;`)
-	if count, err := repository.BulkAdd(ctx, owner, source.Id, []Add{{Reference{1001, "metadata"}, "one"}, {Reference{1002, "metadata"}, "two"}}); err == nil || count != 0 {
-		t.Fatalf("bulk=%d %v", count, err)
-	}
-	if count, err := repository.CountFavorites(ctx, owner, nil); err != nil || count != 0 {
-		t.Fatalf("partial insert=%d %v", count, err)
-	}
+	assertFailedBulkInsert(t, ctx, repository, owner, source.Id)
 	runSql(t, repository, "DROP TRIGGER reject_second")
 	addFavorite(t, repository, owner, source.Id, 1001, "one")
 	addFavorite(t, repository, owner, source.Id, 1002, "two")
@@ -176,15 +155,13 @@ func TestBulkMutationsRollbackLateFailures(t *testing.T) {
 	}
 }
 
+// TestBatchValidationAndEmptyOperationOrdering preserves raw validation and asymmetric empty-operation ownership.
 func TestBatchValidationAndEmptyOperationOrdering(t *testing.T) {
 	repository, _, owner := fixtureRepository(t)
 	ctx := context.Background()
 	folder := createFolder(t, repository, owner, "folder", false)
 	addFavorite(t, repository, owner, folder.Id, 1001, "one")
-	items, err := repository.BatchIsFavorited(ctx, owner, []int64{1001, -1, 1001, 1002, 0}, "metadata")
-	if err != nil || len(items) != 2 || len(items[0].Folders) != 1 || items[1].ArticleId != 1002 || items[1].Folders == nil {
-		t.Fatalf("%+v %v", items, err)
-	}
+	assertBatchMembership(t, ctx, repository, owner)
 	if _, err := repository.BatchIsFavorited(ctx, owner, make([]int64, 501), ""); err == nil || err.Error() != "article_ids must contain at most 500 items" {
 		t.Fatal(err)
 	}
@@ -239,6 +216,7 @@ func TestCursorGrammarAndOwnerBinding(t *testing.T) {
 	}
 }
 
+// TestFavoritePageAndCitationSnapshotKeepStableOwnershipAndOrder checks timestamp ties, ownership and bounded snapshots.
 func TestFavoritePageAndCitationSnapshotKeepStableOwnershipAndOrder(t *testing.T) {
 	repository, configuration, owner := fixtureRepository(t)
 	ctx := context.Background()
@@ -248,14 +226,7 @@ func TestFavoritePageAndCitationSnapshotKeepStableOwnershipAndOrder(t *testing.T
 	addFavorite(t, repository, owner, folder.Id, 1012, "two")
 	addFavorite(t, repository, owner, folder.Id, 999, "missing")
 	runSql(t, repository, "UPDATE favorites SET created_at=12.25")
-	page, err := repository.ArticlePage(ctx, configuration, owner, folder.Id, 1, nil)
-	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleId != 999 || page.Items[0].MetadataStatus != "missing" || page.Page.NextCursor == nil {
-		t.Fatalf("%+v %v", page, err)
-	}
-	second, err := repository.ArticlePage(ctx, configuration, owner, folder.Id, 1, page.Page.NextCursor)
-	if err != nil || len(second.Items) != 1 || second.Items[0].ArticleId != 1012 || second.Items[0].MetadataStatus != "available" {
-		t.Fatalf("%+v %v", second, err)
-	}
+	assertFavoriteCursorPages(t, ctx, repository, configuration, owner, folder.Id)
 	bad := "invalid"
 	if _, err := repository.ArticlePage(ctx, configuration, owner+1, folder.Id, 1, &bad); !errors.Is(err, ErrFolderNotFound) {
 		t.Fatal(err)
@@ -270,6 +241,7 @@ func TestFavoritePageAndCitationSnapshotKeepStableOwnershipAndOrder(t *testing.T
 	}
 }
 
+// TestMetadataFailureIsGroupedButCitationFailsClosed retains writer closure before grouped and citation consumer checks.
 func TestMetadataFailureIsGroupedButCitationFailsClosed(t *testing.T) {
 	_, configuration, _ := fixtureRepository(t)
 	ctx := context.Background()
@@ -284,14 +256,84 @@ func TestMetadataFailureIsGroupedButCitationFailsClosed(t *testing.T) {
 	}
 	database.Close()
 	enriched := Enrich(ctx, configuration, favorites)
-	if enriched[0].MetadataStatus != "unavailable" || enriched[1].MetadataStatus != "unavailable" || enriched[2].MetadataStatus != "missing" || enriched[0].Title != nil {
-		t.Fatalf("%+v", enriched)
-	}
+	assertUnavailableMetadataGroup(t, enriched)
 	if _, err := LoadCitationRecords(ctx, configuration, []Reference{{1001, "metadata"}, {1012, "metadata"}}); err == nil {
 		t.Fatal("partial citation accepted")
 	}
 	records, err := LoadCitationRecords(ctx, configuration, []Reference{{1001, "metadata"}, {999, "missing"}, {1001, "metadata"}})
 	if err != nil || len(records) != 3 || records[1].Authors == nil || records[1].Title != nil || !reflect.DeepEqual(records[0], records[2]) {
 		t.Fatalf("%+v %v", records, err)
+	}
+}
+
+// assertTrackingOwnership retains foreign-owner rejection before selecting the owned target.
+func assertTrackingOwnership(t *testing.T, ctx context.Context, repository *Repository, owner identity.Id, folder int64) {
+	t.Helper()
+	if changed, err := repository.SetTrackingFolder(ctx, owner+1, folder); err != nil || changed {
+		t.Fatalf("cross-owner %v %v", changed, err)
+	}
+	if changed, err := repository.SetTrackingFolder(ctx, owner, folder); err != nil || !changed {
+		t.Fatalf("tracking %v %v", changed, err)
+	}
+	if changed, err := repository.RenameFolder(ctx, owner+1, folder, "hidden"); err != nil || changed {
+		t.Fatalf("rename %v %v", changed, err)
+	}
+}
+
+// assertBulkMoveState preserves target notes before checking source deletion count.
+func assertBulkMoveState(t *testing.T, ctx context.Context, repository *Repository, owner identity.Id, source, target int64, existing Favorite) {
+	t.Helper()
+	items, err := repository.ListFavorites(ctx, owner, &target, -1, 0)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("%+v %v", items, err)
+	}
+	for _, item := range items {
+		if item.ArticleId == 1001 && !reflect.DeepEqual(item, existing) {
+			t.Fatalf("target overwritten %+v", item)
+		}
+	}
+	if count, err := repository.CountFavorites(ctx, owner, &source); err != nil || count != 0 {
+		t.Fatalf("source=%d %v", count, err)
+	}
+}
+
+// assertFailedBulkInsert checks both reported zero and actual rollback before trigger replacement.
+func assertFailedBulkInsert(t *testing.T, ctx context.Context, repository *Repository, owner identity.Id, folder int64) {
+	t.Helper()
+	if count, err := repository.BulkAdd(ctx, owner, folder, []Add{{Reference{1001, "metadata"}, "one"}, {Reference{1002, "metadata"}, "two"}}); err == nil || count != 0 {
+		t.Fatalf("bulk=%d %v", count, err)
+	}
+	if count, err := repository.CountFavorites(ctx, owner, nil); err != nil || count != 0 {
+		t.Fatalf("partial insert=%d %v", count, err)
+	}
+}
+
+// assertBatchMembership preserves raw order and initialized empty memberships.
+func assertBatchMembership(t *testing.T, ctx context.Context, repository *Repository, owner identity.Id) {
+	t.Helper()
+	items, err := repository.BatchIsFavorited(ctx, owner, []int64{1001, -1, 1001, 1002, 0}, "metadata")
+	if err != nil || len(items) != 2 || len(items[0].Folders) != 1 || items[1].ArticleId != 1002 || items[1].Folders == nil {
+		t.Fatalf("%+v %v", items, err)
+	}
+}
+
+// assertFavoriteCursorPages retains the original first page and cursor for the second request.
+func assertFavoriteCursorPages(t *testing.T, ctx context.Context, repository *Repository, configuration config.Config, owner identity.Id, folder int64) {
+	t.Helper()
+	page, err := repository.ArticlePage(ctx, configuration, owner, folder, 1, nil)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleId != 999 || page.Items[0].MetadataStatus != "missing" || page.Page.NextCursor == nil {
+		t.Fatalf("%+v %v", page, err)
+	}
+	second, err := repository.ArticlePage(ctx, configuration, owner, folder, 1, page.Page.NextCursor)
+	if err != nil || len(second.Items) != 1 || second.Items[0].ArticleId != 1012 || second.Items[0].MetadataStatus != "available" {
+		t.Fatalf("%+v %v", second, err)
+	}
+}
+
+// assertUnavailableMetadataGroup checks all entries in the failed original group before citation loading.
+func assertUnavailableMetadataGroup(t *testing.T, enriched []Article) {
+	t.Helper()
+	if enriched[0].MetadataStatus != "unavailable" || enriched[1].MetadataStatus != "unavailable" || enriched[2].MetadataStatus != "missing" || enriched[0].Title != nil {
+		t.Fatalf("%+v", enriched)
 	}
 }

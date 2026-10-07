@@ -20,17 +20,12 @@ import (
 func encodeCursor(owner identity.Id, favorite Favorite) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("1|%d|%d|%016x|%d", owner, favorite.FolderId, math.Float64bits(favorite.CreatedAt), favorite.Id)))
 }
+
+// decodeCursor binds admitted fields to owner and folder before timestamp/identifier decoding.
 func decodeCursor(cursor string, owner identity.Id, folder int64) (float64, int64, error) {
-	if len(cursor) > 128 || strings.ContainsAny(cursor, "\r\n") {
-		return 0, 0, ErrCursor
-	}
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(cursor)
-	if err != nil || !utf8.Valid(raw) {
-		return 0, 0, ErrCursor
-	}
-	fields := strings.Split(string(raw), "|")
-	if len(fields) != 5 || fields[0] != "1" {
-		return 0, 0, ErrCursor
+	fields, err := favoriteCursorFields(cursor)
+	if err != nil {
+		return 0, 0, err
 	}
 	user, err := strconv.ParseInt(fields[1], 10, 64)
 	if err != nil || user != int64(owner) {
@@ -40,16 +35,7 @@ func decodeCursor(cursor string, owner identity.Id, folder int64) (float64, int6
 	if err != nil || selected != folder {
 		return 0, 0, ErrCursor
 	}
-	bits, err := strconv.ParseUint(strings.TrimPrefix(fields[3], "+"), 16, 64)
-	if err != nil {
-		return 0, 0, ErrCursor
-	}
-	id, err := strconv.ParseInt(fields[4], 10, 64)
-	stamp := math.Float64frombits(bits)
-	if err != nil || id <= 0 || math.IsNaN(stamp) || math.IsInf(stamp, 0) || stamp < 0 {
-		return 0, 0, ErrCursor
-	}
-	return stamp, id, nil
+	return favoriteCursorPosition(fields)
 }
 
 func (repository *Repository) readSnapshot(ctx context.Context, read func(*sql.Conn) error) error {
@@ -171,4 +157,34 @@ func (repository *Repository) ListArticles(ctx context.Context, configuration co
 		return nil, err
 	}
 	return Enrich(ctx, configuration, favorites), nil
+}
+
+// favoriteCursorFields retains strict base64/UTF8 admission and exact versioned field arity.
+func favoriteCursorFields(cursor string) ([]string, error) {
+	if len(cursor) > 128 || strings.ContainsAny(cursor, "\r\n") {
+		return nil, ErrCursor
+	}
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(cursor)
+	if err != nil || !utf8.Valid(raw) {
+		return nil, ErrCursor
+	}
+	fields := strings.Split(string(raw), "|")
+	if len(fields) != 5 || fields[0] != "1" {
+		return nil, ErrCursor
+	}
+	return fields, nil
+}
+
+// favoriteCursorPosition preserves accepted numeric spelling and finite nonnegative timestamp bits.
+func favoriteCursorPosition(fields []string) (float64, int64, error) {
+	bits, err := strconv.ParseUint(strings.TrimPrefix(fields[3], "+"), 16, 64)
+	if err != nil {
+		return 0, 0, ErrCursor
+	}
+	id, err := strconv.ParseInt(fields[4], 10, 64)
+	stamp := math.Float64frombits(bits)
+	if err != nil || id <= 0 || math.IsNaN(stamp) || math.IsInf(stamp, 0) || stamp < 0 {
+		return 0, 0, ErrCursor
+	}
+	return stamp, id, nil
 }
