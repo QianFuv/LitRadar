@@ -49,7 +49,61 @@ function formatInviteDate(timestamp: number): string {
  * @param props - Shared copy feedback and action.
  * @returns Invite-code settings card.
  */
-export function InviteCodeCard({
+export function InviteCodeCard(props: {
+  copyFeedback: SettingsCopyFeedback | null;
+  handleCopy: (value: string, successMessage: string, scope: SettingsCopyScope) => Promise<void>;
+}) {
+  const state = useInviteViewState(props);
+  const {
+    inviteCodeData,
+    generateInviteMut,
+    rotateInviteMut,
+    revokeInviteMut,
+    mutationError,
+    isMutating,
+  } = state;
+  return (
+    <SettingsSection>
+      <SettingsSectionHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <SettingsSectionTitle className="flex items-center gap-2">
+              <Ticket className="h-5 w-5" />
+              邀请码
+            </SettingsSectionTitle>
+            <SettingsSectionDescription>
+              邀请码默认有效 7 天且可注册 1 次，可随时轮换或永久撤销
+            </SettingsSectionDescription>
+          </div>
+        </div>
+      </SettingsSectionHeader>
+      <SettingsSectionContent>
+        {inviteCodeData ? (
+          renderCurrentInviteCode(state, inviteCodeData)
+        ) : (
+          <Button
+            onClick={() => {
+              rotateInviteMut.reset();
+              revokeInviteMut.reset();
+              generateInviteMut.mutate();
+            }}
+            disabled={isMutating}
+          >
+            生成邀请码
+          </Button>
+        )}
+        {mutationError && (
+          <p role="alert" className="mt-2 text-sm text-destructive">
+            {mutationError instanceof Error ? mutationError.message : '邀请码操作失败'}
+          </p>
+        )}
+        {renderInviteRevokeConfirmation(state)}
+      </SettingsSectionContent>
+    </SettingsSection>
+  );
+}
+/** Own the original settings hooks and exact mutation/cache completion order. */
+function useInviteViewState({
   copyFeedback,
   handleCopy,
 }: {
@@ -81,125 +135,137 @@ export function InviteCodeCard({
   const isMutating =
     generateInviteMut.isPending || rotateInviteMut.isPending || revokeInviteMut.isPending;
 
+  return {
+    copyFeedback,
+    handleCopy,
+    isRevokeOpen,
+    setIsRevokeOpen,
+    inviteCodeData,
+    refetchInviteCode,
+    generateInviteMut,
+    rotateInviteMut,
+    revokeInviteMut,
+    mutationError,
+    isMutating,
+  };
+}
+type InviteViewState = ReturnType<typeof useInviteViewState>;
+
+/** Retain invite-only copy feedback and accessible tone. */
+function renderInviteCopyFeedback(state: InviteViewState) {
+  const { copyFeedback } = state;
+
   return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <SettingsSectionTitle className="flex items-center gap-2">
-              <Ticket className="h-5 w-5" />
-              邀请码
-            </SettingsSectionTitle>
-            <SettingsSectionDescription>
-              邀请码默认有效 7 天且可注册 1 次，可随时轮换或永久撤销
-            </SettingsSectionDescription>
-          </div>
-        </div>
-      </SettingsSectionHeader>
-      <SettingsSectionContent>
-        {inviteCodeData ? (
-          <div className="space-y-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <code className="flex-1 rounded bg-muted p-2 text-xs break-all sm:text-sm">
-                {inviteCodeData.code}
-              </code>
-              <Button
-                variant="outline"
-                size="icon"
-                className="self-start sm:self-auto"
-                aria-label="复制邀请码"
-                disabled={inviteCodeData.status !== 'active'}
-                onClick={() => void handleCopy(inviteCodeData.code, '邀请码已复制。', 'invite')}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-            </div>
-            {copyFeedback?.scope === 'invite' && (
-              <p
-                role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-                className={
-                  copyFeedback.tone === 'error'
-                    ? 'text-sm text-destructive'
-                    : 'text-sm text-muted-foreground'
-                }
-              >
-                {copyFeedback.message}
-              </p>
-            )}
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant={inviteCodeData.status === 'active' ? 'default' : 'secondary'}>
-                {INVITE_STATUS_LABELS[inviteCodeData.status]}
-              </Badge>
-              <span>
-                已使用 {inviteCodeData.use_count}/{inviteCodeData.max_uses} 次
-              </span>
-              <span>有效期至 {formatInviteDate(inviteCodeData.expires_at)}</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={isMutating}
-                onClick={() => {
-                  generateInviteMut.reset();
-                  revokeInviteMut.reset();
-                  rotateInviteMut.mutate();
-                }}
-              >
-                <RotateCcw className="h-4 w-4" />
-                轮换邀请码
-              </Button>
-              {inviteCodeData.revoked_at === null && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={isMutating}
-                  onClick={() => {
-                    generateInviteMut.reset();
-                    rotateInviteMut.reset();
-                    revokeInviteMut.reset();
-                    setIsRevokeOpen(true);
-                  }}
-                >
-                  <Ban className="h-4 w-4" />
-                  撤销邀请码
-                </Button>
-              )}
-            </div>
-          </div>
-        ) : (
+    copyFeedback?.scope === 'invite' && (
+      <p
+        role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+        className={
+          copyFeedback.tone === 'error'
+            ? 'text-sm text-destructive'
+            : 'text-sm text-muted-foreground'
+        }
+      >
+        {copyFeedback.message}
+      </p>
+    )
+  );
+}
+
+/** Retain status-dependent copying, lifecycle metadata and reset-before-action order. */
+function renderCurrentInviteCode(
+  state: InviteViewState,
+  inviteCodeData: NonNullable<InviteViewState['inviteCodeData']>,
+) {
+  const {
+    handleCopy,
+    setIsRevokeOpen,
+    generateInviteMut,
+    rotateInviteMut,
+    revokeInviteMut,
+    isMutating,
+  } = state;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <code className="flex-1 rounded bg-muted p-2 text-xs break-all sm:text-sm">
+          {inviteCodeData.code}
+        </code>
+        <Button
+          variant="outline"
+          size="icon"
+          className="self-start sm:self-auto"
+          aria-label="复制邀请码"
+          disabled={inviteCodeData.status !== 'active'}
+          onClick={() => void handleCopy(inviteCodeData.code, '邀请码已复制。', 'invite')}
+        >
+          <Copy className="h-4 w-4" />
+        </Button>
+      </div>
+      {renderInviteCopyFeedback(state)}
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <Badge variant={inviteCodeData.status === 'active' ? 'default' : 'secondary'}>
+          {INVITE_STATUS_LABELS[inviteCodeData.status]}
+        </Badge>
+        <span>
+          已使用 {inviteCodeData.use_count}/{inviteCodeData.max_uses} 次
+        </span>
+        <span>有效期至 {formatInviteDate(inviteCodeData.expires_at)}</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={isMutating}
+          onClick={() => {
+            generateInviteMut.reset();
+            revokeInviteMut.reset();
+            rotateInviteMut.mutate();
+          }}
+        >
+          <RotateCcw className="h-4 w-4" />
+          轮换邀请码
+        </Button>
+        {inviteCodeData.revoked_at === null && (
           <Button
+            variant="destructive"
+            size="sm"
+            disabled={isMutating}
             onClick={() => {
+              generateInviteMut.reset();
               rotateInviteMut.reset();
               revokeInviteMut.reset();
-              generateInviteMut.mutate();
+              setIsRevokeOpen(true);
             }}
-            disabled={isMutating}
           >
-            生成邀请码
+            <Ban className="h-4 w-4" />
+            撤销邀请码
           </Button>
         )}
-        {mutationError && (
-          <p role="alert" className="mt-2 text-sm text-destructive">
-            {mutationError instanceof Error ? mutationError.message : '邀请码操作失败'}
-          </p>
-        )}
-        <ConfirmDialog
-          open={isRevokeOpen}
-          onOpenChange={(nextOpen) => {
-            if (!revokeInviteMut.isPending) {
-              setIsRevokeOpen(nextOpen);
-            }
-          }}
-          title="撤销邀请码？"
-          description="撤销后该邀请码将永久失效；如需新邀请码，可以随后轮换。"
-          actionLabel="确认撤销"
-          pendingLabel="撤销中…"
-          isPending={revokeInviteMut.isPending}
-          error={revokeInviteMut.error instanceof Error ? revokeInviteMut.error.message : null}
-          onConfirm={() => revokeInviteMut.mutate()}
-        />
-      </SettingsSectionContent>
-    </SettingsSection>
+      </div>
+    </div>
+  );
+}
+
+/** Retain the explicit revoke confirmation and pending dismissal guard. */
+function renderInviteRevokeConfirmation(state: InviteViewState) {
+  const { isRevokeOpen, setIsRevokeOpen, revokeInviteMut } = state;
+
+  return (
+    <ConfirmDialog
+      open={isRevokeOpen}
+      onOpenChange={(nextOpen) => {
+        if (!revokeInviteMut.isPending) {
+          setIsRevokeOpen(nextOpen);
+        }
+      }}
+      title="撤销邀请码？"
+      description="撤销后该邀请码将永久失效；如需新邀请码，可以随后轮换。"
+      actionLabel="确认撤销"
+      pendingLabel="撤销中…"
+      isPending={revokeInviteMut.isPending}
+      error={revokeInviteMut.error instanceof Error ? revokeInviteMut.error.message : null}
+      onConfirm={() => revokeInviteMut.mutate()}
+    />
   );
 }

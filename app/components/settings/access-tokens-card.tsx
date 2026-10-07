@@ -71,7 +71,58 @@ function formatExpiry(ts: number): string {
  * @param props - Shared copy feedback and action.
  * @returns Access-token settings card.
  */
-export function AccessTokensCard({
+export function AccessTokensCard(props: {
+  copyFeedback: SettingsCopyFeedback | null;
+  handleCopy: (value: string, successMessage: string, scope: SettingsCopyScope) => Promise<void>;
+}) {
+  const state = useAccessTokenViewState(props);
+  const { newTokenValue, setNewTokenValue, dialogOpen, setDialogOpen } = state;
+  return (
+    <SettingsSection>
+      <SettingsSectionHeader>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <SettingsSectionTitle>访问令牌</SettingsSectionTitle>
+            <SettingsSectionDescription>
+              创建访问令牌，用于接口访问或第三方集成
+            </SettingsSectionDescription>
+          </div>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(open: boolean) => {
+              setDialogOpen(open);
+              if (!open) setNewTokenValue(null);
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" className="w-full sm:w-auto">
+                <Plus className="h-4 w-4 mr-1" />
+                新建
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>创建访问令牌</DialogTitle>
+                <DialogDescription>令牌仅显示一次，请妥善保管</DialogDescription>
+              </DialogHeader>
+              <MotionPresence mode="wait">
+                {newTokenValue
+                  ? renderCreatedAccessToken(state, newTokenValue)
+                  : renderAccessTokenForm(state)}
+              </MotionPresence>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </SettingsSectionHeader>
+      <SettingsSectionContent>
+        <div className="space-y-2">{renderAccessTokenList(state)}</div>
+        {renderAccessTokenRevocation(state)}
+      </SettingsSectionContent>
+    </SettingsSection>
+  );
+}
+/** Own the original settings hooks and exact mutation/cache completion order. */
+function useAccessTokenViewState({
   copyFeedback,
   handleCopy,
 }: {
@@ -113,238 +164,251 @@ export function AccessTokensCard({
     },
   });
 
+  return {
+    copyFeedback,
+    handleCopy,
+    queryClient,
+    tokenName,
+    setTokenName,
+    tokenTtl,
+    setTokenTtl,
+    newTokenValue,
+    setNewTokenValue,
+    tokenToRevoke,
+    setTokenToRevoke,
+    dialogOpen,
+    setDialogOpen,
+    feedbackTransition,
+    rowTransition,
+    tokenNameCodePointCount,
+    tokenNameError,
+    tokens,
+    createTokenMut,
+    creationError,
+    revokeMut,
+  };
+}
+type AccessTokenViewState = ReturnType<typeof useAccessTokenViewState>;
+
+/** Retain the one-time plaintext token and scoped copy feedback. */
+function renderCreatedAccessToken(state: AccessTokenViewState, newTokenValue: string) {
+  const { copyFeedback, handleCopy, feedbackTransition } = state;
+
   return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <SettingsSectionTitle>访问令牌</SettingsSectionTitle>
-            <SettingsSectionDescription>
-              创建访问令牌，用于接口访问或第三方集成
-            </SettingsSectionDescription>
-          </div>
-          <Dialog
-            open={dialogOpen}
-            onOpenChange={(open: boolean) => {
-              setDialogOpen(open);
-              if (!open) setNewTokenValue(null);
-            }}
+    <MotionDiv
+      key="token-created"
+      data-motion-token-dialog-state="created"
+      className="space-y-3"
+      initial="hidden"
+      animate="visible"
+      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+      variants={FADE_UP_VARIANTS}
+      transition={feedbackTransition}
+    >
+      <p className="text-sm text-muted-foreground">新令牌已创建：</p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <code className="flex-1 rounded bg-muted p-2 text-xs break-all">{newTokenValue}</code>
+        <Button
+          variant="outline"
+          size="icon"
+          className="self-start sm:self-auto"
+          aria-label="复制新访问令牌"
+          onClick={() => void handleCopy(newTokenValue, '访问令牌已复制。', 'token')}
+        >
+          <Copy className="h-4 w-4" />
+        </Button>
+      </div>
+      <MotionPresence>
+        {copyFeedback?.scope === 'token' && (
+          <MotionParagraph
+            key="token-copy-feedback"
+            data-motion-feedback="token-copy"
+            role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+            className={
+              copyFeedback.tone === 'error'
+                ? 'text-sm text-destructive'
+                : 'text-sm text-muted-foreground'
+            }
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={FADE_UP_VARIANTS}
+            transition={feedbackTransition}
           >
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="w-full sm:w-auto">
-                <Plus className="h-4 w-4 mr-1" />
-                新建
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>创建访问令牌</DialogTitle>
-                <DialogDescription>令牌仅显示一次，请妥善保管</DialogDescription>
-              </DialogHeader>
-              <MotionPresence mode="wait">
-                {newTokenValue ? (
-                  <MotionDiv
-                    key="token-created"
-                    data-motion-token-dialog-state="created"
-                    className="space-y-3"
-                    initial="hidden"
-                    animate="visible"
-                    exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-                    variants={FADE_UP_VARIANTS}
-                    transition={feedbackTransition}
-                  >
-                    <p className="text-sm text-muted-foreground">新令牌已创建：</p>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <code className="flex-1 rounded bg-muted p-2 text-xs break-all">
-                        {newTokenValue}
-                      </code>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="self-start sm:self-auto"
-                        aria-label="复制新访问令牌"
-                        onClick={() => void handleCopy(newTokenValue, '访问令牌已复制。', 'token')}
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    <MotionPresence>
-                      {copyFeedback?.scope === 'token' && (
-                        <MotionParagraph
-                          key="token-copy-feedback"
-                          data-motion-feedback="token-copy"
-                          role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-                          className={
-                            copyFeedback.tone === 'error'
-                              ? 'text-sm text-destructive'
-                              : 'text-sm text-muted-foreground'
-                          }
-                          initial="hidden"
-                          animate="visible"
-                          exit="exit"
-                          variants={FADE_UP_VARIANTS}
-                          transition={feedbackTransition}
-                        >
-                          {copyFeedback.message}
-                        </MotionParagraph>
-                      )}
-                    </MotionPresence>
-                  </MotionDiv>
-                ) : (
-                  <MotionForm
-                    key="token-form"
-                    data-motion-token-dialog-state="form"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      if (tokenNameError) return;
-                      createTokenMut.mutate();
-                    }}
-                    className="space-y-4"
-                    initial="hidden"
-                    animate="visible"
-                    exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-                    variants={FADE_UP_VARIANTS}
-                    transition={feedbackTransition}
-                  >
-                    <div className="space-y-2">
-                      <Label htmlFor="access-token-name">名称</Label>
-                      <Input
-                        id="access-token-name"
-                        name="access_token_name"
-                        autoComplete="off"
-                        spellCheck={false}
-                        value={tokenName}
-                        onChange={(e) => setTokenName(e.target.value)}
-                        aria-invalid={creationError ? true : undefined}
-                        placeholder="例如：接口集成"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {tokenNameCodePointCount}/{ACCESS_TOKEN_NAME_MAX_CODE_POINTS} Unicode code
-                        points
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">有效期</div>
-                      <div
-                        className="flex gap-2 flex-wrap"
-                        role="group"
-                        aria-label="访问令牌有效期"
-                      >
-                        {TTL_OPTIONS.map((opt) => (
-                          <Button
-                            type="button"
-                            key={opt.value}
-                            variant={tokenTtl === opt.value ? 'default' : 'outline'}
-                            size="sm"
-                            onClick={() => setTokenTtl(opt.value)}
-                          >
-                            {opt.label}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                    <MotionPresence>
-                      {creationError && (
-                        <MotionParagraph
-                          key="token-creation-error"
-                          data-motion-feedback="token-creation"
-                          role="alert"
-                          className="text-sm text-destructive"
-                          initial="hidden"
-                          animate="visible"
-                          exit="exit"
-                          variants={FADE_UP_VARIANTS}
-                          transition={feedbackTransition}
-                        >
-                          {creationError}
-                        </MotionParagraph>
-                      )}
-                    </MotionPresence>
-                    <Button
-                      type="submit"
-                      disabled={createTokenMut.isPending || tokenNameError !== null}
-                    >
-                      创建
-                    </Button>
-                  </MotionForm>
-                )}
-              </MotionPresence>
-            </DialogContent>
-          </Dialog>
-        </div>
-      </SettingsSectionHeader>
-      <SettingsSectionContent>
-        <div className="space-y-2">
-          <MotionPresence>
-            {tokens.length === 0 ? (
-              <MotionParagraph
-                key="empty-tokens"
-                className="text-sm text-muted-foreground"
-                initial="hidden"
-                animate="visible"
-                exit="exit"
-                variants={FADE_UP_VARIANTS}
-                transition={feedbackTransition}
-              >
-                暂无访问令牌
-              </MotionParagraph>
-            ) : (
-              tokens.map((t) => (
-                <MotionDiv
-                  key={t.id}
-                  data-motion-token-key={t.id}
-                  className="flex flex-col gap-3 overflow-hidden rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                  initial="hidden"
-                  animate="visible"
-                  exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-                  variants={COLLAPSE_VARIANTS}
-                  transition={rowTransition}
-                >
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <Key className="h-4 w-4 text-muted-foreground" />
-                    <span className="break-all text-sm">{t.name || '（未命名）'}</span>
-                    <Badge variant="outline" className="text-[10px]">
-                      到 {formatExpiry(t.expires_at)} 过期
-                    </Badge>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 self-end text-destructive sm:self-auto"
-                    aria-label={`撤销访问令牌 ${t.name || t.id}`}
-                    disabled={revokeMut.isPending}
-                    onClick={() => {
-                      revokeMut.reset();
-                      setTokenToRevoke(t);
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </MotionDiv>
-              ))
-            )}
-          </MotionPresence>
-        </div>
-        <ConfirmDialog
-          open={tokenToRevoke !== null}
-          onOpenChange={(nextOpen) => {
-            if (!nextOpen && !revokeMut.isPending) {
-              setTokenToRevoke(null);
-            }
-          }}
-          title="撤销访问令牌？"
-          description={`确认撤销访问令牌“${tokenToRevoke?.name || tokenToRevoke?.id || ''}”？撤销后使用该令牌的客户端将立即失去访问权限。`}
-          actionLabel="确认撤销"
-          pendingLabel="撤销中…"
-          isPending={revokeMut.isPending}
-          error={revokeMut.error instanceof Error ? revokeMut.error.message : null}
-          onConfirm={() => {
-            if (tokenToRevoke) {
-              revokeMut.mutate(tokenToRevoke.id);
-            }
-          }}
+            {copyFeedback.message}
+          </MotionParagraph>
+        )}
+      </MotionPresence>
+    </MotionDiv>
+  );
+}
+
+/** Retain the raw name, Unicode limit, TTL selection and submit admission guard. */
+function renderAccessTokenForm(state: AccessTokenViewState) {
+  const {
+    tokenName,
+    setTokenName,
+    tokenTtl,
+    setTokenTtl,
+    feedbackTransition,
+    tokenNameCodePointCount,
+    tokenNameError,
+    createTokenMut,
+    creationError,
+  } = state;
+
+  return (
+    <MotionForm
+      key="token-form"
+      data-motion-token-dialog-state="form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (tokenNameError) return;
+        createTokenMut.mutate();
+      }}
+      className="space-y-4"
+      initial="hidden"
+      animate="visible"
+      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+      variants={FADE_UP_VARIANTS}
+      transition={feedbackTransition}
+    >
+      <div className="space-y-2">
+        <Label htmlFor="access-token-name">名称</Label>
+        <Input
+          id="access-token-name"
+          name="access_token_name"
+          autoComplete="off"
+          spellCheck={false}
+          value={tokenName}
+          onChange={(e) => setTokenName(e.target.value)}
+          aria-invalid={creationError ? true : undefined}
+          placeholder="例如：接口集成"
         />
-      </SettingsSectionContent>
-    </SettingsSection>
+        <p className="text-xs text-muted-foreground">
+          {tokenNameCodePointCount}/{ACCESS_TOKEN_NAME_MAX_CODE_POINTS} Unicode code points
+        </p>
+      </div>
+      <div className="space-y-2">
+        <div className="text-sm font-medium">有效期</div>
+        <div className="flex gap-2 flex-wrap" role="group" aria-label="访问令牌有效期">
+          {TTL_OPTIONS.map((opt) => (
+            <Button
+              type="button"
+              key={opt.value}
+              variant={tokenTtl === opt.value ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setTokenTtl(opt.value)}
+            >
+              {opt.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <MotionPresence>
+        {creationError && (
+          <MotionParagraph
+            key="token-creation-error"
+            data-motion-feedback="token-creation"
+            role="alert"
+            className="text-sm text-destructive"
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={FADE_UP_VARIANTS}
+            transition={feedbackTransition}
+          >
+            {creationError}
+          </MotionParagraph>
+        )}
+      </MotionPresence>
+      <Button type="submit" disabled={createTokenMut.isPending || tokenNameError !== null}>
+        创建
+      </Button>
+    </MotionForm>
+  );
+}
+
+/** Retain empty/list branches and directly keyed revocation rows. */
+function renderAccessTokenList(state: AccessTokenViewState) {
+  const { setTokenToRevoke, feedbackTransition, rowTransition, tokens, revokeMut } = state;
+
+  return (
+    <MotionPresence>
+      {tokens.length === 0 ? (
+        <MotionParagraph
+          key="empty-tokens"
+          className="text-sm text-muted-foreground"
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          variants={FADE_UP_VARIANTS}
+          transition={feedbackTransition}
+        >
+          暂无访问令牌
+        </MotionParagraph>
+      ) : (
+        tokens.map((t) => (
+          <MotionDiv
+            key={t.id}
+            data-motion-token-key={t.id}
+            className="flex flex-col gap-3 overflow-hidden rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+            initial="hidden"
+            animate="visible"
+            exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+            variants={COLLAPSE_VARIANTS}
+            transition={rowTransition}
+          >
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Key className="h-4 w-4 text-muted-foreground" />
+              <span className="break-all text-sm">{t.name || '（未命名）'}</span>
+              <Badge variant="outline" className="text-[10px]">
+                到 {formatExpiry(t.expires_at)} 过期
+              </Badge>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 self-end text-destructive sm:self-auto"
+              aria-label={`撤销访问令牌 ${t.name || t.id}`}
+              disabled={revokeMut.isPending}
+              onClick={() => {
+                revokeMut.reset();
+                setTokenToRevoke(t);
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </MotionDiv>
+        ))
+      )}
+    </MotionPresence>
+  );
+}
+
+/** Retain confirmation target identity and pending-dismissal safeguards. */
+function renderAccessTokenRevocation(state: AccessTokenViewState) {
+  const { tokenToRevoke, setTokenToRevoke, revokeMut } = state;
+
+  return (
+    <ConfirmDialog
+      open={tokenToRevoke !== null}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !revokeMut.isPending) {
+          setTokenToRevoke(null);
+        }
+      }}
+      title="撤销访问令牌？"
+      description={`确认撤销访问令牌“${tokenToRevoke?.name || tokenToRevoke?.id || ''}”？撤销后使用该令牌的客户端将立即失去访问权限。`}
+      actionLabel="确认撤销"
+      pendingLabel="撤销中…"
+      isPending={revokeMut.isPending}
+      error={revokeMut.error instanceof Error ? revokeMut.error.message : null}
+      onConfirm={() => {
+        if (tokenToRevoke) {
+          revokeMut.mutate(tokenToRevoke.id);
+        }
+      }}
+    />
   );
 }

@@ -281,6 +281,15 @@ async function createsTokenAndRetainsFailedRevocation(): Promise<void> {
   );
   await user.click(screen.getByRole('button', { name: '关闭' }));
 
+  await user.click(screen.getByRole('button', { name: '新建' }));
+  await waitFor(() => expect(screen.queryByText('new-raw-token')).not.toBeInTheDocument());
+  expect(screen.getByLabelText('名称')).toHaveValue('');
+  expect(screen.queryByRole('button', { name: '复制新访问令牌' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '创建' }));
+  expect(await screen.findByText('new-raw-token')).toBeInTheDocument();
+  expect(creationPayload).toEqual({ name: '', ttl: 30 * 86400 });
+  await user.click(screen.getByRole('button', { name: '关闭' }));
+
   await user.click(await screen.findByRole('button', { name: '撤销访问令牌 automation' }));
   const confirmation = screen.getByRole('alertdialog', { name: '撤销访问令牌？' });
   await user.click(within(confirmation).getByRole('button', { name: '确认撤销' }));
