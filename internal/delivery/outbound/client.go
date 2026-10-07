@@ -87,11 +87,7 @@ func (client *Client) ValidateUrl(value string) (*whatwg.Url, error) {
 	if location.Scheme() != "https" && !(client.isHttpAllowed && location.Scheme() == "http") {
 		return nil, HttpsRequired
 	}
-	_, authority, _ := strings.Cut(value, "://")
-	if index := strings.IndexAny(authority, "/?#"); index >= 0 {
-		authority = authority[:index]
-	}
-	if strings.Contains(authority, "@") || location.Username() != "" || location.Password() != "" || location.Port() == "0" || strings.Contains(location.Href(true), "?") || location.Href(false) != location.Href(true) {
+	if hasDisallowedUrlAuthority(value, location) {
 		return nil, InvalidUrl
 	}
 	if location.Hostname() == "" {
@@ -129,10 +125,8 @@ func (client *Client) resolve(ctx context.Context, host string) ([]netip.Addr, e
 		if result.err != nil || len(result.addresses) == 0 {
 			return nil, DnsResolutionFailed
 		}
-		for _, address := range result.addresses {
-			if !client.isPrivateAllowed && !IsPublicAddress(address) {
-				return nil, DisallowedAddress
-			}
+		if err := client.validateResolvedAddresses(result.addresses); err != nil {
+			return nil, err
 		}
 		return result.addresses, nil
 	}
@@ -150,89 +144,23 @@ func (client *Client) PostJson(ctx context.Context, value string, headers http.H
 	if err != nil {
 		return Response{}, RequestFailed
 	}
-	headers = headers.Clone()
-	if headers == nil {
-		headers = make(http.Header)
-	}
-	if headers.Get("Content-Type") == "" {
-		headers.Set("Content-Type", "application/json")
-	}
-	if _, exists := headers["Accept"]; !exists {
-		headers.Set("Accept", "*/*")
-	}
-	if _, exists := headers["User-Agent"]; !exists {
-		headers.Set("User-Agent", "")
-	}
-	for name, values := range headers {
-		if !httpguts.ValidHeaderFieldName(name) {
-			return Response{}, RequestFailed
-		}
-		for _, value := range values {
-			if !httpguts.ValidHeaderFieldValue(value) {
-				return Response{}, RequestFailed
-			}
-		}
-	}
-	connection, err := platform.New("")
+	headers, err = prepareOutboundHeaders(headers)
 	if err != nil {
-		return Response{}, RequestFailed
+		return Response{}, err
+	}
+	connection, err := client.newOutboundConnection(ctx)
+	if err != nil {
+		return Response{}, err
 	}
 	defer connection.CloseIdleConnections()
-	connection.DisableCompression = true
-	connection.TLSClientConfig = &tls.Config{}
-	if client.tlsConfig != nil {
-		connection.TLSClientConfig = client.tlsConfig.Clone()
-	}
-	connection.DialContext = func(dialContext context.Context, network, address string) (net.Conn, error) {
-		return client.connect(dialContext, ctx, network, address, nil)
-	}
-	connection.DialTLSContext = func(dialContext context.Context, network, address string) (net.Conn, error) {
-		return client.connect(dialContext, ctx, network, address, connection.TLSClientConfig)
-	}
 	var hasConnection atomic.Bool
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { hasConnection.Store(true) }})
 	response, err := transport.RedirectSequence(ctx, connection, nil, transport.Proxy{}, http.MethodPost, location.Href(false), string(encoded), headers, nil)
 	if err != nil {
-		var policyError Error
-		if errors.As(err, &policyError) {
-			return Response{}, policyError
-		}
-		if errors.Is(err, transport.ErrRequestBuild) {
-			return Response{}, RequestFailed
-		}
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return Response{}, RequestFailed
-		}
-		var networkError net.Error
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.As(err, &networkError) && networkError.Timeout() {
-			return Response{}, TimedOut
-		}
-		if !hasConnection.Load() {
-			return Response{}, ConnectFailed
-		}
-		return Response{}, RequestFailed
+		return Response{}, classifyOutboundRequestError(ctx, err, hasConnection.Load())
 	}
 	defer response.Body.Close()
-	result := Response{StatusCode: response.StatusCode, RequestId: safeRequestId(response.Header), RetryAfterSeconds: retryAfter(response.Header)}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return result, nil
-	}
-	if err := validateHeaders(response.Header, client.maximum); err != nil {
-		return Response{}, err
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, client.maximum+1))
-	if err != nil || ctx.Err() != nil {
-		return Response{}, RequestFailed
-	}
-	if int64(len(data)) > client.maximum {
-		return Response{}, ResponseTooLarge
-	}
-	parsed, err := transport.ParseJson(data)
-	if err != nil {
-		return Response{}, InvalidJson
-	}
-	result.Body = parsed
-	return result, nil
+	return client.readOutboundResponse(ctx, response)
 }
 
 func validateHeaders(headers http.Header, maximum int64) error {
@@ -272,14 +200,7 @@ func safeRequestId(headers http.Header) *string {
 		if value == "" || len(value) > 128 {
 			continue
 		}
-		isSafe := true
-		for _, character := range []byte(value) {
-			if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("-_.:", rune(character))) {
-				isSafe = false
-				break
-			}
-		}
-		if isSafe {
+		if isSafeRequestId(value) {
 			return &value
 		}
 	}
@@ -297,4 +218,125 @@ func retryAfter(headers http.Header) *uint64 {
 		return nil
 	}
 	return &seconds
+}
+
+func hasDisallowedUrlAuthority(value string, location *whatwg.Url) bool {
+	_, authority, _ := strings.Cut(value, "://")
+	if index := strings.IndexAny(authority, "/?#"); index >= 0 {
+		authority = authority[:index]
+	}
+	if strings.Contains(authority, "@") || location.Username() != "" || location.Password() != "" || location.Port() == "0" || strings.Contains(location.Href(true), "?") || location.Href(false) != location.Href(true) {
+		return true
+	}
+	return false
+}
+
+func (client *Client) validateResolvedAddresses(addresses []netip.Addr) error {
+	for _, address := range addresses {
+		if !client.isPrivateAllowed && !IsPublicAddress(address) {
+			return DisallowedAddress
+		}
+	}
+	return nil
+}
+
+func prepareOutboundHeaders(headers http.Header) (http.Header, error) {
+	headers = headers.Clone()
+	if headers == nil {
+		headers = make(http.Header)
+	}
+	if headers.Get("Content-Type") == "" {
+		headers.Set("Content-Type", "application/json")
+	}
+	if _, exists := headers["Accept"]; !exists {
+		headers.Set("Accept", "*/*")
+	}
+	if _, exists := headers["User-Agent"]; !exists {
+		headers.Set("User-Agent", "")
+	}
+	for name, values := range headers {
+		if !httpguts.ValidHeaderFieldName(name) {
+			return nil, RequestFailed
+		}
+		for _, value := range values {
+			if !httpguts.ValidHeaderFieldValue(value) {
+				return nil, RequestFailed
+			}
+		}
+	}
+	return headers, nil
+}
+
+func (client *Client) newOutboundConnection(ctx context.Context) (*http.Transport, error) {
+	connection, err := platform.New("")
+	if err != nil {
+		return nil, RequestFailed
+	}
+	connection.DisableCompression = true
+	connection.TLSClientConfig = &tls.Config{}
+	if client.tlsConfig != nil {
+		connection.TLSClientConfig = client.tlsConfig.Clone()
+	}
+	connection.DialContext = func(dialContext context.Context, network, address string) (net.Conn, error) {
+		return client.connect(dialContext, ctx, network, address, nil)
+	}
+	connection.DialTLSContext = func(dialContext context.Context, network, address string) (net.Conn, error) {
+		return client.connect(dialContext, ctx, network, address, connection.TLSClientConfig)
+	}
+	return connection, nil
+}
+
+func classifyOutboundRequestError(ctx context.Context, err error, hasConnection bool) error {
+	var policyError Error
+	if errors.As(err, &policyError) {
+		return policyError
+	}
+	if errors.Is(err, transport.ErrRequestBuild) {
+		return RequestFailed
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return RequestFailed
+	}
+	var networkError net.Error
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.As(err, &networkError) && networkError.Timeout() {
+		return TimedOut
+	}
+	if !hasConnection {
+		return ConnectFailed
+	}
+	return RequestFailed
+}
+
+func (client *Client) readOutboundResponse(ctx context.Context, response *http.Response) (Response, error) {
+	result := Response{StatusCode: response.StatusCode, RequestId: safeRequestId(response.Header), RetryAfterSeconds: retryAfter(response.Header)}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return result, nil
+	}
+	if err := validateHeaders(response.Header, client.maximum); err != nil {
+		return Response{}, err
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, client.maximum+1))
+	if err != nil || ctx.Err() != nil {
+		return Response{}, RequestFailed
+	}
+	if int64(len(data)) > client.maximum {
+		return Response{}, ResponseTooLarge
+	}
+	parsed, err := transport.ParseJson(data)
+	if err != nil {
+		return Response{}, InvalidJson
+	}
+	result.Body = parsed
+	return result, nil
+}
+
+func isSafeRequestId(value string) bool {
+	isSafe := true
+	for _, character := range []byte(value) {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("-_.:", rune(character))) {
+			isSafe = false
+			break
+		}
+	}
+	return isSafe
 }
