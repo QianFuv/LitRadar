@@ -106,7 +106,7 @@ func migrateLegacyAnchors(ctx context.Context, connection *sql.Conn) error {
 		return err
 	}
 	for _, value := range values {
-		if value[0] == "" || value[1] == "" || value[2] == "" || value[4] == "" || !isLegacyComplete(string(value[3])) {
+		if !isCompleteLegacyAnchor(value) {
 			continue
 		}
 		if _, err := connection.ExecContext(ctx, `INSERT INTO provider_sync_anchors(catalog_name,provider_name,catalog_id,committed_anchor,completed_at) VALUES(?1,?2,?3,NULL,?4) ON CONFLICT(catalog_name,provider_name,catalog_id) DO UPDATE SET committed_anchor=NULL,completed_at=excluded.completed_at`, value[0], value[1], value[2], value[4]); err != nil {
@@ -125,6 +125,14 @@ func isLegacyComplete(value string) bool {
 	if err != nil || opening != json.Delim('{') {
 		return false
 	}
+	return readLegacyCompleteState(decoder)
+}
+
+func isCompleteLegacyAnchor(value [5]sqlite.Text) bool {
+	return !(value[0] == "" || value[1] == "" || value[2] == "" || value[4] == "" || !isLegacyComplete(string(value[3])))
+}
+
+func readLegacyCompleteState(decoder *json.Decoder) bool {
 	hasState := false
 	for decoder.More() {
 		key, err := decoder.Token()

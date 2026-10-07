@@ -173,86 +173,33 @@ func (writer *contentWriter) loadArticle(id int64) (*domain.ArticleDraft, *int64
 
 func (writer *contentWriter) writeArticle(catalog domain.JournalCatalogEntry, journal int64, article domain.ArticleDraft, revision, createdAt string, outcome *ContentWriteOutcome) error {
 	incoming := ArticleIdentityKeys(article)
-	aliases := map[ArticleIdentityKey]int64{}
-	for _, key := range incoming {
-		var owner sqlite.Integer
-		err := writer.queryRow(identityLookupSql, key.Kind, key.Value).Scan(&owner)
-		if err == nil {
-			aliases[key] = int64(owner)
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
+	aliases, err := writer.lookupIdentityAliases(incoming)
+	if err != nil {
+		return err
 	}
 	resolution, err := ResolveArticleIdentity(article, aliases)
 	if err != nil {
 		return err
 	}
-	existing, previousIssue, err := writer.loadArticle(resolution.ArticleId)
+	existing, previousIssue, err := writer.loadResolvedArticle(resolution)
 	if err != nil {
 		return err
 	}
-	if !resolution.IsExisting && existing != nil {
-		return &ArticleIdCollision{resolution.ArticleId}
+	merged, err := mergeStoredArticle(existing, article)
+	if err != nil {
+		return err
 	}
-	merged := article
-	if existing != nil {
-		merged, err = MergeResolvedArticleDrafts(*existing, article)
-		if err != nil {
-			return err
-		}
-	}
-	merged.Authors = append([]domain.ArticleAuthorDraft{}, merged.Authors...)
-	merged.RetractionDois = append([]string{}, merged.RetractionDois...)
 	issue, err := writer.upsertIssue(journal, domain.IssueDraft{CatalogId: merged.CatalogId, PublicationYear: merged.PublicationYear, Title: merged.IssueTitle, Volume: merged.Volume, Number: merged.IssueNumber, Date: merged.Date})
 	if err != nil {
 		return err
 	}
 	isChanged := existing == nil || !reflect.DeepEqual(*existing, merged) || !reflect.DeepEqual(previousIssue, issue)
 	if isChanged {
-		if err := writer.upsertArticle(resolution.ArticleId, journal, issue, merged); err != nil {
+		if err := writer.persistArticleChange(catalog, resolution.ArticleId, journal, previousIssue, issue, existing, merged, revision, createdAt, outcome); err != nil {
 			return err
-		}
-		if err := writer.projectArticle(resolution.ArticleId, journal, issue, catalog, merged); err != nil {
-			return err
-		}
-		if writer.shouldRecordEvents {
-			if existing != nil && (!reflect.DeepEqual(previousIssue, issue) || !reflect.DeepEqual(existing.InPress, merged.InPress)) {
-				count, err := writer.recordEvent(revision, resolution.ArticleId, "remove", journal, previousIssue, existing.InPress, createdAt)
-				if err != nil {
-					return err
-				}
-				outcome.ChangeEventsEmitted += count
-			}
-			count, err := writer.recordEvent(revision, resolution.ArticleId, "upsert", journal, issue, merged.InPress, createdAt)
-			if err != nil {
-				return err
-			}
-			outcome.ChangeEventsEmitted += count
-		}
-		if !reflect.DeepEqual(previousIssue, issue) && previousIssue != nil {
-			writer.observedIssues[*previousIssue] = true
-			if _, err := writer.connection.ExecContext(writer.ctx, "DELETE FROM issues WHERE issue_id=?1 AND NOT EXISTS(SELECT 1 FROM articles WHERE issue_id=?1)", *previousIssue); err != nil {
-				return err
-			}
-		}
-		outcome.ArticlesChanged++
-	}
-	keys := append(incoming, ArticleIdentityKeys(merged)...)
-	sortIdentityKeys(keys)
-	keys = slices.Compact(keys)
-	for _, key := range keys {
-		var owner, wasInserted sqlite.Integer
-		if err := writer.queryRow(identityClaimSql, key.Kind, key.Value, resolution.ArticleId).Scan(&owner, &wasInserted); err != nil {
-			return err
-		}
-		if wasInserted != 0 {
-			outcome.IdentityAliasesAdded++
-		}
-		if int64(owner) != resolution.ArticleId {
-			return &IdentityConflict{[]int64{int64(owner), resolution.ArticleId}}
 		}
 	}
-	return nil
+	return writer.claimArticleAliases(incoming, merged, resolution.ArticleId, outcome)
 }
 
 func (writer *contentWriter) upsertArticle(id, journal int64, issue *int64, article domain.ArticleDraft) error {
@@ -308,4 +255,100 @@ func integerBool(value *int64) *bool {
 		return nil
 	}
 	return ptr(*value != 0)
+}
+
+func (writer *contentWriter) lookupIdentityAliases(incoming []ArticleIdentityKey) (map[ArticleIdentityKey]int64, error) {
+	aliases := map[ArticleIdentityKey]int64{}
+	for _, key := range incoming {
+		var owner sqlite.Integer
+		err := writer.queryRow(identityLookupSql, key.Kind, key.Value).Scan(&owner)
+		if err == nil {
+			aliases[key] = int64(owner)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
+	return aliases, nil
+}
+
+func (writer *contentWriter) claimArticleAliases(incoming []ArticleIdentityKey, merged domain.ArticleDraft, id int64, outcome *ContentWriteOutcome) error {
+	keys := append(incoming, ArticleIdentityKeys(merged)...)
+	sortIdentityKeys(keys)
+	keys = slices.Compact(keys)
+	for _, key := range keys {
+		var owner, wasInserted sqlite.Integer
+		if err := writer.queryRow(identityClaimSql, key.Kind, key.Value, id).Scan(&owner, &wasInserted); err != nil {
+			return err
+		}
+		if wasInserted != 0 {
+			outcome.IdentityAliasesAdded++
+		}
+		if int64(owner) != id {
+			return &IdentityConflict{[]int64{int64(owner), id}}
+		}
+	}
+	return nil
+}
+
+func (writer *contentWriter) persistArticleChange(catalog domain.JournalCatalogEntry, id, journal int64, previousIssue, issue *int64, existing *domain.ArticleDraft, merged domain.ArticleDraft, revision, createdAt string, outcome *ContentWriteOutcome) error {
+	if err := writer.upsertArticle(id, journal, issue, merged); err != nil {
+		return err
+	}
+	if err := writer.projectArticle(id, journal, issue, catalog, merged); err != nil {
+		return err
+	}
+	if writer.shouldRecordEvents {
+		if err := writer.recordArticleChange(id, journal, previousIssue, issue, existing, merged, revision, createdAt, outcome); err != nil {
+			return err
+		}
+	}
+	if !reflect.DeepEqual(previousIssue, issue) && previousIssue != nil {
+		writer.observedIssues[*previousIssue] = true
+		if _, err := writer.connection.ExecContext(writer.ctx, "DELETE FROM issues WHERE issue_id=?1 AND NOT EXISTS(SELECT 1 FROM articles WHERE issue_id=?1)", *previousIssue); err != nil {
+			return err
+		}
+	}
+	outcome.ArticlesChanged++
+	return nil
+}
+
+func (writer *contentWriter) recordArticleChange(id, journal int64, previousIssue, issue *int64, existing *domain.ArticleDraft, merged domain.ArticleDraft, revision, createdAt string, outcome *ContentWriteOutcome) error {
+	if existing != nil && (!reflect.DeepEqual(previousIssue, issue) || !reflect.DeepEqual(existing.InPress, merged.InPress)) {
+		count, err := writer.recordEvent(revision, id, "remove", journal, previousIssue, existing.InPress, createdAt)
+		if err != nil {
+			return err
+		}
+		outcome.ChangeEventsEmitted += count
+	}
+	count, err := writer.recordEvent(revision, id, "upsert", journal, issue, merged.InPress, createdAt)
+	if err != nil {
+		return err
+	}
+	outcome.ChangeEventsEmitted += count
+	return nil
+}
+
+func (writer *contentWriter) loadResolvedArticle(resolution ArticleIdentityResolution) (*domain.ArticleDraft, *int64, error) {
+	existing, previousIssue, err := writer.loadArticle(resolution.ArticleId)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !resolution.IsExisting && existing != nil {
+		return nil, nil, &ArticleIdCollision{resolution.ArticleId}
+	}
+	return existing, previousIssue, nil
+}
+
+func mergeStoredArticle(existing *domain.ArticleDraft, article domain.ArticleDraft) (domain.ArticleDraft, error) {
+	merged := article
+	if existing != nil {
+		value, err := MergeResolvedArticleDrafts(*existing, article)
+		merged = value
+		if err != nil {
+			return merged, err
+		}
+	}
+	merged.Authors = append([]domain.ArticleAuthorDraft{}, merged.Authors...)
+	merged.RetractionDois = append([]string{}, merged.RetractionDois...)
+	return merged, nil
 }

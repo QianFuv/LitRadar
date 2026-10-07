@@ -171,16 +171,7 @@ func TestBatchCompetingConnectionsAndLeaseBoundary(t *testing.T) {
 	if err := HeartbeatBatchLease(ctx, other.Conn, batch.BatchId, "other", 999); err == nil {
 		t.Fatal("expired lease revived by heartbeat")
 	}
-	if batchLeaseExpiry(math.MaxInt64-1) != math.MaxInt64 {
-		t.Fatal("expiry overflow")
-	}
-	if _, err := AdmitBatch(ctx, other.Conn, request, true, "other", math.MaxInt64-1); err != nil {
-		t.Fatal(err)
-	}
-	var expiry int64
-	if err := connection.QueryRowContext(ctx, "SELECT expires_at FROM index_batch_lease").Scan(&expiry); err != nil || expiry != math.MaxInt64 {
-		t.Fatal(expiry, err)
-	}
+	assertBatchLeaseSaturates(t, connection, other, request)
 }
 
 func TestBatchMalformedRecoveryMetadataRejected(t *testing.T) {
@@ -219,5 +210,20 @@ func TestBatchIntentFailureDoesNotAdvancePhase(t *testing.T) {
 	values, err := ReadBatchCatalogs(ctx, connection.Conn, batch.BatchId)
 	if err != nil || values[0].ManifestIntent != nil || values[0].Phase != CatalogIndexing {
 		t.Fatalf("partly committed intent: %v %v", values, err)
+	}
+}
+
+func assertBatchLeaseSaturates(t *testing.T, connection, other *Connection, request BatchRequest) {
+	t.Helper()
+	ctx := context.Background()
+	if batchLeaseExpiry(math.MaxInt64-1) != math.MaxInt64 {
+		t.Fatal("expiry overflow")
+	}
+	if _, err := AdmitBatch(ctx, other.Conn, request, true, "other", math.MaxInt64-1); err != nil {
+		t.Fatal(err)
+	}
+	var expiry int64
+	if err := connection.QueryRowContext(ctx, "SELECT expires_at FROM index_batch_lease").Scan(&expiry); err != nil || expiry != math.MaxInt64 {
+		t.Fatal(expiry, err)
 	}
 }

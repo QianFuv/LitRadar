@@ -177,26 +177,8 @@ func MergeResolvedArticleDrafts(left, right domain.ArticleDraft) (domain.Article
 	if left.InPress != nil && !*left.InPress && right.InPress != nil && *right.InPress {
 		preferred, fallback = left, right
 	}
-	merged.Date = copyValue(preferred.Date)
-	if merged.Date == nil && fallback.Date != nil {
-		isCompatible := preferred.PublicationYear == nil
-		if !isCompatible {
-			year, err := strconv.ParseInt(publicationYear(*fallback.Date), 10, 64)
-			isCompatible = err == nil && year == *preferred.PublicationYear
-		}
-		if isCompatible {
-			merged.Date = copyValue(fallback.Date)
-		}
-	}
-	merged.PublicationYear = nil
-	if merged.Date != nil {
-		if year, err := strconv.ParseInt(publicationYear(*merged.Date), 10, 64); err == nil {
-			merged.PublicationYear = &year
-		}
-	}
-	if merged.PublicationYear == nil {
-		merged.PublicationYear = firstValue(preferred.PublicationYear, fallback.PublicationYear)
-	}
+	merged.Date = resolvedPublicationDate(preferred, fallback)
+	merged.PublicationYear = resolvedPublicationYear(merged.Date, preferred, fallback)
 	merged.IssueTitle = firstValue(preferred.IssueTitle, fallback.IssueTitle)
 	merged.Volume = firstValue(preferred.Volume, fallback.Volume)
 	merged.IssueNumber = firstValue(preferred.IssueNumber, fallback.IssueNumber)
@@ -206,26 +188,15 @@ func MergeResolvedArticleDrafts(left, right domain.ArticleDraft) (domain.Article
 }
 
 func mergeDrafts(left, right domain.ArticleDraft, canMergeDois bool) (domain.ArticleDraft, error) {
-	if left.CatalogId != right.CatalogId {
-		return domain.ArticleDraft{}, errors.New("article drafts use different catalog IDs")
+	if err := validateDraftMerge(left, right, canMergeDois); err != nil {
+		return domain.ArticleDraft{}, err
 	}
 	doi := orderedText(left.Doi, right.Doi)
-	if !canMergeDois && left.Doi != nil && right.Doi != nil && *left.Doi != *right.Doi {
-		return domain.ArticleDraft{}, fmt.Errorf("article drafts contain conflicting DOI values")
-	}
-	if left.Pmid != nil && right.Pmid != nil && *left.Pmid != *right.Pmid {
-		return domain.ArticleDraft{}, fmt.Errorf("article drafts contain conflicting PMID values")
-	}
 	year := firstValue(left.PublicationYear, right.PublicationYear)
 	if year != nil && right.PublicationYear != nil && *right.PublicationYear < *year {
 		year = copyValue(right.PublicationYear)
 	}
-	authors := left.Authors
-	if len(right.Authors) > len(authors) || len(right.Authors) == len(authors) && slices.CompareFunc(right.Authors, authors, func(first, second domain.ArticleAuthorDraft) int {
-		return strings.Compare(first.DisplayName, second.DisplayName)
-	}) < 0 {
-		authors = right.Authors
-	}
+	authors := selectMergedAuthors(left.Authors, right.Authors)
 	retractions := append(append([]string{}, left.RetractionDois...), right.RetractionDois...)
 	slices.Sort(retractions)
 	retractions = slices.Compact(retractions)
@@ -282,4 +253,55 @@ func asciiLower(value string) string {
 		}
 		return character
 	}, value)
+}
+
+func resolvedPublicationDate(preferred, fallback domain.ArticleDraft) *string {
+	date := copyValue(preferred.Date)
+	if date == nil && fallback.Date != nil {
+		isCompatible := preferred.PublicationYear == nil
+		if !isCompatible {
+			year, err := strconv.ParseInt(publicationYear(*fallback.Date), 10, 64)
+			isCompatible = err == nil && year == *preferred.PublicationYear
+		}
+		if isCompatible {
+			date = copyValue(fallback.Date)
+		}
+	}
+	return date
+}
+
+func resolvedPublicationYear(date *string, preferred, fallback domain.ArticleDraft) *int64 {
+	var yearValue *int64
+	if date != nil {
+		if year, err := strconv.ParseInt(publicationYear(*date), 10, 64); err == nil {
+			yearValue = &year
+		}
+	}
+	if yearValue == nil {
+		yearValue = firstValue(preferred.PublicationYear, fallback.PublicationYear)
+	}
+	return yearValue
+}
+
+func validateDraftMerge(left, right domain.ArticleDraft, canMergeDois bool) error {
+	if left.CatalogId != right.CatalogId {
+		return errors.New("article drafts use different catalog IDs")
+	}
+	if !canMergeDois && left.Doi != nil && right.Doi != nil && *left.Doi != *right.Doi {
+		return fmt.Errorf("article drafts contain conflicting DOI values")
+	}
+	if left.Pmid != nil && right.Pmid != nil && *left.Pmid != *right.Pmid {
+		return fmt.Errorf("article drafts contain conflicting PMID values")
+	}
+	return nil
+}
+
+func selectMergedAuthors(left, right []domain.ArticleAuthorDraft) []domain.ArticleAuthorDraft {
+	authors := left
+	if len(right) > len(authors) || len(right) == len(authors) && slices.CompareFunc(right, authors, func(first, second domain.ArticleAuthorDraft) int {
+		return strings.Compare(first.DisplayName, second.DisplayName)
+	}) < 0 {
+		authors = right
+	}
+	return authors
 }

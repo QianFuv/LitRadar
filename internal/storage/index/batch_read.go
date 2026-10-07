@@ -25,55 +25,17 @@ func loadBatch(ctx context.Context, connection *sql.Conn, id, owner string, didR
 
 // ReadBatchCatalogs loads typed persisted metadata in original ordinal order before validating recovery payloads.
 func ReadBatchCatalogs(ctx context.Context, connection *sql.Conn, id string) ([]IndexBatchCatalog, error) {
-	rows, err := connection.QueryContext(ctx, `SELECT ordinal,file_name,catalog_name,provider_name,journal_count,phase FROM index_batch_catalogs WHERE batch_id=?1 ORDER BY ordinal`, id)
-	if err != nil {
-		return nil, err
-	}
-	type rawCatalog struct {
-		ordinal, count              sqlite.Integer
-		file, name, provider, phase sqlite.Text
-	}
-	var raw []rawCatalog
-	for rows.Next() {
-		var value rawCatalog
-		if err := rows.Scan(&value.ordinal, &value.file, &value.name, &value.provider, &value.count, &value.phase); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		raw = append(raw, value)
-	}
-	err = rows.Err()
-	rows.Close()
+	raw, err := readRawBatchCatalogs(ctx, connection, id)
 	if err != nil {
 		return nil, err
 	}
 	catalogs := make([]IndexBatchCatalog, 0, len(raw))
 	for _, value := range raw {
-		ordinal, err := storedCount(int64(value.ordinal))
+		catalog, err := decodeBatchCatalog(ctx, connection, id, value)
 		if err != nil {
 			return nil, err
 		}
-		count, err := storedCount(int64(value.count))
-		if err != nil {
-			return nil, err
-		}
-		phase, err := parseCatalogPhase(string(value.phase))
-		if err != nil {
-			return nil, err
-		}
-		outcome, err := readCatalogOutcome(ctx, connection, id, ordinal)
-		if err != nil {
-			return nil, err
-		}
-		intent, err := readManifestIntent(ctx, connection, id, ordinal)
-		if err != nil {
-			return nil, err
-		}
-		handoff, err := readNotifyHandoff(ctx, connection, id, ordinal)
-		if err != nil {
-			return nil, err
-		}
-		catalogs = append(catalogs, IndexBatchCatalog{ordinal, string(value.file), string(value.name), string(value.provider), count, phase, outcome, intent, handoff})
+		catalogs = append(catalogs, catalog)
 	}
 	return catalogs, nil
 }
@@ -140,18 +102,9 @@ func readManifestIntent(ctx context.Context, connection *sql.Conn, id string, or
 	if err != nil {
 		return nil, err
 	}
-	if !payload.hasValue && digest.Value == nil && through.Value == nil && path.Value == nil && run.Value == nil && generated.Value == nil {
-		return nil, nil
-	}
-	if !payload.hasValue || digest.Value == nil || path.Value == nil || run.Value == nil || generated.Value == nil {
-		return nil, batchState("stored manifest intent is incomplete")
-	}
-	intent := ManifestIntent{payload.value, *digest.Value, through.Value, *path.Value, *run.Value, *generated.Value}
-	if err := validateManifestIntent(intent); err != nil {
-		return nil, err
-	}
-	return &intent, nil
+	return decodeStoredManifestIntent(payload, digest.Value, through.Value, path.Value, run.Value, generated.Value)
 }
+
 func readCatalogOutcome(ctx context.Context, connection *sql.Conn, id string, ordinal uint64) (*BatchCatalogOutcome, error) {
 	count, err := sqliteCount(ordinal)
 	if err != nil {
@@ -164,28 +117,7 @@ func readCatalogOutcome(ctx context.Context, connection *sql.Conn, id string, or
 	if err != nil {
 		return nil, err
 	}
-	if run.Value == nil {
-		if written.Value != nil || attempts.Value != nil || path.Value != nil {
-			return nil, batchState("stored catalog outcome is incomplete")
-		}
-		return nil, nil
-	}
-	journalCount, err := storedCount(int64(journals))
-	if err != nil {
-		return nil, err
-	}
-	if written.Value == nil || attempts.Value == nil {
-		return nil, batchState("stored catalog outcome is incomplete")
-	}
-	attemptCount, err := storedCount(*attempts.Value)
-	if err != nil {
-		return nil, err
-	}
-	outcome := BatchCatalogOutcome{*run.Value, journalCount, *written.Value, attemptCount, path.Value}
-	if err := validateCatalogOutcome(outcome); err != nil {
-		return nil, err
-	}
-	return &outcome, nil
+	return decodeStoredCatalogOutcome(run.Value, int64(journals), written.Value, attempts.Value, path.Value)
 }
 
 type batchExitRangeError struct{ value int64 }
@@ -228,22 +160,7 @@ func readNotifyHandoff(ctx context.Context, connection *sql.Conn, id string, ord
 		}
 		return nil, err
 	}
-	code := exit.value
-	if attempt.Value == nil && status.Value == nil && code == nil && ackAttempt.Value == nil && ackTime.Value == nil {
-		return nil, nil
-	}
-	if attempt.Value == nil || status.Value == nil {
-		return nil, batchState("stored notification handoff is incomplete")
-	}
-	parsed, err := parseNotifyStatus(*status.Value)
-	if err != nil {
-		return nil, err
-	}
-	state := NotifyHandoffState{*attempt.Value, parsed, code, ackAttempt.Value, ackTime.Value}
-	if err := validateNotifyHandoff(state); err != nil {
-		return nil, err
-	}
-	return &state, nil
+	return decodeStoredNotifyHandoff(attempt.Value, status.Value, exit.value, ackAttempt.Value, ackTime.Value)
 }
 
 func validateManifestIntent(intent ManifestIntent) error {
@@ -287,6 +204,125 @@ func validateNotifyHandoff(state NotifyHandoffState) error {
 	if state.Status != NotifyUnknown && hasZero && !state.Status.IsSuccess() {
 		return batchState("unsuccessful notification handoff cannot have a zero exit code")
 	}
+	return validateNotifyAcknowledgement(state)
+}
+
+type rawBatchCatalog struct {
+	ordinal, count              sqlite.Integer
+	file, name, provider, phase sqlite.Text
+}
+
+func readRawBatchCatalogs(ctx context.Context, connection *sql.Conn, id string) ([]rawBatchCatalog, error) {
+	rows, err := connection.QueryContext(ctx, `SELECT ordinal,file_name,catalog_name,provider_name,journal_count,phase FROM index_batch_catalogs WHERE batch_id=?1 ORDER BY ordinal`, id)
+	if err != nil {
+		return nil, err
+	}
+	var raw []rawBatchCatalog
+	for rows.Next() {
+		var value rawBatchCatalog
+		if err := rows.Scan(&value.ordinal, &value.file, &value.name, &value.provider, &value.count, &value.phase); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		raw = append(raw, value)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func decodeBatchCatalog(ctx context.Context, connection *sql.Conn, id string, value rawBatchCatalog) (IndexBatchCatalog, error) {
+	ordinal, err := storedCount(int64(value.ordinal))
+	if err != nil {
+		return IndexBatchCatalog{}, err
+	}
+	count, err := storedCount(int64(value.count))
+	if err != nil {
+		return IndexBatchCatalog{}, err
+	}
+	phase, err := parseCatalogPhase(string(value.phase))
+	if err != nil {
+		return IndexBatchCatalog{}, err
+	}
+	outcome, err := readCatalogOutcome(ctx, connection, id, ordinal)
+	if err != nil {
+		return IndexBatchCatalog{}, err
+	}
+	intent, err := readManifestIntent(ctx, connection, id, ordinal)
+	if err != nil {
+		return IndexBatchCatalog{}, err
+	}
+	handoff, err := readNotifyHandoff(ctx, connection, id, ordinal)
+	if err != nil {
+		return IndexBatchCatalog{}, err
+	}
+	return IndexBatchCatalog{ordinal, string(value.file), string(value.name), string(value.provider), count, phase, outcome, intent, handoff}, nil
+}
+
+func decodeStoredManifestIntent(payload optionalBatchBlob, digest *string, through *int64, path, run, generated *string) (*ManifestIntent, error) {
+	if !hasStoredManifestIntent(payload, digest, through, path, run, generated) {
+		return nil, nil
+	}
+	if !payload.hasValue || digest == nil || path == nil || run == nil || generated == nil {
+		return nil, batchState("stored manifest intent is incomplete")
+	}
+	intent := ManifestIntent{payload.value, *digest, through, *path, *run, *generated}
+	if err := validateManifestIntent(intent); err != nil {
+		return nil, err
+	}
+	return &intent, nil
+}
+func hasStoredManifestIntent(payload optionalBatchBlob, digest *string, through *int64, path, run, generated *string) bool {
+	return payload.hasValue || digest != nil || through != nil || path != nil || run != nil || generated != nil
+}
+
+func decodeStoredCatalogOutcome(run *string, journals int64, written, attempts *int64, path *string) (*BatchCatalogOutcome, error) {
+	if run == nil {
+		if written != nil || attempts != nil || path != nil {
+			return nil, batchState("stored catalog outcome is incomplete")
+		}
+		return nil, nil
+	}
+	journalCount, err := storedCount(journals)
+	if err != nil {
+		return nil, err
+	}
+	if written == nil || attempts == nil {
+		return nil, batchState("stored catalog outcome is incomplete")
+	}
+	attemptCount, err := storedCount(*attempts)
+	if err != nil {
+		return nil, err
+	}
+	outcome := BatchCatalogOutcome{*run, journalCount, *written, attemptCount, path}
+	if err := validateCatalogOutcome(outcome); err != nil {
+		return nil, err
+	}
+	return &outcome, nil
+}
+
+func decodeStoredNotifyHandoff(attempt, status *string, code *int32, ackAttempt *string, ackTime *int64) (*NotifyHandoffState, error) {
+	if attempt == nil && status == nil && code == nil && ackAttempt == nil && ackTime == nil {
+		return nil, nil
+	}
+	if attempt == nil || status == nil {
+		return nil, batchState("stored notification handoff is incomplete")
+	}
+	parsed, err := parseNotifyStatus(*status)
+	if err != nil {
+		return nil, err
+	}
+	state := NotifyHandoffState{*attempt, parsed, code, ackAttempt, ackTime}
+	if err := validateNotifyHandoff(state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func validateNotifyAcknowledgement(state NotifyHandoffState) error {
 	if (state.UnknownAcknowledgedAttemptId == nil) != (state.UnknownAcknowledgedAt == nil) {
 		return batchState("stored notification acknowledgement is incomplete")
 	}

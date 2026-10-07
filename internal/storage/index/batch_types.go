@@ -54,30 +54,11 @@ func NewBatchRequest(catalogs []CatalogInput, selection string, mode domain.Inde
 	if issueBatchSize == 0 {
 		return BatchRequest{}, batchInput("issue batch size must be greater than zero")
 	}
-	filenames, names := map[string]bool{}, map[string]bool{}
-	for _, catalog := range catalogs {
-		for _, field := range [][2]string{{catalog.Filename, "catalog filename must be non-empty and bounded"}, {catalog.CatalogName, "catalog name must be non-empty and bounded"}, {catalog.ProviderName, "provider route must be non-empty and bounded"}} {
-			if err := validateIdentifier(field[0], field[1]); err != nil {
-				return BatchRequest{}, err
-			}
-		}
-		if len(catalog.CsvSha256) != 64 || !isHexDigest(catalog.CsvSha256) {
-			return BatchRequest{}, batchInput("catalog digest must be a SHA-256 hexadecimal value")
-		}
-		if filenames[catalog.Filename] {
-			return BatchRequest{}, batchInput("catalog filenames must be unique within one batch")
-		}
-		filenames[catalog.Filename] = true
-		if names[catalog.CatalogName] {
-			return BatchRequest{}, batchInput("catalog names must be unique within one batch")
-		}
-		names[catalog.CatalogName] = true
+	if err := validateBatchCatalogs(catalogs); err != nil {
+		return BatchRequest{}, err
 	}
-	if selection != "all" && selection != "explicit_file" {
-		return BatchRequest{}, batchInput("catalog selection is invalid")
-	}
-	if mode != domain.Bootstrap && mode != domain.Incremental && mode != domain.FullRescan {
-		return BatchRequest{}, batchInput("synchronization mode is invalid")
+	if err := validateBatchSelection(selection, mode); err != nil {
+		return BatchRequest{}, err
 	}
 	return request, nil
 }
@@ -272,7 +253,7 @@ func validateRelativePath(value string) error {
 	if runtime.GOOS == "windows" {
 		normalized = strings.ReplaceAll(value, `\`, "/")
 	}
-	hasDrivePrefix := runtime.GOOS == "windows" && len(value) >= 2 && value[1] == ':' && (value[0] >= 'A' && value[0] <= 'Z' || value[0] >= 'a' && value[0] <= 'z')
+	hasDrivePrefix := hasManifestDrivePrefix(value)
 	if hasDrivePrefix || strings.HasPrefix(normalized, "/") {
 		return batchInput("manifest path must remain project-relative")
 	}
@@ -322,4 +303,48 @@ func sameOptional[T comparable](first, second *T) bool {
 		return first == nil && second == nil
 	}
 	return *first == *second
+}
+
+func validateBatchCatalogs(catalogs []CatalogInput) error {
+	filenames, names := map[string]bool{}, map[string]bool{}
+	for _, catalog := range catalogs {
+		if err := validateCatalogInput(catalog); err != nil {
+			return err
+		}
+		if filenames[catalog.Filename] {
+			return batchInput("catalog filenames must be unique within one batch")
+		}
+		filenames[catalog.Filename] = true
+		if names[catalog.CatalogName] {
+			return batchInput("catalog names must be unique within one batch")
+		}
+		names[catalog.CatalogName] = true
+	}
+	return nil
+}
+
+func validateCatalogInput(catalog CatalogInput) error {
+	for _, field := range [][2]string{{catalog.Filename, "catalog filename must be non-empty and bounded"}, {catalog.CatalogName, "catalog name must be non-empty and bounded"}, {catalog.ProviderName, "provider route must be non-empty and bounded"}} {
+		if err := validateIdentifier(field[0], field[1]); err != nil {
+			return err
+		}
+	}
+	if len(catalog.CsvSha256) != 64 || !isHexDigest(catalog.CsvSha256) {
+		return batchInput("catalog digest must be a SHA-256 hexadecimal value")
+	}
+	return nil
+}
+
+func hasManifestDrivePrefix(value string) bool {
+	return runtime.GOOS == "windows" && len(value) >= 2 && value[1] == ':' && (value[0] >= 'A' && value[0] <= 'Z' || value[0] >= 'a' && value[0] <= 'z')
+}
+
+func validateBatchSelection(selection string, mode domain.IndexSyncMode) error {
+	if selection != "all" && selection != "explicit_file" {
+		return batchInput("catalog selection is invalid")
+	}
+	if mode != domain.Bootstrap && mode != domain.Incremental && mode != domain.FullRescan {
+		return batchInput("synchronization mode is invalid")
+	}
+	return nil
 }

@@ -64,38 +64,11 @@ func TestContentCommitSurvivesProgressFailureAndReplay(t *testing.T) {
 	if !errors.As(err, &failure) || failure.Phase != "control" || !strings.HasPrefix(err.Error(), "sync progress commit failed: ") {
 		t.Fatalf("error=%v", err)
 	}
-	for _, table := range []string{"articles", "article_change_events"} {
-		var count int
-		if err := content.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("%s count=%d err=%v", table, count, err)
-		}
-	}
-	anchor, err := ReadSyncAnchor(ctx, control.Conn, run.Scope)
-	if err != nil || anchor != nil {
-		t.Fatalf("premature anchor=%v err=%v", anchor, err)
-	}
-	checkpoint, err := ReadRunCheckpoint(ctx, control.Conn, run.Scope)
-	if err != nil || checkpoint == nil || checkpoint.TraversalCheckpoint != nil {
-		t.Fatalf("lost checkpoint=%v err=%v", checkpoint, err)
-	}
+	assertCommittedContentWithoutProgress(t, control, content, run)
 	if _, err := control.ExecContext(ctx, "DROP TRIGGER fail_progress"); err != nil {
 		t.Fatal(err)
 	}
-	outcome, err := CommitContentThenProgress(ctx, control.Conn, run, progress, "done", write)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if outcome.ArticlesChanged != 0 || outcome.IdentityAliasesAdded != 0 || outcome.ChangeEventsEmitted != 0 {
-		t.Fatalf("duplicated replay: %+v", outcome)
-	}
-	anchor, err = ReadSyncAnchor(ctx, control.Conn, run.Scope)
-	if err != nil || anchor == nil || anchor.CommittedAnchor == nil || *anchor.CommittedAnchor != "opaque-success" {
-		t.Fatalf("anchor=%v err=%v", anchor, err)
-	}
-	checkpoint, err = ReadRunCheckpoint(ctx, control.Conn, run.Scope)
-	if err != nil || checkpoint != nil {
-		t.Fatalf("checkpoint=%v err=%v", checkpoint, err)
-	}
+	assertContentReplayCompletesProgress(t, control, run, progress, write)
 }
 
 func TestContentFailureAndOwnershipFenceDoNotAdvance(t *testing.T) {
@@ -248,5 +221,49 @@ func TestContentRuntimeChecksStructureWithoutForeignKeyDataScan(t *testing.T) {
 	defer rows.Close()
 	if !rows.Next() {
 		t.Fatal("fixture did not retain orphan")
+	}
+}
+
+func assertCommittedContentWithoutProgress(t *testing.T, control, content *Connection, run SyncRun) {
+	t.Helper()
+	ctx := context.Background()
+	for _, table := range []string{"articles", "article_change_events"} {
+		var count int
+		if err := content.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("%s count=%d err=%v", table, count, err)
+		}
+	}
+	anchor, err := ReadSyncAnchor(ctx, control.Conn, run.Scope)
+	if err != nil || anchor != nil {
+		t.Fatalf("premature anchor=%v err=%v", anchor, err)
+	}
+	checkpoint, err := ReadRunCheckpoint(ctx, control.Conn, run.Scope)
+	if err != nil || checkpoint == nil || checkpoint.TraversalCheckpoint != nil {
+		t.Fatalf("lost checkpoint=%v err=%v", checkpoint, err)
+	}
+}
+
+func assertContentReplayCompletesProgress(t *testing.T, control *Connection, run SyncRun, progress domain.ProviderProgress, write func() (ContentWriteOutcome, error)) {
+	t.Helper()
+	ctx := context.Background()
+	outcome, err := CommitContentThenProgress(ctx, control.Conn, run, progress, "done", write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContentReplayCounts(t, outcome)
+	anchor, err := ReadSyncAnchor(ctx, control.Conn, run.Scope)
+	if err != nil || anchor == nil || anchor.CommittedAnchor == nil || *anchor.CommittedAnchor != "opaque-success" {
+		t.Fatalf("anchor=%v err=%v", anchor, err)
+	}
+	checkpoint, err := ReadRunCheckpoint(ctx, control.Conn, run.Scope)
+	if err != nil || checkpoint != nil {
+		t.Fatalf("checkpoint=%v err=%v", checkpoint, err)
+	}
+}
+
+func assertContentReplayCounts(t *testing.T, outcome ContentWriteOutcome) {
+	t.Helper()
+	if outcome.ArticlesChanged != 0 || outcome.IdentityAliasesAdded != 0 || outcome.ChangeEventsEmitted != 0 {
+		t.Fatalf("duplicated replay: %+v", outcome)
 	}
 }

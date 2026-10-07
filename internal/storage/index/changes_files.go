@@ -128,50 +128,11 @@ func PruneContentChangeHistory(directory string, cutoff int64) (uint64, error) {
 	}
 	var removed uint64
 	for _, entry := range entries {
-		name := entry.Name()
-		digest, ok := strings.CutSuffix(name, ".changes.json")
-		if !ok || len(digest) != 64 {
-			continue
-		}
-		isManaged := true
-		for _, character := range []byte(digest) {
-			if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
-				isManaged = false
-				break
-			}
-		}
-		if !isManaged {
-			continue
-		}
-		path := filepath.Join(directory, name)
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
-			continue
-		}
-		body, err := os.ReadFile(path)
+		wasRemoved, err := pruneHistoryEntry(directory, entry, cutoff)
 		if err != nil {
 			return removed, err
 		}
-		if !jsonvalue.ValidJson(string(body)) {
-			return removed, errors.New("invalid change history JSON")
-		}
-		var document map[string]json.RawMessage
-		if json.Unmarshal(body, &document) != nil {
-			continue
-		}
-		var generated string
-		if json.Unmarshal(document["generated_at"], &generated) != nil {
-			continue
-		}
-		generated = strings.TrimSpace(generated)
-		epoch, err := strconv.ParseInt(generated, 10, 64)
-		if err != nil || strconv.FormatInt(epoch, 10) != generated {
-			continue
-		}
-		if epoch < cutoff {
-			if err := removeManifestFile(path); err != nil {
-				return removed, err
-			}
+		if wasRemoved {
 			removed++
 		}
 	}
@@ -181,4 +142,68 @@ func PruneContentChangeHistory(directory string, cutoff int64) (uint64, error) {
 		}
 	}
 	return removed, nil
+}
+
+func isManagedHistoryName(name string) bool {
+	digest, ok := strings.CutSuffix(name, ".changes.json")
+	if !ok || len(digest) != 64 {
+		return false
+	}
+	isManaged := true
+	for _, character := range []byte(digest) {
+		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+			isManaged = false
+			break
+		}
+	}
+	if !isManaged {
+		return false
+	}
+	return true
+}
+
+func pruneHistoryEntry(directory string, entry os.DirEntry, cutoff int64) (bool, error) {
+	if !isManagedHistoryName(entry.Name()) {
+		return false, nil
+	}
+	path := filepath.Join(directory, entry.Name())
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false, nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	if !jsonvalue.ValidJson(string(body)) {
+		return false, errors.New("invalid change history JSON")
+	}
+	epoch, isCanonical := historyEpoch(body)
+	if !isCanonical {
+		return false, nil
+	}
+	if epoch < cutoff {
+		if err := removeManifestFile(path); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func historyEpoch(body []byte) (int64, bool) {
+	var document map[string]json.RawMessage
+	if json.Unmarshal(body, &document) != nil {
+		return 0, false
+	}
+	var generated string
+	if json.Unmarshal(document["generated_at"], &generated) != nil {
+		return 0, false
+	}
+	generated = strings.TrimSpace(generated)
+	epoch, err := strconv.ParseInt(generated, 10, 64)
+	if err != nil || strconv.FormatInt(epoch, 10) != generated {
+		return 0, false
+	}
+	return epoch, true
 }

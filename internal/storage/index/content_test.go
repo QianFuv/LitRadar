@@ -26,44 +26,7 @@ func selectedSnapshot(t *testing.T, connection *sql.Conn, selected []string) map
 		if exists == 0 {
 			continue
 		}
-		rows, err := connection.QueryContext(context.Background(), "SELECT * FROM "+table+" ORDER BY 1,2")
-		if err != nil {
-			t.Fatal(err)
-		}
-		columns, err := rows.Columns()
-		if err != nil {
-			t.Fatal(err)
-		}
-		values := [][]any{}
-		for rows.Next() {
-			record := make([]any, len(columns))
-			destinations := make([]any, len(columns))
-			for position := range record {
-				destinations[position] = &record[position]
-			}
-			if err := rows.Scan(destinations...); err != nil {
-				t.Fatal(err)
-			}
-			for position, value := range record {
-				switch typed := value.(type) {
-				case int64:
-					record[position] = map[string]any{"integer": strconv.FormatInt(typed, 10)}
-				case float64:
-					record[position] = map[string]any{"real": strconv.FormatFloat(typed, 'g', -1, 64)}
-				case []byte:
-					bytes := []int{}
-					for _, value := range typed {
-						bytes = append(bytes, int(value))
-					}
-					record[position] = map[string]any{"blob": bytes}
-				}
-			}
-			values = append(values, record)
-		}
-		if err := rows.Err(); err != nil {
-			t.Fatal(err)
-		}
-		rows.Close()
+		values := snapshotTableRows(t, connection, table)
 		tables[table] = values
 	}
 	return tables
@@ -95,4 +58,55 @@ func TestContentRuntimeVersionBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func snapshotTableRows(t *testing.T, connection *sql.Conn, table string) [][]any {
+	t.Helper()
+	rows, err := connection.QueryContext(context.Background(), "SELECT * FROM "+table+" ORDER BY 1,2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns, err := rows.Columns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := [][]any{}
+	for rows.Next() {
+		record := make([]any, len(columns))
+		destinations := make([]any, len(columns))
+		for position := range record {
+			destinations[position] = &record[position]
+		}
+		if err := rows.Scan(destinations...); err != nil {
+			t.Fatal(err)
+		}
+		normalizeSnapshotRecord(record)
+		values = append(values, record)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
+	return values
+}
+
+func normalizeSnapshotRecord(record []any) {
+	for position, value := range record {
+		switch typed := value.(type) {
+		case int64:
+			record[position] = map[string]any{"integer": strconv.FormatInt(typed, 10)}
+		case float64:
+			record[position] = map[string]any{"real": strconv.FormatFloat(typed, 'g', -1, 64)}
+		case []byte:
+			record[position] = map[string]any{"blob": snapshotBlob(typed)}
+		}
+	}
+}
+
+func snapshotBlob(typed []byte) []int {
+	bytes := []int{}
+	for _, value := range typed {
+		bytes = append(bytes, int(value))
+	}
+	return bytes
 }

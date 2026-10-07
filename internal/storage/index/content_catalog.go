@@ -221,26 +221,7 @@ func refreshJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jo
 	if !refresh.shouldRefreshTitle {
 		return nil
 	}
-	rows, err := connection.QueryContext(ctx, `SELECT articles.article_id,articles.title,articles.abstract_text,articles.doi,articles.pmid,COALESCE((SELECT group_concat(CASE authors.type WHEN 'object' THEN json_extract(authors.value,'$.display_name') ELSE CAST(authors.value AS TEXT) END,'; ') FROM json_each(articles.authors_json) AS authors),'') FROM articles WHERE articles.journal_id=?1 ORDER BY articles.article_id`, journal)
-	if err != nil {
-		return err
-	}
-	type projection struct {
-		id                  sqlite.Integer
-		title, authors      sqlite.Text
-		abstract, doi, pmid sqlite.OptionalText
-	}
-	projections := []projection{}
-	for rows.Next() {
-		var value projection
-		if err := rows.Scan(&value.id, &value.title, &value.abstract, &value.doi, &value.pmid, &value.authors); err != nil {
-			rows.Close()
-			return err
-		}
-		projections = append(projections, value)
-	}
-	err = rows.Err()
-	rows.Close()
+	projections, err := readJournalProjections(ctx, connection, journal)
 	if err != nil {
 		return err
 	}
@@ -279,4 +260,32 @@ func jsonBytes(value any) ([]byte, error) {
 		return nil, err
 	}
 	return domain.Json(normalized)
+}
+
+type journalProjection struct {
+	id                  sqlite.Integer
+	title, authors      sqlite.Text
+	abstract, doi, pmid sqlite.OptionalText
+}
+
+func readJournalProjections(ctx context.Context, connection *sql.Conn, journal int64) ([]journalProjection, error) {
+	rows, err := connection.QueryContext(ctx, `SELECT articles.article_id,articles.title,articles.abstract_text,articles.doi,articles.pmid,COALESCE((SELECT group_concat(CASE authors.type WHEN 'object' THEN json_extract(authors.value,'$.display_name') ELSE CAST(authors.value AS TEXT) END,'; ') FROM json_each(articles.authors_json) AS authors),'') FROM articles WHERE articles.journal_id=?1 ORDER BY articles.article_id`, journal)
+	if err != nil {
+		return nil, err
+	}
+	projections := []journalProjection{}
+	for rows.Next() {
+		var value journalProjection
+		if err := rows.Scan(&value.id, &value.title, &value.abstract, &value.doi, &value.pmid, &value.authors); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		projections = append(projections, value)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	return projections, nil
 }

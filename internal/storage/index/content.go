@@ -74,11 +74,8 @@ func InitContent(ctx context.Context, connection *sql.Conn) error {
 	if _, err := connection.ExecContext(ctx, "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"); err != nil {
 		return err
 	}
-	var version, count sqlite.Integer
-	if err := connection.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return err
-	}
-	if err := connection.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").Scan(&count); err != nil {
+	version, count, err := readContentSchemaState(ctx, connection)
+	if err != nil {
 		return err
 	}
 	if version >= 6 && version <= sqlite.Integer(indexschema.Version) {
@@ -87,16 +84,7 @@ func InitContent(ctx context.Context, connection *sql.Conn) error {
 	if version != 0 || count != 0 {
 		return &RebuildRequired{int64(version)}
 	}
-	if err := sqlite.LoadSimple(connection); err != nil {
-		return err
-	}
-	if err := immediate(ctx, connection, func() error {
-		_, err := connection.ExecContext(ctx, indexschema.ContentTables+fmt.Sprintf("\nPRAGMA user_version=%d;", indexschema.Version))
-		return err
-	}); err != nil {
-		return err
-	}
-	return validateContent(ctx, connection, indexschema.Version)
+	return initializeEmptyContent(ctx, connection)
 }
 
 func validateContent(ctx context.Context, connection *sql.Conn, version int) error {
@@ -149,3 +137,27 @@ func jsonArray(value any) (string, error) {
 	return string(encoded), err
 }
 func isTrimmed(value string) bool { return value != "" && strings.TrimSpace(value) == value }
+
+func initializeEmptyContent(ctx context.Context, connection *sql.Conn) error {
+	if err := sqlite.LoadSimple(connection); err != nil {
+		return err
+	}
+	if err := immediate(ctx, connection, func() error {
+		_, err := connection.ExecContext(ctx, indexschema.ContentTables+fmt.Sprintf("\nPRAGMA user_version=%d;", indexschema.Version))
+		return err
+	}); err != nil {
+		return err
+	}
+	return validateContent(ctx, connection, indexschema.Version)
+}
+
+func readContentSchemaState(ctx context.Context, connection *sql.Conn) (sqlite.Integer, sqlite.Integer, error) {
+	var version, count sqlite.Integer
+	if err := connection.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return version, count, err
+	}
+	if err := connection.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").Scan(&count); err != nil {
+		return version, count, err
+	}
+	return version, count, nil
+}

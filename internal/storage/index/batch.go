@@ -104,9 +104,9 @@ func activeBatchHeader(ctx context.Context, connection *sql.Conn) (*batchHeader,
 	if selection != "all" && selection != "explicit_file" {
 		return nil, batchState("stored catalog selection is invalid")
 	}
-	parsed := domain.IndexSyncMode(mode)
-	if parsed != domain.Bootstrap && parsed != domain.Incremental && parsed != domain.FullRescan {
-		return nil, batchState("stored synchronization mode is invalid")
+	parsed, err := parseStoredSyncMode(string(mode))
+	if err != nil {
+		return nil, err
 	}
 	count, err := storedCount(int64(size))
 	if err != nil {
@@ -232,43 +232,11 @@ func batchMismatches(ctx context.Context, connection *sql.Conn, active batchHead
 		return nil, nil
 	}
 	mismatch := map[string]bool{"catalog_selection": active.selection != request.Selection, "sync_mode": active.mode != request.Mode, "issue_batch_size": active.issueBatchSize != request.IssueBatchSize, "notify": active.shouldNotify != request.ShouldNotify, "notify_dry_run": active.isNotifyDryRun != request.IsNotifyDryRun}
-	rows, err := connection.QueryContext(ctx, `SELECT file_name,catalog_name,csv_sha256,provider_name FROM index_batch_catalogs WHERE batch_id=?1 ORDER BY ordinal`, active.batchId)
+	stored, err := readBatchCatalogDescriptors(ctx, connection, active.batchId)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var stored [][4]string
-	for rows.Next() {
-		var fields [4]sqlite.Text
-		if err := rows.Scan(&fields[0], &fields[1], &fields[2], &fields[3]); err != nil {
-			return nil, err
-		}
-		stored = append(stored, [4]string{string(fields[0]), string(fields[1]), string(fields[2]), string(fields[3])})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	sameOrder := len(stored) == len(request.Catalogs)
-	if sameOrder {
-		for ordinal, catalog := range request.Catalogs {
-			if stored[ordinal][0] != catalog.Filename || stored[ordinal][1] != catalog.CatalogName {
-				sameOrder = false
-				break
-			}
-		}
-	}
-	if !sameOrder {
-		mismatch["catalog_order"] = true
-	} else {
-		for ordinal, catalog := range request.Catalogs {
-			if stored[ordinal][2] != catalog.CsvSha256 {
-				mismatch["catalog_content"] = true
-			}
-			if stored[ordinal][3] != catalog.ProviderName {
-				mismatch["provider_route"] = true
-			}
-		}
-	}
+	compareBatchCatalogs(mismatch, stored, request.Catalogs)
 	var fields []string
 	for _, field := range []string{"catalog_selection", "catalog_order", "catalog_content", "provider_route", "sync_mode", "issue_batch_size", "notify", "notify_dry_run"} {
 		if mismatch[field] {
@@ -360,4 +328,60 @@ func expectBatchChange(result sql.Result, err error, reason string) error {
 func touchBatch(ctx context.Context, connection *sql.Conn, id string, now int64) error {
 	_, err := connection.ExecContext(ctx, `UPDATE index_batches SET updated_at=?2 WHERE batch_id=?1`, id, now)
 	return err
+}
+
+func parseStoredSyncMode(mode string) (domain.IndexSyncMode, error) {
+	parsed := domain.IndexSyncMode(mode)
+	if parsed != domain.Bootstrap && parsed != domain.Incremental && parsed != domain.FullRescan {
+		return "", batchState("stored synchronization mode is invalid")
+	}
+	return parsed, nil
+}
+
+func readBatchCatalogDescriptors(ctx context.Context, connection *sql.Conn, id string) ([][4]string, error) {
+	rows, err := connection.QueryContext(ctx, `SELECT file_name,catalog_name,csv_sha256,provider_name FROM index_batch_catalogs WHERE batch_id=?1 ORDER BY ordinal`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stored [][4]string
+	for rows.Next() {
+		var fields [4]sqlite.Text
+		if err := rows.Scan(&fields[0], &fields[1], &fields[2], &fields[3]); err != nil {
+			return nil, err
+		}
+		stored = append(stored, [4]string{string(fields[0]), string(fields[1]), string(fields[2]), string(fields[3])})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return stored, nil
+}
+
+func hasBatchCatalogOrder(stored [][4]string, catalogs []CatalogInput) bool {
+	sameOrder := len(stored) == len(catalogs)
+	if sameOrder {
+		for ordinal, catalog := range catalogs {
+			if stored[ordinal][0] != catalog.Filename || stored[ordinal][1] != catalog.CatalogName {
+				sameOrder = false
+				break
+			}
+		}
+	}
+	return sameOrder
+}
+
+func compareBatchCatalogs(mismatch map[string]bool, stored [][4]string, catalogs []CatalogInput) {
+	if !hasBatchCatalogOrder(stored, catalogs) {
+		mismatch["catalog_order"] = true
+	} else {
+		for ordinal, catalog := range catalogs {
+			if stored[ordinal][2] != catalog.CsvSha256 {
+				mismatch["catalog_content"] = true
+			}
+			if stored[ordinal][3] != catalog.ProviderName {
+				mismatch["provider_route"] = true
+			}
+		}
+	}
 }

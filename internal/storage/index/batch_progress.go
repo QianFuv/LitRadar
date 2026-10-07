@@ -110,16 +110,9 @@ func saveCatalogOutcome(ctx context.Context, connection *sql.Conn, id string, or
 	if err != nil {
 		return err
 	}
-	if current != nil {
-		if current.RunId != outcome.RunId || current.JournalCount != outcome.JournalCount || current.WrittenArticleCount != outcome.WrittenArticleCount || current.SourceAttemptCount != outcome.SourceAttemptCount {
-			return batchState("catalog outcome immutable counters changed during recovery")
-		}
-		if current.ManifestPath != nil {
-			if outcome.ManifestPath != nil && *current.ManifestPath != *outcome.ManifestPath {
-				return batchState("catalog manifest path changed during recovery")
-			}
-			outcome.ManifestPath = current.ManifestPath
-		}
+	outcome, err = retainCatalogOutcome(current, outcome)
+	if err != nil {
+		return err
 	}
 	attempts, err := sqliteCount(outcome.SourceAttemptCount)
 	if err != nil {
@@ -188,4 +181,19 @@ func CompleteBatch(ctx context.Context, connection *sql.Conn, id, owner string, 
 		changed, err = connection.ExecContext(ctx, `DELETE FROM index_batch_lease WHERE lease_key=1 AND batch_id=?1 AND owner_id=?2`, id, owner)
 		return expectLeaseChange(changed, err, owner)
 	})
+}
+
+func retainCatalogOutcome(current *BatchCatalogOutcome, outcome BatchCatalogOutcome) (BatchCatalogOutcome, error) {
+	if current != nil {
+		if current.RunId != outcome.RunId || current.JournalCount != outcome.JournalCount || current.WrittenArticleCount != outcome.WrittenArticleCount || current.SourceAttemptCount != outcome.SourceAttemptCount {
+			return outcome, batchState("catalog outcome immutable counters changed during recovery")
+		}
+		if current.ManifestPath != nil {
+			if outcome.ManifestPath != nil && *current.ManifestPath != *outcome.ManifestPath {
+				return outcome, batchState("catalog manifest path changed during recovery")
+			}
+			outcome.ManifestPath = current.ManifestPath
+		}
+	}
+	return outcome, nil
 }
