@@ -38,11 +38,16 @@ func ValidUsername(username string) bool {
 		return false
 	}
 	for _, character := range []byte(username) {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_') {
+		if !isUsernameByte(character) {
 			return false
 		}
 	}
 	return true
+}
+
+// isUsernameByte admits only ASCII account-name characters without normalization.
+func isUsernameByte(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_'
 }
 
 func validateCredentials(username, password string) error {
@@ -143,6 +148,7 @@ func (service *Service) VerifyPasswordAuthorization(ctx context.Context, usernam
 	return service.verifyObservedAuthorization(ctx, credentials, password)
 }
 
+// verifyObservedAuthorization performs dummy or observed password work before authorizing identity.
 func (service *Service) verifyObservedAuthorization(ctx context.Context, credentials *domain.Credentials, password string) (*domain.Authorization, error) {
 	if credentials == nil {
 		_, err := service.verifyPassword(ctx, password, "", dummyPasswordHash)
@@ -155,30 +161,36 @@ func (service *Service) verifyObservedAuthorization(ctx context.Context, credent
 	if verification == cryptography.Invalid {
 		return nil, nil
 	}
-	generation := credentials.TokenGeneration
 	if verification == cryptography.ValidLegacy {
-		replacement, err := service.hashPassword(ctx, password)
+		return service.upgradeObservedLegacyAuthorization(ctx, credentials, password)
+	}
+	return &domain.Authorization{User: credentials.User, TokenGeneration: credentials.TokenGeneration}, nil
+}
+
+// upgradeObservedLegacyAuthorization rechecks a winning credential row while retaining captured identity.
+func (service *Service) upgradeObservedLegacyAuthorization(ctx context.Context, credentials *domain.Credentials, password string) (*domain.Authorization, error) {
+	generation := credentials.TokenGeneration
+	replacement, err := service.hashPassword(ctx, password)
+	if err != nil {
+		return nil, err
+	}
+	changed, err := service.repository.UpgradeLegacy(ctx, *credentials, replacement, service.now())
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		current, err := service.repository.CredentialsById(ctx, credentials.User.Id)
+		if err != nil || current == nil {
+			return nil, err
+		}
+		verification, err := service.verifyPassword(ctx, password, current.Salt, current.PasswordHash)
 		if err != nil {
 			return nil, err
 		}
-		changed, err := service.repository.UpgradeLegacy(ctx, *credentials, replacement, service.now())
-		if err != nil {
-			return nil, err
+		if verification == cryptography.Invalid {
+			return nil, nil
 		}
-		if !changed {
-			current, err := service.repository.CredentialsById(ctx, credentials.User.Id)
-			if err != nil || current == nil {
-				return nil, err
-			}
-			verification, err := service.verifyPassword(ctx, password, current.Salt, current.PasswordHash)
-			if err != nil {
-				return nil, err
-			}
-			if verification == cryptography.Invalid {
-				return nil, nil
-			}
-			generation = current.TokenGeneration
-		}
+		generation = current.TokenGeneration
 	}
 	return &domain.Authorization{User: credentials.User, TokenGeneration: generation}, nil
 }
