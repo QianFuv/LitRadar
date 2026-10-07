@@ -137,54 +137,12 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	if knownVersion(version) {
 		prepared.Header.Set("MCP-Protocol-Version", internalVersion)
 	}
-	if request.Method == http.MethodPost && strings.Contains(request.Header.Get("Accept"), "application/json") && strings.Contains(request.Header.Get("Accept"), "text/event-stream") && strings.HasPrefix(request.Header.Get("Content-Type"), "application/json") {
-		body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, maxRequestBodyBytes))
-		if err != nil {
-			var limitError *http.MaxBytesError
-			if errors.As(err, &limitError) {
-				http.Error(writer, "request body exceeds 4194304 bytes", http.StatusRequestEntityTooLarge)
-				return
-			}
-			writer.Header()["Content-Type"] = nil
-			writer.WriteHeader(500)
-			io.WriteString(writer, "Failed to read request body: "+err.Error())
+	if shouldNormalizeMessage(request) {
+		body, ok := readLegacyMessage(writer, request)
+		if !ok {
 			return
 		}
-		if err := mcp.ValidateLitRadarMessage(body); err != nil {
-			writer.Header()["Content-Type"] = nil
-			writer.WriteHeader(415)
-			io.WriteString(writer, "fail to deserialize request body "+err.Error())
-			return
-		}
-		envelope, hasEnvelopeDuplicates := objectFields(body)
-		if envelope != nil {
-			var method string
-			_ = json.Unmarshal(envelope["method"], &method)
-			var params map[string]json.RawMessage
-			if json.Unmarshal(envelope["params"], &params) == nil && params != nil {
-				if method == "initialize" {
-					var requested string
-					if json.Unmarshal(params["protocolVersion"], &requested) == nil {
-						prepared = prepared.WithContext(mcp.WithLitRadarVersions(prepared.Context(), version, requested))
-						prepared = prepared.WithContext(context.WithValue(prepared.Context(), versionKey{}, requested))
-						params["protocolVersion"] = json.RawMessage(`"` + internalVersion + `"`)
-						if version != "" && len(request.Header.Values("Mcp-Session-Id")) == 0 {
-							prepared.Header.Set("MCP-Protocol-Version", internalVersion)
-						}
-					}
-				}
-				var metadata map[string]json.RawMessage
-				if json.Unmarshal(params["_meta"], &metadata) == nil && metadata != nil {
-					delete(metadata, mcp.MetaKeyProtocolVersion)
-					params["_meta"], _ = json.Marshal(metadata)
-				}
-				normalizedParams, _ := json.Marshal(params)
-				if hasEnvelopeDuplicates || !bytes.Equal(normalizedParams, envelope["params"]) {
-					envelope["params"] = normalizedParams
-					body, _ = json.Marshal(envelope)
-				}
-			}
-		}
+		prepared, body = normalizeLegacyMessage(prepared, request, version, body)
 		prepared.Body = io.NopCloser(bytes.NewReader(body))
 		prepared.ContentLength = int64(len(body))
 	}
@@ -228,4 +186,77 @@ func objectFields(body []byte) (map[string]json.RawMessage, bool) {
 func (handler *Handler) Close() error {
 	handler.closeOnce.Do(func() { handler.closeError = handler.transport.CloseLitRadar() })
 	return handler.closeError
+}
+
+// shouldNormalizeMessage gates decoding using the original method and case-sensitive media labels.
+func shouldNormalizeMessage(request *http.Request) bool {
+	return request.Method == http.MethodPost && strings.Contains(request.Header.Get("Accept"), "application/json") && strings.Contains(request.Header.Get("Accept"), "text/event-stream") && strings.HasPrefix(request.Header.Get("Content-Type"), "application/json")
+}
+
+// readLegacyMessage applies the raw byte budget and validates the original wire before normalization.
+func readLegacyMessage(writer http.ResponseWriter, request *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, maxRequestBodyBytes))
+	if err != nil {
+		var limitError *http.MaxBytesError
+		if errors.As(err, &limitError) {
+			http.Error(writer, "request body exceeds 4194304 bytes", http.StatusRequestEntityTooLarge)
+			return nil, false
+		}
+		writer.Header()["Content-Type"] = nil
+		writer.WriteHeader(500)
+		io.WriteString(writer, "Failed to read request body: "+err.Error())
+		return nil, false
+	}
+	if err := mcp.ValidateLitRadarMessage(body); err != nil {
+		writer.Header()["Content-Type"] = nil
+		writer.WriteHeader(415)
+		io.WriteString(writer, "fail to deserialize request body "+err.Error())
+		return nil, false
+	}
+	return body, true
+}
+
+// normalizeLegacyMessage preserves last-key-wins envelopes and unchanged body representation.
+func normalizeLegacyMessage(prepared, request *http.Request, version string, body []byte) (*http.Request, []byte) {
+	envelope, hasEnvelopeDuplicates := objectFields(body)
+	if envelope != nil {
+		var method string
+		_ = json.Unmarshal(envelope["method"], &method)
+		var params map[string]json.RawMessage
+		if json.Unmarshal(envelope["params"], &params) == nil && params != nil {
+			prepared = adaptInitializeRequest(prepared, request, version, method, params)
+			stripProtocolMetadata(params)
+			normalizedParams, _ := json.Marshal(params)
+			if hasEnvelopeDuplicates || !bytes.Equal(normalizedParams, envelope["params"]) {
+				envelope["params"] = normalizedParams
+				body, _ = json.Marshal(envelope)
+			}
+		}
+	}
+	return prepared, body
+}
+
+// adaptInitializeRequest retains external versions in context before changing the SDK transport label.
+func adaptInitializeRequest(prepared, request *http.Request, version, method string, params map[string]json.RawMessage) *http.Request {
+	if method == "initialize" {
+		var requested string
+		if json.Unmarshal(params["protocolVersion"], &requested) == nil {
+			prepared = prepared.WithContext(mcp.WithLitRadarVersions(prepared.Context(), version, requested))
+			prepared = prepared.WithContext(context.WithValue(prepared.Context(), versionKey{}, requested))
+			params["protocolVersion"] = json.RawMessage(`"` + internalVersion + `"`)
+			if version != "" && len(request.Header.Values("Mcp-Session-Id")) == 0 {
+				prepared.Header.Set("MCP-Protocol-Version", internalVersion)
+			}
+		}
+	}
+	return prepared
+}
+
+// stripProtocolMetadata removes only the protocol version key from valid object metadata.
+func stripProtocolMetadata(params map[string]json.RawMessage) {
+	var metadata map[string]json.RawMessage
+	if json.Unmarshal(params["_meta"], &metadata) == nil && metadata != nil {
+		delete(metadata, mcp.MetaKeyProtocolVersion)
+		params["_meta"], _ = json.Marshal(metadata)
+	}
 }

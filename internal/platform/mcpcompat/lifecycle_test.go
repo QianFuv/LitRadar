@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// TestConcurrentCloseJoinsTheSameActiveSession proves that all callers join the released request.
 func TestConcurrentCloseJoinsTheSameActiveSession(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
 	started, release := make(chan struct{}), make(chan struct{})
@@ -50,6 +51,15 @@ func TestConcurrentCloseJoinsTheSameActiveSession(t *testing.T) {
 	case <-time.After(25 * time.Millisecond):
 	}
 	releaseOnce.Do(func() { close(release) })
+	assertMcpCloseJoin(t, closed, requestDone)
+	if err := handler.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertMcpCloseJoin waits for both close results before checking active request completion.
+func assertMcpCloseJoin(t *testing.T, closed <-chan error, requestDone <-chan struct{}) {
+	t.Helper()
 	for range 2 {
 		select {
 		case err := <-closed:
@@ -64,8 +74,5 @@ func TestConcurrentCloseJoinsTheSameActiveSession(t *testing.T) {
 	case <-requestDone:
 	case <-time.After(time.Second):
 		t.Fatal("closed request still running")
-	}
-	if err := handler.Close(); err != nil {
-		t.Fatal(err)
 	}
 }
