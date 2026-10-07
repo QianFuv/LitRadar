@@ -249,19 +249,7 @@ func TestSchedulerMigrationPreservesNonemptyHistoryAndManualSlots(t *testing.T) 
 	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{19, 20}) {
 		t.Fatalf("migration failed: %+v %v", summary, err)
 	}
-	var id, taskId, scheduledFor int64
-	var taskName, status, worker, output, trigger string
-	var expiry, claimed, started, finished float64
-	err := connection.QueryRowContext(context.Background(), `SELECT id,task_id,task_name,scheduled_for,status,worker_id,
-		claim_expires_at,claimed_at,started_at,finished_at,output_summary,trigger_kind FROM scheduled_task_runs WHERE id=7`).Scan(
-		&id, &taskId, &taskName, &scheduledFor, &status, &worker, &expiry, &claimed, &started, &finished, &output, &trigger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id != 7 || taskId != 42 || taskName != "retained job" || scheduledFor != 600 || status != "unknown" || worker != "worker-a" ||
-		expiry != 700.5 || claimed != 601.25 || started != 602.5 || finished != 603.75 || output != "ambiguous delivery" || trigger != "scheduled" {
-		t.Fatal("migration changed persisted scheduler history")
-	}
+	assertRetainedSchedulerHistory(t, connection)
 	if err := execute(context.Background(), connection, `INSERT INTO scheduled_task_runs(task_id,task_name,scheduled_for,status) VALUES (42,'duplicate',600,'pending')`); err == nil {
 		t.Fatal("duplicate scheduled slot accepted")
 	}
@@ -490,16 +478,96 @@ func TestStrictJsonRejectsLossySyntaxAndValidatesOverwrittenValues(t *testing.T)
 		t.Fatalf("valid last map value: %+v %v", orders, err)
 	}
 	for _, value := range []string{"\u2028", "\u2029", `\u2028`, `\u2029`, "😀"} {
-		encoded, err := encodeJson([]string{value})
-		if err != nil {
+		assertMigrationStringRoundTrip(t, value)
+	}
+}
+
+// TestLegacyProviderValidationPrecedesOverrides checks invalid detail and explicit blank precedence.
+func TestLegacyProviderValidationPrecedesOverrides(t *testing.T) {
+	for _, scenario := range []struct {
+		detail, abstract, expected string
+		isInvalid                  bool
+	}{
+		{"bad,,name", "cnki", "", true},
+		{"cnki", " ", `{"default":[],"catalogs":{}}`, false},
+	} {
+		filename, connection := historicalDatabase(t, 6)
+		mustExecute(t, connection, "INSERT INTO runtime_settings VALUES('article_detail_provider_order',?,10),('article_abstract_provider_order',?,20)", scenario.detail, scenario.abstract)
+		_, err := Migrate(context.Background(), filename)
+		if scenario.isInvalid {
+			if !errors.Is(err, ErrProviderState) || scalar[int](t, connection, "PRAGMA user_version") != 6 {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err != nil || scalar[string](t, connection, "SELECT value FROM runtime_settings WHERE key='article_abstract_provider_orders'") != scenario.expected || scalar[float64](t, connection, "SELECT updated_at FROM runtime_settings WHERE key='article_abstract_provider_orders'") != 20 {
 			t.Fatal(err)
 		}
-		decoded, err := stringList(json.RawMessage(encoded))
-		if err != nil || !reflect.DeepEqual(decoded, []string{value}) {
-			t.Fatalf("changed value %q: %q %v", value, encoded, err)
-		}
-		if (value == "\u2028" || value == "\u2029") && !strings.Contains(encoded, value) {
-			t.Fatalf("separator escaped: %q", encoded)
-		}
+	}
+}
+
+// TestProviderRetirementRetainsEquivalentFormatting checks semantic equality without a writeback.
+func TestProviderRetirementRetainsEquivalentFormatting(t *testing.T) {
+	filename, connection := historicalDatabase(t, 18)
+	raw := " { \"catalogs\" : {\"empty\": []}, \"default\" : [\"cnki\"] } "
+	duplicate := `{"default":[null],"default":["cnki_oversea","cnki"],"catalogs":{}}`
+	mustExecute(t, connection, "INSERT INTO runtime_settings VALUES('article_fulltext_provider_orders',?,10),('article_abstract_provider_orders',?,20)", raw, duplicate)
+	if _, err := Migrate(context.Background(), filename); err != nil {
+		t.Fatal(err)
+	}
+	if saved := scalar[string](t, connection, "SELECT value FROM runtime_settings WHERE key='article_fulltext_provider_orders'"); saved != raw {
+		t.Fatal(saved)
+	}
+	if saved := scalar[string](t, connection, "SELECT value FROM runtime_settings WHERE key='article_abstract_provider_orders'"); saved != `{"default":["cnki"],"catalogs":{}}` {
+		t.Fatal(saved)
+	}
+}
+
+// assertRetainedSchedulerHistory checks every persisted field from the version-19 fixture.
+func assertRetainedSchedulerHistory(t *testing.T, connection *sql.Conn) {
+	t.Helper()
+	var id, taskId, scheduledFor int64
+	var taskName, status, worker, output, trigger string
+	var expiry, claimed, started, finished float64
+	err := connection.QueryRowContext(context.Background(), `SELECT id,task_id,task_name,scheduled_for,status,worker_id,
+		claim_expires_at,claimed_at,started_at,finished_at,output_summary,trigger_kind FROM scheduled_task_runs WHERE id=7`).Scan(
+		&id, &taskId, &taskName, &scheduledFor, &status, &worker, &expiry, &claimed, &started, &finished, &output, &trigger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertRetainedSchedulerIdentity(t, id, taskId, scheduledFor, taskName, status, worker)
+	assertRetainedSchedulerOutcome(t, expiry, claimed, started, finished, output, trigger)
+}
+
+// assertRetainedSchedulerIdentity checks the original run identity and worker ownership.
+func assertRetainedSchedulerIdentity(t *testing.T, id, taskId, scheduledFor int64, taskName, status, worker string) {
+	t.Helper()
+	if id != 7 || taskId != 42 || taskName != "retained job" || scheduledFor != 600 || status != "unknown" || worker != "worker-a" {
+		t.Fatal("migration changed persisted scheduler history")
+	}
+}
+
+// assertRetainedSchedulerOutcome checks timing, ambiguous output and the scheduled trigger.
+func assertRetainedSchedulerOutcome(t *testing.T, expiry, claimed, started, finished float64, output, trigger string) {
+	t.Helper()
+	if expiry != 700.5 || claimed != 601.25 || started != 602.5 || finished != 603.75 || output != "ambiguous delivery" || trigger != "scheduled" {
+		t.Fatal("migration changed persisted scheduler history")
+	}
+}
+
+// assertMigrationStringRoundTrip retains typed values and literal line separators during migration.
+func assertMigrationStringRoundTrip(t *testing.T, value string) {
+	t.Helper()
+	encoded, err := encodeJson([]string{value})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := stringList(json.RawMessage(encoded))
+	if err != nil || !reflect.DeepEqual(decoded, []string{value}) {
+		t.Fatalf("changed value %q: %q %v", value, encoded, err)
+	}
+	if (value == "\u2028" || value == "\u2029") && !strings.Contains(encoded, value) {
+		t.Fatalf("separator escaped: %q", encoded)
 	}
 }

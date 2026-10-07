@@ -140,26 +140,14 @@ func applyVersion(ctx context.Context, connection *sql.Conn, version, fromVersio
 		return versionEight(ctx, connection, fromVersion)
 	case 12:
 		return versionTwelve(ctx, connection)
-	case 13:
-		return addColumn(ctx, connection, "cnki_sessions", "generation", "ALTER TABLE cnki_sessions ADD COLUMN generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0)")
+	case 13, 15:
+		return addGenerationColumn(ctx, connection, version)
 	case 14:
 		return versionFourteen(ctx, connection)
-	case 15:
-		return addColumn(ctx, connection, "users", "token_generation", "ALTER TABLE users ADD COLUMN token_generation INTEGER NOT NULL DEFAULT 0 CHECK (token_generation >= 0)")
 	case 19:
 		return rewriteProviders(ctx, connection, true)
 	case 20:
-		var sequence int64
-		if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'scheduled_task_runs'").Scan(&sequence); err != nil {
-			return err
-		}
-		if err := execute(ctx, connection, versionTwentySql); err != nil {
-			return err
-		}
-		if err := execute(ctx, connection, "UPDATE sqlite_sequence SET seq = MAX(seq, ?1) WHERE name = 'scheduled_task_runs'", sequence); err != nil {
-			return err
-		}
-		return execute(ctx, connection, "INSERT INTO sqlite_sequence (name, seq) SELECT 'scheduled_task_runs', ?1 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'scheduled_task_runs')", sequence)
+		return versionTwenty(ctx, connection)
 	default:
 		return fmt.Errorf("unimplemented auth migration version %d", version)
 	}
@@ -240,4 +228,27 @@ func checkForeignKeys(ctx context.Context, connection *sql.Conn) error {
 		return errors.New("invalid query")
 	}
 	return nil
+}
+
+// versionTwenty restores the consumed scheduler sequence after rebuilding manual run slots.
+func versionTwenty(ctx context.Context, connection *sql.Conn) error {
+	var sequence int64
+	if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'scheduled_task_runs'").Scan(&sequence); err != nil {
+		return err
+	}
+	if err := execute(ctx, connection, versionTwentySql); err != nil {
+		return err
+	}
+	if err := execute(ctx, connection, "UPDATE sqlite_sequence SET seq = MAX(seq, ?1) WHERE name = 'scheduled_task_runs'", sequence); err != nil {
+		return err
+	}
+	return execute(ctx, connection, "INSERT INTO sqlite_sequence (name, seq) SELECT 'scheduled_task_runs', ?1 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'scheduled_task_runs')", sequence)
+}
+
+// addGenerationColumn retains the two historical generation-column definitions.
+func addGenerationColumn(ctx context.Context, connection *sql.Conn, version int) error {
+	if version == 13 {
+		return addColumn(ctx, connection, "cnki_sessions", "generation", "ALTER TABLE cnki_sessions ADD COLUMN generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0)")
+	}
+	return addColumn(ctx, connection, "users", "token_generation", "ALTER TABLE users ADD COLUMN token_generation INTEGER NOT NULL DEFAULT 0 CHECK (token_generation >= 0)")
 }
