@@ -29,57 +29,12 @@ func collectLegacy(root string) ([]legacyInput, error) {
 		name     string
 		workflow Workflow
 	}{{"push_state", WorkflowNotify}, {"folder_push_state", WorkflowPush}} {
-		path := filepath.Join(root, "data", directory.name)
-		if _, err := os.Stat(path); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, &Error{Kind: "io", cause: err}
-		}
-		metadata, err := os.Lstat(path)
+		found, err := collectLegacyDirectory(root, directory.name, directory.workflow)
 		if err != nil {
-			return nil, &Error{Kind: "io", cause: err}
+			return nil, err
 		}
-		if metadata.Mode()&os.ModeSymlink != 0 || !metadata.IsDir() {
-			return nil, &Error{Kind: "invalid_legacy"}
-		}
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return nil, &Error{Kind: "io", cause: err}
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if !utf8.ValidString(name) {
-				return nil, &Error{Kind: "invalid_legacy"}
-			}
-			if !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".changes.json") {
-				continue
-			}
-			filename := filepath.Join(path, name)
-			metadata, err := os.Lstat(filename)
-			if err != nil {
-				return nil, &Error{Kind: "io", cause: err}
-			}
-			if metadata.Mode()&os.ModeSymlink != 0 || !metadata.Mode().IsRegular() {
-				return nil, &Error{Kind: "invalid_legacy"}
-			}
-			if metadata.Size() > 16*1024*1024 {
-				return nil, &Error{Kind: "legacy_size"}
-			}
-			body, err := os.ReadFile(filename)
-			if err != nil {
-				return nil, &Error{Kind: "io", cause: err}
-			}
-			state, err := decodeLegacy(body)
-			if err != nil {
-				return nil, err
-			}
-			if err := validateLegacy(name, state); err != nil {
-				return nil, err
-			}
-			hash := sha256.Sum256(body)
-			inputs = append(inputs, legacyInput{directory.workflow, name, hex.EncodeToString(hash[:]), state})
-		}
+		inputs = append(inputs, found...)
+
 	}
 	sort.Slice(inputs, func(left, right int) bool {
 		if inputs[left].workflow != inputs[right].workflow {
@@ -130,53 +85,12 @@ func validateLegacy(name string, state legacyState) error {
 	if err := validateOptionalText(state.LastCompletedRunAt, 128, "Legacy completion timestamp is invalid"); err != nil {
 		return err
 	}
-	for _, key := range sortedKeys(state.Snapshot.IssueArticleCounts) {
-		if _, _, err := legacyPair(key); err != nil {
-			return err
-		}
-		if state.Snapshot.IssueArticleCounts[key] < 0 {
-			return &Error{Kind: "invalid_legacy"}
-		}
+	if err := validateLegacySnapshot(state.Snapshot); err != nil {
+		return err
 	}
-	for _, key := range sortedKeys(state.Snapshot.InpressArticleCounts) {
-		if _, err := legacyNumeric(key); err != nil {
+	if state.Run != nil {
+		if err := validateLegacyRun(*state.Run); err != nil {
 			return err
-		}
-		if state.Snapshot.InpressArticleCounts[key] < 0 {
-			return &Error{Kind: "invalid_legacy"}
-		}
-	}
-	if run := state.Run; run != nil {
-		if err := validateIdentifier(run.RunId, "Legacy delivery run id is invalid"); err != nil {
-			return err
-		}
-		for index, keys := range [][]string{run.PendingIssueKeys, run.DoneIssueKeys, run.PendingInpressKeys, run.DoneInpressKeys} {
-			seen := map[string]bool{}
-			for _, key := range keys {
-				var err error
-				if index < 2 {
-					_, _, err = legacyPair(key)
-				} else {
-					_, err = legacyNumeric(key)
-				}
-				if err != nil {
-					return err
-				}
-				if seen[key] {
-					return &Error{Kind: "invalid_legacy"}
-				}
-				seen[key] = true
-			}
-		}
-		for _, id := range run.DeliveredArticleIds {
-			if id <= 0 {
-				return &Error{Kind: "invalid_legacy"}
-			}
-		}
-		for _, result := range run.UserResults {
-			if _, err := legacyNumeric(result.SubscriberId); err != nil {
-				return err
-			}
 		}
 	}
 	for _, key := range sortedKeys(state.DeliveryDedupe) {
@@ -216,6 +130,124 @@ func ImportLegacyFiles(ctx context.Context, config storageconfig.Config, now flo
 }
 
 func emitLegacyImportFailure(ctx context.Context, started time.Time, err error) {
+	kind := legacyImportFailureKind(err)
+	slog.ErrorContext(ctx, "", "event", "delivery.legacy_import.failed", "component", "delivery", "outcome", "failure", "error_kind", kind, "duration_ms", time.Since(started).Milliseconds())
+}
+
+func collectLegacyDirectory(root, name string, workflow Workflow) ([]legacyInput, error) {
+	inputs := []legacyInput{}
+	path := filepath.Join(root, "data", name)
+	entries, err := readLegacyDirectory(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !utf8.ValidString(name) {
+			return nil, &Error{Kind: "invalid_legacy"}
+		}
+		if !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".changes.json") {
+			continue
+		}
+		input, err := readLegacySource(path, name, workflow)
+		if err != nil {
+			return nil, err
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs, nil
+}
+
+func readLegacySource(path, name string, workflow Workflow) (legacyInput, error) {
+	filename := filepath.Join(path, name)
+	metadata, err := os.Lstat(filename)
+	if err != nil {
+		return legacyInput{}, &Error{Kind: "io", cause: err}
+	}
+	if metadata.Mode()&os.ModeSymlink != 0 || !metadata.Mode().IsRegular() {
+		return legacyInput{}, &Error{Kind: "invalid_legacy"}
+	}
+	if metadata.Size() > 16*1024*1024 {
+		return legacyInput{}, &Error{Kind: "legacy_size"}
+	}
+	body, err := os.ReadFile(filename)
+	if err != nil {
+		return legacyInput{}, &Error{Kind: "io", cause: err}
+	}
+	state, err := decodeLegacy(body)
+	if err != nil {
+		return legacyInput{}, err
+	}
+	if err := validateLegacy(name, state); err != nil {
+		return legacyInput{}, err
+	}
+	hash := sha256.Sum256(body)
+	return legacyInput{workflow, name, hex.EncodeToString(hash[:]), state}, nil
+}
+
+func validateLegacySnapshot(snapshot legacySnapshot) error {
+	for _, key := range sortedKeys(snapshot.IssueArticleCounts) {
+		if _, _, err := legacyPair(key); err != nil {
+			return err
+		}
+		if snapshot.IssueArticleCounts[key] < 0 {
+			return &Error{Kind: "invalid_legacy"}
+		}
+	}
+	for _, key := range sortedKeys(snapshot.InpressArticleCounts) {
+		if _, err := legacyNumeric(key); err != nil {
+			return err
+		}
+		if snapshot.InpressArticleCounts[key] < 0 {
+			return &Error{Kind: "invalid_legacy"}
+		}
+	}
+	return nil
+}
+
+func validateLegacyRun(run legacyRun) error {
+	if err := validateIdentifier(run.RunId, "Legacy delivery run id is invalid"); err != nil {
+		return err
+	}
+	for index, keys := range [][]string{run.PendingIssueKeys, run.DoneIssueKeys, run.PendingInpressKeys, run.DoneInpressKeys} {
+		if err := validateLegacyRunKeys(keys, index < 2); err != nil {
+			return err
+		}
+	}
+	for _, id := range run.DeliveredArticleIds {
+		if id <= 0 {
+			return &Error{Kind: "invalid_legacy"}
+		}
+	}
+	for _, result := range run.UserResults {
+		if _, err := legacyNumeric(result.SubscriberId); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateLegacyRunKeys(keys []string, isIssue bool) error {
+	seen := map[string]bool{}
+	for _, key := range keys {
+		var err error
+		if isIssue {
+			_, _, err = legacyPair(key)
+		} else {
+			_, err = legacyNumeric(key)
+		}
+		if err != nil {
+			return err
+		}
+		if seen[key] {
+			return &Error{Kind: "invalid_legacy"}
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+func legacyImportFailureKind(err error) string {
 	kind := "sqlite"
 	var classified *Error
 	if errors.As(err, &classified) {
@@ -234,13 +266,43 @@ func emitLegacyImportFailure(ctx context.Context, started time.Time, err error) 
 			kind = "conflict"
 		case "audit":
 			kind = "audit_persistence"
-		case "invalid_legacy":
-			kind = "invalid_legacy_state"
-		case "legacy_conflict":
-			kind = "legacy_import_conflict"
-		case "legacy_size":
-			kind = "legacy_state_too_large"
+		default:
+			kind = legacySourceFailureKind(classified.Kind)
 		}
 	}
-	slog.ErrorContext(ctx, "", "event", "delivery.legacy_import.failed", "component", "delivery", "outcome", "failure", "error_kind", kind, "duration_ms", time.Since(started).Milliseconds())
+	return kind
+}
+
+func legacySourceFailureKind(kind string) string {
+	switch kind {
+	case "invalid_legacy":
+		return "invalid_legacy_state"
+	case "legacy_conflict":
+		return "legacy_import_conflict"
+	case "legacy_size":
+		return "legacy_state_too_large"
+	default:
+		return "sqlite"
+	}
+}
+
+func readLegacyDirectory(path string) ([]os.DirEntry, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, &Error{Kind: "io", cause: err}
+	}
+	metadata, err := os.Lstat(path)
+	if err != nil {
+		return nil, &Error{Kind: "io", cause: err}
+	}
+	if metadata.Mode()&os.ModeSymlink != 0 || !metadata.IsDir() {
+		return nil, &Error{Kind: "invalid_legacy"}
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, &Error{Kind: "io", cause: err}
+	}
+	return entries, nil
 }

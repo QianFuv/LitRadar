@@ -71,92 +71,16 @@ func emptyMap[V any](value map[string]V) map[string]V {
 }
 
 func importLegacyState(ctx context.Context, connection *sql.Conn, input legacyInput, now float64) (int, int, error) {
+	if err := importLegacyCheckpoint(ctx, connection, input, now); err != nil {
+		return 0, 0, err
+	}
 	state := input.state
-	status, legacyStatus := legacyCheckpointStatus(state.Status)
-	issues, err := compactLegacy(emptyMap(state.Snapshot.IssueArticleCounts))
+	runId, itemCount, err := importLegacyRun(ctx, connection, input, now)
 	if err != nil {
 		return 0, 0, err
 	}
-	inpress, err := compactLegacy(emptyMap(state.Snapshot.InpressArticleCounts))
-	if err != nil {
+	if err := importLegacyDedupe(ctx, connection, input, runId, now); err != nil {
 		return 0, 0, err
-	}
-	snapshot := `{"issue_article_counts":` + issues + `,"inpress_article_counts":` + inpress + `}`
-	_, err = connection.ExecContext(ctx, `INSERT INTO delivery_checkpoints(workflow,db_name,status,legacy_status,snapshot_json,last_completed_run_at,revision,legacy_source_hash,legacy_source_name,legacy_imported_at,created_at,updated_at) VALUES(?,?,?,?,?,?,0,?,?,?,?,?)`, input.workflow, state.DbName, status, legacyStatus, snapshot, state.LastCompletedRunAt, input.sourceHash, input.sourceName, now, now, now)
-	if err != nil {
-		return 0, 0, err
-	}
-	var runId *int64
-	itemCount := 0
-	if run := state.Run; run != nil {
-		status, legacyStatus := legacyRunStatus(run.Status)
-		summary, err := compactLegacy(map[string]any{"pending_issue_keys": emptySlice(run.PendingIssueKeys), "done_issue_keys": emptySlice(run.DoneIssueKeys), "pending_inpress_keys": emptySlice(run.PendingInpressKeys), "done_inpress_keys": emptySlice(run.DoneInpressKeys), "delivered_article_ids": emptySlice(run.DeliveredArticleIds), "subscriber_count": len(run.UserResults)})
-		if err != nil {
-			return 0, 0, err
-		}
-		if err := validateJson(summary); err != nil {
-			return 0, 0, err
-		}
-		inserted, err := connection.ExecContext(ctx, `INSERT INTO delivery_runs(external_id,workflow,scope_key,db_name,trigger_kind,mode,user_id,status,legacy_status,owner_id,lease_expires_at,deadline_at,cancellation_requested,result_json,error_code,revision,created_at,started_at,updated_at,finished_at) VALUES(?,?,?,?,'legacy','execute',NULL,?,?,NULL,NULL,NULL,0,?,NULL,0,?,NULL,?,?)`, run.RunId, input.workflow, state.DbName, state.DbName, status, legacyStatus, summary, now, now, now)
-		if err != nil {
-			return 0, 0, err
-		}
-		id, err := inserted.LastInsertId()
-		if err != nil {
-			return 0, 0, err
-		}
-		runId = &id
-		identities := map[struct {
-			kind ItemKind
-			key  string
-		}]bool{}
-		for _, group := range []struct {
-			kind   ItemKind
-			status ItemStatus
-			keys   []string
-		}{{ItemKindIssue, ItemStatusPending, run.PendingIssueKeys}, {ItemKindIssue, ItemStatusSucceeded, run.DoneIssueKeys}, {ItemKindInPress, ItemStatusPending, run.PendingInpressKeys}, {ItemKindInPress, ItemStatusSucceeded, run.DoneInpressKeys}} {
-			for _, key := range group.keys {
-				identity := struct {
-					kind ItemKind
-					key  string
-				}{group.kind, key}
-				if identities[identity] {
-					return 0, 0, &Error{Kind: "invalid_legacy"}
-				}
-				identities[identity] = true
-				if err := insertLegacyItem(ctx, connection, id, group.kind, key, nil, group.status, nil, now); err != nil {
-					return 0, 0, err
-				}
-				itemCount++
-			}
-		}
-		for _, result := range run.UserResults {
-			userId, err := legacyNumeric(result.SubscriberId)
-			if err != nil {
-				return 0, 0, err
-			}
-			status, legacyStatus := legacyItemStatus(result.Status)
-			payload, err := compactLegacy(map[string]any{"selected_count": result.SelectedCount, "pushed_count": result.PushedCount, "folder_synced_count": result.FolderSyncedCount})
-			if err != nil {
-				return 0, 0, err
-			}
-			if err := insertLegacyItem(ctx, connection, id, ItemKindSubscriber, result.SubscriberId, &userId, status, legacyStatus, now); err != nil {
-				return 0, 0, err
-			}
-			if _, err := connection.ExecContext(ctx, `UPDATE delivery_run_items SET result_json=? WHERE delivery_run_id=? AND item_kind='subscriber' AND item_key=?`, payload, id, result.SubscriberId); err != nil {
-				return 0, 0, err
-			}
-			itemCount++
-		}
-	}
-	for _, key := range sortedKeys(state.DeliveryDedupe) {
-		userId, articleId, err := legacyPair(key)
-		if err != nil {
-			return 0, 0, err
-		}
-		if _, err := connection.ExecContext(ctx, `INSERT INTO delivery_dedupe(workflow,db_name,user_id,article_id,delivery_run_id,status,message_id,reservation_owner,legacy_delivered_at,revision,reserved_at,delivered_at,updated_at) VALUES(?,?,?,?,?,'confirmed',NULL,NULL,?,0,?,?,?)`, input.workflow, state.DbName, userId, articleId, runId, state.DeliveryDedupe[key], now, now, now); err != nil {
-			return 0, 0, err
-		}
 	}
 	return itemCount, len(state.DeliveryDedupe), nil
 }
@@ -222,4 +146,133 @@ func legacyItemStatus(value string) (ItemStatus, *string) {
 		reason := "unrecognized"
 		return ItemStatusUnknown, &reason
 	}
+}
+
+func importLegacyCheckpoint(ctx context.Context, connection *sql.Conn, input legacyInput, now float64) error {
+	state := input.state
+	status, legacyStatus := legacyCheckpointStatus(state.Status)
+	issues, err := compactLegacy(emptyMap(state.Snapshot.IssueArticleCounts))
+	if err != nil {
+		return err
+	}
+	inpress, err := compactLegacy(emptyMap(state.Snapshot.InpressArticleCounts))
+	if err != nil {
+		return err
+	}
+	snapshot := `{"issue_article_counts":` + issues + `,"inpress_article_counts":` + inpress + `}`
+	_, err = connection.ExecContext(ctx, `INSERT INTO delivery_checkpoints(workflow,db_name,status,legacy_status,snapshot_json,last_completed_run_at,revision,legacy_source_hash,legacy_source_name,legacy_imported_at,created_at,updated_at) VALUES(?,?,?,?,?,?,0,?,?,?,?,?)`, input.workflow, state.DbName, status, legacyStatus, snapshot, state.LastCompletedRunAt, input.sourceHash, input.sourceName, now, now, now)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func importLegacyRun(ctx context.Context, connection *sql.Conn, input legacyInput, now float64) (*int64, int, error) {
+	state := input.state
+	var runId *int64
+	itemCount := 0
+	if run := state.Run; run != nil {
+		id, err := createLegacyRun(ctx, connection, input, *run, now)
+		if err != nil {
+			return nil, 0, err
+		}
+		runId = &id
+		itemCount, err = importLegacyProgress(ctx, connection, id, *run, now)
+		if err != nil {
+			return nil, 0, err
+		}
+		subscriberCount, err := importLegacySubscribers(ctx, connection, id, *run, now)
+		if err != nil {
+			return nil, 0, err
+		}
+		itemCount += subscriberCount
+	}
+	return runId, itemCount, nil
+}
+
+func importLegacyDedupe(ctx context.Context, connection *sql.Conn, input legacyInput, runId *int64, now float64) error {
+	state := input.state
+	for _, key := range sortedKeys(state.DeliveryDedupe) {
+		userId, articleId, err := legacyPair(key)
+		if err != nil {
+			return err
+		}
+		if _, err := connection.ExecContext(ctx, `INSERT INTO delivery_dedupe(workflow,db_name,user_id,article_id,delivery_run_id,status,message_id,reservation_owner,legacy_delivered_at,revision,reserved_at,delivered_at,updated_at) VALUES(?,?,?,?,?,'confirmed',NULL,NULL,?,0,?,?,?)`, input.workflow, state.DbName, userId, articleId, runId, state.DeliveryDedupe[key], now, now, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func createLegacyRun(ctx context.Context, connection *sql.Conn, input legacyInput, run legacyRun, now float64) (int64, error) {
+	state := input.state
+	status, legacyStatus := legacyRunStatus(run.Status)
+	summary, err := compactLegacy(map[string]any{"pending_issue_keys": emptySlice(run.PendingIssueKeys), "done_issue_keys": emptySlice(run.DoneIssueKeys), "pending_inpress_keys": emptySlice(run.PendingInpressKeys), "done_inpress_keys": emptySlice(run.DoneInpressKeys), "delivered_article_ids": emptySlice(run.DeliveredArticleIds), "subscriber_count": len(run.UserResults)})
+	if err != nil {
+		return 0, err
+	}
+	if err := validateJson(summary); err != nil {
+		return 0, err
+	}
+	inserted, err := connection.ExecContext(ctx, `INSERT INTO delivery_runs(external_id,workflow,scope_key,db_name,trigger_kind,mode,user_id,status,legacy_status,owner_id,lease_expires_at,deadline_at,cancellation_requested,result_json,error_code,revision,created_at,started_at,updated_at,finished_at) VALUES(?,?,?,?,'legacy','execute',NULL,?,?,NULL,NULL,NULL,0,?,NULL,0,?,NULL,?,?)`, run.RunId, input.workflow, state.DbName, state.DbName, status, legacyStatus, summary, now, now, now)
+	if err != nil {
+		return 0, err
+	}
+	id, err := inserted.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func importLegacyProgress(ctx context.Context, connection *sql.Conn, id int64, run legacyRun, now float64) (int, error) {
+	itemCount := 0
+	identities := map[struct {
+		kind ItemKind
+		key  string
+	}]bool{}
+	for _, group := range []struct {
+		kind   ItemKind
+		status ItemStatus
+		keys   []string
+	}{{ItemKindIssue, ItemStatusPending, run.PendingIssueKeys}, {ItemKindIssue, ItemStatusSucceeded, run.DoneIssueKeys}, {ItemKindInPress, ItemStatusPending, run.PendingInpressKeys}, {ItemKindInPress, ItemStatusSucceeded, run.DoneInpressKeys}} {
+		for _, key := range group.keys {
+			identity := struct {
+				kind ItemKind
+				key  string
+			}{group.kind, key}
+			if identities[identity] {
+				return 0, &Error{Kind: "invalid_legacy"}
+			}
+			identities[identity] = true
+			if err := insertLegacyItem(ctx, connection, id, group.kind, key, nil, group.status, nil, now); err != nil {
+				return 0, err
+			}
+			itemCount++
+		}
+	}
+	return itemCount, nil
+}
+
+func importLegacySubscribers(ctx context.Context, connection *sql.Conn, id int64, run legacyRun, now float64) (int, error) {
+	itemCount := 0
+	for _, result := range run.UserResults {
+		userId, err := legacyNumeric(result.SubscriberId)
+		if err != nil {
+			return 0, err
+		}
+		status, legacyStatus := legacyItemStatus(result.Status)
+		payload, err := compactLegacy(map[string]any{"selected_count": result.SelectedCount, "pushed_count": result.PushedCount, "folder_synced_count": result.FolderSyncedCount})
+		if err != nil {
+			return 0, err
+		}
+		if err := insertLegacyItem(ctx, connection, id, ItemKindSubscriber, result.SubscriberId, &userId, status, legacyStatus, now); err != nil {
+			return 0, err
+		}
+		if _, err := connection.ExecContext(ctx, `UPDATE delivery_run_items SET result_json=? WHERE delivery_run_id=? AND item_kind='subscriber' AND item_key=?`, payload, id, result.SubscriberId); err != nil {
+			return 0, err
+		}
+		itemCount++
+	}
+	return itemCount, nil
 }

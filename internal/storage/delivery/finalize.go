@@ -14,31 +14,7 @@ type RunFinalization struct {
 
 // FinalizeRunWithCheckpoint advances checkpoint, terminal run and released lease together or rolls them all back.
 func (repository *Repository) FinalizeRunWithCheckpoint(ctx context.Context, runId int64, owner string, runRevision int64, status RunStatus, result, errorCode *string, workflow Workflow, dbName string, checkpointRevision *int64, update CheckpointUpdate, leaseRevision int64) (RunFinalization, error) {
-	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
-		return RunFinalization{}, err
-	}
-	if err := validateIdentifier(owner, "Delivery owner id is invalid"); err != nil {
-		return RunFinalization{}, err
-	}
-	if err := validateDbName(dbName); err != nil {
-		return RunFinalization{}, err
-	}
-	if err := validateRevisionTime(runRevision, update.UpdatedAt); err != nil {
-		return RunFinalization{}, err
-	}
-	if leaseRevision < 0 || checkpointRevision != nil && *checkpointRevision < 0 {
-		return RunFinalization{}, invalid("Delivery revision is invalid")
-	}
-	if !status.IsTerminal() {
-		return RunFinalization{}, invalid("Delivery terminal status is invalid")
-	}
-	if err := validateJson(update.SnapshotJson); err != nil {
-		return RunFinalization{}, err
-	}
-	if err := validateOptionalJson(result); err != nil {
-		return RunFinalization{}, err
-	}
-	if err := validateSymbol(errorCode, "Delivery error code is invalid"); err != nil {
+	if err := validateRunFinalization(runId, owner, runRevision, status, result, errorCode, dbName, checkpointRevision, update, leaseRevision); err != nil {
 		return RunFinalization{}, err
 	}
 	var completed RunFinalization
@@ -78,16 +54,7 @@ func (repository *Repository) FinalizeRunWithCheckpoint(ctx context.Context, run
 
 // FinalizeAttempt resolves every dedupe reservation and its subscriber item in one transaction.
 func (repository *Repository) FinalizeAttempt(ctx context.Context, itemId int64, owner string, itemRevision int64, itemStatus ItemStatus, result, errorCode *string, runId int64, reservations []DedupeResolution, dedupeStatus DedupeStatus, message *string, now float64) (*RunItemRecord, error) {
-	if err := validatePositiveId(itemId, "Delivery item id is invalid"); err != nil {
-		return nil, err
-	}
-	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
-		return nil, err
-	}
-	if err := validateIdentifier(owner, "Delivery item owner id is invalid"); err != nil {
-		return nil, err
-	}
-	if err := validateRevisionTime(itemRevision, now); err != nil {
+	if err := validateAttemptFinalizationOwner(itemId, runId, owner, itemRevision, now); err != nil {
 		return nil, err
 	}
 	if !itemStatus.IsTerminal() || dedupeStatus == DedupeStatusReserved || !dedupeStatus.valid() {
@@ -120,4 +87,58 @@ func (repository *Repository) FinalizeAttempt(ctx context.Context, itemId int64,
 		return err
 	})
 	return item, err
+}
+
+func validateRunFinalization(runId int64, owner string, runRevision int64, status RunStatus, result, errorCode *string, dbName string, checkpointRevision *int64, update CheckpointUpdate, leaseRevision int64) error {
+	if err := validateRunFinalizationOwner(runId, owner, dbName, runRevision, update.UpdatedAt); err != nil {
+		return err
+	}
+	if leaseRevision < 0 || checkpointRevision != nil && *checkpointRevision < 0 {
+		return invalid("Delivery revision is invalid")
+	}
+	if !status.IsTerminal() {
+		return invalid("Delivery terminal status is invalid")
+	}
+	if err := validateJson(update.SnapshotJson); err != nil {
+		return err
+	}
+	if err := validateOptionalJson(result); err != nil {
+		return err
+	}
+	if err := validateSymbol(errorCode, "Delivery error code is invalid"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateRunFinalizationOwner(runId int64, owner, dbName string, runRevision int64, now float64) error {
+	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
+		return err
+	}
+	if err := validateIdentifier(owner, "Delivery owner id is invalid"); err != nil {
+		return err
+	}
+	if err := validateDbName(dbName); err != nil {
+		return err
+	}
+	if err := validateRevisionTime(runRevision, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateAttemptFinalizationOwner(itemId, runId int64, owner string, itemRevision int64, now float64) error {
+	if err := validatePositiveId(itemId, "Delivery item id is invalid"); err != nil {
+		return err
+	}
+	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
+		return err
+	}
+	if err := validateIdentifier(owner, "Delivery item owner id is invalid"); err != nil {
+		return err
+	}
+	if err := validateRevisionTime(itemRevision, now); err != nil {
+		return err
+	}
+	return nil
 }

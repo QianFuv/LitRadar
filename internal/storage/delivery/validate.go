@@ -10,8 +10,7 @@ import (
 )
 
 func validateDbName(value string) error {
-	hasDrivePrefix := len(value) >= 2 && value[1] == ':' && (value[0] >= 'a' && value[0] <= 'z' || value[0] >= 'A' && value[0] <= 'Z')
-	if value == "" || len(value) > 255 || !utf8.ValidString(value) || !strings.HasSuffix(value, ".sqlite") || strings.Contains(value, "/") || runtime.GOOS == "windows" && (strings.Contains(value, `\`) || hasDrivePrefix) || hasControl(value) {
+	if value == "" || len(value) > 255 || !utf8.ValidString(value) || !strings.HasSuffix(value, ".sqlite") || strings.Contains(value, "/") || hasWindowsDeliveryPath(value) || hasControl(value) {
 		return invalid("Delivery database name is invalid")
 	}
 	return nil
@@ -31,7 +30,7 @@ func validateIdentifier(value, detail string) error {
 		return invalid(detail)
 	}
 	for _, character := range []byte(value) {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("._-:+", rune(character))) {
+		if !isDeliveryIdentifierByte(character) {
 			return invalid(detail)
 		}
 	}
@@ -124,32 +123,14 @@ func validateRunCreate(run RunCreate) error {
 	if err := validateText(run.ScopeKey, 255, "Delivery run scope is invalid"); err != nil {
 		return err
 	}
-	if run.DbName != nil {
-		if err := validateDbName(*run.DbName); err != nil {
-			return err
-		}
-	}
-	if run.TriggerKind != TriggerKindManual && run.DbName == nil {
-		return invalid("Non-manual delivery runs require a database")
-	}
-	if run.TriggerKind == TriggerKindManual && run.UserId == nil {
-		return invalid("Manual delivery runs require a user")
-	}
-	if run.UserId != nil {
-		if err := validatePositiveId(*run.UserId, "Delivery run user id is invalid"); err != nil {
-			return err
-		}
+	if err := validateRunMembership(run); err != nil {
+		return err
 	}
 	if err := validateTime(run.CreatedAt, "Delivery run creation time is invalid"); err != nil {
 		return err
 	}
-	if run.DeadlineAt != nil {
-		if err := validateTime(*run.DeadlineAt, "Delivery run deadline is invalid"); err != nil {
-			return err
-		}
-		if *run.DeadlineAt <= run.CreatedAt {
-			return invalid("Delivery run deadline must follow creation")
-		}
+	if err := validateRunDeadline(run); err != nil {
+		return err
 	}
 	if !run.Workflow.valid() || !run.TriggerKind.valid() || !run.Mode.valid() {
 		return invalid("Delivery run classification is invalid")
@@ -187,6 +168,50 @@ func validateResolutions(reservations []DedupeResolution) error {
 			return invalid("Delivery dedupe resolutions are invalid")
 		}
 		seen[reservation.Id] = true
+	}
+	return nil
+}
+
+func hasDeliveryDrivePrefix(value string) bool {
+	return len(value) >= 2 && value[1] == ':' && (value[0] >= 'a' && value[0] <= 'z' || value[0] >= 'A' && value[0] <= 'Z')
+}
+
+func hasWindowsDeliveryPath(value string) bool {
+	return runtime.GOOS == "windows" && (strings.Contains(value, `\`) || hasDeliveryDrivePrefix(value))
+}
+
+func isDeliveryIdentifierByte(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("._-:+", rune(character))
+}
+
+func validateRunMembership(run RunCreate) error {
+	if run.DbName != nil {
+		if err := validateDbName(*run.DbName); err != nil {
+			return err
+		}
+	}
+	if run.TriggerKind != TriggerKindManual && run.DbName == nil {
+		return invalid("Non-manual delivery runs require a database")
+	}
+	if run.TriggerKind == TriggerKindManual && run.UserId == nil {
+		return invalid("Manual delivery runs require a user")
+	}
+	if run.UserId != nil {
+		if err := validatePositiveId(*run.UserId, "Delivery run user id is invalid"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRunDeadline(run RunCreate) error {
+	if run.DeadlineAt != nil {
+		if err := validateTime(*run.DeadlineAt, "Delivery run deadline is invalid"); err != nil {
+			return err
+		}
+		if *run.DeadlineAt <= run.CreatedAt {
+			return invalid("Delivery run deadline must follow creation")
+		}
 	}
 	return nil
 }
