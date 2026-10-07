@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// TestCurrentPasswordsUseIndependentSaltsAndRejectWrongCredentials checks fresh salts and captured-hash verification.
 func TestCurrentPasswordsUseIndependentSaltsAndRejectWrongCredentials(t *testing.T) {
 	password := "IndependentPassword!2026"
 	first, err := HashPassword(password)
@@ -26,11 +27,7 @@ func TestCurrentPasswordsUseIndependentSaltsAndRejectWrongCredentials(t *testing
 			t.Fatal("wrong password accepted")
 		}
 	}
-	for _, parameters := range []string{"m=19457,t=2,p=1", "m=19456,t=3,p=1", "m=19456,t=2,p=2", "m=4294967295,t=2,p=1", "m=19456,t=2,p=1,keyid=1", "m=19456,m=19456,t=2,p=1"} {
-		if VerifyPassword(password, "", strings.Replace(first, "m=19456,t=2,p=1", parameters, 1)) != Invalid {
-			t.Fatal("unsupported password parameters accepted")
-		}
-	}
+	assertUnsupportedPasswordCosts(t, password, first)
 }
 
 func TestPasswordPolicyCountsUnicodeScalars(t *testing.T) {
@@ -41,5 +38,15 @@ func TestPasswordPolicyCountsUnicodeScalars(t *testing.T) {
 	}
 	if ValidNewPassword(strings.Repeat("a", 12) + "\xff") {
 		t.Fatal("invalid UTF-8 accepted")
+	}
+}
+
+// assertUnsupportedPasswordCosts checks each unsupported cost before expensive derivation.
+func assertUnsupportedPasswordCosts(t *testing.T, password, first string) {
+	t.Helper()
+	for _, parameters := range []string{"m=19457,t=2,p=1", "m=19456,t=3,p=1", "m=19456,t=2,p=2", "m=4294967295,t=2,p=1", "m=19456,t=2,p=1,keyid=1", "m=19456,m=19456,t=2,p=1"} {
+		if VerifyPassword(password, "", strings.Replace(first, "m=19456,t=2,p=1", parameters, 1)) != Invalid {
+			t.Fatal("unsupported password parameters accepted")
+		}
 	}
 }

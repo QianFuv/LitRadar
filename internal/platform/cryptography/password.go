@@ -50,30 +50,11 @@ func VerifyPassword(password, legacySalt, stored string) Verification {
 	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" || parts[2] != "v=19" {
 		return Invalid
 	}
-	parameters := make(map[string]uint64)
-	for _, field := range strings.Split(parts[3], ",") {
-		key, value, ok := strings.Cut(field, "=")
-		if !ok {
-			return Invalid
-		}
-		if _, exists := parameters[key]; exists {
-			return Invalid
-		}
-		parsed, err := strconv.ParseUint(value, 10, 32)
-		if err != nil {
-			return Invalid
-		}
-		parameters[key] = parsed
-	}
-	if len(parameters) != 3 || parameters["m"] != 19456 || parameters["t"] != 2 || parameters["p"] != 1 {
+	if !validPasswordParameters(parts[3]) {
 		return Invalid
 	}
-	salt, err := base64.RawStdEncoding.Strict().DecodeString(parts[4])
-	if err != nil || len(salt) < 8 || len(parts[4]) > 64 {
-		return Invalid
-	}
-	expected, err := base64.RawStdEncoding.Strict().DecodeString(parts[5])
-	if err != nil || len(expected) != 32 {
+	salt, expected, ok := decodePasswordFields(parts[4], parts[5])
+	if !ok {
 		return Invalid
 	}
 	actual := argon2.IDKey([]byte(password), salt, 2, 19456, 1, 32)
@@ -93,4 +74,40 @@ func HashPassword(password string) (string, error) {
 	derived := argon2.IDKey([]byte(password), salt, 2, 19456, 1, 32)
 	defer clear(derived)
 	return "$argon2id$v=19$m=19456,t=2,p=1$" + base64.RawStdEncoding.EncodeToString(salt) + "$" + base64.RawStdEncoding.EncodeToString(derived), nil
+}
+
+// validPasswordParameters admits only the fixed costs after rejecting duplicate or malformed fields.
+func validPasswordParameters(fields string) bool {
+	parameters := make(map[string]uint64)
+	for _, field := range strings.Split(fields, ",") {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			return false
+		}
+		if _, exists := parameters[key]; exists {
+			return false
+		}
+		parsed, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			return false
+		}
+		parameters[key] = parsed
+	}
+	if len(parameters) != 3 || parameters["m"] != 19456 || parameters["t"] != 2 || parameters["p"] != 1 {
+		return false
+	}
+	return true
+}
+
+// decodePasswordFields preserves strict encoding, encoded salt bounds and exact digest length.
+func decodePasswordFields(saltText, hashText string) ([]byte, []byte, bool) {
+	salt, err := base64.RawStdEncoding.Strict().DecodeString(saltText)
+	if err != nil || len(salt) < 8 || len(saltText) > 64 {
+		return nil, nil, false
+	}
+	expected, err := base64.RawStdEncoding.Strict().DecodeString(hashText)
+	if err != nil || len(expected) != 32 {
+		return nil, nil, false
+	}
+	return salt, expected, true
 }

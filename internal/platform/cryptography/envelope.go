@@ -75,15 +75,7 @@ func (codec *Codec) Decrypt(stored, context string) (string, error) {
 	if !strings.HasPrefix(stored, envelopePrefix) {
 		return "", ErrLegacyPlaintext
 	}
-	nonceText, cipherText, ok := strings.Cut(strings.TrimPrefix(stored, envelopePrefix), ":")
-	if !ok {
-		return "", ErrAuthentication
-	}
-	nonce, err := base64.RawURLEncoding.Strict().DecodeString(nonceText)
-	if err != nil || len(nonce) != chacha20poly1305.NonceSizeX {
-		return "", ErrAuthentication
-	}
-	ciphertext, err := base64.RawURLEncoding.Strict().DecodeString(cipherText)
+	nonce, ciphertext, err := decodeSecretEnvelope(strings.TrimPrefix(stored, envelopePrefix))
 	if err != nil {
 		return "", ErrAuthentication
 	}
@@ -100,4 +92,21 @@ func (codec *Codec) Decrypt(stored, context string) (string, error) {
 		return "", ErrAuthentication
 	}
 	return string(plaintext), nil
+}
+
+// decodeSecretEnvelope decodes the first-colon-separated nonce and ciphertext before authentication.
+func decodeSecretEnvelope(payload string) ([]byte, []byte, error) {
+	nonceText, cipherText, ok := strings.Cut(payload, ":")
+	if !ok {
+		return nil, nil, ErrAuthentication
+	}
+	nonce, err := base64.RawURLEncoding.Strict().DecodeString(nonceText)
+	if err != nil || len(nonce) != chacha20poly1305.NonceSizeX {
+		return nil, nil, ErrAuthentication
+	}
+	ciphertext, err := base64.RawURLEncoding.Strict().DecodeString(cipherText)
+	if err != nil {
+		return nil, nil, ErrAuthentication
+	}
+	return nonce, ciphertext, nil
 }
