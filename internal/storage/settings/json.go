@@ -26,23 +26,7 @@ func readObject(raw string, fields []string, consume func(string, json.RawMessag
 	}
 	seen := map[string]bool{}
 	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return errJsonShape
-		}
-		name, ok := token.(string)
-		if !ok {
-			return errJsonShape
-		}
-		if fields != nil && (seen[name] || !slices.Contains(fields, name)) {
-			return errJsonShape
-		}
-		seen[name] = true
-		var value json.RawMessage
-		if decoder.Decode(&value) != nil {
-			return errJsonShape
-		}
-		if err := consume(name, value); err != nil {
+		if err := readObjectMember(decoder, fields, seen, consume); err != nil {
 			return err
 		}
 	}
@@ -50,6 +34,27 @@ func readObject(raw string, fields []string, consume func(string, json.RawMessag
 		return errJsonShape
 	}
 	return nil
+}
+
+// readObjectMember validates strict member names before decoding and consuming their values.
+func readObjectMember(decoder *json.Decoder, fields []string, seen map[string]bool, consume func(string, json.RawMessage) error) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return errJsonShape
+	}
+	name, ok := token.(string)
+	if !ok {
+		return errJsonShape
+	}
+	if fields != nil && (seen[name] || !slices.Contains(fields, name)) {
+		return errJsonShape
+	}
+	seen[name] = true
+	var value json.RawMessage
+	if decoder.Decode(&value) != nil {
+		return errJsonShape
+	}
+	return consume(name, value)
 }
 
 func jsonString(raw json.RawMessage) (string, error) {
@@ -81,15 +86,16 @@ func runtimeName(value string) bool {
 		return false
 	}
 	for index, character := range []byte(value) {
-		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
-			continue
+		if !isRuntimeNameByte(character, index) {
+			return false
 		}
-		if index > 0 && (character == '.' || character == '_' || character == '-') {
-			continue
-		}
-		return false
 	}
 	return true
+}
+
+// isRuntimeNameByte permits a leading lowercase letter or digit and later separators.
+func isRuntimeNameByte(character byte, index int) bool {
+	return character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || index > 0 && (character == '.' || character == '_' || character == '-')
 }
 
 func rewriteProvider(value string) string {
@@ -233,47 +239,74 @@ func ParseRateLimitPolicy(raw string) (RateLimitPolicy, error) {
 	buckets := map[string]*TokenBucketPolicy{"login_ip": &result.LoginIp, "username": &result.Username, "register_ip": &result.RegisterIp, "global_login": &result.GlobalLogin, "global_register": &result.GlobalRegister}
 	fields := []string{"login_ip", "username", "register_ip", "global_login", "global_register", "ip_key_limit", "username_key_limit"}
 	err := readObject(raw, fields, func(key string, value json.RawMessage) error {
-		if bucket, exists := buckets[key]; exists {
-			return readObject(string(value), []string{"capacity", "refill_tokens", "refill_seconds"}, func(name string, number json.RawMessage) error {
-				parsed, err := strconv.ParseUint(string(number), 10, 64)
-				if err != nil {
-					return errJsonShape
-				}
-				switch name {
-				case "capacity":
-					bucket.Capacity = parsed
-				case "refill_tokens":
-					bucket.RefillTokens = parsed
-				case "refill_seconds":
-					bucket.RefillSeconds = parsed
-				}
-				return nil
-			})
-		}
-		parsed, err := strconv.ParseUint(string(value), 10, 64)
-		if err != nil {
-			return errJsonShape
-		}
-		if key == "ip_key_limit" {
-			result.IpKeyLimit = parsed
-		} else {
-			result.UsernameKeyLimit = parsed
-		}
-		return nil
+		return readRatePolicyValue(key, value, buckets, &result)
 	})
 	if err != nil {
 		return RateLimitPolicy{}, invalid
 	}
 	for _, bucket := range buckets {
-		if bucket.Capacity < 1 || bucket.Capacity > 100000 || bucket.RefillTokens < 1 || bucket.RefillTokens > bucket.Capacity || bucket.RefillSeconds < 1 || bucket.RefillSeconds > 86400 {
+		if !isBoundedBucket(*bucket) {
 			return RateLimitPolicy{}, invalid
 		}
 	}
-	dominates := func(global, front TokenBucketPolicy) bool {
-		return global.Capacity > front.Capacity && global.RefillTokens*front.RefillSeconds >= front.RefillTokens*global.RefillSeconds
-	}
-	if result.IpKeyLimit < 1 || result.IpKeyLimit > 65536 || result.UsernameKeyLimit < 1 || result.UsernameKeyLimit > 65536 || !dominates(result.GlobalLogin, result.LoginIp) || !dominates(result.GlobalLogin, result.Username) || !dominates(result.GlobalRegister, result.RegisterIp) || !dominates(result.GlobalRegister, result.Username) {
+	if !hasBoundedPolicyKeys(result) || !hasDominatingGlobalBuckets(result) {
 		return RateLimitPolicy{}, invalid
 	}
 	return result, nil
+}
+
+// readRatePolicyValue assigns exact uint64 fields after strict nested bucket decoding.
+func readRatePolicyValue(key string, value json.RawMessage, buckets map[string]*TokenBucketPolicy, result *RateLimitPolicy) error {
+	if bucket, exists := buckets[key]; exists {
+		return readTokenBucket(value, bucket)
+	}
+	parsed, err := strconv.ParseUint(string(value), 10, 64)
+	if err != nil {
+		return errJsonShape
+	}
+	if key == "ip_key_limit" {
+		result.IpKeyLimit = parsed
+	} else {
+		result.UsernameKeyLimit = parsed
+	}
+	return nil
+}
+
+// readTokenBucket rejects missing, repeated or noninteger bucket fields.
+func readTokenBucket(value json.RawMessage, bucket *TokenBucketPolicy) error {
+	return readObject(string(value), []string{"capacity", "refill_tokens", "refill_seconds"}, func(name string, number json.RawMessage) error {
+		parsed, err := strconv.ParseUint(string(number), 10, 64)
+		if err != nil {
+			return errJsonShape
+		}
+		switch name {
+		case "capacity":
+			bucket.Capacity = parsed
+		case "refill_tokens":
+			bucket.RefillTokens = parsed
+		case "refill_seconds":
+			bucket.RefillSeconds = parsed
+		}
+		return nil
+	})
+}
+
+// isBoundedBucket validates multiplication-safe limits before dominance is evaluated.
+func isBoundedBucket(bucket TokenBucketPolicy) bool {
+	return bucket.Capacity >= 1 && bucket.Capacity <= 100000 && bucket.RefillTokens >= 1 && bucket.RefillTokens <= bucket.Capacity && bucket.RefillSeconds >= 1 && bucket.RefillSeconds <= 86400
+}
+
+// hasBoundedPolicyKeys enforces finite IP and username cache capacities.
+func hasBoundedPolicyKeys(policy RateLimitPolicy) bool {
+	return policy.IpKeyLimit >= 1 && policy.IpKeyLimit <= 65536 && policy.UsernameKeyLimit >= 1 && policy.UsernameKeyLimit <= 65536
+}
+
+// bucketDominates requires greater capacity and at least the local refill rate.
+func bucketDominates(global, front TokenBucketPolicy) bool {
+	return global.Capacity > front.Capacity && global.RefillTokens*front.RefillSeconds >= front.RefillTokens*global.RefillSeconds
+}
+
+// hasDominatingGlobalBuckets checks both global breakers against each relevant local bucket.
+func hasDominatingGlobalBuckets(policy RateLimitPolicy) bool {
+	return bucketDominates(policy.GlobalLogin, policy.LoginIp) && bucketDominates(policy.GlobalLogin, policy.Username) && bucketDominates(policy.GlobalRegister, policy.RegisterIp) && bucketDominates(policy.GlobalRegister, policy.Username)
 }

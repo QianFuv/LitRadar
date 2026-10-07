@@ -66,9 +66,7 @@ func TestSecretSettingsPreserveClearAndAuthenticatedPoolRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := settingInfo(t, initial, field)
-	if info.Value != "" || !info.HasValue || info.MaskedValue != "••••" || len(info.SecretItems) != 2 || info.SecretItems[0].MaskedValue != "first*******" {
-		t.Fatalf("invalid projection: %v", info)
-	}
+	assertInitialSecretProjection(t, info)
 	originalReference := info.SecretItems[0].Reference
 	updated, err := repository.Update(ctx, nil, map[string]*string{field: textValue("  ")}, map[string]PoolUpdate{field: {Remove: []string{originalReference, originalReference}, Add: []string{"third-secret;second-secret"}}}, nil)
 	if err != nil {
@@ -93,6 +91,14 @@ func TestSecretSettingsPreserveClearAndAuthenticatedPoolRemoval(t *testing.T) {
 	}
 	if settingInfo(t, cleared, field).HasValue {
 		t.Fatal("null did not clear secret")
+	}
+}
+
+// assertInitialSecretProjection preserves independent plaintext, presence and per-item masking checks.
+func assertInitialSecretProjection(t *testing.T, info Info) {
+	t.Helper()
+	if info.Value != "" || !info.HasValue || info.MaskedValue != "••••" || len(info.SecretItems) != 2 || info.SecretItems[0].MaskedValue != "first*******" {
+		t.Fatalf("invalid projection: %v", info)
 	}
 }
 
@@ -164,13 +170,7 @@ func TestRuntimeRowsRejectCoercionIncludingUnknownFields(t *testing.T) {
 
 func TestLoggingBootstrapIsReadOnlyAndPreservesRawSettings(t *testing.T) {
 	ctx := context.Background()
-	missing := filepath.Join(t.TempDir(), "absent", "auth.sqlite")
-	if logging, err := LoadLogging(ctx, missing); err != nil || logging.LogFormat != "json" {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Dir(missing)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("logging startup created directory")
-	}
+	assertMissingLoggingDefaults(t, ctx)
 	repository, filename := testSettings(t)
 	executeSettings(t, repository, `INSERT INTO runtime_settings VALUES('log_format','invalid raw format',1),('log_filter',' invalid raw filter ',2),('openalex_api_key_pool','invalid secret',3)`)
 	if err := repository.auth.Close(); err != nil {
@@ -187,6 +187,18 @@ func TestLoggingBootstrapIsReadOnlyAndPreservesRawSettings(t *testing.T) {
 	after, err := os.ReadFile(filename)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("readonly startup changed database")
+	}
+}
+
+// assertMissingLoggingDefaults checks both default values and the absence of startup file creation.
+func assertMissingLoggingDefaults(t *testing.T, ctx context.Context) {
+	t.Helper()
+	missing := filepath.Join(t.TempDir(), "absent", "auth.sqlite")
+	if logging, err := LoadLogging(ctx, missing); err != nil || logging.LogFormat != "json" {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(missing)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("logging startup created directory")
 	}
 }
 

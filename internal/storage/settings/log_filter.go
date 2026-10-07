@@ -18,88 +18,137 @@ func validLogFilter(value string) bool {
 }
 
 func validLogDirective(value string) bool {
-	const (
-		start = iota
-		levelOrTarget
-		span
-		field
-		fields
-		target
-		level
-	)
-	state, offset := start, 0
-	slice := func(end int) (string, bool) {
-		if offset > end || end > len(value) || !utf8.ValidString(value[offset:end]) {
-			return "", false
-		}
-		return value[offset:end], true
-	}
+	parser := logDirectiveParser{value: value}
 	for index, character := range strings.TrimSpace(value) {
-		switch state {
-		case start:
-			if character == '[' {
-				state = span
-				offset = index + 1
-			} else if character == '-' || character == ':' || character == '_' || isAlphabetic(character) || unicode.IsNumber(character) {
-				state = levelOrTarget
-				offset = index
-			} else {
-				return false
-			}
-		case levelOrTarget:
-			if character == '=' {
-				state = level
-				offset = index + 1
-			} else if character == '[' {
-				state = span
-				offset = index + 1
-			}
-		case span:
-			if character == ']' {
-				if _, ok := slice(index); !ok {
-					return false
-				}
-				state = target
-			} else if character == '{' {
-				if _, ok := slice(index); !ok {
-					return false
-				}
-				state = field
-				offset = index + 1
-			}
-		case field:
-			if character == '}' {
-				candidate, ok := slice(index)
-				if !ok || candidate == "" || !validLogField(candidate) {
-					return false
-				}
-				state = fields
-			}
-		case fields:
-			if character != ']' {
-				return false
-			}
-			state = target
-		case target:
-			if character != '=' {
-				return false
-			}
-			state = level
-			offset = index + 1
-		case level:
+		if !parser.consume(index, character) {
+			return false
 		}
 	}
-	switch state {
-	case levelOrTarget, target:
+	return parser.isComplete()
+}
+
+// logDirectiveState tracks the outer field lexer without normalizing its original byte offsets.
+type logDirectiveState uint8
+
+const (
+	directiveStart logDirectiveState = iota
+	directiveLevelOrTarget
+	directiveSpan
+	directiveField
+	directiveFields
+	directiveTarget
+	directiveLevel
+)
+
+// logDirectiveParser preserves original-value slicing while traversing trimmed directive text.
+type logDirectiveParser struct {
+	value  string
+	state  logDirectiveState
+	offset int
+}
+
+// slice validates lexer offsets and the UTF-8 of the original source substring.
+func (parser *logDirectiveParser) slice(end int) (string, bool) {
+	if parser.offset > end || end > len(parser.value) || !utf8.ValidString(parser.value[parser.offset:end]) {
+		return "", false
+	}
+	return parser.value[parser.offset:end], true
+}
+
+// consume advances one lexer state while retaining its original delimiter ordering.
+func (parser *logDirectiveParser) consume(index int, character rune) bool {
+	switch parser.state {
+	case directiveStart:
+		return parser.start(index, character)
+	case directiveLevelOrTarget:
+		parser.levelOrTarget(index, character)
+	case directiveSpan:
+		return parser.span(index, character)
+	case directiveField:
+		return parser.field(index, character)
+	case directiveFields:
+		if character != ']' {
+			return false
+		}
+		parser.state = directiveTarget
+	case directiveTarget:
+		if character != '=' {
+			return false
+		}
+		parser.state = directiveLevel
+		parser.offset = index + 1
+	case directiveLevel:
+	}
+	return true
+}
+
+// start accepts either an initial span bracket or a target/level name byte.
+func (parser *logDirectiveParser) start(index int, character rune) bool {
+	if character == '[' {
+		parser.state = directiveSpan
+		parser.offset = index + 1
 		return true
-	case level:
-		remaining, ok := slice(len(value))
+	}
+	if character == '-' || character == ':' || character == '_' || isAlphabetic(character) || unicode.IsNumber(character) {
+		parser.state = directiveLevelOrTarget
+		parser.offset = index
+		return true
+	}
+	return false
+}
+
+// levelOrTarget keeps a target prefix open until a level separator or span bracket appears.
+func (parser *logDirectiveParser) levelOrTarget(index int, character rune) {
+	if character == '=' {
+		parser.state = directiveLevel
+		parser.offset = index + 1
+	} else if character == '[' {
+		parser.state = directiveSpan
+		parser.offset = index + 1
+	}
+}
+
+// span verifies its original substring before entering a field or target suffix.
+func (parser *logDirectiveParser) span(index int, character rune) bool {
+	if character == ']' {
+		if _, ok := parser.slice(index); !ok {
+			return false
+		}
+		parser.state = directiveTarget
+	} else if character == '{' {
+		if _, ok := parser.slice(index); !ok {
+			return false
+		}
+		parser.state = directiveField
+		parser.offset = index + 1
+	}
+	return true
+}
+
+// field validates the first brace-delimited field candidate without interpreting later separators.
+func (parser *logDirectiveParser) field(index int, character rune) bool {
+	if character == '}' {
+		candidate, ok := parser.slice(index)
+		if !ok || candidate == "" || !validLogField(candidate) {
+			return false
+		}
+		parser.state = directiveFields
+	}
+	return true
+}
+
+// isComplete accepts target-only directives or a valid optional explicit level.
+func (parser *logDirectiveParser) isComplete() bool {
+	switch parser.state {
+	case directiveLevelOrTarget, directiveTarget:
+		return true
+	case directiveLevel:
+		remaining, ok := parser.slice(len(parser.value))
 		return ok && (remaining == "" || validLogLevel(remaining))
 	default:
 		return false
 	}
 }
-
 func validLogLevel(value string) bool {
 	switch asciiLower(value) {
 	case "off", "error", "warn", "info", "debug", "trace":

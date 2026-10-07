@@ -27,19 +27,7 @@ func LoadLogging(ctx context.Context, filename string) (LoggingSettings, error) 
 		}
 		return LoggingSettings{}, err
 	}
-	dsn, err := platformsqlite.FileUri(filename, "ro")
-	if err != nil {
-		return LoggingSettings{}, err
-	}
-	location, err := url.Parse(dsn)
-	if err != nil {
-		return LoggingSettings{}, err
-	}
-	query := location.Query()
-	query.Del("_foreign_keys")
-	query.Del("_synchronous")
-	location.RawQuery = query.Encode()
-	database, err := sql.Open("sqlite3", location.String())
+	database, err := openLoggingDatabase(filename)
 	if err != nil {
 		return LoggingSettings{}, err
 	}
@@ -69,6 +57,23 @@ func LoadLogging(ctx context.Context, filename string) (LoggingSettings, error) 
 		}
 	}
 	return result, rows.Err()
+}
+
+// openLoggingDatabase removes write-related pragmas from the read-only startup URI.
+func openLoggingDatabase(filename string) (*sql.DB, error) {
+	dsn, err := platformsqlite.FileUri(filename, "ro")
+	if err != nil {
+		return nil, err
+	}
+	location, err := url.Parse(dsn)
+	if err != nil {
+		return nil, err
+	}
+	query := location.Query()
+	query.Del("_foreign_keys")
+	query.Del("_synchronous")
+	location.RawQuery = query.Encode()
+	return sql.Open("sqlite3", location.String())
 }
 
 // LoadField validates only the requested setting; unrelated secrets cannot block non-secret consumers.

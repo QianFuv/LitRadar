@@ -180,27 +180,35 @@ func (repository *Repository) List(ctx context.Context) ([]Info, error) {
 	}
 	result := make([]Info, 0, len(values))
 	for index, value := range values {
-		definition := &definitions[index]
-		item := Info{Field: definition.Field, Label: definition.Label, Description: definition.Description, Group: definition.Group, Control: definition.Control, ApplyMode: definition.ApplyMode, AllowedValues: append([]string{}, definition.AllowedValues...), InputType: definition.InputType, IsSecret: definition.IsSecret, Value: value.Value, HasValue: strings.TrimSpace(value.Value) != "", SecretItems: []SecretItem{}, Source: value.Source, UpdatedAt: value.UpdatedAt}
-		if isSecretPool(definition) {
-			for _, entry := range poolValues(value.Value) {
-				reference, err := repository.codec.Encrypt(entry, secrets.PoolReferenceContext(definition.Field))
-				if err != nil {
-					return nil, err
-				}
-				item.SecretItems = append(item.SecretItems, SecretItem{reference, mask(entry)})
-			}
-			item.HasValue = len(item.SecretItems) > 0
-		}
-		if definition.IsSecret {
-			item.Value = ""
-			if item.HasValue {
-				item.MaskedValue = "••••"
-			}
+		item, err := repository.settingInfo(&definitions[index], value)
+		if err != nil {
+			return nil, err
 		}
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+// settingInfo constructs one administrator projection with fresh authenticated pool references.
+func (repository *Repository) settingInfo(definition *definition, value Value) (Info, error) {
+	item := Info{Field: definition.Field, Label: definition.Label, Description: definition.Description, Group: definition.Group, Control: definition.Control, ApplyMode: definition.ApplyMode, AllowedValues: append([]string{}, definition.AllowedValues...), InputType: definition.InputType, IsSecret: definition.IsSecret, Value: value.Value, HasValue: strings.TrimSpace(value.Value) != "", SecretItems: []SecretItem{}, Source: value.Source, UpdatedAt: value.UpdatedAt}
+	if isSecretPool(definition) {
+		for _, entry := range poolValues(value.Value) {
+			reference, err := repository.codec.Encrypt(entry, secrets.PoolReferenceContext(definition.Field))
+			if err != nil {
+				return Info{}, err
+			}
+			item.SecretItems = append(item.SecretItems, SecretItem{reference, mask(entry)})
+		}
+		item.HasValue = len(item.SecretItems) > 0
+	}
+	if definition.IsSecret {
+		item.Value = ""
+		if item.HasValue {
+			item.MaskedValue = "••••"
+		}
+	}
+	return item, nil
 }
 
 // Update preserves omitted/blank/null secret semantics and commits settings together with their audit.

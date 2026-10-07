@@ -35,28 +35,16 @@ func normalizeProxyUrl(value string) (string, error) {
 	if err != nil {
 		return "", invalid
 	}
-	defaultPort := ""
-	switch location.Scheme() {
-	case "http":
-		defaultPort = "80"
-	case "https":
-		defaultPort = "443"
-	case "socks5", "socks5h":
-		defaultPort = "1080"
-	default:
+	defaultPort := proxyDefaultPort(location.Scheme())
+	if defaultPort == "" {
 		return "", invalid
 	}
 	hasUserinfo := strings.Contains(rawAuthority(value), "@")
-	hasCompleteUserinfo := location.Username() != "" && location.Password() != ""
-	if asciiLower(declared) != location.Scheme() || rawAuthority(value) == "" || location.Hostname() == "" || hasUserinfo != hasCompleteUserinfo || location.Port() == "0" || (location.Pathname() != "" && location.Pathname() != "/") || hasQueryOrFragment(location) || location.OpaquePath() {
+	if !isProxyLocation(value, declared, location, hasUserinfo) {
 		return "", invalid
 	}
-	if hasUserinfo {
-		usernameLength, isUsernameValid := percentDecodedLength(location.Username())
-		passwordLength, isPasswordValid := percentDecodedLength(location.Password())
-		if !isUsernameValid || !isPasswordValid || (strings.HasPrefix(location.Scheme(), "socks5") && (usernameLength > 255 || passwordLength > 255)) {
-			return "", invalid
-		}
+	if hasUserinfo && !isProxyUserinfo(location) {
+		return "", invalid
 	}
 	location.SetHostname(asciiLower(location.Hostname()))
 	if location.Port() == "" {
@@ -66,12 +54,44 @@ func normalizeProxyUrl(value string) (string, error) {
 	return location.Href(false), nil
 }
 
+// proxyDefaultPort preserves the supported proxy schemes and their default ports.
+func proxyDefaultPort(scheme string) string {
+	switch scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	case "socks5", "socks5h":
+		return "1080"
+	default:
+		return ""
+	}
+}
+
+// isProxyLocation checks explicit authority and complete credentials before endpoint syntax.
+func isProxyLocation(value, declared string, location *whatwg.Url, hasUserinfo bool) bool {
+	hasCompleteUserinfo := location.Username() != "" && location.Password() != ""
+	return asciiLower(declared) == location.Scheme() && rawAuthority(value) != "" && location.Hostname() != "" && hasUserinfo == hasCompleteUserinfo && isProxyEndpoint(location)
+}
+
+// isProxyEndpoint restricts a proxy URL to an unadorned root endpoint and nonzero port.
+func isProxyEndpoint(location *whatwg.Url) bool {
+	return location.Port() != "0" && (location.Pathname() == "" || location.Pathname() == "/") && !hasQueryOrFragment(location) && !location.OpaquePath()
+}
+
+// isProxyUserinfo validates percent escapes and SOCKS credential byte lengths.
+func isProxyUserinfo(location *whatwg.Url) bool {
+	usernameLength, isUsernameValid := percentDecodedLength(location.Username())
+	passwordLength, isPasswordValid := percentDecodedLength(location.Password())
+	return isUsernameValid && isPasswordValid && (!strings.HasPrefix(location.Scheme(), "socks5") || usernameLength <= 255 && passwordLength <= 255)
+}
+
 // CanonicalizeBaseUrl preserves the exact administrator-approved HTTPS endpoint boundary.
 func CanonicalizeBaseUrl(value string) (string, error) {
 	invalid := errors.New("AI allowed base URLs must be exact HTTPS base URLs without credentials, query, fragment, or port zero")
 	value = strings.TrimSpace(value)
 	location, err := whatwg.NewParser().Parse(value)
-	if err != nil || location.Scheme() != "https" || location.Hostname() == "" || strings.Contains(rawAuthority(value), "@") || location.Username() != "" || location.Password() != "" || location.Port() == "0" || hasQueryOrFragment(location) || location.OpaquePath() {
+	if err != nil || !isBaseUrlLocation(value, location) {
 		return "", invalid
 	}
 	result := location.Href(false)
@@ -79,6 +99,11 @@ func CanonicalizeBaseUrl(value string) (string, error) {
 		result += "/"
 	}
 	return result, nil
+}
+
+// isBaseUrlLocation preserves the exact credential-free administrator endpoint boundary.
+func isBaseUrlLocation(value string, location *whatwg.Url) bool {
+	return location.Scheme() == "https" && location.Hostname() != "" && !strings.Contains(rawAuthority(value), "@") && location.Username() == "" && location.Password() == "" && location.Port() != "0" && !hasQueryOrFragment(location) && !location.OpaquePath()
 }
 
 func percentDecodedLength(value string) (int, bool) {
