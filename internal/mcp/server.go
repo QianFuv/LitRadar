@@ -77,8 +77,49 @@ func knownTool(name string) bool {
 }
 
 func (services Services) call(ctx context.Context, request *sdk.CallToolRequest, name string, input *toolInput) (*sdk.CallToolResult, error) {
+	work, err := services.toolWork(ctx, request, name, input)
+	if err != nil {
+		return nil, err
+	}
+	if input.err != nil {
+		return toolError(input.err.Error()), nil
+	}
+	type outcome struct {
+		payload any
+		err     error
+	}
+	result, err := executor.Run(ctx, services.Pool, func() (outcome, error) { payload, err := work(); return outcome{payload, err}, nil })
+	if err != nil {
+		return nil, &jsonrpc.Error{Code: -32603, Message: "LitRadar backend is temporarily unavailable"}
+	}
+	if result.err != nil {
+		return toolError(publicError(result.err)), nil
+	}
+	text, err := encodeToolPayload(result.payload)
+	if err != nil {
+		return nil, &jsonrpc.Error{Code: -32603, Message: "Failed to serialize MCP tool response"}
+	}
+	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}, nil
+}
+
+// toolWork resolves parameters before storage admission and selects the tool operation.
+func (services Services) toolWork(ctx context.Context, request *sdk.CallToolRequest, name string, input *toolInput) (func() (any, error), error) {
+	switch name {
+	case "list_databases", "get_weekly_updates", "list_areas", "list_journal_ratings", "list_years", "list_journal_options":
+		return services.metadataWork(ctx, name, input), nil
+	case "list_journals", "search_articles":
+		return services.searchWork(ctx, name, input), nil
+	case "get_article", "get_journal":
+		return services.recordWork(ctx, name, input), nil
+	case "list_folders", "add_favorite", "remove_favorite":
+		return services.favoriteWork(ctx, request, name, input)
+	}
+	return nil, nil
+}
+
+// metadataWork captures database validation while keeping weekly time inside the worker.
+func (services Services) metadataWork(workContext context.Context, name string, input *toolInput) func() (any, error) {
 	var work func() (any, error)
-	workContext := ctx
 	switch name {
 	case "list_databases":
 		work = func() (any, error) {
@@ -109,78 +150,79 @@ func (services Services) call(ctx context.Context, request *sdk.CallToolRequest,
 				return query.ListJournalOptions(workContext, services.Storage, database)
 			}
 		}
+	}
+	return work
+}
+
+// searchWork captures journal or article search parameters before execution.
+func (services Services) searchWork(workContext context.Context, name string, input *toolInput) func() (any, error) {
+	var work func() (any, error)
+	switch name {
 	case "list_journals":
 		database, params := input.journals()
 		work = func() (any, error) { return query.ListJournals(workContext, services.Storage, database, params) }
 	case "search_articles":
 		database, params := input.articles()
 		work = func() (any, error) { return query.ListArticles(workContext, services.Storage, database, params) }
-	case "get_article", "get_journal":
-		database := input.text("db")
-		field := "article_id"
-		if name == "get_journal" {
-			field = "journal_id"
-		}
-		id := input.positiveId(field, input.fields[field].(string))
-		work = func() (any, error) {
-			if name == "get_article" {
-				return query.GetArticle(workContext, services.Storage, database, id)
-			}
-			return query.GetJournal(workContext, services.Storage, database, id)
-		}
-	case "list_folders", "add_favorite", "remove_favorite":
-		principal, ok := mcpcompat.PrincipalFor(request)
-		if !ok {
-			return nil, &jsonrpc.Error{Code: -32603, Message: "Authenticated MCP user is missing"}
-		}
-		if name == "list_folders" {
-			work = func() (any, error) { return services.Favorites.ListFolders(workContext, principal.UserId) }
-			break
-		}
-		workContext = context.WithoutCancel(ctx)
-		folder := *input.integer("folder_id")
-		if folder <= 0 {
-			input.fail("folder_id must be a positive integer")
-		}
-		article := input.positiveId("article_id", input.fields["article_id"].(string))
-		database := ""
-		if value := input.text("db_name"); value != nil {
-			database = *value
-		}
-		reference := favorites.Reference{ArticleId: identity.Id(article), DbName: database}
-		work = func() (any, error) {
-			if name == "add_favorite" {
-				return services.Favorites.AddFavorite(workContext, principal.UserId, folder, favorites.Add{Reference: reference})
-			}
-			didRemove, err := services.Favorites.RemoveFavorite(workContext, principal.UserId, folder, reference)
-			if err != nil {
-				return nil, err
-			}
-			if !didRemove {
-				return nil, errFavoriteNotFound
-			}
-			return map[string]bool{"ok": true}, nil
-		}
 	}
-	if input.err != nil {
-		return toolError(input.err.Error()), nil
+	return work
+}
+
+// recordWork validates the database before the requested record identifier.
+func (services Services) recordWork(workContext context.Context, name string, input *toolInput) func() (any, error) {
+	var work func() (any, error)
+	database := input.text("db")
+	field := "article_id"
+	if name == "get_journal" {
+		field = "journal_id"
 	}
-	type outcome struct {
-		payload any
-		err     error
+	id := input.positiveId(field, input.fields[field].(string))
+	work = func() (any, error) {
+		if name == "get_article" {
+			return query.GetArticle(workContext, services.Storage, database, id)
+		}
+		return query.GetJournal(workContext, services.Storage, database, id)
 	}
-	result, err := executor.Run(ctx, services.Pool, func() (outcome, error) { payload, err := work(); return outcome{payload, err}, nil })
-	if err != nil {
-		return nil, &jsonrpc.Error{Code: -32603, Message: "LitRadar backend is temporarily unavailable"}
+	return work
+}
+
+// favoriteWork uses the current authenticated principal and detaches only mutations.
+func (services Services) favoriteWork(ctx context.Context, request *sdk.CallToolRequest, name string, input *toolInput) (func() (any, error), error) {
+	var work func() (any, error)
+	workContext := ctx
+	principal, ok := mcpcompat.PrincipalFor(request)
+	if !ok {
+		return nil, &jsonrpc.Error{Code: -32603, Message: "Authenticated MCP user is missing"}
 	}
-	if result.err != nil {
-		return toolError(publicError(result.err)), nil
+	if name == "list_folders" {
+		work = func() (any, error) { return services.Favorites.ListFolders(workContext, principal.UserId) }
+		return work, nil
 	}
-	text, err := encodeToolPayload(result.payload)
-	if err != nil {
-		return nil, &jsonrpc.Error{Code: -32603, Message: "Failed to serialize MCP tool response"}
+	workContext = context.WithoutCancel(ctx)
+	folder := *input.integer("folder_id")
+	if folder <= 0 {
+		input.fail("folder_id must be a positive integer")
 	}
-	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}, nil
+	article := input.positiveId("article_id", input.fields["article_id"].(string))
+	database := ""
+	if value := input.text("db_name"); value != nil {
+		database = *value
+	}
+	reference := favorites.Reference{ArticleId: identity.Id(article), DbName: database}
+	work = func() (any, error) {
+		if name == "add_favorite" {
+			return services.Favorites.AddFavorite(workContext, principal.UserId, folder, favorites.Add{Reference: reference})
+		}
+		didRemove, err := services.Favorites.RemoveFavorite(workContext, principal.UserId, folder, reference)
+		if err != nil {
+			return nil, err
+		}
+		if !didRemove {
+			return nil, errFavoriteNotFound
+		}
+		return map[string]bool{"ok": true}, nil
+	}
+	return work, nil
 }
 
 func encodeToolPayload(payload any) (string, error) {

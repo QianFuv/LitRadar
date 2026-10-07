@@ -28,6 +28,7 @@ type toolInput struct {
 	err    error
 }
 
+// decodeInput preserves single-value decoding and present-field-before-required validation.
 func decodeInput(raw json.RawMessage, schema toolSchema) (*toolInput, error) {
 	fields := make(map[string]any)
 	if len(raw) != 0 {
@@ -37,6 +38,21 @@ func decodeInput(raw json.RawMessage, schema toolSchema) (*toolInput, error) {
 			return nil, err
 		}
 	}
+
+	if err := normalizeToolFields(fields, schema); err != nil {
+		return nil, err
+	}
+	for _, key := range schema.Required {
+		if _, exists := fields[key]; !exists {
+			return nil, fmt.Errorf("missing field `%s`", key)
+		}
+	}
+
+	return &toolInput{fields: fields}, nil
+}
+
+// normalizeToolFields validates present known fields in sorted order before required-field checks.
+func normalizeToolFields(fields map[string]any, schema toolSchema) error {
 	keys := make([]string, 0, len(fields))
 	for key := range fields {
 		keys = append(keys, key)
@@ -48,78 +64,107 @@ func decodeInput(raw json.RawMessage, schema toolSchema) (*toolInput, error) {
 			continue
 		}
 		value := fields[key]
-		isRequired := slices.Contains(schema.Required, key)
-		if value == nil && !isRequired {
+		if value == nil && !slices.Contains(schema.Required, key) {
 			continue
 		}
-		if len(property.AnyOf) != 0 {
-			if _, ok := value.(string); ok {
-				continue
-			}
-			if values, ok := value.([]any); ok {
-				isStrings := true
-				for _, item := range values {
-					if _, ok := item.(string); !ok {
-						isStrings = false
-						break
-					}
-				}
-				if isStrings {
-					continue
-				}
-			}
-			return nil, fmt.Errorf("data did not match any variant of untagged enum StringOrStrings")
+		converted, err := normalizeToolValue(value, property.Type, property.AnyOf)
+		if err != nil {
+			return err
 		}
-		var kind string
-		if json.Unmarshal(property.Type, &kind) != nil {
-			var kinds []string
-			_ = json.Unmarshal(property.Type, &kinds)
-			kind = kinds[0]
+		fields[key] = converted
+	}
+	return nil
+}
+
+// normalizeToolValue preserves StringOrStrings admission and supported schema type conversion.
+func normalizeToolValue(value any, encoded, anyOf json.RawMessage) (any, error) {
+	if len(anyOf) != 0 {
+		if acceptsStringOrStrings(value) {
+			return value, nil
 		}
-		switch kind {
-		case "string":
-			if _, ok := value.(string); !ok {
-				return nil, invalidType(value, "a string")
-			}
-		case "boolean":
-			if _, ok := value.(bool); !ok {
-				return nil, invalidType(value, "a boolean")
-			}
-		case "integer":
-			number, ok := value.(json.Number)
-			if !ok {
-				return nil, invalidType(value, "i64")
-			}
-			parsedNumber, err := sourcevalue.ParseNumber(number)
-			if err != nil {
-				return nil, err
-			}
-			parsed, isInteger := parsedNumber.AsInt64()
-			if !isInteger {
-				if _, isUnsigned := parsedNumber.AsUint64(); isUnsigned {
-					return nil, fmt.Errorf("invalid value: integer `%s`, expected i64", parsedNumber.String())
-				}
-				return nil, invalidType(value, "i64")
-			}
-			fields[key] = parsed
-		case "array":
-			values, ok := value.([]any)
-			if !ok {
-				return nil, invalidType(value, "a sequence")
-			}
-			for _, item := range values {
-				if _, ok := item.(string); !ok {
-					return nil, invalidType(item, "a string")
-				}
-			}
+		return nil, fmt.Errorf("data did not match any variant of untagged enum StringOrStrings")
+	}
+	switch toolPropertyKind(encoded) {
+	case "string":
+		if _, ok := value.(string); !ok {
+			return nil, invalidType(value, "a string")
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return nil, invalidType(value, "a boolean")
+		}
+	case "integer":
+		return toolIntegerValue(value)
+	case "array":
+		if err := validateToolStringArray(value); err != nil {
+			return nil, err
 		}
 	}
-	for _, key := range schema.Required {
-		if _, exists := fields[key]; !exists {
-			return nil, fmt.Errorf("missing field `%s`", key)
+	return value, nil
+}
+
+// toolPropertyKind retains the first type in the existing nullable schema representation.
+func toolPropertyKind(encoded json.RawMessage) string {
+	var kind string
+	if json.Unmarshal(encoded, &kind) != nil {
+		var kinds []string
+		_ = json.Unmarshal(encoded, &kinds)
+		kind = kinds[0]
+	}
+
+	return kind
+}
+
+// acceptsStringOrStrings permits scalar strings and arrays containing only strings.
+func acceptsStringOrStrings(value any) bool {
+	if _, ok := value.(string); ok {
+		return true
+	}
+	values, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range values {
+		if _, ok := item.(string); !ok {
+			return false
 		}
 	}
-	return &toolInput{fields: fields}, nil
+	return true
+}
+
+// toolIntegerValue preserves number classification, overflow diagnostics and int64 conversion.
+func toolIntegerValue(value any) (any, error) {
+	number, ok := value.(json.Number)
+	if !ok {
+		return nil, invalidType(value, "i64")
+	}
+	parsedNumber, err := sourcevalue.ParseNumber(number)
+	if err != nil {
+		return nil, err
+	}
+	parsed, isInteger := parsedNumber.AsInt64()
+	if !isInteger {
+		if _, isUnsigned := parsedNumber.AsUint64(); isUnsigned {
+			return nil, fmt.Errorf("invalid value: integer `%s`, expected i64", parsedNumber.String())
+		}
+		return nil, invalidType(value, "i64")
+	}
+	return parsed, nil
+
+}
+
+// validateToolStringArray reports the first non-string member using the sequence diagnostic.
+func validateToolStringArray(value any) error {
+	values, ok := value.([]any)
+	if !ok {
+		return invalidType(value, "a sequence")
+	}
+	for _, item := range values {
+		if _, ok := item.(string); !ok {
+			return invalidType(item, "a string")
+		}
+	}
+	return nil
 }
 
 func invalidType(value any, expected string) error {
@@ -244,6 +289,7 @@ func (input *toolInput) journals() (*string, query.JournalListParams) {
 	return database, params
 }
 
+// articles retains sticky first-error precedence while building partial search parameters.
 func (input *toolInput) articles() (*string, query.ArticleListParams) {
 	params := query.DefaultArticleListParams()
 	params.JournalId = []int64{}
@@ -266,6 +312,17 @@ func (input *toolInput) articles() (*string, query.ArticleListParams) {
 	params.InPress, params.OpenAccess = input.boolean("in_press"), input.boolean("open_access")
 	params.DateFrom, params.DateTo = input.text("date_from"), input.text("date_to")
 	params.Doi, params.Pmid, params.Query = input.text("doi"), input.text("pmid"), input.text("q")
+	input.articleSearchMode(&params)
+	if sort := input.text("sort"); sort != nil {
+		params.Sort = sort
+	}
+	params.Limit, params.Offset = input.limit(), input.offset()
+	params.Cursor, params.IncludeTotal = input.text("cursor"), input.boolean("include_total")
+	return input.text("db"), params
+}
+
+// articleSearchMode folds ASCII case only and retains the original validation position.
+func (input *toolInput) articleSearchMode(params *query.ArticleListParams) {
 	if mode := input.text("search_mode"); mode != nil {
 		value := []byte(*mode)
 		for index, character := range value {
@@ -280,10 +337,5 @@ func (input *toolInput) articles() (*string, query.ArticleListParams) {
 			input.fail("search_mode must be simple or advanced")
 		}
 	}
-	if sort := input.text("sort"); sort != nil {
-		params.Sort = sort
-	}
-	params.Limit, params.Offset = input.limit(), input.offset()
-	params.Cursor, params.IncludeTotal = input.text("cursor"), input.boolean("include_total")
-	return input.text("db"), params
+
 }

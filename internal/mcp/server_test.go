@@ -119,6 +119,37 @@ func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 	}
 	defer repository.Close()
 	service := auth.New(repository, 2)
+	actors := authenticatedToolActors(t, ctx, service)
+	folders := favorites.New(repository)
+	adminFolder, readerFolder := authenticatedToolFolders(t, ctx, folders, actors)
+	pool := executor.New(8, 30*time.Second)
+	server, err := mcp.NewServer(mcp.Services{configuration, folders, pool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticator := api.NewAuthenticator(service, pool)
+	handler := mcpcompat.New(server, authenticator.McpAuthorize)
+	listener := httptest.NewServer(handler)
+	defer listener.Close()
+	defer handler.Close()
+	client := wireClient{testing: t, endpoint: listener.URL, client: &http.Client{Timeout: 10 * time.Second}}
+	assertAuthenticatedToolInventory(t, &client, actors.adminToken.Token)
+	assertAuthenticatedToolInputErrors(t, &client, actors.adminToken.Token)
+	assertAuthenticatedFavoriteOwnership(t, &client, actors, adminFolder, readerFolder)
+	assertDatabaseToolBasenames(t, &client, configuration, actors.adminToken.Token)
+	assertRevokedToolCredential(t, ctx, &client, service, actors.readerToken.Token)
+	assertClosedToolAuthentication(t, &client, pool, actors.adminToken.Token)
+}
+
+// authenticatedActors shares credentials across phases of one authenticated MCP session.
+type authenticatedActors struct {
+	admin, reader           domain.User
+	adminToken, readerToken domain.IssuedToken
+}
+
+// authenticatedToolActors creates the administrator and invited reader in the original order.
+func authenticatedToolActors(t *testing.T, ctx context.Context, service *auth.Service) authenticatedActors {
+	t.Helper()
 	admin, err := service.Bootstrap(ctx, "fixture_admin", "fixture password long", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -139,35 +170,40 @@ func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	folders := favorites.New(repository)
-	adminFolder, err := folders.CreateFolder(ctx, admin.Id, "admin only", false)
+	return authenticatedActors{admin, reader, adminToken, readerToken}
+}
+
+// authenticatedToolFolders creates separate folders for the two authenticated users.
+func authenticatedToolFolders(t *testing.T, ctx context.Context, folders *favorites.Repository, actors authenticatedActors) (favorites.Folder, favorites.Folder) {
+	t.Helper()
+	adminFolder, err := folders.CreateFolder(ctx, actors.admin.Id, "admin only", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	readerFolder, err := folders.CreateFolder(ctx, reader.Id, "reader only", false)
+	readerFolder, err := folders.CreateFolder(ctx, actors.reader.Id, "reader only", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool := executor.New(8, 30*time.Second)
-	server, err := mcp.NewServer(mcp.Services{configuration, folders, pool})
-	if err != nil {
-		t.Fatal(err)
-	}
-	authenticator := api.NewAuthenticator(service, pool)
-	handler := mcpcompat.New(server, authenticator.McpAuthorize)
-	listener := httptest.NewServer(handler)
-	defer listener.Close()
-	defer handler.Close()
-	client := wireClient{testing: t, endpoint: listener.URL, client: &http.Client{Timeout: 10 * time.Second}}
-	status, _ := client.post(adminToken.Token, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "fixture", "version": "1"}}})
+	return adminFolder, readerFolder
+}
+
+// assertAuthenticatedToolInventory initializes the shared session and checks the declared tool inventory.
+func assertAuthenticatedToolInventory(t *testing.T, client *wireClient, token string) {
+	t.Helper()
+	status, _ := client.post(token, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "fixture", "version": "1"}}})
 	if status != 200 || client.session == "" {
 		t.Fatal("real authentication did not initialize")
 	}
-	_, listed := client.post(adminToken.Token, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": map[string]any{}})
+	_, listed := client.post(token, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": map[string]any{}})
 	if tools, ok := listed["result"].(map[string]any)["tools"].([]any); !ok || len(tools) != 13 {
 		t.Fatal("unexpected tool inventory", listed)
 	}
 
+}
+
+// assertAuthenticatedToolInputErrors checks wire error priority without losing the shared session.
+func assertAuthenticatedToolInputErrors(t *testing.T, client *wireClient, token string) {
+	t.Helper()
 	for _, scenario := range []struct {
 		name    string
 		args    any
@@ -182,35 +218,42 @@ func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 		{"list_journals", map[string]any{"limit": 1.5}, "failed to deserialize parameters: invalid type: floating point `1.5`, expected i64"},
 		{"list_areas", map[string]any{"db": "missing"}, "Database not found"},
 	} {
-		result := client.call(adminToken.Token, scenario.name, scenario.args)
+		result := client.call(token, scenario.name, scenario.args)
 		if result["isError"] != true || toolText(t, result) != scenario.message {
 			t.Fatalf("%s: %v", scenario.name, result)
 		}
 	}
-	readerFolders := client.call(readerToken.Token, "list_folders", map[string]any{"unknown": "accepted"})
-	if text := toolText(t, readerFolders); !strings.Contains(text, "reader only") || strings.Contains(text, "admin only") {
-		t.Fatal("session cached initialize identity")
-	}
+}
+
+// assertAuthenticatedFavoriteOwnership checks current identity and favorite mutation ownership in sequence.
+func assertAuthenticatedFavoriteOwnership(t *testing.T, client *wireClient, actors authenticatedActors, adminFolder, readerFolder favorites.Folder) {
+	t.Helper()
+	assertCurrentToolIdentity(t, client, actors.readerToken.Token)
 	args := map[string]any{"folder_id": readerFolder.Id, "article_id": "9007199254740993", "db_name": "fixture"}
-	added := client.call(readerToken.Token, "add_favorite", args)
+	added := client.call(actors.readerToken.Token, "add_favorite", args)
 	if added["isError"] == true || !strings.Contains(toolText(t, added), `"article_id": "9007199254740993"`) {
 		t.Fatal(added)
 	}
-	denied := client.call(adminToken.Token, "remove_favorite", args)
+	denied := client.call(actors.adminToken.Token, "remove_favorite", args)
 	if denied["isError"] != true || toolText(t, denied) != "Favorite not found" {
 		t.Fatal("favorite mutation crossed user boundary", denied)
 	}
-	removed := client.call(readerToken.Token, "remove_favorite", args)
+	removed := client.call(actors.readerToken.Token, "remove_favorite", args)
 	if removed["isError"] == true || toolText(t, removed) != "{\n  \"ok\": true\n}" {
 		t.Fatal(removed)
 	}
-	if missing := client.call(readerToken.Token, "remove_favorite", args); toolText(t, missing) != "Favorite not found" || missing["isError"] != true {
+	if missing := client.call(actors.readerToken.Token, "remove_favorite", args); toolText(t, missing) != "Favorite not found" || missing["isError"] != true {
 		t.Fatal(missing)
 	}
 	args["folder_id"] = adminFolder.Id
-	if denied := client.call(readerToken.Token, "add_favorite", args); denied["isError"] != true {
+	if denied := client.call(actors.readerToken.Token, "add_favorite", args); denied["isError"] != true {
 		t.Fatal("foreign folder accepted")
 	}
+}
+
+// assertDatabaseToolBasenames checks that database discovery returns only basenames.
+func assertDatabaseToolBasenames(t *testing.T, client *wireClient, configuration config.Config, token string) {
+	t.Helper()
 	if err := os.MkdirAll(configuration.IndexDir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -218,21 +261,40 @@ func TestAuthenticatedToolsEnforceCurrentIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	databases := client.call(adminToken.Token, "list_databases", map[string]any{})
+	databases := client.call(token, "list_databases", map[string]any{})
 	if toolText(t, databases) != "[\n  \"metadata.sqlite\"\n]" {
 		t.Fatal("database tool leaked paths", databases)
 	}
-	_, err = service.RevokeToken(ctx, readerToken.Token, domain.AuditEvent{Action: "logout", Outcome: "completed", OccurredAt: float64(time.Now().Unix())})
+}
+
+// assertRevokedToolCredential checks that the established session still rejects revoked credentials.
+func assertRevokedToolCredential(t *testing.T, ctx context.Context, client *wireClient, service *auth.Service, token string) {
+	t.Helper()
+	_, err := service.RevokeToken(ctx, token, domain.AuditEvent{Action: "logout", Outcome: "completed", OccurredAt: float64(time.Now().Unix())})
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, _ = client.post(readerToken.Token, map[string]any{"jsonrpc": "2.0", "id": 9, "method": "tools/list"})
+	status, _ := client.post(token, map[string]any{"jsonrpc": "2.0", "id": 9, "method": "tools/list"})
 	if status != 401 {
 		t.Fatal("existing session bypassed revoked credential")
 	}
+}
+
+// assertClosedToolAuthentication checks that closed authentication admission fails closed.
+func assertClosedToolAuthentication(t *testing.T, client *wireClient, pool *executor.Pool, token string) {
+	t.Helper()
 	pool.Close()
-	_, unavailable := client.post(adminToken.Token, map[string]any{"jsonrpc": "2.0", "id": 10, "method": "tools/list"})
+	_, unavailable := client.post(token, map[string]any{"jsonrpc": "2.0", "id": 10, "method": "tools/list"})
 	if unavailable["code"] != "service_unavailable" {
 		t.Fatal("closed authentication pool did not fail closed", unavailable)
+	}
+}
+
+// assertCurrentToolIdentity checks the request principal after administrator initialization.
+func assertCurrentToolIdentity(t *testing.T, client *wireClient, token string) {
+	t.Helper()
+	readerFolders := client.call(token, "list_folders", map[string]any{"unknown": "accepted"})
+	if text := toolText(t, readerFolders); !strings.Contains(text, "reader only") || strings.Contains(text, "admin only") {
+		t.Fatal("session cached initialize identity")
 	}
 }
