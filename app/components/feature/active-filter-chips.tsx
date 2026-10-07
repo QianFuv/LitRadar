@@ -125,16 +125,7 @@ export function ActiveFilterChips() {
       onRemove: () => void setJournalIds((current) => current.filter((item) => item !== journalId)),
     });
   }
-  for (const { key, label } of JOURNAL_RATING_SYSTEMS) {
-    for (const value of ratings[key]) {
-      appliedFilters.push({
-        id: `${key}-${value}`,
-        label: `${label}：${value}`,
-        removeLabel: `移除评级 ${label} ${value}`,
-        onRemove: () => void setRatings({ [key]: ratings[key].filter((item) => item !== value) }),
-      });
-    }
-  }
+  appendRatingFilterChips(appliedFilters, ratings, setRatings);
   if (monthRangeLabel) {
     appliedFilters.push({
       id: `month-${monthRange}`,
@@ -201,4 +192,22 @@ export function ActiveFilterChips() {
       )}
     </MotionPresence>
   );
+}
+
+/** Append rating chips in declared system order with the original captured-removal snapshot. */
+function appendRatingFilterChips(
+  appliedFilters: AppliedFilterChip[],
+  ratings: ReturnType<typeof useJournalRatingFilters>[0],
+  setRatings: ReturnType<typeof useJournalRatingFilters>[1],
+): void {
+  for (const { key, label } of JOURNAL_RATING_SYSTEMS) {
+    for (const value of ratings[key]) {
+      appliedFilters.push({
+        id: `${key}-${value}`,
+        label: `${label}：${value}`,
+        removeLabel: `移除评级 ${label} ${value}`,
+        onRemove: () => void setRatings({ [key]: ratings[key].filter((item) => item !== value) }),
+      });
+    }
+  }
 }

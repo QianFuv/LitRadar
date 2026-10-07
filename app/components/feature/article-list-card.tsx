@@ -75,6 +75,7 @@ export function ArticleListCard({
     .filter(Boolean)
     .join(', ');
 
+  const state = { authors, journalTitle, issueLabel, date };
   return (
     <Card
       className={cn(
@@ -102,14 +103,7 @@ export function ArticleListCard({
             </div>
           )}
         </div>
-        <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed">
-          {authors && authors.length > 0 && (
-            <span className="min-w-0 break-words">{authors.join('; ')}</span>
-          )}
-          <span className="font-medium text-foreground/70">{journalTitle || '未知期刊'}</span>
-          {issueLabel && <span>{issueLabel}</span>}
-          {date && <time>{date}</time>}
-        </CardDescription>
+        {renderArticleListMetadata(state)}
       </CardHeader>
       {hasPreview && (
         <CardContent className="px-4 pb-4 sm:px-5 sm:pb-5">
@@ -121,3 +115,23 @@ export function ArticleListCard({
     </Card>
   );
 }
+
+/** Retain authors, journal, issue and date metadata order and truthy fallbacks. */
+function renderArticleListMetadata(state: ArticleListViewState) {
+  const { authors, journalTitle, date, issueLabel } = state;
+
+  return (
+    <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed">
+      {authors && authors.length > 0 && (
+        <span className="min-w-0 break-words">{authors.join('; ')}</span>
+      )}
+      <span className="font-medium text-foreground/70">{journalTitle || '未知期刊'}</span>
+      {issueLabel && <span>{issueLabel}</span>}
+      {date && <time>{date}</time>}
+    </CardDescription>
+  );
+}
+
+type ArticleListViewState = Pick<ArticleListCardProps, 'authors' | 'journalTitle' | 'date'> & {
+  issueLabel: string;
+};

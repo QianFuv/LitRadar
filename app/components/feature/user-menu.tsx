@@ -144,7 +144,7 @@ export function UserMenu() {
     ) : null;
   }
 
-  const selectedTheme = isMounted ? (theme ?? 'system') : 'system';
+  const selectedTheme = getUserMenuTheme(isMounted, theme);
   const settingsHref = buildSettingsCenterHref(pathname, searchParams, 'general');
   const adminHref = buildAdminCenterHref(pathname, searchParams, 'overview');
   const isAdminOpen = parseAdminSection(searchParams.get('admin')) !== null;
@@ -177,6 +177,11 @@ export function UserMenu() {
     setTheme(value);
   }
 
+  const state = {
+    isMounted,
+    selectedTheme,
+    handleThemeChange,
+  };
   return (
     <div
       data-slot="user-menu-position"
@@ -245,37 +250,7 @@ export function UserMenu() {
               </Link>
             </DropdownMenuPrimitive.Item>
 
-            <div className="flex items-center justify-between gap-2 px-2 py-1.5">
-              <span className="flex shrink-0 items-center gap-2 text-sm">
-                <Monitor className="size-4 text-muted-foreground" aria-hidden="true" />
-                <span>外观主题</span>
-              </span>
-              {isMounted && (
-                <DropdownMenuPrimitive.RadioGroup
-                  aria-label="外观主题"
-                  value={selectedTheme}
-                  onValueChange={handleThemeChange}
-                  className="flex shrink-0 items-center gap-1"
-                >
-                  {THEME_ITEMS.map((item) => {
-                    const Icon = item.icon;
-
-                    return (
-                      <DropdownMenuPrimitive.RadioItem
-                        key={item.value}
-                        value={item.value}
-                        textValue={item.label}
-                        aria-label={item.label}
-                        title={item.label}
-                        className="motion-control flex size-11 shrink-0 cursor-default items-center justify-center rounded-md text-muted-foreground outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-accent data-[highlighted]:text-foreground data-[state=checked]:bg-accent data-[state=checked]:text-foreground md:size-9"
-                      >
-                        <Icon className="size-4" aria-hidden="true" />
-                      </DropdownMenuPrimitive.RadioItem>
-                    );
-                  })}
-                </DropdownMenuPrimitive.RadioGroup>
-              )}
-            </div>
+            {renderUserThemeControls(state)}
 
             {user.is_admin && (
               <DropdownMenuPrimitive.Item asChild>
@@ -308,4 +283,54 @@ export function UserMenu() {
       </DropdownMenuPrimitive.Root>
     </div>
   );
+}
+
+/** Retain hydration-gated theme choices and exact Radix radio structure. */
+function renderUserThemeControls(state: UserMenuViewState) {
+  const { isMounted, selectedTheme, handleThemeChange } = state;
+
+  return (
+    <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+      <span className="flex shrink-0 items-center gap-2 text-sm">
+        <Monitor className="size-4 text-muted-foreground" aria-hidden="true" />
+        <span>外观主题</span>
+      </span>
+      {isMounted && (
+        <DropdownMenuPrimitive.RadioGroup
+          aria-label="外观主题"
+          value={selectedTheme}
+          onValueChange={handleThemeChange}
+          className="flex shrink-0 items-center gap-1"
+        >
+          {THEME_ITEMS.map((item) => {
+            const Icon = item.icon;
+
+            return (
+              <DropdownMenuPrimitive.RadioItem
+                key={item.value}
+                value={item.value}
+                textValue={item.label}
+                aria-label={item.label}
+                title={item.label}
+                className="motion-control flex size-11 shrink-0 cursor-default items-center justify-center rounded-md text-muted-foreground outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-accent data-[highlighted]:text-foreground data-[state=checked]:bg-accent data-[state=checked]:text-foreground md:size-9"
+              >
+                <Icon className="size-4" aria-hidden="true" />
+              </DropdownMenuPrimitive.RadioItem>
+            );
+          })}
+        </DropdownMenuPrimitive.RadioGroup>
+      )}
+    </div>
+  );
+}
+
+type UserMenuViewState = {
+  isMounted: boolean;
+  selectedTheme: string;
+  handleThemeChange: (value: string) => void;
+};
+
+/** Resolve the theme only after the client environment is mounted. */
+function getUserMenuTheme(isMounted: boolean, theme: string | undefined): string {
+  return isMounted ? (theme ?? 'system') : 'system';
 }

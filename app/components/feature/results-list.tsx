@@ -76,6 +76,64 @@ function validateArticlePageCursor(
  * @returns Article cards, filter content, and pagination sentinels.
  */
 export function ResultsList({ filterSummary }: ResultsListProps) {
+  const state = useResultsViewState();
+  const { stateTransition, favoriteStateError, retryFavoriteChecks } = state;
+  const { resultContent, resultAnnouncement, resultAnnouncementRole, resultState } =
+    getResultsPresentation(state);
+  return (
+    <div className="space-y-4">
+      {filterSummary && (
+        <div
+          data-testid="filter-summary-slot"
+          className="sticky -top-3 z-20 bg-background py-2 empty:hidden sm:-top-5 lg:-top-6"
+        >
+          {filterSummary}
+        </div>
+      )}
+      <p
+        key={`${resultState}-${resultAnnouncement}`}
+        data-testid="results-state-announcement"
+        className="sr-only"
+        role={resultAnnouncementRole}
+        aria-label={resultAnnouncement}
+        aria-live={resultAnnouncementRole === 'alert' ? 'assertive' : 'polite'}
+        aria-atomic="true"
+      >
+        {resultAnnouncement}
+      </p>
+      {favoriteStateError && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 p-3 text-sm"
+        >
+          <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
+          <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
+            重试收藏状态
+          </Button>
+        </div>
+      )}
+      <MotionPresence mode="wait">
+        <MotionDiv
+          key={resultState}
+          data-testid={`results-state-${resultState}`}
+          className="space-y-4"
+          variants={{
+            ...FADE_UP_VARIANTS,
+            visible: { ...FADE_UP_VARIANTS.visible, pointerEvents: 'auto' },
+          }}
+          initial="hidden"
+          animate="visible"
+          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+          transition={stateTransition}
+        >
+          {resultContent}
+        </MotionDiv>
+      </MotionPresence>
+    </div>
+  );
+}
+/** Own the unchanged query, visibility, favorite and highlight hooks together. */
+function useResultsViewState() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const stateTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
@@ -88,22 +146,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
   const searchParams = useSearchParams();
   const searchKey = searchParams.toString();
 
-  const params = new URLSearchParams();
-  if (q) params.set('q', q);
-
-  if (areas && areas.length > 0) {
-    areas.forEach((a) => params.append('area', a));
-  }
-  if (journalIds && journalIds.length > 0) {
-    journalIds.forEach((id) => params.append('journal_id', id));
-  }
-  appendJournalRatingParams(params, ratings);
-
-  const dateBounds = getMonthRangeDateBounds(monthRange);
-  if (dateBounds) {
-    params.set('date_from', dateBounds.dateFrom);
-    params.set('date_to', dateBounds.dateTo);
-  }
+  const params = getResultsArticleParams(q, areas, journalIds, ratings, monthRange);
   const paramsString = params.toString();
   const currentDb = useSelectedDatabase();
   const queryKey = ['articles', currentDb, paramsString];
@@ -180,6 +223,68 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
 
   const prefetchThreshold = 25;
   const prefetchIndex = Math.max(0, visibleArticles.length - prefetchThreshold);
+
+  return {
+    user,
+    queryClient,
+    stateTransition,
+    q,
+    areas,
+    journalIds,
+    monthRange,
+    ratings,
+    searchParams,
+    searchKey,
+    params,
+    paramsString,
+    currentDb,
+    queryKey,
+    data,
+    isLoading,
+    isError,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    pages,
+    loadedPages,
+    visiblePages,
+    prefetchRef,
+    loadMoreRef,
+    visiblePageCount,
+    visibleArticles,
+    visibleArticleIds,
+    favoriteChecksByArticle,
+    isFavoriteStatePending,
+    favoriteStateError,
+    retryFavoriteChecks,
+    highlightTerms,
+    highlightPattern,
+    highlightText,
+    prefetchThreshold,
+    prefetchIndex,
+  };
+}
+type ResultsViewState = ReturnType<typeof useResultsViewState>;
+/** Preserve error, loading, empty and result presentation and the single announcement. */
+function getResultsPresentation(state: ResultsViewState) {
+  const {
+    user,
+    stateTransition,
+    currentDb,
+    isLoading,
+    isError,
+    error,
+    isFetchingNextPage,
+    prefetchRef,
+    loadMoreRef,
+    visibleArticles,
+    favoriteChecksByArticle,
+    isFavoriteStatePending,
+    favoriteStateError,
+    highlightText,
+    prefetchIndex,
+  } = state;
   let resultContent: ReactNode;
   let resultAnnouncement: string;
   let resultAnnouncementRole: 'alert' | 'status' = 'status';
@@ -276,55 +381,33 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
     );
   }
 
-  return (
-    <div className="space-y-4">
-      {filterSummary && (
-        <div
-          data-testid="filter-summary-slot"
-          className="sticky -top-3 z-20 bg-background py-2 empty:hidden sm:-top-5 lg:-top-6"
-        >
-          {filterSummary}
-        </div>
-      )}
-      <p
-        key={`${resultState}-${resultAnnouncement}`}
-        data-testid="results-state-announcement"
-        className="sr-only"
-        role={resultAnnouncementRole}
-        aria-label={resultAnnouncement}
-        aria-live={resultAnnouncementRole === 'alert' ? 'assertive' : 'polite'}
-        aria-atomic="true"
-      >
-        {resultAnnouncement}
-      </p>
-      {favoriteStateError && (
-        <div
-          role="alert"
-          className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 p-3 text-sm"
-        >
-          <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
-          <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
-            重试收藏状态
-          </Button>
-        </div>
-      )}
-      <MotionPresence mode="wait">
-        <MotionDiv
-          key={resultState}
-          data-testid={`results-state-${resultState}`}
-          className="space-y-4"
-          variants={{
-            ...FADE_UP_VARIANTS,
-            visible: { ...FADE_UP_VARIANTS.visible, pointerEvents: 'auto' },
-          }}
-          initial="hidden"
-          animate="visible"
-          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-          transition={stateTransition}
-        >
-          {resultContent}
-        </MotionDiv>
-      </MotionPresence>
-    </div>
-  );
+  return { resultContent, resultAnnouncement, resultAnnouncementRole, resultState };
+}
+
+/** Serialize raw search text and selected filters in the original request order. */
+function getResultsArticleParams(
+  q: string | null,
+  areas: string[] | null,
+  journalIds: string[] | null,
+  ratings: ReturnType<typeof useJournalRatingFilters>[0],
+  monthRange: string | null,
+): URLSearchParams {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+
+  if (areas && areas.length > 0) {
+    areas.forEach((a) => params.append('area', a));
+  }
+  if (journalIds && journalIds.length > 0) {
+    journalIds.forEach((id) => params.append('journal_id', id));
+  }
+  appendJournalRatingParams(params, ratings);
+
+  const dateBounds = getMonthRangeDateBounds(monthRange);
+  if (dateBounds) {
+    params.set('date_from', dateBounds.dateFrom);
+    params.set('date_to', dateBounds.dateTo);
+  }
+
+  return params;
 }

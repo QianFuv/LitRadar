@@ -174,7 +174,43 @@ export function WorkspaceSidebar({ children, className, headerContent }: Workspa
  * @param props - Optional layout class names.
  * @returns Sidebar filter UI.
  */
-export function Sidebar({ className }: { className?: string }) {
+export function Sidebar(props: { className?: string }) {
+  const state = useSidebarViewState(props);
+  const { className, handleClearJournalFilters } = state;
+  return (
+    <WorkspaceSidebar className={className} headerContent={renderSidebarDatabase(state)}>
+      <div
+        data-slot="sidebar-scroll-region"
+        className="sidebar-scroll-gutter min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-sidebar-foreground">期刊筛选</h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearJournalFilters}
+              className="h-6 px-2 text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
+              title="清空期刊筛选"
+            >
+              清空
+            </Button>
+          </div>
+
+          {renderSidebarRatings(state)}
+
+          {renderSidebarAreas(state)}
+
+          {renderSidebarJournals(state)}
+        </div>
+
+        {renderSidebarTime(state)}
+      </div>
+    </WorkspaceSidebar>
+  );
+}
+/** Own the unchanged hooks, refs, queries and event closures in their original order. */
+function useSidebarViewState({ className }: { className?: string }) {
   const { user } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -260,18 +296,18 @@ export function Sidebar({ className }: { className?: string }) {
   };
 
   const yearBounds = useMemo(() => getYearBounds(yearData ?? []), [yearData]);
-  const defaultStartMonth = yearBounds ? buildMonthKey(yearBounds.min, 1) : null;
-  const defaultEndMonth = yearBounds ? buildMonthKey(yearBounds.max, 12) : null;
-  const selectedMonthRange = yearBounds
-    ? resolveMonthRangeForYears(monthRange, yearBounds.min, yearBounds.max)
-    : null;
-  const selectedStartMonth = selectedMonthRange?.[0] ?? '';
-  const selectedEndMonth = selectedMonthRange?.[1] ?? '';
-  const yearOptions = yearBounds ? buildYearOptions(yearBounds) : [];
-  const selectedStartYearValue = selectedStartMonth.slice(0, 4);
-  const selectedStartMonthValue = selectedStartMonth.slice(5, 7);
-  const selectedEndYearValue = selectedEndMonth.slice(0, 4);
-  const selectedEndMonthValue = selectedEndMonth.slice(5, 7);
+  const {
+    defaultStartMonth,
+    defaultEndMonth,
+    selectedMonthRange,
+    selectedStartMonth,
+    selectedEndMonth,
+    yearOptions,
+    selectedStartYearValue,
+    selectedStartMonthValue,
+    selectedEndYearValue,
+    selectedEndMonthValue,
+  } = getSidebarMonthValues(yearBounds, monthRange);
 
   const handleAreaChange = (value: string, checked: boolean) => {
     setAreas((current) => {
@@ -360,302 +396,423 @@ export function Sidebar({ className }: { className?: string }) {
         ? selectedJournalLabels[0]
         : `已选 ${selectedJournalLabels.length} 本期刊`;
 
+  return {
+    className,
+    user,
+    router,
+    pathname,
+    selectedDb,
+    setQ,
+    areas,
+    setAreas,
+    journalIds,
+    setJournalIds,
+    monthRange,
+    setMonthRange,
+    ratings,
+    setRatings,
+    databases,
+    loadingDatabases,
+    activeDb,
+    areaOptions,
+    loadingAreas,
+    journalOptions,
+    loadingJournals,
+    yearData,
+    loadingYears,
+    ratingOptions,
+    isLoadingRatings,
+    isRatingError,
+    refetchRatings,
+    handleDatabaseChange,
+    handleClearJournalFilters,
+    handleRatingChange,
+    handleClearTimeFilters,
+    yearBounds,
+    defaultStartMonth,
+    defaultEndMonth,
+    selectedMonthRange,
+    selectedStartMonth,
+    selectedEndMonth,
+    yearOptions,
+    selectedStartYearValue,
+    selectedStartMonthValue,
+    selectedEndYearValue,
+    selectedEndMonthValue,
+    handleAreaChange,
+    handleJournalChange,
+    handleMonthRangeCommit,
+    handleRecentMonthRange,
+    journalSearch,
+    setJournalSearch,
+    filteredJournalOptions,
+    journalLabelMap,
+    selectedJournalLabels,
+    journalSummary,
+  };
+}
+
+/** Retain the original rating controls, row identities and event coercion. */
+function renderSidebarRatings(state: SidebarViewState) {
+  const {
+    ratings,
+    ratingOptions,
+    isLoadingRatings,
+    isRatingError,
+    refetchRatings,
+    handleRatingChange,
+  } = state;
+
   return (
-    <WorkspaceSidebar
-      className={className}
-      headerContent={
-        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-t border-sidebar-border pt-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
-            <Database className="size-4" />
-            <span>数据库</span>
-          </div>
-          {loadingDatabases ? (
-            <Skeleton className="h-9 w-full" />
-          ) : (
-            <Select value={activeDb} onValueChange={handleDatabaseChange}>
-              <SelectTrigger aria-label="检索数据库" className="h-9 w-full bg-sidebar">
-                <SelectValue placeholder="选择数据库" />
-              </SelectTrigger>
-              <SelectContent>
-                {databases?.map((dbName) => (
-                  <SelectItem key={dbName} value={dbName}>
-                    {dbName.replace('.sqlite', '')}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+    <div className="space-y-3">
+      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+        期刊评级
+      </h4>
+      <p className="text-xs text-muted-foreground">同一体系可多选，不同体系共同筛选。</p>
+      {isLoadingRatings ? (
+        <Skeleton className="h-16 w-full" />
+      ) : isRatingError ? (
+        <div className="text-xs text-muted-foreground" role="status">
+          无法加载期刊评级
+          <Button variant="ghost" size="sm" onClick={() => void refetchRatings()}>
+            重试
+          </Button>
         </div>
-      }
-    >
-      <div
-        data-slot="sidebar-scroll-region"
-        className="sidebar-scroll-gutter min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain"
-      >
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-sidebar-foreground">期刊筛选</h3>
+      ) : JOURNAL_RATING_SYSTEMS.some(({ key }) => (ratingOptions?.[key].length ?? 0) > 0) ? (
+        JOURNAL_RATING_SYSTEMS.map(({ key, label }) => {
+          const options = ratingOptions?.[key] ?? [];
+          return options.length > 0 ? (
+            <fieldset key={key} className="space-y-2">
+              <legend className="text-xs font-medium">{label}</legend>
+              {options.map((option) => (
+                <div
+                  key={option.value}
+                  className="motion-control flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
+                >
+                  <Checkbox
+                    id={`rating-${key}-${option.value}`}
+                    aria-label={`${label} ${option.value}`}
+                    className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
+                    checked={ratings[key].includes(option.value)}
+                    onCheckedChange={(isChecked) =>
+                      handleRatingChange(key, option.value, isChecked === true)
+                    }
+                  />
+                  <Label
+                    htmlFor={`rating-${key}-${option.value}`}
+                    className="min-w-0 flex-1 cursor-pointer break-words text-sm font-normal"
+                  >
+                    {option.value}
+                  </Label>
+                  <span className="text-xs text-muted-foreground" title="期刊数量">
+                    {option.count}
+                  </span>
+                </div>
+              ))}
+            </fieldset>
+          ) : null;
+        })
+      ) : (
+        <p className="text-xs text-muted-foreground">当前数据库暂无期刊评级信息。</p>
+      )}
+    </div>
+  );
+}
+
+/** Retain the original area controls, row identities and event coercion. */
+function renderSidebarAreas(state: SidebarViewState) {
+  const { areas, areaOptions, loadingAreas, handleAreaChange } = state;
+
+  return (
+    <div className="space-y-3">
+      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">领域</h4>
+      {loadingAreas ? (
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-3/4" />
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {areaOptions?.map((opt) => {
+            const displayName = getAreaDisplayName(opt.value);
+            return (
+              <div
+                key={opt.value}
+                className="motion-control content-visibility-filter-row flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
+              >
+                <Checkbox
+                  id={`area-${opt.value}`}
+                  className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
+                  checked={areas.includes(opt.value)}
+                  onCheckedChange={(checked: boolean | 'indeterminate') =>
+                    handleAreaChange(opt.value, checked as boolean)
+                  }
+                />
+                <Label
+                  htmlFor={`area-${opt.value}`}
+                  className="min-w-0 flex-1 cursor-pointer break-words text-sm leading-snug font-normal whitespace-normal"
+                  title={opt.value}
+                >
+                  {displayName}
+                </Label>
+                <span className="shrink-0 text-xs text-muted-foreground">{opt.count}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Retain the original journal controls, row identities and event coercion. */
+function renderSidebarJournals(state: SidebarViewState) {
+  const {
+    journalIds,
+    loadingJournals,
+    handleJournalChange,
+    journalSearch,
+    setJournalSearch,
+    filteredJournalOptions,
+    journalSummary,
+  } = state;
+
+  return (
+    <div className="space-y-3">
+      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">期刊</h4>
+      {loadingJournals ? (
+        <Skeleton className="h-8 w-full" />
+      ) : (
+        <Popover>
+          <PopoverTrigger asChild>
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
-              onClick={handleClearJournalFilters}
-              className="h-6 px-2 text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
-              title="清空期刊筛选"
+              className="w-full justify-between bg-sidebar hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
+              title={journalSummary}
             >
-              清空
+              <span className="truncate">{journalSummary}</span>
+              {journalIds.length > 0 && (
+                <span className="text-xs text-muted-foreground">{journalIds.length}</span>
+              )}
             </Button>
-          </div>
-
-          <div className="space-y-3">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              期刊评级
-            </h4>
-            <p className="text-xs text-muted-foreground">同一体系可多选，不同体系共同筛选。</p>
-            {isLoadingRatings ? (
-              <Skeleton className="h-16 w-full" />
-            ) : isRatingError ? (
-              <div className="text-xs text-muted-foreground" role="status">
-                无法加载期刊评级
-                <Button variant="ghost" size="sm" onClick={() => void refetchRatings()}>
-                  重试
-                </Button>
-              </div>
-            ) : JOURNAL_RATING_SYSTEMS.some(({ key }) => (ratingOptions?.[key].length ?? 0) > 0) ? (
-              JOURNAL_RATING_SYSTEMS.map(({ key, label }) => {
-                const options = ratingOptions?.[key] ?? [];
-                return options.length > 0 ? (
-                  <fieldset key={key} className="space-y-2">
-                    <legend className="text-xs font-medium">{label}</legend>
-                    {options.map((option) => (
-                      <div
-                        key={option.value}
-                        className="motion-control flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
-                      >
-                        <Checkbox
-                          id={`rating-${key}-${option.value}`}
-                          aria-label={`${label} ${option.value}`}
-                          className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
-                          checked={ratings[key].includes(option.value)}
-                          onCheckedChange={(isChecked) =>
-                            handleRatingChange(key, option.value, isChecked === true)
-                          }
-                        />
-                        <Label
-                          htmlFor={`rating-${key}-${option.value}`}
-                          className="min-w-0 flex-1 cursor-pointer break-words text-sm font-normal"
-                        >
-                          {option.value}
-                        </Label>
-                        <span className="text-xs text-muted-foreground" title="期刊数量">
-                          {option.count}
-                        </span>
-                      </div>
-                    ))}
-                  </fieldset>
-                ) : null;
-              })
-            ) : (
-              <p className="text-xs text-muted-foreground">当前数据库暂无期刊评级信息。</p>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              领域
-            </h4>
-            {loadingAreas ? (
+          </PopoverTrigger>
+          <PopoverContent
+            align="start"
+            className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-3"
+          >
+            <Input
+              aria-label="搜索期刊"
+              name="journal_search"
+              autoComplete="off"
+              spellCheck={false}
+              value={journalSearch}
+              onChange={(event) => setJournalSearch(event.target.value)}
+              placeholder="搜索期刊"
+              className="h-8 text-sm"
+            />
+            <ScrollArea className="mt-2 h-60 touch-pan-y">
               <div className="space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-3/4" />
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {areaOptions?.map((opt) => {
-                  const displayName = getAreaDisplayName(opt.value);
+                {filteredJournalOptions.map((option) => {
+                  const id = String(option.journal_id);
                   return (
                     <div
-                      key={opt.value}
+                      key={id}
                       className="motion-control content-visibility-filter-row flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
                     >
                       <Checkbox
-                        id={`area-${opt.value}`}
+                        id={`journal-${id}`}
                         className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
-                        checked={areas.includes(opt.value)}
+                        checked={journalIds.includes(id)}
                         onCheckedChange={(checked: boolean | 'indeterminate') =>
-                          handleAreaChange(opt.value, checked as boolean)
+                          handleJournalChange(id, checked as boolean)
                         }
                       />
                       <Label
-                        htmlFor={`area-${opt.value}`}
+                        htmlFor={`journal-${id}`}
                         className="min-w-0 flex-1 cursor-pointer break-words text-sm leading-snug font-normal whitespace-normal"
-                        title={opt.value}
+                        title={option.title ?? id}
                       >
-                        {displayName}
+                        {option.title ?? id}
                       </Label>
-                      <span className="shrink-0 text-xs text-muted-foreground">{opt.count}</span>
                     </div>
                   );
                 })}
+                {filteredJournalOptions.length === 0 && (
+                  <div className="text-xs text-muted-foreground">未找到期刊。</div>
+                )}
               </div>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              期刊
-            </h4>
-            {loadingJournals ? (
-              <Skeleton className="h-8 w-full" />
-            ) : (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full justify-between bg-sidebar hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
-                    title={journalSummary}
-                  >
-                    <span className="truncate">{journalSummary}</span>
-                    {journalIds.length > 0 && (
-                      <span className="text-xs text-muted-foreground">{journalIds.length}</span>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  align="start"
-                  className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-3"
-                >
-                  <Input
-                    aria-label="搜索期刊"
-                    name="journal_search"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={journalSearch}
-                    onChange={(event) => setJournalSearch(event.target.value)}
-                    placeholder="搜索期刊"
-                    className="h-8 text-sm"
-                  />
-                  <ScrollArea className="mt-2 h-60 touch-pan-y">
-                    <div className="space-y-2">
-                      {filteredJournalOptions.map((option) => {
-                        const id = String(option.journal_id);
-                        return (
-                          <div
-                            key={id}
-                            className="motion-control content-visibility-filter-row flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
-                          >
-                            <Checkbox
-                              id={`journal-${id}`}
-                              className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
-                              checked={journalIds.includes(id)}
-                              onCheckedChange={(checked: boolean | 'indeterminate') =>
-                                handleJournalChange(id, checked as boolean)
-                              }
-                            />
-                            <Label
-                              htmlFor={`journal-${id}`}
-                              className="min-w-0 flex-1 cursor-pointer break-words text-sm leading-snug font-normal whitespace-normal"
-                              title={option.title ?? id}
-                            >
-                              {option.title ?? id}
-                            </Label>
-                          </div>
-                        );
-                      })}
-                      {filteredJournalOptions.length === 0 && (
-                        <div className="text-xs text-muted-foreground">未找到期刊。</div>
-                      )}
-                    </div>
-                  </ScrollArea>
-                </PopoverContent>
-              </Popover>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-sidebar-foreground">发表时间</h3>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleClearTimeFilters}
-              className="h-6 px-2 text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
-              title="清空时间筛选"
-            >
-              清空
-            </Button>
-          </div>
-          {!user || loadingYears ? (
-            <Skeleton className="h-8 w-full" />
-          ) : !yearBounds ? (
-            <p className="text-sm text-muted-foreground">暂无可用发表年份</p>
-          ) : (
-            <>
-              <div
-                className="grid grid-cols-[minmax(0,1fr)_minmax(0,0.78fr)_auto_minmax(0,1fr)_minmax(0,0.78fr)] items-end gap-1"
-                title={`${formatMonthLabel(selectedStartMonth)} - ${formatMonthLabel(selectedEndMonth)}`}
-              >
-                <DateSegmentSelect
-                  ariaLabel="起始年份"
-                  value={selectedStartYearValue}
-                  options={yearOptions}
-                  triggerClassName="w-full"
-                  contentClassName="w-[4.75rem]"
-                  onChange={(value) =>
-                    handleMonthRangeCommit(`${value}-${selectedStartMonthValue}`, selectedEndMonth)
-                  }
-                />
-                <DateSegmentSelect
-                  ariaLabel="起始月份"
-                  value={selectedStartMonthValue}
-                  options={MONTH_OPTIONS}
-                  triggerClassName="w-full"
-                  contentClassName="w-16"
-                  onChange={(value) =>
-                    handleMonthRangeCommit(`${selectedStartYearValue}-${value}`, selectedEndMonth)
-                  }
-                />
-                <span className="text-center text-sm text-muted-foreground">-</span>
-                <DateSegmentSelect
-                  ariaLabel="结束年份"
-                  value={selectedEndYearValue}
-                  options={yearOptions}
-                  triggerClassName="w-full"
-                  contentClassName="w-[4.75rem]"
-                  onChange={(value) =>
-                    handleMonthRangeCommit(selectedStartMonth, `${value}-${selectedEndMonthValue}`)
-                  }
-                />
-                <DateSegmentSelect
-                  ariaLabel="结束月份"
-                  value={selectedEndMonthValue}
-                  options={MONTH_OPTIONS}
-                  triggerClassName="w-full"
-                  contentClassName="w-16"
-                  onChange={(value) =>
-                    handleMonthRangeCommit(selectedStartMonth, `${selectedEndYearValue}-${value}`)
-                  }
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {[1, 3, 5].map((yearCount) => (
-                  <Button
-                    key={yearCount}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="bg-sidebar hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
-                    onClick={() => handleRecentMonthRange(yearCount)}
-                  >
-                    近 {yearCount} 年
-                  </Button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </WorkspaceSidebar>
+            </ScrollArea>
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
   );
+}
+
+/** Retain publication time selectors, range ordering and recent shortcuts. */
+function renderSidebarTime(state: SidebarViewState) {
+  const {
+    user,
+    loadingYears,
+    handleClearTimeFilters,
+    yearBounds,
+    selectedStartMonth,
+    selectedEndMonth,
+    yearOptions,
+    selectedStartYearValue,
+    selectedStartMonthValue,
+    selectedEndYearValue,
+    selectedEndMonthValue,
+    handleMonthRangeCommit,
+    handleRecentMonthRange,
+  } = state;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-sidebar-foreground">发表时间</h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleClearTimeFilters}
+          className="h-6 px-2 text-xs hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
+          title="清空时间筛选"
+        >
+          清空
+        </Button>
+      </div>
+      {!user || loadingYears ? (
+        <Skeleton className="h-8 w-full" />
+      ) : !yearBounds ? (
+        <p className="text-sm text-muted-foreground">暂无可用发表年份</p>
+      ) : (
+        <>
+          <div
+            className="grid grid-cols-[minmax(0,1fr)_minmax(0,0.78fr)_auto_minmax(0,1fr)_minmax(0,0.78fr)] items-end gap-1"
+            title={`${formatMonthLabel(selectedStartMonth)} - ${formatMonthLabel(selectedEndMonth)}`}
+          >
+            <DateSegmentSelect
+              ariaLabel="起始年份"
+              value={selectedStartYearValue}
+              options={yearOptions}
+              triggerClassName="w-full"
+              contentClassName="w-[4.75rem]"
+              onChange={(value) =>
+                handleMonthRangeCommit(`${value}-${selectedStartMonthValue}`, selectedEndMonth)
+              }
+            />
+            <DateSegmentSelect
+              ariaLabel="起始月份"
+              value={selectedStartMonthValue}
+              options={MONTH_OPTIONS}
+              triggerClassName="w-full"
+              contentClassName="w-16"
+              onChange={(value) =>
+                handleMonthRangeCommit(`${selectedStartYearValue}-${value}`, selectedEndMonth)
+              }
+            />
+            <span className="text-center text-sm text-muted-foreground">-</span>
+            <DateSegmentSelect
+              ariaLabel="结束年份"
+              value={selectedEndYearValue}
+              options={yearOptions}
+              triggerClassName="w-full"
+              contentClassName="w-[4.75rem]"
+              onChange={(value) =>
+                handleMonthRangeCommit(selectedStartMonth, `${value}-${selectedEndMonthValue}`)
+              }
+            />
+            <DateSegmentSelect
+              ariaLabel="结束月份"
+              value={selectedEndMonthValue}
+              options={MONTH_OPTIONS}
+              triggerClassName="w-full"
+              contentClassName="w-16"
+              onChange={(value) =>
+                handleMonthRangeCommit(selectedStartMonth, `${selectedEndYearValue}-${value}`)
+              }
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {[1, 3, 5].map((yearCount) => (
+              <Button
+                key={yearCount}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="bg-sidebar hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-sidebar-ring/50"
+                onClick={() => handleRecentMonthRange(yearCount)}
+              >
+                近 {yearCount} 年
+              </Button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Retain database selection and metadata loading presentation. */
+function renderSidebarDatabase(state: SidebarViewState) {
+  const { databases, loadingDatabases, activeDb, handleDatabaseChange } = state;
+
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-t border-sidebar-border pt-3">
+      <div className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
+        <Database className="size-4" />
+        <span>数据库</span>
+      </div>
+      {loadingDatabases ? (
+        <Skeleton className="h-9 w-full" />
+      ) : (
+        <Select value={activeDb} onValueChange={handleDatabaseChange}>
+          <SelectTrigger aria-label="检索数据库" className="h-9 w-full bg-sidebar">
+            <SelectValue placeholder="选择数据库" />
+          </SelectTrigger>
+          <SelectContent>
+            {databases?.map((dbName) => (
+              <SelectItem key={dbName} value={dbName}>
+                {dbName.replace('.sqlite', '')}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </div>
+  );
+}
+
+type SidebarViewState = ReturnType<typeof useSidebarViewState>;
+/** Derive the original month defaults and segment values in their original order. */
+function getSidebarMonthValues(
+  yearBounds: ReturnType<typeof getYearBounds>,
+  monthRange: string | null,
+) {
+  const defaultStartMonth = yearBounds ? buildMonthKey(yearBounds.min, 1) : null;
+  const defaultEndMonth = yearBounds ? buildMonthKey(yearBounds.max, 12) : null;
+  const selectedMonthRange = yearBounds
+    ? resolveMonthRangeForYears(monthRange, yearBounds.min, yearBounds.max)
+    : null;
+  const selectedStartMonth = selectedMonthRange?.[0] ?? '';
+  const selectedEndMonth = selectedMonthRange?.[1] ?? '';
+  const yearOptions = yearBounds ? buildYearOptions(yearBounds) : [];
+  const selectedStartYearValue = selectedStartMonth.slice(0, 4);
+  const selectedStartMonthValue = selectedStartMonth.slice(5, 7);
+  const selectedEndYearValue = selectedEndMonth.slice(0, 4);
+  const selectedEndMonthValue = selectedEndMonth.slice(5, 7);
+
+  return {
+    defaultStartMonth,
+    defaultEndMonth,
+    selectedMonthRange,
+    selectedStartMonth,
+    selectedEndMonth,
+    yearOptions,
+    selectedStartYearValue,
+    selectedStartMonthValue,
+    selectedEndYearValue,
+    selectedEndMonthValue,
+  };
 }

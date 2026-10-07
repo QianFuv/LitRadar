@@ -63,10 +63,7 @@ function buildArticleInfoText(article: ArticleDetailDialogArticle): string {
     `作者：${authors || '暂无'}`,
     `期刊：${article.journal_title || '暂无'}`,
     `日期：${article.date || '暂无'}`,
-    article.volume && `卷号：${article.volume}`,
-    article.number && `期号：${article.number}`,
-    article.doi && `DOI: ${article.doi}`,
-    doiUrl && `DOI 链接：${doiUrl}`,
+    ...getOptionalArticleInfoFields(article, doiUrl),
   ]
     .filter(Boolean)
     .join('\n');
@@ -97,7 +94,45 @@ function buildArticleDescription(article: ArticleDetailDialogArticle): string {
  * @param props - Article detail dialog configuration.
  * @returns Article detail dialog content.
  */
-export function ArticleDetailDialogContent({
+export function ArticleDetailDialogContent(props: ArticleDetailDialogContentProps) {
+  const state = useArticleDetailViewState(props);
+  const { article, extraActions } = state;
+  return (
+    <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] overflow-y-auto md:max-w-4xl">
+      {renderArticleDetailHeader(state)}
+      <div className="space-y-5 py-3">
+        {article.authors && article.authors.length > 0 && (
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-foreground/80">作者</h3>
+            <p className="text-sm text-muted-foreground">{article.authors.join('; ')}</p>
+          </div>
+        )}
+
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-foreground/80">摘要</h3>
+          <p className="text-justify text-sm leading-relaxed text-muted-foreground">
+            {article.abstract || '暂无摘要。'}
+          </p>
+        </div>
+
+        <div className="border-t pt-4">
+          <div
+            role="group"
+            aria-label="文章操作"
+            className="flex flex-wrap items-center gap-1 md:gap-2"
+          >
+            {renderArticleInfoCopy(state)}
+            {renderArticleAccessActions(state)}
+            {renderArticleFavoriteAction(state)}
+            {extraActions}
+          </div>
+        </div>
+      </div>
+    </DialogContent>
+  );
+}
+/** Own unchanged detail hooks, query settings, clipboard ref and completion/timer order. */
+function useArticleDetailViewState({
   article,
   dbName,
   initialFolderIds = [],
@@ -173,266 +208,385 @@ export function ArticleDetailDialogContent({
     await handleCopy(buildArticleInfoText(article), 'info');
   };
 
-  const abstractAction = access?.abstract_page;
-  const fulltextAction = access?.fulltext;
-  const abstractUrl = abstractAction?.available
-    ? getArticleActionUrlForDatabase(article.article_id, dbName, 'abstract')
-    : null;
-  const fullTextUrl = fulltextAction?.available
-    ? getArticleActionUrlForDatabase(article.article_id, dbName, 'fulltext')
-    : null;
-  const isAccessLoading = isAccessQueryEnabled && (isAccessPending || isAccessFetching);
-  const canShowAccessActions = !isAccessFetching && !isAccessError;
-  const accessState = isAccessLoading ? 'loading' : isAccessError ? 'error' : 'ready';
+  const {
+    abstractAction,
+    fulltextAction,
+    abstractUrl,
+    fullTextUrl,
+    isAccessLoading,
+    canShowAccessActions,
+    accessState,
+  } = getArticleAccessPresentation(
+    article.article_id,
+    dbName,
+    access,
+    isAccessQueryEnabled,
+    isAccessPending,
+    isAccessFetching,
+    isAccessError,
+  );
   const dataSourceSettingsHref = buildSettingsCenterHref(pathname, searchParams, 'data-sources');
 
+  return {
+    article,
+    dbName,
+    initialFolderIds,
+    isFavoriteStatePending,
+    isFavoriteStateUnavailable,
+    extraActions,
+    pathname,
+    searchParams,
+    copyStatus,
+    setCopyStatus,
+    copyError,
+    setCopyError,
+    copyResetTimeoutRef,
+    stateTransition,
+    isAccessQueryEnabled,
+    canCopyTitle,
+    access,
+    isAccessPending,
+    isAccessFetching,
+    isAccessError,
+    accessError,
+    handleCopy,
+    handleCopyTitle,
+    handleCopyArticleInfo,
+    abstractAction,
+    fulltextAction,
+    abstractUrl,
+    fullTextUrl,
+    isAccessLoading,
+    canShowAccessActions,
+    accessState,
+    dataSourceSettingsHref,
+  };
+}
+
+/** Retain availability, exact nullish labels and abstract action routing. */
+function renderArticleAbstractAction(state: ArticleDetailViewState) {
+  const { abstractAction, abstractUrl, canShowAccessActions } = state;
+
   return (
-    <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] overflow-y-auto md:max-w-4xl">
-      <DialogHeader>
-        <DialogTitle className="text-wrap break-words text-xl leading-snug">
-          {getArticleDisplayTitle(article)}
+    canShowAccessActions &&
+    abstractUrl && (
+      <Button asChild variant="outline" size="sm" className={ARTICLE_ACTION_BUTTON_CLASS_NAME}>
+        <a
+          href={abstractUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={abstractAction?.label ?? '查看摘要页'}
+          title={abstractAction?.label ?? '查看摘要页'}
+        >
+          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+          <span className="hidden md:inline">{abstractAction?.label ?? '查看摘要页'}</span>
+        </a>
+      </Button>
+    )
+  );
+}
+
+/** Retain availability, exact nullish labels and fulltext action routing. */
+function renderArticleFulltextAction(state: ArticleDetailViewState) {
+  const { fulltextAction, fullTextUrl, canShowAccessActions } = state;
+
+  return (
+    canShowAccessActions &&
+    fullTextUrl && (
+      <Button asChild variant="outline" size="sm" className={ARTICLE_ACTION_BUTTON_CLASS_NAME}>
+        <a
+          href={fullTextUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={fulltextAction?.label ?? '获取全文'}
+          title={fulltextAction?.label ?? '获取全文'}
+        >
+          <FileDown className="h-4 w-4" aria-hidden="true" />
+          <span className="hidden md:inline">{fulltextAction?.label ?? '获取全文'}</span>
+        </a>
+      </Button>
+    )
+  );
+}
+
+/** Retain direct keyed access loading/error/action children and wait ownership. */
+function renderArticleAccessActions(state: ArticleDetailViewState) {
+  const {
+    stateTransition,
+    isAccessQueryEnabled,
+    isAccessFetching,
+    isAccessError,
+    accessError,
+    fulltextAction,
+    canShowAccessActions,
+    accessState,
+    dataSourceSettingsHref,
+  } = state;
+
+  return (
+    <MotionPresence mode="wait">
+      <MotionDiv
+        key={accessState}
+        data-article-access-state={accessState}
+        className="flex flex-wrap gap-1 md:gap-2"
+        variants={FADE_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        exit={{ opacity: 0, pointerEvents: 'none' }}
+        transition={stateTransition}
+      >
+        {renderArticleAccessLoading(state)}
+        {isAccessQueryEnabled && !isAccessFetching && isAccessError && (
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
-            className="ml-2 inline-flex h-6 w-6 p-0 align-middle"
-            aria-label="复制文章标题"
-            disabled={!canCopyTitle}
-            onClick={handleCopyTitle}
+            className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+            aria-label="访问状态失败"
+            disabled
+            title={accessError instanceof Error ? accessError.message : '访问状态不可用'}
           >
-            <span className="grid place-items-center" aria-hidden="true">
-              <MotionPresence>
-                <MotionSpan
-                  key={copyStatus === 'title' ? 'title-copied' : 'title-copy'}
-                  data-copy-state={copyStatus === 'title' ? 'copied' : 'idle'}
-                  className="col-start-1 row-start-1 inline-flex"
-                  variants={FADE_VARIANTS}
-                  initial="hidden"
-                  animate="visible"
-                  exit={{ opacity: 0, pointerEvents: 'none' }}
-                  transition={stateTransition}
-                >
-                  {copyStatus === 'title' ? (
-                    <Check className="h-3 w-3 text-success-foreground" aria-hidden="true" />
-                  ) : (
-                    <Copy className="h-3 w-3" aria-hidden="true" />
-                  )}
-                </MotionSpan>
-              </MotionPresence>
-            </span>
+            <CircleAlert className="h-4 w-4 text-destructive" aria-hidden="true" />
+            <span className="hidden md:inline">访问状态失败</span>
           </Button>
-        </DialogTitle>
-        <DialogDescription>{buildArticleDescription(article)}</DialogDescription>
-        {copyError && (
-          <p className="sr-only" role="alert">
-            {copyError}
-          </p>
         )}
-        <MotionPresence>
-          {copyError && (
-            <MotionParagraph
-              key="copy-error"
-              aria-hidden="true"
-              className="text-sm text-destructive"
-              variants={FADE_VARIANTS}
-              initial="hidden"
-              animate="visible"
-              exit={{ opacity: 0, pointerEvents: 'none' }}
-              transition={stateTransition}
-            >
-              {copyError}
-            </MotionParagraph>
-          )}
-        </MotionPresence>
-      </DialogHeader>
-      <div className="space-y-5 py-3">
-        {article.authors && article.authors.length > 0 && (
-          <div>
-            <h3 className="mb-2 text-sm font-semibold text-foreground/80">作者</h3>
-            <p className="text-sm text-muted-foreground">{article.authors.join('; ')}</p>
-          </div>
-        )}
-
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-foreground/80">摘要</h3>
-          <p className="text-justify text-sm leading-relaxed text-muted-foreground">
-            {article.abstract || '暂无摘要。'}
-          </p>
-        </div>
-
-        <div className="border-t pt-4">
-          <div
-            role="group"
-            aria-label="文章操作"
-            className="flex flex-wrap items-center gap-1 md:gap-2"
-          >
+        {renderArticleAbstractAction(state)}
+        {renderArticleFulltextAction(state)}
+        {canShowAccessActions && fulltextAction?.requires_login && (
+          <DialogClose asChild>
             <Button
+              asChild
               variant="outline"
               size="sm"
               className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
-              aria-label={copyStatus === 'info' ? '已复制' : '复制信息'}
-              title={copyStatus === 'info' ? '已复制' : '复制信息'}
-              onClick={handleCopyArticleInfo}
             >
-              <span className="grid" aria-hidden="true">
-                <MotionPresence>
-                  <MotionSpan
-                    key={copyStatus === 'info' ? 'info-copied' : 'info-copy'}
-                    data-copy-state={copyStatus === 'info' ? 'copied' : 'idle'}
-                    className="col-start-1 row-start-1 flex items-center gap-2"
-                    variants={FADE_VARIANTS}
-                    initial="hidden"
-                    animate="visible"
-                    exit={{ opacity: 0, pointerEvents: 'none' }}
-                    transition={stateTransition}
-                  >
-                    {copyStatus === 'info' ? (
-                      <Check className="h-4 w-4 text-success-foreground" aria-hidden="true" />
-                    ) : (
-                      <Copy className="h-4 w-4" aria-hidden="true" />
-                    )}
-                    <span className="hidden md:inline">
-                      {copyStatus === 'info' ? '已复制' : '复制信息'}
-                    </span>
-                  </MotionSpan>
-                </MotionPresence>
-              </span>
+              <Link href={dataSourceSettingsHref} aria-label="去设置登录" title="去设置登录">
+                <Settings className="h-4 w-4" aria-hidden="true" />
+                <span className="hidden md:inline">去设置登录</span>
+              </Link>
             </Button>
-            <MotionPresence mode="wait">
-              <MotionDiv
-                key={accessState}
-                data-article-access-state={accessState}
-                className="flex flex-wrap gap-1 md:gap-2"
+          </DialogClose>
+        )}
+      </MotionDiv>
+    </MotionPresence>
+  );
+}
+
+/** Retain direct keyed favorite pending/ready control identity. */
+function renderArticleFavoriteAction(state: ArticleDetailViewState) {
+  const {
+    article,
+    dbName,
+    initialFolderIds,
+    isFavoriteStatePending,
+    isFavoriteStateUnavailable,
+    stateTransition,
+  } = state;
+
+  return (
+    <MotionPresence mode="wait">
+      <MotionDiv
+        key={isFavoriteStatePending ? 'favorite-loading' : 'favorite-ready'}
+        data-article-favorite-state={isFavoriteStatePending ? 'loading' : 'ready'}
+        variants={FADE_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        exit={{ opacity: 0, pointerEvents: 'none' }}
+        transition={stateTransition}
+      >
+        {isFavoriteStatePending ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+            aria-label="加载收藏…"
+            disabled
+          >
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            <span className="hidden md:inline">加载收藏…</span>
+          </Button>
+        ) : (
+          <FavoriteButton
+            articleId={article.article_id}
+            dbName={dbName}
+            initialFolderIds={initialFolderIds}
+            isFavoriteStateUnavailable={isFavoriteStateUnavailable}
+          />
+        )}
+      </MotionDiv>
+    </MotionPresence>
+  );
+}
+
+/** Retain copy-info callback, labels and complete keyed feedback presence. */
+function renderArticleInfoCopy(state: ArticleDetailViewState) {
+  const { copyStatus, stateTransition, handleCopyArticleInfo } = state;
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+      aria-label={copyStatus === 'info' ? '已复制' : '复制信息'}
+      title={copyStatus === 'info' ? '已复制' : '复制信息'}
+      onClick={handleCopyArticleInfo}
+    >
+      <span className="grid" aria-hidden="true">
+        <MotionPresence>
+          <MotionSpan
+            key={copyStatus === 'info' ? 'info-copied' : 'info-copy'}
+            data-copy-state={copyStatus === 'info' ? 'copied' : 'idle'}
+            className="col-start-1 row-start-1 flex items-center gap-2"
+            variants={FADE_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, pointerEvents: 'none' }}
+            transition={stateTransition}
+          >
+            {copyStatus === 'info' ? (
+              <Check className="h-4 w-4 text-success-foreground" aria-hidden="true" />
+            ) : (
+              <Copy className="h-4 w-4" aria-hidden="true" />
+            )}
+            <span className="hidden md:inline">
+              {copyStatus === 'info' ? '已复制' : '复制信息'}
+            </span>
+          </MotionSpan>
+        </MotionPresence>
+      </span>
+    </Button>
+  );
+}
+
+/** Retain source-title copying, accessible copy error and visual feedback ownership. */
+function renderArticleDetailHeader(state: ArticleDetailViewState) {
+  const { article, copyStatus, copyError, stateTransition, canCopyTitle, handleCopyTitle } = state;
+
+  return (
+    <DialogHeader>
+      <DialogTitle className="text-wrap break-words text-xl leading-snug">
+        {getArticleDisplayTitle(article)}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-2 inline-flex h-6 w-6 p-0 align-middle"
+          aria-label="复制文章标题"
+          disabled={!canCopyTitle}
+          onClick={handleCopyTitle}
+        >
+          <span className="grid place-items-center" aria-hidden="true">
+            <MotionPresence>
+              <MotionSpan
+                key={copyStatus === 'title' ? 'title-copied' : 'title-copy'}
+                data-copy-state={copyStatus === 'title' ? 'copied' : 'idle'}
+                className="col-start-1 row-start-1 inline-flex"
                 variants={FADE_VARIANTS}
                 initial="hidden"
                 animate="visible"
                 exit={{ opacity: 0, pointerEvents: 'none' }}
                 transition={stateTransition}
               >
-                {isAccessLoading && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
-                    aria-label={isAccessPending ? '加载访问' : '刷新访问'}
-                    disabled
-                  >
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                    <span className="hidden md:inline">
-                      {isAccessPending ? '加载访问' : '刷新访问'}
-                    </span>
-                  </Button>
-                )}
-                {isAccessQueryEnabled && !isAccessFetching && isAccessError && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
-                    aria-label="访问状态失败"
-                    disabled
-                    title={accessError instanceof Error ? accessError.message : '访问状态不可用'}
-                  >
-                    <CircleAlert className="h-4 w-4 text-destructive" aria-hidden="true" />
-                    <span className="hidden md:inline">访问状态失败</span>
-                  </Button>
-                )}
-                {canShowAccessActions && abstractUrl && (
-                  <Button
-                    asChild
-                    variant="outline"
-                    size="sm"
-                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
-                  >
-                    <a
-                      href={abstractUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      aria-label={abstractAction?.label ?? '查看摘要页'}
-                      title={abstractAction?.label ?? '查看摘要页'}
-                    >
-                      <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                      <span className="hidden md:inline">
-                        {abstractAction?.label ?? '查看摘要页'}
-                      </span>
-                    </a>
-                  </Button>
-                )}
-                {canShowAccessActions && fullTextUrl && (
-                  <Button
-                    asChild
-                    variant="outline"
-                    size="sm"
-                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
-                  >
-                    <a
-                      href={fullTextUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      aria-label={fulltextAction?.label ?? '获取全文'}
-                      title={fulltextAction?.label ?? '获取全文'}
-                    >
-                      <FileDown className="h-4 w-4" aria-hidden="true" />
-                      <span className="hidden md:inline">
-                        {fulltextAction?.label ?? '获取全文'}
-                      </span>
-                    </a>
-                  </Button>
-                )}
-                {canShowAccessActions && fulltextAction?.requires_login && (
-                  <DialogClose asChild>
-                    <Button
-                      asChild
-                      variant="outline"
-                      size="sm"
-                      className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
-                    >
-                      <Link
-                        href={dataSourceSettingsHref}
-                        aria-label="去设置登录"
-                        title="去设置登录"
-                      >
-                        <Settings className="h-4 w-4" aria-hidden="true" />
-                        <span className="hidden md:inline">去设置登录</span>
-                      </Link>
-                    </Button>
-                  </DialogClose>
-                )}
-              </MotionDiv>
-            </MotionPresence>
-            <MotionPresence mode="wait">
-              <MotionDiv
-                key={isFavoriteStatePending ? 'favorite-loading' : 'favorite-ready'}
-                data-article-favorite-state={isFavoriteStatePending ? 'loading' : 'ready'}
-                variants={FADE_VARIANTS}
-                initial="hidden"
-                animate="visible"
-                exit={{ opacity: 0, pointerEvents: 'none' }}
-                transition={stateTransition}
-              >
-                {isFavoriteStatePending ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
-                    aria-label="加载收藏…"
-                    disabled
-                  >
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                    <span className="hidden md:inline">加载收藏…</span>
-                  </Button>
+                {copyStatus === 'title' ? (
+                  <Check className="h-3 w-3 text-success-foreground" aria-hidden="true" />
                 ) : (
-                  <FavoriteButton
-                    articleId={article.article_id}
-                    dbName={dbName}
-                    initialFolderIds={initialFolderIds}
-                    isFavoriteStateUnavailable={isFavoriteStateUnavailable}
-                  />
+                  <Copy className="h-3 w-3" aria-hidden="true" />
                 )}
-              </MotionDiv>
+              </MotionSpan>
             </MotionPresence>
-            {extraActions}
-          </div>
-        </div>
-      </div>
-    </DialogContent>
+          </span>
+        </Button>
+      </DialogTitle>
+      <DialogDescription>{buildArticleDescription(article)}</DialogDescription>
+      {copyError && (
+        <p className="sr-only" role="alert">
+          {copyError}
+        </p>
+      )}
+      <MotionPresence>
+        {copyError && (
+          <MotionParagraph
+            key="copy-error"
+            aria-hidden="true"
+            className="text-sm text-destructive"
+            variants={FADE_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, pointerEvents: 'none' }}
+            transition={stateTransition}
+          >
+            {copyError}
+          </MotionParagraph>
+        )}
+      </MotionPresence>
+    </DialogHeader>
+  );
+}
+
+type ArticleDetailViewState = ReturnType<typeof useArticleDetailViewState>;
+/** Retain optional issue/DOI fields in their original order before truthy filtering. */
+function getOptionalArticleInfoFields(article: ArticleDetailDialogArticle, doiUrl: string | null) {
+  return [
+    article.volume && `卷号：${article.volume}`,
+    article.number && `期号：${article.number}`,
+    article.doi && `DOI: ${article.doi}`,
+    doiUrl && `DOI 链接：${doiUrl}`,
+  ];
+}
+
+/** Derive access presentation with loading-before-error and refresh suppression unchanged. */
+function getArticleAccessPresentation(
+  articleId: Article['article_id'],
+  dbName: string,
+  access: Awaited<ReturnType<typeof getArticleAccess>> | undefined,
+  isAccessQueryEnabled: boolean,
+  isAccessPending: boolean,
+  isAccessFetching: boolean,
+  isAccessError: boolean,
+) {
+  const abstractAction = access?.abstract_page;
+  const fulltextAction = access?.fulltext;
+  const abstractUrl = getAvailableArticleActionUrl(abstractAction, articleId, dbName, 'abstract');
+  const fullTextUrl = getAvailableArticleActionUrl(fulltextAction, articleId, dbName, 'fulltext');
+  const isAccessLoading = isAccessQueryEnabled && (isAccessPending || isAccessFetching);
+  const canShowAccessActions = !isAccessFetching && !isAccessError;
+  const accessState = isAccessLoading ? 'loading' : isAccessError ? 'error' : 'ready';
+
+  return {
+    abstractAction,
+    fulltextAction,
+    abstractUrl,
+    fullTextUrl,
+    isAccessLoading,
+    canShowAccessActions,
+    accessState,
+  };
+}
+
+/** Construct the server action route only for an available access action. */
+function getAvailableArticleActionUrl(
+  action: { available: boolean } | undefined,
+  articleId: Article['article_id'],
+  dbName: string,
+  kind: 'abstract' | 'fulltext',
+) {
+  return action?.available ? getArticleActionUrlForDatabase(articleId, dbName, kind) : null;
+}
+
+/** Retain the complete loading guard and pending-versus-refresh labels. */
+function renderArticleAccessLoading(state: ArticleDetailViewState) {
+  const { isAccessPending, isAccessLoading } = state;
+
+  return (
+    isAccessLoading && (
+      <Button
+        variant="outline"
+        size="sm"
+        className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+        aria-label={isAccessPending ? '加载访问' : '刷新访问'}
+        disabled
+      >
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+        <span className="hidden md:inline">{isAccessPending ? '加载访问' : '刷新访问'}</span>
+      </Button>
+    )
   );
 }
