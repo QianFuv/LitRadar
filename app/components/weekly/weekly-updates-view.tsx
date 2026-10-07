@@ -17,6 +17,7 @@ import {
   type WeeklyArticlePage,
   type WeeklyDatabaseSummary,
   type WeeklyJournalSummary,
+  type WeeklyUpdatesSummaryResponse,
   type JournalId,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -277,6 +278,89 @@ function WeeklySidebar({
  * @returns Weekly-updates workspace view.
  */
 export function WeeklyUpdatesView() {
+  const state = useWeeklyViewState();
+  const {
+    weeklySummary,
+    effectiveSelectedDb,
+    effectiveSelectedJournalId,
+    availableDatabases,
+    journals,
+    favoriteStateError,
+    retryFavoriteChecks,
+    setSelectedDb,
+    setSelectedJournalId,
+    weeklyState,
+    articleState,
+  } = state;
+  const announcement = getWeeklyAnnouncement(state);
+  const announcementRole =
+    weeklyState === 'error' || (weeklyState === 'ready' && articleState === 'error')
+      ? 'alert'
+      : 'status';
+  const handleDatabaseChange = (value: string) => {
+    void setSelectedDb(value);
+    void setSelectedJournalId(null);
+  };
+
+  return (
+    <WorkspaceShell
+      sidebar={
+        <WeeklySidebar
+          availableDatabases={availableDatabases}
+          effectiveSelectedDb={effectiveSelectedDb}
+          journals={journals}
+          effectiveSelectedJournalId={effectiveSelectedJournalId}
+          onDatabaseChange={handleDatabaseChange}
+          onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
+        />
+      }
+      sidebarOpenLabel="打开期刊筛选"
+      sidebarDialogTitle="期刊筛选"
+      sidebarDialogDescription="选择数据库和期刊以查看每周更新。"
+      toolbar={
+        <div className="flex min-w-0 flex-1 items-center gap-3 md:mx-auto md:max-w-4xl">
+          <CalendarDays className="size-5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">每周新文章</p>
+            <h1 className="truncate text-xl font-semibold tracking-tight">
+              期刊每周更新
+              {weeklySummary
+                ? ` (${formatDate(weeklySummary.window_start)} - ${formatDate(weeklySummary.window_end)})`
+                : ''}
+            </h1>
+          </div>
+        </div>
+      }
+    >
+      <p
+        key={`${weeklyState}-${articleState}-${announcement}`}
+        data-testid="weekly-state-announcement"
+        className="sr-only"
+        role={announcementRole}
+        aria-label={announcement}
+        aria-live={announcementRole === 'alert' ? 'assertive' : 'polite'}
+        aria-atomic="true"
+      >
+        {announcement}
+      </p>
+      {favoriteStateError && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 p-3 text-sm"
+        >
+          <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
+          <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
+            重试收藏状态
+          </Button>
+        </div>
+      )}
+      {renderWeeklyPresentation(state)}
+    </WorkspaceShell>
+  );
+}
+
+/** Own the unchanged query, URL, selection and pagination hooks in their original order. */
+function useWeeklyViewState() {
   const { user } = useAuth();
   const [weeklyQuery] = useQueryState('weekly_q', parseAsString.withDefault(''));
   const searchQuery = weeklyQuery.trim();
@@ -356,13 +440,12 @@ export function WeeklyUpdatesView() {
     return journals.find((item) => item.journal_id === effectiveSelectedJournalId) ?? null;
   }, [journals, effectiveSelectedJournalId]);
 
-  const weeklyArticleQueryKey: string[] = [
-    'weekly-update-articles',
+  const weeklyArticleQueryKey = getWeeklyArticleQueryKey(
     effectiveSelectedDb,
-    effectiveSelectedJournalId ?? '',
+    effectiveSelectedJournalId,
     searchQuery,
-    weeklySummary?.window_end ?? '',
-  ];
+    weeklySummary,
+  );
   const {
     data: weeklyArticleData,
     fetchNextPage,
@@ -404,7 +487,12 @@ export function WeeklyUpdatesView() {
   });
 
   const articlePages = useMemo(() => weeklyArticleData?.pages ?? [], [weeklyArticleData]);
-  const articleListKey = `${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}:${searchQuery}:${weeklySummary?.window_end ?? ''}`;
+  const articleListKey = getWeeklyArticleListKey(
+    effectiveSelectedDb,
+    effectiveSelectedJournalId,
+    searchQuery,
+    weeklySummary,
+  );
   const { visiblePages, prefetchRef, loadMoreRef } = useVisiblePageList({
     listKey: articleListKey,
     loadedPages: articlePages.length,
@@ -439,346 +527,421 @@ export function WeeklyUpdatesView() {
     return weeklySummary.databases.reduce((sum, db) => sum + db.new_article_count, 0);
   }, [weeklySummary]);
 
-  const weeklyState = weeklyError ? 'error' : loadingWeekly || !weeklySummary ? 'loading' : 'ready';
-  const articleState = !selectedJournal
-    ? 'no-journal'
-    : loadingArticles
-      ? 'loading'
-      : articleError
-        ? 'error'
-        : renderedArticles.length === 0
-          ? 'empty'
-          : 'results';
-  const announcementRole =
-    weeklyState === 'error' || (weeklyState === 'ready' && articleState === 'error')
-      ? 'alert'
-      : 'status';
-  const announcement =
-    weeklyState === 'loading'
-      ? '正在加载每周更新摘要'
-      : weeklyState === 'error'
-        ? `加载每周更新失败：${weeklyErrorData instanceof Error ? weeklyErrorData.message : '未知错误'}`
-        : articleState === 'no-journal'
-          ? '请选择一个期刊以查看新收录文章'
-          : articleState === 'loading'
-            ? `正在加载“${selectedJournal ? getJournalLabel(selectedJournal) : ''}”的本周文章`
-            : articleState === 'error'
-              ? `加载本周文章失败：${articleErrorData instanceof Error ? articleErrorData.message : '未知错误'}`
-              : articleState === 'empty'
-                ? searchQuery
-                  ? '该期刊中没有匹配全文检索条件的本周文章'
-                  : '该期刊暂无文章'
-                : isFetchingNextPage
-                  ? '正在加载更多本周文章'
-                  : `已加载 ${renderedArticles.length} 篇本周文章`;
-
-  const handleDatabaseChange = (value: string) => {
-    void setSelectedDb(value);
-    void setSelectedJournalId(null);
+  const weeklyState = getWeeklyState(weeklyError, loadingWeekly, Boolean(weeklySummary));
+  const articleState = getWeeklyArticleState(
+    Boolean(selectedJournal),
+    loadingArticles,
+    articleError,
+    renderedArticles.length,
+  );
+  return {
+    user,
+    searchQuery,
+    stateTransition,
+    weeklySummary,
+    weeklyErrorData,
+    articleErrorData,
+    effectiveSelectedDb,
+    effectiveSelectedJournalId,
+    selectedJournal,
+    availableDatabases,
+    journals,
+    renderedArticles,
+    articleListKey,
+    prefetchIndex,
+    prefetchRef,
+    loadMoreRef,
+    favoriteChecksByArticle,
+    isFavoriteStatePending,
+    favoriteStateError,
+    retryFavoriteChecks,
+    totalDatabases,
+    totalArticles,
+    hasNextPage,
+    isFetchingNextPage,
+    visiblePageCount,
+    articlePages,
+    setSelectedDb,
+    setSelectedJournalId,
+    weeklyState,
+    articleState,
   };
+}
 
+type WeeklyViewState = ReturnType<typeof useWeeklyViewState>;
+type WeeklyState = 'error' | 'loading' | 'ready';
+type WeeklyArticleState = 'no-journal' | 'loading' | 'error' | 'empty' | 'results';
+
+/** Preserve weekly failure precedence over loading or missing summaries. */
+function getWeeklyState(hasError: boolean, isLoading: boolean, hasSummary: boolean): WeeklyState {
+  if (hasError) return 'error';
+  if (isLoading || !hasSummary) return 'loading';
+  return 'ready';
+}
+
+/** Preserve article selection, loading, failure and empty-result priority. */
+function getWeeklyArticleState(
+  hasJournal: boolean,
+  isLoading: boolean,
+  hasError: boolean,
+  count: number,
+): WeeklyArticleState {
+  if (!hasJournal) return 'no-journal';
+  if (isLoading) return 'loading';
+  if (hasError) return 'error';
+  if (count === 0) return 'empty';
+  return 'results';
+}
+
+/** Format the one live announcement using the original ordered presentation states. */
+function getWeeklyAnnouncement(state: WeeklyViewState): string {
+  const { weeklyState, weeklyErrorData } = state;
+  if (weeklyState === 'loading') return '正在加载每周更新摘要';
+  if (weeklyState === 'error')
+    return `加载每周更新失败：${weeklyErrorData instanceof Error ? weeklyErrorData.message : '未知错误'}`;
+  return getWeeklyArticleAnnouncement(state);
+}
+
+/** Announce article progress without introducing a second live region. */
+function getWeeklyArticleAnnouncement(state: WeeklyViewState): string {
+  const {
+    articleState,
+    articleErrorData,
+    selectedJournal,
+    searchQuery,
+    isFetchingNextPage,
+    renderedArticles,
+  } = state;
+  if (articleState === 'no-journal') return '请选择一个期刊以查看新收录文章';
+  if (articleState === 'loading')
+    return `正在加载“${selectedJournal ? getJournalLabel(selectedJournal) : ''}”的本周文章`;
+  if (articleState === 'error')
+    return `加载本周文章失败：${articleErrorData instanceof Error ? articleErrorData.message : '未知错误'}`;
+  if (articleState === 'empty')
+    return searchQuery ? '该期刊中没有匹配全文检索条件的本周文章' : '该期刊暂无文章';
+  if (isFetchingNextPage) return '正在加载更多本周文章';
+  return `已加载 ${renderedArticles.length} 篇本周文章`;
+}
+
+/** Describe the selected journal with the original search loading and failure precedence. */
+function getWeeklyJournalDescription(state: WeeklyViewState): string {
+  const { selectedJournal, searchQuery, articleState, renderedArticles, hasNextPage } = state;
+  if (!selectedJournal) return '从左侧选择期刊后查看本周新收录文章';
+  if (!searchQuery) return `本周新增 ${selectedJournal.new_article_count} 篇文章`;
+  if (articleState === 'loading') return '正在检索本周文章…';
+  if (articleState === 'error') return '全文检索失败';
+  return `已加载 ${renderedArticles.length} 篇匹配文章${hasNextPage ? '，继续滚动加载' : ''}`;
+}
+/** Render visible cards and existing pagination sentinels without changing their ownership. */
+function renderWeeklyArticleResults(state: WeeklyViewState) {
+  const {
+    user,
+    stateTransition,
+    effectiveSelectedDb,
+    renderedArticles,
+    prefetchIndex,
+    prefetchRef,
+    loadMoreRef,
+    favoriteChecksByArticle,
+    isFavoriteStatePending,
+    favoriteStateError,
+    hasNextPage,
+    isFetchingNextPage,
+    visiblePageCount,
+    articlePages,
+  } = state;
   return (
-    <WorkspaceShell
-      sidebar={
-        <WeeklySidebar
-          availableDatabases={availableDatabases}
-          effectiveSelectedDb={effectiveSelectedDb}
-          journals={journals}
-          effectiveSelectedJournalId={effectiveSelectedJournalId}
-          onDatabaseChange={handleDatabaseChange}
-          onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
+    <>
+      {renderedArticles.map((article, index) => (
+        <ArticleDialogCard
+          key={article.article_id}
+          triggerRef={index === prefetchIndex ? prefetchRef : undefined}
+          article={article}
+          dbName={effectiveSelectedDb}
+          initialFolderIds={
+            favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
+          }
+          isFavoriteStatePending={
+            Boolean(user) && isFavoriteStatePending && !favoriteChecksByArticle[article.article_id]
+          }
+          isFavoriteStateUnavailable={
+            Boolean(favoriteStateError) && !favoriteChecksByArticle[article.article_id]
+          }
         />
-      }
-      sidebarOpenLabel="打开期刊筛选"
-      sidebarDialogTitle="期刊筛选"
-      sidebarDialogDescription="选择数据库和期刊以查看每周更新。"
-      toolbar={
-        <div className="flex min-w-0 flex-1 items-center gap-3 md:mx-auto md:max-w-4xl">
-          <CalendarDays className="size-5 shrink-0" aria-hidden="true" />
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">每周新文章</p>
-            <h1 className="truncate text-xl font-semibold tracking-tight">
-              期刊每周更新
-              {weeklySummary
-                ? ` (${formatDate(weeklySummary.window_start)} - ${formatDate(weeklySummary.window_end)})`
-                : ''}
-            </h1>
-          </div>
-        </div>
-      }
-    >
-      <p
-        key={`${weeklyState}-${articleState}-${announcement}`}
-        data-testid="weekly-state-announcement"
-        className="sr-only"
-        role={announcementRole}
-        aria-label={announcement}
-        aria-live={announcementRole === 'alert' ? 'assertive' : 'polite'}
-        aria-atomic="true"
-      >
-        {announcement}
-      </p>
-      {favoriteStateError && (
-        <div
-          role="alert"
-          className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 p-3 text-sm"
-        >
-          <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
-          <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
-            重试收藏状态
-          </Button>
-        </div>
-      )}
-      <MotionPresence mode="wait">
-        {weeklyState === 'loading' ? (
+      ))}
+      <MotionPresence>
+        {isFetchingNextPage && (
           <MotionDiv
-            key="weekly-loading"
-            data-weekly-state="loading"
-            className="space-y-4"
+            key="weekly-next-page"
             aria-hidden="true"
+            className="py-2 text-center text-sm text-muted-foreground"
             variants={FADE_UP_VARIANTS}
             initial="hidden"
             animate="visible"
-            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+            exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
             transition={stateTransition}
           >
-            <Skeleton className="h-20 w-full" />
-            <Skeleton className="h-[70vh] w-full" />
+            正在加载更多文章…
           </MotionDiv>
-        ) : weeklyState === 'error' ? (
-          <MotionDiv
-            key="weekly-error"
-            data-weekly-state="error"
-            variants={FADE_UP_VARIANTS}
-            initial="hidden"
-            animate="visible"
-            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-            transition={stateTransition}
-          >
-            <StateMessage
-              isLive={false}
-              tone="danger"
-              title="加载每周更新失败"
-              description={
-                weeklyErrorData instanceof Error ? weeklyErrorData.message : '请稍后重试。'
-              }
-            />
-          </MotionDiv>
-        ) : (
-          weeklySummary && (
-            <MotionDiv
-              key="weekly-ready"
-              data-weekly-state="ready"
-              className="space-y-3"
-              variants={FADE_UP_VARIANTS}
-              initial="hidden"
-              animate="visible"
-              exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-              transition={stateTransition}
-            >
-              <section className="flex flex-col gap-3 rounded-lg bg-muted/30 p-3 shadow-vercel-ring sm:flex-row sm:items-center">
-                <MotionPresence mode="wait">
-                  <MotionDiv
-                    key={weeklySummary.window_end}
-                    data-weekly-summary-key={weeklySummary.window_end}
-                    className="flex shrink-0 flex-wrap gap-2"
-                    variants={FADE_UP_VARIANTS}
-                    initial="hidden"
-                    animate="visible"
-                    exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
-                    transition={stateTransition}
-                  >
-                    <Badge variant="secondary" className="gap-1">
-                      <Database className="h-3.5 w-3.5" aria-hidden="true" />
-                      {totalDatabases} 个数据库
-                    </Badge>
-                    <Badge variant="secondary" className="gap-1">
-                      <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-                      {totalArticles} 篇新文章
-                    </Badge>
-                  </MotionDiv>
-                </MotionPresence>
-                <SearchBar
-                  className="w-full max-w-none sm:min-w-0 sm:flex-1"
-                  queryParam="weekly_q"
-                />
-              </section>
-
-              <section className="min-w-0 space-y-3" aria-label="每周文章">
-                <MotionPresence mode="wait">
-                  <MotionDiv
-                    key={`${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}`}
-                    data-weekly-journal={effectiveSelectedJournalId ?? 'none'}
-                    className="rounded-lg bg-card px-4 py-3 shadow-vercel-ring"
-                    variants={FADE_UP_VARIANTS}
-                    initial="hidden"
-                    animate="visible"
-                    exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
-                    transition={stateTransition}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h2 className="truncate text-lg font-semibold tracking-tight">
-                          {selectedJournal ? getJournalLabel(selectedJournal) : '选择期刊'}
-                        </h2>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {selectedJournal
-                            ? searchQuery
-                              ? articleState === 'loading'
-                                ? '正在检索本周文章…'
-                                : articleState === 'error'
-                                  ? '全文检索失败'
-                                  : `已加载 ${renderedArticles.length} 篇匹配文章${hasNextPage ? '，继续滚动加载' : ''}`
-                              : `本周新增 ${selectedJournal.new_article_count} 篇文章`
-                            : '从左侧选择期刊后查看本周新收录文章'}
-                        </p>
-                      </div>
-                      {selectedJournal && (
-                        <Badge variant="secondary" className="shrink-0">
-                          {selectedJournal.new_article_count} 篇
-                        </Badge>
-                      )}
-                    </div>
-                  </MotionDiv>
-                </MotionPresence>
-
-                <MotionPresence mode="wait">
-                  {articleState === 'no-journal' ? (
-                    <MotionDiv
-                      key="weekly-articles-no-journal"
-                      data-weekly-article-state="no-journal"
-                      variants={FADE_UP_VARIANTS}
-                      initial="hidden"
-                      animate="visible"
-                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-                      transition={stateTransition}
-                    >
-                      <StateMessage
-                        isLive={false}
-                        title="请选择一个期刊以查看新收录文章。"
-                        description="选择后会显示该期刊在当前周窗口内的新文章。"
-                      />
-                    </MotionDiv>
-                  ) : articleState === 'loading' ? (
-                    <MotionDiv
-                      key="weekly-articles-loading"
-                      data-weekly-article-key={articleListKey}
-                      data-weekly-article-state="loading"
-                      className="space-y-2"
-                      aria-hidden="true"
-                      variants={FADE_UP_VARIANTS}
-                      initial="hidden"
-                      animate="visible"
-                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-                      transition={stateTransition}
-                    >
-                      <Skeleton className="h-28 w-full" />
-                      <Skeleton className="h-28 w-full" />
-                    </MotionDiv>
-                  ) : articleState === 'error' ? (
-                    <MotionDiv
-                      key="weekly-articles-error"
-                      data-weekly-article-key={articleListKey}
-                      data-weekly-article-state="error"
-                      variants={FADE_UP_VARIANTS}
-                      initial="hidden"
-                      animate="visible"
-                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-                      transition={stateTransition}
-                    >
-                      <StateMessage
-                        isLive={false}
-                        tone="danger"
-                        title="加载本周文章失败"
-                        description={
-                          articleErrorData instanceof Error
-                            ? articleErrorData.message
-                            : '请稍后重试。'
-                        }
-                      />
-                    </MotionDiv>
-                  ) : articleState === 'empty' ? (
-                    <MotionDiv
-                      key="weekly-articles-empty"
-                      data-weekly-article-key={articleListKey}
-                      data-weekly-article-state="empty"
-                      variants={FADE_UP_VARIANTS}
-                      initial="hidden"
-                      animate="visible"
-                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-                      transition={stateTransition}
-                    >
-                      <StateMessage
-                        isLive={false}
-                        title={searchQuery ? '没有匹配文章' : '该期刊暂无文章'}
-                        description={
-                          searchQuery ? '请尝试调整全文检索词。' : '当前周窗口内没有新收录文章。'
-                        }
-                      />
-                    </MotionDiv>
-                  ) : (
-                    <MotionDiv
-                      key="weekly-articles-results"
-                      data-weekly-article-key={articleListKey}
-                      data-weekly-article-state="results"
-                      className="space-y-3"
-                      variants={FADE_UP_VARIANTS}
-                      initial="hidden"
-                      animate="visible"
-                      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-                      transition={stateTransition}
-                    >
-                      {renderedArticles.map((article, index) => (
-                        <ArticleDialogCard
-                          key={article.article_id}
-                          triggerRef={index === prefetchIndex ? prefetchRef : undefined}
-                          article={article}
-                          dbName={effectiveSelectedDb}
-                          initialFolderIds={
-                            favoriteChecksByArticle[article.article_id]?.map(
-                              (item) => item.folder_id,
-                            ) ?? []
-                          }
-                          isFavoriteStatePending={
-                            Boolean(user) &&
-                            isFavoriteStatePending &&
-                            !favoriteChecksByArticle[article.article_id]
-                          }
-                          isFavoriteStateUnavailable={
-                            Boolean(favoriteStateError) &&
-                            !favoriteChecksByArticle[article.article_id]
-                          }
-                        />
-                      ))}
-
-                      <MotionPresence>
-                        {isFetchingNextPage && (
-                          <MotionDiv
-                            key="weekly-next-page"
-                            aria-hidden="true"
-                            className="py-2 text-center text-sm text-muted-foreground"
-                            variants={FADE_UP_VARIANTS}
-                            initial="hidden"
-                            animate="visible"
-                            exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
-                            transition={stateTransition}
-                          >
-                            正在加载更多文章…
-                          </MotionDiv>
-                        )}
-                      </MotionPresence>
-
-                      {(visiblePageCount < articlePages.length || hasNextPage) && (
-                        <div ref={loadMoreRef} className="h-1" />
-                      )}
-                    </MotionDiv>
-                  )}
-                </MotionPresence>
-              </section>
-            </MotionDiv>
-          )
         )}
       </MotionPresence>
-    </WorkspaceShell>
+      {(visiblePageCount < articlePages.length || hasNextPage) && (
+        <div ref={loadMoreRef} className="h-1" />
+      )}
+    </>
   );
+}
+
+/** Render the complete keyed article presence subtree with its original state precedence. */
+function renderWeeklyArticleStates(state: WeeklyViewState) {
+  return <MotionPresence mode="wait">{renderWeeklyArticlePanel(state)}</MotionPresence>;
+}
+
+/** Select the original keyed panel before returning it directly to MotionPresence. */
+function renderWeeklyArticlePanel(state: WeeklyViewState) {
+  const { searchQuery, stateTransition, articleErrorData, articleListKey, articleState } = state;
+  if (articleState === 'no-journal')
+    return (
+      <MotionDiv
+        key="weekly-articles-no-journal"
+        data-weekly-article-state="no-journal"
+        variants={FADE_UP_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+        transition={stateTransition}
+      >
+        <StateMessage
+          isLive={false}
+          title="请选择一个期刊以查看新收录文章。"
+          description="选择后会显示该期刊在当前周窗口内的新文章。"
+        />
+      </MotionDiv>
+    );
+  if (articleState === 'loading')
+    return (
+      <MotionDiv
+        key="weekly-articles-loading"
+        data-weekly-article-key={articleListKey}
+        data-weekly-article-state="loading"
+        className="space-y-2"
+        aria-hidden="true"
+        variants={FADE_UP_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+        transition={stateTransition}
+      >
+        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-28 w-full" />
+      </MotionDiv>
+    );
+  if (articleState === 'error')
+    return (
+      <MotionDiv
+        key="weekly-articles-error"
+        data-weekly-article-key={articleListKey}
+        data-weekly-article-state="error"
+        variants={FADE_UP_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+        transition={stateTransition}
+      >
+        <StateMessage
+          isLive={false}
+          tone="danger"
+          title="加载本周文章失败"
+          description={
+            articleErrorData instanceof Error ? articleErrorData.message : '请稍后重试。'
+          }
+        />
+      </MotionDiv>
+    );
+  if (articleState === 'empty')
+    return (
+      <MotionDiv
+        key="weekly-articles-empty"
+        data-weekly-article-key={articleListKey}
+        data-weekly-article-state="empty"
+        variants={FADE_UP_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+        transition={stateTransition}
+      >
+        <StateMessage
+          isLive={false}
+          title={searchQuery ? '没有匹配文章' : '该期刊暂无文章'}
+          description={searchQuery ? '请尝试调整全文检索词。' : '当前周窗口内没有新收录文章。'}
+        />
+      </MotionDiv>
+    );
+  return (
+    <MotionDiv
+      key="weekly-articles-results"
+      data-weekly-article-key={articleListKey}
+      data-weekly-article-state="results"
+      className="space-y-3"
+      variants={FADE_UP_VARIANTS}
+      initial="hidden"
+      animate="visible"
+      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+      transition={stateTransition}
+    >
+      {renderWeeklyArticleResults(state)}
+    </MotionDiv>
+  );
+}
+
+/** Render the complete journal heading presence subtree with its existing identity key. */
+function renderWeeklyJournalHeader(state: WeeklyViewState) {
+  const { stateTransition, effectiveSelectedDb, effectiveSelectedJournalId, selectedJournal } =
+    state;
+  return (
+    <MotionPresence mode="wait">
+      <MotionDiv
+        key={`${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}`}
+        data-weekly-journal={effectiveSelectedJournalId ?? 'none'}
+        className="rounded-lg bg-card px-4 py-3 shadow-vercel-ring"
+        variants={FADE_UP_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
+        transition={stateTransition}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-lg font-semibold tracking-tight">
+              {selectedJournal ? getJournalLabel(selectedJournal) : '选择期刊'}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {getWeeklyJournalDescription(state)}
+            </p>
+          </div>
+          {selectedJournal && (
+            <Badge variant="secondary" className="shrink-0">
+              {selectedJournal.new_article_count} 篇
+            </Badge>
+          )}
+        </div>
+      </MotionDiv>
+    </MotionPresence>
+  );
+}
+
+/** Render the complete summary animation and unchanged search control. */
+function renderWeeklySummary(state: WeeklyViewState, weeklySummary: WeeklyUpdatesSummaryResponse) {
+  const { stateTransition, totalDatabases, totalArticles } = state;
+  return (
+    <section className="flex flex-col gap-3 rounded-lg bg-muted/30 p-3 shadow-vercel-ring sm:flex-row sm:items-center">
+      <MotionPresence mode="wait">
+        <MotionDiv
+          key={weeklySummary.window_end}
+          data-weekly-summary-key={weeklySummary.window_end}
+          className="flex shrink-0 flex-wrap gap-2"
+          variants={FADE_UP_VARIANTS}
+          initial="hidden"
+          animate="visible"
+          exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
+          transition={stateTransition}
+        >
+          <Badge variant="secondary" className="gap-1">
+            <Database className="h-3.5 w-3.5" aria-hidden="true" />
+            {totalDatabases} 个数据库
+          </Badge>
+          <Badge variant="secondary" className="gap-1">
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+            {totalArticles} 篇新文章
+          </Badge>
+        </MotionDiv>
+      </MotionPresence>
+      <SearchBar className="w-full max-w-none sm:min-w-0 sm:flex-1" queryParam="weekly_q" />
+    </section>
+  );
+}
+
+/** Render summary loading and errors before the complete ready workspace. */
+function renderWeeklyPresentation(state: WeeklyViewState) {
+  const { stateTransition, weeklySummary, weeklyErrorData, weeklyState } = state;
+  return (
+    <MotionPresence mode="wait">
+      {weeklyState === 'loading' ? (
+        <MotionDiv
+          key="weekly-loading"
+          data-weekly-state="loading"
+          className="space-y-4"
+          aria-hidden="true"
+          variants={FADE_UP_VARIANTS}
+          initial="hidden"
+          animate="visible"
+          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+          transition={stateTransition}
+        >
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-[70vh] w-full" />
+        </MotionDiv>
+      ) : weeklyState === 'error' ? (
+        <MotionDiv
+          key="weekly-error"
+          data-weekly-state="error"
+          variants={FADE_UP_VARIANTS}
+          initial="hidden"
+          animate="visible"
+          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+          transition={stateTransition}
+        >
+          <StateMessage
+            isLive={false}
+            tone="danger"
+            title="加载每周更新失败"
+            description={
+              weeklyErrorData instanceof Error ? weeklyErrorData.message : '请稍后重试。'
+            }
+          />
+        </MotionDiv>
+      ) : (
+        weeklySummary && (
+          <MotionDiv
+            key="weekly-ready"
+            data-weekly-state="ready"
+            className="space-y-3"
+            variants={FADE_UP_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+            transition={stateTransition}
+          >
+            {renderWeeklySummary(state, weeklySummary)}
+
+            <section className="min-w-0 space-y-3" aria-label="每周文章">
+              {renderWeeklyJournalHeader(state)}
+
+              {renderWeeklyArticleStates(state)}
+            </section>
+          </MotionDiv>
+        )
+      )}
+    </MotionPresence>
+  );
+}
+
+/** Build the unchanged database, journal, search and weekly-window query identity. */
+function getWeeklyArticleQueryKey(
+  database: string,
+  journal: JournalId | null,
+  query: string,
+  summary: WeeklyUpdatesSummaryResponse | undefined,
+): string[] {
+  return ['weekly-update-articles', database, journal ?? '', query, summary?.window_end ?? ''];
+}
+
+/** Build the unchanged visible-page reset identity, including the no-journal marker. */
+function getWeeklyArticleListKey(
+  database: string,
+  journal: JournalId | null,
+  query: string,
+  summary: WeeklyUpdatesSummaryResponse | undefined,
+): string {
+  return `${database}:${journal ?? 'none'}:${query}:${summary?.window_end ?? ''}`;
 }
