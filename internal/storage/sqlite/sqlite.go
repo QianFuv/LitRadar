@@ -75,12 +75,7 @@ func usesSimple(connection *native.SQLiteConn) (bool, error) {
 
 // SimpleLibrary discovers only package and compiled-source locations, never a selected data directory.
 func SimpleLibrary() (string, error) {
-	name := "libsimple.so"
-	if runtime.GOOS == "windows" {
-		name = "simple.dll"
-	} else if runtime.GOOS == "darwin" {
-		name = "libsimple.dylib"
-	}
+	name := simpleLibraryName()
 	candidates := []string{}
 	if runtime.GOOS == "linux" {
 		candidates = append(candidates, "/usr/lib/litradar/libsimple.so")
@@ -89,12 +84,35 @@ func SimpleLibrary() (string, error) {
 		candidates = append(candidates, filepath.Join(filepath.Dir(executable), name))
 	}
 	if _, filename, _, ok := runtime.Caller(0); ok && filepath.IsAbs(filename) {
-		root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filename))))
-		candidates = append(candidates, filepath.Join(root, "target", "simple-tokenizer", name))
-		if runtime.GOARCH == "amd64" && (runtime.GOOS == "windows" || runtime.GOOS == "linux") {
-			candidates = append(candidates, filepath.Join(root, "libs", "simple", runtime.GOOS, name))
-		}
+		candidates = append(candidates, sourceSimpleLibraries(filename, name)...)
 	}
+	return firstRegularSimpleLibrary(candidates)
+}
+
+// simpleLibraryName preserves the host-native tokenizer filename.
+func simpleLibraryName() string {
+	name := "libsimple.so"
+	if runtime.GOOS == "windows" {
+		name = "simple.dll"
+	} else if runtime.GOOS == "darwin" {
+		name = "libsimple.dylib"
+	}
+	return name
+}
+
+// sourceSimpleLibraries derives build and bundle candidates from the original caller file anchor.
+func sourceSimpleLibraries(filename, name string) []string {
+	candidates := []string{}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filename))))
+	candidates = append(candidates, filepath.Join(root, "target", "simple-tokenizer", name))
+	if runtime.GOARCH == "amd64" && (runtime.GOOS == "windows" || runtime.GOOS == "linux") {
+		candidates = append(candidates, filepath.Join(root, "libs", "simple", runtime.GOOS, name))
+	}
+	return candidates
+}
+
+// firstRegularSimpleLibrary skips stat failures and nonregular candidates without canonicalization.
+func firstRegularSimpleLibrary(candidates []string) (string, error) {
 	for _, candidate := range candidates {
 		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
 			return candidate, nil
