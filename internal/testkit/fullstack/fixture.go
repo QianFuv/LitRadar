@@ -75,6 +75,7 @@ func Run(ctx context.Context, values []string, output io.Writer) error {
 	return err
 }
 
+// validateRoot admits the original directory, canonical temporary containment and exact marker.
 func validateRoot(root string) (string, error) {
 	metadata, err := os.Lstat(root)
 	if err != nil {
@@ -83,63 +84,23 @@ func validateRoot(root string) (string, error) {
 	if !metadata.IsDir() || metadata.Mode()&os.ModeSymlink != 0 {
 		return "", errors.New("fixture root must be a real directory")
 	}
-	canonical, err := filepath.EvalSymlinks(root)
+	canonical, err := canonicalFixturePath(root)
 	if err != nil {
 		return "", err
 	}
-	canonical, err = filepath.Abs(canonical)
-	if err != nil {
+	if err := validateFixtureContainment(canonical); err != nil {
 		return "", err
 	}
-	temporary, err := filepath.EvalSymlinks(os.TempDir())
-	if err != nil {
+	if err := validateFixtureMarker(canonical); err != nil {
 		return "", err
-	}
-	temporary, err = filepath.Abs(temporary)
-	if err != nil {
-		return "", err
-	}
-	relative, err := filepath.Rel(temporary, canonical)
-	if err != nil || relative == "." || !filepath.IsLocal(relative) {
-		return "", errors.New("fixture root must be below the OS temporary directory")
-	}
-	marker := filepath.Join(canonical, markerFile)
-	metadata, err = os.Lstat(marker)
-	if err != nil {
-		return "", errors.New("fixture marker is missing")
-	}
-	if !metadata.Mode().IsRegular() {
-		return "", errors.New("fixture marker must be a regular file")
-	}
-	content, err := os.ReadFile(marker)
-	if err != nil {
-		return "", err
-	}
-	if string(content) != markerContent {
-		return "", errors.New("fixture marker content is invalid")
 	}
 	return canonical, nil
 }
 
+// seed owns both database lifetimes through ordered fixture writes and manifest publication.
 func seed(ctx context.Context, root string) (any, error) {
-	root, err := validateRoot(root)
+	storage, err := prepareSeedStorage(ctx, root)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := os.Stat(filepath.Join(root, "data")); err == nil {
-		return nil, errors.New("fixture data already exists")
-	}
-	storage := config.FromProjectRoot(root)
-	if err := maintenance.CheckInterrupted(storage); err != nil {
-		return nil, err
-	}
-	if _, err := authmigration.Migrate(ctx, storage.AuthDbPath); err != nil {
-		return nil, err
-	}
-	if _, err := delivery.ImportLegacyFiles(ctx, storage, float64(time.Now().Unix())); err != nil {
-		return nil, err
-	}
-	if err := indexmigration.MigrateExisting(ctx, storage); err != nil {
 		return nil, err
 	}
 	repository, err := authstorage.Open(storage.AuthDbPath)
@@ -147,23 +108,7 @@ func seed(ctx context.Context, root string) (any, error) {
 		return nil, err
 	}
 	defer repository.Close()
-	service := auth.New(repository, 2)
-	administrator, err := service.Bootstrap(ctx, "fullstack_admin", "FullStackAdmin!2026", nil)
-	if err != nil {
-		return nil, err
-	}
-	invite, err := service.IssueInvite(ctx, administrator.Id, false, nil)
-	if err != nil {
-		return nil, err
-	}
-	member, err := service.Register(ctx, "fullstack_member", "FullStackMember!2026", &invite.Code, nil)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := favorites.New(repository).CreateFolder(ctx, member.Id, "Reading", false); err != nil {
-		return nil, err
-	}
-	if _, err := announcements.Create(ctx, repository, nil, "Seeded full-stack notice", "This announcement proves the real auth database is visible to the frontend.", "normal", true, nil); err != nil {
+	if err := seedFixtureAccounts(ctx, repository); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(storage.IndexDir, 0777); err != nil {
@@ -178,46 +123,14 @@ func seed(ctx context.Context, root string) (any, error) {
 	if err := seedCfp(ctx, storage, catalog); err != nil {
 		return nil, err
 	}
-	var changed uint64
-	for _, isSecond := range []bool{false, true} {
-		catalog, batch, revision := fixtureCatalog(), fixtureBatch(), "full-stack-seed-v1"
-		if isSecond {
-			catalog.CatalogId, catalog.Title, catalog.Issn, catalog.AllIssns = "full-stack-rating-second", "Complementary Methods Journal", nil, []string{}
-			catalog.Rankings = domain.JournalRankings{AbsRating: pointer("4"), FmsRating: pointer("B")}
-			batch.CatalogId, batch.Journal.CatalogId = catalog.CatalogId, catalog.CatalogId
-			batch.Journal.ObservedTitle, batch.Journal.ObservedIssns = &catalog.Title, []string{}
-			batch.Issues[0].CatalogId, batch.Articles[0].CatalogId = catalog.CatalogId, catalog.CatalogId
-			batch.Articles[0].Title, batch.Articles[0].Doi = "Statistical Methods for Evidence Synthesis", pointer("10.1234/full-stack-rating-second")
-			revision = "full-stack-rating-seed-v1"
-		}
-		if err := indexstorage.ReconcileCatalogIdentities(ctx, connection.Conn, []domain.JournalCatalogEntry{catalog}); err != nil {
-			return nil, err
-		}
-		outcome, err := indexstorage.WriteContentBatch(ctx, connection.Conn, catalog, batch, revision, "2026-07-22T00:00:00Z")
-		if err != nil {
-			return nil, err
-		}
-		changed += outcome.ArticlesChanged
-	}
-	var articleId int64
-	if err := connection.QueryRowContext(ctx, "SELECT article_id FROM articles WHERE doi=?", articleDoi).Scan(&articleId); err != nil {
-		return nil, err
-	}
-	if _, err := connection.ExecContext(ctx, "UPDATE articles SET authors_json=? WHERE article_id=?", `["Ada Lovelace","Grace Hopper"]`, articleId); err != nil {
+	changed, articleId, err := seedFixtureArticles(ctx, connection)
+	if err != nil {
 		return nil, err
 	}
 	if err := connection.Close(); err != nil {
 		return nil, err
 	}
-	pushState := filepath.Join(root, "data", "push_state")
-	if err := os.MkdirAll(pushState, 0777); err != nil {
-		return nil, err
-	}
-	manifest, err := json.MarshalIndent(map[string]any{"db_name": databaseName, "generated_at": strconv.FormatInt(time.Now().Unix(), 10), "run_id": "full-stack-seed-v1", "notifiable_article_ids": []int64{articleId}}, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(filepath.Join(pushState, "full-stack.changes.json"), manifest, 0666); err != nil {
+	if err := writeFixtureManifest(storage.ProjectRoot, articleId); err != nil {
 		return nil, err
 	}
 	return map[string]any{"status": "seeded", "database": databaseName, "user_count": 2, "article_count": changed, "weekly_article_count": 1}, nil
@@ -256,4 +169,152 @@ func fixtureCatalog() domain.JournalCatalogEntry {
 
 func fixtureBatch() domain.ProviderBatch {
 	return domain.ProviderBatch{CatalogId: "full-stack-journal", Journal: domain.JournalDraft{CatalogId: "full-stack-journal", ObservedTitle: pointer("Journal of Reproducible Literature"), ObservedIssns: []string{"1234-5679"}, ObservedTitleAliases: []string{}}, Issues: []domain.IssueDraft{{CatalogId: "full-stack-journal", PublicationYear: pointer(int64(2026)), Title: pointer("Full-stack verification issue"), Volume: pointer("12"), Number: pointer("3"), Date: pointer("2026-07")}}, Articles: []domain.ArticleDraft{{CatalogId: "full-stack-journal", Title: articleTitle, PublicationYear: pointer(int64(2026)), Date: pointer("2026-07-21"), IssueTitle: pointer("Full-stack verification issue"), Volume: pointer("12"), IssueNumber: pointer("3"), Authors: []domain.ArticleAuthorDraft{{DisplayName: "Ada Lovelace"}, {DisplayName: "Grace Hopper"}}, StartPage: pointer("101"), EndPage: pointer("118"), AbstractText: pointer("A deterministic nonempty article used to verify SQLite, search, detail, weekly, and favorite persistence."), Doi: pointer(articleDoi), OpenAccess: pointer(true), InPress: pointer(false), RetractionDois: []string{}}}, Progress: domain.ProviderProgress{State: domain.Complete}}
+}
+
+// canonicalFixturePath resolves links before obtaining the absolute path.
+func canonicalFixturePath(root string) (string, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	canonical, err = filepath.Abs(canonical)
+	if err != nil {
+		return "", err
+	}
+	return canonical, nil
+}
+
+// validateFixtureContainment admits only local descendants of the canonical OS temporary directory.
+func validateFixtureContainment(canonical string) error {
+	temporary, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		return err
+	}
+	temporary, err = filepath.Abs(temporary)
+	if err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(temporary, canonical)
+	if err != nil || relative == "." || !filepath.IsLocal(relative) {
+		return errors.New("fixture root must be below the OS temporary directory")
+	}
+	return nil
+}
+
+// validateFixtureMarker preserves missing, nonregular, unreadable and invalid marker errors.
+func validateFixtureMarker(canonical string) error {
+	marker := filepath.Join(canonical, markerFile)
+	metadata, err := os.Lstat(marker)
+	if err != nil {
+		return errors.New("fixture marker is missing")
+	}
+	if !metadata.Mode().IsRegular() {
+		return errors.New("fixture marker must be a regular file")
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		return err
+	}
+	if string(content) != markerContent {
+		return errors.New("fixture marker content is invalid")
+	}
+	return nil
+}
+
+// prepareSeedStorage protects an unpopulated marked root before running migrations in order.
+func prepareSeedStorage(ctx context.Context, root string) (config.Config, error) {
+	root, err := validateRoot(root)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if _, err := os.Stat(filepath.Join(root, "data")); err == nil {
+		return config.Config{}, errors.New("fixture data already exists")
+	}
+	storage := config.FromProjectRoot(root)
+	if err := maintenance.CheckInterrupted(storage); err != nil {
+		return config.Config{}, err
+	}
+	if _, err := authmigration.Migrate(ctx, storage.AuthDbPath); err != nil {
+		return config.Config{}, err
+	}
+	if _, err := delivery.ImportLegacyFiles(ctx, storage, float64(time.Now().Unix())); err != nil {
+		return config.Config{}, err
+	}
+	if err := indexmigration.MigrateExisting(ctx, storage); err != nil {
+		return config.Config{}, err
+	}
+	return storage, nil
+}
+
+// seedFixtureAccounts writes the administrator, invite, member, reading folder and notice in order.
+func seedFixtureAccounts(ctx context.Context, repository *authstorage.Repository) error {
+	service := auth.New(repository, 2)
+	administrator, err := service.Bootstrap(ctx, "fullstack_admin", "FullStackAdmin!2026", nil)
+	if err != nil {
+		return err
+	}
+	invite, err := service.IssueInvite(ctx, administrator.Id, false, nil)
+	if err != nil {
+		return err
+	}
+	member, err := service.Register(ctx, "fullstack_member", "FullStackMember!2026", &invite.Code, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := favorites.New(repository).CreateFolder(ctx, member.Id, "Reading", false); err != nil {
+		return err
+	}
+	if _, err := announcements.Create(ctx, repository, nil, "Seeded full-stack notice", "This announcement proves the real auth database is visible to the frontend.", "normal", true, nil); err != nil {
+		return err
+	}
+	return nil
+}
+
+// seedFixtureArticles reconciles both catalogs and retains the original article and legacy author encoding.
+func seedFixtureArticles(ctx context.Context, connection *indexstorage.Connection) (uint64, int64, error) {
+	var changed uint64
+	for _, isSecond := range []bool{false, true} {
+		catalog, batch, revision := fixtureCatalog(), fixtureBatch(), "full-stack-seed-v1"
+		if isSecond {
+			catalog.CatalogId, catalog.Title, catalog.Issn, catalog.AllIssns = "full-stack-rating-second", "Complementary Methods Journal", nil, []string{}
+			catalog.Rankings = domain.JournalRankings{AbsRating: pointer("4"), FmsRating: pointer("B")}
+			batch.CatalogId, batch.Journal.CatalogId = catalog.CatalogId, catalog.CatalogId
+			batch.Journal.ObservedTitle, batch.Journal.ObservedIssns = &catalog.Title, []string{}
+			batch.Issues[0].CatalogId, batch.Articles[0].CatalogId = catalog.CatalogId, catalog.CatalogId
+			batch.Articles[0].Title, batch.Articles[0].Doi = "Statistical Methods for Evidence Synthesis", pointer("10.1234/full-stack-rating-second")
+			revision = "full-stack-rating-seed-v1"
+		}
+		if err := indexstorage.ReconcileCatalogIdentities(ctx, connection.Conn, []domain.JournalCatalogEntry{catalog}); err != nil {
+			return 0, 0, err
+		}
+		outcome, err := indexstorage.WriteContentBatch(ctx, connection.Conn, catalog, batch, revision, "2026-07-22T00:00:00Z")
+		if err != nil {
+			return 0, 0, err
+		}
+		changed += outcome.ArticlesChanged
+	}
+	var articleId int64
+	if err := connection.QueryRowContext(ctx, "SELECT article_id FROM articles WHERE doi=?", articleDoi).Scan(&articleId); err != nil {
+		return 0, 0, err
+	}
+	if _, err := connection.ExecContext(ctx, "UPDATE articles SET authors_json=? WHERE article_id=?", `["Ada Lovelace","Grace Hopper"]`, articleId); err != nil {
+		return 0, 0, err
+	}
+	return changed, articleId, nil
+}
+
+// writeFixtureManifest publishes the first article only after the owner's checked content close.
+func writeFixtureManifest(root string, articleId int64) error {
+	pushState := filepath.Join(root, "data", "push_state")
+	if err := os.MkdirAll(pushState, 0777); err != nil {
+		return err
+	}
+	manifest, err := json.MarshalIndent(map[string]any{"db_name": databaseName, "generated_at": strconv.FormatInt(time.Now().Unix(), 10), "run_id": "full-stack-seed-v1", "notifiable_article_ids": []int64{articleId}}, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(pushState, "full-stack.changes.json"), manifest, 0666); err != nil {
+		return err
+	}
+	return nil
 }

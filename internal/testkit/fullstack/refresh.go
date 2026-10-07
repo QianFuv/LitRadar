@@ -21,6 +21,7 @@ import (
 
 type fixtureTransport struct{ client *http.Client }
 
+// Fetch retains URL admission, one deadline and response ownership for the local fixture transport.
 func (transport fixtureTransport) Fetch(ctx context.Context, configuration cfp.SourceConfig, location string, deadline time.Time) (cfp.Document, error) {
 	parsed, err := whatwg.NewParser().Parse(location)
 	if location != cfpUrl || err != nil || !configuration.PermitsUrl(parsed) {
@@ -37,17 +38,7 @@ func (transport fixtureTransport) Fetch(ctx context.Context, configuration cfp.S
 		return cfp.Document{}, cfp.ErrRequest
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return cfp.Document{}, cfp.SourceError{Kind: "http_status", Status: response.StatusCode}
-	}
-	content, err := io.ReadAll(io.LimitReader(response.Body, 65537))
-	if err != nil || !utf8.Valid(content) {
-		return cfp.Document{}, cfp.ErrEncoding
-	}
-	if len(content) > 65536 {
-		return cfp.Document{}, cfp.ErrTooLarge
-	}
-	return cfp.Document{FinalUrl: response.Request.URL.String(), Text: string(content), Format: "html"}, nil
+	return fixtureDocument(response)
 }
 
 func refresh(ctx context.Context, root string) (any, error) {
@@ -108,4 +99,19 @@ func serveCfp(listener *net.TCPListener) error {
 	const body = "<h1>Journal of Reproducible Literature</h1><h2>Call for papers</h2><h3>Updated original CFP after backend refresh</h3><p>New original research scope from the HTTP source.</p><p>Submission deadline: 31 December 2099</p><h4>Submission instructions</h4><p>Original manuscripts are welcome.</p>"
 	_, err = fmt.Fprintf(connection, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body)
 	return err
+}
+
+// fixtureDocument keeps HTTP status before reading and encoding failure before size admission.
+func fixtureDocument(response *http.Response) (cfp.Document, error) {
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return cfp.Document{}, cfp.SourceError{Kind: "http_status", Status: response.StatusCode}
+	}
+	content, err := io.ReadAll(io.LimitReader(response.Body, 65537))
+	if err != nil || !utf8.Valid(content) {
+		return cfp.Document{}, cfp.ErrEncoding
+	}
+	if len(content) > 65536 {
+		return cfp.Document{}, cfp.ErrTooLarge
+	}
+	return cfp.Document{FinalUrl: response.Request.URL.String(), Text: string(content), Format: "html"}, nil
 }
