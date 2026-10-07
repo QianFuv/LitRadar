@@ -37,6 +37,8 @@ func (tree *nativeTree) kill() error {
 	}
 	return classifiedError("kill_failed", err)
 }
+
+// hasRunningMembers conservatively retains ownership while the proc snapshot can change.
 func (tree *nativeTree) hasRunningMembers() (bool, error) {
 	if tree.group <= 0 {
 		return false, nil
@@ -50,21 +52,9 @@ func (tree *nativeTree) hasRunningMembers() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	for _, entry := range entries {
-		if _, err := strconv.Atoi(entry.Name()); err != nil {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "stat"))
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
-			return true, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		isActive, err := isProcessGroupActive(data, tree.group)
-		if err != nil || isActive {
-			return isActive, err
-		}
+	isActive, err := scanProcessGroupEntries(entries, tree.group)
+	if err != nil || isActive {
+		return isActive, err
 	}
 	finalEntries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -135,3 +125,24 @@ func (tree *nativeTree) waitEmpty(ctx context.Context) error {
 	}
 }
 func (tree *nativeTree) close() error { return nil }
+
+// scanProcessGroupEntries treats disappearing entries as active and propagates status errors.
+func scanProcessGroupEntries(entries []os.DirEntry, group int) (bool, error) {
+	for _, entry := range entries {
+		if _, err := strconv.Atoi(entry.Name()); err != nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "stat"))
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		isActive, err := isProcessGroupActive(data, group)
+		if err != nil || isActive {
+			return isActive, err
+		}
+	}
+	return false, nil
+}

@@ -78,6 +78,7 @@ func Start(ctx context.Context, config Config) (*Child, error) {
 
 type startHook func(string, *exec.Cmd) error
 
+// startWithHook publishes ownership after assignment and starts all completion observers.
 func startWithHook(ctx context.Context, config Config, hook startHook) (*Child, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -91,87 +92,37 @@ func startWithHook(ctx context.Context, config Config, hook startHook) (*Child, 
 	command := exec.Command(config.Path, config.Args...)
 	command.Dir = config.Directory
 	command.Env = config.Environment
-	inputReader, inputWriter, err := os.Pipe()
+	pipes, err := openChildPipes()
 	if err != nil {
 		return nil, err
 	}
-	outputReader, outputWriter, err := os.Pipe()
-	if err != nil {
-		inputReader.Close()
-		inputWriter.Close()
-		return nil, err
-	}
-	errorReader, errorWriter, err := os.Pipe()
-	if err != nil {
-		inputReader.Close()
-		inputWriter.Close()
-		outputReader.Close()
-		outputWriter.Close()
-		return nil, err
-	}
-	command.Stdin, command.Stdout, command.Stderr = inputReader, outputWriter, errorWriter
-	if config.InheritStdin {
-		command.Stdin = os.Stdin
-	}
-	if config.InheritStdout {
-		command.Stdout = os.Stdout
-	}
-	if config.InheritStderr {
-		command.Stderr = os.Stderr
-	}
+	configureChildPipes(command, config, pipes)
 	tree, err := prepareTree(command)
 	if err != nil {
-		inputReader.Close()
-		inputWriter.Close()
-		outputReader.Close()
-		outputWriter.Close()
-		errorReader.Close()
-		errorWriter.Close()
+		pipes.inputReader.Close()
+		pipes.inputWriter.Close()
+		pipes.outputReader.Close()
+		pipes.outputWriter.Close()
+		pipes.errorReader.Close()
+		pipes.errorWriter.Close()
 		return nil, fmt.Errorf("spawn_or_assign_failed")
 	}
 	if err = command.Start(); err == nil {
 		err = tree.attach(command, hook)
 	}
-	inputReader.Close()
-	outputWriter.Close()
-	errorWriter.Close()
+	pipes.inputReader.Close()
+	pipes.outputWriter.Close()
+	pipes.errorWriter.Close()
 	if err != nil {
-		if command.Process != nil {
-			tree.kill()
-			command.Process.Kill()
-			reaped := make(chan struct{})
-			go func() { command.Wait(); close(reaped) }()
-			cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			tree.waitEmpty(cleanupContext)
-			tree.close()
-			select {
-			case <-reaped:
-			case <-cleanupContext.Done():
-			}
-			cancel()
-		} else {
-			tree.close()
-		}
-		inputWriter.Close()
-		outputReader.Close()
-		errorReader.Close()
+		cleanupFailedStart(command, tree)
+		pipes.inputWriter.Close()
+		pipes.outputReader.Close()
+		pipes.errorReader.Close()
 		return nil, fmt.Errorf("spawn_or_assign_failed")
 	}
-	child := &Child{command: command, tree: tree, Stdin: inputWriter, readers: []*os.File{outputReader, errorReader},
+	child := &Child{command: command, tree: tree, Stdin: pipes.inputWriter, readers: []*os.File{pipes.outputReader, pipes.errorReader},
 		output: retainedOutput{limit: config.OutputLimit}, diagnostics: retainedOutput{limit: config.OutputLimit}, done: make(chan struct{}), drained: make(chan struct{}), closed: make(chan struct{})}
-	var draining sync.WaitGroup
-	for index, reader := range child.readers {
-		if index == 0 && config.StreamStdout {
-			child.Stdout = reader
-			continue
-		}
-		destination := &child.output
-		if index == 1 {
-			destination = &child.diagnostics
-		}
-		draining.Go(func() { _, _ = io.Copy(destination, reader); reader.Close() })
-	}
-	go func() { draining.Wait(); close(child.drained) }()
+	child.startDraining(config)
 	go func() { child.waitError = command.Wait(); close(child.done) }()
 	go func() {
 		select {
@@ -257,4 +208,85 @@ func (child *Child) Terminate(grace time.Duration) (Termination, error) {
 		}
 	})
 	return child.termination, child.closeError
+}
+
+// childPipes keeps both endpoints owned until their corresponding startup phase completes.
+type childPipes struct {
+	inputReader, inputWriter   *os.File
+	outputReader, outputWriter *os.File
+	errorReader, errorWriter   *os.File
+}
+
+// openChildPipes creates stdin, stdout and stderr in order, closing prior endpoints on failure.
+func openChildPipes() (*childPipes, error) {
+	inputReader, inputWriter, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	outputReader, outputWriter, err := os.Pipe()
+	if err != nil {
+		inputReader.Close()
+		inputWriter.Close()
+		return nil, err
+	}
+	errorReader, errorWriter, err := os.Pipe()
+	if err != nil {
+		inputReader.Close()
+		inputWriter.Close()
+		outputReader.Close()
+		outputWriter.Close()
+		return nil, err
+	}
+	return &childPipes{inputReader: inputReader, inputWriter: inputWriter, outputReader: outputReader, outputWriter: outputWriter, errorReader: errorReader, errorWriter: errorWriter}, nil
+}
+
+// configureChildPipes applies inheritance after creating the owned draining endpoints.
+func configureChildPipes(command *exec.Cmd, config Config, pipes *childPipes) {
+	command.Stdin, command.Stdout, command.Stderr = pipes.inputReader, pipes.outputWriter, pipes.errorWriter
+	if config.InheritStdin {
+		command.Stdin = os.Stdin
+	}
+	if config.InheritStdout {
+		command.Stdout = os.Stdout
+	}
+	if config.InheritStderr {
+		command.Stderr = os.Stderr
+	}
+}
+
+// cleanupFailedStart kills and joins a partially assigned leader before parent endpoint closure.
+func cleanupFailedStart(command *exec.Cmd, tree *nativeTree) {
+	if command.Process != nil {
+		tree.kill()
+		command.Process.Kill()
+		reaped := make(chan struct{})
+		go func() { command.Wait(); close(reaped) }()
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		tree.waitEmpty(cleanupContext)
+		tree.close()
+		select {
+		case <-reaped:
+		case <-cleanupContext.Done():
+		}
+		cancel()
+	} else {
+		tree.close()
+	}
+}
+
+// startDraining starts output readers before leader and cancellation observers.
+func (child *Child) startDraining(config Config) {
+	var draining sync.WaitGroup
+	for index, reader := range child.readers {
+		if index == 0 && config.StreamStdout {
+			child.Stdout = reader
+			continue
+		}
+		destination := &child.output
+		if index == 1 {
+			destination = &child.diagnostics
+		}
+		draining.Go(func() { _, _ = io.Copy(destination, reader); reader.Close() })
+	}
+	go func() { draining.Wait(); close(child.drained) }()
 }

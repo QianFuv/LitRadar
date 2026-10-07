@@ -49,90 +49,25 @@ func fixtureCommand(mode, directory string) *exec.Cmd {
 	return command
 }
 
+// TestProcessFixture supplies owned child modes for native lifecycle proofs.
 func TestProcessFixture(t *testing.T) {
 	mode := os.Getenv("LITRADAR_PROCESS_FIXTURE")
 	if mode == "" {
 		return
 	}
 	directory := os.Getenv("LITRADAR_PROCESS_DIRECTORY")
-	if mode == "inherit-stdout" {
-		config := fixtureConfig("stderr-flood", directory)
-		config.InheritStdout = true
-		child, err := Start(context.Background(), config)
-		if err != nil {
-			os.Exit(10)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := child.Wait(ctx); err != nil {
-			child.Close()
-			os.Exit(11)
-		}
-		if err := child.Close(); err != nil {
-			os.Exit(12)
-		}
-		output, _ := child.Output()
-		if len(output) != 0 {
-			os.Exit(13)
-		}
-		os.Exit(0)
-	}
-	if mode == "stderr-flood" {
-		os.Stderr.Write(bytes.Repeat([]byte("e"), 8192))
-		fmt.Fprint(os.Stdout, "result")
-		os.Exit(0)
-	}
-	if mode == "protocol" {
-		fmt.Fprintln(os.Stderr, "synthetic diagnostic")
-		fmt.Fprintln(os.Stdout, `{"frame":"ready"}`)
-		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-		if err != nil || line != "ACK\n" {
-			os.Exit(8)
-		}
-		fmt.Fprintln(os.Stdout, `{"frame":"acknowledged"}`)
-		os.Exit(0)
+	if runImmediateProcessFixture(mode, directory) {
+		return
 	}
 	if mode == "ignore-term" {
 		signal.Ignore(syscall.SIGTERM)
-	}
-	if mode == "output" {
-		for count := 0; count < 256; count++ {
-			if _, err := os.Stdout.Write(bytes.Repeat([]byte("x"), 8192)); err != nil {
-				os.Exit(3)
-			}
-		}
-		os.Exit(0)
-	}
-	if mode == "owner" || mode == "owner-late-guard" || mode == "owner-stopped-guard" {
-		workerMode := "parent"
-		if mode == "owner-late-guard" {
-			workerMode = "late-guard"
-		}
-		if mode == "owner-stopped-guard" {
-			workerMode = "stopped-guard"
-		}
-		config := fixtureConfig(workerMode, directory)
-		config.Environment = append(config.Environment, ParentEnvironment+"="+strconv.Itoa(os.Getpid()))
-		child, err := Start(context.Background(), config)
-		if err != nil {
-			panic(err)
-		}
-		defer child.Close()
-		os.WriteFile(filepath.Join(directory, "owner.ready"), []byte(strconv.Itoa(os.Getpid())), 0600)
-		select {}
 	}
 	if os.Getenv(ParentEnvironment) != "" && mode != "late-guard" {
 		stop, err := StartParentGuard()
 		if err != nil {
 			os.Exit(4)
 		}
-		if mode == "stopped-guard" {
-			started := time.Now()
-			stop()
-			if time.Since(started) >= 500*time.Millisecond {
-				os.Exit(5)
-			}
-		}
+		stopProcessFixtureGuard(mode, stop)
 		defer stop()
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -140,49 +75,14 @@ func TestProcessFixture(t *testing.T) {
 		panic(err)
 	}
 	defer listener.Close()
-	data, _ := json.Marshal(fixtureInfo{Pid: os.Getpid(), Address: listener.Addr().String()})
-	if err := os.WriteFile(filepath.Join(directory, mode+".json"), data, 0600); err != nil {
-		panic(err)
-	}
-	if mode == "parent" || mode == "leader-exit" || mode == "term-parent" || mode == "detached-pipes" || mode == "late-guard" || mode == "stopped-guard" {
-		grandMode := "grandchild"
-		if mode == "term-parent" {
-			grandMode = "ignore-term"
-		}
-		grandchild := fixtureCommand(grandMode, directory)
-		grandchild.Stdin, grandchild.Stdout, grandchild.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if mode == "detached-pipes" {
-			grandchild.Stdin, grandchild.Stdout, grandchild.Stderr = nil, nil, nil
-		}
-		if err := grandchild.Start(); err != nil {
-			panic(err)
-		}
-		if mode == "leader-exit" || mode == "detached-pipes" {
-			os.Exit(0)
-		}
-	}
+	publishProcessFixture(mode, directory, listener)
+	startFixtureGrandchild(mode, directory)
 	if mode == "late-guard" {
-		for {
-			if _, err := os.Stat(filepath.Join(directory, "release-guard")); err == nil {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		stop, err := StartParentGuard()
-		if err != nil {
-			os.Exit(4)
-		}
+		stop := awaitLateProcessGuard(directory)
 		defer stop()
 		os.WriteFile(filepath.Join(directory, "work-started"), []byte("unexpected"), 0600)
 	}
-	_, _ = io.Copy(io.Discard, os.Stdin)
-	for {
-		connection, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		connection.Close()
-	}
+	drainProcessFixture(listener)
 }
 
 func TestInheritedStdoutReachesParentAndIsNotRetained(t *testing.T) {
@@ -228,6 +128,7 @@ func TestCancellationAfterLeaderExitStillOwnsDescendants(t *testing.T) {
 	}
 }
 
+// TestProtocolStdoutIsSeparateAndBidirectional proves framing and diagnostic isolation.
 func TestProtocolStdoutIsSeparateAndBidirectional(t *testing.T) {
 	config := fixtureConfig("protocol", t.TempDir())
 	config.StreamStdout = true
@@ -236,18 +137,7 @@ func TestProtocolStdoutIsSeparateAndBidirectional(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer child.Close()
-	reader := bufio.NewReader(child.Stdout)
-	ready, err := reader.ReadString('\n')
-	if err != nil || ready != "{\"frame\":\"ready\"}\n" {
-		t.Fatalf("protocol polluted: %q %v", ready, err)
-	}
-	if _, err := io.WriteString(child.Stdin, "ACK\n"); err != nil {
-		t.Fatal(err)
-	}
-	ack, err := reader.ReadString('\n')
-	if err != nil || !strings.Contains(ack, "acknowledged") {
-		t.Fatalf("ACK protocol: %q %v", ack, err)
-	}
+	assertProcessProtocolExchange(t, child)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := child.Wait(ctx); err != nil {
@@ -525,4 +415,180 @@ func ExampleConfig() {
 	configuration := Config{Path: "litradar", OutputLimit: 4096}
 	fmt.Println(configuration.OutputLimit)
 	// Output: 4096
+}
+
+// runImmediateProcessFixture dispatches modes that exit before listener and guard setup.
+func runImmediateProcessFixture(mode, directory string) bool {
+	switch mode {
+	case "inherit-stdout":
+		runInheritedProcessFixture(directory)
+	case "stderr-flood":
+		os.Stderr.Write(bytes.Repeat([]byte("e"), 8192))
+		fmt.Fprint(os.Stdout, "result")
+		os.Exit(0)
+	case "protocol":
+		runProtocolProcessFixture()
+	case "output":
+		runOutputProcessFixture()
+	case "owner", "owner-late-guard", "owner-stopped-guard":
+		runOwnerProcessFixture(mode, directory)
+	default:
+		return false
+	}
+	return true
+}
+
+// runInheritedProcessFixture owns and joins the inherited stdout child.
+func runInheritedProcessFixture(directory string) {
+	config := fixtureConfig("stderr-flood", directory)
+	config.InheritStdout = true
+	child, err := Start(context.Background(), config)
+	if err != nil {
+		os.Exit(10)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := child.Wait(ctx); err != nil {
+		child.Close()
+		os.Exit(11)
+	}
+	if err := child.Close(); err != nil {
+		os.Exit(12)
+	}
+	output, _ := child.Output()
+	if len(output) != 0 {
+		os.Exit(13)
+	}
+	os.Exit(0)
+}
+
+// runProtocolProcessFixture exchanges a ready frame and acknowledgment independently of diagnostics.
+func runProtocolProcessFixture() {
+	fmt.Fprintln(os.Stderr, "synthetic diagnostic")
+	fmt.Fprintln(os.Stdout, `{"frame":"ready"}`)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil || line != "ACK\n" {
+		os.Exit(8)
+	}
+	fmt.Fprintln(os.Stdout, `{"frame":"acknowledged"}`)
+	os.Exit(0)
+}
+
+// runOutputProcessFixture writes beyond the retention limit before exiting.
+func runOutputProcessFixture() {
+	for count := 0; count < 256; count++ {
+		if _, err := os.Stdout.Write(bytes.Repeat([]byte("x"), 8192)); err != nil {
+			os.Exit(3)
+		}
+	}
+	os.Exit(0)
+}
+
+// runOwnerProcessFixture retains child ownership while its owner remains blocked.
+func runOwnerProcessFixture(mode, directory string) {
+	workerMode := "parent"
+	if mode == "owner-late-guard" {
+		workerMode = "late-guard"
+	}
+	if mode == "owner-stopped-guard" {
+		workerMode = "stopped-guard"
+	}
+	config := fixtureConfig(workerMode, directory)
+	config.Environment = append(config.Environment, ParentEnvironment+"="+strconv.Itoa(os.Getpid()))
+	child, err := Start(context.Background(), config)
+	if err != nil {
+		panic(err)
+	}
+	defer child.Close()
+	os.WriteFile(filepath.Join(directory, "owner.ready"), []byte(strconv.Itoa(os.Getpid())), 0600)
+	select {}
+}
+
+// stopProcessFixtureGuard checks that explicitly stopping the watcher joins promptly.
+func stopProcessFixtureGuard(mode string, stop func()) {
+	if mode == "stopped-guard" {
+		started := time.Now()
+		stop()
+		if time.Since(started) >= 500*time.Millisecond {
+			os.Exit(5)
+		}
+	}
+}
+
+// publishProcessFixture publishes identity while its caller owns listener cleanup.
+func publishProcessFixture(mode, directory string, listener net.Listener) {
+	data, _ := json.Marshal(fixtureInfo{Pid: os.Getpid(), Address: listener.Addr().String()})
+	if err := os.WriteFile(filepath.Join(directory, mode+".json"), data, 0600); err != nil {
+		panic(err)
+	}
+}
+
+// isParentProcessFixture identifies the modes that retain or leave a descendant.
+func isParentProcessFixture(mode string) bool {
+	return mode == "parent" || mode == "leader-exit" || mode == "term-parent" || mode == "detached-pipes" || mode == "late-guard" || mode == "stopped-guard"
+}
+
+// startFixtureGrandchild preserves inherited or detached descriptors before optional leader exit.
+func startFixtureGrandchild(mode, directory string) {
+	if isParentProcessFixture(mode) {
+		grandMode := "grandchild"
+		if mode == "term-parent" {
+			grandMode = "ignore-term"
+		}
+		grandchild := fixtureCommand(grandMode, directory)
+		grandchild.Stdin, grandchild.Stdout, grandchild.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if mode == "detached-pipes" {
+			grandchild.Stdin, grandchild.Stdout, grandchild.Stderr = nil, nil, nil
+		}
+		if err := grandchild.Start(); err != nil {
+			panic(err)
+		}
+		if mode == "leader-exit" || mode == "detached-pipes" {
+			os.Exit(0)
+		}
+	}
+}
+
+// awaitLateProcessGuard starts watching only after the release marker is observed.
+func awaitLateProcessGuard(directory string) func() {
+	for {
+		if _, err := os.Stat(filepath.Join(directory, "release-guard")); err == nil {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	stop, err := StartParentGuard()
+	if err != nil {
+		os.Exit(4)
+	}
+	return stop
+}
+
+// drainProcessFixture waits for stdin completion before servicing listener connections.
+func drainProcessFixture(listener net.Listener) {
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		connection.Close()
+	}
+}
+
+// assertProcessProtocolExchange checks both frames before the caller joins and closes the child.
+func assertProcessProtocolExchange(t *testing.T, child *Child) {
+	t.Helper()
+	reader := bufio.NewReader(child.Stdout)
+	ready, err := reader.ReadString('\n')
+	if err != nil || ready != "{\"frame\":\"ready\"}\n" {
+		t.Fatalf("protocol polluted: %q %v", ready, err)
+	}
+	if _, err := io.WriteString(child.Stdin, "ACK\n"); err != nil {
+		t.Fatal(err)
+	}
+	ack, err := reader.ReadString('\n')
+	if err != nil || !strings.Contains(ack, "acknowledged") {
+		t.Fatalf("ACK protocol: %q %v", ack, err)
+	}
 }

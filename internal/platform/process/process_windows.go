@@ -32,6 +32,7 @@ func prepareTree(command *exec.Cmd) (*nativeTree, error) {
 	return &nativeTree{job: job}, nil
 }
 
+// attach retains native handles through assignment, resume and the final startup hook.
 func (tree *nativeTree) attach(command *exec.Cmd, hook startHook) error {
 	if hook != nil {
 		if err := hook("before_assignment", command); err != nil {
@@ -56,31 +57,8 @@ func (tree *nativeTree) attach(command *exec.Cmd, hook startHook) error {
 		return err
 	}
 	defer windows.CloseHandle(snapshot)
-	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
-	err = windows.Thread32First(snapshot, &entry)
-	hasResumed := false
-	for err == nil {
-		if entry.OwnerProcessID == uint32(command.Process.Pid) {
-			thread, openError := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, entry.ThreadID)
-			if openError != nil {
-				return openError
-			}
-			previous, resumeError := windows.ResumeThread(thread)
-			windows.CloseHandle(thread)
-			if resumeError != nil {
-				return resumeError
-			}
-			if previous == 1 {
-				hasResumed = true
-			}
-		}
-		err = windows.Thread32Next(snapshot, &entry)
-	}
-	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+	if err := resumeProcessThreads(snapshot, command.Process.Pid); err != nil {
 		return err
-	}
-	if !hasResumed {
-		return fmt.Errorf("no suspended primary thread")
 	}
 	if hook != nil {
 		return hook("after_resume", command)
@@ -88,34 +66,23 @@ func (tree *nativeTree) attach(command *exec.Cmd, hook startHook) error {
 	return nil
 }
 
+// retainProcesses appends synchronized handles in query order without discarding prior ownership.
 func (tree *nativeTree) retainProcesses() error {
-	buffer := make([]uintptr, 65)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		err := windows.QueryInformationJobObject(tree.job, windows.JobObjectBasicProcessIdList, uintptr(unsafe.Pointer(&buffer[0])), uint32(len(buffer))*uint32(unsafe.Sizeof(buffer[0])), nil)
-		if errors.Is(err, windows.ERROR_MORE_DATA) {
-			if time.Now().After(deadline) {
-				return context.DeadlineExceeded
-			}
-			buffer = make([]uintptr, len(buffer)*2)
+	processIds, err := tree.readProcessIds()
+	if err != nil {
+		return err
+	}
+	for _, pid := range processIds {
+		handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		count := (*[2]uint32)(unsafe.Pointer(&buffer[0]))[1]
-		for _, pid := range buffer[1 : 1+int(count)] {
-			handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
-			if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			tree.processes = append(tree.processes, handle)
-		}
-		return nil
+		tree.processes = append(tree.processes, handle)
 	}
+	return nil
 }
 
 func (tree *nativeTree) kill() error {
@@ -152,6 +119,7 @@ type jobAccountingInformation struct {
 	TotalTerminatedProcesses  uint32
 }
 
+// waitEmpty observes Job and retained handle completion before cancellation.
 func (tree *nativeTree) waitEmpty(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -161,15 +129,9 @@ func (tree *nativeTree) waitEmpty(ctx context.Context) error {
 			return err
 		}
 		if information.ActiveProcesses == 0 {
-			hasPending := false
-			for _, handle := range tree.processes {
-				state, err := windows.WaitForSingleObject(handle, 0)
-				if err != nil {
-					return err
-				}
-				if state != windows.WAIT_OBJECT_0 {
-					hasPending = true
-				}
+			hasPending, err := tree.hasPendingProcesses()
+			if err != nil {
+				return err
 			}
 			if !hasPending {
 				return nil
@@ -181,4 +143,80 @@ func (tree *nativeTree) waitEmpty(ctx context.Context) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// resumeProcessThreads examines every owned thread while the caller retains the snapshot.
+func resumeProcessThreads(snapshot windows.Handle, pid int) error {
+	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	err := windows.Thread32First(snapshot, &entry)
+	hasResumed := false
+	for err == nil {
+		if entry.OwnerProcessID == uint32(pid) {
+			previous, err := resumeProcessThread(entry.ThreadID)
+			if err != nil {
+				return err
+			}
+			if previous == 1 {
+				hasResumed = true
+			}
+		}
+		err = windows.Thread32Next(snapshot, &entry)
+	}
+	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return err
+	}
+	if !hasResumed {
+		return fmt.Errorf("no suspended primary thread")
+	}
+	return nil
+}
+
+// resumeProcessThread closes its handle immediately after attempting the resume.
+func resumeProcessThread(threadId uint32) (uint32, error) {
+	thread, openError := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, threadId)
+	if openError != nil {
+		return 0, openError
+	}
+	previous, resumeError := windows.ResumeThread(thread)
+	windows.CloseHandle(thread)
+	if resumeError != nil {
+		return 0, resumeError
+	}
+	return previous, nil
+}
+
+// readProcessIds grows the Job query buffer only for MORE_DATA within the original deadline.
+func (tree *nativeTree) readProcessIds() ([]uintptr, error) {
+	buffer := make([]uintptr, 65)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := windows.QueryInformationJobObject(tree.job, windows.JobObjectBasicProcessIdList, uintptr(unsafe.Pointer(&buffer[0])), uint32(len(buffer))*uint32(unsafe.Sizeof(buffer[0])), nil)
+		if errors.Is(err, windows.ERROR_MORE_DATA) {
+			if time.Now().After(deadline) {
+				return nil, context.DeadlineExceeded
+			}
+			buffer = make([]uintptr, len(buffer)*2)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		count := (*[2]uint32)(unsafe.Pointer(&buffer[0]))[1]
+		return buffer[1 : 1+int(count)], nil
+	}
+}
+
+// hasPendingProcesses checks every retained handle, including errors after a pending process.
+func (tree *nativeTree) hasPendingProcesses() (bool, error) {
+	hasPending := false
+	for _, handle := range tree.processes {
+		state, err := windows.WaitForSingleObject(handle, 0)
+		if err != nil {
+			return false, err
+		}
+		if state != windows.WAIT_OBJECT_0 {
+			hasPending = true
+		}
+	}
+	return hasPending, nil
 }
