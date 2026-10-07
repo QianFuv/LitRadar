@@ -38,19 +38,7 @@ func TestContextScopeActivatesTypedFilterAndNeverLeaksToOtherRequests(t *testing
 	if len(lines) != 20 || bytes.Contains(output.Bytes(), []byte("hidden")) {
 		t.Fatal("scope leaked", output.String())
 	}
-	for _, line := range lines {
-		var value struct {
-			Event, Target string
-			Span          struct{ Name, Route string }
-			Spans         []map[string]any
-		}
-		if err := json.Unmarshal(line, &value); err != nil {
-			t.Fatal(err)
-		}
-		if value.Event != "visible" || value.Target != "other" || value.Span.Name != "http.request" || value.Span.Route != "/api/private" || len(value.Spans) != 1 {
-			t.Fatal(string(line))
-		}
-	}
+	assertRequestScopeRecords(t, lines)
 }
 
 func TestCapturedWorkerRetainsAncestryWithoutEnteringAncestorFilter(t *testing.T) {
@@ -168,6 +156,24 @@ func TestStartupLoggingUsesReadOnlyDefaultsAndFixedErrors(t *testing.T) {
 		_, _, err := New(values[0], values[1], io.Discard)
 		if err == nil || err.Error() != values[2] || strings.Contains(err.Error(), "SECRET") {
 			t.Fatal(err)
+		}
+	}
+}
+
+// assertRequestScopeRecords checks every emitted request record against its immutable captured scope.
+func assertRequestScopeRecords(t *testing.T, lines [][]byte) {
+	t.Helper()
+	for _, line := range lines {
+		var value struct {
+			Event, Target string
+			Span          struct{ Name, Route string }
+			Spans         []map[string]any
+		}
+		if err := json.Unmarshal(line, &value); err != nil {
+			t.Fatal(err)
+		}
+		if value.Event != "visible" || value.Target != "other" || value.Span.Name != "http.request" || value.Span.Route != "/api/private" || len(value.Spans) != 1 {
+			t.Fatal(string(line))
 		}
 	}
 }

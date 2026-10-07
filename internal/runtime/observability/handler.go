@@ -240,24 +240,8 @@ func (output *handler) WithGroup(name string) slog.Handler {
 }
 
 func (output *handler) Handle(ctx context.Context, record slog.Record) error {
-	fields := map[string]any{}
-	order := []string{}
-	add := func(attribute slog.Attr) {
-		if attribute.Key != "" {
-			if _, exists := fields[attribute.Key]; !exists {
-				order = append(order, attribute.Key)
-			}
-			fields[attribute.Key] = attribute.Value.Resolve().Any()
-		}
-	}
-	for _, attribute := range output.attributes {
-		add(attribute)
-	}
-	record.Attrs(func(attribute slog.Attr) bool { add(attribute); return true })
-	if _, exists := fields["event"]; !exists && record.Message != "" {
-		fields["event"] = record.Message
-		order = append(order, "event")
-	}
+	fields, order := recordFields(record, output.attributes)
+
 	target := originalTarget(record, fields)
 	delete(fields, "log_target")
 	scope := scopeFrom(ctx)
@@ -269,6 +253,41 @@ func (output *handler) Handle(ctx context.Context, record slog.Record) error {
 		output.guard.enqueue([]byte(compact(record.Time, level, target, fields, order, scope)))
 		return nil
 	}
+	payload := recordJsonPayload(record, level, target, fields, scope)
+
+	encoded, err := jsonvalue.EncodeJson(payload)
+	if err != nil {
+		return err
+	}
+	output.guard.enqueue([]byte(encoded + "\n"))
+	return nil
+}
+
+// recordFields resolves retained attributes in encounter order while retaining first-key display order.
+func recordFields(record slog.Record, attributes []slog.Attr) (map[string]any, []string) {
+	fields := map[string]any{}
+	order := []string{}
+	add := func(attribute slog.Attr) {
+		if attribute.Key != "" {
+			if _, exists := fields[attribute.Key]; !exists {
+				order = append(order, attribute.Key)
+			}
+			fields[attribute.Key] = attribute.Value.Resolve().Any()
+		}
+	}
+	for _, attribute := range attributes {
+		add(attribute)
+	}
+	record.Attrs(func(attribute slog.Attr) bool { add(attribute); return true })
+	if _, exists := fields["event"]; !exists && record.Message != "" {
+		fields["event"] = record.Message
+		order = append(order, "event")
+	}
+	return fields, order
+}
+
+// recordJsonPayload applies JSON metadata and captures nonnil span snapshots in scope order.
+func recordJsonPayload(record slog.Record, level, target string, fields map[string]any, scope []logfilter.Entry) map[string]any {
 	payload := maps.Clone(fields)
 	payload["timestamp"] = record.Time.UTC().Format("2006-01-02T15:04:05.000000Z")
 	payload["level"] = level
@@ -285,12 +304,7 @@ func (output *handler) Handle(ctx context.Context, record slog.Record) error {
 			payload["spans"] = spans
 		}
 	}
-	encoded, err := jsonvalue.EncodeJson(payload)
-	if err != nil {
-		return err
-	}
-	output.guard.enqueue([]byte(encoded + "\n"))
-	return nil
+	return payload
 }
 
 func compact(timestamp time.Time, level, target string, fields map[string]any, order []string, scope []logfilter.Entry) string {
@@ -380,6 +394,28 @@ func originalTarget(record slog.Record, fields map[string]any) string {
 	if position >= 0 {
 		filename = filename[position+10:]
 	}
+	if target := runtimeFileTarget(filename, fields); target != "" {
+		return target
+	}
+	if target := apiAndIndexFileTarget(filename); target != "" {
+		return target
+	}
+	if target := storageFileTarget(filename); target != "" {
+		return target
+	}
+	if target := sourceAndDeliveryFileTarget(filename); target != "" {
+		return target
+	}
+	for prefix, target := range map[string]string{"cli/": "litradar_cli", "scheduler/": "litradar_worker::scheduler", "sources/cnki_index": "litradar_sources::providers", "sources/scholarly/": "litradar_sources::scholarly", "sources/zjlib/": "litradar_sources::zjlib"} {
+		if strings.HasPrefix(filename, prefix) {
+			return target
+		}
+	}
+	return "litradar"
+}
+
+// runtimeFileTarget retains exact source-file logging categories before prefix fallback.
+func runtimeFileTarget(filename string, fields map[string]any) string {
 	switch filename {
 	case "cli/application.go":
 		if strings.HasPrefix(fmt.Sprint(fields["event"]), "process.") {
@@ -397,6 +433,13 @@ func originalTarget(record slog.Record, fields map[string]any) string {
 			return "litradar_cli"
 		}
 		return "litradar_api"
+	}
+	return ""
+}
+
+// apiAndIndexFileTarget retains exact source-file logging categories before prefix fallback.
+func apiAndIndexFileTarget(filename string) string {
+	switch filename {
 	case "api/middleware.go":
 		return "litradar_api::http_observability"
 	case "api/auth.go", "api/auth_body.go":
@@ -411,6 +454,13 @@ func originalTarget(record slog.Record, fields map[string]any) string {
 		return "litradar_index::live"
 	case "cfp/full_text.go":
 		return "litradar_worker::cfp::full_text"
+	}
+	return ""
+}
+
+// storageFileTarget retains exact source-file logging categories before prefix fallback.
+func storageFileTarget(filename string) string {
+	switch filename {
 	case "storage/auth/audit.go":
 		return "litradar_storage::business::security_audit"
 	case "storage/favorites/metadata.go":
@@ -421,6 +471,13 @@ func originalTarget(record slog.Record, fields map[string]any) string {
 		return "litradar_storage::index_maintenance"
 	case "storage/migrations/index/events.go":
 		return "litradar_storage::migrations"
+	}
+	return ""
+}
+
+// sourceAndDeliveryFileTarget retains exact source-file logging categories before prefix fallback.
+func sourceAndDeliveryFileTarget(filename string) string {
+	switch filename {
 	case "sources/scholarly/crossref_workset_collect.go":
 		return "litradar_sources::crossref_workset"
 	case "sources/scholarly/index.go", "sources/article_access.go":
@@ -432,10 +489,5 @@ func originalTarget(record slog.Record, fields map[string]any) string {
 	case "delivery/manual.go", "delivery/orchestration.go":
 		return "litradar_worker::delivery::orchestration"
 	}
-	for prefix, target := range map[string]string{"cli/": "litradar_cli", "scheduler/": "litradar_worker::scheduler", "sources/cnki_index": "litradar_sources::providers", "sources/scholarly/": "litradar_sources::scholarly", "sources/zjlib/": "litradar_sources::zjlib"} {
-		if strings.HasPrefix(filename, prefix) {
-			return target
-		}
-	}
-	return "litradar"
+	return ""
 }
