@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/html/charset"
+	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
@@ -82,31 +83,12 @@ func Decode(body []byte, label string) (string, error) {
 	case "gbk", "gb18030":
 		return decodeGb18030(body)
 	case "windows-1252":
-		var result strings.Builder
-		for _, value := range body {
-			switch value {
-			case 0x81, 0x8d, 0x8f, 0x90, 0x9d:
-				result.WriteRune(rune(value))
-			default:
-				decoded, err := encoding.NewDecoder().Bytes([]byte{value})
-				if err != nil {
-					return "", ErrEncoding
-				}
-				result.Write(decoded)
-			}
-		}
-		return result.String(), nil
+		return decodeWindows1252(body, encoding)
 	}
-	decoded, err := encoding.NewDecoder().Bytes(body)
-	if err != nil {
-		return "", ErrEncoding
-	}
-	if name != "utf-16le" && name != "utf-16be" && strings.ContainsRune(string(decoded), utf8.RuneError) {
-		return "", ErrEncoding
-	}
-	return string(decoded), nil
+	return decodeStrictBytes(body, name, encoding)
 }
 
+// validUtf16 rejects odd lengths, isolated low surrogates and incomplete high-surrogate pairs.
 func validUtf16(body []byte, littleEndian bool) bool {
 	if len(body)%2 != 0 {
 		return false
@@ -122,11 +104,7 @@ func validUtf16(body []byte, littleEndian bool) bool {
 		}
 		if value >= 0xd800 && value <= 0xdbff {
 			offset += 2
-			if offset >= len(body) {
-				return false
-			}
-			low := order.Uint16(body[offset:])
-			if low < 0xdc00 || low > 0xdfff {
+			if !validUtf16LowSurrogate(body, offset, order) {
 				return false
 			}
 		}
@@ -139,24 +117,8 @@ func decodeGb18030(body []byte) (string, error) {
 	var result strings.Builder
 	decoder := simplifiedchinese.GB18030.NewDecoder()
 	for offset := 0; offset < len(body); {
-		length := 1
-		first := body[offset]
-		if first >= 0x81 && first <= 0xfe {
-			if offset+1 >= len(body) {
-				return "", ErrEncoding
-			}
-			second := body[offset+1]
-			if second >= 0x30 && second <= 0x39 {
-				length = 4
-				if offset+3 >= len(body) || body[offset+2] < 0x81 || body[offset+2] > 0xfe || body[offset+3] < 0x30 || body[offset+3] > 0x39 {
-					return "", ErrEncoding
-				}
-			} else if second >= 0x40 && second <= 0xfe && second != 0x7f {
-				length = 2
-			} else {
-				return "", ErrEncoding
-			}
-		} else if first == 0xff {
+		length, ok := gb18030UnitLength(body, offset)
+		if !ok {
 			return "", ErrEncoding
 		}
 		unit := body[offset : offset+length]
@@ -179,4 +141,75 @@ func decodeGb18030(body []byte) (string, error) {
 		offset += length
 	}
 	return result.String(), nil
+}
+
+// decodeWindows1252 preserves undefined single-byte values as their control runes.
+func decodeWindows1252(body []byte, codec encoding.Encoding) (string, error) {
+	var result strings.Builder
+	for _, value := range body {
+		switch value {
+		case 0x81, 0x8d, 0x8f, 0x90, 0x9d:
+			result.WriteRune(rune(value))
+		default:
+			decoded, err := codec.NewDecoder().Bytes([]byte{value})
+			if err != nil {
+				return "", ErrEncoding
+			}
+			result.Write(decoded)
+		}
+	}
+	return result.String(), nil
+}
+
+// decodeStrictBytes rejects decoder replacement outside already validated UTF-16.
+func decodeStrictBytes(body []byte, name string, codec encoding.Encoding) (string, error) {
+	decoded, err := codec.NewDecoder().Bytes(body)
+	if err != nil {
+		return "", ErrEncoding
+	}
+	if name != "utf-16le" && name != "utf-16be" && strings.ContainsRune(string(decoded), utf8.RuneError) {
+		return "", ErrEncoding
+	}
+	return string(decoded), nil
+}
+
+// validUtf16LowSurrogate checks the second code unit after the caller advances past a high surrogate.
+func validUtf16LowSurrogate(body []byte, offset int, order binary.ByteOrder) bool {
+	if offset >= len(body) {
+		return false
+	}
+	low := order.Uint16(body[offset:])
+	if low < 0xdc00 || low > 0xdfff {
+		return false
+	}
+	return true
+}
+
+// gb18030UnitLength admits single-byte units or validates the complete multibyte shape.
+func gb18030UnitLength(body []byte, offset int) (int, bool) {
+	first := body[offset]
+	if first >= 0x81 && first <= 0xfe {
+		return gb18030MultibyteLength(body, offset)
+	}
+	return 1, first != 0xff
+}
+
+// gb18030MultibyteLength distinguishes decimal four-byte units from legal two-byte trails.
+func gb18030MultibyteLength(body []byte, offset int) (int, bool) {
+	if offset+1 >= len(body) {
+		return 0, false
+	}
+	second := body[offset+1]
+	if second >= 0x30 && second <= 0x39 {
+		return 4, validGb18030FourByte(body, offset)
+	}
+	if second >= 0x40 && second <= 0xfe && second != 0x7f {
+		return 2, true
+	}
+	return 0, false
+}
+
+// validGb18030FourByte requires the final lead and decimal trail after checking the complete length.
+func validGb18030FourByte(body []byte, offset int) bool {
+	return offset+3 < len(body) && body[offset+2] >= 0x81 && body[offset+2] <= 0xfe && body[offset+3] >= 0x30 && body[offset+3] <= 0x39
 }
