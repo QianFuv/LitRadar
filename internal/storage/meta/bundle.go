@@ -97,25 +97,36 @@ func findPackagedDirectory(directories []string) (string, error) {
 	return "", nil
 }
 
+// object requires every declared field exactly once and rejects null or unknown values.
 func object(raw []byte, fields ...string) (map[string]json.RawMessage, error) {
 	invalid := errors.New("invalid metadata bundle manifest")
 	if !jsonvalue.ValidJson(string(raw)) {
 		return nil, invalid
 	}
 	if bytes.TrimSpace(raw)[0] == '[' {
-		var elements []json.RawMessage
-		if json.Unmarshal(raw, &elements) != nil || len(elements) != len(fields) {
+		return sequenceObject(raw, fields, invalid)
+	}
+	return namedObject(raw, fields, invalid)
+}
+
+// sequenceObject maps the original positional form only after exact arity and value admission.
+func sequenceObject(raw []byte, fields []string, invalid error) (map[string]json.RawMessage, error) {
+	var elements []json.RawMessage
+	if json.Unmarshal(raw, &elements) != nil || len(elements) != len(fields) {
+		return nil, invalid
+	}
+	values := make(map[string]json.RawMessage, len(fields))
+	for index, field := range fields {
+		if bytes.Equal(bytes.TrimSpace(elements[index]), []byte("null")) {
 			return nil, invalid
 		}
-		values := make(map[string]json.RawMessage, len(fields))
-		for index, field := range fields {
-			if bytes.Equal(bytes.TrimSpace(elements[index]), []byte("null")) {
-				return nil, invalid
-			}
-			values[field] = elements[index]
-		}
-		return values, nil
+		values[field] = elements[index]
 	}
+	return values, nil
+}
+
+// namedObject decodes admitted fields in encounter order and requires a complete object.
+func namedObject(raw []byte, fields []string, invalid error) (map[string]json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') {
@@ -123,24 +134,32 @@ func object(raw []byte, fields ...string) (map[string]json.RawMessage, error) {
 	}
 	values := map[string]json.RawMessage{}
 	for decoder.More() {
-		key, err := decoder.Token()
-		if err != nil {
-			return nil, invalid
+		if err := decodeObjectField(decoder, fields, values, invalid); err != nil {
+			return nil, err
 		}
-		name, ok := key.(string)
-		if !ok || !slices.Contains(fields, name) || values[name] != nil {
-			return nil, invalid
-		}
-		var value json.RawMessage
-		if decoder.Decode(&value) != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return nil, invalid
-		}
-		values[name] = value
 	}
 	if len(values) != len(fields) {
 		return nil, invalid
 	}
 	return values, nil
+}
+
+// decodeObjectField validates the key before consuming its nonnull raw value.
+func decodeObjectField(decoder *json.Decoder, fields []string, values map[string]json.RawMessage, invalid error) error {
+	key, err := decoder.Token()
+	if err != nil {
+		return invalid
+	}
+	name, ok := key.(string)
+	if !ok || !slices.Contains(fields, name) || values[name] != nil {
+		return invalid
+	}
+	var value json.RawMessage
+	if decoder.Decode(&value) != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		return invalid
+	}
+	values[name] = value
+	return nil
 }
 
 func regularBundleFile(filename, name string) error {
@@ -169,94 +188,154 @@ func validDigest(value string) bool {
 	return true
 }
 
+// validateBundle admits catalogs in manifest order and sorts only the fully valid bundle.
 func validateBundle(directory string) (bundle, error) {
-	filename := filepath.Join(directory, manifestFilename)
-	if err := regularBundleFile(filename, manifestFilename); err != nil {
-		return bundle{}, err
-	}
-	data, err := os.ReadFile(filename)
+	result, entries, err := readBundleManifest(directory)
 	if err != nil {
 		return bundle{}, err
 	}
-	fields, err := object(data, "format", "version", "catalogs")
-	if err != nil {
-		return bundle{}, err
-	}
-	var format string
-	var version int64
-	var entries []json.RawMessage
-	if json.Unmarshal(fields["format"], &format) != nil || json.Unmarshal(fields["version"], &version) != nil || json.Unmarshal(fields["catalogs"], &entries) != nil {
-		return bundle{}, errors.New("invalid metadata bundle manifest")
-	}
-	if format != "litradar-meta-bundle" {
-		return bundle{}, InvalidBundle{"unsupported format " + format}
-	}
-	if version <= 0 {
-		return bundle{}, InvalidBundle{"version must be a positive integer"}
-	}
-	if len(entries) == 0 {
-		return bundle{}, InvalidBundle{"catalog inventory must not be empty"}
-	}
-	result := bundle{version: version, catalogs: []catalog{}}
 	names := map[string]bool{}
 	for _, entry := range entries {
-		fields, err := object(entry, "filename", "sha256", "legacy_sha256")
+		candidate, err := validateCatalog(directory, result.version, entry, names)
 		if err != nil {
 			return bundle{}, err
-		}
-		var candidate catalog
-		if json.Unmarshal(fields["filename"], &candidate.filename) != nil || json.Unmarshal(fields["sha256"], &candidate.sha256) != nil || json.Unmarshal(fields["legacy_sha256"], &candidate.legacy) != nil {
-			return bundle{}, errors.New("invalid metadata bundle manifest")
-		}
-		name := candidate.filename
-		if name == "" || name == ".csv" || strings.ContainsAny(name, "/\\") || filepath.VolumeName(name) != "" || filepath.Base(name) != name || filepath.Ext(name) != ".csv" {
-			return bundle{}, InvalidBundle{fmt.Sprintf("catalog filename %q must be a portable CSV basename", name)}
-		}
-		if names[name] {
-			return bundle{}, InvalidBundle{"duplicate catalog filename " + name}
-		}
-		names[name] = true
-		if !validDigest(candidate.sha256) {
-			return bundle{}, InvalidBundle{"catalog " + name + " contains an invalid SHA-256 digest"}
-		}
-		digests := map[string]bool{candidate.sha256: true}
-		for _, digest := range candidate.legacy {
-			if !validDigest(digest) {
-				return bundle{}, InvalidBundle{"catalog " + name + " contains an invalid SHA-256 digest"}
-			}
-			if digests[digest] {
-				return bundle{}, InvalidBundle{"duplicate current or legacy hash for " + name}
-			}
-			digests[digest] = true
-		}
-		location := filepath.Join(directory, name)
-		if err := regularBundleFile(location, name); err != nil {
-			return bundle{}, err
-		}
-		candidate.data, err = os.ReadFile(location)
-		if err != nil {
-			return bundle{}, err
-		}
-		if !utf8.Valid(candidate.data) {
-			return bundle{}, InvalidBundle{"catalog " + name + " is not valid UTF-8"}
-		}
-		if version >= 2 {
-			header, _, _ := strings.Cut(string(candidate.data), "\n")
-			header = strings.TrimRight(header, "\r")
-			expected, headerVersion := headerV2, 2
-			if version >= 3 {
-				expected, headerVersion = headerV3, 3
-			}
-			if header != expected {
-				return bundle{}, InvalidBundle{fmt.Sprintf("catalog %s must use the exact canonical v%d header", name, headerVersion)}
-			}
-		}
-		actual, _ := CanonicalSha256(candidate.data)
-		if actual != candidate.sha256 {
-			return bundle{}, HashMismatch{name, candidate.sha256, actual}
 		}
 		result.catalogs = append(result.catalogs, candidate)
 	}
 	slices.SortFunc(result.catalogs, func(first, second catalog) int { return strings.Compare(first.filename, second.filename) })
 	return result, nil
+}
+
+// readBundleManifest decodes all header types before admitting format, version and inventory.
+func readBundleManifest(directory string) (bundle, []json.RawMessage, error) {
+	filename := filepath.Join(directory, manifestFilename)
+	if err := regularBundleFile(filename, manifestFilename); err != nil {
+		return bundle{}, nil, err
+	}
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return bundle{}, nil, err
+	}
+	fields, err := object(data, "format", "version", "catalogs")
+	if err != nil {
+		return bundle{}, nil, err
+	}
+	var format string
+	var version int64
+	var entries []json.RawMessage
+	if json.Unmarshal(fields["format"], &format) != nil || json.Unmarshal(fields["version"], &version) != nil || json.Unmarshal(fields["catalogs"], &entries) != nil {
+		return bundle{}, nil, errors.New("invalid metadata bundle manifest")
+	}
+	if format != "litradar-meta-bundle" {
+		return bundle{}, nil, InvalidBundle{"unsupported format " + format}
+	}
+	if version <= 0 {
+		return bundle{}, nil, InvalidBundle{"version must be a positive integer"}
+	}
+	if len(entries) == 0 {
+		return bundle{}, nil, InvalidBundle{"catalog inventory must not be empty"}
+	}
+	return bundle{version: version, catalogs: []catalog{}}, entries, nil
+}
+
+// validateCatalog admits one complete descriptor before reading and checking its file.
+func validateCatalog(directory string, version int64, entry json.RawMessage, names map[string]bool) (catalog, error) {
+	candidate, err := decodeCatalog(entry)
+	if err != nil {
+		return catalog{}, err
+	}
+	if err := admitCatalogName(candidate.filename, names); err != nil {
+		return catalog{}, err
+	}
+	if err := admitCatalogDigests(candidate); err != nil {
+		return catalog{}, err
+	}
+	location := filepath.Join(directory, candidate.filename)
+	if err := regularBundleFile(location, candidate.filename); err != nil {
+		return catalog{}, err
+	}
+	candidate.data, err = os.ReadFile(location)
+	if err != nil {
+		return catalog{}, err
+	}
+	if err := validateCatalogData(candidate, version); err != nil {
+		return catalog{}, err
+	}
+	return candidate, nil
+}
+
+// decodeCatalog retains strict object/sequence fields and sequential typed decoding.
+func decodeCatalog(entry json.RawMessage) (catalog, error) {
+	fields, err := object(entry, "filename", "sha256", "legacy_sha256")
+	if err != nil {
+		return catalog{}, err
+	}
+	var candidate catalog
+	if json.Unmarshal(fields["filename"], &candidate.filename) != nil || json.Unmarshal(fields["sha256"], &candidate.sha256) != nil || json.Unmarshal(fields["legacy_sha256"], &candidate.legacy) != nil {
+		return catalog{}, errors.New("invalid metadata bundle manifest")
+	}
+	return candidate, nil
+}
+
+// admitCatalogName checks portable CSV names before recording duplicate admission.
+func admitCatalogName(name string, names map[string]bool) error {
+	if name == "" || name == ".csv" || strings.ContainsAny(name, "/\\") || filepath.VolumeName(name) != "" || filepath.Base(name) != name || filepath.Ext(name) != ".csv" {
+		return InvalidBundle{fmt.Sprintf("catalog filename %q must be a portable CSV basename", name)}
+	}
+	if names[name] {
+		return InvalidBundle{"duplicate catalog filename " + name}
+	}
+	names[name] = true
+	return nil
+}
+
+// admitCatalogDigests checks the current digest before ordered legacy syntax and duplicates.
+func admitCatalogDigests(candidate catalog) error {
+	name := candidate.filename
+	if !validDigest(candidate.sha256) {
+		return InvalidBundle{"catalog " + name + " contains an invalid SHA-256 digest"}
+	}
+	digests := map[string]bool{candidate.sha256: true}
+	for _, digest := range candidate.legacy {
+		if !validDigest(digest) {
+			return InvalidBundle{"catalog " + name + " contains an invalid SHA-256 digest"}
+		}
+		if digests[digest] {
+			return InvalidBundle{"duplicate current or legacy hash for " + name}
+		}
+		digests[digest] = true
+	}
+	return nil
+}
+
+// validateCatalogData checks original UTF-8/header bytes before their canonical content digest.
+func validateCatalogData(candidate catalog, version int64) error {
+	name := candidate.filename
+	if !utf8.Valid(candidate.data) {
+		return InvalidBundle{"catalog " + name + " is not valid UTF-8"}
+	}
+	if version >= 2 {
+		if err := validateCatalogHeader(candidate, version); err != nil {
+			return err
+		}
+	}
+	actual, _ := CanonicalSha256(candidate.data)
+	if actual != candidate.sha256 {
+		return HashMismatch{name, candidate.sha256, actual}
+	}
+	return nil
+}
+
+// validateCatalogHeader requires the exact v2 or v3 first line without trimming a BOM.
+func validateCatalogHeader(candidate catalog, version int64) error {
+	header, _, _ := strings.Cut(string(candidate.data), "\n")
+	header = strings.TrimRight(header, "\r")
+	expected, headerVersion := headerV2, 2
+	if version >= 3 {
+		expected, headerVersion = headerV3, 3
+	}
+	if header != expected {
+		return InvalidBundle{fmt.Sprintf("catalog %s must use the exact canonical v%d header", candidate.filename, headerVersion)}
+	}
+	return nil
 }

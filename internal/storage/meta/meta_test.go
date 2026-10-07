@@ -108,6 +108,7 @@ func TestCanonicalHashPreservesMeaningfulBytes(t *testing.T) {
 	}
 }
 
+// TestPreparationPreservesCustomizationAndAdoptsEquivalentBytes checks managed ownership without rewriting customization.
 func TestPreparationPreservesCustomizationAndAdoptsEquivalentBytes(t *testing.T) {
 	configuration := newProject(t)
 	current, legacy := "name,value\nalpha,current\n", "name,value\nalpha,legacy\n"
@@ -134,14 +135,7 @@ func TestPreparationPreservesCustomizationAndAdoptsEquivalentBytes(t *testing.T)
 	updated := headerV2 + "\nalpha,updated\n"
 	newer := newBundle(t, 2, catalogFixture{"alpha.csv", updated, nil})
 	assertAction(t, configuration, newer, "updated")
-	for _, custom := range [][]byte{[]byte("operator,customization\n"), {0xff, 0xfe}} {
-		writeFixture(t, target, custom)
-		assertAction(t, configuration, newer, "customized")
-		actual, _ := os.ReadFile(target)
-		if !bytes.Equal(actual, custom) {
-			t.Fatal("custom bytes replaced")
-		}
-	}
+	assertCustomizedCatalogBytes(t, configuration, newer, target)
 	var version int64
 	if err := database.QueryRow("SELECT bundle_version FROM managed_meta_catalogs WHERE filename='alpha.csv'").Scan(&version); err != nil || version != 2 {
 		t.Fatalf("state = %d, %v", version, err)
@@ -149,17 +143,7 @@ func TestPreparationPreservesCustomizationAndAdoptsEquivalentBytes(t *testing.T)
 	if err := os.Remove(target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(context.Background(), configuration, directory); err == nil {
-		t.Fatal("downgrade accepted")
-	} else {
-		var downgrade Downgrade
-		if !errors.As(err, &downgrade) {
-			t.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("downgrade recreated missing catalog")
-	}
+	assertDowngradeDoesNotRecreate(t, configuration, directory, target)
 }
 
 func TestWholeBundleValidatedBeforePersistentWrites(t *testing.T) {
@@ -390,5 +374,34 @@ func TestRollbackAndCleanupPreserveUnexpectedDirectories(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// assertCustomizedCatalogBytes keeps valid and invalid UTF-8 operator bytes intact.
+func assertCustomizedCatalogBytes(t *testing.T, configuration config.Config, newer, target string) {
+	t.Helper()
+	for _, custom := range [][]byte{[]byte("operator,customization\n"), {0xff, 0xfe}} {
+		writeFixture(t, target, custom)
+		assertAction(t, configuration, newer, "customized")
+		actual, _ := os.ReadFile(target)
+		if !bytes.Equal(actual, custom) {
+			t.Fatal("custom bytes replaced")
+		}
+	}
+}
+
+// assertDowngradeDoesNotRecreate checks typed refusal before recreating a missing catalog.
+func assertDowngradeDoesNotRecreate(t *testing.T, configuration config.Config, directory, target string) {
+	t.Helper()
+	if _, err := Prepare(context.Background(), configuration, directory); err == nil {
+		t.Fatal("downgrade accepted")
+	} else {
+		var downgrade Downgrade
+		if !errors.As(err, &downgrade) {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("downgrade recreated missing catalog")
 	}
 }

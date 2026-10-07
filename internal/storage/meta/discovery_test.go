@@ -6,19 +6,12 @@ import (
 	"testing"
 )
 
+// TestPackagedDirectoryUsesPortableBundleWithoutOverridingSystemBundle checks the ordered manifest lookup.
 func TestPackagedDirectoryUsesPortableBundleWithoutOverridingSystemBundle(t *testing.T) {
 	root := t.TempDir()
 	system := filepath.Join(root, "system")
 	portable := filepath.Join(root, "release", "assets", "meta")
-	if err := os.MkdirAll(portable, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(portable, manifestFilename), []byte("{}"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := findPackagedDirectory([]string{system, portable}); err != nil || got != portable {
-		t.Fatalf("portable bundle: %q, %v", got, err)
-	}
+	assertPortableDiscovery(t, system, portable)
 	if err := os.MkdirAll(system, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -30,5 +23,19 @@ func TestPackagedDirectoryUsesPortableBundleWithoutOverridingSystemBundle(t *tes
 	}
 	if got, err := findPackagedDirectory([]string{filepath.Join(root, "missing")}); err != nil || got != "" {
 		t.Fatalf("unpackaged development build: %q, %v", got, err)
+	}
+}
+
+// assertPortableDiscovery checks portable fallback before a system bundle exists.
+func assertPortableDiscovery(t *testing.T, system, portable string) {
+	t.Helper()
+	if err := os.MkdirAll(portable, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(portable, manifestFilename), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := findPackagedDirectory([]string{system, portable}); err != nil || got != portable {
+		t.Fatalf("portable bundle: %q, %v", got, err)
 	}
 }
