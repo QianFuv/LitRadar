@@ -10,6 +10,7 @@ import (
 	whatwg "github.com/nlnwa/whatwg-url/url"
 )
 
+// decodeJsString preserves literal unknown escapes and legacy rune consumption.
 func decodeJsString(value string) string {
 	characters := []rune(value)
 	var output strings.Builder
@@ -20,37 +21,7 @@ func decodeJsString(value string) string {
 			continue
 		}
 		index++
-		escaped := characters[index]
-		switch escaped {
-		case '/', '"', '\'', '\\':
-			output.WriteRune(escaped)
-		case 'b':
-			output.WriteByte('\b')
-		case 'f':
-			output.WriteByte('\f')
-		case 'n':
-			output.WriteByte('\n')
-		case 'r':
-			output.WriteByte('\r')
-		case 't':
-			output.WriteByte('\t')
-		case 'u':
-			end := min(index+5, len(characters))
-			digits := string(characters[index+1 : end])
-			index = end - 1
-			if len(digits) == 4 {
-				number, err := strconv.ParseUint(strings.TrimPrefix(digits, "+"), 16, 32)
-				if err == nil && number <= utf8.MaxRune && (number < 0xd800 || number > 0xdfff) {
-					output.WriteRune(rune(number))
-					continue
-				}
-			}
-			output.WriteString(`\u`)
-			output.WriteString(digits)
-		default:
-			output.WriteByte('\\')
-			output.WriteRune(escaped)
-		}
+		index = writeJsEscape(&output, characters, index)
 	}
 	return output.String()
 }
@@ -117,12 +88,13 @@ type shareCookieSync struct {
 	fields map[string]string
 }
 
+// safeAbsolutePath admits the original ASCII path grammar without dot segments.
 func safeAbsolutePath(path string) bool {
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
 		return false
 	}
 	for _, character := range []byte(path) {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("/-_.", rune(character))) {
+		if !isSafePathCharacter(character) {
 			return false
 		}
 	}
@@ -133,6 +105,8 @@ func safeAbsolutePath(path string) bool {
 	}
 	return true
 }
+
+// extractShareCookieSync admits the callback before the domain and portal endpoint.
 func extractShareCookieSync(text string, allowed endpoints) (*shareCookieSync, error) {
 	sign, callback := extractJsVar(text, "sign"), extractJsVar(text, "url")
 	if sign == nil || callback == nil || !strings.Contains(text, "sso-login/cookie/sync") {
@@ -140,6 +114,79 @@ func extractShareCookieSync(text string, allowed endpoints) (*shareCookieSync, e
 	}
 	base, _ := whatwg.NewParser().Parse(allowed.bases[shareFamily])
 	origin := base.Scheme() + "://" + base.Host()
+	normalized, portal := shareSyncDomainAndPortal(text, origin, base.Scheme())
+	callbackUrl, err := allowed.join(allowed.bases[shareFamily], *callback, shareFamily)
+	if err != nil {
+		return nil, err
+	}
+	domainUrl, err := whatwg.NewParser().Parse(normalized)
+	if err != nil {
+		return nil, &Error{Kind: "Parse", Message: "Share cookie sync domain was invalid."}
+	}
+	if !isAllowedShareSync(domainUrl, base, portal) {
+		return nil, &Error{Kind: "Parse", Message: "Share cookie sync endpoint was not allowed."}
+	}
+	syncUrl, err := allowed.parse(origin+strings.TrimRight(portal, "/")+"/sso-login/cookie/sync", shareFamily)
+	if err != nil {
+		return nil, err
+	}
+	return &shareCookieSync{url: syncUrl.Href(false), fields: map[string]string{"sign": *sign, "url": callbackUrl}}, nil
+}
+
+// writeJsEscape writes one escaped rune and returns the last consumed rune index.
+func writeJsEscape(output *strings.Builder, characters []rune, index int) int {
+	escaped := characters[index]
+	switch escaped {
+	case '/', '"', '\'', '\\':
+		output.WriteRune(escaped)
+	case 'b':
+		output.WriteByte('\b')
+	case 'f':
+		output.WriteByte('\f')
+	case 'n':
+		output.WriteByte('\n')
+	case 'r':
+		output.WriteByte('\r')
+	case 't':
+		output.WriteByte('\t')
+	case 'u':
+		return writeJsUnicodeEscape(output, characters, index)
+	default:
+		output.WriteByte('\\')
+		output.WriteRune(escaped)
+	}
+	return index
+}
+
+// writeJsUnicodeEscape consumes at most four runes and retains invalid escape spelling.
+func writeJsUnicodeEscape(output *strings.Builder, characters []rune, index int) int {
+	end := min(index+5, len(characters))
+	digits := string(characters[index+1 : end])
+	index = end - 1
+	if len(digits) == 4 {
+		number, err := strconv.ParseUint(strings.TrimPrefix(digits, "+"), 16, 32)
+		if err == nil && number <= utf8.MaxRune && (number < 0xd800 || number > 0xdfff) {
+			output.WriteRune(rune(number))
+			return index
+		}
+	}
+	output.WriteString(`\u`)
+	output.WriteString(digits)
+	return index
+}
+
+// isSafePathCharacter preserves the ASCII portal path alphabet.
+func isSafePathCharacter(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("/-_.", rune(character))
+}
+
+// isAllowedShareSync checks origin and root domain before the absolute portal path.
+func isAllowedShareSync(domainUrl, base *whatwg.Url, portal string) bool {
+	return !(!hasOrigin(domainUrl, base) || strings.Trim(domainUrl.Pathname(), "/") != "" || strings.Contains(domainUrl.Href(true), "?") || domainUrl.Href(false) != domainUrl.Href(true) || !safeAbsolutePath(portal))
+}
+
+// shareSyncDomainAndPortal preserves missing defaults and protocol-relative domain normalization.
+func shareSyncDomainAndPortal(text, origin, scheme string) (string, string) {
 	domain, portal := extractJsVar(text, "domainUrl"), extractJsVar(text, "portalContextPath")
 	if domain == nil {
 		domain = &origin
@@ -149,22 +196,7 @@ func extractShareCookieSync(text string, allowed endpoints) (*shareCookieSync, e
 	}
 	normalized := *domain
 	if strings.HasPrefix(normalized, "//") {
-		normalized = base.Scheme() + ":" + normalized
+		normalized = scheme + ":" + normalized
 	}
-	callbackUrl, err := allowed.join(allowed.bases[shareFamily], *callback, shareFamily)
-	if err != nil {
-		return nil, err
-	}
-	domainUrl, err := whatwg.NewParser().Parse(normalized)
-	if err != nil {
-		return nil, &Error{Kind: "Parse", Message: "Share cookie sync domain was invalid."}
-	}
-	if !hasOrigin(domainUrl, base) || strings.Trim(domainUrl.Pathname(), "/") != "" || strings.Contains(domainUrl.Href(true), "?") || domainUrl.Href(false) != domainUrl.Href(true) || !safeAbsolutePath(*portal) {
-		return nil, &Error{Kind: "Parse", Message: "Share cookie sync endpoint was not allowed."}
-	}
-	syncUrl, err := allowed.parse(origin+strings.TrimRight(*portal, "/")+"/sso-login/cookie/sync", shareFamily)
-	if err != nil {
-		return nil, err
-	}
-	return &shareCookieSync{url: syncUrl.Href(false), fields: map[string]string{"sign": *sign, "url": callbackUrl}}, nil
+	return normalized, *portal
 }

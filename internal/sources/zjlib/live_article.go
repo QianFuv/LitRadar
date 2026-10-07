@@ -143,20 +143,37 @@ func (live *LiveTransport) DownloadPdf(ctx context.Context, pdfUrl string, title
 		return DownloadedPdf{}, err
 	}
 	final := response.Request.URL.String()
+	content, contentType, err := readPdfContent(response, live.state.config.MaximumDocumentBytes, final)
+	if err != nil {
+		return DownloadedPdf{}, err
+	}
+	filename := downloadedPdfFilename(title, final)
+	return DownloadedPdf{Filename: filename, FinalUrl: final, ContentType: contentType, ByteCount: uint64(len(content)), Content: content}, nil
+}
+
+var _ Transport = (*LiveTransport)(nil)
+
+// readPdfContent applies the decoded byte bound before content-type-or-magic recognition.
+func readPdfContent(response *http.Response, maximumBytes int64, final string) ([]byte, string, error) {
 	contentType := "application/pdf"
 	if values, ok := response.Header["Content-Type"]; ok && len(values) > 0 && asciiHeader(values[0]) {
 		contentType = values[0]
 	}
-	content, err := transport.BoundedBytes(response, live.state.config.MaximumDocumentBytes)
+	content, err := transport.BoundedBytes(response, maximumBytes)
 	if err != nil {
 		if errors.Is(err, transport.ErrTooLarge) {
-			return DownloadedPdf{}, &Error{Kind: "Request", Message: "Download endpoint exceeded the configured document size limit."}
+			return nil, "", &Error{Kind: "Request", Message: "Download endpoint exceeded the configured document size limit."}
 		}
-		return DownloadedPdf{}, &Error{Kind: "Request", Message: "request or response body error"}
+		return nil, "", &Error{Kind: "Request", Message: "request or response body error"}
 	}
 	if !strings.Contains(asciiLower(contentType), "pdf") && !bytes.HasPrefix(content, []byte("%PDF")) {
-		return DownloadedPdf{}, &Error{Kind: "Request", Message: fmt.Sprintf("Download endpoint did not return PDF (content-type=%q, url=%s).", contentType, redactUrl(final))}
+		return nil, "", &Error{Kind: "Request", Message: fmt.Sprintf("Download endpoint did not return PDF (content-type=%q, url=%s).", contentType, redactUrl(final))}
 	}
+	return content, contentType, nil
+}
+
+// downloadedPdfFilename preserves explicit title, final URL query and cnki fallback order.
+func downloadedPdfFilename(title *string, final string) string {
 	resolved := title
 	if resolved == nil || strings.TrimSpace(*resolved) == "" {
 		resolved = titleFromPdfUrl(final)
@@ -164,7 +181,5 @@ func (live *LiveTransport) DownloadPdf(ctx context.Context, pdfUrl string, title
 	if resolved == nil {
 		resolved = pointer("cnki")
 	}
-	return DownloadedPdf{Filename: SafeFilename(*resolved) + ".pdf", FinalUrl: final, ContentType: contentType, ByteCount: uint64(len(content)), Content: content}, nil
+	return SafeFilename(*resolved) + ".pdf"
 }
-
-var _ Transport = (*LiveTransport)(nil)

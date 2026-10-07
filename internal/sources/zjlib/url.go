@@ -127,6 +127,8 @@ func titleFromPdfUrl(value string) *string {
 func ParseSearchResults(text, base string) ([]SearchResult, error) {
 	return parseSearchResults(text, base, defaultEndpoints())
 }
+
+// parseSearchResults admits and deduplicates canonical detail URLs before row hints.
 func parseSearchResults(text, base string, allowed endpoints) ([]SearchResult, error) {
 	lower := asciiLower(text)
 	seen := map[string]bool{}
@@ -143,38 +145,10 @@ func parseSearchResults(text, base string, allowed endpoints) ([]SearchResult, e
 			continue
 		}
 		seen[detail] = true
-		start := strings.LastIndex(lower[:anchor.start], "<tr")
-		if start < 0 {
-			start = anchor.start
-		}
-		end := strings.Index(lower[anchor.end:], "</tr>")
-		if end < 0 {
-			end = anchor.end
-		} else {
-			end += anchor.end + 5
-		}
-		query := queryDict(detail)
-		title := anchorTitle(anchor.body)
-		if title == nil {
-			if value, ok := query["FileName"]; ok {
-				title = &value
-			} else {
-				title = pointer("result-" + strconv.Itoa(len(results)+1))
-			}
-		}
-		download, err := extractDownloadUrl(text[start:end], base, allowed, false)
+		row := searchResultRow(text, lower, anchor)
+		result, err := buildSearchResult(anchor, detail, row, base, allowed, len(results)+1)
 		if err != nil {
 			return nil, err
-		}
-		result := SearchResult{Index: uint64(len(results) + 1), Title: *title, DetailUrl: detail, DownloadUrl: download}
-		if value, ok := query["FileName"]; ok {
-			result.FileName = &value
-		}
-		if value, ok := query["DbName"]; ok {
-			result.DbName = &value
-		}
-		if value, ok := query["DbCode"]; ok {
-			result.DbCode = &value
 		}
 		results = append(results, result)
 	}
@@ -203,4 +177,47 @@ func extractDownloadUrl(text, base string, allowed endpoints, requirePdf bool) (
 		return &value, nil
 	}
 	return nil, nil
+}
+
+// searchResultRow keeps the original enclosing-row and missing-tag bounds.
+func searchResultRow(text, lower string, anchor anchorLink) string {
+	start := strings.LastIndex(lower[:anchor.start], "<tr")
+	if start < 0 {
+		start = anchor.start
+	}
+	end := strings.Index(lower[anchor.end:], "</tr>")
+	if end < 0 {
+		end = anchor.end
+	} else {
+		end += anchor.end + 5
+	}
+	return text[start:end]
+}
+
+// buildSearchResult resolves title before row hints and retains case-sensitive query metadata.
+func buildSearchResult(anchor anchorLink, detail, row, base string, allowed endpoints, index int) (SearchResult, error) {
+	query := queryDict(detail)
+	title := anchorTitle(anchor.body)
+	if title == nil {
+		if value, ok := query["FileName"]; ok {
+			title = &value
+		} else {
+			title = pointer("result-" + strconv.Itoa(index))
+		}
+	}
+	download, err := extractDownloadUrl(row, base, allowed, false)
+	if err != nil {
+		return SearchResult{}, err
+	}
+	result := SearchResult{Index: uint64(index), Title: *title, DetailUrl: detail, DownloadUrl: download}
+	if value, ok := query["FileName"]; ok {
+		result.FileName = &value
+	}
+	if value, ok := query["DbName"]; ok {
+		result.DbName = &value
+	}
+	if value, ok := query["DbCode"]; ok {
+		result.DbCode = &value
+	}
+	return result, nil
 }

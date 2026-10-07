@@ -27,6 +27,8 @@ func loopbackLive(t *testing.T, handler http.Handler, config LiveConfig, deadlin
 	t.Cleanup(live.Close)
 	return live, server
 }
+
+// TestLiveFullLoginSearchAndDownload verifies ordered login, reuse, search and document contracts.
 func TestLiveFullLoginSearchAndDownload(t *testing.T) {
 	var serverUrl string
 	var mutex sync.Mutex
@@ -39,94 +41,23 @@ func TestLiveFullLoginSearchAndDownload(t *testing.T) {
 		if request.Header.Get("User-Agent") != browserUserAgent || request.Header.Get("Accept-Language") != "zh-CN;q=0.9" {
 			t.Error("browser headers missing")
 		}
-		switch request.URL.Path {
-		case "/www/bff-api/reader-sso-service/portal-pc-api/login/zfb-qr":
-			if request.Header.Get("Bff-Org-Id") != "1916318653650423810" {
-				t.Error("organization header missing")
-			}
-			fmt.Fprint(writer, `{"success":true,"data":{"uuid":"qr","qrCode":"image","status":"WAITING_SCAN"}}`)
-		case "/www/bff-api/reader-sso-service/portal-pc-api/qr/status":
-			if request.URL.Query().Get("uuid") != "qr" {
-				t.Error("QR query missing")
-			}
-			polls++
-			if polls == 1 {
-				fmt.Fprint(writer, `{"data":{"status":"WAITING_SCAN"}}`)
-			} else {
-				fmt.Fprint(writer, `{"data":{"status":"COMPLETE","data":"private-token"}}`)
-			}
-		case "/www/bff-api/portal-admin-service/open-api/build-and-share/ssoLoginUrl":
-			if request.Header.Get("Bff-User-Token") != "private-token" || !strings.Contains(request.Header.Get("Cookie"), "userToken=private-token") {
-				t.Error("login token did not reach SSO")
-			}
-			if request.URL.Query().Get("referURL") != serverUrl+"/share/entry/area/35594/2120" {
-				t.Error("wrong SSO entry")
-			}
-			fmt.Fprintf(writer, `{"data":%q}`, serverUrl+"/share/protocolAuth")
-		case "/share/protocolAuth":
-			fmt.Fprintf(writer, `var sign='sync-sign';var url='/share/callback';var domainUrl='%s';var portalContextPath='/share/entry';sso-login/cookie/sync`, serverUrl)
-		case "/share/entry/sso-login/cookie/sync":
-			request.ParseForm()
-			if request.PostForm.Get("sign") != "sync-sign" || request.PostForm.Get("url") != serverUrl+"/share/callback" || request.Header.Get("Origin") != serverUrl {
-				t.Error("sync form/origin mismatch")
-			}
-			http.SetCookie(writer, &http.Cookie{Name: "share", Value: "yes", Path: "/"})
-			http.Redirect(writer, request, "/share/synced", http.StatusFound)
-		case "/share/synced":
-			if request.Method != "GET" || request.Header.Get("Referer") != serverUrl+"/share/entry/sso-login/cookie/sync" {
-				t.Error("redirect method/referer mismatch")
-			}
-		case "/share/entry/area/35594/2120":
-			if !strings.Contains(request.Header.Get("Cookie"), "share=yes") {
-				t.Error("share cookie missing")
-			}
-		case "/share/engine2/header/user-info":
-			if request.Header.Get("X-Requested-With") != "XMLHttpRequest" || request.URL.Query().Get("t") == "" {
-				t.Error("userinfo AJAX metadata missing")
-			}
-		case "/share/sso/api/auth/library/vpn358":
-			if request.URL.Query().Get("wfwfid") != "2120" {
-				t.Error("proxy library id missing")
-			}
-			writer.Header().Set("Location", serverUrl+"/login/index.php?enc=private")
-			writer.WriteHeader(302)
-		case "/login/index.php":
-			http.SetCookie(writer, &http.Cookie{Name: "vpn358_sid", Value: "private-session", Path: "/"})
-			http.Redirect(writer, request, "/proxy/kns55/", 302)
-		case "/proxy/kns55/":
-			if !strings.Contains(request.Header.Get("Cookie"), "vpn358_sid=private-session") {
-				t.Error("proxy session missing")
-			}
-		case "/proxy/kns55/brief/result.aspx":
-			request.ParseForm()
-			if request.Method != "POST" || request.PostForm.Get("txt_1_value1") != "Study & Methods" || request.PostForm.Get("{key}_logical") != "and" || request.Header.Get("Origin") != serverUrl {
-				t.Error("result form mismatch")
-			}
-		case "/proxy/kns55/request/SearchHandler.ashx":
-			request.ParseForm()
-			if request.PostForm.Get("txt_1_extension") != "xls" || request.PostForm.Get("__") == "" || request.Header.Get("X-Requested-With") != "XMLHttpRequest" {
-				t.Error("handler form mismatch")
-			}
-		case "/proxy/kns55/brief/brief.aspx":
-			if request.URL.Query().Get("pagename") != "ASP.brief_result_aspx" {
-				t.Error("brief query mismatch")
-			}
-			fmt.Fprint(writer, `<tr><a href="/proxy/kns55/detail/detail.aspx?FileName=A">Study &amp; Methods</a><a href="/proxy/wrong-download.aspx">PDF</a></tr>`)
-		case "/proxy/kns55/detail/detail.aspx":
-			if !strings.Contains(request.Header.Get("Referer"), "brief.aspx?") {
-				t.Error("last brief referer missing")
-			}
-			fmt.Fprint(writer, `<meta name="citation_title" content="Study &amp; Methods"><meta name="citation_author" content="Ada"><meta name="citation_journal_title" content="Journal"><a href="/proxy/download.aspx?dflag=pdfdown">PDF</a>`)
-		case "/proxy/download.aspx":
-			if !strings.Contains(request.Header.Get("Referer"), "detail.aspx?") {
-				t.Error("detail referer missing")
-			}
-			writer.Header().Set("Content-Type", "application/octet-stream")
-			fmt.Fprint(writer, "%PDF-1.4\nfixture")
-		default:
-			t.Errorf("unexpected network request %s", request.URL.Path)
-			writer.WriteHeader(500)
+		if serveLoginChallenge(t, writer, request, serverUrl, &polls) {
+			return
 		}
+		if serveShareProtocol(t, writer, request, serverUrl) {
+			return
+		}
+		if serveProxyLogin(t, writer, request, serverUrl) {
+			return
+		}
+		if serveProxySearch(t, writer, request, serverUrl) {
+			return
+		}
+		if serveFulltextDocument(t, writer, request) {
+			return
+		}
+		t.Errorf("unexpected network request %s", request.URL.Path)
+		writer.WriteHeader(500)
 	}), DefaultLiveConfig(), time.Time{})
 	serverUrl = server.URL
 	client := NewClient(live)
@@ -157,15 +88,7 @@ func TestLiveFullLoginSearchAndDownload(t *testing.T) {
 	if pdf.Filename != "Study & Methods.pdf" || string(pdf.Content) != "%PDF-1.4\nfixture" {
 		t.Fatalf("wrong document: %s", pdf.Filename)
 	}
-	clone := live.Clone()
-	if !clone.HasUnexpiredCookie("vpn358_sid", 0) {
-		t.Error("clone lost shared cookie jar")
-	}
-	fresh := NewClient(NewFixtureTransport(Success))
-	fresh.LoadStateData(client.StateData())
-	if fresh.StateData()["bff_user_token"] != "private-token" {
-		t.Error("network session could not be restored")
-	}
+	assertFulltextSessionRoundTrip(t, live, client)
 }
 
 func TestLiveQrResponseErrors(t *testing.T) {
@@ -452,5 +375,176 @@ func TestLiveHttpRedirectNormalizesBeforeFamilyValidation(t *testing.T) {
 				t.Fatalf("redirect normalization differs: count=%d error=%v", count.Load(), err)
 			}
 		})
+	}
+}
+
+// serveLoginChallenge verifies its ordered protocol phase without changing the handler mutex owner.
+func serveLoginChallenge(t *testing.T, writer http.ResponseWriter, request *http.Request, serverUrl string, polls *int) bool {
+	t.Helper()
+	switch request.URL.Path {
+	case "/www/bff-api/reader-sso-service/portal-pc-api/login/zfb-qr":
+		if request.Header.Get("Bff-Org-Id") != "1916318653650423810" {
+			t.Error("organization header missing")
+		}
+		fmt.Fprint(writer, `{"success":true,"data":{"uuid":"qr","qrCode":"image","status":"WAITING_SCAN"}}`)
+	case "/www/bff-api/reader-sso-service/portal-pc-api/qr/status":
+		if request.URL.Query().Get("uuid") != "qr" {
+			t.Error("QR query missing")
+		}
+		(*polls)++
+		if *polls == 1 {
+			fmt.Fprint(writer, `{"data":{"status":"WAITING_SCAN"}}`)
+		} else {
+			fmt.Fprint(writer, `{"data":{"status":"COMPLETE","data":"private-token"}}`)
+		}
+	case "/www/bff-api/portal-admin-service/open-api/build-and-share/ssoLoginUrl":
+		if request.Header.Get("Bff-User-Token") != "private-token" || !strings.Contains(request.Header.Get("Cookie"), "userToken=private-token") {
+			t.Error("login token did not reach SSO")
+		}
+		if request.URL.Query().Get("referURL") != serverUrl+"/share/entry/area/35594/2120" {
+			t.Error("wrong SSO entry")
+		}
+		fmt.Fprintf(writer, `{"data":%q}`, serverUrl+"/share/protocolAuth")
+	default:
+		return false
+	}
+	return true
+}
+
+// serveShareProtocol verifies its ordered protocol phase without changing the handler mutex owner.
+func serveShareProtocol(t *testing.T, writer http.ResponseWriter, request *http.Request, serverUrl string) bool {
+	t.Helper()
+	switch request.URL.Path {
+	case "/share/protocolAuth":
+		fmt.Fprintf(writer, `var sign='sync-sign';var url='/share/callback';var domainUrl='%s';var portalContextPath='/share/entry';sso-login/cookie/sync`, serverUrl)
+	case "/share/entry/sso-login/cookie/sync":
+		request.ParseForm()
+		assertShareSyncForm(t, request, serverUrl)
+		http.SetCookie(writer, &http.Cookie{Name: "share", Value: "yes", Path: "/"})
+		http.Redirect(writer, request, "/share/synced", http.StatusFound)
+	case "/share/synced":
+		assertShareSyncRedirect(t, request, serverUrl)
+	case "/share/entry/area/35594/2120":
+		if !strings.Contains(request.Header.Get("Cookie"), "share=yes") {
+			t.Error("share cookie missing")
+		}
+	case "/share/engine2/header/user-info":
+		if request.Header.Get("X-Requested-With") != "XMLHttpRequest" || request.URL.Query().Get("t") == "" {
+			t.Error("userinfo AJAX metadata missing")
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// serveProxyLogin verifies its ordered protocol phase without changing the handler mutex owner.
+func serveProxyLogin(t *testing.T, writer http.ResponseWriter, request *http.Request, serverUrl string) bool {
+	t.Helper()
+	switch request.URL.Path {
+	case "/share/sso/api/auth/library/vpn358":
+		if request.URL.Query().Get("wfwfid") != "2120" {
+			t.Error("proxy library id missing")
+		}
+		writer.Header().Set("Location", serverUrl+"/login/index.php?enc=private")
+		writer.WriteHeader(302)
+	case "/login/index.php":
+		http.SetCookie(writer, &http.Cookie{Name: "vpn358_sid", Value: "private-session", Path: "/"})
+		http.Redirect(writer, request, "/proxy/kns55/", 302)
+	case "/proxy/kns55/":
+		if !strings.Contains(request.Header.Get("Cookie"), "vpn358_sid=private-session") {
+			t.Error("proxy session missing")
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// serveProxySearch verifies its ordered protocol phase without changing the handler mutex owner.
+func serveProxySearch(t *testing.T, writer http.ResponseWriter, request *http.Request, serverUrl string) bool {
+	t.Helper()
+	switch request.URL.Path {
+	case "/proxy/kns55/brief/result.aspx":
+		request.ParseForm()
+		assertSearchResultForm(t, request, serverUrl)
+	case "/proxy/kns55/request/SearchHandler.ashx":
+		request.ParseForm()
+		assertSearchHandlerForm(t, request)
+	case "/proxy/kns55/brief/brief.aspx":
+		if request.URL.Query().Get("pagename") != "ASP.brief_result_aspx" {
+			t.Error("brief query mismatch")
+		}
+		fmt.Fprint(writer, `<tr><a href="/proxy/kns55/detail/detail.aspx?FileName=A">Study &amp; Methods</a><a href="/proxy/wrong-download.aspx">PDF</a></tr>`)
+	default:
+		return false
+	}
+	return true
+}
+
+// serveFulltextDocument verifies its ordered protocol phase without changing the handler mutex owner.
+func serveFulltextDocument(t *testing.T, writer http.ResponseWriter, request *http.Request) bool {
+	t.Helper()
+	switch request.URL.Path {
+	case "/proxy/kns55/detail/detail.aspx":
+		if !strings.Contains(request.Header.Get("Referer"), "brief.aspx?") {
+			t.Error("last brief referer missing")
+		}
+		fmt.Fprint(writer, `<meta name="citation_title" content="Study &amp; Methods"><meta name="citation_author" content="Ada"><meta name="citation_journal_title" content="Journal"><a href="/proxy/download.aspx?dflag=pdfdown">PDF</a>`)
+	case "/proxy/download.aspx":
+		if !strings.Contains(request.Header.Get("Referer"), "detail.aspx?") {
+			t.Error("detail referer missing")
+		}
+		writer.Header().Set("Content-Type", "application/octet-stream")
+		fmt.Fprint(writer, "%PDF-1.4\nfixture")
+	default:
+		return false
+	}
+	return true
+}
+
+// assertFulltextSessionRoundTrip verifies shared cookies and restored session credentials.
+func assertFulltextSessionRoundTrip(t *testing.T, live *LiveTransport, client *Client) {
+	t.Helper()
+	clone := live.Clone()
+	if !clone.HasUnexpiredCookie("vpn358_sid", 0) {
+		t.Error("clone lost shared cookie jar")
+	}
+	fresh := NewClient(NewFixtureTransport(Success))
+	fresh.LoadStateData(client.StateData())
+	if fresh.StateData()["bff_user_token"] != "private-token" {
+		t.Error("network session could not be restored")
+	}
+}
+
+// assertShareSyncForm retains all assertions for the corresponding protocol request.
+func assertShareSyncForm(t *testing.T, request *http.Request, serverUrl string) {
+	t.Helper()
+	if request.PostForm.Get("sign") != "sync-sign" || request.PostForm.Get("url") != serverUrl+"/share/callback" || request.Header.Get("Origin") != serverUrl {
+		t.Error("sync form/origin mismatch")
+	}
+}
+
+// assertShareSyncRedirect retains all assertions for the corresponding protocol request.
+func assertShareSyncRedirect(t *testing.T, request *http.Request, serverUrl string) {
+	t.Helper()
+	if request.Method != "GET" || request.Header.Get("Referer") != serverUrl+"/share/entry/sso-login/cookie/sync" {
+		t.Error("redirect method/referer mismatch")
+	}
+}
+
+// assertSearchResultForm retains all assertions for the corresponding protocol request.
+func assertSearchResultForm(t *testing.T, request *http.Request, serverUrl string) {
+	t.Helper()
+	if request.Method != "POST" || request.PostForm.Get("txt_1_value1") != "Study & Methods" || request.PostForm.Get("{key}_logical") != "and" || request.Header.Get("Origin") != serverUrl {
+		t.Error("result form mismatch")
+	}
+}
+
+// assertSearchHandlerForm retains all assertions for the corresponding protocol request.
+func assertSearchHandlerForm(t *testing.T, request *http.Request) {
+	t.Helper()
+	if request.PostForm.Get("txt_1_extension") != "xls" || request.PostForm.Get("__") == "" || request.Header.Get("X-Requested-With") != "XMLHttpRequest" {
+		t.Error("handler form mismatch")
 	}
 }

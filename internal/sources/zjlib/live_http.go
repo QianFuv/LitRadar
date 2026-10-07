@@ -217,30 +217,12 @@ func (live *LiveTransport) LoadCookies(cookies []Cookie) {
 		if strings.TrimSpace(cookie.Name) == "" {
 			continue
 		}
-		host := strings.TrimLeft(strings.TrimSpace(cookie.Domain), ".")
-		location := "https://" + host + "/"
-		if host == "" {
-			location = live.state.allowed.bases[wwwFamily]
-		} else {
-			for _, base := range live.state.allowed.bases {
-				parsed, _ := url.Parse(base)
-				if parsed.Hostname() == host {
-					location = base
-					break
-				}
-			}
-		}
+		location := live.cookieRestoreOrigin(cookie)
 		parsed, err := url.Parse(location)
 		if err != nil {
 			continue
 		}
-		raw := cookie.Name + "=" + cookie.Value + "; Path=" + cookie.Path
-		if strings.TrimSpace(cookie.Domain) != "" {
-			raw += "; Domain=" + cookie.Domain
-		}
-		if cookie.Secure {
-			raw += "; Secure"
-		}
+		raw := restoredCookieHeader(cookie)
 		if parsedCookie, err := http.ParseSetCookie(raw); err == nil {
 			live.state.redirect.Jar.SetCookies(parsed, []*http.Cookie{parsedCookie})
 		}
@@ -279,4 +261,34 @@ func (live *LiveTransport) HasUnexpiredCookie(name string, _ int64) bool {
 		}
 	}
 	return false
+}
+
+// cookieRestoreOrigin chooses a configured base by host while retaining the empty-domain default.
+func (live *LiveTransport) cookieRestoreOrigin(cookie Cookie) string {
+	host := strings.TrimLeft(strings.TrimSpace(cookie.Domain), ".")
+	location := "https://" + host + "/"
+	if host == "" {
+		location = live.state.allowed.bases[wwwFamily]
+	} else {
+		for _, base := range live.state.allowed.bases {
+			parsed, _ := url.Parse(base)
+			if parsed.Hostname() == host {
+				location = base
+				break
+			}
+		}
+	}
+	return location
+}
+
+// restoredCookieHeader rebuilds only name, value, path, domain and secure metadata.
+func restoredCookieHeader(cookie Cookie) string {
+	raw := cookie.Name + "=" + cookie.Value + "; Path=" + cookie.Path
+	if strings.TrimSpace(cookie.Domain) != "" {
+		raw += "; Domain=" + cookie.Domain
+	}
+	if cookie.Secure {
+		raw += "; Secure"
+	}
+	return raw
 }

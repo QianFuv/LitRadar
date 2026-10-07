@@ -33,6 +33,8 @@ func decodeHtml(value string) string {
 	}
 	return output.String()
 }
+
+// decodeEntity recognizes the original named entities before numeric scalar parsing.
 func decodeEntity(entity string) (string, bool) {
 	switch entity {
 	case "amp":
@@ -46,22 +48,7 @@ func decodeEntity(entity string) (string, bool) {
 	case "apos":
 		return "'", true
 	}
-	base := 10
-	digits := ""
-	if strings.HasPrefix(entity, "#x") || strings.HasPrefix(entity, "#X") {
-		base = 16
-		digits = entity[2:]
-	} else if strings.HasPrefix(entity, "#") {
-		digits = entity[1:]
-	} else {
-		return "", false
-	}
-	digits = strings.TrimPrefix(digits, "+")
-	number, err := strconv.ParseUint(digits, base, 32)
-	if err != nil || number > utf8.MaxRune || number >= 0xd800 && number <= 0xdfff {
-		return "", false
-	}
-	return string(rune(number)), true
+	return decodeNumericEntity(entity)
 }
 func stripTags(value string) string {
 	var output strings.Builder
@@ -145,4 +132,24 @@ func SafeFilename(value string) string {
 		return "cnki"
 	}
 	return result
+}
+
+// decodeNumericEntity accepts the legacy numeric prefixes, leading plus and Unicode scalars.
+func decodeNumericEntity(entity string) (string, bool) {
+	base := 10
+	digits := ""
+	if strings.HasPrefix(entity, "#x") || strings.HasPrefix(entity, "#X") {
+		base = 16
+		digits = entity[2:]
+	} else if strings.HasPrefix(entity, "#") {
+		digits = entity[1:]
+	} else {
+		return "", false
+	}
+	digits = strings.TrimPrefix(digits, "+")
+	number, err := strconv.ParseUint(digits, base, 32)
+	if err != nil || number > utf8.MaxRune || number >= 0xd800 && number <= 0xdfff {
+		return "", false
+	}
+	return string(rune(number)), true
 }
