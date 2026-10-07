@@ -91,23 +91,9 @@ func TestSchedulerAuditedMutationsFailClosed(t *testing.T) {
 		_, err := repository.Update(ctx, domain.Update{TaskId: task.Id, Name: &name}, &actor, &event)
 		return err
 	}, func() error { _, err := repository.Delete(ctx, task.Id, &actor, &event); return err }}
-	for _, operation := range operations {
-		if err := operation(); !errors.Is(err, auditdomain.ErrAudit) {
-			t.Fatalf("audit failure not propagated: %v", err)
-		}
-		if !reflect.DeepEqual(before, snapshot(t, repository)) {
-			t.Fatal("failed audit mutated scheduler state")
-		}
-	}
+	assertSchedulerAuditRollback(t, repository, before, operations)
 	applyFixtureSql(t, repository, `DROP TRIGGER fail_audit;UPDATE users SET is_admin=0 WHERE id=1`)
-	for _, operation := range operations {
-		if err := operation(); !errors.Is(err, auditdomain.ErrAdminForbidden) {
-			t.Fatalf("revoked admin mutation: %v", err)
-		}
-		if !reflect.DeepEqual(before, snapshot(t, repository)) {
-			t.Fatal("revoked admin mutated scheduler state")
-		}
-	}
+	assertSchedulerRevokedAdminRollback(t, repository, before, operations)
 }
 
 func TestSchedulerPostClaimTaskRead(t *testing.T) {
@@ -140,5 +126,31 @@ func TestSchedulerPostClaimTaskRead(t *testing.T) {
 				t.Fatalf("committed run = %s", status.RecentRuns[0].Status)
 			}
 		})
+	}
+}
+
+// assertSchedulerAuditRollback checks all three failed audit mutations against the shared full SQLite snapshot.
+func assertSchedulerAuditRollback(t *testing.T, repository *Repository, before map[string]any, operations []func() error) {
+	t.Helper()
+	for _, operation := range operations {
+		if err := operation(); !errors.Is(err, auditdomain.ErrAudit) {
+			t.Fatalf("audit failure not propagated: %v", err)
+		}
+		if !reflect.DeepEqual(before, snapshot(t, repository)) {
+			t.Fatal("failed audit mutated scheduler state")
+		}
+	}
+}
+
+// assertSchedulerRevokedAdminRollback checks the same mutation closures after administrator revocation.
+func assertSchedulerRevokedAdminRollback(t *testing.T, repository *Repository, before map[string]any, operations []func() error) {
+	t.Helper()
+	for _, operation := range operations {
+		if err := operation(); !errors.Is(err, auditdomain.ErrAdminForbidden) {
+			t.Fatalf("revoked admin mutation: %v", err)
+		}
+		if !reflect.DeepEqual(before, snapshot(t, repository)) {
+			t.Fatal("revoked admin mutated scheduler state")
+		}
 	}
 }
