@@ -43,23 +43,7 @@ func ExtractResponsePayload(response any, kind PayloadKind) (map[string]any, err
 	if parsed, exists := message["parsed"]; exists {
 		return normalizePayload(parsed, kind)
 	}
-	switch content := message["content"].(type) {
-	case map[string]any:
-		return normalizePayload(content, kind)
-	case []any:
-		var joined strings.Builder
-		for _, item := range content {
-			if object, ok := item.(map[string]any); ok {
-				if text, ok := object["text"].(string); ok {
-					joined.WriteString(text)
-				}
-			}
-		}
-		return normalizeContentText(joined.String(), kind)
-	case string:
-		return normalizeContentText(content, kind)
-	}
-	return nil, errors.New("AI message content is invalid")
+	return extractMessageContent(message["content"], kind)
 }
 
 func normalizeContentText(content string, kind PayloadKind) (map[string]any, error) {
@@ -114,21 +98,11 @@ func normalizeSummary(value any) (map[string]any, error) {
 	case string:
 		summary = strings.TrimSpace(item)
 	case []any:
-		texts := []string{}
-		for _, item := range item {
-			if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
-				texts = append(texts, strings.TrimSpace(text))
-			}
-		}
-		summary = strings.Join(texts, "\n")
+		summary = summaryArrayText(item)
 	case map[string]any:
 		summary = extractSummary(item)
-		if summary == "" && len(item) == 1 {
-			for _, value := range item {
-				if text, ok := value.(string); ok {
-					summary = strings.TrimSpace(text)
-				}
-			}
+		if summary == "" {
+			summary = singleSummaryText(item)
 		}
 	}
 	if summary == "" {
@@ -214,23 +188,7 @@ func jsonInt64(value any) (int64, bool) {
 func jsonFloat64(value any) (float64, bool) {
 	switch item := value.(type) {
 	case string:
-		if item == "" || strings.TrimSpace(item) != item || strings.ContainsAny(item, "_xXpP") {
-			return 0, false
-		}
-		unsigned := item
-		if unsigned[0] == '+' || unsigned[0] == '-' {
-			unsigned = unsigned[1:]
-		}
-		if strings.EqualFold(unsigned, "nan") {
-			return math.NaN(), true
-		}
-		number, err := strconv.ParseFloat(item, 64)
-		if err != nil {
-			if numericError, ok := err.(*strconv.NumError); !ok || numericError.Err != strconv.ErrRange {
-				return 0, false
-			}
-		}
-		return number, true
+		return jsonStringFloat64(item)
 	case json.Number:
 		number, err := sources.ParseNumber(item)
 		if err == nil {
@@ -251,4 +209,66 @@ func finiteScore(value float64) any {
 		return nil
 	}
 	return value
+}
+
+func extractMessageContent(value any, kind PayloadKind) (map[string]any, error) {
+	switch content := value.(type) {
+	case map[string]any:
+		return normalizePayload(content, kind)
+	case []any:
+		var joined strings.Builder
+		for _, item := range content {
+			if object, ok := item.(map[string]any); ok {
+				if text, ok := object["text"].(string); ok {
+					joined.WriteString(text)
+				}
+			}
+		}
+		return normalizeContentText(joined.String(), kind)
+	case string:
+		return normalizeContentText(content, kind)
+	}
+	return nil, errors.New("AI message content is invalid")
+}
+
+func summaryArrayText(items []any) string {
+	texts := []string{}
+	for _, item := range items {
+		if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+			texts = append(texts, strings.TrimSpace(text))
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+func singleSummaryText(item map[string]any) string {
+	summary := ""
+	if len(item) == 1 {
+		for _, value := range item {
+			if text, ok := value.(string); ok {
+				summary = strings.TrimSpace(text)
+			}
+		}
+	}
+	return summary
+}
+
+func jsonStringFloat64(item string) (float64, bool) {
+	if item == "" || strings.TrimSpace(item) != item || strings.ContainsAny(item, "_xXpP") {
+		return 0, false
+	}
+	unsigned := item
+	if unsigned[0] == '+' || unsigned[0] == '-' {
+		unsigned = unsigned[1:]
+	}
+	if strings.EqualFold(unsigned, "nan") {
+		return math.NaN(), true
+	}
+	number, err := strconv.ParseFloat(item, 64)
+	if err != nil {
+		if numericError, ok := err.(*strconv.NumError); !ok || numericError.Err != strconv.ErrRange {
+			return 0, false
+		}
+	}
+	return number, true
 }

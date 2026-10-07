@@ -88,25 +88,7 @@ func IsDatabaseSelected(selected []string, dbName string) bool {
 func normalizeDbName(value string) string {
 	value = strings.TrimSpace(value)
 	if runtime.GOOS == "windows" && strings.HasPrefix(value, `\\?\`) {
-		value = strings.TrimRight(value, `\`)
-		volume := filepath.VolumeName(value)
-		if value == volume {
-			return ""
-		}
-		_, name, exists := strings.Cut(value[len(volume):], `\`)
-		if !exists {
-			name = value[len(volume):]
-		}
-		if index := strings.LastIndex(name, `\`); index >= 0 {
-			name = name[index+1:]
-		}
-		if name == "" || name == "." || name == ".." {
-			return ""
-		}
-		if strings.HasSuffix(name, ".sqlite") {
-			return name
-		}
-		return name + ".sqlite"
+		return normalizeWindowsVerbatimDbName(value)
 	}
 	for {
 		value = strings.TrimRightFunc(value, func(character rune) bool { return character < 128 && os.IsPathSeparator(uint8(character)) })
@@ -121,9 +103,32 @@ func normalizeDbName(value string) string {
 		if name == "." || name == ".." || name == filepath.VolumeName(value) {
 			return ""
 		}
-		if strings.HasSuffix(name, ".sqlite") {
-			return name
-		}
-		return name + ".sqlite"
+		return sqliteDbFilename(name)
 	}
+}
+
+func normalizeWindowsVerbatimDbName(value string) string {
+	value = strings.TrimRight(value, `\`)
+	volume := filepath.VolumeName(value)
+	if value == volume {
+		return ""
+	}
+	_, name, exists := strings.Cut(value[len(volume):], `\`)
+	if !exists {
+		name = value[len(volume):]
+	}
+	if index := strings.LastIndex(name, `\`); index >= 0 {
+		name = name[index+1:]
+	}
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	return sqliteDbFilename(name)
+}
+
+func sqliteDbFilename(name string) string {
+	if strings.HasSuffix(name, ".sqlite") {
+		return name
+	}
+	return name + ".sqlite"
 }

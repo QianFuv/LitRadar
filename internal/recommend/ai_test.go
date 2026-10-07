@@ -38,37 +38,12 @@ func (fixture *aiFixture) PostJson(ctx context.Context, location string, headers
 	if len(fixture.responses) == 0 {
 		return outbound.Response{}, errors.New("fixture exhausted")
 	}
-	var response struct {
-		Error      string
-		Status     int
-		RequestId  *string `json:"request_id"`
-		RetryAfter *uint64 `json:"retry_after"`
-		Body       json.RawMessage
-	}
+	var response aiFixtureResponse
 	if err := json.Unmarshal(fixture.responses[0], &response); err != nil {
 		return outbound.Response{}, err
 	}
 	fixture.responses = fixture.responses[1:]
-	switch response.Error {
-	case "connect_failed":
-		return outbound.Response{}, outbound.ConnectFailed
-	case "timeout":
-		return outbound.Response{}, outbound.TimedOut
-	case "transport":
-		return outbound.Response{}, outbound.RequestFailed
-	}
-	if response.Status == 0 {
-		response.Status = 200
-	}
-	var parsed any
-	if len(response.Body) > 0 {
-		var err error
-		parsed, err = transport.ParseJson(response.Body)
-		if err != nil {
-			return outbound.Response{}, err
-		}
-	}
-	return outbound.Response{StatusCode: response.Status, RequestId: response.RequestId, RetryAfterSeconds: response.RetryAfter, Body: parsed}, nil
+	return decodeAiFixtureResponse(response)
 }
 
 func TestAiRechecksAllowlistBeforeEachAttempt(t *testing.T) {
@@ -99,4 +74,35 @@ func TestAiBudgetIsSharedAcrossFormatsAndCompletions(t *testing.T) {
 	if !errors.Is(err, domain.ControlBudgetExhausted) || len(fixture.requests) != 2 {
 		t.Fatalf("budget bypass: %v requests=%d", err, len(fixture.requests))
 	}
+}
+
+type aiFixtureResponse struct {
+	Error      string
+	Status     int
+	RequestId  *string `json:"request_id"`
+	RetryAfter *uint64 `json:"retry_after"`
+	Body       json.RawMessage
+}
+
+func decodeAiFixtureResponse(response aiFixtureResponse) (outbound.Response, error) {
+	switch response.Error {
+	case "connect_failed":
+		return outbound.Response{}, outbound.ConnectFailed
+	case "timeout":
+		return outbound.Response{}, outbound.TimedOut
+	case "transport":
+		return outbound.Response{}, outbound.RequestFailed
+	}
+	if response.Status == 0 {
+		response.Status = 200
+	}
+	var parsed any
+	if len(response.Body) > 0 {
+		var err error
+		parsed, err = transport.ParseJson(response.Body)
+		if err != nil {
+			return outbound.Response{}, err
+		}
+	}
+	return outbound.Response{StatusCode: response.Status, RequestId: response.RequestId, RetryAfterSeconds: response.RetryAfter, Body: parsed}, nil
 }

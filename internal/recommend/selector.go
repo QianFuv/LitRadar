@@ -83,17 +83,7 @@ func (selector *Selector) SelectForSubscriber(ctx context.Context, request Selec
 		}
 		accepted := ApplySelectionRules(selection, request.Subscriber, request.CandidatesById, request.Dedupe)
 		summary := selection.Summary
-		candidates := make([]storage.ArticleCandidate, 0, len(accepted))
-		for _, item := range accepted {
-			if candidate, exists := request.CandidatesById[item.ArticleId]; exists {
-				candidates = append(candidates, candidate)
-			}
-		}
-		if len(candidates) > 0 {
-			if updated, err := client.SummarizeSelectedArticles(ctx, config, request.Subscriber, candidates); err == nil && strings.TrimSpace(updated) != "" {
-				summary = updated
-			}
-		}
+		summary = summarizeAcceptedSelection(ctx, client, config, request.Subscriber, accepted, request.CandidatesById, summary)
 		return SelectionOutcome{Accepted: accepted, Summary: summary}, nil
 	}
 	return SelectionOutcome{}, fmt.Errorf("AI selection failed across configured endpoints: %w", lastError)
@@ -118,22 +108,12 @@ func selectRounds(ctx context.Context, client selectionClient, config AiRuntimeC
 		if summary == "" && strings.TrimSpace(result.Summary) != "" {
 			summary = result.Summary
 		}
-		for _, selection := range result.Selections {
-			if existing, exists := aggregated[selection.ArticleId]; !exists || !(existing.Score >= selection.Score) {
-				aggregated[selection.ArticleId] = selection
-			}
-		}
+		aggregateRoundSelections(aggregated, result.Selections)
 		merged := mergedSelection(summary, aggregated)
 		if len(ApplySelectionRules(merged, request.Subscriber, request.CandidatesById, request.Dedupe)) >= MaxArticlesPerPush {
 			return merged, nil
 		}
-		next := remaining[:0]
-		for _, candidate := range remaining {
-			if _, exists := aggregated[candidate.ArticleId]; !exists {
-				next = append(next, candidate)
-			}
-		}
-		remaining = next
+		remaining = unselectedCandidates(remaining, aggregated)
 	}
 	return mergedSelection(summary, aggregated), nil
 }
@@ -146,4 +126,37 @@ func mergedSelection(summary string, aggregated map[int64]domain.RankedSelection
 	sort.Slice(selections, func(first, second int) bool { return selections[first].ArticleId < selections[second].ArticleId })
 	sort.SliceStable(selections, func(first, second int) bool { return selections[first].Score > selections[second].Score })
 	return domain.SelectionResult{Summary: summary, Selections: selections}
+}
+
+func summarizeAcceptedSelection(ctx context.Context, client selectionClient, config AiRuntimeConfig, subscriber domain.Subscriber, accepted []domain.RankedSelection, candidatesById map[int64]storage.ArticleCandidate, summary string) string {
+	candidates := make([]storage.ArticleCandidate, 0, len(accepted))
+	for _, item := range accepted {
+		if candidate, exists := candidatesById[item.ArticleId]; exists {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if len(candidates) > 0 {
+		if updated, err := client.SummarizeSelectedArticles(ctx, config, subscriber, candidates); err == nil && strings.TrimSpace(updated) != "" {
+			summary = updated
+		}
+	}
+	return summary
+}
+
+func aggregateRoundSelections(aggregated map[int64]domain.RankedSelection, selections []domain.RankedSelection) {
+	for _, selection := range selections {
+		if existing, exists := aggregated[selection.ArticleId]; !exists || !(existing.Score >= selection.Score) {
+			aggregated[selection.ArticleId] = selection
+		}
+	}
+}
+
+func unselectedCandidates(remaining []storage.ArticleCandidate, aggregated map[int64]domain.RankedSelection) []storage.ArticleCandidate {
+	next := remaining[:0]
+	for _, candidate := range remaining {
+		if _, exists := aggregated[candidate.ArticleId]; !exists {
+			next = append(next, candidate)
+		}
+	}
+	return next
 }

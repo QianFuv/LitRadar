@@ -32,16 +32,7 @@ func BuildMarkdownContent(dbName, runId string, subscriber domain.Subscriber, su
 		if !exists {
 			continue
 		}
-		doi := orText(candidate.Doi, "N/A")
-		title := candidate.Title
-		if strings.TrimSpace(title) == "" {
-			title = "Title unavailable (DOI: " + doi + ")"
-		}
-		abstract := strings.TrimSpace(candidate.Abstract)
-		if abstract == "" {
-			abstract = "N/A"
-		}
-		sections = append(sections, fmt.Sprintf("### %d. %s\n- Journal: %s\n- Date: %s\n- DOI: %s\n- Abstract: %s", len(sections)+1, title, candidate.JournalTitle, orText(candidate.Date, "Unknown"), doi, abstract))
+		sections = append(sections, markdownArticleSection(candidate, len(sections)+1))
 	}
 	kept := []string{}
 	for _, section := range sections {
@@ -71,4 +62,17 @@ func renderContent(base, sections []string) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
+func markdownArticleSection(candidate storage.ArticleCandidate, position int) string {
+	doi := orText(candidate.Doi, "N/A")
+	title := candidate.Title
+	if strings.TrimSpace(title) == "" {
+		title = "Title unavailable (DOI: " + doi + ")"
+	}
+	abstract := strings.TrimSpace(candidate.Abstract)
+	if abstract == "" {
+		abstract = "N/A"
+	}
+	return fmt.Sprintf("### %d. %s\n- Journal: %s\n- Date: %s\n- DOI: %s\n- Abstract: %s", position, title, candidate.JournalTitle, orText(candidate.Date, "Unknown"), doi, abstract)
 }
