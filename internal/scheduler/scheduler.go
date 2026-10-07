@@ -149,33 +149,9 @@ func PrepareRunsAt(ctx context.Context, repository *store.Repository, worker str
 		return result, nil, err
 	}
 	for _, task := range tasks {
-		if !task.Enabled {
-			continue
-		}
-		if err := validateTask(task); err != nil {
-			result.Skipped = append(result.Skipped, SkippedTask{task.Id, task.Name, task.Cron, err.Error()})
-			continue
-		}
-		result.Jobs++
-		schedule, err := cron.Parse(task.Cron)
-		if err != nil {
+		if err := enqueueScheduledTask(ctx, repository, task, now, &result); err != nil {
 			return result, nil, err
 		}
-		slots, err := schedule.Slots(task.Timezone, max(result.CheckedFrom, task.CreatedAt-0.001), now)
-		if err != nil {
-			return result, nil, err
-		}
-		result.Due += len(slots)
-		represented := len(slots)
-		if task.Coalesce && represented > 0 {
-			represented = 1
-		}
-		inserted, err := repository.Enqueue(ctx, task, slots)
-		if err != nil {
-			return result, nil, err
-		}
-		result.Queued += inserted
-		result.AlreadyExecuted += max(0, represented-inserted)
 	}
 	if err := repository.RecordCheck(ctx, now); err != nil {
 		return result, nil, err
@@ -185,12 +161,49 @@ func PrepareRunsAt(ctx context.Context, repository *store.Repository, worker str
 		return result, nil, err
 	}
 	result.Claimed = len(claims)
+	logPreparedTick(ctx, worker, result)
+	return result, claims, nil
+}
+
+// enqueueScheduledTask preserves partial counters and earlier durable admission on a later task failure.
+func enqueueScheduledTask(ctx context.Context, repository *store.Repository, task domain.Task, now float64, result *TickResult) error {
+	if !task.Enabled {
+		return nil
+	}
+	if err := validateTask(task); err != nil {
+		result.Skipped = append(result.Skipped, SkippedTask{task.Id, task.Name, task.Cron, err.Error()})
+		return nil
+	}
+	result.Jobs++
+	schedule, err := cron.Parse(task.Cron)
+	if err != nil {
+		return err
+	}
+	slots, err := schedule.Slots(task.Timezone, max(result.CheckedFrom, task.CreatedAt-0.001), now)
+	if err != nil {
+		return err
+	}
+	result.Due += len(slots)
+	represented := len(slots)
+	if task.Coalesce && represented > 0 {
+		represented = 1
+	}
+	inserted, err := repository.Enqueue(ctx, task, slots)
+	if err != nil {
+		return err
+	}
+	result.Queued += inserted
+	result.AlreadyExecuted += max(0, represented-inserted)
+	return nil
+}
+
+// logPreparedTick retains quiet empty ticks and exact successful preparation counters.
+func logPreparedTick(ctx context.Context, worker string, result TickResult) {
 	level := slog.LevelInfo
 	if result.Due == 0 && result.Queued == 0 && result.Claimed == 0 && len(result.Skipped) == 0 {
 		level = slog.LevelDebug
 	}
 	slog.Log(ctx, level, "scheduler.tick.prepared", "event", "scheduler.tick.prepared", "component", "scheduler", "worker_id", worker, "outcome", "success", "jobs", result.Jobs, "skipped", len(result.Skipped), "due", result.Due, "already_executed", result.AlreadyExecuted, "queued", result.Queued, "claimed", result.Claimed)
-	return result, claims, nil
 }
 
 type processResult struct {

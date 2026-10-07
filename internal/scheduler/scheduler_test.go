@@ -50,34 +50,13 @@ func TestSchedulerTickCatchupCapacityAndClockRollback(t *testing.T) {
 	ctx := context.Background()
 	task := createTask(t, repository)
 	fixtureSql(t, filename, "UPDATE scheduled_tasks SET created_at=0")
-	result, claims, err := PrepareRunsAt(ctx, repository, "first", 0, 120)
-	if err != nil {
+	assertInitialSchedulerCatchup(t, ctx, repository)
+	claim := assertPendingSchedulerClaim(t, ctx, repository)
+	if _, err := repository.FinishRun(ctx, claim, domain.Success, "", 121); err != nil {
 		t.Fatal(err)
 	}
-	if result.Due != 3 || result.Queued != 1 || result.Claimed != 0 || len(claims) != 0 || result.CheckedFrom != -86280 {
-		t.Fatalf("first tick %#v %v", result, claims)
-	}
-	result, claims, err = PrepareRunsAt(ctx, repository, "second", 1, 120)
-	if err != nil || result.Due != 0 || result.Claimed != 1 || len(claims) != 1 || claims[0].ScheduledFor != 120 {
-		t.Fatalf("pending tick %#v %v %v", result, claims, err)
-	}
-	if _, err := repository.FinishRun(ctx, claims[0], domain.Success, "", 121); err != nil {
-		t.Fatal(err)
-	}
-	result, claims, err = PrepareRunsAt(ctx, repository, "rollback", 1, 60)
-	if err != nil || result.Queued != 0 || result.AlreadyExecuted != 1 || len(claims) != 0 {
-		t.Fatalf("rollback tick %#v %v %v", result, claims, err)
-	}
-	cursor, err := repository.LastCheckedAt(ctx)
-	if err != nil || cursor == nil || *cursor != 120 {
-		t.Fatal("cursor moved backward", cursor, err)
-	}
-	fixtureSql(t, filename, "UPDATE scheduled_tasks SET coalesce=0 WHERE id=?", task.Id)
-	fixtureSql(t, filename, "UPDATE scheduler_state SET last_checked_at=0")
-	result, _, err = PrepareRunsAt(ctx, repository, "catchup", 0, 200000)
-	if err != nil || result.CheckedFrom != 113600 || result.Due != 1440 || result.Queued != 1440 {
-		t.Fatalf("catchup %#v %v", result, err)
-	}
+	assertSchedulerClockRollback(t, ctx, repository)
+	assertNoncoalescedSchedulerCatchup(t, ctx, repository, filename, task.Id)
 }
 
 func TestSchedulerLoadAndManualDryRunDoNotMutate(t *testing.T) {
@@ -96,17 +75,7 @@ func TestSchedulerLoadAndManualDryRunDoNotMutate(t *testing.T) {
 		executed = true
 		return processResult{domain.Success, ""}
 	}
-	outcome, err := runTaskNow(ctx, repository, first.Id, DryRun, runner)
-	if err != nil || !outcome.Found || outcome.DidExecute || executed {
-		t.Fatalf("%#v %v", outcome, err)
-	}
-	outcome, err = runTaskNow(ctx, repository, 999, Execute, runner)
-	if err != nil || outcome.Found || executed {
-		t.Fatalf("%#v %v", outcome, err)
-	}
-	if _, err = runTaskNow(ctx, repository, first.Id, Execute, runner); err == nil || executed {
-		t.Fatal("manual execution skipped validation")
-	}
+	assertManualSchedulerInspection(t, ctx, repository, first.Id, runner, &executed)
 	status, err := repository.Status(ctx, 0, 90, 10)
 	if err != nil || len(status.RecentRuns) != 0 {
 		t.Fatal("inspection admitted a run")
@@ -181,5 +150,67 @@ func TestSchedulerClaimOwnershipAndHeartbeatFailures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// assertInitialSchedulerCatchup retains its complete ordered admission or recovery assertion phase.
+func assertInitialSchedulerCatchup(t *testing.T, ctx context.Context, repository *store.Repository) {
+	t.Helper()
+	result, claims, err := PrepareRunsAt(ctx, repository, "first", 0, 120)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Due != 3 || result.Queued != 1 || result.Claimed != 0 || len(claims) != 0 || result.CheckedFrom != -86280 {
+		t.Fatalf("first tick %#v %v", result, claims)
+	}
+}
+
+// assertPendingSchedulerClaim retains its complete ordered admission or recovery assertion phase.
+func assertPendingSchedulerClaim(t *testing.T, ctx context.Context, repository *store.Repository) store.Claim {
+	t.Helper()
+	result, claims, err := PrepareRunsAt(ctx, repository, "second", 1, 120)
+	if err != nil || result.Due != 0 || result.Claimed != 1 || len(claims) != 1 || claims[0].ScheduledFor != 120 {
+		t.Fatalf("pending tick %#v %v %v", result, claims, err)
+	}
+	return claims[0]
+}
+
+// assertSchedulerClockRollback retains its complete ordered admission or recovery assertion phase.
+func assertSchedulerClockRollback(t *testing.T, ctx context.Context, repository *store.Repository) {
+	t.Helper()
+	result, claims, err := PrepareRunsAt(ctx, repository, "rollback", 1, 60)
+	if err != nil || result.Queued != 0 || result.AlreadyExecuted != 1 || len(claims) != 0 {
+		t.Fatalf("rollback tick %#v %v %v", result, claims, err)
+	}
+	cursor, err := repository.LastCheckedAt(ctx)
+	if err != nil || cursor == nil || *cursor != 120 {
+		t.Fatal("cursor moved backward", cursor, err)
+	}
+}
+
+// assertNoncoalescedSchedulerCatchup retains its complete ordered admission or recovery assertion phase.
+func assertNoncoalescedSchedulerCatchup(t *testing.T, ctx context.Context, repository *store.Repository, filename string, taskId int64) {
+	t.Helper()
+	fixtureSql(t, filename, "UPDATE scheduled_tasks SET coalesce=0 WHERE id=?", taskId)
+	fixtureSql(t, filename, "UPDATE scheduler_state SET last_checked_at=0")
+	result, _, err := PrepareRunsAt(ctx, repository, "catchup", 0, 200000)
+	if err != nil || result.CheckedFrom != 113600 || result.Due != 1440 || result.Queued != 1440 {
+		t.Fatalf("catchup %#v %v", result, err)
+	}
+}
+
+// assertManualSchedulerInspection checks dry-run, missing-task and invalid execution without changing the shared runner flag.
+func assertManualSchedulerInspection(t *testing.T, ctx context.Context, repository *store.Repository, taskId int64, runner jobRunner, executed *bool) {
+	t.Helper()
+	outcome, err := runTaskNow(ctx, repository, taskId, DryRun, runner)
+	if err != nil || !outcome.Found || outcome.DidExecute || *executed {
+		t.Fatalf("%#v %v", outcome, err)
+	}
+	outcome, err = runTaskNow(ctx, repository, 999, Execute, runner)
+	if err != nil || outcome.Found || *executed {
+		t.Fatalf("%#v %v", outcome, err)
+	}
+	if _, err = runTaskNow(ctx, repository, taskId, Execute, runner); err == nil || *executed {
+		t.Fatal("manual execution skipped validation")
 	}
 }

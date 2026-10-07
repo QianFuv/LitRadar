@@ -108,20 +108,7 @@ func executeProcess(ctx context.Context, command scheduledProcess, claim store.C
 	slog.InfoContext(ctx, "scheduler.child.started", append(fields, "event", "scheduler.child.started", "outcome", "started")...)
 	errorKind := "none"
 	var exitCode *int
-	defer func() {
-		event, outcome, level := "scheduler.child.completed", "success", slog.LevelInfo
-		if result.status != domain.Success {
-			event, outcome, level = "scheduler.child.failed", "failure", slog.LevelWarn
-		}
-		terminalFields := append(fields, "event", event, "outcome", outcome, "status", result.status, "duration_ms", time.Since(started).Milliseconds())
-		if errorKind != "none" {
-			terminalFields = append(terminalFields, "error_kind", errorKind)
-		}
-		if exitCode != nil {
-			terminalFields = append(terminalFields, "exit_code", *exitCode)
-		}
-		slog.Log(ctx, level, event, terminalFields...)
-	}()
+	defer func() { logScheduledProcessTerminal(ctx, result, started, fields, errorKind, exitCode) }()
 	if ctx.Err() != nil {
 		errorKind = "cancelled"
 		return processResult{domain.Cancelled, command.command + ": cancelled"}
@@ -133,62 +120,7 @@ func executeProcess(ctx context.Context, command scheduledProcess, claim store.C
 		return processResult{domain.Error, command.command + ": process supervision failed (" + errorKind + ")"}
 	}
 	defer child.Close()
-	lastHeartbeat := time.Now()
-	result.status = domain.Success
-	terminate := func(status domain.State, kind, suffix string) {
-		result.status = status
-		errorKind = kind
-		result.summary = command.command + suffix
-		if _, err := child.Terminate(processTerminationGrace); err != nil {
-			result.status = domain.Error
-			errorKind = process.ErrorKind(err)
-			result.summary = command.command + ": process supervision failed (" + errorKind + ")"
-		}
-	}
-	for {
-		if ctx.Err() != nil {
-			terminate(domain.Cancelled, "cancelled", ": cancelled")
-			break
-		}
-		hasExited, waitError := child.Poll()
-		if hasExited {
-			if waitError != nil {
-				var failure *exec.ExitError
-				if errors.As(waitError, &failure) {
-					result.status = domain.Failed
-					errorKind = "nonzero_exit"
-					code := failure.ExitCode()
-					hasCode := code != -1 || runtime.GOOS == "windows"
-					if runtime.GOOS == "windows" {
-						code = int(int32(code))
-					}
-					if !hasCode {
-						result.summary = command.command + ": process failed"
-					} else {
-						exitCode = &code
-						result.summary = fmt.Sprintf("%s: exit code %d", command.command, code)
-					}
-				} else {
-					result.status = domain.Error
-					errorKind = "wait_failed"
-					result.summary = command.command + ": process supervision failed (wait_failed)"
-				}
-			}
-			break
-		}
-		if !time.Now().Before(deadline) {
-			terminate(domain.TimedOut, "timeout", ": timed out")
-			break
-		}
-		if time.Since(lastHeartbeat) >= heartbeatInterval {
-			if !heartbeat() {
-				terminate(domain.Unknown, "heartbeat_lost", ": heartbeat lost")
-				break
-			}
-			lastHeartbeat = time.Now()
-		}
-		time.Sleep(processPollInterval)
-	}
+	waitScheduledProcess(ctx, child, command.command, deadline, heartbeatInterval, heartbeat, &result, &errorKind, &exitCode)
 	if err := child.Close(); err != nil {
 		result.status = domain.Error
 		errorKind = process.ErrorKind(err)
@@ -208,4 +140,88 @@ func executeProcess(ctx context.Context, command scheduledProcess, claim store.C
 func boundedSummary(value string) string {
 	characters := []rune(value)
 	return string(characters[:min(len(characters), 4096)])
+}
+
+// logScheduledProcessTerminal emits exactly one terminal event after child cleanup and summary capture.
+func logScheduledProcessTerminal(ctx context.Context, result processResult, started time.Time, fields []any, errorKind string, exitCode *int) {
+	event, outcome, level := "scheduler.child.completed", "success", slog.LevelInfo
+	if result.status != domain.Success {
+		event, outcome, level = "scheduler.child.failed", "failure", slog.LevelWarn
+	}
+	terminalFields := append(fields, "event", event, "outcome", outcome, "status", result.status, "duration_ms", time.Since(started).Milliseconds())
+	if errorKind != "none" {
+		terminalFields = append(terminalFields, "error_kind", errorKind)
+	}
+	if exitCode != nil {
+		terminalFields = append(terminalFields, "exit_code", *exitCode)
+	}
+	slog.Log(ctx, level, event, terminalFields...)
+}
+
+// waitScheduledProcess preserves cancellation, exit, deadline and heartbeat observation priority.
+func waitScheduledProcess(ctx context.Context, child *process.Child, commandName string, deadline time.Time, heartbeatInterval time.Duration, heartbeat func() bool, result *processResult, errorKind *string, exitCode **int) {
+	lastHeartbeat := time.Now()
+	result.status = domain.Success
+	terminate := func(status domain.State, kind, suffix string) {
+		result.status = status
+		*errorKind = kind
+		result.summary = commandName + suffix
+		if _, err := child.Terminate(processTerminationGrace); err != nil {
+			result.status = domain.Error
+			*errorKind = process.ErrorKind(err)
+			result.summary = commandName + ": process supervision failed (" + *errorKind + ")"
+		}
+	}
+	for {
+		if ctx.Err() != nil {
+			terminate(domain.Cancelled, "cancelled", ": cancelled")
+			break
+		}
+		hasExited, waitError := child.Poll()
+		if hasExited {
+			*result, *errorKind, *exitCode = classifyScheduledProcessExit(commandName, waitError)
+			break
+		}
+		if !time.Now().Before(deadline) {
+			terminate(domain.TimedOut, "timeout", ": timed out")
+			break
+		}
+		if time.Since(lastHeartbeat) >= heartbeatInterval {
+			if !heartbeat() {
+				terminate(domain.Unknown, "heartbeat_lost", ": heartbeat lost")
+				break
+			}
+			lastHeartbeat = time.Now()
+		}
+		time.Sleep(processPollInterval)
+	}
+}
+
+// classifyScheduledProcessExit preserves signed Windows codes and signal-only Unix failure summaries.
+func classifyScheduledProcessExit(commandName string, waitError error) (result processResult, errorKind string, exitCode *int) {
+	result.status = domain.Success
+	errorKind = "none"
+	if waitError != nil {
+		var failure *exec.ExitError
+		if errors.As(waitError, &failure) {
+			result.status = domain.Failed
+			errorKind = "nonzero_exit"
+			code := failure.ExitCode()
+			hasCode := code != -1 || runtime.GOOS == "windows"
+			if runtime.GOOS == "windows" {
+				code = int(int32(code))
+			}
+			if !hasCode {
+				result.summary = commandName + ": process failed"
+			} else {
+				exitCode = &code
+				result.summary = fmt.Sprintf("%s: exit code %d", commandName, code)
+			}
+		} else {
+			result.status = domain.Error
+			errorKind = "wait_failed"
+			result.summary = commandName + ": process supervision failed (wait_failed)"
+		}
+	}
+	return result, errorKind, exitCode
 }

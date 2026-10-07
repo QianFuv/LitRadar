@@ -28,35 +28,7 @@ func TestMain(tests *testing.M) {
 	directory := os.Getenv("LITRADAR_SCHEDULER_TEST_DIRECTORY")
 	switch role {
 	case "claim-crash":
-		boundary := os.Getenv("LITRADAR_SCHEDULER_TEST_BOUNDARY")
-		repository, err := store.Open(filepath.Join(directory, "auth.sqlite"))
-		if err != nil {
-			os.Exit(40)
-		}
-		claims, err := repository.ClaimReady(context.Background(), "crashed", 100, 90, 1)
-		if err != nil || len(claims) != 1 {
-			os.Exit(41)
-		}
-		if boundary != "claimed" {
-			if started, err := repository.StartRun(context.Background(), claims[0].RunId, "crashed", 100, 90); err != nil || !started {
-				os.Exit(42)
-			}
-			file, err := os.OpenFile(filepath.Join(directory, "effect"), os.O_CREATE|os.O_WRONLY, 0600)
-			if err != nil {
-				os.Exit(43)
-			}
-			file.WriteString("executed")
-			file.Sync()
-			file.Close()
-		}
-		if boundary == "finished" {
-			if finished, err := repository.FinishRun(context.Background(), claims[0], domain.Success, "complete", 101); err != nil || !finished {
-				os.Exit(44)
-			}
-		}
-		repository.Close()
-		os.WriteFile(filepath.Join(directory, "barrier"), []byte(boundary), 0600)
-		select {}
+		runClaimCrashFixture(directory)
 	case "exit":
 		code, _ := strconv.Atoi(os.Getenv("LITRADAR_SCHEDULER_TEST_EXIT"))
 		os.Exit(code)
@@ -67,59 +39,11 @@ func TestMain(tests *testing.M) {
 		fmt.Fprint(os.Stderr, "scheduler-private-diagnostic")
 		os.Exit(0)
 	case "sequence":
-		file, err := os.OpenFile(filepath.Join(directory, "commands.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-		if err != nil {
-			os.Exit(30)
-		}
-		cwd, _ := os.Getwd()
-		body, _ := json.Marshal(map[string]any{"args": os.Args[1:], "cwd": cwd})
-		file.Write(append(body, '\n'))
-		file.Sync()
-		file.Close()
-		if os.Getenv("LITRADAR_SCHEDULER_TEST_DELAY") == "yes" {
-			time.Sleep(8 * time.Second)
-		}
-		if os.Getenv("LITRADAR_SCHEDULER_TEST_FAIL") == os.Args[1] {
-			os.Exit(7)
-		}
-		os.Exit(0)
+		runProcessSequenceFixture(directory)
 	case "tree", "leader-exit":
-		command := exec.Command(os.Args[0])
-		command.Env = []string{}
-		for _, value := range os.Environ() {
-			if !strings.HasPrefix(value, "LITRADAR_SCHEDULER_TEST_ROLE=") {
-				command.Env = append(command.Env, value)
-			}
-		}
-		command.Env = append(command.Env, "LITRADAR_SCHEDULER_TEST_ROLE=descendant")
-		command.Stdout = os.Stdout
-		command.Stderr = os.Stderr
-		if command.Start() != nil {
-			os.Exit(31)
-		}
-		for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); {
-			if _, err := os.Stat(filepath.Join(directory, "ready")); err == nil {
-				if role == "leader-exit" {
-					os.Exit(0)
-				}
-				select {}
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		os.Exit(32)
+		runProcessTreeFixture(directory, role)
 	case "descendant":
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			os.Exit(33)
-		}
-		os.WriteFile(filepath.Join(directory, "ready"), []byte(listener.Addr().String()), 0600)
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				os.Exit(34)
-			}
-			connection.Close()
-		}
+		runProcessDescendantFixture(directory)
 	default:
 		os.Exit(35)
 	}
@@ -297,5 +221,106 @@ func TestSchedulerCommandsSequenceAndSharedDeadline(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// runClaimCrashFixture preserves durable crash boundaries before publishing the barrier and hanging.
+func runClaimCrashFixture(directory string) {
+	boundary := os.Getenv("LITRADAR_SCHEDULER_TEST_BOUNDARY")
+	repository, err := store.Open(filepath.Join(directory, "auth.sqlite"))
+	if err != nil {
+		os.Exit(40)
+	}
+	claims, err := repository.ClaimReady(context.Background(), "crashed", 100, 90, 1)
+	if err != nil || len(claims) != 1 {
+		os.Exit(41)
+	}
+	if boundary != "claimed" {
+		writeStartedCrashEffect(repository, claims[0], directory)
+	}
+	if boundary == "finished" {
+		if finished, err := repository.FinishRun(context.Background(), claims[0], domain.Success, "complete", 101); err != nil || !finished {
+			os.Exit(44)
+		}
+	}
+	repository.Close()
+	os.WriteFile(filepath.Join(directory, "barrier"), []byte(boundary), 0600)
+	select {}
+}
+
+// writeStartedCrashEffect starts the owned claim before writing, syncing and closing its external effect.
+func writeStartedCrashEffect(repository *store.Repository, claim store.Claim, directory string) {
+	if started, err := repository.StartRun(context.Background(), claim.RunId, "crashed", 100, 90); err != nil || !started {
+		os.Exit(42)
+	}
+	file, err := os.OpenFile(filepath.Join(directory, "effect"), os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		os.Exit(43)
+	}
+	file.WriteString("executed")
+	file.Sync()
+	file.Close()
+}
+
+// runProcessSequenceFixture records exact argv and working directory before delay or selected exit.
+func runProcessSequenceFixture(directory string) {
+	file, err := os.OpenFile(filepath.Join(directory, "commands.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		os.Exit(30)
+	}
+	cwd, _ := os.Getwd()
+	body, _ := json.Marshal(map[string]any{"args": os.Args[1:], "cwd": cwd})
+	file.Write(append(body, '\n'))
+	file.Sync()
+	file.Close()
+	if os.Getenv("LITRADAR_SCHEDULER_TEST_DELAY") == "yes" {
+		time.Sleep(8 * time.Second)
+	}
+	if os.Getenv("LITRADAR_SCHEDULER_TEST_FAIL") == os.Args[1] {
+		os.Exit(7)
+	}
+	os.Exit(0)
+}
+
+// runProcessTreeFixture preserves inherited output and readiness before leader exit or tree lifetime.
+func runProcessTreeFixture(directory, role string) {
+	command := exec.Command(os.Args[0])
+	command.Env = []string{}
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "LITRADAR_SCHEDULER_TEST_ROLE=") {
+			command.Env = append(command.Env, value)
+		}
+	}
+	command.Env = append(command.Env, "LITRADAR_SCHEDULER_TEST_ROLE=descendant")
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	if command.Start() != nil {
+		os.Exit(31)
+	}
+	for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); {
+		if _, err := os.Stat(filepath.Join(directory, "ready")); err == nil {
+			if role == "leader-exit" {
+				os.Exit(0)
+			}
+			select {}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	os.Exit(32)
+}
+
+// runProcessDescendantFixture publishes the bound socket and serves until forced process cleanup.
+func runProcessDescendantFixture(directory string) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		os.Exit(33)
+	}
+	os.WriteFile(filepath.Join(directory, "ready"), []byte(listener.Addr().String()), 0600)
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			os.Exit(34)
+		}
+		connection.Close()
 	}
 }
