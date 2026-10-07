@@ -2,6 +2,7 @@ package indexschema
 
 import (
 	"context"
+	"database/sql"
 
 	"path/filepath"
 	"testing"
@@ -39,6 +40,12 @@ func TestNewSchemaInventoryAndForeignKeyValidationHaveDifferentScopes(t *testing
 	if err := Validate(ctx, connection, 9); err == nil {
 		t.Fatal("explicit verification ignored broken foreign key")
 	}
+	assertUnexpectedSchemaTableRejected(t, connection)
+}
+
+func assertUnexpectedSchemaTableRejected(t *testing.T, connection *sql.Conn) {
+	t.Helper()
+	ctx := context.Background()
 	if _, err := connection.ExecContext(ctx, "DELETE FROM issues; CREATE TABLE unexpected(value TEXT)"); err != nil {
 		t.Fatal(err)
 	}
