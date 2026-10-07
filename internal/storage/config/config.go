@@ -99,38 +99,9 @@ func (config Config) ListIndexDatabases() ([]string, error) {
 // ListProviderCatalogs merges only regular files with safe lowercase stems across metadata and content.
 func (config Config) ListProviderCatalogs() ([]domain.ProviderCatalog, error) {
 	catalogs := map[string]domain.ProviderCatalog{}
-	for _, source := range []struct {
-		directory, extension string
-		isCsv                bool
-	}{{config.MetaDir, "csv", true}, {config.IndexDir, "sqlite", false}} {
-		if _, err := os.Stat(source.directory); err != nil {
-			continue
-		}
-		entries, err := os.ReadDir(source.directory)
-		if err != nil {
+	for _, source := range []providerCatalogSource{{config.MetaDir, "csv", true}, {config.IndexDir, "sqlite", false}} {
+		if err := mergeProviderCatalogSource(source, catalogs); err != nil {
 			return nil, err
-		}
-		for _, entry := range entries {
-			metadata, err := entry.Info()
-			if err != nil {
-				return nil, err
-			}
-			if !metadata.Mode().IsRegular() || !hasExtension(entry.Name(), source.extension) {
-				continue
-			}
-			stem := strings.TrimSuffix(entry.Name(), "."+source.extension)
-			if !IsRuntimeName(stem) {
-				continue
-			}
-			catalog := catalogs[stem]
-			catalog.Stem = stem
-			filename := entry.Name()
-			if source.isCsv {
-				catalog.CsvFilename = &filename
-			} else {
-				catalog.DatabaseFilename = &filename
-			}
-			catalogs[stem] = catalog
 		}
 	}
 	result := make([]domain.ProviderCatalog, 0, len(catalogs))
@@ -141,13 +112,60 @@ func (config Config) ListProviderCatalogs() ([]domain.ProviderCatalog, error) {
 	return result, nil
 }
 
+type providerCatalogSource struct {
+	directory, extension string
+	isCsv                bool
+}
+
+// mergeProviderCatalogSource ignores stat failures but retains enumeration and entry errors.
+func mergeProviderCatalogSource(source providerCatalogSource, catalogs map[string]domain.ProviderCatalog) error {
+	if _, err := os.Stat(source.directory); err != nil {
+		return nil
+	}
+	entries, err := os.ReadDir(source.directory)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := mergeProviderCatalogEntry(source, entry, catalogs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mergeProviderCatalogEntry reads metadata before filtering and merges distinct basename pointers.
+func mergeProviderCatalogEntry(source providerCatalogSource, entry os.DirEntry, catalogs map[string]domain.ProviderCatalog) error {
+	metadata, err := entry.Info()
+	if err != nil {
+		return err
+	}
+	if !metadata.Mode().IsRegular() || !hasExtension(entry.Name(), source.extension) {
+		return nil
+	}
+	stem := strings.TrimSuffix(entry.Name(), "."+source.extension)
+	if !IsRuntimeName(stem) {
+		return nil
+	}
+	catalog := catalogs[stem]
+	catalog.Stem = stem
+	filename := entry.Name()
+	if source.isCsv {
+		catalog.CsvFilename = &filename
+	} else {
+		catalog.DatabaseFilename = &filename
+	}
+	catalogs[stem] = catalog
+	return nil
+}
+
 // IsRuntimeName preserves the maintained catalog stem grammar and byte length limit.
 func IsRuntimeName(value string) bool {
 	if len(value) < 2 || len(value) > 128 {
 		return false
 	}
 	for index, character := range value {
-		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+		if isRuntimeLetterOrDigit(character) {
 			continue
 		}
 		if index > 0 && (character == '.' || character == '_' || character == '-') {
@@ -156,6 +174,11 @@ func IsRuntimeName(value string) bool {
 		return false
 	}
 	return true
+}
+
+// isRuntimeLetterOrDigit admits only lowercase ASCII letters and digits.
+func isRuntimeLetterOrDigit(character rune) bool {
+	return character >= 'a' && character <= 'z' || character >= '0' && character <= '9'
 }
 
 func hasExtension(filename, extension string) bool {
