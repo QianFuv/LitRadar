@@ -73,29 +73,18 @@ func ParseJson(body []byte) (any, error) {
 	return result, nil
 }
 
+// maskJsonNumbers validates every numeric token while retaining non-number bytes unchanged.
 func maskJsonNumbers(body []byte) ([]byte, bool) {
 	masked := make([]byte, 0, len(body))
 	for index := 0; index < len(body); {
 		start := index
 		if body[index] == '"' {
-			index++
-			for index < len(body) {
-				character := body[index]
-				index++
-				if character == '\\' && index < len(body) {
-					index++
-				} else if character == '"' {
-					break
-				}
-			}
+			index = jsonStringEnd(body, index)
 			masked = append(masked, body[start:index]...)
 			continue
 		}
 		if body[index] == '-' || body[index] >= '0' && body[index] <= '9' {
-			index++
-			for index < len(body) && (body[index] >= '0' && body[index] <= '9' || body[index] == '-' || body[index] == '+' || body[index] == '.' || body[index] == 'e' || body[index] == 'E') {
-				index++
-			}
+			index = jsonNumberEnd(body, index)
 			if _, err := domain.ParseNumber(json.Number(body[start:index])); err != nil {
 				return nil, false
 			}
@@ -115,4 +104,33 @@ func BoundedJson(response *http.Response, maximum int64) (any, error) {
 		return nil, err
 	}
 	return ParseJson(body)
+}
+
+// jsonStringEnd skips escaped bytes without replacing the later strict string validation.
+func jsonStringEnd(body []byte, index int) int {
+	index++
+	for index < len(body) {
+		character := body[index]
+		index++
+		if character == '\\' && index < len(body) {
+			index++
+		} else if character == '"' {
+			break
+		}
+	}
+	return index
+}
+
+// jsonNumberEnd consumes the complete maximal numeric alphabet before domain admission.
+func jsonNumberEnd(body []byte, index int) int {
+	index++
+	for index < len(body) && isJsonNumberCharacter(body[index]) {
+		index++
+	}
+	return index
+}
+
+// isJsonNumberCharacter retains signs, decimal points and exponent markers in the token.
+func isJsonNumberCharacter(character byte) bool {
+	return character >= '0' && character <= '9' || character == '-' || character == '+' || character == '.' || character == 'e' || character == 'E'
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// TestLogicalBudgetAndDistinctWaitPolicies proves the distinct retry and article wait boundaries.
 func TestLogicalBudgetAndDistinctWaitPolicies(t *testing.T) {
 	started := time.Now()
 	early := started.Add(time.Second)
@@ -25,13 +26,7 @@ func TestLogicalBudgetAndDistinctWaitPolicies(t *testing.T) {
 	if time.Since(started) > time.Second {
 		t.Fatal("logical retry consumed budget")
 	}
-	started = time.Now()
-	if err := ArticleSleep(context.Background(), time.Second, started.Add(25*time.Millisecond)); err != ErrArticleDeadline {
-		t.Fatal(err)
-	}
-	if elapsed := time.Since(started); elapsed < 15*time.Millisecond || elapsed > 500*time.Millisecond {
-		t.Fatal(elapsed)
-	}
+	assertArticleSleepBudget(t)
 	if CanWait(time.Second, time.Now().Add(time.Second)) {
 		t.Fatal("equal delay must not fit")
 	}
@@ -85,5 +80,17 @@ func TestHeaderVisibilityFirstValueAndWideDelay(t *testing.T) {
 	second := MonotonicTime()
 	if second.Before(first) {
 		t.Fatal("monotonic epoch regressed")
+	}
+}
+
+// assertArticleSleepBudget verifies that an oversized article wait consumes only the remaining budget.
+func assertArticleSleepBudget(t *testing.T) {
+	t.Helper()
+	started := time.Now()
+	if err := ArticleSleep(context.Background(), time.Second, started.Add(25*time.Millisecond)); err != ErrArticleDeadline {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed < 15*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatal(elapsed)
 	}
 }

@@ -159,20 +159,13 @@ func TestProxyCredentialDecodingOnSocksWire(t *testing.T) {
 	}
 }
 
+// TestProxyFormattingAndExplicitFailure proves redaction and explicit versus direct proxy decisions.
 func TestProxyFormattingAndExplicitFailure(t *testing.T) {
 	proxy, err := ExplicitProxy("http://private-user:private-password@127.0.0.1:1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []any{proxy, &proxy} {
-		var output strings.Builder
-		logger := slog.New(slog.NewJSONHandler(&output, nil))
-		logger.Info("proxy", slog.Any("value", value))
-		output.WriteString(fmt.Sprintf("%v %+v %#v", value, value, value))
-		if strings.Contains(output.String(), "private-") {
-			t.Fatal("proxy credentials leaked")
-		}
-	}
+	assertProxyRedaction(t, proxy)
 	wire, err := proxy.ClientTransport()
 	if err != nil {
 		t.Fatal(err)
@@ -195,5 +188,19 @@ func TestProxyFormattingAndExplicitFailure(t *testing.T) {
 	defer direct.CloseIdleConnections()
 	if direct.Proxy != nil {
 		t.Fatal("direct decision inherits environment")
+	}
+}
+
+// assertProxyRedaction checks logging and all implicit formatting for value and pointer forms.
+func assertProxyRedaction(t *testing.T, proxy Proxy) {
+	t.Helper()
+	for _, value := range []any{proxy, &proxy} {
+		var output strings.Builder
+		logger := slog.New(slog.NewJSONHandler(&output, nil))
+		logger.Info("proxy", slog.Any("value", value))
+		output.WriteString(fmt.Sprintf("%v %+v %#v", value, value, value))
+		if strings.Contains(output.String(), "private-") {
+			t.Fatal("proxy credentials leaked")
+		}
 	}
 }

@@ -33,50 +33,8 @@ func (selection Proxy) ClientTransport() (*ClientTransport, error) {
 			return nil, ErrProxyUrl
 		}
 		if location.Scheme == "socks5" || location.Scheme == "socks5h" {
-			var authentication *proxy.Auth
-			if location.User != nil {
-				password, _ := location.User.Password()
-				authentication = &proxy.Auth{User: location.User.Username(), Password: password}
-			}
-			port := location.Port()
-			if port == "" {
-				port = "1080"
-			}
-			selected, err := proxy.SOCKS5("tcp", net.JoinHostPort(location.Hostname(), port), authentication, dialer)
-			if err != nil {
-				return nil, ErrProxyUrl
-			}
-			contextDialer := selected.(proxy.ContextDialer)
-			wire.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-				if location.Scheme == "socks5h" {
-					return contextDialer.DialContext(ctx, network, address)
-				}
-				host, port, err := net.SplitHostPort(address)
-				if err != nil {
-					return nil, err
-				}
-				if net.ParseIP(host) != nil {
-					return contextDialer.DialContext(ctx, network, address)
-				}
-				addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-				if err != nil {
-					return nil, err
-				}
-				failures := []error{}
-				for _, resolved := range addresses {
-					connection, err := contextDialer.DialContext(ctx, network, net.JoinHostPort(resolved.String(), port))
-					if err == nil {
-						return connection, nil
-					}
-					failures = append(failures, err)
-					if ctx.Err() != nil {
-						return nil, ctx.Err()
-					}
-				}
-				if len(failures) == 0 {
-					return nil, errors.New("destination has no addresses")
-				}
-				return nil, errors.Join(failures...)
+			if err := configureSocksDialer(wire, location, dialer); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -133,4 +91,60 @@ func (body *gzipBody) Close() error {
 		_ = body.decoded.Close()
 	}
 	return body.source.Close()
+}
+
+// configureSocksDialer installs explicit proxy authentication and the selected DNS policy.
+func configureSocksDialer(wire *http.Transport, location *url.URL, dialer *net.Dialer) error {
+	var authentication *proxy.Auth
+	if location.User != nil {
+		password, _ := location.User.Password()
+		authentication = &proxy.Auth{User: location.User.Username(), Password: password}
+	}
+	port := location.Port()
+	if port == "" {
+		port = "1080"
+	}
+	selected, err := proxy.SOCKS5("tcp", net.JoinHostPort(location.Hostname(), port), authentication, dialer)
+	if err != nil {
+		return ErrProxyUrl
+	}
+	contextDialer := selected.(proxy.ContextDialer)
+	wire.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return dialSocksDestination(ctx, network, address, location, contextDialer)
+	}
+
+	return nil
+}
+
+// dialSocksDestination retains remote DNS or ordered local address attempts under the request context.
+func dialSocksDestination(ctx context.Context, network, address string, location *url.URL, contextDialer proxy.ContextDialer) (net.Conn, error) {
+	if location.Scheme == "socks5h" {
+		return contextDialer.DialContext(ctx, network, address)
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	if net.ParseIP(host) != nil {
+		return contextDialer.DialContext(ctx, network, address)
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	failures := []error{}
+	for _, resolved := range addresses {
+		connection, err := contextDialer.DialContext(ctx, network, net.JoinHostPort(resolved.String(), port))
+		if err == nil {
+			return connection, nil
+		}
+		failures = append(failures, err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+	if len(failures) == 0 {
+		return nil, errors.New("destination has no addresses")
+	}
+	return nil, errors.Join(failures...)
 }

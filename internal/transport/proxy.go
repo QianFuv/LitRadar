@@ -25,9 +25,8 @@ func ExplicitProxy(value string) (Proxy, error) {
 	if err != nil {
 		return Proxy{}, ErrProxyUrl
 	}
-	hasUserinfo := location.Username() != "" || location.Password() != ""
-	hasCompleteUserinfo := location.Username() != "" && location.Password() != ""
-	if location.Scheme() != "http" && location.Scheme() != "https" && location.Scheme() != "socks5" && location.Scheme() != "socks5h" || location.Hostname() == "" || hasUserinfo != hasCompleteUserinfo || location.Port() == "0" || location.Pathname() != "" && location.Pathname() != "/" || strings.Contains(location.Href(true), "?") || location.Href(false) != location.Href(true) || location.OpaquePath() {
+	hasCompleteUserinfo, hasValidUserinfo := proxyUserinfo(location)
+	if !hasValidUserinfo || !validProxyEndpoint(location) {
 		return Proxy{}, ErrProxyUrl
 	}
 	canonical := location.Href(false)
@@ -83,3 +82,25 @@ func (proxy Proxy) String() string {
 }
 func (proxy Proxy) GoString() string     { return proxy.String() }
 func (proxy Proxy) LogValue() slog.Value { return slog.StringValue(proxy.String()) }
+
+// proxyUserinfo retains the requirement that username and password are both present or both absent.
+func proxyUserinfo(location *whatwg.Url) (bool, bool) {
+	hasUserinfo := location.Username() != "" || location.Password() != ""
+	hasCompleteUserinfo := location.Username() != "" && location.Password() != ""
+	return hasCompleteUserinfo, hasUserinfo == hasCompleteUserinfo
+}
+
+// validProxyEndpoint retains the original host, port, path, query, fragment and opaque-path boundary.
+func validProxyEndpoint(location *whatwg.Url) bool {
+	return supportedProxyScheme(location.Scheme()) && location.Hostname() != "" && location.Port() != "0" && validProxyPath(location.Pathname()) && !strings.Contains(location.Href(true), "?") && location.Href(false) == location.Href(true) && !location.OpaquePath()
+}
+
+// supportedProxyScheme permits the four explicit provider transport schemes.
+func supportedProxyScheme(scheme string) bool {
+	return scheme == "http" || scheme == "https" || scheme == "socks5" || scheme == "socks5h"
+}
+
+// validProxyPath admits only an empty path or its canonical slash.
+func validProxyPath(path string) bool {
+	return path == "" || path == "/"
+}
