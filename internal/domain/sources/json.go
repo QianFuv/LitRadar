@@ -21,41 +21,99 @@ func Json(value any) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
+// appendJson dispatches structural values before the supported scalar representations.
 func appendJson(output *bytes.Buffer, value any) error {
+	switch item := value.(type) {
+	case string:
+		return appendJsonString(output, item)
+	case []any:
+		return appendJsonArray(output, item)
+	case map[string]any:
+		return appendJsonObject(output, item)
+	default:
+		return appendJsonScalar(output, value)
+	}
+}
+
+// appendJsonString validates UTF-8 before emitting the original JSON escapes.
+func appendJsonString(output *bytes.Buffer, item string) error {
+	if !utf8.ValidString(item) {
+		return fmt.Errorf("source JSON string is not UTF-8")
+	}
+	output.WriteByte('"')
+	for _, character := range item {
+		switch character {
+		case '"', '\\':
+			output.WriteByte('\\')
+			output.WriteRune(character)
+		case '\b':
+			output.WriteString(`\b`)
+		case '\f':
+			output.WriteString(`\f`)
+		case '\n':
+			output.WriteString(`\n`)
+		case '\r':
+			output.WriteString(`\r`)
+		case '\t':
+			output.WriteString(`\t`)
+		default:
+			if character < 32 {
+				fmt.Fprintf(output, "\\u%04x", character)
+			} else {
+				output.WriteRune(character)
+			}
+		}
+	}
+	output.WriteByte('"')
+	return nil
+}
+
+// appendJsonArray preserves child order and the output prefix on a child failure.
+func appendJsonArray(output *bytes.Buffer, item []any) error {
+	output.WriteByte('[')
+	for index, child := range item {
+		if index > 0 {
+			output.WriteByte(',')
+		}
+		if err := appendJson(output, child); err != nil {
+			return err
+		}
+	}
+	output.WriteByte(']')
+	return nil
+}
+
+// appendJsonObject emits sorted keys and stops at the first key or child error.
+func appendJsonObject(output *bytes.Buffer, item map[string]any) error {
+	keys := make([]string, 0, len(item))
+	for key := range item {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	output.WriteByte('{')
+	for index, key := range keys {
+		if index > 0 {
+			output.WriteByte(',')
+		}
+		if err := appendJson(output, key); err != nil {
+			return err
+		}
+		output.WriteByte(':')
+		if err := appendJson(output, item[key]); err != nil {
+			return err
+		}
+	}
+	output.WriteByte('}')
+	return nil
+}
+
+// appendJsonScalar emits supported scalar variants without changing numeric identity.
+func appendJsonScalar(output *bytes.Buffer, value any) error {
 	switch item := value.(type) {
 	case nil:
 		output.WriteString("null")
 	case bool:
 		output.WriteString(strconv.FormatBool(item))
-	case string:
-		if !utf8.ValidString(item) {
-			return fmt.Errorf("source JSON string is not UTF-8")
-		}
-		output.WriteByte('"')
-		for _, character := range item {
-			switch character {
-			case '"', '\\':
-				output.WriteByte('\\')
-				output.WriteRune(character)
-			case '\b':
-				output.WriteString(`\b`)
-			case '\f':
-				output.WriteString(`\f`)
-			case '\n':
-				output.WriteString(`\n`)
-			case '\r':
-				output.WriteString(`\r`)
-			case '\t':
-				output.WriteString(`\t`)
-			default:
-				if character < 32 {
-					fmt.Fprintf(output, "\\u%04x", character)
-				} else {
-					output.WriteRune(character)
-				}
-			}
-		}
-		output.WriteByte('"')
 	case json.Number:
 		number, err := ParseNumber(item)
 		if err != nil {
@@ -64,48 +122,26 @@ func appendJson(output *bytes.Buffer, value any) error {
 		output.WriteString(number.String())
 	case Number:
 		output.WriteString(item.String())
+	case float64:
+		if math.IsNaN(item) || math.IsInf(item, 0) {
+			return ErrInvalidNumber
+		}
+		output.WriteString(Number{kind: 'f', floating: item}.String())
+	default:
+		return appendJsonInteger(output, value)
+	}
+	return nil
+}
+
+// appendJsonInteger emits the supported native integer types and rejects other values.
+func appendJsonInteger(output *bytes.Buffer, value any) error {
+	switch item := value.(type) {
 	case int:
 		output.WriteString(strconv.Itoa(item))
 	case int64:
 		output.WriteString(strconv.FormatInt(item, 10))
 	case uint64:
 		output.WriteString(strconv.FormatUint(item, 10))
-	case float64:
-		if math.IsNaN(item) || math.IsInf(item, 0) {
-			return ErrInvalidNumber
-		}
-		output.WriteString(Number{kind: 'f', floating: item}.String())
-	case []any:
-		output.WriteByte('[')
-		for index, child := range item {
-			if index > 0 {
-				output.WriteByte(',')
-			}
-			if err := appendJson(output, child); err != nil {
-				return err
-			}
-		}
-		output.WriteByte(']')
-	case map[string]any:
-		keys := make([]string, 0, len(item))
-		for key := range item {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		output.WriteByte('{')
-		for index, key := range keys {
-			if index > 0 {
-				output.WriteByte(',')
-			}
-			if err := appendJson(output, key); err != nil {
-				return err
-			}
-			output.WriteByte(':')
-			if err := appendJson(output, item[key]); err != nil {
-				return err
-			}
-		}
-		output.WriteByte('}')
 	default:
 		return fmt.Errorf("unsupported source JSON value %T", value)
 	}

@@ -13,47 +13,18 @@ func CanonicalArticle(article ArticleDraft) *ArticleDraft {
 	article.Pmid = copyCanonicalField(article.Pmid)
 	article.OpenAccess = copyCanonicalField(article.OpenAccess)
 	article.InPress = copyCanonicalField(article.InPress)
-	if title := NormalizeText(article.Title); title != nil {
-		article.Title = *title
-	} else if article.Doi != nil {
-		doi := NormalizeDoi(*article.Doi)
-		if doi == nil || *doi != *article.Doi {
-			return nil
-		}
-		article.Title = ""
-	} else {
+	if !canonicalArticleTitle(&article) {
 		return nil
 	}
-	if article.Date != nil {
-		date := NormalizeDate(*article.Date)
-		article.Date = nil
-		if date != nil {
-			article.Date = &date.Value
-		}
-	}
+	canonicalArticleDate(&article)
 	for _, field := range []**string{&article.IssueTitle, &article.Volume, &article.IssueNumber, &article.StartPage, &article.EndPage, &article.AbstractText} {
 		if *field != nil {
 			*field = NormalizeText(**field)
 		}
 	}
-	authors := make([]ArticleAuthorDraft, 0, len(article.Authors))
-	for _, author := range article.Authors {
-		if name := NormalizeText(author.DisplayName); name != nil {
-			authors = append(authors, ArticleAuthorDraft{DisplayName: *name})
-		}
-	}
-	article.Authors = authors
-	seen := map[string]bool{}
-	articleRetractions := []string{}
-	for _, value := range article.RetractionDois {
-		if doi := NormalizeDoi(value); doi != nil && !seen[*doi] {
-			seen[*doi] = true
-			articleRetractions = append(articleRetractions, *doi)
-		}
-	}
-	slices.Sort(articleRetractions)
-	article.RetractionDois = articleRetractions
-	if article.Doi == nil && article.Pmid == nil && !(article.PublicationYear != nil && (article.Volume != nil || article.IssueNumber != nil || article.StartPage != nil)) {
+	article.Authors = canonicalArticleAuthors(article.Authors)
+	article.RetractionDois = canonicalArticleRetractions(article.RetractionDois)
+	if !hasCanonicalArticleIdentity(article) {
 		return nil
 	}
 	return &article
@@ -120,4 +91,61 @@ func BatchFromArticles(catalog JournalCatalogEntry, articles []ArticleDraft, pro
 		articles = []ArticleDraft{}
 	}
 	return ProviderBatch{CatalogId: catalog.CatalogId, Journal: JournalDraft{CatalogId: catalog.CatalogId, ObservedTitle: &catalog.Title, ObservedIssns: CatalogIssns(catalog), ObservedTitleAliases: []string{}}, Issues: issues, Articles: articles, Progress: progress}
+}
+
+// canonicalArticleTitle accepts normalized text or an already canonical DOI fallback.
+func canonicalArticleTitle(article *ArticleDraft) bool {
+	if title := NormalizeText(article.Title); title != nil {
+		article.Title = *title
+	} else if article.Doi != nil {
+		doi := NormalizeDoi(*article.Doi)
+		if doi == nil || *doi != *article.Doi {
+			return false
+		}
+		article.Title = ""
+	} else {
+		return false
+	}
+	return true
+}
+
+// canonicalArticleDate replaces a present observation with its normalized date.
+func canonicalArticleDate(article *ArticleDraft) {
+	if article.Date != nil {
+		date := NormalizeDate(*article.Date)
+		article.Date = nil
+		if date != nil {
+			article.Date = &date.Value
+		}
+	}
+}
+
+// canonicalArticleAuthors preserves author order while dropping empty display names.
+func canonicalArticleAuthors(values []ArticleAuthorDraft) []ArticleAuthorDraft {
+	authors := make([]ArticleAuthorDraft, 0, len(values))
+	for _, author := range values {
+		if name := NormalizeText(author.DisplayName); name != nil {
+			authors = append(authors, ArticleAuthorDraft{DisplayName: *name})
+		}
+	}
+	return authors
+}
+
+// canonicalArticleRetractions normalizes, deduplicates and sorts retraction identities.
+func canonicalArticleRetractions(values []string) []string {
+	seen := map[string]bool{}
+	articleRetractions := []string{}
+	for _, value := range values {
+		if doi := NormalizeDoi(value); doi != nil && !seen[*doi] {
+			seen[*doi] = true
+			articleRetractions = append(articleRetractions, *doi)
+		}
+	}
+	slices.Sort(articleRetractions)
+	return articleRetractions
+}
+
+// hasCanonicalArticleIdentity requires external identity or a bibliographic boundary.
+func hasCanonicalArticleIdentity(article ArticleDraft) bool {
+	return !(article.Doi == nil && article.Pmid == nil && !(article.PublicationYear != nil && (article.Volume != nil || article.IssueNumber != nil || article.StartPage != nil)))
 }

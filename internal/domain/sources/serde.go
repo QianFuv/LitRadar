@@ -12,6 +12,7 @@ import (
 
 var errContractJson = errors.New("invalid canonical provider contract JSON")
 
+// decodeContractStruct validates JSON before decoding fields in their source order.
 func decodeContractStruct(data []byte, target any) error {
 	if !jsonvalue.ValidJson(string(data)) {
 		return errContractJson
@@ -19,47 +20,75 @@ func decodeContractStruct(data []byte, target any) error {
 	value := reflect.ValueOf(target).Elem()
 	kind := value.Type()
 	data = bytes.TrimSpace(data)
+	fields := contractFields(kind)
+	seen := make([]bool, kind.NumField())
+	var err error
+	switch data[0] {
+	case '[':
+		err = decodeContractSequence(data, value, seen)
+	case '{':
+		err = decodeContractObject(data, value, fields, seen)
+	default:
+		return errContractJson
+	}
+	if err != nil {
+		return err
+	}
+	return requireContractFields(kind, seen)
+}
+
+// contractFields retains the declared JSON-name to field-position mapping.
+func contractFields(kind reflect.Type) map[string]int {
 	fields := make(map[string]int, kind.NumField())
 	for index := 0; index < kind.NumField(); index++ {
 		name, _, _ := strings.Cut(kind.Field(index).Tag.Get("json"), ",")
 		fields[name] = index
 	}
-	seen := make([]bool, kind.NumField())
-	if data[0] == '[' {
-		var sequence []json.RawMessage
-		if err := json.Unmarshal(data, &sequence); err != nil || len(sequence) != kind.NumField() {
-			return errContractJson
-		}
-		for index, raw := range sequence {
-			if err := decodeContractValue(raw, value.Field(index)); err != nil {
-				return err
-			}
-			seen[index] = true
-		}
-	} else if data[0] == '{' {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.Token()
-		for decoder.More() {
-			key, err := decoder.Token()
-			if err != nil {
-				return errContractJson
-			}
-			index, exists := fields[key.(string)]
-			if !exists || seen[index] {
-				return errContractJson
-			}
-			var raw json.RawMessage
-			if err := decoder.Decode(&raw); err != nil {
-				return errContractJson
-			}
-			if err := decodeContractValue(raw, value.Field(index)); err != nil {
-				return err
-			}
-			seen[index] = true
-		}
-	} else {
+	return fields
+}
+
+// decodeContractSequence requires exact arity before mutating declared fields.
+func decodeContractSequence(data []byte, value reflect.Value, seen []bool) error {
+	var sequence []json.RawMessage
+	if err := json.Unmarshal(data, &sequence); err != nil || len(sequence) != value.NumField() {
 		return errContractJson
 	}
+	for index, raw := range sequence {
+		if err := decodeContractValue(raw, value.Field(index)); err != nil {
+			return err
+		}
+		seen[index] = true
+	}
+	return nil
+}
+
+// decodeContractObject rejects unknown or duplicate names before decoding their values.
+func decodeContractObject(data []byte, value reflect.Value, fields map[string]int, seen []bool) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.Token()
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return errContractJson
+		}
+		index, exists := fields[key.(string)]
+		if !exists || seen[index] {
+			return errContractJson
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return errContractJson
+		}
+		if err := decodeContractValue(raw, value.Field(index)); err != nil {
+			return err
+		}
+		seen[index] = true
+	}
+	return nil
+}
+
+// requireContractFields permits absent pointer fields and requires every other field.
+func requireContractFields(kind reflect.Type, seen []bool) error {
 	for index, hasField := range seen {
 		if !hasField && kind.Field(index).Type.Kind() != reflect.Pointer {
 			return errContractJson
@@ -68,6 +97,7 @@ func decodeContractStruct(data []byte, target any) error {
 	return nil
 }
 
+// decodeContractValue preserves pointer allocation and null rejection before typed decoding.
 func decodeContractValue(raw []byte, value reflect.Value) error {
 	raw = bytes.TrimSpace(raw)
 	if value.Kind() == reflect.Pointer {
@@ -82,29 +112,10 @@ func decodeContractValue(raw []byte, value reflect.Value) error {
 		return errContractJson
 	}
 	if value.Kind() == reflect.Slice {
-		var items []json.RawMessage
-		if err := json.Unmarshal(raw, &items); err != nil {
-			return errContractJson
-		}
-		value.Set(reflect.MakeSlice(value.Type(), len(items), len(items)))
-		for index, item := range items {
-			if err := decodeContractValue(item, value.Index(index)); err != nil {
-				return err
-			}
-		}
-		return nil
+		return decodeContractSlice(raw, value)
 	}
 	if value.Kind() == reflect.Int64 {
-		number, err := ParseNumber(json.Number(raw))
-		if err != nil {
-			return errContractJson
-		}
-		signed, hasSigned := number.AsInt64()
-		if !hasSigned {
-			return errContractJson
-		}
-		value.SetInt(signed)
-		return nil
+		return decodeContractInteger(raw, value)
 	}
 	if err := json.Unmarshal(raw, value.Addr().Interface()); err != nil {
 		return errContractJson
@@ -265,35 +276,7 @@ func (value *ProviderProgress) UnmarshalJSON(data []byte) error {
 	}
 	data = bytes.TrimSpace(data)
 	if data[0] == '[' {
-		var sequence []json.RawMessage
-		if json.Unmarshal(data, &sequence) != nil || len(sequence) < 1 || len(sequence) > 2 {
-			return errContractJson
-		}
-		var state ProgressState
-		if json.Unmarshal(sequence[0], &state) != nil {
-			return errContractJson
-		}
-		switch state {
-		case Continue:
-			if len(sequence) != 2 || bytes.Equal(bytes.TrimSpace(sequence[1]), []byte("null")) {
-				return errContractJson
-			}
-			var checkpoint string
-			if json.Unmarshal(sequence[1], &checkpoint) != nil {
-				return errContractJson
-			}
-			*value = ProviderProgress{State: Continue, Checkpoint: &checkpoint}
-			return nil
-		case Complete:
-			var anchor *string
-			if len(sequence) == 2 && json.Unmarshal(sequence[1], &anchor) != nil {
-				return errContractJson
-			}
-			*value = ProviderProgress{State: Complete, NextAnchor: anchor}
-			return nil
-		default:
-			return errContractJson
-		}
+		return decodeProgressSequence(data, value)
 	}
 	var selector struct {
 		State string `json:"state"`
@@ -349,4 +332,77 @@ func (value ProviderProgress) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, errContractJson
 	}
+}
+
+// decodeContractSlice allocates the entire sequence before decoding children in order.
+func decodeContractSlice(raw []byte, value reflect.Value) error {
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return errContractJson
+	}
+	value.Set(reflect.MakeSlice(value.Type(), len(items), len(items)))
+	for index, item := range items {
+		if err := decodeContractValue(item, value.Index(index)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// decodeContractInteger accepts only representable integral numeric variants.
+func decodeContractInteger(raw []byte, value reflect.Value) error {
+	number, err := ParseNumber(json.Number(raw))
+	if err != nil {
+		return errContractJson
+	}
+	signed, hasSigned := number.AsInt64()
+	if !hasSigned {
+		return errContractJson
+	}
+	value.SetInt(signed)
+	return nil
+}
+
+// decodeProgressSequence preserves variant arity, null admission and assignment timing.
+func decodeProgressSequence(data []byte, value *ProviderProgress) error {
+	var sequence []json.RawMessage
+	if json.Unmarshal(data, &sequence) != nil || len(sequence) < 1 || len(sequence) > 2 {
+		return errContractJson
+	}
+	var state ProgressState
+	if json.Unmarshal(sequence[0], &state) != nil {
+		return errContractJson
+	}
+	switch state {
+	case Continue:
+		return decodeProgressContinuation(sequence, value)
+	case Complete:
+		return decodeProgressCompletion(sequence, value)
+	default:
+		return errContractJson
+	}
+
+}
+
+// decodeProgressContinuation requires a nonnull checkpoint before replacing progress.
+func decodeProgressContinuation(sequence []json.RawMessage, value *ProviderProgress) error {
+	if len(sequence) != 2 || bytes.Equal(bytes.TrimSpace(sequence[1]), []byte("null")) {
+		return errContractJson
+	}
+	var checkpoint string
+	if json.Unmarshal(sequence[1], &checkpoint) != nil {
+		return errContractJson
+	}
+	*value = ProviderProgress{State: Continue, Checkpoint: &checkpoint}
+	return nil
+}
+
+// decodeProgressCompletion permits an absent or null anchor before replacing progress.
+func decodeProgressCompletion(sequence []json.RawMessage, value *ProviderProgress) error {
+	var anchor *string
+	if len(sequence) == 2 && json.Unmarshal(sequence[1], &anchor) != nil {
+		return errContractJson
+	}
+	*value = ProviderProgress{State: Complete, NextAnchor: anchor}
+	return nil
 }
