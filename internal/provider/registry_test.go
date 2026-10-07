@@ -11,27 +11,10 @@ import (
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
 )
 
+// TestRegistryOrderingOwnershipAndDuplicates checks deterministic capabilities under concurrent reads.
 func TestRegistryOrderingOwnershipAndDuplicates(t *testing.T) {
 	var registry Registry
-	for _, name := range []string{"z_provider", "a_provider", "middle"} {
-		hosts := []string{"doi.org"}
-		registration, err := NewRegistration(Descriptor{Name: name, Capabilities: Capabilities{ArticleAbstract: true}, AllowedRedirectHosts: hosts}, Implementations{ArticleAbstract: noExecution{}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		hosts[0] = "untrusted.example"
-		if err := registry.Register(registration); err != nil {
-			t.Fatal(err)
-		}
-		if err := registry.Register(registration); err == nil || err.Error() != "duplicate provider name: "+name {
-			t.Fatal(err)
-		}
-		descriptor := registry.Find(name).Descriptor()
-		descriptor.AllowedRedirectHosts[0] = "changed.example"
-		if registry.Find(name).Descriptor().AllowedRedirectHosts[0] != "doi.org" {
-			t.Fatal("descriptor mutated")
-		}
-	}
+	assertRegistryRegistrationOwnership(t, &registry)
 	names := []string{}
 	for _, registration := range registry.ProvidersWith(domain.ArticleAbstract) {
 		names = append(names, registration.Descriptor().Name)
@@ -95,5 +78,29 @@ func TestFixtureOpaquePreflightAndSafeFailure(t *testing.T) {
 	_, err = ValidateIndexProviderFixture(context.Background(), implementation, domain.JournalCatalogEntry{}, domain.IndexFetchContext{})
 	if err == nil || err.Error() != "index provider fixture failed with TemporarilyUnavailable" || implementation.calls != 1 {
 		t.Fatal(err)
+	}
+}
+
+// assertRegistryRegistrationOwnership pins descriptor copies and duplicate-name rejection.
+func assertRegistryRegistrationOwnership(t *testing.T, registry *Registry) {
+	t.Helper()
+	for _, name := range []string{"z_provider", "a_provider", "middle"} {
+		hosts := []string{"doi.org"}
+		registration, err := NewRegistration(Descriptor{Name: name, Capabilities: Capabilities{ArticleAbstract: true}, AllowedRedirectHosts: hosts}, Implementations{ArticleAbstract: noExecution{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		hosts[0] = "untrusted.example"
+		if err := registry.Register(registration); err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.Register(registration); err == nil || err.Error() != "duplicate provider name: "+name {
+			t.Fatal(err)
+		}
+		descriptor := registry.Find(name).Descriptor()
+		descriptor.AllowedRedirectHosts[0] = "changed.example"
+		if registry.Find(name).Descriptor().AllowedRedirectHosts[0] != "doi.org" {
+			t.Fatal("descriptor mutated")
+		}
 	}
 }

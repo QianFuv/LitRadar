@@ -198,12 +198,13 @@ func (registry *Registry) ProvidersWith(kind domain.CapabilityKind) []*Registrat
 	return result
 }
 
+// validName checks provider length and position-sensitive ASCII grammar.
 func validName(name string) bool {
 	if len(name) < 2 || len(name) > 64 {
 		return false
 	}
 	for index, character := range []byte(name) {
-		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || index > 0 && (character == '_' || character == '-') {
+		if validProviderNameByte(character, index) {
 			continue
 		}
 		return false
@@ -211,25 +212,14 @@ func validName(name string) bool {
 	return true
 }
 
+// validateRedirectHosts checks online capability before ordered host admission and deduplication.
 func validateRedirectHosts(descriptor Descriptor) error {
 	if !descriptor.Capabilities.ArticleAbstract && !descriptor.Capabilities.ArticleFullText && len(descriptor.AllowedRedirectHosts) > 0 {
 		return &RegistryError{Kind: "RedirectHostsWithoutOnlineCapability", Provider: descriptor.Name}
 	}
 	seen := make(map[string]bool)
 	for _, host := range descriptor.AllowedRedirectHosts {
-		isValid := len(host) >= 1 && len(host) <= 253 && strings.Contains(host, ".")
-		for _, label := range strings.Split(host, ".") {
-			if len(label) < 1 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-				isValid = false
-				break
-			}
-			for _, character := range []byte(label) {
-				if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '-') {
-					isValid = false
-					break
-				}
-			}
-		}
+		isValid := validRedirectHost(host)
 		if !isValid {
 			return &RegistryError{Kind: "InvalidRedirectHost", Provider: descriptor.Name, Host: host}
 		}
@@ -239,4 +229,39 @@ func validateRedirectHosts(descriptor Descriptor) error {
 		seen[host] = true
 	}
 	return nil
+}
+
+// validProviderNameByte admits ASCII letters, digits and noninitial separators.
+func validProviderNameByte(character byte, index int) bool {
+	return character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || index > 0 && (character == '_' || character == '-')
+}
+
+// validRedirectHost retains host bounds and validates every DNS label.
+func validRedirectHost(host string) bool {
+	isValid := len(host) >= 1 && len(host) <= 253 && strings.Contains(host, ".")
+	for _, label := range strings.Split(host, ".") {
+		if !validRedirectLabel(label) {
+			isValid = false
+			break
+		}
+	}
+	return isValid
+}
+
+// validRedirectLabel rejects empty, oversized and noncanonical ASCII labels.
+func validRedirectLabel(label string) bool {
+	if len(label) < 1 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+	for _, character := range []byte(label) {
+		if !validRedirectLabelByte(character) {
+			return false
+		}
+	}
+	return true
+}
+
+// validRedirectLabelByte admits canonical lowercase ASCII DNS label characters.
+func validRedirectLabelByte(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '-'
 }
