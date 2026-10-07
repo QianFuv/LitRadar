@@ -28,30 +28,8 @@ func DecodeAuthorNames(payload string) ([]string, error) {
 	result := make([]string, 0, len(authors))
 	isCanonical := len(authors) > 0 && !bytes.HasPrefix(bytes.TrimSpace(authors[0]), []byte(`"`))
 	for _, author := range authors {
-		var name string
-		if isCanonical {
-			if bytes.HasPrefix(bytes.TrimSpace(author), []byte("[")) {
-				var fields []json.RawMessage
-				if json.Unmarshal(author, &fields) != nil || len(fields) != 1 || !bytes.HasPrefix(bytes.TrimSpace(fields[0]), []byte(`"`)) || json.Unmarshal(fields[0], &name) != nil {
-					return nil, invalid
-				}
-				result = append(result, name)
-				continue
-			}
-			decoder := json.NewDecoder(bytes.NewReader(author))
-			opening, err := decoder.Token()
-			if err != nil || opening != json.Delim('{') || !decoder.More() {
-				return nil, invalid
-			}
-			key, err := decoder.Token()
-			if err != nil || key != "display_name" {
-				return nil, invalid
-			}
-			var value json.RawMessage
-			if err := decoder.Decode(&value); err != nil || !bytes.HasPrefix(bytes.TrimSpace(value), []byte(`"`)) || json.Unmarshal(value, &name) != nil || decoder.More() {
-				return nil, invalid
-			}
-		} else if !bytes.HasPrefix(bytes.TrimSpace(author), []byte(`"`)) || json.Unmarshal(author, &name) != nil {
+		name, err := decodeAuthorName(author, isCanonical)
+		if err != nil {
 			return nil, invalid
 		}
 		result = append(result, name)
@@ -97,18 +75,75 @@ func Rebuild(ctx context.Context, connection *sql.Conn) error {
 	}
 	defer insert.Close()
 	for rows.Next() {
-		var id int64
-		var title, abstract, doi, pmid, authors, journal storage.Text
-		if err := rows.Scan(&id, &title, &abstract, &doi, &pmid, &authors, &journal); err != nil {
-			return err
-		}
-		names, err := DecodeAuthorNames(string(authors))
-		if err != nil {
-			return err
-		}
-		if _, err := insert.ExecContext(ctx, id, PrepareText(string(title), usesSimple), PrepareText(string(abstract), usesSimple), PrepareText(string(doi), usesSimple), PrepareText(string(pmid), usesSimple), PrepareText(strings.Join(names, "; "), usesSimple), PrepareText(string(journal), usesSimple)); err != nil {
+		if err := insertSearchRow(ctx, rows, insert, usesSimple); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
+}
+
+// decodeAuthorName applies the representation selected by the first author without permitting mixed strings.
+func decodeAuthorName(author json.RawMessage, isCanonical bool) (string, error) {
+	if !isCanonical {
+		return decodeAuthorString(author)
+	}
+	if bytes.HasPrefix(bytes.TrimSpace(author), []byte("[")) {
+		return decodePositionalAuthor(author)
+	}
+	return decodeObjectAuthor(author)
+}
+
+// decodeAuthorString accepts a JSON string without null coercion.
+func decodeAuthorString(author json.RawMessage) (string, error) {
+	var name string
+	if !bytes.HasPrefix(bytes.TrimSpace(author), []byte(`"`)) || json.Unmarshal(author, &name) != nil {
+		return "", ErrInvalidAuthors
+	}
+	return name, nil
+}
+
+// decodePositionalAuthor retains exact single-field arity and string admission.
+func decodePositionalAuthor(author json.RawMessage) (string, error) {
+	var fields []json.RawMessage
+	var name string
+	if json.Unmarshal(author, &fields) != nil || len(fields) != 1 || !bytes.HasPrefix(bytes.TrimSpace(fields[0]), []byte(`"`)) || json.Unmarshal(fields[0], &name) != nil {
+		return "", ErrInvalidAuthors
+	}
+	return name, nil
+}
+
+// decodeObjectAuthor retains the original single display_name member token sequence.
+func decodeObjectAuthor(author json.RawMessage) (string, error) {
+	var name string
+	decoder := json.NewDecoder(bytes.NewReader(author))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') || !decoder.More() {
+		return "", ErrInvalidAuthors
+	}
+	key, err := decoder.Token()
+	if err != nil || key != "display_name" {
+		return "", ErrInvalidAuthors
+	}
+	var value json.RawMessage
+	if err := decoder.Decode(&value); err != nil || !bytes.HasPrefix(bytes.TrimSpace(value), []byte(`"`)) || json.Unmarshal(value, &name) != nil || decoder.More() {
+		return "", ErrInvalidAuthors
+	}
+	return name, nil
+}
+
+// insertSearchRow preserves typed scan, complete author decoding and one ordered projection insertion.
+func insertSearchRow(ctx context.Context, rows *sql.Rows, insert *sql.Stmt, usesSimple bool) error {
+	var id int64
+	var title, abstract, doi, pmid, authors, journal storage.Text
+	if err := rows.Scan(&id, &title, &abstract, &doi, &pmid, &authors, &journal); err != nil {
+		return err
+	}
+	names, err := DecodeAuthorNames(string(authors))
+	if err != nil {
+		return err
+	}
+	if _, err := insert.ExecContext(ctx, id, PrepareText(string(title), usesSimple), PrepareText(string(abstract), usesSimple), PrepareText(string(doi), usesSimple), PrepareText(string(pmid), usesSimple), PrepareText(strings.Join(names, "; "), usesSimple), PrepareText(string(journal), usesSimple)); err != nil {
+		return err
+	}
+	return nil
 }
