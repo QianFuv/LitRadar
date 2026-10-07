@@ -28,18 +28,7 @@ func (ScholarlyArticleAccess) SupportsAbstract(article domain.ArticleLocator) bo
 // ResolveAbstract preserves DOI precedence and encodes its UTF-8 path bytes exactly once.
 func (ScholarlyArticleAccess) ResolveAbstract(_ context.Context, article domain.ArticleLocator, _ domain.ArticleAccessContext) (domain.ArticleRedirect, error) {
 	if article.Doi != nil {
-		var encoded strings.Builder
-		const hex = "0123456789ABCDEF"
-		for _, value := range []byte(*article.Doi) {
-			if value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || strings.ContainsRune("-._~/", rune(value)) {
-				encoded.WriteByte(value)
-			} else {
-				encoded.WriteByte('%')
-				encoded.WriteByte(hex[value>>4])
-				encoded.WriteByte(hex[value&15])
-			}
-		}
-		return domain.ArticleRedirect{Location: "https://doi.org/" + encoded.String()}, nil
+		return domain.ArticleRedirect{Location: "https://doi.org/" + encodeDoiPath(*article.Doi)}, nil
 	}
 	if article.Pmid != nil {
 		return domain.ArticleRedirect{Location: "https://pubmed.ncbi.nlm.nih.gov/" + *article.Pmid + "/"}, nil
@@ -99,58 +88,9 @@ func (access *CnkiArticleAccess) ResolveAbstract(ctx context.Context, article do
 		if !cnkiIssueMatchesLocator(issue, article) {
 			continue
 		}
-		for pageIndex := uint64(0); ; pageIndex++ {
-			page, err := access.transport.IssueArticles(ctx, journal, issue, pageIndex)
-			if err != nil {
-				return domain.ArticleRedirect{}, mapCnkiProviderError(err)
-			}
-			if page.PageIndex != pageIndex || page.ArticleCount != uint64(len(page.Articles)) {
-				return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI issue article page metadata is inconsistent")
-			}
-			for index, summary := range page.Articles {
-				title := providerText(providerField(summary, "title"))
-				if title == nil || domain.NormalizeBibliographicText(*title) != domain.NormalizeBibliographicText(article.Title) {
-					continue
-				}
-				url := providerText(providerField(summary, "article_url"))
-				if url == nil {
-					return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI matching article summary omitted its URL")
-				}
-				detail, err := access.transport.ArticleDetail(ctx, *url, providerText(providerField(summary, "platform_id")))
-				if err != nil {
-					if isPermanentCnkiArticleError(err) {
-						var failure *cnki.Error
-						errors.As(err, &failure)
-						status, hasStatus := failure.HttpStatus()
-						slog.WarnContext(ctx, "index.provider.article.skipped", "event", "index.provider.article.skipped", "component", "index", "provider", CnkiProviderName, "reason", "permanent_missing", "article_ordinal", index+1, "http_status", status, "has_http_status", hasStatus)
-						continue
-					}
-					return domain.ArticleRedirect{}, mapCnkiProviderError(err)
-				}
-				if !cnkiDetailMatchesLocator(detail, article) {
-					continue
-				}
-				location := providerText(providerField(detail, "permalink"))
-				if location == nil {
-					location = providerText(providerField(detail, "article_url"))
-				}
-				if location == nil {
-					return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI detail response omitted its request-time destination")
-				}
-				if !(strings.HasPrefix(*location, "https://navi.cnki.net/") || strings.HasPrefix(*location, "https://kns.cnki.net/") || strings.HasPrefix(*location, "https://www.cnki.net/")) {
-					return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI abstract destination is outside the allowlist")
-				}
-				if strings.Contains(asciiLowerSource(*location), "oversea.cnki.net") {
-					return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI abstract destination used overseas host")
-				}
-				return domain.ArticleRedirect{Location: *location}, nil
-			}
-			if !page.HasNextPage {
-				break
-			}
-			if pageIndex == math.MaxUint64 {
-				return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI abstract page index overflowed")
-			}
+		redirect, found, err := access.resolveCnkiIssue(ctx, journal, issue, article)
+		if found || err != nil {
+			return redirect, err
 		}
 	}
 	return domain.ArticleRedirect{}, accessFailure(provider.NotFound, "domestic CNKI provider could not find an exact article match")
@@ -266,4 +206,112 @@ func emitSourceAttemptSummary(ctx context.Context, name string, attempts []schol
 		}
 	}
 	slog.InfoContext(ctx, "index.provider.attempts", "event", "index.provider.attempts", "component", "index", "provider", name, "attempt_count", len(attempts), "failure_count", failures, "retry_count", retries)
+}
+
+// encodeDoiPath escapes UTF-8 bytes exactly once while retaining the DOI path safe set.
+func encodeDoiPath(doi string) string {
+	var encoded strings.Builder
+	const hex = "0123456789ABCDEF"
+	for _, value := range []byte(doi) {
+		if isUnescapedDoiByte(value) {
+			encoded.WriteByte(value)
+		} else {
+			encoded.WriteByte('%')
+			encoded.WriteByte(hex[value>>4])
+			encoded.WriteByte(hex[value&15])
+		}
+	}
+	return encoded.String()
+}
+
+// isUnescapedDoiByte admits only the original ASCII alphanumeric and path punctuation set.
+func isUnescapedDoiByte(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || strings.ContainsRune("-._~/", rune(value))
+}
+
+// resolveCnkiIssue scans pages in source order and checks overflow only after continuing page work.
+func (access *CnkiArticleAccess) resolveCnkiIssue(ctx context.Context, journal, issue any, article domain.ArticleLocator) (domain.ArticleRedirect, bool, error) {
+	for pageIndex := uint64(0); ; pageIndex++ {
+		page, err := access.transport.IssueArticles(ctx, journal, issue, pageIndex)
+		if err != nil {
+			return domain.ArticleRedirect{}, false, mapCnkiProviderError(err)
+		}
+		if page.PageIndex != pageIndex || page.ArticleCount != uint64(len(page.Articles)) {
+			return domain.ArticleRedirect{}, false, accessFailure(provider.InvalidResponse, "domestic CNKI issue article page metadata is inconsistent")
+		}
+		redirect, found, err := access.resolveCnkiPage(ctx, page, article)
+		if found || err != nil {
+			return redirect, found, err
+		}
+
+		if !page.HasNextPage {
+			break
+		}
+		if pageIndex == math.MaxUint64 {
+			return domain.ArticleRedirect{}, false, accessFailure(provider.InvalidResponse, "domestic CNKI abstract page index overflowed")
+		}
+	}
+	return domain.ArticleRedirect{}, false, nil
+}
+
+// resolveCnkiPage inspects detail only for exact normalized summary titles.
+func (access *CnkiArticleAccess) resolveCnkiPage(ctx context.Context, page cnki.IssueArticlePage, article domain.ArticleLocator) (domain.ArticleRedirect, bool, error) {
+	for index, summary := range page.Articles {
+		title := providerText(providerField(summary, "title"))
+		if title == nil || domain.NormalizeBibliographicText(*title) != domain.NormalizeBibliographicText(article.Title) {
+			continue
+		}
+		redirect, found, err := access.resolveCnkiSummary(ctx, summary, index, article)
+		if found || err != nil {
+			return redirect, found, err
+		}
+	}
+	return domain.ArticleRedirect{}, false, nil
+}
+
+// resolveCnkiSummary skips only permanent misses or incompatible detail metadata before resolving a destination.
+func (access *CnkiArticleAccess) resolveCnkiSummary(ctx context.Context, summary any, ordinal int, article domain.ArticleLocator) (domain.ArticleRedirect, bool, error) {
+	url := providerText(providerField(summary, "article_url"))
+	if url == nil {
+		return domain.ArticleRedirect{}, false, accessFailure(provider.InvalidResponse, "domestic CNKI matching article summary omitted its URL")
+	}
+	detail, err := access.transport.ArticleDetail(ctx, *url, providerText(providerField(summary, "platform_id")))
+	if err != nil {
+		if isPermanentCnkiArticleError(err) {
+			logMissingCnkiArticle(ctx, ordinal, err)
+			return domain.ArticleRedirect{}, false, nil
+		}
+		return domain.ArticleRedirect{}, false, mapCnkiProviderError(err)
+	}
+	if !cnkiDetailMatchesLocator(detail, article) {
+		return domain.ArticleRedirect{}, false, nil
+	}
+	redirect, err := cnkiAbstractDestination(detail)
+	return redirect, true, err
+}
+
+// cnkiAbstractDestination prefers a present permalink and enforces the exact domestic destination rules.
+func cnkiAbstractDestination(detail any) (domain.ArticleRedirect, error) {
+	location := providerText(providerField(detail, "permalink"))
+	if location == nil {
+		location = providerText(providerField(detail, "article_url"))
+	}
+	if location == nil {
+		return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI detail response omitted its request-time destination")
+	}
+	if !(strings.HasPrefix(*location, "https://navi.cnki.net/") || strings.HasPrefix(*location, "https://kns.cnki.net/") || strings.HasPrefix(*location, "https://www.cnki.net/")) {
+		return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI abstract destination is outside the allowlist")
+	}
+	if strings.Contains(asciiLowerSource(*location), "oversea.cnki.net") {
+		return domain.ArticleRedirect{}, accessFailure(provider.InvalidResponse, "domestic CNKI abstract destination used overseas host")
+	}
+	return domain.ArticleRedirect{Location: *location}, nil
+}
+
+// logMissingCnkiArticle publishes the original safe ordinal and optional HTTP status classification.
+func logMissingCnkiArticle(ctx context.Context, ordinal int, err error) {
+	var failure *cnki.Error
+	errors.As(err, &failure)
+	status, hasStatus := failure.HttpStatus()
+	slog.WarnContext(ctx, "index.provider.article.skipped", "event", "index.provider.article.skipped", "component", "index", "provider", CnkiProviderName, "reason", "permanent_missing", "article_ordinal", ordinal+1, "http_status", status, "has_http_status", hasStatus)
 }

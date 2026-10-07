@@ -77,6 +77,7 @@ func TestZjlibFullTextAuthenticationPrecedesTransport(t *testing.T) {
 	}
 }
 
+// TestZjlibFullTextUsesFreshSessionAndExactTenCandidateMatch verifies exact documents and caller-owned session lifecycle.
 func TestZjlibFullTextUsesFreshSessionAndExactTenCandidateMatch(t *testing.T) {
 	reader := &accessSessionReader{data: &authstorage.CnkiData{SessionData: json.RawMessage(`{"bff_user_token":"fixture-token","cookies":[]}`)}}
 	before := string(reader.data.SessionData)
@@ -96,12 +97,7 @@ func TestZjlibFullTextUsesFreshSessionAndExactTenCandidateMatch(t *testing.T) {
 	article := domain.ArticleLocator{Title: "Exact Article", JournalTitle: "Fixture CNKI Journal", Authors: []string{"Ada Lovelace", "Grace Hopper"}}
 	for range 2 {
 		result, err := access.ResolveFullText(context.Background(), article, domain.ArticleAccessContext{UserId: new(identity.Id(9)), Deadline: deadline})
-		if err != nil || result.Document == nil || result.Redirect != nil {
-			t.Fatalf("%#v %v", result, err)
-		}
-		if result.Document.ContentType != "application/pdf" || *result.Document.Filename != "Exact Article.pdf" || string(result.Document.Bytes) != "%PDF-1.4\n% fixture cnki pdf\n" {
-			t.Fatal(result.Document)
-		}
+		assertExactZjlibDocument(t, result, err)
 	}
 	if created != 2 || closed != 2 || wires[0] == wires[1] || wires[0].limit != 10 || wires[1].limit != 10 || before != string(reader.data.SessionData) {
 		t.Fatal("session lifecycle or search contract changed")
@@ -155,5 +151,16 @@ func TestLiveCnkiAccessCreatesAndClosesEachRequest(t *testing.T) {
 	_, err := access.ResolveAbstract(context.Background(), domain.ArticleLocator{}, domain.ArticleAccessContext{})
 	if !reflect.DeepEqual(err, &provider.Error{Kind: provider.TemporarilyUnavailable, Message: "domestic CNKI transport is unavailable"}) {
 		t.Fatal(err)
+	}
+}
+
+// assertExactZjlibDocument checks the returned kind, MIME type, filename and exact fixture PDF bytes.
+func assertExactZjlibDocument(t *testing.T, result domain.ArticleFullTextResolution, err error) {
+	t.Helper()
+	if err != nil || result.Document == nil || result.Redirect != nil {
+		t.Fatalf("%#v %v", result, err)
+	}
+	if result.Document.ContentType != "application/pdf" || *result.Document.Filename != "Exact Article.pdf" || string(result.Document.Bytes) != "%PDF-1.4\n% fixture cnki pdf\n" {
+		t.Fatal(result.Document)
 	}
 }

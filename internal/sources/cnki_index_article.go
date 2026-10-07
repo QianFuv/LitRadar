@@ -13,6 +13,7 @@ import (
 
 var cnkiPersonalMarker = regexp.MustCompile(`^(?:[0-9]+[.]?)?([\p{Han}·]{2,8})(?:[0-9]+[a-c]?|[a-c]|[①-⑳†‡*]+)?$`)
 
+// cnkiAuthors retains ordered normalized names and strips personal markers only outside organization names.
 func cnkiAuthors(value *string) []domain.ArticleAuthorDraft {
 	authors := []domain.ArticleAuthorDraft{}
 	if value == nil {
@@ -23,20 +24,10 @@ func cnkiAuthors(value *string) []domain.ArticleAuthorDraft {
 		if name == nil {
 			continue
 		}
-		isMarker := true
-		for _, character := range *name {
-			if !(character >= '0' && character <= '9' || character >= '①' && character <= '⑳' || strings.ContainsRune("abc†‡*", character)) {
-				isMarker = false
-				break
-			}
-		}
-		if isMarker {
+		if isCnkiAuthorMarker(*name) {
 			continue
 		}
-		isOrganization := false
-		for _, word := range []string{"组", "委员会", "研究院", "科学院", "研究所", "大学", "中心"} {
-			isOrganization = isOrganization || strings.Contains(*name, word)
-		}
+		isOrganization := isCnkiAuthorOrganization(*name)
 		if !isOrganization {
 			if matched := cnkiPersonalMarker.FindStringSubmatch(*name); matched != nil {
 				name = &matched[1]
@@ -159,4 +150,25 @@ func cnkiLacksAuthorsAndDoi(summary, detail any) bool {
 	}
 	text := providerText(providerField(detail, "doi"))
 	return text == nil || domain.NormalizeDoi(*text) == nil
+}
+
+// isCnkiAuthorMarker recognizes only the original digit, circled-digit and suffix marker characters.
+func isCnkiAuthorMarker(name string) bool {
+	isMarker := true
+	for _, character := range name {
+		if !(character >= '0' && character <= '9' || character >= '①' && character <= '⑳' || strings.ContainsRune("abc†‡*", character)) {
+			isMarker = false
+			break
+		}
+	}
+	return isMarker
+}
+
+// isCnkiAuthorOrganization preserves personal-marker text when an organization word is present.
+func isCnkiAuthorOrganization(name string) bool {
+	isOrganization := false
+	for _, word := range []string{"组", "委员会", "研究院", "科学院", "研究所", "大学", "中心"} {
+		isOrganization = isOrganization || strings.Contains(name, word)
+	}
+	return isOrganization
 }

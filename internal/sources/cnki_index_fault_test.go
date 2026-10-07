@@ -75,6 +75,7 @@ func cnkiTestFetch(index *CnkiIndexProvider, checkpoint *string) (domain.Provide
 	return index.Fetch(context.Background(), domain.JournalCatalogEntry{CatalogId: "J", Title: "Journal"}, domain.IndexFetchContext{Mode: domain.Bootstrap, TraversalCheckpoint: checkpoint})
 }
 
+// TestCnkiRetryCacheRetainsSuccessAndFilterButRefetchesMissing verifies per-invocation success and filtered caches.
 func TestCnkiRetryCacheRetainsSuccessAndFilterButRefetchesMissing(t *testing.T) {
 	index, state := newCnkiIndexTest(t, []any{cnkiTestRow("A"), cnkiTestRow("B"), cnkiTestRow("C"), cnkiTestRow("D")}, 1)
 	calls := map[string]int{}
@@ -98,12 +99,7 @@ func TestCnkiRetryCacheRetainsSuccessAndFilterButRefetchesMissing(t *testing.T) 
 	if err != nil || len(batch.Articles) != 2 || !reflect.DeepEqual(calls, map[string]int{"A": 1, "B": 2, "C": 2, "D": 1}) || state.resets.Load() != 1 || state.clones.Load() != 2 || !reflect.DeepEqual(delays, []time.Duration{time.Second}) {
 		t.Fatalf("batch=%#v err=%v calls=%v reset=%d clones=%d delays=%v", batch, err, calls, state.resets.Load(), state.clones.Load(), delays)
 	}
-	if _, err := cnkiTestFetch(index, nil); err != nil {
-		t.Fatal(err)
-	}
-	if calls["A"] != 2 || calls["D"] != 2 || state.trees.Load() != 2 {
-		t.Fatal("cache escaped Fetch or completed snapshot survived", calls, state.trees.Load())
-	}
+	assertCnkiCacheEndsWithFetch(t, index, state, calls)
 }
 
 func TestCnkiRetryCacheDetectsInPlacePageMutation(t *testing.T) {
@@ -241,5 +237,16 @@ func TestCnkiWorkerCountValidatedBeforeClone(t *testing.T) {
 		if _, err := NewCnkiIndexProviderWithWorkers(&cnkiIndexTestTransport{state: state}, count); err == nil || state.clones.Load() != 0 {
 			t.Fatal("invalid count cloned transport", count, err)
 		}
+	}
+}
+
+// assertCnkiCacheEndsWithFetch checks a new invocation refetches successes and filters and rebuilds its tree.
+func assertCnkiCacheEndsWithFetch(t *testing.T, index *CnkiIndexProvider, state *cnkiIndexTestState, calls map[string]int) {
+	t.Helper()
+	if _, err := cnkiTestFetch(index, nil); err != nil {
+		t.Fatal(err)
+	}
+	if calls["A"] != 2 || calls["D"] != 2 || state.trees.Load() != 2 {
+		t.Fatal("cache escaped Fetch or completed snapshot survived", calls, state.trees.Load())
 	}
 }

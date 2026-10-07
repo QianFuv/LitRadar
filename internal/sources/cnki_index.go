@@ -99,22 +99,39 @@ func (index *CnkiIndexProvider) Fetch(ctx context.Context, catalog domain.Journa
 		batch, err := index.fetchBatch(ctx, catalog, fetch, &details, &cache)
 		attempts = append(attempts, index.client.DrainAttempts()...)
 		attempts = append(attempts, details...)
-		var failure *provider.Error
-		if err == nil || attempt >= 3 || !errors.As(err, &failure) || failure.Kind != provider.TemporarilyUnavailable && failure.Kind != provider.InvalidResponse {
+		failure := cnkiBatchRetryFailure(err, attempt)
+		if failure == nil {
 			if err == nil && batch.Progress.State == domain.Complete {
 				delete(index.snapshots, catalog.CatalogId)
 			}
 			return batch, err
 		}
 		slog.InfoContext(ctx, "index.provider.batch.retry", "event", "index.provider.batch.retry", "component", "index", "provider", CnkiProviderName, "failed_attempt", attempt, "next_attempt", attempt+1, "failure_kind", failure.Kind)
-		if err := index.client.ResetTransientState(ctx); err != nil {
-			return domain.ProviderBatch{}, mapCnkiProviderError(err)
-		}
-		pool := newCnkiDetailPool(index.clone, index.pool.count)
-		index.pool.close()
-		index.pool = pool
-		if err := index.sleep(ctx, time.Second<<(attempt-1)); err != nil {
-			return domain.ProviderBatch{}, mapCnkiProviderError(err)
+		if err := index.resetCnkiBatch(ctx, attempt); err != nil {
+			return domain.ProviderBatch{}, err
 		}
 	}
+}
+
+// cnkiBatchRetryFailure retains the three-attempt ceiling and the two retryable provider classifications.
+func cnkiBatchRetryFailure(err error, attempt int) *provider.Error {
+	var failure *provider.Error
+	if err == nil || attempt >= 3 || !errors.As(err, &failure) || failure.Kind != provider.TemporarilyUnavailable && failure.Kind != provider.InvalidResponse {
+		return nil
+	}
+	return failure
+}
+
+// resetCnkiBatch resets sessions, creates new clones, joins the old pool and sleeps in the original order.
+func (index *CnkiIndexProvider) resetCnkiBatch(ctx context.Context, attempt int) error {
+	if err := index.client.ResetTransientState(ctx); err != nil {
+		return mapCnkiProviderError(err)
+	}
+	pool := newCnkiDetailPool(index.clone, index.pool.count)
+	index.pool.close()
+	index.pool = pool
+	if err := index.sleep(ctx, time.Second<<(attempt-1)); err != nil {
+		return mapCnkiProviderError(err)
+	}
+	return nil
 }

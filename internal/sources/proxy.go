@@ -51,40 +51,9 @@ type ProxySelection struct {
 
 // NewProxySelection validates policy shape and names before the URL, even for a disabled policy.
 func NewProxySelection(proxyUrl, policy string) (ProxySelection, error) {
-	value, err := transport.ParseJson([]byte(policy))
+	object, err := decodeProxyPolicy(policy)
 	if err != nil {
-		return ProxySelection{}, ErrProxyPolicy
-	}
-	object, isObject := value.(map[string]any)
-	if !isObject {
-		return ProxySelection{}, ErrProxyPolicy
-	}
-	for _, value := range object {
-		if _, isBoolean := value.(bool); !isBoolean {
-			return ProxySelection{}, ErrProxyPolicy
-		}
-	}
-	decoder := json.NewDecoder(strings.NewReader(policy))
-	decoder.UseNumber()
-	decoder.Token()
-	for decoder.More() {
-		decoder.Token()
-		var value any
-		if err := decoder.Decode(&value); err != nil {
-			return ProxySelection{}, ErrProxyPolicy
-		}
-		if _, isBoolean := value.(bool); !isBoolean {
-			return ProxySelection{}, ErrProxyPolicy
-		}
-	}
-	known := make(map[string]bool)
-	for _, info := range BuiltInCapabilities() {
-		known[info.Name] = true
-	}
-	for name := range object {
-		if !known[name] {
-			return ProxySelection{}, ErrUnknownProxyProvider
-		}
+		return ProxySelection{}, err
 	}
 	enabled := make(map[string]bool)
 	for name, value := range object {
@@ -146,3 +115,59 @@ func (selection ProxySelection) String() string {
 }
 func (selection ProxySelection) GoString() string     { return selection.String() }
 func (selection ProxySelection) LogValue() slog.Value { return slog.StringValue(selection.String()) }
+
+// decodeProxyPolicy validates complete JSON, every value occurrence and known names before URL parsing.
+func decodeProxyPolicy(policy string) (map[string]any, error) {
+	value, err := transport.ParseJson([]byte(policy))
+	if err != nil {
+		return nil, ErrProxyPolicy
+	}
+	object, isObject := value.(map[string]any)
+	if !isObject {
+		return nil, ErrProxyPolicy
+	}
+	if err := validateProxyPolicyValues(policy, object); err != nil {
+		return nil, err
+	}
+	if err := validateProxyPolicyNames(object); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
+// validateProxyPolicyValues rejects nonboolean duplicates even when later fields overwrite them.
+func validateProxyPolicyValues(policy string, object map[string]any) error {
+	for _, value := range object {
+		if _, isBoolean := value.(bool); !isBoolean {
+			return ErrProxyPolicy
+		}
+	}
+	decoder := json.NewDecoder(strings.NewReader(policy))
+	decoder.UseNumber()
+	decoder.Token()
+	for decoder.More() {
+		decoder.Token()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return ErrProxyPolicy
+		}
+		if _, isBoolean := value.(bool); !isBoolean {
+			return ErrProxyPolicy
+		}
+	}
+	return nil
+}
+
+// validateProxyPolicyNames admits only the built-in logical provider names after value validation.
+func validateProxyPolicyNames(object map[string]any) error {
+	known := make(map[string]bool)
+	for _, info := range BuiltInCapabilities() {
+		known[info.Name] = true
+	}
+	for name := range object {
+		if !known[name] {
+			return ErrUnknownProxyProvider
+		}
+	}
+	return nil
+}
