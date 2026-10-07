@@ -19,59 +19,81 @@ func decodeStruct(data []byte, target any, deniesUnknown bool) error {
 		return errJson
 	}
 	value := reflect.ValueOf(target).Elem()
-	kind := value.Type()
 	data = bytes.TrimSpace(data)
-	fields := map[string]int{}
-	for index := 0; index < kind.NumField(); index++ {
-		fields[kind.Field(index).Tag.Get("json")] = index
-	}
-	seen := make([]bool, kind.NumField())
-	if data[0] == '[' {
-		var sequence []json.RawMessage
-		if json.Unmarshal(data, &sequence) != nil || len(sequence) > kind.NumField() {
-			return errJson
-		}
-		for index := len(sequence); index < kind.NumField(); index++ {
-			if kind.Field(index).Tag.Get("default") != "true" {
-				return errJson
-			}
-		}
-		for index, raw := range sequence {
-			if err := decodeValue(raw, value.Field(index)); err != nil {
-				return err
-			}
-			seen[index] = true
-		}
-	} else if data[0] == '{' {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.Token()
-		for decoder.More() {
-			key, err := decoder.Token()
-			if err != nil {
-				return errJson
-			}
-			var raw json.RawMessage
-			if decoder.Decode(&raw) != nil {
-				return errJson
-			}
-			index, exists := fields[key.(string)]
-			if !exists {
-				if deniesUnknown {
-					return errJson
-				}
-				continue
-			}
-			if seen[index] {
-				return errJson
-			}
-			if err := decodeValue(raw, value.Field(index)); err != nil {
-				return err
-			}
-			seen[index] = true
-		}
-	} else {
+	seen := make([]bool, value.NumField())
+	var err error
+	switch data[0] {
+	case '[':
+		err = decodeSequence(data, value, seen)
+	case '{':
+		err = decodeObject(data, value, seen, deniesUnknown)
+	default:
 		return errJson
 	}
+	if err != nil {
+		return err
+	}
+	return defaultMissingFields(value, seen)
+}
+
+// decodeSequence validates trailing defaults before assigning positional fields.
+func decodeSequence(data []byte, value reflect.Value, seen []bool) error {
+	var sequence []json.RawMessage
+	if json.Unmarshal(data, &sequence) != nil || len(sequence) > value.NumField() {
+		return errJson
+	}
+	for index := len(sequence); index < value.NumField(); index++ {
+		if value.Type().Field(index).Tag.Get("default") != "true" {
+			return errJson
+		}
+	}
+	for index, raw := range sequence {
+		if err := decodeValue(raw, value.Field(index)); err != nil {
+			return err
+		}
+		seen[index] = true
+	}
+	return nil
+}
+
+// decodeObject rejects repeated known fields and optionally rejects unknown fields.
+func decodeObject(data []byte, value reflect.Value, seen []bool, deniesUnknown bool) error {
+	fields := map[string]int{}
+	for index := 0; index < value.NumField(); index++ {
+		fields[value.Type().Field(index).Tag.Get("json")] = index
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.Token()
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return errJson
+		}
+		var raw json.RawMessage
+		if decoder.Decode(&raw) != nil {
+			return errJson
+		}
+		index, exists := fields[key.(string)]
+		if !exists {
+			if deniesUnknown {
+				return errJson
+			}
+			continue
+		}
+		if seen[index] {
+			return errJson
+		}
+		if err := decodeValue(raw, value.Field(index)); err != nil {
+			return err
+		}
+		seen[index] = true
+	}
+	return nil
+}
+
+// defaultMissingFields preserves omitted nullable fields and initializes default slices.
+func defaultMissingFields(value reflect.Value, seen []bool) error {
+	kind := value.Type()
 	for index, hasField := range seen {
 		if !hasField && kind.Field(index).Type.Kind() != reflect.Pointer {
 			if kind.Field(index).Tag.Get("default") != "true" {
@@ -99,23 +121,28 @@ func decodeValue(raw []byte, value reflect.Value) error {
 		return errJson
 	}
 	if value.Kind() == reflect.Slice {
-		var items []json.RawMessage
-		if json.Unmarshal(raw, &items) != nil {
-			return errJson
-		}
-		value.Set(reflect.MakeSlice(value.Type(), len(items), len(items)))
-		for index, item := range items {
-			if err := decodeValue(item, value.Index(index)); err != nil {
-				return err
-			}
-		}
-		return nil
+		return decodeSlice(raw, value)
 	}
 	if value.Kind() != reflect.Struct && !jsonvalue.ValidJson(string(raw)) {
 		return errJson
 	}
 	if json.Unmarshal(raw, value.Addr().Interface()) != nil {
 		return errJson
+	}
+	return nil
+}
+
+// decodeSlice applies the same strict value contract to each array element.
+func decodeSlice(raw []byte, value reflect.Value) error {
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) != nil {
+		return errJson
+	}
+	value.Set(reflect.MakeSlice(value.Type(), len(items), len(items)))
+	for index, item := range items {
+		if err := decodeValue(item, value.Index(index)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

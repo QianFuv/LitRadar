@@ -26,35 +26,20 @@ func expression(pattern string) *regexp.Regexp {
 	if cached, ok := expressions.Load(pattern); ok {
 		return cached.(*regexp.Regexp)
 	}
+	compiled := regexp.MustCompile(translatePattern(pattern))
+	actual, _ := expressions.LoadOrStore(pattern, compiled)
+	return actual.(*regexp.Regexp)
+}
+
+// translatePattern expands Unicode classes while preserving assertion capture placeholders.
+func translatePattern(pattern string) string {
 	var translated strings.Builder
 	isClass := false
 	for index := 0; index < len(pattern); index++ {
 		character := pattern[index]
 		if character == '\\' && index+1 < len(pattern) {
 			index++
-			var replacement string
-			switch pattern[index] {
-			case 's':
-				replacement = `\t\n\v\f\r\x{85}\p{Z}`
-			case 'w':
-				replacement = `\p{L}\p{M}\p{Nd}\p{Pc}\x{200c}\x{200d}\x{2160}-\x{2188}`
-			case 'd':
-				replacement = `\p{Nd}`
-			case 'b':
-				translated.WriteString(`(?P<boundary>)`)
-				continue
-			default:
-				translated.WriteByte('\\')
-				translated.WriteByte(pattern[index])
-				continue
-			}
-			if !isClass {
-				translated.WriteByte('[')
-			}
-			translated.WriteString(replacement)
-			if !isClass {
-				translated.WriteByte(']')
-			}
+			writePatternEscape(&translated, pattern[index], isClass)
 			continue
 		}
 		if character == '[' {
@@ -65,9 +50,34 @@ func expression(pattern string) *regexp.Regexp {
 		}
 		translated.WriteByte(character)
 	}
-	compiled := regexp.MustCompile(translated.String())
-	actual, _ := expressions.LoadOrStore(pattern, compiled)
-	return actual.(*regexp.Regexp)
+	return translated.String()
+}
+
+// writePatternEscape keeps class expansions unwrapped inside an existing character class.
+func writePatternEscape(translated *strings.Builder, character byte, isClass bool) {
+	var replacement string
+	switch character {
+	case 's':
+		replacement = `\t\n\v\f\r\x{85}\p{Z}`
+	case 'w':
+		replacement = `\p{L}\p{M}\p{Nd}\p{Pc}\x{200c}\x{200d}\x{2160}-\x{2188}`
+	case 'd':
+		replacement = `\p{Nd}`
+	case 'b':
+		translated.WriteString(`(?P<boundary>)`)
+		return
+	default:
+		translated.WriteByte('\\')
+		translated.WriteByte(character)
+		return
+	}
+	if !isClass {
+		translated.WriteByte('[')
+	}
+	translated.WriteString(replacement)
+	if !isClass {
+		translated.WriteByte(']')
+	}
 }
 
 func isWord(character rune) bool {
@@ -79,33 +89,41 @@ func captures(pattern, text string) [][]int {
 	compiled := expression(pattern)
 	result := [][]int{}
 	for _, found := range compiled.FindAllStringSubmatchIndex(text, -1) {
-		filtered := append([]int{}, found[:2]...)
-		isValid := true
-		for index, name := range compiled.SubexpNames()[1:] {
-			start, end := found[(index+1)*2], found[(index+1)*2+1]
-			if name != "boundary" {
-				filtered = append(filtered, start, end)
-				continue
-			}
-			if start < 0 {
-				continue
-			}
-			before, after := rune(0), rune(0)
-			if start > 0 {
-				before, _ = utf8.DecodeLastRuneInString(text[:start])
-			}
-			if start < len(text) {
-				after, _ = utf8.DecodeRuneInString(text[start:])
-			}
-			if isWord(before) == isWord(after) {
-				isValid = false
-			}
-		}
+		filtered, isValid := filterCaptureBoundaries(compiled.SubexpNames()[1:], found, text)
 		if isValid {
 			result = append(result, filtered)
 		}
 	}
 	return result
+}
+
+// filterCaptureBoundaries removes assertion-only groups without shifting public captures.
+func filterCaptureBoundaries(names []string, found []int, text string) ([]int, bool) {
+	filtered := append([]int{}, found[:2]...)
+	isValid := true
+	for index, name := range names {
+		start, end := found[(index+1)*2], found[(index+1)*2+1]
+		if name != "boundary" {
+			filtered = append(filtered, start, end)
+			continue
+		}
+		if start >= 0 && !isWordBoundary(text, start) {
+			isValid = false
+		}
+	}
+	return filtered, isValid
+}
+
+// isWordBoundary compares Unicode word membership on either side of a byte offset.
+func isWordBoundary(text string, position int) bool {
+	before, after := rune(0), rune(0)
+	if position > 0 {
+		before, _ = utf8.DecodeLastRuneInString(text[:position])
+	}
+	if position < len(text) {
+		after, _ = utf8.DecodeRuneInString(text[position:])
+	}
+	return isWord(before) != isWord(after)
 }
 
 func matches(pattern, value string) bool { return len(captures("(?i)"+pattern, value)) != 0 }
@@ -202,12 +220,9 @@ func clauses(value string) []string {
 			start = end
 		case '.', '!', '?':
 			end := position + 1
-			remaining := value[end:]
-			first, _ := utf8.DecodeRuneInString(remaining)
-			trimmed := strings.TrimLeftFunc(remaining, unicode.IsSpace)
-			if unicode.IsSpace(first) && len(trimmed) > 0 && trimmed[0] >= 'A' && trimmed[0] <= 'Z' {
+			if next, isSentence := nextSentence(value, end); isSentence {
 				result = append(result, value[start:end])
-				start = end + len(remaining) - len(trimmed)
+				start = next
 			}
 		}
 	}
@@ -215,6 +230,14 @@ func clauses(value string) []string {
 		result = append(result, value[start:])
 	}
 	return result
+}
+
+// nextSentence recognizes whitespace followed by an ASCII uppercase sentence start.
+func nextSentence(value string, end int) (int, bool) {
+	remaining := value[end:]
+	first, _ := utf8.DecodeRuneInString(remaining)
+	trimmed := strings.TrimLeftFunc(remaining, unicode.IsSpace)
+	return end + len(remaining) - len(trimmed), unicode.IsSpace(first) && len(trimmed) > 0 && trimmed[0] >= 'A' && trimmed[0] <= 'Z'
 }
 
 // windowDates returns whether a range was recognized separately from its calendar validity.
@@ -239,50 +262,68 @@ func windowDates(text, context string, stage Stage) (string, string, bool) {
 		if !hasNumericBoundaries(text, capture[0], capture[1]) {
 			return "", "", false
 		}
-		numericGroups := [][]int{{2, 4, 5}, {1, 3, 5}, {1, 2, 4}}
-		for _, position := range numericGroups[index] {
-			if _, err := strconv.Atoi(group(text, capture, position)); err != nil {
-				return "", "", false
-			}
-		}
-		var year, startMonth, startDay, endMonth, endDay int
-		switch index {
-		case 0:
-			if matches(`\band\b`, group(text, capture, 0)) && !matches(`between|window|period|期间|窗口`, context) {
-				return "", "", true
-			}
-			year = number(group(text, capture, 5))
-			startMonth = monthNumber(group(text, capture, 1))
-			startDay = number(group(text, capture, 2))
-			endMonth = startMonth
-			if value := group(text, capture, 3); value != "" {
-				endMonth = monthNumber(value)
-			}
-			endDay = number(group(text, capture, 4))
-		case 1:
-			year = number(group(text, capture, 5))
-			startMonth = monthNumber(group(text, capture, 2))
-			startDay = number(group(text, capture, 1))
-			endMonth = monthNumber(group(text, capture, 4))
-			endDay = number(group(text, capture, 3))
-		case 2:
-			year = number(group(text, capture, 4))
-			startMonth = monthNumber(group(text, capture, 3))
-			startDay = number(group(text, capture, 1))
-			endMonth = startMonth
-			endDay = number(group(text, capture, 2))
-		}
-		startYear := year
-		if startMonth > endMonth {
-			startYear--
-		}
-		start, end := calendarDate(startYear, startMonth, startDay), calendarDate(year, endMonth, endDay)
-		if start == "" || end == "" || start > end {
-			return "", "", true
-		}
-		return start, end, true
+		return parseWindowCapture(text, context, capture, index)
 	}
 	return "", "", false
+}
+
+// parseWindowCapture distinguishes recognized invalid ranges from unparsed numeric captures.
+func parseWindowCapture(text, context string, capture []int, index int) (string, string, bool) {
+	numericGroups := [][]int{{2, 4, 5}, {1, 3, 5}, {1, 2, 4}}
+	if !hasIntegerGroups(text, capture, numericGroups[index]) {
+		return "", "", false
+	}
+	if index == 0 && matches(`\band\b`, group(text, capture, 0)) && !matches(`between|window|period|期间|窗口`, context) {
+		return "", "", true
+	}
+	year, startMonth, startDay, endMonth, endDay := windowComponents(text, capture, index)
+	startYear := year
+	if startMonth > endMonth {
+		startYear--
+	}
+	start, end := calendarDate(startYear, startMonth, startDay), calendarDate(year, endMonth, endDay)
+	if start == "" || end == "" || start > end {
+		return "", "", true
+	}
+	return start, end, true
+}
+
+// hasIntegerGroups rejects Unicode digits which the regex recognizes but Atoi cannot convert.
+func hasIntegerGroups(text string, capture, positions []int) bool {
+	for _, position := range positions {
+		if _, err := strconv.Atoi(group(text, capture, position)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// windowComponents converts each supported shorthand layout into calendar components.
+func windowComponents(text string, capture []int, index int) (year, startMonth, startDay, endMonth, endDay int) {
+	switch index {
+	case 0:
+		year = number(group(text, capture, 5))
+		startMonth = monthNumber(group(text, capture, 1))
+		startDay = number(group(text, capture, 2))
+		endMonth = startMonth
+		if value := group(text, capture, 3); value != "" {
+			endMonth = monthNumber(value)
+		}
+		endDay = number(group(text, capture, 4))
+	case 1:
+		year = number(group(text, capture, 5))
+		startMonth = monthNumber(group(text, capture, 2))
+		startDay = number(group(text, capture, 1))
+		endMonth = monthNumber(group(text, capture, 4))
+		endDay = number(group(text, capture, 3))
+	case 2:
+		year = number(group(text, capture, 4))
+		startMonth = monthNumber(group(text, capture, 3))
+		startDay = number(group(text, capture, 1))
+		endMonth = startMonth
+		endDay = number(group(text, capture, 2))
+	}
+	return
 }
 
 // ParseDates returns nil for conflicting/underspecified gates and a non-nil empty slice for no dates.
@@ -290,98 +331,180 @@ func ParseDates(value string, entryStage Stage) []Date {
 	dates := []Date{}
 	unresolved := map[Stage]bool{}
 	parts := clauses(CleanText(value))
-	for index, clause := range parts {
-		text := matchingText(clause)
-		context := clause
-		if dateStage(clause, entryStage) == "" {
-			previous := ""
-			if index > 0 {
-				previous = parts[index-1]
-			}
-			context = previous + " " + clause
-		}
-		stage := dateStage(context, entryStage)
-		if stage == "" {
+	for index := range parts {
+		clause := interpretDateClause(parts, index, entryStage)
+		if clause.stage == "" {
 			continue
 		}
-		submissionStage := entryStage
-		if stage.IsSubmission() {
-			submissionStage = stage
-		}
-		isOptional := matches(`optional|if desired|not required|not a prerequisite|可选|自愿|非必需`, context)
-		if start, end, hasWindow := windowDates(text, context, stage); hasWindow {
-			if start == "" {
-				return nil
-			}
-			dates = append(dates, Date{Date: start, Stage: Opens, OriginalText: clause, IsOptional: isOptional}, Date{Date: end, Stage: submissionStage, OriginalText: clause, IsOptional: isOptional})
-			continue
-		}
-		found := [][]int{}
-		for _, capture := range captures(datePattern, text) {
-			if hasNumericBoundaries(text, capture[0], capture[1]) {
-				found = append(found, capture)
-			}
-		}
-		if len(found) == 0 && (matches(`following.{0,30}(?:timetable|timeline|schedule)|submission (?:stage|information)`, context) || !matches(`deadline|due\b|no later than|\bbefore\b|\bby\b|close|submissions? (?:open|window|period)|截[稿止]|投稿时间|征稿时间|TBD|to be (?:announced|determined)`, context)) {
-			continue
-		}
-		if len(found) == 0 && !isOptional {
-			unresolved[stage] = true
-		}
-		if len(found) == 0 && (stage == Opens || stage.IsSubmission()) && matches(`\d`, clause) {
+		parsed, isUnresolved, isValid := clause.parse()
+		if !isValid {
 			return nil
 		}
-		for matchIndex, capture := range found {
-			year, month, day := "", "", ""
-			for _, position := range []int{1, 6, 9} {
-				if field := group(text, capture, position); field != "" {
-					year = field
-					break
-				}
-			}
-			for _, position := range []int{3, 4, 8} {
-				if field := group(text, capture, position); field != "" {
-					day = field
-					break
-				}
-			}
-			month = group(text, capture, 2)
-			monthValue := number(month)
-			if month == "" {
-				name := group(text, capture, 5)
-				if name == "" {
-					name = group(text, capture, 7)
-				}
-				monthValue = monthNumber(name)
-			}
-			if _, err := strconv.Atoi(year); err != nil {
-				return nil
-			}
-			if _, err := strconv.Atoi(day); err != nil {
-				return nil
-			}
-			if month != "" {
-				if _, err := strconv.Atoi(month); err != nil {
-					return nil
-				}
-			}
-			date := calendarDate(number(year), monthValue, number(day))
-			if date == "" {
-				if stage == Opens || stage.IsSubmission() {
-					return nil
-				}
-				continue
-			}
-			resolved := stage
-			if len(found) == 2 && matches(`window|period|between|窗口|期间`, context) {
-				resolved = submissionStage
-				if matchIndex == 0 {
-					resolved = Opens
-				}
-			}
-			dates = append(dates, Date{Date: date, Stage: resolved, OriginalText: clause, IsOptional: isOptional, IsExclusive: matches(`日前|日之前`, clause) || matches(`\bbefore(?:\s+the)?(?:\s+\w+day,?)?\s*$`, text[:capture[0]])})
+		if isUnresolved {
+			unresolved[clause.stage] = true
+		}
+		dates = append(dates, parsed...)
+	}
+	return reconcileDates(dates, unresolved, entryStage)
+}
+
+// dateClause separates original metadata from normalized matching text and inherited context.
+type dateClause struct {
+	original        string
+	text            string
+	context         string
+	stage           Stage
+	submissionStage Stage
+	isOptional      bool
+}
+
+// interpretDateClause consults only the immediately preceding clause when a stage is absent.
+func interpretDateClause(parts []string, index int, entryStage Stage) dateClause {
+	clause := parts[index]
+	context := clause
+	if dateStage(clause, entryStage) == "" {
+		previous := ""
+		if index > 0 {
+			previous = parts[index-1]
+		}
+		context = previous + " " + clause
+	}
+	stage := dateStage(context, entryStage)
+	submissionStage := entryStage
+	if stage.IsSubmission() {
+		submissionStage = stage
+	}
+	return dateClause{original: clause, text: matchingText(clause), context: context, stage: stage, submissionStage: submissionStage, isOptional: matches(`optional|if desired|not required|not a prerequisite|可选|自愿|非必需`, context)}
+}
+
+// parse retains invalid-window precedence and distinguishes unresolved labels from numeric gates.
+func (clause dateClause) parse() ([]Date, bool, bool) {
+	if start, end, hasWindow := windowDates(clause.text, clause.context, clause.stage); hasWindow {
+		if start == "" {
+			return nil, false, false
+		}
+		return []Date{{Date: start, Stage: Opens, OriginalText: clause.original, IsOptional: clause.isOptional}, {Date: end, Stage: clause.submissionStage, OriginalText: clause.original, IsOptional: clause.isOptional}}, false, true
+	}
+	found := boundedDateCaptures(clause.text)
+	if len(found) == 0 {
+		if clause.isNonDateLabel() {
+			return nil, false, true
+		}
+		if isCalendarGate(clause.stage) && matches(`\d`, clause.original) {
+			return nil, false, false
+		}
+		return nil, !clause.isOptional, true
+	}
+	dates, isValid := clause.parseCaptures(found)
+	return dates, false, isValid
+}
+
+// boundedDateCaptures rejects full-date substrings embedded in longer numeric tokens.
+func boundedDateCaptures(text string) [][]int {
+	found := [][]int{}
+	for _, capture := range captures(datePattern, text) {
+		if hasNumericBoundaries(text, capture[0], capture[1]) {
+			found = append(found, capture)
 		}
 	}
+	return found
+}
+
+// isNonDateLabel excludes timetable introductions and context without a gate announcement.
+func (clause dateClause) isNonDateLabel() bool {
+	return matches(`following.{0,30}(?:timetable|timeline|schedule)|submission (?:stage|information)`, clause.context) || !matches(`deadline|due\b|no later than|\bbefore\b|\bby\b|close|submissions? (?:open|window|period)|截[稿止]|投稿时间|征稿时间|TBD|to be (?:announced|determined)`, clause.context)
+}
+
+// isCalendarGate identifies dates whose invalid calendar values prevent admission.
+func isCalendarGate(stage Stage) bool {
+	return stage == Opens || stage.IsSubmission()
+}
+
+// parseCaptures keeps invalid editorial dates skippable while rejecting invalid gate dates.
+func (clause dateClause) parseCaptures(found [][]int) ([]Date, bool) {
+	dates := []Date{}
+	for index, capture := range found {
+		date, hasValidNumbers := capturedCalendarDate(clause.text, capture)
+		if !hasValidNumbers {
+			return nil, false
+		}
+		if date == "" {
+			if isCalendarGate(clause.stage) {
+				return nil, false
+			}
+			continue
+		}
+		dates = append(dates, Date{Date: date, Stage: clause.captureStage(index, len(found)), OriginalText: clause.original, IsOptional: clause.isOptional, IsExclusive: matches(`日前|日之前`, clause.original) || matches(`\bbefore(?:\s+the)?(?:\s+\w+day,?)?\s*$`, clause.text[:capture[0]])})
+	}
+	return dates, true
+}
+
+// captureStage treats exactly two fully specified window dates as opening and admission.
+func (clause dateClause) captureStage(index, count int) Stage {
+	if count == 2 && matches(`window|period|between|窗口|期间`, clause.context) {
+		if index == 0 {
+			return Opens
+		}
+		return clause.submissionStage
+	}
+	return clause.stage
+}
+
+// firstCapturedGroup selects the first populated alternative without changing capture numbering.
+func firstCapturedGroup(text string, capture, positions []int) string {
+	for _, position := range positions {
+		if field := group(text, capture, position); field != "" {
+			return field
+		}
+	}
+	return ""
+}
+
+// capturedCalendarDate separates numeric conversion failures from invalid calendar dates.
+func capturedCalendarDate(text string, capture []int) (string, bool) {
+	year := firstCapturedGroup(text, capture, []int{1, 6, 9})
+	day := firstCapturedGroup(text, capture, []int{3, 4, 8})
+	month := group(text, capture, 2)
+	monthValue := number(month)
+	if month == "" {
+		monthValue = monthNumber(firstCapturedGroup(text, capture, []int{5, 7}))
+	}
+	if _, err := strconv.Atoi(year); err != nil {
+		return "", false
+	}
+	if _, err := strconv.Atoi(day); err != nil {
+		return "", false
+	}
+	if month != "" {
+		if _, err := strconv.Atoi(month); err != nil {
+			return "", false
+		}
+	}
+	return calendarDate(number(year), monthValue, number(day)), true
+}
+
+// reconcileDates preserves deduplication, unresolved-gate, extension and chronology ordering.
+func reconcileDates(dates []Date, unresolved map[Stage]bool, entryStage Stage) []Date {
+	unique := uniqueDates(dates)
+	if hasUnresolvedGate(unique, unresolved) {
+		return nil
+	}
+	for _, stage := range []Stage{Opens, Paper, Abstract, Proposal} {
+		var isValid bool
+		unique, isValid = resolveDateExtensions(unique, stage)
+		if !isValid {
+			return nil
+		}
+	}
+	start, end := firstStageDate(unique, Opens), firstStageDate(unique, entryStage)
+	if start != nil && end != nil && start.Date > end.Date {
+		return nil
+	}
+	return unique
+}
+
+// uniqueDates retains first-position ordering and replaces duplicate metadata with the last clause.
+func uniqueDates(dates []Date) []Date {
 	unique := []Date{}
 	for _, date := range dates {
 		index := slices.IndexFunc(unique, func(existing Date) bool { return existing.Stage == date.Stage && existing.Date == date.Date })
@@ -391,42 +514,36 @@ func ParseDates(value string, entryStage Stage) []Date {
 			unique[index] = date
 		}
 	}
-	for _, stage := range []Stage{Opens, Abstract, Proposal} {
-		if unresolved[stage] && !slices.ContainsFunc(unique, func(date Date) bool { return date.Stage == stage }) && slices.ContainsFunc(unique, func(date Date) bool { return date.Stage.IsSubmission() }) {
-			return nil
-		}
-	}
-	for _, stage := range []Stage{Opens, Paper, Abstract, Proposal} {
-		count := 0
-		extensions := []Date{}
-		for _, date := range unique {
-			if date.Stage == stage && !date.IsOptional {
-				count++
-				if matches(`extended|延期|延长`, date.OriginalText) {
-					extensions = append(extensions, date)
-				}
-			}
-		}
-		if count > 1 {
-			if len(extensions) != 1 {
-				return nil
-			}
-			unique = slices.DeleteFunc(unique, func(date Date) bool { return date.Stage == stage && date != extensions[0] })
-		}
-	}
-	var start, end *Date
-	for _, date := range unique {
-		if date.Stage == Opens && start == nil {
-			copy := date
-			start = &copy
-		}
-		if date.Stage == entryStage && end == nil {
-			copy := date
-			end = &copy
-		}
-	}
-	if start != nil && end != nil && start.Date > end.Date {
-		return nil
-	}
 	return unique
+}
+
+// hasUnresolvedGate rejects missing opening/abstract/proposal gates only beside a submission.
+func hasUnresolvedGate(dates []Date, unresolved map[Stage]bool) bool {
+	for _, stage := range []Stage{Opens, Abstract, Proposal} {
+		if unresolved[stage] && !slices.ContainsFunc(dates, func(date Date) bool { return date.Stage == stage }) && slices.ContainsFunc(dates, func(date Date) bool { return date.Stage.IsSubmission() }) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveDateExtensions requires exactly one mandatory extension to replace competing dates.
+func resolveDateExtensions(dates []Date, stage Stage) ([]Date, bool) {
+	count := 0
+	extensions := []Date{}
+	for _, date := range dates {
+		if date.Stage == stage && !date.IsOptional {
+			count++
+			if matches(`extended|延期|延长`, date.OriginalText) {
+				extensions = append(extensions, date)
+			}
+		}
+	}
+	if count <= 1 {
+		return dates, true
+	}
+	if len(extensions) != 1 {
+		return nil, false
+	}
+	return slices.DeleteFunc(dates, func(date Date) bool { return date.Stage == stage && date != extensions[0] }), true
 }
