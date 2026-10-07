@@ -121,3 +121,19 @@ func TestLateMalformedAuthorsRollBackWholeMigration(t *testing.T) {
 		})
 	}
 }
+
+// TestRepeatedJournalIssnsRetainOneOwner covers duplicate legacy identity sources.
+func TestRepeatedJournalIssnsRetainOneOwner(t *testing.T) {
+	filename, _ := copyFixture(t, fixtures(t)[0])
+	mutateFixture(t, filename, `UPDATE journals SET issns_json='["1234-5679","0378-5955","1234-5679"]',issn='1234-5679',eissn='0378-5955' WHERE journal_id=1`)
+	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{4, 9}) {
+		t.Fatalf("repeated identifiers rejected: %+v %v", summary, err)
+	}
+	inspectConnection(t, filename, func(connection *sql.Conn) {
+		actual := stringsFromQuery(t, connection, "SELECT identity_kind||'|'||identity_value||'|'||canonical_catalog_id FROM journal_identity_keys ORDER BY identity_kind,identity_value")
+		expected := []string{"catalog_id|journal-one|journal-one", "catalog_id|journal-two|journal-two", "issn|0378-5955|journal-one", "issn|1234-5679|journal-one", "issn|2049-3630|journal-two"}
+		if !reflect.DeepEqual(actual, expected) {
+			t.Fatalf("identity ownership: %v", actual)
+		}
+	})
+}

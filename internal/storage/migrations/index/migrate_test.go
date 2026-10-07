@@ -74,48 +74,67 @@ func stringsFromQuery(t *testing.T, connection *sql.Conn, statement string, args
 	return result
 }
 
+// TestFreshEmptyAndLegacyDatabaseEntrances covers admitted empty and rejected legacy files.
 func TestFreshEmptyAndLegacyDatabaseEntrances(t *testing.T) {
 	ctx := context.Background()
 	for _, isEmptyFile := range []bool{false, true} {
-		filename := filepath.Join(t.TempDir(), "nested", "content.sqlite")
-		if isEmptyFile {
-			if err := os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filename, nil, 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if result, err := Migrate(ctx, filename); err != nil || result != (Summary{0, 9}) {
-			t.Fatalf("%+v %v", result, err)
-		}
+		assertFreshDatabaseEntrance(t, ctx, isEmptyFile)
 	}
 	for _, version := range []int{0, 1, 2, 3, 10} {
-		filename := filepath.Join(t.TempDir(), "legacy.sqlite")
-		database, err := storage.OpenMigration(filename)
-		if err != nil {
+		assertRejectedDatabaseEntrance(t, ctx, version)
+	}
+}
+
+// assertFreshDatabaseEntrance checks missing and zero-byte databases reach the current version.
+func assertFreshDatabaseEntrance(t *testing.T, ctx context.Context, isEmptyFile bool) {
+	t.Helper()
+	filename := filepath.Join(t.TempDir(), "nested", "content.sqlite")
+	if isEmptyFile {
+		if err := os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := database.Exec("CREATE TABLE legacy(value TEXT); PRAGMA user_version=" + strconv.Itoa(version)); err != nil {
+		if err := os.WriteFile(filename, nil, 0600); err != nil {
 			t.Fatal(err)
 		}
-		database.Close()
-		before, err := os.ReadFile(filename)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, failure := Migrate(ctx, filename)
-		if failure == nil {
-			t.Fatal("unsupported database accepted")
-		}
-		var future UnsupportedVersion
-		var rebuild RebuildRequired
-		if version == 10 && !errors.As(failure, &future) || version < 10 && !errors.As(failure, &rebuild) {
-			t.Fatalf("wrong classification: %v", failure)
-		}
-		after, err := os.ReadFile(filename)
-		if err != nil || !bytes.Equal(before, after) {
-			t.Fatal("rejected file changed")
-		}
+	}
+	if result, err := Migrate(ctx, filename); err != nil || result != (Summary{0, 9}) {
+		t.Fatalf("%+v %v", result, err)
+	}
+}
+
+// assertRejectedDatabaseEntrance checks rejection leaves the exact historical file unchanged.
+func assertRejectedDatabaseEntrance(t *testing.T, ctx context.Context, version int) {
+	t.Helper()
+	filename := filepath.Join(t.TempDir(), "legacy.sqlite")
+	database, err := storage.OpenMigration(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("CREATE TABLE legacy(value TEXT); PRAGMA user_version=" + strconv.Itoa(version)); err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+	before, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, failure := Migrate(ctx, filename)
+	assertRejectedEntranceClassification(t, version, failure)
+	after, err := os.ReadFile(filename)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("rejected file changed")
+	}
+}
+
+// assertRejectedEntranceClassification distinguishes unsupported future and rebuild entrances.
+func assertRejectedEntranceClassification(t *testing.T, version int, failure error) {
+	t.Helper()
+	if failure == nil {
+		t.Fatal("unsupported database accepted")
+	}
+	var future UnsupportedVersion
+	var rebuild RebuildRequired
+	if version == 10 && !errors.As(failure, &future) || version < 10 && !errors.As(failure, &rebuild) {
+		t.Fatalf("wrong classification: %v", failure)
 	}
 }
