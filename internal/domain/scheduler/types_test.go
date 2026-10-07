@@ -8,16 +8,7 @@ import (
 
 func TestSchedulerStateWireAndLegacyMapping(t *testing.T) {
 	for _, state := range []State{Idle, Pending, Claimed, Running, Success, Failed, TimedOut, Error, Unknown, Cancelled} {
-		encoded, err := json.Marshal(state)
-		if err != nil || string(encoded) != `"`+string(state)+`"` {
-			t.Fatalf("%s: %s %v", state, encoded, err)
-		}
-		for _, raw := range []string{string(encoded), `{` + string(encoded) + `:null}`} {
-			var decoded State
-			if err := json.Unmarshal([]byte(raw), &decoded); err != nil || decoded != state {
-				t.Fatalf("%s: %s %v", raw, decoded, err)
-			}
-		}
+		assertSchedulerStateWire(t, state)
 	}
 	for _, raw := range []string{`"timeout"`, `""`, `"legacy"`, `null`, `{}`, `[]`, `{"success":null,"failed":null}`, `{"success":null,"success":null}`, `{"success":true}`} {
 		var state State
@@ -39,5 +30,20 @@ func TestSchedulerValidationIsDistinctFromStoredJsonFailure(t *testing.T) {
 	err := json.Unmarshal([]byte(`{"kind":"unknown"}`), &job)
 	if err == nil || errors.As(err, &validation) {
 		t.Fatal("corrupt stored job was misclassified as input validation")
+	}
+}
+
+// assertSchedulerStateWire verifies exact enum marshaling and both retained wire representations.
+func assertSchedulerStateWire(t *testing.T, state State) {
+	t.Helper()
+	encoded, err := json.Marshal(state)
+	if err != nil || string(encoded) != `"`+string(state)+`"` {
+		t.Fatalf("%s: %s %v", state, encoded, err)
+	}
+	for _, raw := range []string{string(encoded), `{` + string(encoded) + `:null}`} {
+		var decoded State
+		if err := json.Unmarshal([]byte(raw), &decoded); err != nil || decoded != state {
+			t.Fatalf("%s: %s %v", raw, decoded, err)
+		}
 	}
 }

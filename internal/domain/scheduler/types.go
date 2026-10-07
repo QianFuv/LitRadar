@@ -52,72 +52,104 @@ func (job Job) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON rejects unknown fields, duplicate fields, null booleans and lossy strings.
 func (job *Job) UnmarshalJSON(data []byte) error {
 	invalid := errors.New("invalid scheduled job JSON")
-	if !jsonvalue.ValidJson(string(data)) {
-		return invalid
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('{') {
-		return invalid
-	}
-	fields := map[string]json.RawMessage{}
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return invalid
-		}
-		name, ok := token.(string)
-		if !ok {
-			return invalid
-		}
-		if _, exists := fields[name]; exists {
-			return invalid
-		}
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil {
-			return invalid
-		}
-		fields[name] = raw
+	fields, err := scheduledJobFields(data, invalid)
+	if err != nil {
+		return err
 	}
 	var result Job
 	if raw, ok := fields["kind"]; !ok || json.Unmarshal(raw, &result.Kind) != nil || result.Kind == "" {
 		return invalid
 	}
 	for name, raw := range fields {
-		var target any
-		switch name {
-		case "kind":
+		if name == "kind" {
 			continue
-		case "metadata_file":
-			if result.Kind == "index" {
-				target = &result.MetadataFile
-			}
-		case "notify":
-			if result.Kind == "index" && string(raw) != "null" {
-				target = &result.Notify
-			}
-		case "push":
-			if result.Kind == "index" && string(raw) != "null" {
-				target = &result.Push
-			}
-		case "database":
-			if result.Kind == "notify" || result.Kind == "push" {
-				target = &result.Database
-			}
-		case "max_candidates":
-			if result.Kind == "notify" || result.Kind == "push" {
-				target = &result.MaxCandidates
-			}
 		}
+		target := scheduledJobFieldTarget(&result, name, raw)
 		if target == nil || json.Unmarshal(raw, target) != nil {
 			return invalid
 		}
 	}
-	if result.Kind != "index" && result.Kind != "notify" && result.Kind != "push" {
+	if !isScheduledJobKind(result.Kind) {
 		return invalid
 	}
 	*job = result
 	return nil
+}
+
+// scheduledJobFields validates the entire JSON before retaining duplicate-free object field bytes.
+func scheduledJobFields(data []byte, invalid error) (map[string]json.RawMessage, error) {
+	if !jsonvalue.ValidJson(string(data)) {
+		return nil, invalid
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, invalid
+	}
+	fields := map[string]json.RawMessage{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, invalid
+		}
+		name, ok := token.(string)
+		if !ok {
+			return nil, invalid
+		}
+		if _, exists := fields[name]; exists {
+			return nil, invalid
+		}
+		var raw json.RawMessage
+		if decoder.Decode(&raw) != nil {
+			return nil, invalid
+		}
+		fields[name] = raw
+	}
+	return fields, nil
+}
+
+// scheduledJobFieldTarget admits only the active variant without invoking business validation.
+func scheduledJobFieldTarget(job *Job, name string, raw json.RawMessage) any {
+	if job.Kind == "index" {
+		return indexJobFieldTarget(job, name, raw)
+	}
+	if job.Kind == "notify" || job.Kind == "push" {
+		return deliveryJobFieldTarget(job, name)
+	}
+	return nil
+}
+
+// indexJobFieldTarget retains nullable metadata and nonnullable boolean fields.
+func indexJobFieldTarget(job *Job, name string, raw json.RawMessage) any {
+	switch name {
+	case "metadata_file":
+		return &job.MetadataFile
+	case "notify", "push":
+		if string(raw) == "null" {
+			return nil
+		}
+		if name == "notify" {
+			return &job.Notify
+		}
+		return &job.Push
+	}
+	return nil
+}
+
+// deliveryJobFieldTarget retains nullable database and uint64 candidate pointer fields.
+func deliveryJobFieldTarget(job *Job, name string) any {
+	switch name {
+	case "database":
+		return &job.Database
+	case "max_candidates":
+		return &job.MaxCandidates
+	}
+	return nil
+}
+
+// isScheduledJobKind recognizes the exact three decoded application variants.
+func isScheduledJobKind(kind string) bool {
+	return kind == "index" || kind == "notify" || kind == "push"
 }
 
 // Validate checks the original filename and candidate allowlists without normalizing values.
@@ -144,7 +176,7 @@ func validateFilename(value *string, extension, label string) error {
 	}
 	isAllowed := len(*value) > 0 && len(*value) <= 128 && !strings.HasPrefix(*value, ".") && !strings.Contains(*value, "..") && strings.HasSuffix(*value, extension)
 	for _, character := range *value {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-') {
+		if !isScheduledFilenameCharacter(character) {
 			isAllowed = false
 		}
 	}
@@ -175,32 +207,9 @@ func (state *State) UnmarshalJSON(data []byte) error {
 		return invalid
 	}
 	data = bytes.TrimSpace(data)
-	var name string
-	if data[0] == '"' {
-		if json.Unmarshal(data, &name) != nil {
-			return invalid
-		}
-	} else if data[0] == '{' {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.Token()
-		if !decoder.More() {
-			return invalid
-		}
-		token, err := decoder.Token()
-		if err != nil {
-			return invalid
-		}
-		var ok bool
-		name, ok = token.(string)
-		if !ok {
-			return invalid
-		}
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil || !bytes.Equal(raw, []byte("null")) || decoder.More() {
-			return invalid
-		}
-	} else {
-		return invalid
+	name, err := scheduledStateWireName(data, invalid)
+	if err != nil {
+		return err
 	}
 	value := State(name)
 	switch value {
@@ -308,4 +317,41 @@ type Status struct {
 	LastCheckedAt *float64 `json:"last_checked_at"`
 	Workers       []Worker `json:"workers"`
 	RecentRuns    []Run    `json:"recent_runs"`
+}
+
+// isScheduledFilenameCharacter preserves the ASCII-only basename alphabet without normalization.
+func isScheduledFilenameCharacter(character rune) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-'
+}
+
+// scheduledStateWireName reads a validated string or exactly one externally tagged null state.
+func scheduledStateWireName(data []byte, invalid error) (string, error) {
+	var name string
+	if data[0] == '"' {
+		if json.Unmarshal(data, &name) != nil {
+			return "", invalid
+		}
+	} else if data[0] == '{' {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.Token()
+		if !decoder.More() {
+			return "", invalid
+		}
+		token, err := decoder.Token()
+		if err != nil {
+			return "", invalid
+		}
+		var ok bool
+		name, ok = token.(string)
+		if !ok {
+			return "", invalid
+		}
+		var raw json.RawMessage
+		if decoder.Decode(&raw) != nil || !bytes.Equal(raw, []byte("null")) || decoder.More() {
+			return "", invalid
+		}
+	} else {
+		return "", invalid
+	}
+	return name, nil
 }
