@@ -2,6 +2,7 @@ package maintenance
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -57,74 +58,96 @@ func EnsureInactive(ctx context.Context, configuration config.Config, now int64)
 	if err != nil || !present {
 		return err
 	}
-	info, err := os.Lstat(configuration.IndexControlDir)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return invalid("index control target must be a regular directory")
-	}
-	entries, err := os.ReadDir(configuration.IndexControlDir)
+	entries, err := readControlEntries(configuration.IndexControlDir)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".sqlite") || name == ".sqlite" {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return invalid("index control databases must be regular files")
-		}
-		if !utf8.ValidString(name) {
-			return invalid("index control filenames must be valid UTF-8")
-		}
-		if err := checkLeases(ctx, filepath.Join(configuration.IndexControlDir, name), name, now); err != nil {
+		if err := checkControlDatabase(ctx, configuration.IndexControlDir, entry, now); err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
+// readControlEntries rejects links before reading the control directory.
+func readControlEntries(directory string) ([]os.DirEntry, error) {
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, invalid("index control target must be a regular directory")
+	}
+	return os.ReadDir(directory)
+}
+
+// checkControlDatabase skips unrelated names before admitting and checking one control file.
+func checkControlDatabase(ctx context.Context, directory string, entry os.DirEntry, now int64) error {
+	name := entry.Name()
+	if !strings.HasSuffix(name, ".sqlite") || name == ".sqlite" {
+		return nil
+	}
+	info, err := entry.Info()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return invalid("index control databases must be regular files")
+	}
+	if !utf8.ValidString(name) {
+		return invalid("index control filenames must be valid UTF-8")
+	}
+	return checkLeases(ctx, filepath.Join(directory, name), name, now)
+}
+
+// checkLeases admits batch and provider leases in their original priority order.
 func checkLeases(ctx context.Context, filename, name string, now int64) error {
 	database, err := storage.Open(filename, true, 1)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
-	for _, lease := range []struct{ table, kind, query string }{
+	for _, lease := range []leaseCheck{
 		{"index_batch_lease", "index batch lease", "SELECT expires_at FROM index_batch_lease WHERE lease_key=1 AND expires_at>?"},
 		{"provider_leases", "Provider lease", "SELECT MAX(expires_at) FROM provider_leases WHERE expires_at>?"},
 	} {
-		var present bool
-		if err := database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?)", lease.table).Scan(&present); err != nil {
+		if err := checkLease(ctx, database, lease, name, now); err != nil {
 			return err
 		}
-		if !present {
-			continue
-		}
-		rows, err := database.QueryContext(ctx, lease.query, now)
-		if err != nil {
-			return err
-		}
-		var expiration storage.OptionalInteger
-		if rows.Next() {
-			err = rows.Scan(&expiration)
-		}
-		rowError := rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
-		if rowError != nil {
-			return rowError
-		}
-		if expiration.Value != nil {
-			return Failure{Code: "active_lease", Message: fmt.Sprintf("index storage optimization refused because %s in %s remains leased until %d", lease.kind, name, *expiration.Value)}
-		}
+	}
+	return nil
+}
+
+type leaseCheck struct{ table, kind, query string }
+
+// checkLease closes queried rows before classifying scan, iteration or active-lease results.
+func checkLease(ctx context.Context, database *sql.DB, lease leaseCheck, name string, now int64) error {
+	var present bool
+	if err := database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?)", lease.table).Scan(&present); err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
+	rows, err := database.QueryContext(ctx, lease.query, now)
+	if err != nil {
+		return err
+	}
+	var expiration storage.OptionalInteger
+	if rows.Next() {
+		err = rows.Scan(&expiration)
+	}
+	rowError := rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if rowError != nil {
+		return rowError
+	}
+	if expiration.Value != nil {
+		return Failure{Code: "active_lease", Message: fmt.Sprintf("index storage optimization refused because %s in %s remains leased until %d", lease.kind, name, *expiration.Value)}
 	}
 	return nil
 }
@@ -161,80 +184,120 @@ type directorySnapshot struct {
 	bytes     uint64
 }
 
+// inspectDirectory retains admitted databases on entry or deferred sidecar validation failure.
 func inspectDirectory(configuration config.Config) (directorySnapshot, error) {
 	result := directorySnapshot{databases: []sourceDatabase{}}
 	present, err := exists(configuration.IndexDir)
 	if err != nil || !present {
 		return result, err
 	}
-	info, err := os.Lstat(configuration.IndexDir)
+	entries, err := readIndexEntries(configuration.IndexDir)
 	if err != nil {
 		return result, err
+	}
+	sidecars, err := inspectIndexEntries(configuration.IndexDir, entries, &result)
+	if err != nil {
+		return result, err
+	}
+	if err := validateIndexSidecars(sidecars, result.databases); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+type indexSidecar struct {
+	name, database, kind string
+	size                 int64
+}
+
+// readIndexEntries preserves platform-specific directory permission admission before enumeration.
+func readIndexEntries(directory string) ([]os.DirEntry, error) {
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return nil, err
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return result, invalid("index target must be a regular directory")
+		return nil, invalid("index target must be a regular directory")
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0222 == 0 {
-		return result, invalid("index target must be writable for directory replacement")
+		return nil, invalid("index target must be writable for directory replacement")
 	}
-	entries, err := os.ReadDir(configuration.IndexDir)
-	if err != nil {
-		return result, err
-	}
-	type sidecar struct {
-		name, database, kind string
-		size                 int64
-	}
-	sidecars := []sidecar{}
+	return os.ReadDir(directory)
+}
+
+// inspectIndexEntries admits every entry before validating collected sidecar relationships.
+func inspectIndexEntries(directory string, entries []os.DirEntry, result *directorySnapshot) ([]indexSidecar, error) {
+	sidecars := []indexSidecar{}
 	for _, entry := range entries {
-		info, err := entry.Info()
+		info, err := admitIndexEntry(entry)
 		if err != nil {
-			return result, err
-		}
-		if !info.Mode().IsRegular() {
-			return result, invalid("index directory entries must be regular files")
-		}
-		if info.Mode().Perm()&0222 == 0 {
-			return result, invalid("index database and sidecar files must be writable for replacement")
+			return sidecars, err
 		}
 		name := entry.Name()
-		if !utf8.ValidString(name) {
-			return result, invalid("index filenames must be valid UTF-8")
-		}
 		if strings.HasSuffix(name, ".sqlite") {
-			result.databases = append(result.databases, sourceDatabase{name, filepath.Join(configuration.IndexDir, name), uint64(info.Size()), info.ModTime(), 0})
+			result.databases = append(result.databases, sourceDatabase{name, filepath.Join(directory, name), uint64(info.Size()), info.ModTime(), 0})
 			result.bytes += uint64(info.Size())
 			continue
 		}
-		isSidecar := false
-		for _, kind := range []string{"wal", "shm", "journal"} {
-			suffix := "-" + kind
-			if strings.HasSuffix(name, suffix) && strings.HasSuffix(strings.TrimSuffix(name, suffix), ".sqlite") {
-				sidecars = append(sidecars, sidecar{name, strings.TrimSuffix(name, suffix), kind, info.Size()})
-				isSidecar = true
-				break
-			}
-		}
+		sidecar, isSidecar := identifyIndexSidecar(name, info.Size())
 		if !isSidecar {
-			return result, invalid("unexpected file exists beside index databases")
+			return sidecars, invalid("unexpected file exists beside index databases")
+		}
+		sidecars = append(sidecars, sidecar)
+	}
+	return sidecars, nil
+}
+
+// admitIndexEntry checks metadata, file type, permission bits and filename in that order.
+func admitIndexEntry(entry os.DirEntry) (os.FileInfo, error) {
+	info, err := entry.Info()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, invalid("index directory entries must be regular files")
+	}
+	if info.Mode().Perm()&0222 == 0 {
+		return nil, invalid("index database and sidecar files must be writable for replacement")
+	}
+	if !utf8.ValidString(entry.Name()) {
+		return nil, invalid("index filenames must be valid UTF-8")
+	}
+	return info, nil
+}
+
+// identifyIndexSidecar recognizes the ordered SQLite sidecar suffixes.
+func identifyIndexSidecar(name string, size int64) (indexSidecar, bool) {
+	for _, kind := range []string{"wal", "shm", "journal"} {
+		suffix := "-" + kind
+		if strings.HasSuffix(name, suffix) && strings.HasSuffix(strings.TrimSuffix(name, suffix), ".sqlite") {
+			return indexSidecar{name, strings.TrimSuffix(name, suffix), kind, size}, true
 		}
 	}
+	return indexSidecar{}, false
+}
+
+// validateIndexSidecars requires a parent before checking sidecar content.
+func validateIndexSidecars(sidecars []indexSidecar, databases []sourceDatabase) error {
 	for _, sidecar := range sidecars {
-		found := false
-		for _, database := range result.databases {
-			if database.name == sidecar.database {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return result, invalid("orphaned SQLite sidecar " + sidecar.name)
+		if !hasSidecarDatabase(sidecar.database, databases) {
+			return invalid("orphaned SQLite sidecar " + sidecar.name)
 		}
 		if sidecar.kind != "shm" && sidecar.size != 0 {
-			return result, invalid(fmt.Sprintf("non-empty SQLite %s sidecar %s", sidecar.kind, sidecar.name))
+			return invalid(fmt.Sprintf("non-empty SQLite %s sidecar %s", sidecar.kind, sidecar.name))
 		}
 	}
-	return result, nil
+	return nil
+}
+
+// hasSidecarDatabase searches the admitted database inventory in encounter order.
+func hasSidecarDatabase(name string, databases []sourceDatabase) bool {
+	for _, database := range databases {
+		if database.name == name {
+			return true
+		}
+	}
+	return false
 }
 func sourceVersion(ctx context.Context, source sourceDatabase) (int64, error) {
 	version := int64(0)

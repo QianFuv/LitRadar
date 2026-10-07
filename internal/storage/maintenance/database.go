@@ -146,6 +146,8 @@ func buildDatabase(ctx context.Context, source sourceDatabase, destination strin
 	}
 	return os.Chmod(destination, info.Mode())
 }
+
+// copyCanonical retains the transaction rollback until copy and post-commit maintenance finish.
 func copyCanonical(ctx context.Context, source sourceDatabase, destination string) error {
 	database, err := storage.Open(destination, false, 1)
 	if err != nil {
@@ -160,30 +162,67 @@ func copyCanonical(ctx context.Context, source sourceDatabase, destination strin
 	if _, err := connection.ExecContext(ctx, "PRAGMA foreign_keys=ON; PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA temp_store=FILE;"); err != nil {
 		return err
 	}
-	rows, err := connection.QueryContext(ctx, "SELECT name,sql FROM sqlite_schema WHERE type='index' AND sql IS NOT NULL ORDER BY name")
+	indexes, err := prepareCanonicalIndexes(ctx, connection)
 	if err != nil {
 		return err
+	}
+	if err := attachCanonicalSource(ctx, connection, source.path); err != nil {
+		return err
+	}
+	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	if err := copyCanonicalTables(ctx, connection); err != nil {
+		return err
+	}
+	if _, err := connection.ExecContext(ctx, "COMMIT; DETACH DATABASE source;"); err != nil {
+		return err
+	}
+	if err := restoreCanonicalIndexes(ctx, connection, indexes); err != nil {
+		return err
+	}
+	_, err = connection.ExecContext(ctx, "INSERT INTO article_search(article_search) VALUES('optimize'); ANALYZE; VACUUM; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")
+	return err
+}
+
+// readCanonicalIndexes closes all definition rows before any index mutation.
+func readCanonicalIndexes(ctx context.Context, connection *sql.Conn) ([][2]string, error) {
+	rows, err := connection.QueryContext(ctx, "SELECT name,sql FROM sqlite_schema WHERE type='index' AND sql IS NOT NULL ORDER BY name")
+	if err != nil {
+		return nil, err
 	}
 	indexes := [][2]string{}
 	for rows.Next() {
 		var name, definition storage.Text
 		if err := rows.Scan(&name, &definition); err != nil {
 			rows.Close()
-			return err
+			return nil, err
 		}
 		indexes = append(indexes, [2]string{string(name), string(definition)})
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return err
+		return nil, err
+	}
+	return indexes, nil
+}
+
+// prepareCanonicalIndexes reads and drops explicit destination indexes in name order.
+func prepareCanonicalIndexes(ctx context.Context, connection *sql.Conn) ([][2]string, error) {
+	indexes, err := readCanonicalIndexes(ctx, connection)
+	if err != nil {
+		return nil, err
 	}
 	for _, index := range indexes {
 		if _, err := connection.ExecContext(ctx, "DROP INDEX "+quote(index[0])); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	uri, err := sourceUri(source.path)
+	return indexes, nil
+}
+
+// attachCanonicalSource attaches the immutable source and starts the copy transaction.
+func attachCanonicalSource(ctx context.Context, connection *sql.Conn, filename string) error {
+	uri, err := sourceUri(filename)
 	if err != nil {
 		return err
 	}
@@ -193,7 +232,11 @@ func copyCanonical(ctx context.Context, source sourceDatabase, destination strin
 	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	return nil
+}
+
+// copyCanonicalTables copies the declared canonical tables before rebuilding search.
+func copyCanonicalTables(ctx context.Context, connection *sql.Conn) error {
 	for _, table := range tables {
 		statement := "INSERT INTO main." + table.name + " (" + table.columns + ") SELECT " + table.columns + " FROM source." + table.name
 		if _, err := connection.ExecContext(ctx, statement); err != nil {
@@ -203,16 +246,17 @@ func copyCanonical(ctx context.Context, source sourceDatabase, destination strin
 	if err := search.Rebuild(ctx, connection); err != nil {
 		return err
 	}
-	if _, err := connection.ExecContext(ctx, "COMMIT; DETACH DATABASE source;"); err != nil {
-		return err
-	}
+	return nil
+}
+
+// restoreCanonicalIndexes restores each saved definition after commit and detach.
+func restoreCanonicalIndexes(ctx context.Context, connection *sql.Conn, indexes [][2]string) error {
 	for _, index := range indexes {
 		if _, err := connection.ExecContext(ctx, index[1]); err != nil {
 			return err
 		}
 	}
-	_, err = connection.ExecContext(ctx, "INSERT INTO article_search(article_search) VALUES('optimize'); ANALYZE; VACUUM; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")
-	return err
+	return nil
 }
 
 func countTable(ctx context.Context, connection *sql.Conn, database, table string) (uint64, error) {
