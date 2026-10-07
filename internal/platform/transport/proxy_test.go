@@ -110,6 +110,7 @@ func TestSocksDnsAndAuthentication(t *testing.T) {
 	}
 }
 
+// serveSocksFixture owns one connection and its deadline throughout the protocol exchange.
 func serveSocksFixture(listener net.Listener, scheme string) error {
 	connection, err := listener.Accept()
 	if err != nil {
@@ -119,68 +120,15 @@ func serveSocksFixture(listener net.Listener, scheme string) error {
 	connection.SetDeadline(time.Now().Add(3 * time.Second))
 	reader := bufio.NewReader(connection)
 	header := make([]byte, 2)
-	if _, err := io.ReadFull(reader, header); err != nil {
+	if err := socksFixtureGreeting(reader, connection, header); err != nil {
 		return err
 	}
-	methods := make([]byte, int(header[1]))
-	if _, err := io.ReadFull(reader, methods); err != nil {
+	if err := socksFixtureAuthentication(reader, connection, header); err != nil {
 		return err
 	}
-	if header[0] != 5 {
-		return fmt.Errorf("invalid SOCKS version")
-	}
-	connection.Write([]byte{5, 2})
-	if _, err := io.ReadFull(reader, header); err != nil {
+	if err := socksFixtureDestination(reader, connection, header, scheme); err != nil {
 		return err
 	}
-	user := make([]byte, int(header[1]))
-	if _, err := io.ReadFull(reader, user); err != nil {
-		return err
-	}
-	length, err := reader.ReadByte()
-	if err != nil {
-		return err
-	}
-	password := make([]byte, int(length))
-	if _, err := io.ReadFull(reader, password); err != nil {
-		return err
-	}
-	if string(user) != "fixture" || string(password) != "password" {
-		return fmt.Errorf("invalid SOCKS credentials")
-	}
-	connection.Write([]byte{1, 0})
-	request := make([]byte, 4)
-	if _, err := io.ReadFull(reader, request); err != nil {
-		return err
-	}
-	var address []byte
-	switch request[3] {
-	case 1:
-		address = make([]byte, 4)
-	case 4:
-		address = make([]byte, 16)
-	case 3:
-		size, err := reader.ReadByte()
-		if err != nil {
-			return err
-		}
-		address = make([]byte, int(size))
-	default:
-		return fmt.Errorf("invalid ATYP")
-	}
-	if _, err := io.ReadFull(reader, address); err != nil {
-		return err
-	}
-	if _, err := io.ReadFull(reader, header); err != nil {
-		return err
-	}
-	if scheme == "socks5" && request[3] == 3 {
-		return fmt.Errorf("local DNS leaked domain")
-	}
-	if scheme == "socks5h" && (request[3] != 3 || string(address) != "only-proxy-knows.invalid") {
-		return fmt.Errorf("remote DNS lost domain")
-	}
-	connection.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 31, 144})
 	message, err := http.ReadRequest(reader)
 	if err != nil {
 		return err
@@ -229,4 +177,90 @@ func TestAmbientProxyIsDisabledWithPositiveControl(t *testing.T) {
 	if originCalls.Load() != 1 || proxyCalls.Load() != 1 {
 		t.Fatalf("direct=%d ambient-control=%d", originCalls.Load(), proxyCalls.Load())
 	}
+}
+
+// socksFixtureGreeting consumes the offered methods before checking the protocol version.
+func socksFixtureGreeting(reader *bufio.Reader, connection net.Conn, header []byte) error {
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return err
+	}
+	methods := make([]byte, int(header[1]))
+	if _, err := io.ReadFull(reader, methods); err != nil {
+		return err
+	}
+	if header[0] != 5 {
+		return fmt.Errorf("invalid SOCKS version")
+	}
+	connection.Write([]byte{5, 2})
+	return nil
+}
+
+// socksFixtureAuthentication verifies the exact synthetic credentials after ordered byte reads.
+func socksFixtureAuthentication(reader *bufio.Reader, connection net.Conn, header []byte) error {
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return err
+	}
+	user := make([]byte, int(header[1]))
+	if _, err := io.ReadFull(reader, user); err != nil {
+		return err
+	}
+	length, err := reader.ReadByte()
+	if err != nil {
+		return err
+	}
+	password := make([]byte, int(length))
+	if _, err := io.ReadFull(reader, password); err != nil {
+		return err
+	}
+	if string(user) != "fixture" || string(password) != "password" {
+		return fmt.Errorf("invalid SOCKS credentials")
+	}
+	connection.Write([]byte{1, 0})
+	return nil
+}
+
+// socksFixtureDestination validates the DNS address policy after consuming the address and port.
+func socksFixtureDestination(reader *bufio.Reader, connection net.Conn, header []byte, scheme string) error {
+	request := make([]byte, 4)
+	if _, err := io.ReadFull(reader, request); err != nil {
+		return err
+	}
+	address, err := socksFixtureAddress(reader, request[3])
+	if err != nil {
+		return err
+	}
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return err
+	}
+	if scheme == "socks5" && request[3] == 3 {
+		return fmt.Errorf("local DNS leaked domain")
+	}
+	if scheme == "socks5h" && (request[3] != 3 || string(address) != "only-proxy-knows.invalid") {
+		return fmt.Errorf("remote DNS lost domain")
+	}
+	connection.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 31, 144})
+	return nil
+}
+
+// socksFixtureAddress reads only the address framing selected by the SOCKS address type.
+func socksFixtureAddress(reader *bufio.Reader, addressType byte) ([]byte, error) {
+	var address []byte
+	switch addressType {
+	case 1:
+		address = make([]byte, 4)
+	case 4:
+		address = make([]byte, 16)
+	case 3:
+		size, err := reader.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		address = make([]byte, int(size))
+	default:
+		return nil, fmt.Errorf("invalid ATYP")
+	}
+	if _, err := io.ReadFull(reader, address); err != nil {
+		return nil, err
+	}
+	return address, nil
 }
