@@ -57,27 +57,14 @@ func TestForcedManualFinalizationPreservesReplacementOwnerAndTerminalResult(t *t
 	}
 	dispatcher := manualDispatcher{repository: repository}
 	active := &manualChild{runId: run.Id, ownerId: "previous", stopKind: "shutdown"}
-	if err := dispatcher.finalizeForced(active); err != nil {
-		t.Fatal(err)
-	}
-	stored, err := repository.LoadRun(context.Background(), run.Id)
-	if err != nil || stored.Revision != claimed.Run.Revision || stored.OwnerId == nil || *stored.OwnerId != "replacement" {
-		t.Fatal("forced termination overwrote replacement ownership", stored, err)
-	}
+	assertReplacementManualOwnerProtected(t, &dispatcher, active, claimed.Run.Revision)
 	active.ownerId = "replacement"
-	if err := dispatcher.finalizeForced(active); err != nil {
-		t.Fatal(err)
-	}
-	stored, err = repository.LoadRun(context.Background(), run.Id)
-	if err != nil || stored.Status != delivery.RunStatusUnknown || stored.ErrorCode == nil || *stored.ErrorCode != "forced_shutdown_unknown" {
-		t.Fatal("owned ambiguous run was not quarantined", stored, err)
-	}
-	revision := stored.Revision
+	revision := assertOwnedManualRunQuarantined(t, &dispatcher, active)
 	active.stopKind = "deadline"
 	if err := dispatcher.finalizeForced(active); err != nil {
 		t.Fatal(err)
 	}
-	stored, err = repository.LoadRun(context.Background(), run.Id)
+	stored, err := repository.LoadRun(context.Background(), run.Id)
 	if err != nil || stored.Revision != revision || *stored.ErrorCode != "forced_shutdown_unknown" {
 		t.Fatal("terminal result was overwritten", stored, err)
 	}
@@ -156,4 +143,30 @@ func TestManualShutdownReapsChildBeforeQuarantiningOwnedRun(t *testing.T) {
 	if err != nil || stored.Status != delivery.RunStatusUnknown || stored.ErrorCode == nil || *stored.ErrorCode != "forced_shutdown_unknown" || len(dispatcher.children) != 0 {
 		t.Fatal(fmt.Sprint("shutdown state: ", stored, err))
 	}
+}
+
+// assertReplacementManualOwnerProtected checks stale finalization cannot alter the replacement owner.
+func assertReplacementManualOwnerProtected(t *testing.T, dispatcher *manualDispatcher, active *manualChild, claimedRevision int64) {
+	t.Helper()
+	if err := dispatcher.finalizeForced(active); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := dispatcher.repository.LoadRun(context.Background(), active.runId)
+	if err != nil || stored.Revision != claimedRevision || stored.OwnerId == nil || *stored.OwnerId != "replacement" {
+		t.Fatal("forced termination overwrote replacement ownership", stored, err)
+	}
+}
+
+// assertOwnedManualRunQuarantined checks owned ambiguous finalization before terminal preservation.
+func assertOwnedManualRunQuarantined(t *testing.T, dispatcher *manualDispatcher, active *manualChild) int64 {
+	t.Helper()
+	if err := dispatcher.finalizeForced(active); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := dispatcher.repository.LoadRun(context.Background(), active.runId)
+	if err != nil || stored.Status != delivery.RunStatusUnknown || stored.ErrorCode == nil || *stored.ErrorCode != "forced_shutdown_unknown" {
+		t.Fatal("owned ambiguous run was not quarantined", stored, err)
+	}
+	revision := stored.Revision
+	return revision
 }

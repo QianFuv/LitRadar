@@ -58,31 +58,8 @@ func (configuration *Config) ApplyRuntimeSettings(values []settings.Value) error
 		if err != nil {
 			return err
 		}
-		switch value.Field {
-		case "cors_allowed_origins":
-			configuration.ApiOptions.CorsOrigins = commaValues(canonical)
-		case "mcp_allowed_hosts":
-			configuration.ApiOptions.McpHosts = commaValues(canonical)
-		case "mcp_allowed_origins":
-			configuration.ApiOptions.McpOrigins = commaValues(canonical)
-		case "secure_cookies":
-			configuration.ApiOptions.AreCookiesSecure = canonical == "true"
-		case "trusted_proxy_cidrs":
-			prefixes := []netip.Prefix{}
-			for _, value := range commaValues(canonical) {
-				prefix, err := netip.ParsePrefix(value)
-				if err != nil {
-					return err
-				}
-				prefixes = append(prefixes, prefix)
-			}
-			configuration.ApiOptions.TrustedProxies = prefixes
-		case "auth_rate_limit_policy":
-			policy, err := settings.ParseRateLimitPolicy(canonical)
-			if err != nil {
-				return err
-			}
-			configuration.ApiOptions.RateLimit = policy
+		if err := configuration.applyCanonicalRuntimeSetting(value.Field, canonical); err != nil {
+			return err
 		}
 	}
 	if configuration.AreSecureCookiesRequired && !configuration.ApiOptions.AreCookiesSecure {
@@ -96,4 +73,44 @@ func commaValues(value string) []string {
 		return []string{}
 	}
 	return strings.Split(value, ",")
+}
+
+// applyCanonicalRuntimeSetting applies one policy field after its known-setting normalization.
+func (configuration *Config) applyCanonicalRuntimeSetting(field, canonical string) error {
+	switch field {
+	case "cors_allowed_origins":
+		configuration.ApiOptions.CorsOrigins = commaValues(canonical)
+	case "mcp_allowed_hosts":
+		configuration.ApiOptions.McpHosts = commaValues(canonical)
+	case "mcp_allowed_origins":
+		configuration.ApiOptions.McpOrigins = commaValues(canonical)
+	case "secure_cookies":
+		configuration.ApiOptions.AreCookiesSecure = canonical == "true"
+	case "trusted_proxy_cidrs":
+		prefixes, err := runtimeProxyPrefixes(canonical)
+		if err != nil {
+			return err
+		}
+		configuration.ApiOptions.TrustedProxies = prefixes
+	case "auth_rate_limit_policy":
+		policy, err := settings.ParseRateLimitPolicy(canonical)
+		if err != nil {
+			return err
+		}
+		configuration.ApiOptions.RateLimit = policy
+	}
+	return nil
+}
+
+// runtimeProxyPrefixes parses all trusted networks before replacing the prior proxy policy.
+func runtimeProxyPrefixes(canonical string) ([]netip.Prefix, error) {
+	prefixes := []netip.Prefix{}
+	for _, value := range commaValues(canonical) {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, err
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	return prefixes, nil
 }

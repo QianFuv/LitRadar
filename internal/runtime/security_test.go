@@ -50,44 +50,16 @@ func writeManifest(t *testing.T, root string) cspManifest {
 func TestCspStartupRejectsMissingStaleUnsafeAndMalformedExport(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "index.html")
-	if err := os.WriteFile(filename, []byte("<script>ready=true;</script>"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadSecurityPolicy(root); err == nil || !strings.Contains(err.Error(), "CSP manifest metadata") {
-		t.Fatal(err)
-	}
-	manifest := writeManifest(t, root)
-	policy, err := loadSecurityPolicy(root)
-	if err != nil || !strings.Contains(policy, "'"+manifest.ScriptHashes[0]+"'") {
-		t.Fatal(policy, err)
-	}
-	if err := os.WriteFile(filename, []byte("<script>ready=false;</script>"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadSecurityPolicy(root); err == nil || err.Error() != "CSP manifest does not match the deployed static HTML" {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filename, []byte{255}, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadSecurityPolicy(root); err == nil || !strings.Contains(err.Error(), "valid UTF-8") {
-		t.Fatal(err)
-	}
+	assertInitialCspPolicy(t, root, filename)
+	assertStaleAndInvalidCspHtml(t, root, filename)
 	if err := os.WriteFile(filename, []byte("<html>no script</html>"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	manifest = writeManifest(t, root)
+	manifest := writeManifest(t, root)
 	if len(manifest.ScriptHashes) != 0 {
 		t.Fatal(manifest)
 	}
-	for _, contents := range []string{`{"version":1,"version":1,"algorithm":"sha256","files":[],"script_hashes":[]}`, `{"version":1,"algorithm":"sha256","files":[],"script_hashes":[],"extra":1}`, `{"version":1,"algorithm":"sha256","files":[],"script_hashes":null}`, `{"version":1,"algorithm":"sha256","files":[{"path":"\ud800","html_sha256":"x","inline_script_hashes":[]}],"script_hashes":[]}`} {
-		if err := os.WriteFile(filepath.Join(root, "csp-hashes.json"), []byte(contents), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := loadSecurityPolicy(root); err == nil || !strings.Contains(err.Error(), "Invalid CSP manifest") {
-			t.Fatal(contents, err)
-		}
-	}
+	assertMalformedCspManifests(t, root)
 	writeManifest(t, root)
 	if err := os.Symlink(filename, filepath.Join(root, "linked.js")); err != nil {
 		t.Skip("host does not permit creating symbolic links")
@@ -132,5 +104,51 @@ func TestCspMatchesBuiltFrontendManifest(t *testing.T) {
 	policy, err := loadSecurityPolicy(root)
 	if err != nil || !strings.Contains(policy, "sha256-") {
 		t.Fatal(policy, err)
+	}
+}
+
+// assertInitialCspPolicy checks missing manifest admission and exact initial script-hash policy.
+func assertInitialCspPolicy(t *testing.T, root, filename string) {
+	t.Helper()
+	if err := os.WriteFile(filename, []byte("<script>ready=true;</script>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSecurityPolicy(root); err == nil || !strings.Contains(err.Error(), "CSP manifest metadata") {
+		t.Fatal(err)
+	}
+	manifest := writeManifest(t, root)
+	policy, err := loadSecurityPolicy(root)
+	if err != nil || !strings.Contains(policy, "'"+manifest.ScriptHashes[0]+"'") {
+		t.Fatal(policy, err)
+	}
+}
+
+// assertStaleAndInvalidCspHtml checks stale deployment and UTF-8 failure before valid empty scripts.
+func assertStaleAndInvalidCspHtml(t *testing.T, root, filename string) {
+	t.Helper()
+	if err := os.WriteFile(filename, []byte("<script>ready=false;</script>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSecurityPolicy(root); err == nil || err.Error() != "CSP manifest does not match the deployed static HTML" {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filename, []byte{255}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSecurityPolicy(root); err == nil || !strings.Contains(err.Error(), "valid UTF-8") {
+		t.Fatal(err)
+	}
+}
+
+// assertMalformedCspManifests checks every malformed manifest before the final symlink scenario.
+func assertMalformedCspManifests(t *testing.T, root string) {
+	t.Helper()
+	for _, contents := range []string{`{"version":1,"version":1,"algorithm":"sha256","files":[],"script_hashes":[]}`, `{"version":1,"algorithm":"sha256","files":[],"script_hashes":[],"extra":1}`, `{"version":1,"algorithm":"sha256","files":[],"script_hashes":null}`, `{"version":1,"algorithm":"sha256","files":[{"path":"\ud800","html_sha256":"x","inline_script_hashes":[]}],"script_hashes":[]}`} {
+		if err := os.WriteFile(filepath.Join(root, "csp-hashes.json"), []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadSecurityPolicy(root); err == nil || !strings.Contains(err.Error(), "Invalid CSP manifest") {
+			t.Fatal(contents, err)
+		}
 	}
 }

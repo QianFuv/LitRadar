@@ -58,17 +58,7 @@ func coordinate(ctx context.Context, components []component) error {
 	defer cancel()
 	results := make(chan componentResult, len(components))
 	for _, current := range components {
-		go func() {
-			var result error
-			defer func() {
-				if recover() != nil {
-					observability.ReportPanic(serviceContext)
-					result = errors.New("component task failed")
-				}
-				results <- componentResult{current.name, result}
-			}()
-			result = current.run(serviceContext)
-		}()
+		go runCoordinatedComponent(serviceContext, current, results)
 	}
 	remaining := len(components)
 	var failure error
@@ -80,17 +70,7 @@ func coordinate(ctx context.Context, components []component) error {
 		slog.InfoContext(ctx, "service.shutdown.requested", "event", "service.shutdown.requested", "component", "runtime", "reason", "signal")
 	case first := <-results:
 		remaining--
-		outcome, kind := "failure", "component_failure"
-		if first.err == nil {
-			outcome, kind = "unexpected_stop", "unexpected_stop"
-		}
-		slog.ErrorContext(ctx, "service.component.failed", "event", "service.component.failed", "component", first.name, "outcome", outcome, "error_kind", kind)
-		if first.err == nil && ctx.Err() == nil {
-			first.err = errors.New("component stopped unexpectedly")
-		}
-		if first.err != nil && !isOnlyCancellation(first.err) {
-			failure = fmt.Errorf("%s: %w", first.name, first.err)
-		}
+		failure = firstComponentFailure(ctx, first)
 	}
 	cancel()
 	for remaining > 0 {
@@ -285,3 +265,32 @@ func waitDuration(ctx context.Context, duration time.Duration) bool {
 }
 
 func unixTime() float64 { return float64(time.Now().UnixNano()) / 1e9 }
+
+// runCoordinatedComponent preserves guarded execution and a deferred buffered completion report.
+func runCoordinatedComponent(serviceContext context.Context, current component, results chan<- componentResult) {
+	var result error
+	defer func() {
+		if recover() != nil {
+			observability.ReportPanic(serviceContext)
+			result = errors.New("component task failed")
+		}
+		results <- componentResult{current.name, result}
+	}()
+	result = current.run(serviceContext)
+}
+
+// firstComponentFailure classifies unexpected completion before cancellation and joins begin.
+func firstComponentFailure(ctx context.Context, first componentResult) error {
+	outcome, kind := "failure", "component_failure"
+	if first.err == nil {
+		outcome, kind = "unexpected_stop", "unexpected_stop"
+	}
+	slog.ErrorContext(ctx, "service.component.failed", "event", "service.component.failed", "component", first.name, "outcome", outcome, "error_kind", kind)
+	if first.err == nil && ctx.Err() == nil {
+		first.err = errors.New("component stopped unexpectedly")
+	}
+	if first.err != nil && !isOnlyCancellation(first.err) {
+		return fmt.Errorf("%s: %w", first.name, first.err)
+	}
+	return nil
+}

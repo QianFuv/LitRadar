@@ -13,6 +13,7 @@ import (
 
 	"github.com/QianFuv/LitRadar/internal/scheduler"
 	"github.com/QianFuv/LitRadar/internal/storage/auth"
+	store "github.com/QianFuv/LitRadar/internal/storage/scheduler"
 	"github.com/QianFuv/LitRadar/internal/storage/settings"
 )
 
@@ -44,48 +45,13 @@ func (prepared *Prepared) runScheduler(ctx context.Context) (result error) {
 		}
 		for _, claim := range claims {
 			active++
-			go func() {
-				var result error
-				defer func() {
-					if recover() != nil {
-						observability.ReportPanic(observability.CaptureCurrent(claimContext))
-						result = errors.New("scheduler claim task failed")
-					}
-					completed <- result
-				}()
-				_, result = scheduler.RunClaim(observability.CaptureCurrent(claimContext), prepared.services.Scheduler, processes, claim)
-			}()
+			go prepared.runSchedulerClaim(claimContext, processes, claim, completed)
 		}
-		level := slog.LevelInfo
-		if tick.Due == 0 && len(tick.Skipped) == 0 && tick.Claimed == 0 {
-			level = slog.LevelDebug
-		}
-		slog.Log(ctx, level, "scheduler.tick.completed", "event", "scheduler.tick.completed", "component", "scheduler", "worker_id", worker, "outcome", "success", "minute_epoch", tick.MinuteEpoch, "jobs", tick.Jobs, "skipped", len(tick.Skipped), "due", tick.Due, "already_executed", tick.AlreadyExecuted, "queued", tick.Queued, "claimed", tick.Claimed, "executed", executed, "duration_ms", time.Since(started).Milliseconds())
+		reportSchedulerTick(ctx, tick, worker, executed, started)
 		executed = 0
-		delayContext, cancelDelay := context.WithCancel(ctx)
-		nextTick := make(chan struct{})
-		go func() { waitSeconds(delayContext, prepared.configuration.SchedulerIntervalSeconds); close(nextTick) }()
-		isDue := false
-		for !isDue {
-			select {
-			case <-ctx.Done():
-				cancelDelay()
-				<-nextTick
-				return nil
-			case err := <-completed:
-				active--
-				executed++
-				if err != nil {
-					slog.ErrorContext(ctx, "scheduler.tick.failed", "event", "scheduler.tick.failed", "component", "scheduler", "worker_id", worker, "outcome", "failure", "error_kind", "execution_error", "duration_ms", time.Since(started).Milliseconds())
-					cancelDelay()
-					<-nextTick
-					return err
-				}
-			case <-nextTick:
-				isDue = true
-			}
+		if err := prepared.waitSchedulerTick(ctx, completed, worker, started, &active, &executed); err != nil {
+			return err
 		}
-		cancelDelay()
 	}
 	return nil
 }
@@ -115,11 +81,7 @@ func (prepared *Prepared) runAuditRetention(ctx context.Context) error {
 			err, errorKind = cleanupError, "persistence_error"
 			if err == nil {
 				hasBacklog = result.HasMoreExpired
-				if result.DidRun {
-					slog.InfoContext(ctx, "audit.retention.completed", "event", "audit.retention.completed", "component", "security", "outcome", "success", "deleted_count", result.DeletedCount, "has_more_expired", result.HasMoreExpired, "cutoff", result.Cutoff, "duration_ms", time.Since(started).Milliseconds())
-				} else {
-					slog.DebugContext(ctx, "audit.retention.skipped", "event", "audit.retention.skipped", "component", "security", "outcome", "success", "reason", "daily_window_not_due", "cutoff", result.Cutoff, "duration_ms", time.Since(started).Milliseconds())
-				}
+				reportAuditRetention(ctx, result, started)
 			}
 		}
 		if err != nil {
@@ -134,4 +96,64 @@ func (prepared *Prepared) runAuditRetention(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// runSchedulerClaim reports exactly one result after execution or a redacted claim panic.
+func (prepared *Prepared) runSchedulerClaim(claimContext context.Context, processes scheduler.ProcessConfig, claim store.Claim, completed chan<- error) {
+	var result error
+	defer func() {
+		if recover() != nil {
+			observability.ReportPanic(observability.CaptureCurrent(claimContext))
+			result = errors.New("scheduler claim task failed")
+		}
+		completed <- result
+	}()
+	_, result = scheduler.RunClaim(observability.CaptureCurrent(claimContext), prepared.services.Scheduler, processes, claim)
+}
+
+// reportSchedulerTick preserves empty-tick log level and all evaluated counters.
+func reportSchedulerTick(ctx context.Context, tick scheduler.TickResult, worker string, executed int, started time.Time) {
+	level := slog.LevelInfo
+	if tick.Due == 0 && len(tick.Skipped) == 0 && tick.Claimed == 0 {
+		level = slog.LevelDebug
+	}
+	slog.Log(ctx, level, "scheduler.tick.completed", "event", "scheduler.tick.completed", "component", "scheduler", "worker_id", worker, "outcome", "success", "minute_epoch", tick.MinuteEpoch, "jobs", tick.Jobs, "skipped", len(tick.Skipped), "due", tick.Due, "already_executed", tick.AlreadyExecuted, "queued", tick.Queued, "claimed", tick.Claimed, "executed", executed, "duration_ms", time.Since(started).Milliseconds())
+}
+
+// waitSchedulerTick updates caller-owned counters and joins its delay task before every early return.
+func (prepared *Prepared) waitSchedulerTick(ctx context.Context, completed <-chan error, worker string, started time.Time, active, executed *int) error {
+	delayContext, cancelDelay := context.WithCancel(ctx)
+	nextTick := make(chan struct{})
+	go func() { waitSeconds(delayContext, prepared.configuration.SchedulerIntervalSeconds); close(nextTick) }()
+	isDue := false
+	for !isDue {
+		select {
+		case <-ctx.Done():
+			cancelDelay()
+			<-nextTick
+			return nil
+		case err := <-completed:
+			(*active)--
+			(*executed)++
+			if err != nil {
+				slog.ErrorContext(ctx, "scheduler.tick.failed", "event", "scheduler.tick.failed", "component", "scheduler", "worker_id", worker, "outcome", "failure", "error_kind", "execution_error", "duration_ms", time.Since(started).Milliseconds())
+				cancelDelay()
+				<-nextTick
+				return err
+			}
+		case <-nextTick:
+			isDue = true
+		}
+	}
+	cancelDelay()
+	return nil
+}
+
+// reportAuditRetention preserves completed versus daily-window-skipped fields after successful cleanup.
+func reportAuditRetention(ctx context.Context, result auth.RetentionResult, started time.Time) {
+	if result.DidRun {
+		slog.InfoContext(ctx, "audit.retention.completed", "event", "audit.retention.completed", "component", "security", "outcome", "success", "deleted_count", result.DeletedCount, "has_more_expired", result.HasMoreExpired, "cutoff", result.Cutoff, "duration_ms", time.Since(started).Milliseconds())
+	} else {
+		slog.DebugContext(ctx, "audit.retention.skipped", "event", "audit.retention.skipped", "component", "security", "outcome", "success", "reason", "daily_window_not_due", "cutoff", result.Cutoff, "duration_ms", time.Since(started).Milliseconds())
+	}
 }

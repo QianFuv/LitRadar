@@ -72,18 +72,8 @@ func Prepare(ctx context.Context, configuration Config) (*Prepared, error) {
 }
 
 func prepareResources(ctx context.Context, configuration Config) (_ *Prepared, err error) {
-	if err := configuration.ValidateDevelopment(); err != nil {
+	if err := prepareRuntimeStorage(ctx, configuration); err != nil {
 		return nil, err
-	}
-	if err := PreflightStorage(ctx, configuration.Storage); err != nil {
-		return nil, err
-	}
-	if configuration.BundledMetaDir != "" {
-		report, err := meta.Prepare(ctx, configuration.Storage, configuration.BundledMetaDir)
-		if err != nil {
-			return nil, err
-		}
-		ReportManagedMeta(ctx, report, "api_startup")
 	}
 	prepared := &Prepared{configuration: configuration, services: api.Services{Storage: configuration.Storage}}
 	defer func() {
@@ -91,44 +81,12 @@ func prepareResources(ctx context.Context, configuration Config) (_ *Prepared, e
 			_ = prepared.Close()
 		}
 	}()
-	prepared.services.Codec, err = secrets.Load(configuration.SecretKeyFile)
+	if err = prepared.prepareRuntimeCatalogs(ctx, configuration); err != nil {
+		return nil, err
+	}
+	configuration, err = prepared.runtimePolicy(ctx, configuration)
 	if err != nil {
 		return nil, err
-	}
-	if _, err = secrets.Verify(ctx, configuration.Storage.AuthDbPath, prepared.services.Codec); err != nil {
-		return nil, err
-	}
-	prepared.services.Cfp, err = cfpstorage.Open(configuration.Storage.AuthDbPath)
-	if err != nil {
-		return nil, err
-	}
-	if _, err = cfp.EnsureSeed(ctx, prepared.services.Cfp); err != nil {
-		return nil, err
-	}
-	prepared.services.Auth, err = auth.Open(configuration.Storage.AuthDbPath)
-	if err != nil {
-		return nil, err
-	}
-	values, err := settings.New(prepared.services.Auth, prepared.services.Codec).Load(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err = configuration.ApplyRuntimeSettings(values); err != nil {
-		return nil, err
-	}
-	configuration.ApiOptions.ProviderProxy, err = sources.ProxySelectionFromRuntime(values)
-	if err != nil {
-		return nil, err
-	}
-	configuration.ApiOptions.ContentSecurityPolicy = developmentCsp
-	if !configuration.IsDevelopment {
-		webRoot := filepath.Join(configuration.Storage.ProjectRoot, "web")
-		configuration.ApiOptions.ContentSecurityPolicy, err = loadSecurityPolicy(webRoot)
-		if err != nil {
-			return nil, err
-		}
-		configuration.ApiOptions.IsHstsEnabled = configuration.AreSecureCookiesRequired
-		configuration.ApiOptions.Frontend = frontend{webRoot}
 	}
 	prepared.services.Delivery, err = delivery.Open(configuration.Storage.AuthDbPath)
 	if err != nil {
@@ -201,4 +159,72 @@ func ReportManagedMeta(ctx context.Context, report meta.Report, label string) {
 		counts[catalog.Action]++
 	}
 	slog.InfoContext(ctx, "storage.managed_meta.prepared", "event", "storage.managed_meta.prepared", "component", "storage", "context", label, "bundle_version", report.BundleVersion, "catalog_count", len(report.Catalogs), "created", counts["created"], "adopted", counts["adopted"], "updated", counts["updated"], "customized", counts["customized"], "unchanged", counts["unchanged"])
+}
+
+// prepareRuntimeStorage admits deployment and migrations before owned service resources are created.
+func prepareRuntimeStorage(ctx context.Context, configuration Config) error {
+	if err := configuration.ValidateDevelopment(); err != nil {
+		return err
+	}
+	if err := PreflightStorage(ctx, configuration.Storage); err != nil {
+		return err
+	}
+	if configuration.BundledMetaDir != "" {
+		report, err := meta.Prepare(ctx, configuration.Storage, configuration.BundledMetaDir)
+		if err != nil {
+			return err
+		}
+		ReportManagedMeta(ctx, report, "api_startup")
+	}
+	return nil
+}
+
+// prepareRuntimeCatalogs acquires ordered service resources covered by prepareResources cleanup.
+func (prepared *Prepared) prepareRuntimeCatalogs(ctx context.Context, configuration Config) error {
+	var err error
+	prepared.services.Codec, err = secrets.Load(configuration.SecretKeyFile)
+	if err != nil {
+		return err
+	}
+	if _, err = secrets.Verify(ctx, configuration.Storage.AuthDbPath, prepared.services.Codec); err != nil {
+		return err
+	}
+	prepared.services.Cfp, err = cfpstorage.Open(configuration.Storage.AuthDbPath)
+	if err != nil {
+		return err
+	}
+	if _, err = cfp.EnsureSeed(ctx, prepared.services.Cfp); err != nil {
+		return err
+	}
+	prepared.services.Auth, err = auth.Open(configuration.Storage.AuthDbPath)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// runtimePolicy preserves persisted-policy and frontend-security admission before delivery resources.
+func (prepared *Prepared) runtimePolicy(ctx context.Context, configuration Config) (Config, error) {
+	values, err := settings.New(prepared.services.Auth, prepared.services.Codec).Load(ctx)
+	if err != nil {
+		return configuration, err
+	}
+	if err = configuration.ApplyRuntimeSettings(values); err != nil {
+		return configuration, err
+	}
+	configuration.ApiOptions.ProviderProxy, err = sources.ProxySelectionFromRuntime(values)
+	if err != nil {
+		return configuration, err
+	}
+	configuration.ApiOptions.ContentSecurityPolicy = developmentCsp
+	if !configuration.IsDevelopment {
+		webRoot := filepath.Join(configuration.Storage.ProjectRoot, "web")
+		configuration.ApiOptions.ContentSecurityPolicy, err = loadSecurityPolicy(webRoot)
+		if err != nil {
+			return configuration, err
+		}
+		configuration.ApiOptions.IsHstsEnabled = configuration.AreSecureCookiesRequired
+		configuration.ApiOptions.Frontend = frontend{webRoot}
+	}
+	return configuration, nil
 }

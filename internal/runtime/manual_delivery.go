@@ -98,16 +98,11 @@ func (dispatcher *manualDispatcher) dispatch(concurrency int) error {
 		return errors.New("delivery dispatch query failed")
 	}
 	for _, candidate := range candidates {
-		isActive := false
-		for _, active := range dispatcher.children {
-			isActive = isActive || active.runId == candidate.Id
-		}
+		isActive := dispatcher.hasActiveManualRun(candidate.Id)
 		if isActive {
 			continue
 		}
-		if candidate.Status == delivery.RunStatusQueued && candidate.DeadlineAt != nil && *candidate.DeadlineAt <= now {
-			code := "deadline_exceeded"
-			_, _ = dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.Id, candidate.Revision, delivery.RunStatusTimedOut, nil, &code, now)
+		if dispatcher.expireQueuedManualCandidate(candidate, now) {
 			continue
 		}
 		active, err := dispatcher.spawn(candidate.Id)
@@ -147,29 +142,12 @@ func (dispatcher *manualDispatcher) enforceStops() error {
 		if err != nil {
 			return errors.New("delivery cancellation query failed")
 		}
-		if run != nil && active.stopKind == "" {
-			switch {
-			case run.DeadlineAt != nil && *run.DeadlineAt <= now:
-				active.stopKind = "deadline"
-			case run.CancellationRequested:
-				active.stopKind = "cancellation"
-			case run.Status.IsTerminal():
-				active.stopKind = "termination"
-			}
-			active.stopStarted = time.Now()
-		}
+		beginManualStop(active, run, now)
 		if active.stopKind == "" || active.stopKind != "deadline" && time.Since(active.stopStarted) < cooperativeGrace {
 			index++
 			continue
 		}
-		grace := cooperativeGrace
-		if active.stopKind == "deadline" {
-			grace = 0
-		}
-		if _, err := active.child.Terminate(grace); err != nil {
-			return errors.New("delivery child termination failed")
-		}
-		if err := dispatcher.finalizeForced(active); err != nil {
+		if err := dispatcher.terminateManualChild(active); err != nil {
 			return err
 		}
 		dispatcher.remove(index)
@@ -205,6 +183,71 @@ func (dispatcher *manualDispatcher) finalizeForced(active *manualChild) error {
 }
 
 func (dispatcher *manualDispatcher) shutdown() error {
+	dispatcher.requestManualShutdown()
+	deadline := time.Now().Add(cooperativeGrace)
+	result := dispatcher.reapManualShutdown(deadline)
+	for _, active := range dispatcher.children {
+		if _, err := active.child.Terminate(cooperativeGrace); err != nil {
+			result = errors.Join(result, errors.New("delivery child termination failed"))
+			continue
+		}
+		result = errors.Join(result, dispatcher.finalizeForced(active))
+	}
+	dispatcher.children = nil
+	return result
+}
+
+// hasActiveManualRun retains a full scan of current children before spawning a candidate.
+func (dispatcher *manualDispatcher) hasActiveManualRun(runId int64) bool {
+	isActive := false
+	for _, active := range dispatcher.children {
+		isActive = isActive || active.runId == runId
+	}
+	return isActive
+}
+
+// expireQueuedManualCandidate finalizes expired queued admission using the dispatch tick's captured time.
+func (dispatcher *manualDispatcher) expireQueuedManualCandidate(candidate delivery.RunRecord, now float64) bool {
+	if candidate.Status == delivery.RunStatusQueued && candidate.DeadlineAt != nil && *candidate.DeadlineAt <= now {
+		code := "deadline_exceeded"
+		_, _ = dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.Id, candidate.Revision, delivery.RunStatusTimedOut, nil, &code, now)
+		return true
+	}
+	return false
+}
+
+// beginManualStop preserves deadline priority and the original stop-start timestamp updates.
+func beginManualStop(active *manualChild, run *delivery.RunRecord, now float64) {
+	if run != nil && active.stopKind == "" {
+		switch {
+		case run.DeadlineAt != nil && *run.DeadlineAt <= now:
+			active.stopKind = "deadline"
+		case run.CancellationRequested:
+			active.stopKind = "cancellation"
+		case run.Status.IsTerminal():
+			active.stopKind = "termination"
+		}
+		active.stopStarted = time.Now()
+	}
+}
+
+// terminateManualChild joins termination before reloading fenced durable finalization authority.
+func (dispatcher *manualDispatcher) terminateManualChild(active *manualChild) error {
+	grace := cooperativeGrace
+	if active.stopKind == "deadline" {
+		grace = 0
+	}
+	if _, err := active.child.Terminate(grace); err != nil {
+		return errors.New("delivery child termination failed")
+	}
+	if err := dispatcher.finalizeForced(active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// requestManualShutdown requests cancellation for every owned child before any wait or reap.
+func (dispatcher *manualDispatcher) requestManualShutdown() {
 	for _, active := range dispatcher.children {
 		run, err := dispatcher.repository.LoadRun(context.Background(), active.runId)
 		if err == nil && run != nil && !run.Status.IsTerminal() && run.OwnerId != nil && *run.OwnerId == active.ownerId {
@@ -212,7 +255,10 @@ func (dispatcher *manualDispatcher) shutdown() error {
 		}
 		active.stopKind, active.stopStarted = "shutdown", time.Now()
 	}
-	deadline := time.Now().Add(cooperativeGrace)
+}
+
+// reapManualShutdown shares one cooperative deadline across all tracked children.
+func (dispatcher *manualDispatcher) reapManualShutdown(deadline time.Time) error {
 	var result error
 	for len(dispatcher.children) > 0 && time.Now().Before(deadline) {
 		if err := dispatcher.reap(); err != nil {
@@ -223,13 +269,5 @@ func (dispatcher *manualDispatcher) shutdown() error {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	for _, active := range dispatcher.children {
-		if _, err := active.child.Terminate(cooperativeGrace); err != nil {
-			result = errors.Join(result, errors.New("delivery child termination failed"))
-			continue
-		}
-		result = errors.Join(result, dispatcher.finalizeForced(active))
-	}
-	dispatcher.children = nil
 	return result
 }

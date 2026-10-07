@@ -33,14 +33,7 @@ func TestDrainHttpForcesNetworkWhileHandlerCloseIsBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	connection.SetDeadline(time.Now().Add(3 * time.Second))
-	if _, err := fmt.Fprint(connection, "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n"); err != nil {
-		t.Fatal(err)
-	}
-	status, err := bufio.NewReader(connection).ReadString('\n')
-	if err != nil || !strings.Contains(status, "100 Continue") {
-		t.Fatal(status, err)
-	}
+	awaitBlockedDrainRequest(t, connection)
 	handlers.stop()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -84,15 +77,7 @@ func TestHttpShutdownForcesUnfinishedPostWithinNetworkBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	connection.SetDeadline(time.Now().Add(40 * time.Second))
-	if _, err := fmt.Fprintf(connection, "POST /api/auth/login HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n"); err != nil {
-		t.Fatal(err)
-	}
-	reader := bufio.NewReader(connection)
-	status, err := reader.ReadString('\n')
-	if err != nil || !strings.Contains(status, "100 Continue") {
-		t.Fatal("body read did not start", status, err)
-	}
+	awaitUnfinishedLoginBody(t, connection)
 	started := time.Now()
 	cancel()
 	select {
@@ -109,5 +94,32 @@ func TestHttpShutdownForcesUnfinishedPostWithinNetworkBudget(t *testing.T) {
 			t.Fatal("shutdown did not join after test socket release")
 		}
 		t.Fatal("unfinished POST exceeded 30s network drain budget")
+	}
+}
+
+// awaitBlockedDrainRequest checks that the original incomplete POST started before draining.
+func awaitBlockedDrainRequest(t *testing.T, connection net.Conn) {
+	t.Helper()
+	connection.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := fmt.Fprint(connection, "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := bufio.NewReader(connection).ReadString('\n')
+	if err != nil || !strings.Contains(status, "100 Continue") {
+		t.Fatal(status, err)
+	}
+}
+
+// awaitUnfinishedLoginBody checks the login body read started before cancellation timing.
+func awaitUnfinishedLoginBody(t *testing.T, connection net.Conn) {
+	t.Helper()
+	connection.SetDeadline(time.Now().Add(40 * time.Second))
+	if _, err := fmt.Fprintf(connection, "POST /api/auth/login HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(connection)
+	status, err := reader.ReadString('\n')
+	if err != nil || !strings.Contains(status, "100 Continue") {
+		t.Fatal("body read did not start", status, err)
 	}
 }

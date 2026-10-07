@@ -23,7 +23,7 @@ func TestMain(tests *testing.M) {
 		os.Exit(tests.Run())
 	}
 	marker, err := os.ReadFile(filepath.Join(directory, "fixture.marker"))
-	if err != nil || string(marker) != "runtime-process-fixture-v1" || len(os.Args) < 2 || (os.Args[1] != "index" && os.Args[1] != "delivery-run") {
+	if !isRuntimeProcessFixture(marker, err) {
 		os.Exit(90)
 	}
 	identity := ""
@@ -35,24 +35,7 @@ func TestMain(tests *testing.M) {
 	if !regexp.MustCompile(`^[a-zA-Z0-9-]+$`).MatchString(identity) {
 		os.Exit(91)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		os.Exit(92)
-	}
-	ready := filepath.Join(directory, identity+".ready")
-	if err := os.WriteFile(ready+".tmp", []byte(listener.Addr().String()), 0600); err != nil {
-		os.Exit(93)
-	}
-	if err := os.Rename(ready+".tmp", ready); err != nil {
-		os.Exit(94)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(directory, identity+".release")); err == nil {
-			listener.Close()
-			os.Exit(0)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	executeRuntimeProcessFixture(directory, identity)
 }
 
 func runtimeProcessFixture(t *testing.T, prepared *Prepared) string {
@@ -94,22 +77,7 @@ func requireRuntimeChildStopped(t *testing.T, address string) {
 func TestManualDispatcherAppliesGlobalTwoChildLimitAcrossUsers(t *testing.T) {
 	prepared, first := manualFixture(t)
 	directory := runtimeProcessFixture(t, prepared)
-	runs := []*delivery.RunRecord{first}
-	for ordinal := 2; ordinal <= 3; ordinal++ {
-		if err := prepared.services.Auth.Immediate(context.Background(), false, func(connection *sql.Conn) error {
-			_, err := connection.ExecContext(context.Background(), "INSERT INTO users(id,username,password_hash,salt,created_at,updated_at,token_generation) VALUES(?,?, 'hash','salt',1,1,0)", ordinal, fmt.Sprintf("user%d", ordinal))
-			return err
-		}); err != nil {
-			t.Fatal(err)
-		}
-		user := int64(ordinal)
-		deadline := unixTime() + 300
-		outcome, err := prepared.services.Delivery.AdmitManualRun(context.Background(), delivery.RunCreate{ExternalId: fmt.Sprintf("manual-%d", ordinal), Workflow: delivery.WorkflowPush, ScopeKey: fmt.Sprintf("manual:user:%d", ordinal), TriggerKind: delivery.TriggerKindManual, Mode: delivery.RunModeExecute, UserId: &user, DeadlineAt: &deadline, CreatedAt: unixTime()})
-		if err != nil {
-			t.Fatal(err)
-		}
-		runs = append(runs, outcome.Run)
-	}
+	runs := admitManualRuntimeUsers(t, prepared, first)
 	dispatcher := manualDispatcher{configuration: prepared.configuration, repository: prepared.services.Delivery}
 	defer dispatcher.shutdown()
 	if err := dispatcher.dispatch(2); err != nil {
@@ -125,13 +93,7 @@ func TestManualDispatcherAppliesGlobalTwoChildLimitAcrossUsers(t *testing.T) {
 	if err := dispatcher.dispatch(2); err != nil || len(dispatcher.children) != 2 {
 		t.Fatal("global bound exceeded", err)
 	}
-	third, err := dispatcher.repository.LoadRun(context.Background(), runs[2].Id)
-	if err != nil || third.Status != delivery.RunStatusQueued {
-		t.Fatal(third, err)
-	}
-	if _, err := os.Stat(filepath.Join(directory, fmt.Sprintf("manual-delivery-%d.ready", third.Id))); !os.IsNotExist(err) {
-		t.Fatal("third child was spawned", err)
-	}
+	assertThirdManualChildStillQueued(t, &dispatcher, directory, runs[2].Id)
 	if err := dispatcher.shutdown(); err != nil {
 		t.Fatal(err)
 	}
@@ -251,5 +213,66 @@ func TestSchedulerLoopScansWithActiveClaimsAndDrainsOnFailureOrCancellation(t *t
 				t.Fatal("cancelled claims", cancelled, expected)
 			}
 		})
+	}
+}
+
+// admitManualRuntimeUsers creates the original three user-scoped queued runs before dispatch.
+func admitManualRuntimeUsers(t *testing.T, prepared *Prepared, first *delivery.RunRecord) []*delivery.RunRecord {
+	t.Helper()
+	runs := []*delivery.RunRecord{first}
+	for ordinal := 2; ordinal <= 3; ordinal++ {
+		if err := prepared.services.Auth.Immediate(context.Background(), false, func(connection *sql.Conn) error {
+			_, err := connection.ExecContext(context.Background(), "INSERT INTO users(id,username,password_hash,salt,created_at,updated_at,token_generation) VALUES(?,?, 'hash','salt',1,1,0)", ordinal, fmt.Sprintf("user%d", ordinal))
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		user := int64(ordinal)
+		deadline := unixTime() + 300
+		outcome, err := prepared.services.Delivery.AdmitManualRun(context.Background(), delivery.RunCreate{ExternalId: fmt.Sprintf("manual-%d", ordinal), Workflow: delivery.WorkflowPush, ScopeKey: fmt.Sprintf("manual:user:%d", ordinal), TriggerKind: delivery.TriggerKindManual, Mode: delivery.RunModeExecute, UserId: &user, DeadlineAt: &deadline, CreatedAt: unixTime()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, outcome.Run)
+	}
+	return runs
+}
+
+// isRuntimeProcessFixture retains marker and argument admission before identity or socket creation.
+func isRuntimeProcessFixture(marker []byte, err error) bool {
+	return !(err != nil || string(marker) != "runtime-process-fixture-v1" || len(os.Args) < 2 || (os.Args[1] != "index" && os.Args[1] != "delivery-run"))
+}
+
+// executeRuntimeProcessFixture retains exit codes, atomic readiness and release-controlled listener lifetime.
+func executeRuntimeProcessFixture(directory, identity string) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		os.Exit(92)
+	}
+	ready := filepath.Join(directory, identity+".ready")
+	if err := os.WriteFile(ready+".tmp", []byte(listener.Addr().String()), 0600); err != nil {
+		os.Exit(93)
+	}
+	if err := os.Rename(ready+".tmp", ready); err != nil {
+		os.Exit(94)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(directory, identity+".release")); err == nil {
+			listener.Close()
+			os.Exit(0)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// assertThirdManualChildStillQueued checks durable admission and absent readiness before any shutdown.
+func assertThirdManualChildStillQueued(t *testing.T, dispatcher *manualDispatcher, directory string, thirdId int64) {
+	t.Helper()
+	third, err := dispatcher.repository.LoadRun(context.Background(), thirdId)
+	if err != nil || third.Status != delivery.RunStatusQueued {
+		t.Fatal(third, err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, fmt.Sprintf("manual-delivery-%d.ready", third.Id))); !os.IsNotExist(err) {
+		t.Fatal("third child was spawned", err)
 	}
 }

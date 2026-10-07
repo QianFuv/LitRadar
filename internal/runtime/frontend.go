@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf8"
 )
 
@@ -25,57 +26,12 @@ func (files frontend) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	name, isValid := frontendPath(request.URL.EscapedPath())
-	var file *os.File
-	var err error
-	isCompressed, isFallback := false, !isValid
-	if isValid {
-		if strings.ContainsRune(name, 0) {
-			if request.Method == "HEAD" {
-				writer.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			isFallback = true
-		}
+	opened := files.openFrontendRequest(writer, request, name, isValid)
+	if opened.isHandled {
+		return
 	}
-	if isValid && !isFallback {
-		filename := filepath.Join(files.root, filepath.FromSlash(name))
-		if info, metadataError := os.Stat(filename); metadataError == nil && info.IsDir() {
-			location := request.URL.EscapedPath() + "/"
-			if request.URL.RawQuery != "" || request.URL.ForceQuery {
-				location += "?" + request.URL.RawQuery
-			}
-			writer.Header().Set("Location", location)
-			if request.Method != "HEAD" {
-				writer.Header().Set("Content-Length", "0")
-			}
-			writer.WriteHeader(http.StatusTemporaryRedirect)
-			return
-		}
-		if prefersGzip(request.Header) {
-			file, err = os.Open(filename + ".gz")
-			isCompressed = err == nil
-		}
-		if file == nil && (err == nil || os.IsNotExist(err)) {
-			file, err = os.Open(filename)
-		}
-		if err != nil {
-			isFallback = os.IsNotExist(err) || os.IsPermission(err) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, os.ErrInvalid)
-			if !isFallback {
-				writer.Header().Set("Content-Length", "0")
-				writer.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-		}
-	}
-	if isFallback {
-		name, isCompressed = "404.html", false
-		file, err = os.Open(filepath.Join(files.root, name))
-		if err != nil {
-			writer.Header().Set("Content-Length", "0")
-			writer.WriteHeader(http.StatusNotFound)
-			return
-		}
-	}
+	file, name := opened.file, opened.name
+	isCompressed, isFallback := opened.isCompressed, opened.isFallback
 	defer file.Close()
 	metadata, err := file.Stat()
 	if err != nil || !metadata.Mode().IsRegular() {
@@ -87,23 +43,14 @@ func (files frontend) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 }
 
 func frontendPath(escaped string) (string, bool) {
-	last := path.Base(escaped)
-	hasExtension := strings.LastIndex(last, ".") > 0
-	if escaped != "/" && !strings.HasSuffix(escaped, "/") && !hasExtension {
-		escaped += ".html"
-	}
+	escaped = frontendExtensionPath(escaped)
 	decoded, err := url.PathUnescape(strings.TrimLeft(escaped, "/"))
 	if err != nil || !utf8.ValidString(decoded) || strings.ContainsAny(decoded, "\\:") || strings.HasPrefix(decoded, "/") {
 		return "", false
 	}
-	components := []string{}
-	for _, component := range strings.Split(decoded, "/") {
-		if component == ".." {
-			return "", false
-		}
-		if component != "" && component != "." {
-			components = append(components, component)
-		}
+	components, isValid := frontendPathComponents(decoded)
+	if !isValid {
+		return "", false
 	}
 	if decoded == "" || strings.HasSuffix(decoded, "/") {
 		components = append(components, "index.html")
@@ -122,20 +69,7 @@ func serveFrontendFile(writer http.ResponseWriter, request *http.Request, file *
 		etag = fmt.Sprintf("\"%x.%08x-%x\"", modified.Unix(), modified.Nanosecond(), size)
 	}
 	status := frontendPrecondition(request.Header, etag, modified)
-	if status == http.StatusPreconditionFailed {
-		writeFrontendEmptyError(writer, request, status, isFallback)
-		return
-	}
-	if etag != "" {
-		writer.Header().Set("ETag", etag)
-	}
-	writer.Header().Set("Last-Modified", modified.Format(http.TimeFormat))
-	if status == http.StatusNotModified {
-		if isFallback {
-			writeFrontendStatus(writer, status, true, 0)
-		} else {
-			writer.WriteHeader(status)
-		}
+	if writeFrontendPrecondition(writer, request, status, etag, modified, isFallback) {
 		return
 	}
 	writer.Header().Set("Content-Type", frontendMediaType(name))
@@ -146,32 +80,9 @@ func serveFrontendFile(writer http.ResponseWriter, request *http.Request, file *
 	if !isFallback {
 		writer.Header().Add("Vary", "accept-encoding")
 	}
-	start, length := int64(0), size
-	if raw, exists := request.Header["Range"]; exists && len(raw) > 0 && isVisibleHeader(raw[0]) {
-		ranges, isValid := frontendRanges(raw[0], uint64(size))
-		if !isValid || len(ranges) != 1 {
-			writer.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
-			body := ""
-			if isValid && len(ranges) > 1 {
-				body = "Cannot serve multipart range requests"
-			}
-			if body == "" {
-				writeFrontendEmptyError(writer, request, http.StatusRequestedRangeNotSatisfiable, isFallback)
-			} else {
-				writeFrontendStatus(writer, http.StatusRequestedRangeNotSatisfiable, isFallback, int64(len(body)))
-			}
-			if request.Method != "HEAD" {
-				_, _ = io.WriteString(writer, body)
-			}
-			return
-		}
-		start = int64(ranges[0][0])
-		length = int64(ranges[0][1]-ranges[0][0]) + 1
-		if size == 0 {
-			length = 0
-		}
-		status = http.StatusPartialContent
-		writer.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, ranges[0][1], size))
+	start, length, status, isHandled := applyFrontendRange(writer, request, size, status, isFallback)
+	if isHandled {
+		return
 	}
 	writeFrontendStatus(writer, status, isFallback, length)
 	if request.Method != "HEAD" {
@@ -196,4 +107,175 @@ func writeFrontendStatus(writer http.ResponseWriter, status int, isFallback bool
 	}
 	writer.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 	writer.WriteHeader(status)
+}
+
+// frontendOpenedFile carries acquisition decisions back to the request's file owner.
+type frontendOpenedFile struct {
+	file                                *os.File
+	name                                string
+	isCompressed, isFallback, isHandled bool
+}
+
+// openFrontendRequest retains path-error admission and fallback acquisition before caller-owned close.
+func (files frontend) openFrontendRequest(writer http.ResponseWriter, request *http.Request, name string, isValid bool) frontendOpenedFile {
+	var file *os.File
+	var err error
+	isCompressed, isFallback := false, !isValid
+	if isValid {
+		if strings.ContainsRune(name, 0) {
+			if request.Method == "HEAD" {
+				writer.WriteHeader(http.StatusInternalServerError)
+				return frontendOpenedFile{isHandled: true}
+			}
+			isFallback = true
+		}
+	}
+	if isValid && !isFallback {
+		opened := files.openFrontendPath(writer, request, name)
+		if opened.isHandled {
+			return opened
+		}
+		file, isCompressed, isFallback = opened.file, opened.isCompressed, opened.isFallback
+	}
+	if isFallback {
+		name, isCompressed = "404.html", false
+		file, err = os.Open(filepath.Join(files.root, name))
+		if err != nil {
+			writer.Header().Set("Content-Length", "0")
+			writer.WriteHeader(http.StatusNotFound)
+			return frontendOpenedFile{isHandled: true}
+		}
+	}
+	return frontendOpenedFile{file: file, name: name, isCompressed: isCompressed, isFallback: isFallback}
+}
+
+// openFrontendPath preserves directory redirect, gzip selection and identity-open retry precedence.
+func (files frontend) openFrontendPath(writer http.ResponseWriter, request *http.Request, name string) frontendOpenedFile {
+	var file *os.File
+	var err error
+	isCompressed, isFallback := false, false
+	filename := filepath.Join(files.root, filepath.FromSlash(name))
+	if redirectFrontendDirectory(writer, request, filename) {
+		return frontendOpenedFile{isHandled: true}
+	}
+	if prefersGzip(request.Header) {
+		file, err = os.Open(filename + ".gz")
+		isCompressed = err == nil
+	}
+	if file == nil && (err == nil || os.IsNotExist(err)) {
+		file, err = os.Open(filename)
+	}
+	if err != nil {
+		isFallback = isFrontendFallbackError(err)
+		if !isFallback {
+			writer.Header().Set("Content-Length", "0")
+			writer.WriteHeader(http.StatusInternalServerError)
+			return frontendOpenedFile{isHandled: true}
+		}
+	}
+	return frontendOpenedFile{file: file, name: name, isCompressed: isCompressed, isFallback: isFallback}
+}
+
+// redirectFrontendDirectory retains escaped-path and raw-query spelling for directory redirects.
+func redirectFrontendDirectory(writer http.ResponseWriter, request *http.Request, filename string) bool {
+	if info, metadataError := os.Stat(filename); metadataError == nil && info.IsDir() {
+		location := request.URL.EscapedPath() + "/"
+		if request.URL.RawQuery != "" || request.URL.ForceQuery {
+			location += "?" + request.URL.RawQuery
+		}
+		writer.Header().Set("Location", location)
+		if request.Method != "HEAD" {
+			writer.Header().Set("Content-Length", "0")
+		}
+		writer.WriteHeader(http.StatusTemporaryRedirect)
+		return true
+	}
+	return false
+}
+
+// frontendPathComponents rejects parent components before dropping dots and empty components.
+func frontendPathComponents(decoded string) ([]string, bool) {
+	components := []string{}
+	for _, component := range strings.Split(decoded, "/") {
+		if component == ".." {
+			return nil, false
+		}
+		if component != "" && component != "." {
+			components = append(components, component)
+		}
+	}
+	return components, true
+}
+
+// writeFrontendPrecondition publishes validators only after failed-precondition admission.
+func writeFrontendPrecondition(writer http.ResponseWriter, request *http.Request, status int, etag string, modified time.Time, isFallback bool) bool {
+	if status == http.StatusPreconditionFailed {
+		writeFrontendEmptyError(writer, request, status, isFallback)
+		return true
+	}
+	if etag != "" {
+		writer.Header().Set("ETag", etag)
+	}
+	writer.Header().Set("Last-Modified", modified.Format(http.TimeFormat))
+	if status == http.StatusNotModified {
+		if isFallback {
+			writeFrontendStatus(writer, status, true, 0)
+		} else {
+			writer.WriteHeader(status)
+		}
+		return true
+	}
+	return false
+}
+
+// applyFrontendRange preserves range admission and returns body positions only after successful headers.
+func applyFrontendRange(writer http.ResponseWriter, request *http.Request, size int64, status int, isFallback bool) (int64, int64, int, bool) {
+	start, length := int64(0), size
+	if raw, exists := request.Header["Range"]; exists && len(raw) > 0 && isVisibleHeader(raw[0]) {
+		ranges, isValid := frontendRanges(raw[0], uint64(size))
+		if !isValid || len(ranges) != 1 {
+			writeFrontendRangeError(writer, request, ranges, isValid, size, isFallback)
+			return 0, 0, status, true
+		}
+		start = int64(ranges[0][0])
+		length = int64(ranges[0][1]-ranges[0][0]) + 1
+		if size == 0 {
+			length = 0
+		}
+		status = http.StatusPartialContent
+		writer.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, ranges[0][1], size))
+	}
+	return start, length, status, false
+}
+
+// writeFrontendRangeError retains multipart diagnostics and HEAD-specific empty response behavior.
+func writeFrontendRangeError(writer http.ResponseWriter, request *http.Request, ranges [][2]uint64, isValid bool, size int64, isFallback bool) {
+	writer.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
+	body := ""
+	if isValid && len(ranges) > 1 {
+		body = "Cannot serve multipart range requests"
+	}
+	if body == "" {
+		writeFrontendEmptyError(writer, request, http.StatusRequestedRangeNotSatisfiable, isFallback)
+	} else {
+		writeFrontendStatus(writer, http.StatusRequestedRangeNotSatisfiable, isFallback, int64(len(body)))
+	}
+	if request.Method != "HEAD" {
+		_, _ = io.WriteString(writer, body)
+	}
+}
+
+// frontendExtensionPath appends HTML using the escaped basename before path decoding.
+func frontendExtensionPath(escaped string) string {
+	last := path.Base(escaped)
+	hasExtension := strings.LastIndex(last, ".") > 0
+	if escaped != "/" && !strings.HasSuffix(escaped, "/") && !hasExtension {
+		escaped += ".html"
+	}
+	return escaped
+}
+
+// isFrontendFallbackError retains the exact file-open categories admitted to the static fallback.
+func isFrontendFallbackError(err error) bool {
+	return os.IsNotExist(err) || os.IsPermission(err) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, os.ErrInvalid)
 }

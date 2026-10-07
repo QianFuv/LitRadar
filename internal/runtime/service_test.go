@@ -77,20 +77,7 @@ func TestHeartbeatPersistsAndStopsWhilePublicWorkersAreOccupied(t *testing.T) {
 			}
 		}
 	}()
-	hasHeartbeat := false
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		err := prepared.services.Auth.WithConnection(context.Background(), func(connection *sql.Conn) error {
-			return connection.QueryRowContext(context.Background(), "SELECT EXISTS(SELECT 1 FROM service_heartbeats WHERE instance_id='saturated')").Scan(&hasHeartbeat)
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if hasHeartbeat {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
+	hasHeartbeat := awaitSaturatedHeartbeat(t, prepared)
 	cancel()
 	select {
 	case err := <-done:
@@ -187,10 +174,7 @@ func TestHeartbeatCancellationInterruptsExecutingSqlAndJoins(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("SQL worker did not join")
 	}
-	var value int
-	if err := connection.QueryRowContext(context.Background(), "SELECT 1").Scan(&value); err != nil || value != 1 {
-		t.Fatal("canceled SQL polluted next operation", err)
-	}
+	assertHeartbeatConnectionReusable(t, connection)
 }
 
 func TestHeartbeatCancellationDoesNotHidePersistenceFailure(t *testing.T) {
@@ -403,22 +387,7 @@ func TestRunningServiceStopsAndDeletesOnlyOwnedApiHeartbeat(t *testing.T) {
 	go func() { done <- prepared.Run(ctx) }()
 	t.Cleanup(func() { cancel(); prepared.Close() })
 	client := &http.Client{Timeout: 5 * time.Second}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		response, err := client.Get("http://" + address + "/health/ready")
-		if err != nil {
-			t.Fatal(err)
-		}
-		io.Copy(io.Discard, response.Body)
-		response.Body.Close()
-		if response.StatusCode == http.StatusOK {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("service never became ready", response.StatusCode)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	awaitRuntimeServiceReadiness(t, client, address)
 	cancel()
 	select {
 	case err := <-done:
@@ -451,5 +420,55 @@ func TestRunningServiceStopsAndDeletesOnlyOwnedApiHeartbeat(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// awaitSaturatedHeartbeat checks heartbeat persistence while all eight public workers remain occupied.
+func awaitSaturatedHeartbeat(t *testing.T, prepared *Prepared) bool {
+	t.Helper()
+	hasHeartbeat := false
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		err := prepared.services.Auth.WithConnection(context.Background(), func(connection *sql.Conn) error {
+			return connection.QueryRowContext(context.Background(), "SELECT EXISTS(SELECT 1 FROM service_heartbeats WHERE instance_id='saturated')").Scan(&hasHeartbeat)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hasHeartbeat {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return hasHeartbeat
+}
+
+// assertHeartbeatConnectionReusable checks native connection reuse only after the canceled SQL worker joined.
+func assertHeartbeatConnectionReusable(t *testing.T, connection *sql.Conn) {
+	t.Helper()
+	var value int
+	if err := connection.QueryRowContext(context.Background(), "SELECT 1").Scan(&value); err != nil || value != 1 {
+		t.Fatal("canceled SQL polluted next operation", err)
+	}
+}
+
+// awaitRuntimeServiceReadiness joins readiness response bodies before initiating service cancellation.
+func awaitRuntimeServiceReadiness(t *testing.T, client *http.Client, address string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		response, err := client.Get("http://" + address + "/health/ready")
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if response.StatusCode == http.StatusOK {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("service never became ready", response.StatusCode)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

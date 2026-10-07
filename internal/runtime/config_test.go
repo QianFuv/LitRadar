@@ -9,13 +9,7 @@ import (
 )
 
 func TestServiceConfigurationUsesPersistedSecurityPolicy(t *testing.T) {
-	configuration, err := NewConfig(t.TempDir(), "127.0.0.1", 8000, "secret.key")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if configuration.BindAddress() != "127.0.0.1:8000" || configuration.ApiOptions.AreCookiesSecure || configuration.ApiOptions.RateLimit.LoginIp.Capacity != 30 || !reflect.DeepEqual(configuration.ApiOptions.McpHosts, []string{"localhost", "127.0.0.1", "::1"}) {
-		t.Fatal(configuration.ApiOptions)
-	}
+	configuration := defaultServiceConfiguration(t)
 	configuration.AreSecureCookiesRequired = true
 	if err := configuration.ApplyRuntimeSettings(nil); err == nil {
 		t.Fatal("hardened startup accepted insecure cookies")
@@ -54,4 +48,17 @@ func TestDevelopmentRequiresExactLoopbackAndNoHardenedFlag(t *testing.T) {
 	if err := configuration.ValidateDevelopment(); err == nil {
 		t.Fatal("development accepted production requirement")
 	}
+}
+
+// defaultServiceConfiguration checks all original default listener and security policy fields.
+func defaultServiceConfiguration(t *testing.T) Config {
+	t.Helper()
+	configuration, err := NewConfig(t.TempDir(), "127.0.0.1", 8000, "secret.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.BindAddress() != "127.0.0.1:8000" || configuration.ApiOptions.AreCookiesSecure || configuration.ApiOptions.RateLimit.LoginIp.Capacity != 30 || !reflect.DeepEqual(configuration.ApiOptions.McpHosts, []string{"localhost", "127.0.0.1", "::1"}) {
+		t.Fatal(configuration.ApiOptions)
+	}
+	return configuration
 }

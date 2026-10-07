@@ -32,7 +32,7 @@ func prefersGzip(headers http.Header) bool {
 }
 
 func encodingQuality(value string) int {
-	if len(value) < 3 || (value[0] != 'q' && value[0] != 'Q') || value[1] != '=' || (value[2] != '0' && value[2] != '1') {
+	if !hasEncodingQualityPrefix(value) {
 		return 0
 	}
 	quality := int(value[2]-'0') * 1000
@@ -58,11 +58,7 @@ func encodingQuality(value string) int {
 
 func frontendPrecondition(headers http.Header, etag string, modified time.Time) int {
 	modified = modified.Truncate(time.Second)
-	if match := headers.Get("If-Match"); match != "" {
-		if etag == "" || !matchesEtag(match, etag, false) {
-			return http.StatusPreconditionFailed
-		}
-	} else if date, isValid := frontendDate(headers.Get("If-Unmodified-Since")); isValid && date.Before(modified) {
+	if failsFrontendMatch(headers, etag, modified) {
 		return http.StatusPreconditionFailed
 	}
 	if match := headers.Get("If-None-Match"); match != "" {
@@ -85,24 +81,14 @@ func isVisibleHeader(value string) bool {
 }
 
 func frontendDate(value string) (time.Time, bool) {
-	for _, character := range []byte(value) {
-		if character > 127 {
-			return time.Time{}, false
-		}
+	if !isAsciiDate(value) {
+		return time.Time{}, false
 	}
 	value = strings.TrimSpace(value)
 	for _, layout := range []string{http.TimeFormat, time.RFC850, time.ANSIC} {
-		candidate := value
-		if layout == time.RFC850 {
-			_, suffix, exists := strings.Cut(candidate, ", ")
-			if !exists || len(suffix) != 22 {
-				continue
-			}
-			offset := len(candidate) - len(suffix) + 9
-			candidate = candidate[:offset] + " " + candidate[offset+1:]
-		}
-		if layout == time.ANSIC && len(candidate) == 24 && candidate[8] == '0' {
-			candidate = candidate[:8] + " " + candidate[9:]
+		candidate, isValid := frontendDateCandidate(value, layout)
+		if !isValid {
+			continue
 		}
 		date, err := time.Parse(layout, candidate)
 		if err != nil {
@@ -155,49 +141,11 @@ func frontendRanges(value string, size uint64) ([][2]uint64, bool) {
 		last = size - 1
 	}
 	for _, item := range strings.Split(value, ",") {
-		whitespace := 0
-		for _, character := range item {
-			if unicode.IsSpace(character) {
-				whitespace++
-			}
-		}
-		if whitespace > 1 || len(item) == 0 || strings.TrimRightFunc(item, unicode.IsSpace) != item {
+		current, isValid := frontendRangeItem(item, size, last)
+		if !isValid || overlapsFrontendRange(current, ranges) {
 			return nil, false
 		}
-		first, final, exists := strings.Cut(strings.TrimSpace(item), "-")
-		if !exists {
-			return nil, false
-		}
-		start, end := uint64(0), last
-		if first == "" {
-			suffix, isValid := strictRangeNumber(final)
-			if !isValid || suffix == 0 || suffix > size {
-				return nil, false
-			}
-			start = size - suffix
-		} else {
-			var isValid bool
-			start, isValid = strictRangeNumber(first)
-			if !isValid {
-				return nil, false
-			}
-			if final != "" {
-				end, isValid = strictRangeNumber(final)
-				if !isValid {
-					return nil, false
-				}
-				end = min(end, last)
-			}
-		}
-		if start > end {
-			return nil, false
-		}
-		for _, previous := range ranges {
-			if start <= previous[1] && end >= previous[0] {
-				return nil, false
-			}
-		}
-		ranges = append(ranges, [2]uint64{start, end})
+		ranges = append(ranges, current)
 	}
 	return ranges, true
 }
@@ -208,4 +156,109 @@ func strictRangeNumber(value string) (uint64, bool) {
 	}
 	number, err := strconv.ParseUint(value, 10, 64)
 	return number, err == nil
+}
+
+// hasEncodingQualityPrefix checks the fixed admission grammar before fractional parsing.
+func hasEncodingQualityPrefix(value string) bool {
+	return !(len(value) < 3 || (value[0] != 'q' && value[0] != 'Q') || value[1] != '=' || (value[2] != '0' && value[2] != '1'))
+}
+
+// failsFrontendMatch retains If-Match precedence over the unmodified-since date.
+func failsFrontendMatch(headers http.Header, etag string, modified time.Time) bool {
+	if match := headers.Get("If-Match"); match != "" {
+		if etag == "" || !matchesEtag(match, etag, false) {
+			return true
+		}
+	} else if date, isValid := frontendDate(headers.Get("If-Unmodified-Since")); isValid && date.Before(modified) {
+		return true
+	}
+	return false
+}
+
+// isAsciiDate rejects non-ASCII bytes before trimming and parsing HTTP dates.
+func isAsciiDate(value string) bool {
+	for _, character := range []byte(value) {
+		if character > 127 {
+			return false
+		}
+	}
+	return true
+}
+
+// frontendDateCandidate retains the original RFC850 and ANSIC spelling adjustments.
+func frontendDateCandidate(value, layout string) (string, bool) {
+	candidate := value
+	if layout == time.RFC850 {
+		_, suffix, exists := strings.Cut(candidate, ", ")
+		if !exists || len(suffix) != 22 {
+			return "", false
+		}
+		offset := len(candidate) - len(suffix) + 9
+		candidate = candidate[:offset] + " " + candidate[offset+1:]
+	}
+	if layout == time.ANSIC && len(candidate) == 24 && candidate[8] == '0' {
+		candidate = candidate[:8] + " " + candidate[9:]
+	}
+	return candidate, true
+}
+
+// frontendRangeItem checks whitespace, separators and ordered bounds of one source range.
+func frontendRangeItem(item string, size, last uint64) ([2]uint64, bool) {
+	whitespace := 0
+	for _, character := range item {
+		if unicode.IsSpace(character) {
+			whitespace++
+		}
+	}
+	if whitespace > 1 || len(item) == 0 || strings.TrimRightFunc(item, unicode.IsSpace) != item {
+		return [2]uint64{}, false
+	}
+	first, final, exists := strings.Cut(strings.TrimSpace(item), "-")
+	if !exists {
+		return [2]uint64{}, false
+	}
+	start, end, isValid := frontendRangeBounds(first, final, size, last)
+	if !isValid {
+		return [2]uint64{}, false
+	}
+	if start > end {
+		return [2]uint64{}, false
+	}
+	return [2]uint64{start, end}, true
+}
+
+// frontendRangeBounds preserves suffix rejection and explicit-end clamping.
+func frontendRangeBounds(first, final string, size, last uint64) (uint64, uint64, bool) {
+	start, end := uint64(0), last
+	if first == "" {
+		suffix, isValid := strictRangeNumber(final)
+		if !isValid || suffix == 0 || suffix > size {
+			return 0, 0, false
+		}
+		start = size - suffix
+	} else {
+		var isValid bool
+		start, isValid = strictRangeNumber(first)
+		if !isValid {
+			return 0, 0, false
+		}
+		if final != "" {
+			end, isValid = strictRangeNumber(final)
+			if !isValid {
+				return 0, 0, false
+			}
+			end = min(end, last)
+		}
+	}
+	return start, end, true
+}
+
+// overlapsFrontendRange rejects intersecting intervals while retaining adjacent source order.
+func overlapsFrontendRange(current [2]uint64, ranges [][2]uint64) bool {
+	for _, previous := range ranges {
+		if current[0] <= previous[1] && current[1] >= previous[0] {
+			return true
+		}
+	}
+	return false
 }

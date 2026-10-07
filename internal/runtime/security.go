@@ -78,30 +78,9 @@ func buildCspManifest(root string) (cspManifest, error) {
 		return manifest, fmt.Errorf("Static export contains no HTML files: %s", root)
 	}
 	for _, filename := range paths {
-		data, err := os.ReadFile(filename)
-		if err != nil {
-			return manifest, fmt.Errorf("Unable to read static HTML at %s: %w", filename, err)
-		}
-		if !utf8.Valid(data) {
-			return manifest, fmt.Errorf("Static HTML must be valid UTF-8: %s", filename)
-		}
-		hashes, err := inlineScriptHashes(data)
-		if err != nil {
+		if err := appendCspFile(&manifest, root, filename); err != nil {
 			return manifest, err
 		}
-		for _, hash := range hashes {
-			if !slices.Contains(manifest.ScriptHashes, hash) {
-				manifest.ScriptHashes = append(manifest.ScriptHashes, hash)
-			}
-		}
-		relative, err := filepath.Rel(root, filename)
-		if err != nil {
-			return manifest, errors.New("Static HTML escaped the export root")
-		}
-		if !utf8.ValidString(relative) {
-			return manifest, errors.New("Static HTML path must be valid UTF-8")
-		}
-		manifest.Files = append(manifest.Files, cspFile{strings.ReplaceAll(relative, "\\", "/"), cspDigest(data), hashes})
 	}
 	slices.SortFunc(manifest.Files, func(first, second cspFile) int { return strings.Compare(first.Path, second.Path) })
 	slices.Sort(manifest.ScriptHashes)
@@ -204,13 +183,9 @@ func scriptOpeningEnd(html []byte, start int) (int, error) {
 func hasScriptSource(tag []byte) bool {
 	cursor := len("<script")
 	for cursor+1 < len(tag) {
-		for cursor < len(tag) && (htmlWhitespace(tag[cursor]) || tag[cursor] == '/') {
-			cursor++
-		}
+		cursor = skipScriptAttributeSeparators(tag, cursor)
 		start := cursor
-		for cursor < len(tag) && !htmlWhitespace(tag[cursor]) && !strings.ContainsRune("=/>", rune(tag[cursor])) {
-			cursor++
-		}
+		cursor = scriptAttributeNameEnd(tag, cursor)
 		if cursor == start {
 			cursor++
 			continue
@@ -218,30 +193,7 @@ func hasScriptSource(tag []byte) bool {
 		if asciiEqualFold(tag[start:cursor], []byte("src")) {
 			return true
 		}
-		for cursor < len(tag) && htmlWhitespace(tag[cursor]) {
-			cursor++
-		}
-		if cursor >= len(tag) || tag[cursor] != '=' {
-			continue
-		}
-		cursor++
-		for cursor < len(tag) && htmlWhitespace(tag[cursor]) {
-			cursor++
-		}
-		if cursor < len(tag) && (tag[cursor] == '\'' || tag[cursor] == '"') {
-			quote := tag[cursor]
-			cursor++
-			for cursor < len(tag) && tag[cursor] != quote {
-				cursor++
-			}
-			if cursor < len(tag) {
-				cursor++
-			}
-		} else {
-			for cursor < len(tag) && !htmlWhitespace(tag[cursor]) && tag[cursor] != '>' {
-				cursor++
-			}
-		}
+		cursor = scriptAttributeValueEnd(tag, cursor)
 	}
 	return false
 }
@@ -281,36 +233,12 @@ func cspFields(data []byte, names []string) ([]json.RawMessage, error) {
 	result := make([]json.RawMessage, len(names))
 	switch token {
 	case json.Delim('{'):
-		for decoder.More() {
-			token, err := decoder.Token()
-			if err != nil {
-				return nil, err
-			}
-			name, ok := token.(string)
-			if !ok {
-				return nil, errors.New("invalid manifest field")
-			}
-			index := slices.Index(names, name)
-			if index < 0 {
-				return nil, fmt.Errorf("unknown field %s", name)
-			}
-			if result[index] != nil {
-				return nil, fmt.Errorf("duplicate field %s", name)
-			}
-			if err := decoder.Decode(&result[index]); err != nil {
-				return nil, err
-			}
+		if err := decodeCspObject(decoder, names, result); err != nil {
+			return nil, err
 		}
 	case json.Delim('['):
-		index := 0
-		for decoder.More() {
-			if index >= len(names) {
-				return nil, errors.New("invalid manifest sequence length")
-			}
-			if err := decoder.Decode(&result[index]); err != nil {
-				return nil, err
-			}
-			index++
+		if err := decodeCspSequence(decoder, names, result); err != nil {
+			return nil, err
 		}
 	default:
 		return nil, errors.New("manifest must be a struct")
@@ -321,10 +249,8 @@ func cspFields(data []byte, names []string) ([]json.RawMessage, error) {
 	if _, err := decoder.Token(); err != io.EOF {
 		return nil, errors.New("trailing manifest data")
 	}
-	for index, value := range result {
-		if value == nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return nil, fmt.Errorf("missing or null field %s", names[index])
-		}
+	if err := requireCspFields(result, names); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -352,4 +278,138 @@ func (file *cspFile) UnmarshalJSON(data []byte) error {
 		}
 	}
 	return nil
+}
+
+// appendCspFile retains aggregate hash mutation before relative-path validation and file append.
+func appendCspFile(manifest *cspManifest, root, filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("Unable to read static HTML at %s: %w", filename, err)
+	}
+	if !utf8.Valid(data) {
+		return fmt.Errorf("Static HTML must be valid UTF-8: %s", filename)
+	}
+	hashes, err := inlineScriptHashes(data)
+	if err != nil {
+		return err
+	}
+	for _, hash := range hashes {
+		if !slices.Contains(manifest.ScriptHashes, hash) {
+			manifest.ScriptHashes = append(manifest.ScriptHashes, hash)
+		}
+	}
+	relative, err := filepath.Rel(root, filename)
+	if err != nil {
+		return errors.New("Static HTML escaped the export root")
+	}
+	if !utf8.ValidString(relative) {
+		return errors.New("Static HTML path must be valid UTF-8")
+	}
+	manifest.Files = append(manifest.Files, cspFile{strings.ReplaceAll(relative, "\\", "/"), cspDigest(data), hashes})
+	return nil
+}
+
+// skipScriptAttributeSeparators advances only over original HTML whitespace and slash bytes.
+func skipScriptAttributeSeparators(tag []byte, cursor int) int {
+	for cursor < len(tag) && (htmlWhitespace(tag[cursor]) || tag[cursor] == '/') {
+		cursor++
+	}
+	return cursor
+}
+
+// scriptAttributeNameEnd consumes the exact original attribute-name byte grammar.
+func scriptAttributeNameEnd(tag []byte, cursor int) int {
+	for cursor < len(tag) && !htmlWhitespace(tag[cursor]) && !strings.ContainsRune("=/>", rune(tag[cursor])) {
+		cursor++
+	}
+	return cursor
+}
+
+// scriptAttributeValueEnd skips a supplied quoted or unquoted value after equals admission.
+func scriptAttributeValueEnd(tag []byte, cursor int) int {
+	cursor = skipScriptAttributeWhitespace(tag, cursor)
+	if cursor >= len(tag) || tag[cursor] != '=' {
+		return cursor
+	}
+	cursor++
+	cursor = skipScriptAttributeWhitespace(tag, cursor)
+	if cursor < len(tag) && (tag[cursor] == '\'' || tag[cursor] == '"') {
+		cursor = scriptQuotedValueEnd(tag, cursor)
+	} else {
+		for cursor < len(tag) && !htmlWhitespace(tag[cursor]) && tag[cursor] != '>' {
+			cursor++
+		}
+	}
+	return cursor
+}
+
+// scriptQuotedValueEnd consumes through an optional matching quote without interpreting bytes.
+func scriptQuotedValueEnd(tag []byte, cursor int) int {
+	quote := tag[cursor]
+	cursor++
+	for cursor < len(tag) && tag[cursor] != quote {
+		cursor++
+	}
+	if cursor < len(tag) {
+		cursor++
+	}
+	return cursor
+}
+
+// decodeCspObject rejects unknown and duplicate names before decoding their values.
+func decodeCspObject(decoder *json.Decoder, names []string, result []json.RawMessage) error {
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return errors.New("invalid manifest field")
+		}
+		index := slices.Index(names, name)
+		if index < 0 {
+			return fmt.Errorf("unknown field %s", name)
+		}
+		if result[index] != nil {
+			return fmt.Errorf("duplicate field %s", name)
+		}
+		if err := decoder.Decode(&result[index]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// decodeCspSequence rejects excess positional values before reading their contents.
+func decodeCspSequence(decoder *json.Decoder, names []string, result []json.RawMessage) error {
+	index := 0
+	for decoder.More() {
+		if index >= len(names) {
+			return errors.New("invalid manifest sequence length")
+		}
+		if err := decoder.Decode(&result[index]); err != nil {
+			return err
+		}
+		index++
+	}
+	return nil
+}
+
+// requireCspFields checks missing and null fields in the supplied declaration order.
+func requireCspFields(result []json.RawMessage, names []string) error {
+	for index, value := range result {
+		if value == nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return fmt.Errorf("missing or null field %s", names[index])
+		}
+	}
+	return nil
+}
+
+// skipScriptAttributeWhitespace consumes the original five HTML whitespace bytes.
+func skipScriptAttributeWhitespace(tag []byte, cursor int) int {
+	for cursor < len(tag) && htmlWhitespace(tag[cursor]) {
+		cursor++
+	}
+	return cursor
 }

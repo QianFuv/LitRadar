@@ -80,24 +80,29 @@ func CleanupAfterProcess(args []string) {
 		return
 	}
 	for _, path := range paths {
-		label := filepath.Base(path)
-		if label == "." || label == string(filepath.Separator) || !utf8.ValidString(label) {
-			label = "sqlite"
+		cleanupProcessSidecars(path)
+	}
+}
+
+// cleanupProcessSidecars reports bounded basename-only results for one SQLite cleanup attempt.
+func cleanupProcessSidecars(path string) {
+	label := filepath.Base(path)
+	if label == "." || label == string(filepath.Separator) || !utf8.ValidString(label) {
+		label = "sqlite"
+	}
+	result, err := sqlite.CleanupSidecars(context.Background(), path)
+	if err != nil {
+		slog.Warn("storage.sqlite_sidecars.cleanup_failed", "event", "storage.sqlite_sidecars.cleanup_failed", "component", "storage", "database", label, "error_kind", "sqlite_error")
+		return
+	}
+	switch result {
+	case sqlite.SidecarCleaned:
+		slog.Debug("storage.sqlite_sidecars.cleaned", "event", "storage.sqlite_sidecars.cleaned", "component", "storage", "database", label, "outcome", "success")
+	case sqlite.SidecarBusy, sqlite.SidecarRetained:
+		reason := "sqlite_retained"
+		if result == sqlite.SidecarBusy {
+			reason = "active_connection"
 		}
-		result, err := sqlite.CleanupSidecars(context.Background(), path)
-		if err != nil {
-			slog.Warn("storage.sqlite_sidecars.cleanup_failed", "event", "storage.sqlite_sidecars.cleanup_failed", "component", "storage", "database", label, "error_kind", "sqlite_error")
-			continue
-		}
-		switch result {
-		case sqlite.SidecarCleaned:
-			slog.Debug("storage.sqlite_sidecars.cleaned", "event", "storage.sqlite_sidecars.cleaned", "component", "storage", "database", label, "outcome", "success")
-		case sqlite.SidecarBusy, sqlite.SidecarRetained:
-			reason := "sqlite_retained"
-			if result == sqlite.SidecarBusy {
-				reason = "active_connection"
-			}
-			slog.Debug("storage.sqlite_sidecars.retained", "event", "storage.sqlite_sidecars.retained", "component", "storage", "database", label, "outcome", "skipped", "reason", reason)
-		}
+		slog.Debug("storage.sqlite_sidecars.retained", "event", "storage.sqlite_sidecars.retained", "component", "storage", "database", label, "outcome", "skipped", "reason", reason)
 	}
 }
