@@ -173,75 +173,28 @@ func Create(ctx context.Context, options CreateOptions) (Manifest, error) {
 }
 func create(ctx context.Context, options CreateOptions, afterMetaCopy func(string) error) (Manifest, error) {
 	empty := Manifest{}
-	if fileExists(options.OutputDir) {
-		return empty, failure("input", "output directory already exists")
-	}
-	info, err := os.Stat(options.AuthDbPath)
-	if err != nil || !info.Mode().IsRegular() {
-		return empty, failure("input", "auth database does not exist")
-	}
-	parent := filepath.Dir(options.OutputDir)
-	if err := os.MkdirAll(parent, 0777); err != nil {
-		return empty, err
-	}
-	if err := validateOutput(options); err != nil {
-		return empty, err
-	}
-	stage, err := os.MkdirTemp(parent, ".litradar-backup-")
+	stage, err := prepareBackupStage(options)
 	if err != nil {
 		return empty, err
 	}
 	defer os.RemoveAll(stage)
-	components := []Component{}
-	err = withAuthGate(ctx, options.AuthDbPath, func(_ *sql.Conn) error {
-		destination := filepath.Join(stage, "auth.sqlite")
-		if err := backupDatabase(ctx, options.AuthDbPath, destination); err != nil {
-			return err
-		}
-		component, err := databaseComponent(ctx, "auth_database", "auth.sqlite", destination)
-		if err != nil {
-			return err
-		}
-		components = append(components, component)
-		metadata, err := copyGroup(options.Config.MetaDir, stage, "meta", "metadata", "metadata", afterMetaCopy)
-		if err != nil {
-			return err
-		}
-		components = append(components, metadata...)
-		return nil
-	})
+	components, err := copyInitialBackupComponents(ctx, options, stage, afterMetaCopy)
 	if err != nil {
 		return empty, err
 	}
 	if options.IncludeIndexDatabases {
-		if err := os.MkdirAll(filepath.Join(stage, "index"), 0777); err != nil {
-			return empty, err
-		}
-		files, err := options.Config.ListIndexDatabases()
+		items, err := copyBackupIndexes(ctx, options, stage)
 		if err != nil {
 			return empty, err
 		}
-		for _, source := range files {
-			name := filepath.Base(source)
-			destination := filepath.Join(stage, "index", name)
-			if err := backupDatabase(ctx, source, destination); err != nil {
-				return empty, err
-			}
-			component, err := databaseComponent(ctx, "index_database", "index/"+name, destination)
-			if err != nil {
-				return empty, err
-			}
-			components = append(components, component)
-		}
+		components = append(components, items...)
 	}
 	if options.IncludePushState {
-		for _, name := range []string{"push_state", "folder_push_state"} {
-			items, err := copyGroup(filepath.Join(options.Config.ProjectRoot, "data", name), stage, name, "push_state", "push-state", nil)
-			if err != nil {
-				return empty, err
-			}
-			components = append(components, items...)
+		items, err := copyBackupPushState(options, stage)
+		if err != nil {
+			return empty, err
 		}
+		components = append(components, items...)
 	}
 	slices.SortFunc(components, func(first, second Component) int { return strings.Compare(first.Path, second.Path) })
 	now := time.Now()
@@ -249,17 +202,7 @@ func create(ctx context.Context, options CreateOptions, afterMetaCopy func(strin
 		return empty, failure("input", "system time is before the Unix epoch")
 	}
 	manifest := Manifest{"litradar-backup", FormatVersion, float64(now.Unix()) + float64(now.Nanosecond())/1e9, Selection{true, options.IncludeIndexDatabases, options.IncludePushState}, components}
-	if err := writeManifest(stage, manifest); err != nil {
-		return empty, err
-	}
-	manifest, err = Verify(ctx, stage)
-	if err != nil {
-		return empty, err
-	}
-	if err := os.Rename(stage, options.OutputDir); err != nil {
-		return empty, err
-	}
-	return manifest, nil
+	return publishBackupStage(ctx, options.OutputDir, stage, manifest)
 }
 func withAuthGate(ctx context.Context, filename string, read func(*sql.Conn) error) error {
 	database, err := storage.Open(filename, false, 1)
@@ -281,4 +224,99 @@ func withAuthGate(ctx context.Context, filename string, read func(*sql.Conn) err
 	}
 	_, err = connection.ExecContext(ctx, "ROLLBACK")
 	return err
+}
+
+func prepareBackupStage(options CreateOptions) (string, error) {
+	if fileExists(options.OutputDir) {
+		return "", failure("input", "output directory already exists")
+	}
+	info, err := os.Stat(options.AuthDbPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", failure("input", "auth database does not exist")
+	}
+	parent := filepath.Dir(options.OutputDir)
+	if err := os.MkdirAll(parent, 0777); err != nil {
+		return "", err
+	}
+	if err := validateOutput(options); err != nil {
+		return "", err
+	}
+	stage, err := os.MkdirTemp(parent, ".litradar-backup-")
+	if err != nil {
+		return "", err
+	}
+	return stage, nil
+}
+
+func copyInitialBackupComponents(ctx context.Context, options CreateOptions, stage string, afterMetaCopy func(string) error) ([]Component, error) {
+	components := []Component{}
+	err := withAuthGate(ctx, options.AuthDbPath, func(_ *sql.Conn) error {
+		destination := filepath.Join(stage, "auth.sqlite")
+		if err := backupDatabase(ctx, options.AuthDbPath, destination); err != nil {
+			return err
+		}
+		component, err := databaseComponent(ctx, "auth_database", "auth.sqlite", destination)
+		if err != nil {
+			return err
+		}
+		components = append(components, component)
+		metadata, err := copyGroup(options.Config.MetaDir, stage, "meta", "metadata", "metadata", afterMetaCopy)
+		if err != nil {
+			return err
+		}
+		components = append(components, metadata...)
+		return nil
+	})
+
+	return components, err
+}
+
+func copyBackupIndexes(ctx context.Context, options CreateOptions, stage string) ([]Component, error) {
+	components := []Component{}
+	if err := os.MkdirAll(filepath.Join(stage, "index"), 0777); err != nil {
+		return nil, err
+	}
+	files, err := options.Config.ListIndexDatabases()
+	if err != nil {
+		return nil, err
+	}
+	for _, source := range files {
+		name := filepath.Base(source)
+		destination := filepath.Join(stage, "index", name)
+		if err := backupDatabase(ctx, source, destination); err != nil {
+			return nil, err
+		}
+		component, err := databaseComponent(ctx, "index_database", "index/"+name, destination)
+		if err != nil {
+			return nil, err
+		}
+		components = append(components, component)
+	}
+	return components, nil
+}
+
+func copyBackupPushState(options CreateOptions, stage string) ([]Component, error) {
+	components := []Component{}
+	for _, name := range []string{"push_state", "folder_push_state"} {
+		items, err := copyGroup(filepath.Join(options.Config.ProjectRoot, "data", name), stage, name, "push_state", "push-state", nil)
+		if err != nil {
+			return nil, err
+		}
+		components = append(components, items...)
+	}
+	return components, nil
+}
+
+func publishBackupStage(ctx context.Context, output, stage string, manifest Manifest) (Manifest, error) {
+	if err := writeManifest(stage, manifest); err != nil {
+		return Manifest{}, err
+	}
+	manifest, err := Verify(ctx, stage)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if err := os.Rename(stage, output); err != nil {
+		return Manifest{}, err
+	}
+	return manifest, nil
 }

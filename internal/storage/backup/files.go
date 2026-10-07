@@ -113,23 +113,8 @@ func copyGroup(source, stage, directory, kind, label string, afterCopy func(stri
 		return nil, err
 	}
 	for _, file := range before {
-		if keyFile(file.Path) {
-			return nil, failure("input", "%s directory contains a forbidden key file", label)
-		}
-		target := filepath.Join(destination, filepath.FromSlash(file.Path))
-		if err := copyFile(filepath.Join(source, filepath.FromSlash(file.Path)), target); err != nil {
+		if err := copySnapshotFile(source, destination, file, label); err != nil {
 			return nil, err
-		}
-		info, err := os.Stat(target)
-		if err != nil {
-			return nil, err
-		}
-		digest, err := hashFile(target)
-		if err != nil {
-			return nil, err
-		}
-		if uint64(info.Size()) != file.Size || digest != file.Sha256 {
-			return nil, failure("integrity", "%s copy changed while it was written", label)
 		}
 	}
 	if afterCopy != nil {
@@ -174,4 +159,26 @@ func removeFile(filename string) error {
 		return &os.PathError{Op: "remove", Path: filename, Err: os.ErrInvalid}
 	}
 	return os.Remove(filename)
+}
+
+func copySnapshotFile(source, destination string, file snapshotFile, label string) error {
+	if keyFile(file.Path) {
+		return failure("input", "%s directory contains a forbidden key file", label)
+	}
+	target := filepath.Join(destination, filepath.FromSlash(file.Path))
+	if err := copyFile(filepath.Join(source, filepath.FromSlash(file.Path)), target); err != nil {
+		return err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return err
+	}
+	digest, err := hashFile(target)
+	if err != nil {
+		return err
+	}
+	if uint64(info.Size()) != file.Size || digest != file.Sha256 {
+		return failure("integrity", "%s copy changed while it was written", label)
+	}
+	return nil
 }

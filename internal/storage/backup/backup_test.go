@@ -83,18 +83,8 @@ func TestCreateCapturesCommittedWalAndExactSelectedGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Version != 2 || manifest.Selection != (Selection{true, true, true}) || len(manifest.Components) != 4 {
-		t.Fatalf("%+v", manifest)
-	}
-	database, err := storage.Open(filepath.Join(options.OutputDir, "auth.sqlite"), true, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
-	var name string
-	if err := database.QueryRowContext(ctx, "SELECT username FROM users WHERE id=1").Scan(&name); err != nil || name != "committed-wal" {
-		t.Fatalf("%q %v", name, err)
-	}
+	assertSelectedBackupManifest(t, manifest)
+	assertCommittedBackupUsername(t, ctx, options.OutputDir)
 	for _, file := range manifest.Components {
 		if strings.Contains(file.Path, "control") || keyFile(file.Path) {
 			t.Fatal(file.Path)
@@ -245,24 +235,8 @@ func TestHeartbeatBoundaryRenewalAndLateRestoreGate(t *testing.T) {
 	if err := RecordHeartbeat(ctx, configuration.AuthDbPath, Api, "instance", 20); err != nil {
 		t.Fatal(err)
 	}
-	database, err := storage.Open(configuration.AuthDbPath, true, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var started float64
-	if err := database.QueryRowContext(ctx, "SELECT started_at FROM service_heartbeats WHERE instance_id='instance'").Scan(&started); err != nil || started != 10 {
-		t.Fatalf("%f %v", started, err)
-	}
-	database.Close()
-	for _, test := range []struct {
-		now  float64
-		want bool
-	}{{110, true}, {110.001, false}, {-100, true}} {
-		active, err := HasRecentHeartbeat(ctx, configuration.AuthDbPath, test.now, 90)
-		if err != nil || active != test.want {
-			t.Fatalf("%+v => %v %v", test, active, err)
-		}
-	}
+	assertHeartbeatRetainsStartTime(t, ctx, configuration.AuthDbPath)
+	assertRecentHeartbeatBoundaries(t, ctx, configuration.AuthDbPath)
 	if err := DeleteHeartbeat(ctx, configuration.AuthDbPath, Api, "instance"); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +244,7 @@ func TestHeartbeatBoundaryRenewalAndLateRestoreGate(t *testing.T) {
 	if _, err := Create(ctx, options); err != nil {
 		t.Fatal(err)
 	}
-	_, err = restore(ctx, RestoreOptions{configuration, configuration.AuthDbPath, options.OutputDir}, 1000, func() error { return RecordHeartbeat(ctx, configuration.AuthDbPath, Worker, "late", 1001) }, nil)
+	_, err := restore(ctx, RestoreOptions{configuration, configuration.AuthDbPath, options.OutputDir}, 1000, func() error { return RecordHeartbeat(ctx, configuration.AuthDbPath, Worker, "late", 1001) }, nil)
 	if !errors.Is(err, ErrActiveTarget) {
 		t.Fatal(err)
 	}
@@ -302,5 +276,51 @@ func TestManifestRejectsUnsafePathsAndDuplicateFields(t *testing.T) {
 	}
 	if _, err := ParseManifest([]byte(`{"format":"litradar-backup","version":1,"created_at":1,"selection":{"index_databases":false,"push_state":false},"components":[]}`)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertCommittedBackupUsername(t *testing.T, ctx context.Context, directory string) {
+	t.Helper()
+	database, err := storage.Open(filepath.Join(directory, "auth.sqlite"), true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var name string
+	if err := database.QueryRowContext(ctx, "SELECT username FROM users WHERE id=1").Scan(&name); err != nil || name != "committed-wal" {
+		t.Fatalf("%q %v", name, err)
+	}
+}
+
+func assertSelectedBackupManifest(t *testing.T, manifest Manifest) {
+	t.Helper()
+	if manifest.Version != 2 || manifest.Selection != (Selection{true, true, true}) || len(manifest.Components) != 4 {
+		t.Fatalf("%+v", manifest)
+	}
+}
+
+func assertHeartbeatRetainsStartTime(t *testing.T, ctx context.Context, filename string) {
+	t.Helper()
+	database, err := storage.Open(filename, true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started float64
+	if err := database.QueryRowContext(ctx, "SELECT started_at FROM service_heartbeats WHERE instance_id='instance'").Scan(&started); err != nil || started != 10 {
+		t.Fatalf("%f %v", started, err)
+	}
+	database.Close()
+}
+
+func assertRecentHeartbeatBoundaries(t *testing.T, ctx context.Context, filename string) {
+	t.Helper()
+	for _, test := range []struct {
+		now  float64
+		want bool
+	}{{110, true}, {110.001, false}, {-100, true}} {
+		active, err := HasRecentHeartbeat(ctx, filename, test.now, 90)
+		if err != nil || active != test.want {
+			t.Fatalf("%+v => %v %v", test, active, err)
+		}
 	}
 }

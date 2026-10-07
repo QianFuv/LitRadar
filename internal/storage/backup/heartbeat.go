@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"database/sql"
 	"math"
 	"os"
 	"strings"
@@ -42,7 +43,7 @@ func HasRecentHeartbeat(ctx context.Context, filename string, now, maximumAge fl
 	if _, err := os.Stat(filename); err != nil {
 		return false, nil
 	}
-	if math.IsNaN(now) || math.IsInf(now, 0) || math.IsNaN(maximumAge) || math.IsInf(maximumAge, 0) || maximumAge < 0 {
+	if hasInvalidHeartbeatWindow(now, maximumAge) {
 		return false, failure("input", "heartbeat time window is invalid")
 	}
 	database, err := storage.Open(filename, true, 1)
@@ -51,23 +52,32 @@ func HasRecentHeartbeat(ctx context.Context, filename string, now, maximumAge fl
 	}
 	defer database.Close()
 	for _, table := range []string{"service_heartbeats", "scheduler_workers"} {
-		var exists bool
-		if err := database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?)", table).Scan(&exists); err != nil {
-			return false, err
-		}
-		if !exists {
-			continue
-		}
-		clause := ""
-		if table == "service_heartbeats" {
-			clause = "service IN ('api','worker') AND "
-		}
-		if err := database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+" WHERE "+clause+"heartbeat_at>=?)", now-maximumAge).Scan(&exists); err != nil {
-			return false, err
-		}
-		if exists {
-			return true, nil
+		active, err := recentTableHeartbeat(ctx, database, table, now-maximumAge)
+		if err != nil || active {
+			return active, err
 		}
 	}
 	return false, nil
+}
+
+func hasInvalidHeartbeatWindow(now, maximumAge float64) bool {
+	return math.IsNaN(now) || math.IsInf(now, 0) || math.IsNaN(maximumAge) || math.IsInf(maximumAge, 0) || maximumAge < 0
+}
+
+func recentTableHeartbeat(ctx context.Context, database *sql.DB, table string, cutoff float64) (bool, error) {
+	var exists bool
+	if err := database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?)", table).Scan(&exists); err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+	clause := ""
+	if table == "service_heartbeats" {
+		clause = "service IN ('api','worker') AND "
+	}
+	if err := database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+" WHERE "+clause+"heartbeat_at>=?)", cutoff).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
 }

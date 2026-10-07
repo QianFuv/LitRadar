@@ -30,11 +30,8 @@ func (item *replacement) apply() error {
 	}
 	if item.staged != "" {
 		if err := os.Rename(item.staged, item.target); err != nil {
-			if item.hadOriginal {
-				if rollbackError := os.Rename(item.rollback, item.target); rollbackError != nil {
-					return failure("rollback", "replacement failed (%v); original could not be restored (%v)", err, rollbackError)
-				}
-				item.hadOriginal = false
+			if rollbackError := item.restoreOriginalAfterFailedRename(err); rollbackError != nil {
+				return rollbackError
 			}
 			return err
 		}
@@ -141,17 +138,8 @@ func restore(ctx context.Context, options RestoreOptions, now float64, beforeRep
 	if err != nil {
 		return report, err
 	}
-	inactive := func() error {
-		active, err := HasRecentHeartbeat(ctx, options.AuthDbPath, now, ActiveHeartbeatMaxAge)
-		if err != nil {
-			return err
-		}
-		if active {
-			return ErrActiveTarget
-		}
-		return nil
-	}
-	if err := inactive(); err != nil {
+
+	if err := requireInactiveRestoreTarget(ctx, options.AuthDbPath, now); err != nil {
 		return report, err
 	}
 	if err := validateOutside(options, manifest.Selection); err != nil {
@@ -185,9 +173,41 @@ func restore(ctx context.Context, options RestoreOptions, now float64, beforeRep
 			os.RemoveAll(dataWorkspace)
 		}
 	}()
+	items, err := stageRestoreReplacements(options, manifest, data, authWorkspace, dataWorkspace)
+	if err != nil {
+		return report, err
+	}
+	if err := executeRestoreReplacements(ctx, options, manifest, now, data, items, beforeReplace, afterReplace); err != nil {
+		return report, err
+	}
+	return restoredManifestReport(manifest), nil
+}
+
+func (item *replacement) restoreOriginalAfterFailedRename(replaceError error) error {
+	if item.hadOriginal {
+		if rollbackError := os.Rename(item.rollback, item.target); rollbackError != nil {
+			return failure("rollback", "replacement failed (%v); original could not be restored (%v)", replaceError, rollbackError)
+		}
+		item.hadOriginal = false
+	}
+	return nil
+}
+
+func requireInactiveRestoreTarget(ctx context.Context, filename string, now float64) error {
+	active, err := HasRecentHeartbeat(ctx, filename, now, ActiveHeartbeatMaxAge)
+	if err != nil {
+		return err
+	}
+	if active {
+		return ErrActiveTarget
+	}
+	return nil
+}
+
+func stageRestoreReplacements(options RestoreOptions, manifest Manifest, data, authWorkspace, dataWorkspace string) ([]replacement, error) {
 	stagedAuth := filepath.Join(authWorkspace, "staged-auth.sqlite")
 	if err := copyFile(filepath.Join(options.BackupDir, "auth.sqlite"), stagedAuth); err != nil {
-		return report, err
+		return nil, err
 	}
 	items := []replacement{{target: options.AuthDbPath, staged: stagedAuth, rollback: filepath.Join(authWorkspace, "rollback-auth.sqlite")}}
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
@@ -208,46 +228,60 @@ func restore(ctx context.Context, options RestoreOptions, now float64, beforeRep
 		}
 		stage := filepath.Join(dataWorkspace, "staged-"+group.directory)
 		if err := selectedGroup(options.BackupDir, manifest, group.kind, group.directory, stage); err != nil {
-			return report, err
+			return nil, err
 		}
 		items = append(items, replacement{target: group.target, staged: stage, rollback: filepath.Join(dataWorkspace, "rollback-"+group.directory)})
 	}
+	return items, nil
+}
+
+func executeRestoreReplacements(ctx context.Context, options RestoreOptions, manifest Manifest, now float64, data string, items []replacement, beforeReplace, afterReplace func() error) error {
+	var err error
 	if beforeReplace != nil {
 		if err := beforeReplace(); err != nil {
-			return report, err
+			return err
 		}
 	}
-	if err := inactive(); err != nil {
-		return report, err
+	if err := requireInactiveRestoreTarget(ctx, options.AuthDbPath, now); err != nil {
+		return err
 	}
 	if err := apply(items); err != nil {
-		return report, err
+		return err
 	}
 	if afterReplace != nil {
 		err = afterReplace()
 	}
 	if err == nil {
-		for _, component := range manifest.Components {
-			target := options.AuthDbPath
-			if component.Kind != "auth_database" {
-				target = filepath.Join(data, filepath.FromSlash(component.Path))
-			}
-			if err = validateFile(ctx, component, target); err != nil {
-				break
-			}
-		}
+		err = validateRestoredComponents(ctx, options, manifest, data)
 	}
 	if err != nil {
 		if rollbackError := rollback(items); rollbackError != nil {
-			return report, rollbackError
+			return rollbackError
 		}
-		return report, err
+		return err
 	}
-	report = RestoreReport{RestoredFiles: len(manifest.Components), RestoredMetadata: manifest.Selection.Metadata, RestoredIndexDatabases: manifest.Selection.IndexDatabases, RestoredPushState: manifest.Selection.PushState}
+	return nil
+}
+
+func validateRestoredComponents(ctx context.Context, options RestoreOptions, manifest Manifest, data string) error {
+	for _, component := range manifest.Components {
+		target := options.AuthDbPath
+		if component.Kind != "auth_database" {
+			target = filepath.Join(data, filepath.FromSlash(component.Path))
+		}
+		if err := validateFile(ctx, component, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoredManifestReport(manifest Manifest) RestoreReport {
+	report := RestoreReport{RestoredFiles: len(manifest.Components), RestoredMetadata: manifest.Selection.Metadata, RestoredIndexDatabases: manifest.Selection.IndexDatabases, RestoredPushState: manifest.Selection.PushState}
 	for _, component := range manifest.Components {
 		if component.Kind == "auth_database" || component.Kind == "index_database" {
 			report.RestoredDatabases++
 		}
 	}
-	return report, nil
+	return report
 }
