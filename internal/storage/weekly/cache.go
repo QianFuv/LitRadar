@@ -98,18 +98,11 @@ func (cache *Cache) readAt(filename string, now time.Time) (*Manifest, error) {
 		return nil, err
 	}
 	cache.mutex.Lock()
-	cache.prune(now)
-	cache.accessSequence++
-	if entry, exists := cache.entries[path]; exists && entry.fingerprint == before {
-		entry.lastAccess = cache.accessSequence
-		cache.entries[path] = entry
-		result := cloneManifest(entry.manifest)
-		cache.mutex.Unlock()
+	result, hit := cache.lookupLocked(path, before, now)
+	cache.mutex.Unlock()
+	if hit {
 		return result, nil
 	}
-	cache.remove(path)
-	cache.parseAttempts++
-	cache.mutex.Unlock()
 	parsed, err := readManifest(path)
 	if err != nil {
 		return nil, err
@@ -121,8 +114,40 @@ func (cache *Cache) readAt(filename string, now time.Time) (*Manifest, error) {
 	}
 	cache.mutex.Lock()
 	defer cache.mutex.Unlock()
+	cache.retainLocked(path, before, parsed, count, now)
+	return parsed, nil
+}
+
+// lookupLocked updates LRU hits or counts a parse attempt while the caller owns the mutex.
+func (cache *Cache) lookupLocked(path string, before fileFingerprint, now time.Time) (*Manifest, bool) {
+	cache.prune(now)
+	cache.accessSequence++
+	if entry, exists := cache.entries[path]; exists && entry.fingerprint == before {
+		entry.lastAccess = cache.accessSequence
+		cache.entries[path] = entry
+		result := cloneManifest(entry.manifest)
+		return result, true
+	}
+	cache.remove(path)
+	cache.parseAttempts++
+	return nil, false
+}
+
+// retainLocked clones a stable publication under the caller's existing admission lock.
+func (cache *Cache) retainLocked(path string, before fileFingerprint, parsed *Manifest, count int, now time.Time) {
 	cache.prune(now)
 	cache.remove(path)
+	cache.evictLocked(count)
+	if cache.entries == nil {
+		cache.entries = map[string]cacheEntry{}
+	}
+	cache.accessSequence++
+	cache.entries[path] = cacheEntry{before, cloneManifest(parsed), now, cache.accessSequence}
+	cache.articleIds += count
+}
+
+// evictLocked enforces entry and article limits using the existing least-recent-access sequence.
+func (cache *Cache) evictLocked(count int) {
 	for len(cache.entries) >= cacheCapacity || cache.articleIds+count > cacheArticleLimit {
 		oldest := ""
 		var sequence uint64
@@ -136,11 +161,4 @@ func (cache *Cache) readAt(filename string, now time.Time) (*Manifest, error) {
 		}
 		cache.remove(oldest)
 	}
-	if cache.entries == nil {
-		cache.entries = map[string]cacheEntry{}
-	}
-	cache.accessSequence++
-	cache.entries[path] = cacheEntry{before, cloneManifest(parsed), now, cache.accessSequence}
-	cache.articleIds += count
-	return parsed, nil
 }

@@ -50,15 +50,7 @@ func TestCacheArticleBudgetEvictsAndDoesNotRetainOversizedPublication(t *testing
 	if stats := cache.statsAt(now); stats.Entries != 1 || stats.ArticleIds != 600000 {
 		t.Fatal(stats)
 	}
-	for range 2 {
-		manifest, err := cache.readAt(large, now)
-		if err != nil || len(manifest.ArticleIds) != cacheArticleLimit+1 {
-			t.Fatalf("oversized publication was truncated: %v", err)
-		}
-	}
-	if stats := cache.statsAt(now); stats.Entries != 1 || stats.ArticleIds != 600000 || stats.ParseAttempts != 4 {
-		t.Fatal(stats)
-	}
+	assertOversizedPublicationUncached(t, &cache, large, now)
 }
 
 func TestCacheExpiresFromLoadTimeAndReturnsIndependentCopies(t *testing.T) {
@@ -109,32 +101,14 @@ func TestCacheNeverMasksDamageAndRecoversAfterRepair(t *testing.T) {
 	if stats := cache.Stats(); stats.Entries != 1 || stats.ArticleIds != 1 || stats.ParseAttempts != 3 {
 		t.Fatalf("failure cached: %+v", stats)
 	}
-	writeManifest(t, filename, []int64{3})
-	if value, err := cache.read(filename); err != nil || value.ArticleIds[0] != 3 {
-		t.Fatalf("repair=%+v %v", value, err)
-	}
-	if err := os.Remove(filename); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cache.read(filename); err == nil {
-		t.Fatal("missing manifest accepted")
-	}
-	if stats := cache.Stats(); stats.Entries != 0 || stats.ArticleIds != 0 {
-		t.Fatalf("canonicalization failure did not clear cache: %+v", stats)
-	}
+	assertCacheRepairAndMissingSource(t, &cache, filename)
 }
 
 func TestCacheBoundsLruAndRetainsValidIgnoredPublications(t *testing.T) {
 	directory := t.TempDir()
 	cache := Cache{}
 	now := time.Now()
-	for index := range cacheCapacity {
-		filename := filepath.Join(directory, strconv.Itoa(index)+".changes.json")
-		writeManifest(t, filename, []int64{int64(index)})
-		if _, err := cache.readAt(filename, now); err != nil {
-			t.Fatal(err)
-		}
-	}
+	fillPublicationCache(t, &cache, directory, now)
 	first := filepath.Join(directory, "0.changes.json")
 	if _, err := cache.readAt(first, now); err != nil {
 		t.Fatal(err)
@@ -156,12 +130,7 @@ func TestCacheBoundsLruAndRetainsValidIgnoredPublications(t *testing.T) {
 	if stats := cache.statsAt(now); stats.ParseAttempts != 65 {
 		t.Fatalf("recent/empty entry evicted: %+v", stats)
 	}
-	if _, err := cache.readAt(filepath.Join(directory, "1.changes.json"), now); err != nil {
-		t.Fatal(err)
-	}
-	if stats := cache.statsAt(now); stats.ParseAttempts != 66 {
-		t.Fatalf("oldest entry retained: %+v", stats)
-	}
+	assertOldestPublicationEvicted(t, &cache, directory, now)
 }
 
 func TestDiscoveryAndPublicationDedupUseImmutableSourceIdentity(t *testing.T) {
@@ -178,15 +147,7 @@ func TestDiscoveryAndPublicationDedupUseImmutableSourceIdentity(t *testing.T) {
 	}
 	end, _ := ParseTimestamp("2026-10-03T12:00:00.123456789Z")
 	cache := Cache{}
-	for _, selectedCache := range []*Cache{nil, &cache} {
-		manifests, err := LoadManifests(configuration, end.WindowStart(), end, selectedCache)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(manifests) != 2 || !reflect.DeepEqual(manifests[0].ArticleIds, []int64{1, 2}) || !reflect.DeepEqual(manifests[1].ArticleIds, []int64{2, 1}) {
-			t.Fatalf("dedup/order=%+v", manifests)
-		}
-	}
+	assertImmutablePublicationDedup(t, configuration, &cache, end)
 	before := end
 	before.Nanoseconds--
 	if manifests, err := LoadManifests(configuration, before.WindowStart(), before, &cache); err != nil || len(manifests) != 0 {
@@ -223,5 +184,74 @@ func TestConcurrentCacheReadersCannotMutateSharedPublication(t *testing.T) {
 	workers.Wait()
 	if stats := cache.Stats(); stats.Entries != 1 || stats.ArticleIds != 3 {
 		t.Fatalf("concurrent accounting=%+v", stats)
+	}
+}
+
+// assertOversizedPublicationUncached checks repeated untruncated reads without replacing retained publications.
+func assertOversizedPublicationUncached(t *testing.T, cache *Cache, large string, now time.Time) {
+	t.Helper()
+	for range 2 {
+		manifest, err := cache.readAt(large, now)
+		if err != nil || len(manifest.ArticleIds) != cacheArticleLimit+1 {
+			t.Fatalf("oversized publication was truncated: %v", err)
+		}
+	}
+	if stats := cache.statsAt(now); stats.Entries != 1 || stats.ArticleIds != 600000 || stats.ParseAttempts != 4 {
+		t.Fatal(stats)
+	}
+}
+
+// assertCacheRepairAndMissingSource checks repair followed by global clearing after failed canonicalization.
+func assertCacheRepairAndMissingSource(t *testing.T, cache *Cache, filename string) {
+	t.Helper()
+	writeManifest(t, filename, []int64{3})
+	if value, err := cache.read(filename); err != nil || value.ArticleIds[0] != 3 {
+		t.Fatalf("repair=%+v %v", value, err)
+	}
+	if err := os.Remove(filename); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.read(filename); err == nil {
+		t.Fatal("missing manifest accepted")
+	}
+	if stats := cache.Stats(); stats.Entries != 0 || stats.ArticleIds != 0 {
+		t.Fatalf("canonicalization failure did not clear cache: %+v", stats)
+	}
+}
+
+// fillPublicationCache loads all entries before testing access chronology.
+func fillPublicationCache(t *testing.T, cache *Cache, directory string, now time.Time) {
+	t.Helper()
+	for index := range cacheCapacity {
+		filename := filepath.Join(directory, strconv.Itoa(index)+".changes.json")
+		writeManifest(t, filename, []int64{int64(index)})
+		if _, err := cache.readAt(filename, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// assertOldestPublicationEvicted checks the original LRU victim after warm and ignored-publication hits.
+func assertOldestPublicationEvicted(t *testing.T, cache *Cache, directory string, now time.Time) {
+	t.Helper()
+	if _, err := cache.readAt(filepath.Join(directory, "1.changes.json"), now); err != nil {
+		t.Fatal(err)
+	}
+	if stats := cache.statsAt(now); stats.ParseAttempts != 66 {
+		t.Fatalf("oldest entry retained: %+v", stats)
+	}
+}
+
+// assertImmutablePublicationDedup checks exact source order under both cold and cached discovery.
+func assertImmutablePublicationDedup(t *testing.T, configuration config.Config, cache *Cache, end Timestamp) {
+	t.Helper()
+	for _, selectedCache := range []*Cache{nil, cache} {
+		manifests, err := LoadManifests(configuration, end.WindowStart(), end, selectedCache)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(manifests) != 2 || !reflect.DeepEqual(manifests[0].ArticleIds, []int64{1, 2}) || !reflect.DeepEqual(manifests[1].ArticleIds, []int64{2, 1}) {
+			t.Fatalf("dedup/order=%+v", manifests)
+		}
 	}
 }

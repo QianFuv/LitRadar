@@ -33,24 +33,11 @@ func manifestPaths(directory string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, catalog := range catalogs {
-		if !catalog.IsDir() {
-			continue
-		}
-		entries, err := os.ReadDir(filepath.Join(history, catalog.Name()))
-		if err != nil {
-			return nil, err
-		}
-		for _, entry := range entries {
-			info, err := entry.Info()
-			if err != nil {
-				return nil, err
-			}
-			if info.Mode().IsRegular() && managedHistoryName(entry.Name()) {
-				paths = append(paths, filepath.Join(history, catalog.Name(), entry.Name()))
-			}
-		}
+	historyPaths, err := historyManifestPaths(history, catalogs)
+	if err != nil {
+		return nil, err
 	}
+	paths = append(paths, historyPaths...)
 	slices.Sort(paths)
 	return paths, nil
 }
@@ -175,4 +162,28 @@ func fingerprint(filename string) (fileFingerprint, error) {
 	}
 	created, hasCreated := creationTime(filename, info)
 	return fileFingerprint{info.Size(), info.ModTime().Unix(), info.ModTime().Nanosecond(), created, hasCreated}, nil
+}
+
+// historyManifestPaths admits regular managed publications beneath actual catalog directories.
+func historyManifestPaths(history string, catalogs []os.DirEntry) ([]string, error) {
+	paths := []string{}
+	for _, catalog := range catalogs {
+		if !catalog.IsDir() {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(history, catalog.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				return nil, err
+			}
+			if info.Mode().IsRegular() && managedHistoryName(entry.Name()) {
+				paths = append(paths, filepath.Join(history, catalog.Name(), entry.Name()))
+			}
+		}
+	}
+	return paths, nil
 }

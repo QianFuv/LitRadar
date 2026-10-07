@@ -63,21 +63,48 @@ func fixedDigits(value string) (int, bool) {
 // ParseTimestamp implements the frozen RFC3339 grammar, including lowercase separators and leap seconds.
 func ParseTimestamp(value string) (Timestamp, bool) {
 	value = strings.TrimSpace(value)
-	if len(value) < 20 || value[4] != '-' || value[7] != '-' || (value[10] != 'T' && value[10] != 't' && value[10] != ' ') || value[13] != ':' || value[16] != ':' {
+	date, leap, ok := parseTimestampDate(value)
+	if !ok {
 		return Timestamp{}, false
+	}
+	position, fraction, ok := parseTimestampFraction(value)
+	if !ok {
+		return Timestamp{}, false
+	}
+	offset, ok := parseTimestampOffset(value[position:])
+	if !ok {
+		return Timestamp{}, false
+	}
+	return Timestamp{date.Unix() - int64(offset), fraction + leap}, true
+}
+
+// hasTimestampSeparators checks the fixed positions before any component slicing.
+func hasTimestampSeparators(value string) bool {
+	return !(len(value) < 20 || value[4] != '-' || value[7] != '-' || (value[10] != 'T' && value[10] != 't' && value[10] != ' ') || value[13] != ':' || value[16] != ':')
+}
+
+// matchesTimestampDate rejects normalized invalid calendar dates.
+func matchesTimestampDate(date time.Time, year, month, day int) bool {
+	return date.Year() == year && int(date.Month()) == month && date.Day() == day
+}
+
+// parseTimestampDate retains leap seconds separately from the native UTC date.
+func parseTimestampDate(value string) (time.Time, uint32, bool) {
+	if !hasTimestampSeparators(value) {
+		return time.Time{}, 0, false
 	}
 	parts := []string{value[:4], value[5:7], value[8:10], value[11:13], value[14:16], value[17:19]}
 	numbers := make([]int, len(parts))
 	for index, part := range parts {
 		number, ok := fixedDigits(part)
 		if !ok {
-			return Timestamp{}, false
+			return time.Time{}, 0, false
 		}
 		numbers[index] = number
 	}
 	year, month, day, hour, minute, second := numbers[0], numbers[1], numbers[2], numbers[3], numbers[4], numbers[5]
 	if hour > 23 || minute > 59 || second > 60 {
-		return Timestamp{}, false
+		return time.Time{}, 0, false
 	}
 	leap := uint32(0)
 	if second == 60 {
@@ -85,9 +112,14 @@ func ParseTimestamp(value string) (Timestamp, bool) {
 		leap = 1000000000
 	}
 	date := time.Date(year, time.Month(month), day, hour, minute, second, 0, time.UTC)
-	if date.Year() != year || int(date.Month()) != month || date.Day() != day {
-		return Timestamp{}, false
+	if !matchesTimestampDate(date, year, month, day) {
+		return time.Time{}, 0, false
 	}
+	return date, leap, true
+}
+
+// parseTimestampFraction consumes all digits while truncating precision after nine.
+func parseTimestampFraction(value string) (int, uint32, bool) {
 	position := 19
 	fraction := uint32(0)
 	if value[position] == '.' {
@@ -100,44 +132,67 @@ func ParseTimestamp(value string) (Timestamp, bool) {
 			position++
 		}
 		if position == start {
-			return Timestamp{}, false
+			return 0, 0, false
 		}
 		for digits := position - start; digits < 9; digits++ {
 			fraction *= 10
 		}
 	}
-	zone := value[position:]
+	return position, fraction, true
+}
+
+// parseTimestampOffset preserves lowercase UTC and ASCII or Unicode minus offsets.
+func parseTimestampOffset(zone string) (int, bool) {
 	offset := 0
 	if zone != "Z" && zone != "z" {
-		negative := false
-		if strings.HasPrefix(zone, "−") {
-			negative = true
-			zone = zone[len("−"):]
-		} else if strings.HasPrefix(zone, "-") {
-			negative = true
-			zone = zone[1:]
-		} else if strings.HasPrefix(zone, "+") {
-			zone = zone[1:]
-		} else {
-			return Timestamp{}, false
+		var negative, ok bool
+		zone, negative, ok = timestampZoneSign(zone)
+		if !ok {
+			return 0, false
 		}
-		if len(zone) != 5 || zone[2] != ':' {
-			return Timestamp{}, false
+		var valid bool
+		offset, valid = timestampZoneDigits(zone)
+		if !valid {
+			return 0, false
 		}
-		hours, ok := fixedDigits(zone[:2])
-		if !ok || hours > 23 {
-			return Timestamp{}, false
-		}
-		minutes, ok := fixedDigits(zone[3:])
-		if !ok || minutes > 59 {
-			return Timestamp{}, false
-		}
-		offset = hours*3600 + minutes*60
 		if negative {
 			offset = -offset
 		}
 	}
-	return Timestamp{date.Unix() - int64(offset), fraction + leap}, true
+	return offset, true
+}
+
+// timestampZoneSign consumes only accepted signs without coercing the remaining zone.
+func timestampZoneSign(zone string) (string, bool, bool) {
+	negative := false
+	if strings.HasPrefix(zone, "−") {
+		negative = true
+		zone = zone[len("−"):]
+	} else if strings.HasPrefix(zone, "-") {
+		negative = true
+		zone = zone[1:]
+	} else if strings.HasPrefix(zone, "+") {
+		zone = zone[1:]
+	} else {
+		return "", false, false
+	}
+	return zone, negative, true
+}
+
+// timestampZoneDigits enforces the original fixed-width hour and minute bounds.
+func timestampZoneDigits(zone string) (int, bool) {
+	if len(zone) != 5 || zone[2] != ':' {
+		return 0, false
+	}
+	hours, ok := fixedDigits(zone[:2])
+	if !ok || hours > 23 {
+		return 0, false
+	}
+	minutes, ok := fixedDigits(zone[3:])
+	if !ok || minutes > 59 {
+		return 0, false
+	}
+	return hours*3600 + minutes*60, true
 }
 
 func parseManifestTime(value string) (Timestamp, bool) {
