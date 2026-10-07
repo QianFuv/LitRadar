@@ -148,6 +148,7 @@ func (handlers *cfpHandlers) catalog(writer http.ResponseWriter, request *http.R
 	})
 }
 
+// notices preserves path, query and authentication admission before pagination validation.
 func (handlers *cfpHandlers) notices(writer http.ResponseWriter, request *http.Request) {
 	catalogId := request.PathValue("catalog_id")
 	if !utf8.ValidString(catalogId) {
@@ -166,17 +167,9 @@ func (handlers *cfpHandlers) notices(writer http.ResponseWriter, request *http.R
 		failure.write(writer)
 		return
 	}
-	limit, exists := query["limit"].(uint64)
-	if !exists {
-		limit = 50
-	}
-	if limit < 1 || limit > 200 {
-		badRequest("CFP page limit must be between 1 and 200").write(writer)
-		return
-	}
-	cursor := query.text("cursor")
-	if cursor != nil && len(*cursor) > 4096 {
-		cfpCursorError().write(writer)
+	limit, cursor, failure := cfpPagination(query)
+	if failure != nil {
+		failure.write(writer)
 		return
 	}
 	includeClosed, _ := query["include_closed"].(bool)
@@ -205,6 +198,22 @@ func (handlers *cfpHandlers) notices(writer http.ResponseWriter, request *http.R
 		}
 		return cfpPage(handlers.codec, *query.text("db"), *entry, snapshot, includeClosed, cursor, limit, time.Now().Unix())
 	})
+}
+
+// cfpPagination validates the limit before bounding the encrypted cursor size.
+func cfpPagination(query typedQuery) (uint64, *string, *apiError) {
+	limit, exists := query["limit"].(uint64)
+	if !exists {
+		limit = 50
+	}
+	if limit < 1 || limit > 200 {
+		return limit, nil, badRequest("CFP page limit must be between 1 and 200")
+	}
+	cursor := query.text("cursor")
+	if cursor != nil && len(*cursor) > 4096 {
+		return limit, cursor, cfpCursorError()
+	}
+	return limit, cursor, nil
 }
 
 func (handlers *cfpHandlers) respond(writer http.ResponseWriter, request *http.Request, operation func() (any, *apiError)) {
@@ -258,6 +267,7 @@ func cfpFindSnapshot(entry sources.JournalCatalogEntry, snapshots []storage.Jour
 	return result, nil
 }
 
+// cfpSummary projects catalog identity before optional snapshot and refresh metadata.
 func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, evaluatedAt, now int64) cfpJournalSummary {
 	result := cfpJournalSummary{CatalogId: entry.CatalogId, CatalogAliases: entry.CatalogAliases, AllIssns: entry.AllIssns, TitleAliases: entry.TitleAliases, Title: entry.Title, Area: entry.Area, Coverage: "unadapted", RefreshStatus: "unadapted", StateCounts: cfpStateCounts{}}
 	if snapshot == nil {
@@ -265,6 +275,13 @@ func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnap
 	}
 	result.Coverage, result.CheckedOn, result.SourceUrl, result.SourceStatement = "adapted", &snapshot.CheckedOn, snapshot.SourceUrl, snapshot.SourceStatement
 	result.NoticeCount = len(snapshot.Notices)
+	countCfpNotices(&result, snapshot, evaluatedAt)
+	applyCfpRefresh(&result, snapshot, now)
+	return result
+}
+
+// countCfpNotices evaluates all notices at the page's frozen timestamp.
+func countCfpNotices(result *cfpJournalSummary, snapshot *storage.JournalSnapshot, evaluatedAt int64) {
 	for _, notice := range snapshot.Notices {
 		state := notice.State(time.Unix(evaluatedAt, 0))
 		result.StateCounts[state]++
@@ -272,12 +289,10 @@ func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnap
 			result.CurrentCount++
 		}
 	}
-	for _, registration := range acquisition.Registry() {
-		if slices.Contains(registration.CatalogIds, snapshot.JournalKey) {
-			result.CanRefresh = registration.CanRefresh()
-			break
-		}
-	}
+}
+
+// latestCfpSource retains source order when no attempt timestamp is available.
+func latestCfpSource(snapshot *storage.JournalSnapshot) *storage.SourceStatus {
 	var latest *storage.SourceStatus
 	for index := range snapshot.Sources {
 		source := &snapshot.Sources[index]
@@ -285,6 +300,18 @@ func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnap
 			latest = source
 		}
 	}
+	return latest
+}
+
+// applyCfpRefresh preserves refresh capability and expired-lease projection.
+func applyCfpRefresh(result *cfpJournalSummary, snapshot *storage.JournalSnapshot, now int64) {
+	for _, registration := range acquisition.Registry() {
+		if slices.Contains(registration.CatalogIds, snapshot.JournalKey) {
+			result.CanRefresh = registration.CanRefresh()
+			break
+		}
+	}
+	latest := latestCfpSource(snapshot)
 	if latest != nil {
 		result.LastAttempt, result.LastSuccess, result.LastError = latest.LastAttempt, latest.LastSuccess, latest.LastError
 		switch latest.Status {
@@ -298,7 +325,6 @@ func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnap
 			result.RefreshStatus, result.LastError = "failed", &message
 		}
 	}
-	return result
 }
 
 func cfpCatalog(database string, query *string, entries []sources.JournalCatalogEntry, snapshots []storage.JournalSnapshot, now int64) (*cfpCatalogResponse, *apiError) {
@@ -388,31 +414,18 @@ func decodeCfpCursor(codec *secrets.Codec, ciphertext string) (*cfpCursor, *apiE
 	return &cfpCursor{fields["database"].(string), fields["catalog_id"].(string), fields["include_closed"].(bool), fields["revision"].(string), fields["evaluated_at"].(int64), fields["position"].(uint64), fields["order"].(string)}, nil
 }
 
+// cfpPage binds pagination to catalog revision, filter and frozen evaluation time.
 func cfpPage(codec *secrets.Codec, database string, entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, includeClosed bool, ciphertext *string, limit uint64, now int64) (*cfpNoticePage, *apiError) {
 	revision, err := cfpRevision(entry, snapshot)
 	if err != nil {
 		return nil, internalError()
 	}
 	cursor := cfpCursor{database, entry.CatalogId, includeClosed, revision, now, 0, "source-v1"}
-	if ciphertext != nil {
-		decoded, failure := decodeCfpCursor(codec, *ciphertext)
-		if failure != nil {
-			return nil, failure
-		}
-		if decoded.Database != database || decoded.CatalogId != entry.CatalogId || decoded.IncludeClosed != includeClosed || decoded.Revision != revision || decoded.Order != "source-v1" || decoded.EvaluatedAt > now || decoded.EvaluatedAt < now-900 {
-			return nil, cfpCursorError()
-		}
-		cursor = *decoded
+	cursor, failure := resumeCfpCursor(codec, cursor, ciphertext, now)
+	if failure != nil {
+		return nil, failure
 	}
-	items := []cfpNoticeView{}
-	if snapshot != nil {
-		for _, notice := range snapshot.Notices {
-			state := notice.State(time.Unix(cursor.EvaluatedAt, 0))
-			if includeClosed || !state.IsArchived() {
-				items = append(items, cfpNoticeView{cfpNoticeWire(notice), state, notice.EntryDeadline()})
-			}
-		}
-	}
+	items := cfpNoticeItems(snapshot, includeClosed, cursor.EvaluatedAt)
 	if cursor.Position > uint64(len(items)) {
 		return nil, cfpCursorError()
 	}
@@ -433,4 +446,39 @@ func cfpPage(codec *secrets.Codec, database string, entry sources.JournalCatalog
 		nextCursor = &value
 	}
 	return &cfpNoticePage{cfpSummary(entry, snapshot, cursor.EvaluatedAt, now), cursor.EvaluatedAt, items[offset:next], metadata.PageMeta{Total: &total, Limit: int64(limit), Offset: offset, NextCursor: nextCursor, HasMore: &hasMore}}, nil
+}
+
+// resumeCfpCursor validates encrypted continuation against the current page identity.
+func resumeCfpCursor(codec *secrets.Codec, expected cfpCursor, ciphertext *string, now int64) (cfpCursor, *apiError) {
+	if ciphertext == nil {
+		return expected, nil
+	}
+	decoded, failure := decodeCfpCursor(codec, *ciphertext)
+	if failure != nil {
+		return expected, failure
+	}
+	if !matchesCfpCursor(*decoded, expected, now) {
+		return expected, cfpCursorError()
+	}
+	return *decoded, nil
+}
+
+// matchesCfpCursor excludes limit while enforcing the inclusive fifteen-minute lifetime.
+func matchesCfpCursor(decoded, expected cfpCursor, now int64) bool {
+	return decoded.Database == expected.Database && decoded.CatalogId == expected.CatalogId && decoded.IncludeClosed == expected.IncludeClosed && decoded.Revision == expected.Revision && decoded.Order == "source-v1" && decoded.EvaluatedAt <= now && decoded.EvaluatedAt >= now-900
+}
+
+// cfpNoticeItems preserves source order and nonnil empty page items.
+func cfpNoticeItems(snapshot *storage.JournalSnapshot, includeClosed bool, evaluatedAt int64) []cfpNoticeView {
+	items := []cfpNoticeView{}
+	if snapshot == nil {
+		return items
+	}
+	for _, notice := range snapshot.Notices {
+		state := notice.State(time.Unix(evaluatedAt, 0))
+		if includeClosed || !state.IsArchived() {
+			items = append(items, cfpNoticeView{cfpNoticeWire(notice), state, notice.EntryDeadline()})
+		}
+	}
+	return items
 }

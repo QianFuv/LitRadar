@@ -30,6 +30,7 @@ const (
 
 type typedQuery map[string]any
 
+// extractQuery rejects known duplicates after form decoding and ignores unknown fields.
 func extractQuery(raw string, fields map[string]queryKind) (typedQuery, *apiError) {
 	values := typedQuery{}
 	for _, part := range strings.Split(raw, "&") {
@@ -45,44 +46,69 @@ func extractQuery(raw string, fields map[string]queryKind) (typedQuery, *apiErro
 		if _, exists := values[name]; exists {
 			return nil, queryRejection("duplicate field `" + name + "`")
 		}
-		switch kind {
-		case queryText:
-			values[name] = value
-		case queryBoolean:
-			if value != "true" && value != "false" {
-				return nil, queryRejection(name + ": provided string was not `true` or `false`")
-			}
-			values[name] = value == "true"
-		case queryInteger:
-			number, err := strconv.ParseInt(value, 10, 64)
-			if err != nil {
-				detail := "invalid digit found in string"
-				if value == "" {
-					detail = "cannot parse integer from empty string"
-				} else if errors.Is(err, strconv.ErrRange) {
-					detail = "number too large to fit in target type"
-					if strings.HasPrefix(value, "-") {
-						detail = "number too small to fit in target type"
-					}
-				}
-				return nil, queryRejection(name + ": " + detail)
-			}
-			values[name] = number
-		case queryUnsigned:
-			number, err := strconv.ParseUint(strings.TrimPrefix(value, "+"), 10, 64)
-			if err != nil {
-				detail := "invalid digit found in string"
-				if value == "" {
-					detail = "cannot parse integer from empty string"
-				} else if errors.Is(err, strconv.ErrRange) {
-					detail = "number too large to fit in target type"
-				}
-				return nil, queryRejection(name + ": " + detail)
-			}
-			values[name] = number
+		parsed, failure, isHandled := decodeQueryValue(kind, name, value)
+		if failure != nil {
+			return nil, failure
 		}
+		if isHandled {
+			values[name] = parsed
+		}
+
 	}
 	return values, nil
+}
+
+// decodeQueryValue retains literal booleans and signed/unsigned conversion rules.
+func decodeQueryValue(kind queryKind, name, value string) (any, *apiError, bool) {
+	switch kind {
+	case queryText:
+		return value, nil, true
+	case queryBoolean:
+		if value != "true" && value != "false" {
+			return nil, queryRejection(name + ": provided string was not `true` or `false`"), true
+		}
+		return value == "true", nil, true
+	case queryInteger:
+		number, failure := decodeSignedQuery(name, value)
+		return number, failure, true
+	case queryUnsigned:
+		number, failure := decodeUnsignedQuery(name, value)
+		return number, failure, true
+	}
+	return nil, nil, false
+}
+
+// decodeSignedQuery preserves empty, invalid and directional range diagnostics.
+func decodeSignedQuery(name, value string) (any, *apiError) {
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		detail := "invalid digit found in string"
+		if value == "" {
+			detail = "cannot parse integer from empty string"
+		} else if errors.Is(err, strconv.ErrRange) {
+			detail = "number too large to fit in target type"
+			if strings.HasPrefix(value, "-") {
+				detail = "number too small to fit in target type"
+			}
+		}
+		return nil, queryRejection(name + ": " + detail)
+	}
+	return number, nil
+}
+
+// decodeUnsignedQuery accepts a leading plus while preserving original failure text.
+func decodeUnsignedQuery(name, value string) (any, *apiError) {
+	number, err := strconv.ParseUint(strings.TrimPrefix(value, "+"), 10, 64)
+	if err != nil {
+		detail := "invalid digit found in string"
+		if value == "" {
+			detail = "cannot parse integer from empty string"
+		} else if errors.Is(err, strconv.ErrRange) {
+			detail = "number too large to fit in target type"
+		}
+		return nil, queryRejection(name + ": " + detail)
+	}
+	return number, nil
 }
 
 func queryRejection(detail string) *apiError {

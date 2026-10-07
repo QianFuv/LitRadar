@@ -26,6 +26,7 @@ type manualPushStatus struct {
 	FolderName            *string  `json:"folder_name"`
 }
 
+// manualOutcome admits a complete typed result and a strictly represented status.
 func manualOutcome(encoded string) map[string]any {
 	kind := structBody("ManualWeeklyPushOutcome", bodyFieldOf("status", bodyType{kind: "raw"}), bodyFieldOf("message", stringBody), bodyFieldOf("pushed", integerBody), bodyFieldOf("selected", integerBody), bodyFieldOf("total_candidates", optionalBody(integerBody)), bodyFieldOf("summary", stringBody), bodyFieldOf("folder_id", optionalBody(integerBody)), bodyFieldOf("folder_name", optionalBody(stringBody)))
 	scanner := bodyScanner{body: []byte(encoded)}
@@ -35,34 +36,50 @@ func manualOutcome(encoded string) map[string]any {
 	}
 	fields := value.(map[string]any)
 	raw := fields["status"].(json.RawMessage)
-	var name string
-	if json.Unmarshal(raw, &name) != nil || name == "" {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		token, err := decoder.Token()
-		if err != nil || token != json.Delim('{') || !decoder.More() {
-			return nil
-		}
-		token, err = decoder.Token()
-		if err != nil {
-			return nil
-		}
-		var isString bool
-		name, isString = token.(string)
-		if !isString {
-			return nil
-		}
-		var unit json.RawMessage
-		if decoder.Decode(&unit) != nil || !bytes.Equal(bytes.TrimSpace(unit), []byte("null")) || decoder.More() {
-			return nil
-		}
-	}
-	if !slices.Contains([]string{"idle", "pending", "running", "completed", "failed", "cancelled", "timed_out", "unknown"}, name) {
+	name, isValid := manualOutcomeStatus(raw)
+	if !isValid {
 		return nil
 	}
 	fields["status"] = name
 	return fields
 }
 
+// manualOutcomeStatus accepts a known string or an externally tagged null unit.
+func manualOutcomeStatus(raw json.RawMessage) (string, bool) {
+	var name string
+	if json.Unmarshal(raw, &name) != nil || name == "" {
+		var isValid bool
+		name, isValid = manualOutcomeUnit(raw)
+		if !isValid {
+			return "", false
+		}
+	}
+	return name, slices.Contains([]string{"idle", "pending", "running", "completed", "failed", "cancelled", "timed_out", "unknown"}, name)
+}
+
+// manualOutcomeUnit rejects extra members and non-null unit payloads.
+func manualOutcomeUnit(raw json.RawMessage) (string, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') || !decoder.More() {
+		return "", false
+	}
+	token, err = decoder.Token()
+	if err != nil {
+		return "", false
+	}
+	name, isString := token.(string)
+	if !isString {
+		return "", false
+	}
+	var unit json.RawMessage
+	if decoder.Decode(&unit) != nil || !bytes.Equal(bytes.TrimSpace(unit), []byte("null")) || decoder.More() {
+		return "", false
+	}
+	return name, true
+}
+
+// manualStatus projects durable run state before optional decoded result metrics.
 func manualStatus(run *storage.RunRecord) manualPushStatus {
 	result := manualPushStatus{Status: "idle", Message: "No manual push task is available"}
 	if run == nil {
@@ -88,12 +105,18 @@ func manualStatus(run *storage.RunRecord) manualPushStatus {
 	result.CancellationRequested = run.CancellationRequested
 	result.CanCancel = !run.Status.IsTerminal() && !run.CancellationRequested
 	result.CanRetry = run.Status == storage.RunStatusFailed || run.Status == storage.RunStatusCancelled || run.Status == storage.RunStatusTimedOut
+	applyManualOutcome(&result, run)
+	return result
+}
+
+// applyManualOutcome projects valid metrics while limiting message overrides to completed runs.
+func applyManualOutcome(result *manualPushStatus, run *storage.RunRecord) {
 	if run.ResultJson == nil {
-		return result
+		return
 	}
 	outcome := manualOutcome(*run.ResultJson)
 	if outcome == nil {
-		return result
+		return
 	}
 	if (run.Status == storage.RunStatusCompleted || run.Status == storage.RunStatusSkipped) && outcome["status"] == "completed" && outcome["message"].(string) != "" {
 		result.Message = outcome["message"].(string)
@@ -108,7 +131,6 @@ func manualStatus(run *storage.RunRecord) manualPushStatus {
 	if value, ok := outcome["folder_name"].(string); ok {
 		result.FolderName = &value
 	}
-	return result
 }
 
 var manualErrorMessage = map[string]string{

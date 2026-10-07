@@ -153,6 +153,8 @@ func frontendRedirect(request *http.Request) string {
 	}
 	return path
 }
+
+// applyCachePolicy retains authentication, immutable asset and frontend cache precedence.
 func applyCachePolicy(headers http.Header, request *http.Request, status int) {
 	path := request.URL.EscapedPath()
 	_, hasAuthorization := request.Header["Authorization"]
@@ -161,13 +163,23 @@ func applyCachePolicy(headers http.Header, request *http.Request, status int) {
 	case path == "/api/auth" || strings.HasPrefix(path, "/api/auth/"):
 		headers.Set("Pragma", "no-cache")
 		headers.Set("Cache-Control", "no-store")
-	case strings.HasPrefix(path, "/_next/static/") && (status >= 200 && status < 300 || status == 304):
+	case strings.HasPrefix(path, "/_next/static/") && isCacheSuccess(status):
 		headers.Set("Cache-Control", "public, max-age=31536000, immutable")
 	case hasAuthorization || hasCookie || status == 401:
 		headers.Set("Cache-Control", "private, no-store")
-	case !isBackendPath(path) && (request.Method == "GET" || request.Method == "HEAD") && (status >= 200 && status < 300 || status == 404 || status == 304):
+	case isFrontendRevalidation(request, path, status):
 		headers.Set("Cache-Control", "no-cache")
 	}
+}
+
+// isCacheSuccess recognizes successful or unmodified representations.
+func isCacheSuccess(status int) bool {
+	return status >= 200 && status < 300 || status == 304
+}
+
+// isFrontendRevalidation selects cacheable frontend reads, including missing-page responses.
+func isFrontendRevalidation(request *http.Request, path string, status int) bool {
+	return !isBackendPath(path) && (request.Method == "GET" || request.Method == "HEAD") && (isCacheSuccess(status) || status == 404)
 }
 func logRequest(request *http.Request, id, route string, status int, duration time.Duration) {
 	if (status >= 200 && status < 300 || status == 304) && slices.Contains([]string{"/health/live", "/health/ready", "static.asset", "static.frontend"}, route) {

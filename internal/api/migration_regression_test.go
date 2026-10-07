@@ -80,14 +80,8 @@ func TestArticleStatusSupportsLoginFreeFallbackAndRejectsExpiredSession(t *testi
 	if failure != nil || !status.Fulltext.Available || status.Fulltext.RequiresLogin || status.Fulltext.Message != nil {
 		t.Fatal(status, failure)
 	}
-	setArticleOrder(t, handlers, `{"default":["zjlib"],"catalogs":{}}`)
-	if _, err := handlers.sessions.Upsert(context.Background(), 1, json.RawMessage(`{"bff_user_token":"header.eyJleHAiOjF9.signature"}`), "active", nil); err != nil {
-		t.Fatal(err)
-	}
-	status, failure = handlers.status(context.Background(), articleLocatorFixture(), 1, "fixture")
-	if failure != nil || status.Fulltext.Available || !status.Fulltext.RequiresLogin || status.Fulltext.Message == nil {
-		t.Fatal(status, failure)
-	}
+	assertExpiredArticleSessionRequiresLogin(t, handlers)
+
 }
 
 func TestRealAuthKdfPoolBoundsTwoAndDoesNotBlockStorageOrUpstream(t *testing.T) {
@@ -123,27 +117,8 @@ func TestRealAuthKdfPoolBoundsTwoAndDoesNotBlockStorageOrUpstream(t *testing.T) 
 	for range 2 {
 		start()
 	}
-	for range 2 {
-		select {
-		case <-entered:
-		case <-time.After(2 * time.Second):
-			t.Fatal("KDF did not admit both slots")
-		}
-	}
-	start()
-	select {
-	case <-entered:
-		t.Fatal("third KDF closure entered while both slots were occupied")
-	case <-time.After(50 * time.Millisecond):
-	}
-	if response := authRequest(router, "GET", "/api/auth/me", "", token); response.Code != 200 {
-		t.Fatal("storage-only auth blocked", response.Body.String())
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if result, err := executor.Run(ctx, articles.upstream, func() (string, error) { return "independent", nil }); err != nil || result != "independent" {
-		t.Fatal(result, err)
-	}
+	assertKdfAdmissionBound(t, entered, start)
+	assertIndependentWorkDuringKdfAdmission(t, articles, router, token)
 	close(release)
 	isReleased = true
 	for joined < started {
@@ -163,5 +138,51 @@ func TestRealAuthKdfPoolBoundsTwoAndDoesNotBlockStorageOrUpstream(t *testing.T) 
 	}
 	if response := authRequest(router, "GET", "/api/auth/me", "", token); response.Code != 200 {
 		t.Fatal("closing KDF broke storage-only auth", response.Code)
+	}
+}
+
+// assertExpiredArticleSessionRequiresLogin checks that an expired provider session cannot satisfy login.
+func assertExpiredArticleSessionRequiresLogin(t *testing.T, handlers *articleHandlers) {
+	t.Helper()
+	var status *articleAccess
+	var failure *apiError
+	setArticleOrder(t, handlers, `{"default":["zjlib"],"catalogs":{}}`)
+	if _, err := handlers.sessions.Upsert(context.Background(), 1, json.RawMessage(`{"bff_user_token":"header.eyJleHAiOjF9.signature"}`), "active", nil); err != nil {
+		t.Fatal(err)
+	}
+	status, failure = handlers.status(context.Background(), articleLocatorFixture(), 1, "fixture")
+	if failure != nil || status.Fulltext.Available || !status.Fulltext.RequiresLogin || status.Fulltext.Message == nil {
+		t.Fatal(status, failure)
+	}
+}
+
+// assertKdfAdmissionBound checks two admitted slots and a blocked third closure.
+func assertKdfAdmissionBound(t *testing.T, entered <-chan struct{}, start func()) {
+	t.Helper()
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("KDF did not admit both slots")
+		}
+	}
+	start()
+	select {
+	case <-entered:
+		t.Fatal("third KDF closure entered while both slots were occupied")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// assertIndependentWorkDuringKdfAdmission checks storage and upstream work while KDF slots are occupied.
+func assertIndependentWorkDuringKdfAdmission(t *testing.T, articles *articleHandlers, router *http.ServeMux, token string) {
+	t.Helper()
+	if response := authRequest(router, "GET", "/api/auth/me", "", token); response.Code != 200 {
+		t.Fatal("storage-only auth blocked", response.Body.String())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if result, err := executor.Run(ctx, articles.upstream, func() (string, error) { return "independent", nil }); err != nil || result != "independent" {
+		t.Fatal(result, err)
 	}
 }

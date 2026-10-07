@@ -79,65 +79,21 @@ func authRequest(router http.Handler, method, path, body, token string) *httptes
 
 func TestAuthRouteLifecycleAndNumericUserIdentity(t *testing.T) {
 	_, router, token := authFixture(t)
-	me := authRequest(router, "GET", "/api/auth/me", "", token)
-	if me.Code != 200 || me.Body.String() != `{"id":1,"username":"api_fixture","is_admin":true}` {
-		t.Fatal(me.Code, me.Body.String())
-	}
-	recorder := httptest.NewRecorder()
-	writeResponse(recorder, publicUser(domain.User{Id: identity.Id(9007199254740993), Username: "large", IsAdmin: false}))
-	if !strings.Contains(recorder.Body.String(), `"id":9007199254740993`) {
-		t.Fatal("user precision", recorder.Body.String())
-	}
-	login := authRequest(router, "POST", "/api/auth/login", `{"username":" api_fixture ","password":"correct password long"}`, "")
-	if login.Code != 200 || strings.Contains(login.Body.String(), `"token"`) || !strings.Contains(login.Body.String(), `"id":1`) {
-		t.Fatal(login.Code, login.Body.String())
-	}
-	cookies := login.Result().Cookies()
-	if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].MaxAge <= 0 {
-		t.Fatal("session cookie", cookies)
-	}
-	session := cookies[0].Value
-	issued := authRequest(router, "POST", "/api/auth/tokens", `["browser-issued",3600]`, session)
-	if issued.Code != 200 {
-		t.Fatal(issued.Code, issued.Body.String())
-	}
-	var access struct {
-		Token string
-		Id    int64
-	}
-	if err := json.Unmarshal(issued.Body.Bytes(), &access); err != nil {
-		t.Fatal(err)
-	}
-	if access.Token == "" || access.Id == 0 {
-		t.Fatal("missing issued token")
-	}
-	for _, path := range []string{"/api/auth/tokens", "/api/auth/invite-code", "/api/auth/invite-required"} {
-		response := authRequest(router, "GET", path, "", access.Token)
-		if response.Code != 200 {
-			t.Fatal(path, response.Code, response.Body.String())
-		}
-	}
-	for _, path := range []string{"/api/auth/invite-code", "/api/auth/invite-code/rotate"} {
-		response := authRequest(router, "POST", path, "", access.Token)
-		if response.Code != 200 {
-			t.Fatal(path, response.Code, response.Body.String())
-		}
-	}
-	response := authRequest(router, "DELETE", "/api/auth/invite-code", "", access.Token)
-	if response.Code != 200 {
-		t.Fatal(response.Body.String())
-	}
-	response = authRequest(router, "POST", "/api/auth/logout", "", session)
+	assertAuthPublicIdentity(t, router, token)
+	session := assertAuthSessionLogin(t, router)
+	accessToken := assertAuthAccessTokenIssuance(t, router, session)
+	assertAuthInviteLifecycle(t, router, accessToken)
+	response := authRequest(router, "POST", "/api/auth/logout", "", session)
 	if response.Code != 200 || response.Body.String() != `{"ok":true,"user_id":1}` {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	if response = authRequest(router, "GET", "/api/auth/me", "", session); response.Code != 401 {
 		t.Fatal("session not revoked")
 	}
-	if response = authRequest(router, "GET", "/api/auth/me", "", access.Token); response.Code != 200 {
+	if response = authRequest(router, "GET", "/api/auth/me", "", accessToken); response.Code != 200 {
 		t.Fatal("independent access token revoked")
 	}
-	if response = authRequest(router, "POST", "/api/auth/logout-all", "", access.Token); response.Code != 200 {
+	if response = authRequest(router, "POST", "/api/auth/logout-all", "", accessToken); response.Code != 200 {
 		t.Fatal(response.Body.String())
 	}
 	if response = authRequest(router, "GET", "/api/auth/me", "", token); response.Code != 401 {
@@ -269,5 +225,77 @@ func TestRevocationRetryOnlyForTransientSqliteContention(t *testing.T) {
 		if calls != expected {
 			t.Fatal(calls, failure)
 		}
+	}
+}
+
+// assertAuthPublicIdentity checks exact public identity JSON and large integer precision.
+func assertAuthPublicIdentity(t *testing.T, router *http.ServeMux, token string) {
+	t.Helper()
+	me := authRequest(router, "GET", "/api/auth/me", "", token)
+	if me.Code != 200 || me.Body.String() != `{"id":1,"username":"api_fixture","is_admin":true}` {
+		t.Fatal(me.Code, me.Body.String())
+	}
+	recorder := httptest.NewRecorder()
+	writeResponse(recorder, publicUser(domain.User{Id: identity.Id(9007199254740993), Username: "large", IsAdmin: false}))
+	if !strings.Contains(recorder.Body.String(), `"id":9007199254740993`) {
+		t.Fatal("user precision", recorder.Body.String())
+	}
+}
+
+// assertAuthSessionLogin checks a secure session cookie without exposing its token in JSON.
+func assertAuthSessionLogin(t *testing.T, router *http.ServeMux) string {
+	t.Helper()
+	login := authRequest(router, "POST", "/api/auth/login", `{"username":" api_fixture ","password":"correct password long"}`, "")
+	if login.Code != 200 || strings.Contains(login.Body.String(), `"token"`) || !strings.Contains(login.Body.String(), `"id":1`) {
+		t.Fatal(login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].MaxAge <= 0 {
+		t.Fatal("session cookie", cookies)
+	}
+	session := cookies[0].Value
+
+	return session
+}
+
+// assertAuthAccessTokenIssuance checks independent access-token identity and nonempty credentials.
+func assertAuthAccessTokenIssuance(t *testing.T, router *http.ServeMux, session string) string {
+	t.Helper()
+	issued := authRequest(router, "POST", "/api/auth/tokens", `["browser-issued",3600]`, session)
+	if issued.Code != 200 {
+		t.Fatal(issued.Code, issued.Body.String())
+	}
+	var access struct {
+		Token string
+		Id    int64
+	}
+	if err := json.Unmarshal(issued.Body.Bytes(), &access); err != nil {
+		t.Fatal(err)
+	}
+	if access.Token == "" || access.Id == 0 {
+		t.Fatal("missing issued token")
+	}
+
+	return access.Token
+}
+
+// assertAuthInviteLifecycle checks authenticated invite reads, creation, rotation and revocation.
+func assertAuthInviteLifecycle(t *testing.T, router *http.ServeMux, accessToken string) {
+	t.Helper()
+	for _, path := range []string{"/api/auth/tokens", "/api/auth/invite-code", "/api/auth/invite-required"} {
+		response := authRequest(router, "GET", path, "", accessToken)
+		if response.Code != 200 {
+			t.Fatal(path, response.Code, response.Body.String())
+		}
+	}
+	for _, path := range []string{"/api/auth/invite-code", "/api/auth/invite-code/rotate"} {
+		response := authRequest(router, "POST", path, "", accessToken)
+		if response.Code != 200 {
+			t.Fatal(path, response.Code, response.Body.String())
+		}
+	}
+	response := authRequest(router, "DELETE", "/api/auth/invite-code", "", accessToken)
+	if response.Code != 200 {
+		t.Fatal(response.Body.String())
 	}
 }

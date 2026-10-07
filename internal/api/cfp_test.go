@@ -63,30 +63,14 @@ func cfpFixture(t *testing.T) (*cfpHandlers, *http.ServeMux, string) {
 
 func TestCfpRoutesReadCatalogWithoutIndexAndContinueAliasCursor(t *testing.T) {
 	_, router, token := cfpFixture(t)
-	response := authRequest(router, "GET", "/api/cfp/journals?db=fixture.sqlite&q=Example", "", token)
-	var catalog cfpCatalogResponse
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &catalog) != nil || catalog.Summary.Journals != 2 || catalog.Summary.AdaptedJournals != 1 || len(catalog.Items) != 1 || catalog.Items[0].NoticeCount != 2 {
-		t.Fatal(response.Code, response.Body.String())
-	}
-	response = authRequest(router, "GET", "/api/cfp/journals/cfp-alias/notices?db=fixture.sqlite&limit=1", "", token)
-	var first struct {
-		EvaluatedAt int64            `json:"evaluatedAt"`
-		Items       []map[string]any `json:"items"`
-		Page        struct {
-			NextCursor *string `json:"next_cursor"`
-		} `json:"page"`
-	}
+	assertCfpCatalogWithoutIndex(t, router, token)
+	response := authRequest(router, "GET", "/api/cfp/journals/cfp-alias/notices?db=fixture.sqlite&limit=1", "", token)
+	var first cfpRouteFirstPage
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &first) != nil || first.Page.NextCursor == nil || len(first.Items) != 1 || first.Items[0]["state"] != "open" || first.Items[0]["entryDeadline"] == nil {
 		t.Fatal(response.Code, response.Body.String())
 	}
-	response = authRequest(router, "GET", "/api/cfp/journals/cfp-fixture/notices?db=fixture.sqlite&limit=2&cursor="+*first.Page.NextCursor, "", token)
-	var second struct {
-		EvaluatedAt int64            `json:"evaluatedAt"`
-		Items       []map[string]any `json:"items"`
-	}
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &second) != nil || len(second.Items) != 1 || second.EvaluatedAt != first.EvaluatedAt || first.Items[0]["id"] == second.Items[0]["id"] {
-		t.Fatal(response.Code, response.Body.String())
-	}
+	assertCanonicalCfpContinuation(t, router, token, first)
+
 }
 
 func TestCfpExtractionAuthenticationAndValidationPrecedence(t *testing.T) {
@@ -140,44 +124,9 @@ func TestCfpCursorBindsRevisionFilterAndTimeButNotLimit(t *testing.T) {
 	if failure != nil || first.Page.NextCursor == nil {
 		t.Fatal(first, failure)
 	}
-	for _, delta := range []int64{-1, 0, 900, 901} {
-		page, failure := cfpPage(handlers.codec, "fixture.sqlite", entries[0], snapshot, false, first.Page.NextCursor, 200, now+delta)
-		if delta == -1 || delta == 901 {
-			if failure == nil || failure.status != 409 {
-				t.Fatal(delta, page, failure)
-			}
-		} else if failure != nil || len(page.Items) != 1 || page.EvaluatedAt != now {
-			t.Fatal(delta, page, failure)
-		}
-	}
-	changed := entries[0]
-	changed.Title += " changed"
-	for _, scenario := range []struct {
-		entry         sources.JournalCatalogEntry
-		database      string
-		includeClosed bool
-	}{{changed, "fixture.sqlite", false}, {entries[0], "other.sqlite", false}, {entries[0], "fixture.sqlite", true}} {
-		if _, failure := cfpPage(handlers.codec, scenario.database, scenario.entry, snapshot, scenario.includeClosed, first.Page.NextCursor, 1, now); failure == nil || failure.status != 409 {
-			t.Fatal("accepted changed cursor binding", failure)
-		}
-	}
-	cursor, failure := decodeCfpCursor(handlers.codec, *first.Page.NextCursor)
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	for _, position := range []uint64{2, 3, ^uint64(0)} {
-		cursor.Position = position
-		plaintext, _ := jsonvalue.EncodeJson(cursor)
-		ciphertext, _ := handlers.codec.Encrypt(plaintext, cfpCursorContext)
-		page, failure := cfpPage(handlers.codec, "fixture.sqlite", entries[0], snapshot, false, &ciphertext, 1, now)
-		if position == 2 {
-			if failure != nil || len(page.Items) != 0 {
-				t.Fatal(page, failure)
-			}
-		} else if failure == nil {
-			t.Fatal("out-of-range cursor accepted")
-		}
-	}
+	assertCfpCursorLifetimeAndLimit(t, handlers, entries[0], snapshot, first, now)
+	assertCfpCursorBindings(t, handlers, entries[0], snapshot, first, now)
+	assertCfpCursorPositions(t, handlers, entries[0], snapshot, first, now)
 	missing, _ := cfpRevision(entries[0], nil)
 	empty, _ := cfpRevision(entries[0], &storage.JournalSnapshot{})
 	if missing == empty {
@@ -221,6 +170,90 @@ func TestCfpCursorRejectsMalformedAuthenticatedPlaintext(t *testing.T) {
 		ciphertext, _ := handlers.codec.Encrypt(plaintext, cfpCursorContext)
 		if _, failure := decodeCfpCursor(handlers.codec, ciphertext); failure != nil {
 			t.Fatal(plaintext, failure)
+		}
+	}
+}
+
+// assertCfpCatalogWithoutIndex checks catalog totals and notices without requiring an index database.
+func assertCfpCatalogWithoutIndex(t *testing.T, router *http.ServeMux, token string) {
+	t.Helper()
+	response := authRequest(router, "GET", "/api/cfp/journals?db=fixture.sqlite&q=Example", "", token)
+	var catalog cfpCatalogResponse
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &catalog) != nil || catalog.Summary.Journals != 2 || catalog.Summary.AdaptedJournals != 1 || len(catalog.Items) != 1 || catalog.Items[0].NoticeCount != 2 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+}
+
+type cfpRouteFirstPage struct {
+	EvaluatedAt int64            `json:"evaluatedAt"`
+	Items       []map[string]any `json:"items"`
+	Page        struct {
+		NextCursor *string `json:"next_cursor"`
+	} `json:"page"`
+}
+
+// assertCanonicalCfpContinuation checks alias-to-canonical continuation with frozen evaluation time.
+func assertCanonicalCfpContinuation(t *testing.T, router *http.ServeMux, token string, first cfpRouteFirstPage) {
+	t.Helper()
+	response := authRequest(router, "GET", "/api/cfp/journals/cfp-fixture/notices?db=fixture.sqlite&limit=2&cursor="+*first.Page.NextCursor, "", token)
+	var second struct {
+		EvaluatedAt int64            `json:"evaluatedAt"`
+		Items       []map[string]any `json:"items"`
+	}
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &second) != nil || len(second.Items) != 1 || second.EvaluatedAt != first.EvaluatedAt || first.Items[0]["id"] == second.Items[0]["id"] {
+		t.Fatal(response.Code, response.Body.String())
+	}
+}
+
+// assertCfpCursorLifetimeAndLimit checks cursor lifetime boundaries while permitting a changed limit.
+func assertCfpCursorLifetimeAndLimit(t *testing.T, handlers *cfpHandlers, entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, first *cfpNoticePage, now int64) {
+	t.Helper()
+	for _, delta := range []int64{-1, 0, 900, 901} {
+		page, failure := cfpPage(handlers.codec, "fixture.sqlite", entry, snapshot, false, first.Page.NextCursor, 200, now+delta)
+		if delta == -1 || delta == 901 {
+			if failure == nil || failure.status != 409 {
+				t.Fatal(delta, page, failure)
+			}
+		} else if failure != nil || len(page.Items) != 1 || page.EvaluatedAt != now {
+			t.Fatal(delta, page, failure)
+		}
+	}
+}
+
+// assertCfpCursorBindings checks rejection of catalog revision, database and filter changes.
+func assertCfpCursorBindings(t *testing.T, handlers *cfpHandlers, entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, first *cfpNoticePage, now int64) {
+	t.Helper()
+	changed := entry
+	changed.Title += " changed"
+	for _, scenario := range []struct {
+		entry         sources.JournalCatalogEntry
+		database      string
+		includeClosed bool
+	}{{changed, "fixture.sqlite", false}, {entry, "other.sqlite", false}, {entry, "fixture.sqlite", true}} {
+		if _, failure := cfpPage(handlers.codec, scenario.database, scenario.entry, snapshot, scenario.includeClosed, first.Page.NextCursor, 1, now); failure == nil || failure.status != 409 {
+			t.Fatal("accepted changed cursor binding", failure)
+		}
+	}
+}
+
+// assertCfpCursorPositions checks end-of-page and out-of-range authenticated positions.
+func assertCfpCursorPositions(t *testing.T, handlers *cfpHandlers, entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, first *cfpNoticePage, now int64) {
+	t.Helper()
+	cursor, failure := decodeCfpCursor(handlers.codec, *first.Page.NextCursor)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for _, position := range []uint64{2, 3, ^uint64(0)} {
+		cursor.Position = position
+		plaintext, _ := jsonvalue.EncodeJson(cursor)
+		ciphertext, _ := handlers.codec.Encrypt(plaintext, cfpCursorContext)
+		page, failure := cfpPage(handlers.codec, "fixture.sqlite", entry, snapshot, false, &ciphertext, 1, now)
+		if position == 2 {
+			if failure != nil || len(page.Items) != 0 {
+				t.Fatal(page, failure)
+			}
+		} else if failure == nil {
+			t.Fatal("out-of-range cursor accepted")
 		}
 	}
 }

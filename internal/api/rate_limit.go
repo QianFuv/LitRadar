@@ -138,18 +138,12 @@ func (bucket *tokenBucket) acquire(now uint64, policy settings.TokenBucketPolicy
 	return (policy.RefillSeconds - bucket.available + policy.RefillTokens - 1) / policy.RefillTokens
 }
 
+// acquireTracked reuses an evicted node before recording this ordered token acquisition.
 func acquireTracked(buckets map[bucketKey]*trackedBucket, order *list.List, key bucketKey, limit uint64, policy settings.TokenBucketPolicy, now, sequence uint64) uint64 {
 	tracked := buckets[key]
 	if tracked == nil {
 		if uint64(len(buckets)) >= limit && len(buckets) > 0 {
-			tracked = order.Front().Value.(*trackedBucket)
-			if sequence == ^uint64(0) {
-				for candidate, entry := range buckets {
-					if entry.lastUsed < tracked.lastUsed || (entry.lastUsed == tracked.lastUsed && bucketKeyLess(candidate, tracked.key)) {
-						tracked = entry
-					}
-				}
-			}
+			tracked = trackedEviction(buckets, order, sequence)
 			delete(buckets, tracked.key)
 		} else {
 			tracked = &trackedBucket{}
@@ -161,6 +155,20 @@ func acquireTracked(buckets map[bucketKey]*trackedBucket, order *list.List, key 
 	tracked.lastUsed = sequence
 	order.MoveToBack(tracked.element)
 	return tracked.bucket.acquire(now, policy)
+}
+
+// trackedEviction retains deterministic key ordering when the usage sequence is saturated.
+func trackedEviction(buckets map[bucketKey]*trackedBucket, order *list.List, sequence uint64) *trackedBucket {
+	tracked := order.Front().Value.(*trackedBucket)
+	if sequence != ^uint64(0) {
+		return tracked
+	}
+	for candidate, entry := range buckets {
+		if entry.lastUsed < tracked.lastUsed || (entry.lastUsed == tracked.lastUsed && bucketKeyLess(candidate, tracked.key)) {
+			tracked = entry
+		}
+	}
+	return tracked
 }
 
 func bucketKeyLess(first, second bucketKey) bool {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/storage"
+	"github.com/QianFuv/LitRadar/internal/storage/query"
 )
 
 func TestArticleQueryRetainsRepeatedFiltersAndLastScalar(t *testing.T) {
@@ -12,9 +13,7 @@ func TestArticleQueryRetainsRepeatedFiltersAndLastScalar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if database != nil || len(params.JournalId) != 1 || params.JournalId[0] != 9007199254740993 || len(params.Area) != 2 || params.Area[1] != " " || len(params.Ratings.AbsRating) != 2 || params.Ratings.AbsRating[1] != "" {
-		t.Fatalf("filter/scalar semantics: %+v %+v", database, params)
-	}
+	assertRepeatedArticleFilters(t, database, params)
 	if *params.Query != "new;value" || params.SearchMode != domain.SearchAdvanced || !*params.InPress || *params.IncludeTotal || params.Limit != 20 {
 		t.Fatalf("query semantics: %+v", params)
 	}
@@ -63,5 +62,13 @@ func TestWeeklyQueryUsesItsOwnRequiredFieldsAndValidationOrder(t *testing.T) {
 	params, err := parseWeeklyArticleQuery("db=x&journal_id=1&window_end=now&" + strings.Repeat("area=a&", 501))
 	if err != nil || params.Limit != 50 || params.WindowEnd != "now" {
 		t.Fatalf("weekly inherited unrelated search validation: %+v %v", params, err)
+	}
+}
+
+// assertRepeatedArticleFilters checks repeated filter values without losing large integer precision.
+func assertRepeatedArticleFilters(t *testing.T, database *string, params query.ArticleListParams) {
+	t.Helper()
+	if database != nil || len(params.JournalId) != 1 || params.JournalId[0] != 9007199254740993 || len(params.Area) != 2 || params.Area[1] != " " || len(params.Ratings.AbsRating) != 2 || params.Ratings.AbsRating[1] != "" {
+		t.Fatalf("filter/scalar semantics: %+v %+v", database, params)
 	}
 }

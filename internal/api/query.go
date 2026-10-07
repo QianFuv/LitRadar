@@ -125,6 +125,7 @@ func (pairs queryPairs) ratings() domain.JournalRatings {
 	return domain.JournalRatings{UtdRating: pairs.values("utd_rating"), AbsRating: pairs.values("abs_rating"), FmsRating: pairs.values("fms_rating"), FmscnRating: pairs.values("fmscn_rating")}
 }
 
+// parseArticleQuery preserves filter, scalar, search and pagination conversion order.
 func parseArticleQuery(raw string) (*string, query.ArticleListParams, *apiError) {
 	params := query.DefaultArticleListParams()
 	pairs, err := parseQueryPairs(raw)
@@ -134,16 +135,8 @@ func parseArticleQuery(raw string) (*string, query.ArticleListParams, *apiError)
 	if err = pairs.validateArticle(); err != nil {
 		return nil, params, err
 	}
-	params.JournalId = []int64{}
-	for _, value := range pairs.values("journal_id") {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		id, err := parseInteger("journal_id", value)
-		if err != nil {
-			return nil, params, err
-		}
-		params.JournalId = append(params.JournalId, id)
+	if err = parseArticleJournals(pairs, &params); err != nil {
+		return nil, params, err
 	}
 	params.Area, params.Ratings = pairs.values("area"), pairs.ratings()
 	if params.IssueId, err = pairs.integer("issue_id"); err != nil {
@@ -160,36 +153,68 @@ func parseArticleQuery(raw string) (*string, query.ArticleListParams, *apiError)
 	}
 	params.DateFrom, params.DateTo = pairs.value("date_from"), pairs.value("date_to")
 	params.Doi, params.Pmid, params.Query = pairs.value("doi"), pairs.value("pmid"), pairs.value("q")
+	if err = parseArticleSearch(pairs, &params); err != nil {
+		return nil, params, err
+	}
+	if err = parseArticlePaging(pairs, &params); err != nil {
+		return nil, params, err
+	}
+	return pairs.value("db"), params, nil
+}
+
+// parseArticleSearch validates the search mode before assigning an optional sort.
+func parseArticleSearch(pairs queryPairs, params *query.ArticleListParams) *apiError {
 	if mode := pairs.value("search_mode"); mode != nil {
 		switch asciiLower(*mode) {
 		case "simple", "advanced":
 			params.SearchMode = domain.SearchMode(asciiLower(*mode))
 		default:
-			return nil, params, badRequest("search_mode must be simple or advanced")
+			return badRequest("search_mode must be simple or advanced")
 		}
 	}
 	if sort := pairs.value("sort"); sort != nil {
 		params.Sort = sort
 	}
+	return nil
+}
+
+// parseArticleJournals preserves repeated nonempty filters and their validation order.
+func parseArticleJournals(pairs queryPairs, params *query.ArticleListParams) *apiError {
+	params.JournalId = []int64{}
+	for _, value := range pairs.values("journal_id") {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		id, err := parseInteger("journal_id", value)
+		if err != nil {
+			return err
+		}
+		params.JournalId = append(params.JournalId, id)
+	}
+	return nil
+}
+
+// parseArticlePaging mutates pagination fields only after each preceding conversion succeeds.
+func parseArticlePaging(pairs queryPairs, params *query.ArticleListParams) *apiError {
 	limit, err := pairs.integer("limit")
 	if err != nil {
-		return nil, params, err
+		return err
 	}
 	if limit != nil {
 		params.Limit = *limit
 	}
 	offset, err := pairs.integer("offset")
 	if err != nil {
-		return nil, params, err
+		return err
 	}
 	if offset != nil {
 		params.Offset = *offset
 	}
 	params.Cursor = pairs.value("cursor")
 	if params.IncludeTotal, err = pairs.boolean("include_total"); err != nil {
-		return nil, params, err
+		return err
 	}
-	return pairs.value("db"), params, nil
+	return nil
 }
 
 func asciiLower(value string) string {
@@ -202,6 +227,7 @@ func asciiLower(value string) string {
 	return string(result)
 }
 
+// parseWeeklyArticleQuery requires its identity fields before character and pagination checks.
 func parseWeeklyArticleQuery(raw string) (query.WeeklyArticlePageParams, *apiError) {
 	params := query.WeeklyArticlePageParams{Limit: 50}
 	pairs, err := parseQueryPairs(raw)
@@ -229,18 +255,8 @@ func parseWeeklyArticleQuery(raw string) (query.WeeklyArticlePageParams, *apiErr
 		return params, badRequest("window_end is required")
 	}
 	params.WindowEnd, params.Query, params.Cursor = *window, pairs.value("q"), pairs.value("cursor")
-	if err := validateCharacters("db", params.DbName, 255); err != nil {
-		return params, err
-	}
-	for _, field := range []struct {
-		name  string
-		value *string
-	}{{"window_end", window}, {"q", params.Query}, {"cursor", params.Cursor}} {
-		if field.value != nil {
-			if err := validateCharacters(field.name, *field.value, 2048); err != nil {
-				return params, err
-			}
-		}
+	if failure := validateWeeklyQuery(params); failure != nil {
+		return params, failure
 	}
 	limit, err := pairs.integer("limit")
 	if err != nil {
@@ -250,4 +266,22 @@ func parseWeeklyArticleQuery(raw string) (query.WeeklyArticlePageParams, *apiErr
 		params.Limit = *limit
 	}
 	return params, nil
+}
+
+// validateWeeklyQuery retains database-first character checks before pagination conversion.
+func validateWeeklyQuery(params query.WeeklyArticlePageParams) *apiError {
+	if err := validateCharacters("db", params.DbName, 255); err != nil {
+		return err
+	}
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{{"window_end", &params.WindowEnd}, {"q", params.Query}, {"cursor", params.Cursor}} {
+		if field.value != nil {
+			if err := validateCharacters(field.name, *field.value, 2048); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

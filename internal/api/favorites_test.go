@@ -74,12 +74,7 @@ func TestFavoriteLifecycleOwnerIsolationAndExport(t *testing.T) {
 		t.Fatal("missing cursor", page.Body.String())
 	}
 	require("GET", path+"/articles/page?limit=1&cursor="+*parsed.Page.NextCursor, "", 200)
-	for _, format := range []string{"bibtex", "ris", "endnote"} {
-		response := require("GET", path+"/export?format="+format, "", 200)
-		if !strings.Contains(response.Header().Get("Content-Disposition"), `filename="favorites.`) || response.Body.Len() == 0 {
-			t.Fatal(response.Header(), response.Body.String())
-		}
-	}
+	assertFavoriteCitationFormats(t, require, path)
 	require("POST", path+"/articles/bulk-move", fmt.Sprintf(`{"target_folder_id":%d,"articles":[{"article_id":2}]}`, target), 200)
 	require("POST", path+"/articles/bulk-remove", `{"articles":[{"article_id":3}]}`, 200)
 	require("DELETE", path+"/articles/9007199254740993?db_name=unavailable", "", 200)
@@ -90,6 +85,44 @@ func TestFavoriteLifecycleOwnerIsolationAndExport(t *testing.T) {
 	require("PUT", path, `{"name":"renamed"}`, 200)
 	require("DELETE", path, "", 200)
 	require("GET", path+"/articles/page", "", 404)
+	assertFavoriteOwnerIsolation(t, auth, handlers, router, target, require)
+
+}
+
+func TestFavoriteExportRejectsOversizeSnapshotBeforeMetadata(t *testing.T) {
+	auth, _, router, token := favoriteFixture(t)
+	response := authRequest(router, "POST", "/api/favorites/folders", `{"name":"large"}`, token)
+	var folder favorites.Folder
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &folder) != nil {
+		t.Fatal(response.Body.String())
+	}
+	err := auth.repository.Immediate(context.Background(), false, func(connection *sql.Conn) error {
+		_, err := connection.ExecContext(context.Background(), "WITH RECURSIVE ids(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM ids WHERE value<10001) INSERT INTO favorites(user_id,folder_id,article_id,db_name,note,created_at) SELECT 1,?,value,'unavailable','',1 FROM ids", folder.Id)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = authRequest(router, "GET", fmt.Sprintf("/api/favorites/folders/%d/export", folder.Id), "", token)
+	if response.Code != 413 || strings.Contains(response.Header().Get("Content-Disposition"), "attachment") || !strings.Contains(response.Body.String(), "10000 items") {
+		t.Fatal(response.Code, response.Header(), response.Body.String())
+	}
+}
+
+// assertFavoriteCitationFormats checks nonempty attachments for each supported citation format.
+func assertFavoriteCitationFormats(t *testing.T, require func(string, string, string, int) *httptest.ResponseRecorder, path string) {
+	t.Helper()
+	for _, format := range []string{"bibtex", "ris", "endnote"} {
+		response := require("GET", path+"/export?format="+format, "", 200)
+		if !strings.Contains(response.Header().Get("Content-Disposition"), `filename="favorites.`) || response.Body.Len() == 0 {
+			t.Fatal(response.Header(), response.Body.String())
+		}
+	}
+}
+
+// assertFavoriteOwnerIsolation checks foreign folder reads, exports and mutations are rejected.
+func assertFavoriteOwnerIsolation(t *testing.T, auth *authHandlers, handlers *favoriteHandlers, router *http.ServeMux, target int64, require func(string, string, string, int) *httptest.ResponseRecorder) {
+	t.Helper()
 	invite, err := auth.service.IssueInvite(context.Background(), 1, false, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -113,24 +146,4 @@ func TestFavoriteLifecycleOwnerIsolationAndExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	require("POST", fmt.Sprintf("/api/favorites/folders/%d/articles", foreignFolder.Id), `{"article_id":1}`, 404)
-}
-
-func TestFavoriteExportRejectsOversizeSnapshotBeforeMetadata(t *testing.T) {
-	auth, _, router, token := favoriteFixture(t)
-	response := authRequest(router, "POST", "/api/favorites/folders", `{"name":"large"}`, token)
-	var folder favorites.Folder
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &folder) != nil {
-		t.Fatal(response.Body.String())
-	}
-	err := auth.repository.Immediate(context.Background(), false, func(connection *sql.Conn) error {
-		_, err := connection.ExecContext(context.Background(), "WITH RECURSIVE ids(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM ids WHERE value<10001) INSERT INTO favorites(user_id,folder_id,article_id,db_name,note,created_at) SELECT 1,?,value,'unavailable','',1 FROM ids", folder.Id)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	response = authRequest(router, "GET", fmt.Sprintf("/api/favorites/folders/%d/export", folder.Id), "", token)
-	if response.Code != 413 || strings.Contains(response.Header().Get("Content-Disposition"), "attachment") || !strings.Contains(response.Body.String(), "10000 items") {
-		t.Fatal(response.Code, response.Header(), response.Body.String())
-	}
 }

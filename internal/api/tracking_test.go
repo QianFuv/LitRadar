@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,28 +62,7 @@ func TestTrackingSettingsPreserveSecretIntentAndMaskedProjection(t *testing.T) {
 		`{"pushplus_token":" ","ai_api_key":"","ai_backup_api_key":" "}`,
 		`{"pushplus_token":null,"ai_api_key":null,"ai_backup_api_key":null}`,
 	} {
-		response := authRequest(router, "PUT", "/api/tracking/notification-settings", body, token)
-		if response.Code != 200 || strings.Contains(response.Body.String(), "private-") {
-			t.Fatal(response.Code, response.Body.String())
-		}
-		var value domain.NotificationSettingsResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
-			t.Fatal(err)
-		}
-		shouldHaveSecret := !strings.Contains(body, "null")
-		if value.HasPushplusToken != shouldHaveSecret || value.HasAiApiKey != shouldHaveSecret || value.HasAiBackupApiKey != shouldHaveSecret {
-			t.Fatal(response.Body.String())
-		}
-		stored, err := handlers.repository.GetNotificationSettings(context.Background(), handlers.codec, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if shouldHaveSecret && (stored.PushplusToken != "private-push" || stored.AiApiKey != "private-ai" || stored.AiBackupApiKey != "private-backup") {
-			t.Fatal("secret intent changed")
-		}
-		if strings.Contains(body, "keywords") && (strings.Join(value.Keywords, ",") != "x,x" || value.PushplusTemplate != "markdown") {
-			t.Fatal(response.Body.String())
-		}
+		assertNotificationSecretUpdate(t, handlers, router, token, body)
 	}
 }
 
@@ -137,23 +117,8 @@ func TestManualPushDurableAdmissionOwnershipAndCancellation(t *testing.T) {
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"status":"idle"`) {
 		t.Fatal(response.Code, response.Body.String())
 	}
-	var first manualPushStatus
-	for attempt := 0; attempt < 2; attempt++ {
-		response = authRequest(router, "POST", "/api/tracking/push-weekly", "", token)
-		var current manualPushStatus
-		if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &current) != nil || current.JobId == nil || len(*current.JobId) != 32 || current.Status != "pending" || !current.CanCancel {
-			t.Fatal(response.Code, response.Body.String())
-		}
-		if attempt == 0 {
-			first = current
-		} else if *first.JobId != *current.JobId {
-			t.Fatal("duplicate admission created another job")
-		}
-	}
-	record, err := handlers.repository.LoadLatestManualRun(context.Background(), 1)
-	if err != nil || record.Status != storage.RunStatusQueued || record.DeadlineAt == nil || *record.DeadlineAt-record.CreatedAt != 600 {
-		t.Fatal(record, err)
-	}
+	first := assertDuplicateManualAdmission(t, router, token)
+	assertQueuedManualDeadline(t, handlers)
 	path := "/api/tracking/push-weekly/runs/" + *first.JobId
 	if response := authRequest(router, "GET", path, "", member); response.Code != 404 {
 		t.Fatal(response.Code, response.Body.String())
@@ -165,14 +130,13 @@ func TestManualPushDurableAdmissionOwnershipAndCancellation(t *testing.T) {
 	if response := authRequest(router, "POST", path+"/cancel", "", token); response.Code != 200 {
 		t.Fatal(response.Code, response.Body.String())
 	}
-	response = authRequest(router, "POST", "/api/tracking/push-weekly", "", member)
-	var second manualPushStatus
-	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &second) != nil || second.JobId == nil {
-		t.Fatal(response.Code, response.Body.String())
-	}
-	if response := authRequest(router, "POST", "/api/tracking/push-weekly/runs/"+*second.JobId+"/cancel", "", token); response.Code != 200 {
-		t.Fatal("admin cannot cancel another owner", response.Code, response.Body.String())
-	}
+	assertAdminCanCancelMemberManualRun(t, router, token, member)
+	assertManualRunAuthenticationPrecedesIdValidation(t, router, token)
+}
+
+// assertManualRunAuthenticationPrecedesIdValidation checks unauthenticated and owner responses.
+func assertManualRunAuthenticationPrecedesIdValidation(t *testing.T, router *http.ServeMux, token string) {
+	t.Helper()
 	for _, bearer := range []string{"", token} {
 		response := authRequest(router, "GET", "/api/tracking/push-weekly/runs/invalid", "", bearer)
 		expected := 404
@@ -205,25 +169,7 @@ func TestManualUnknownAcknowledgementRemainsOwnerOnlyAndAtomic(t *testing.T) {
 	if response := authRequest(router, "POST", path, "", token); response.Code != 404 {
 		t.Fatal("admin acquired owner-only acknowledgement", response.Code, response.Body.String())
 	}
-	if err := auth.repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
-		_, err := connection.ExecContext(context.Background(), "CREATE TRIGGER reject_manual_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'private'); END")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if response := authRequest(router, "POST", path, "", member); response.Code != 500 {
-		t.Fatal("manual audit failure must be500", response.Code, response.Body.String())
-	}
-	latest, err := handlers.repository.LoadLatestManualRun(context.Background(), 2)
-	if err != nil || latest == nil || latest.Status != storage.RunStatusUnknown {
-		t.Fatal("audit failure admitted replacement", latest, err)
-	}
-	if err := auth.repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
-		_, err := connection.ExecContext(context.Background(), "DROP TRIGGER reject_manual_audit")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
+	latest := assertManualAcknowledgementAuditRollback(t, handlers, auth, router, path, member)
 	if response := authRequest(router, "POST", path, "", member); response.Code != 202 {
 		t.Fatal(response.Code, response.Body.String())
 	}
@@ -246,24 +192,14 @@ func TestManualUnknownAcknowledgementRemainsOwnerOnlyAndAtomic(t *testing.T) {
 }
 
 func TestManualPublicOutcomeRequiresStrictDecodedState(t *testing.T) {
-	for _, encoded := range []string{`{}`, `{"status":"completed","message":"private","pushed":null,"selected":1,"summary":"x"}`, `{"status":"invented","message":"private","pushed":1,"selected":1,"summary":"x"}`, `{"status":"completed","status":"completed","message":"private","pushed":1,"selected":1,"summary":"x"}`, `{"status":{"completed":null,"completed":null},"message":"private","pushed":1,"selected":1,"summary":"x"}`} {
-		value := manualStatus(&storage.RunRecord{Status: storage.RunStatusCompleted, ResultJson: &encoded})
-		if value.Message != "Manual push completed" || value.Pushed != 0 || value.Summary != "" {
-			t.Fatal("invalid result disclosed", encoded, value)
-		}
-	}
+	assertMalformedManualResultsAreHidden(t)
 	encoded := `{"status":{"completed":null},"message":"Public result","pushed":7,"selected":8,"summary":"Public summary"}`
 	for _, state := range []storage.RunStatus{storage.RunStatusCompleted, storage.RunStatusRunning, storage.RunStatusUnknown} {
 		value := manualStatus(&storage.RunRecord{Status: state, ResultJson: &encoded})
 		if value.Pushed != 7 || value.Selected != 8 || value.Summary != "Public summary" {
 			t.Fatal(value)
 		}
-		if state == storage.RunStatusCompleted && value.Message != "Public result" || state != storage.RunStatusCompleted && value.Message == "Public result" {
-			t.Fatal(value)
-		}
-		if state == storage.RunStatusUnknown && value.CanRetry {
-			t.Fatal("ambiguous run can retry without acknowledgement")
-		}
+		assertManualOutcomeStateMessage(t, state, value)
 	}
 }
 
@@ -280,5 +216,130 @@ func TestTrackingNormalizedEndpointLengthRemainsClientError(t *testing.T) {
 		if response.Code != 400 || !strings.Contains(response.Body.String(), field+" must be at most 2048 characters") {
 			t.Fatal(field, response.Code, response.Body.String())
 		}
+	}
+}
+
+// assertNotificationSecretUpdate checks masking and all three public presence flags.
+func assertNotificationSecretUpdate(t *testing.T, handlers *trackingHandlers, router *http.ServeMux, token, body string) {
+	t.Helper()
+	response := authRequest(router, "PUT", "/api/tracking/notification-settings", body, token)
+	if response.Code != 200 || strings.Contains(response.Body.String(), "private-") {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	var value domain.NotificationSettingsResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
+		t.Fatal(err)
+	}
+	shouldHaveSecret := !strings.Contains(body, "null")
+	if value.HasPushplusToken != shouldHaveSecret || value.HasAiApiKey != shouldHaveSecret || value.HasAiBackupApiKey != shouldHaveSecret {
+		t.Fatal(response.Body.String())
+	}
+	assertStoredNotificationIntent(t, handlers, body, value, shouldHaveSecret, response)
+}
+
+// assertStoredNotificationIntent checks retained secrets, repeated keywords and template defaults.
+func assertStoredNotificationIntent(t *testing.T, handlers *trackingHandlers, body string, value domain.NotificationSettingsResponse, shouldHaveSecret bool, response *httptest.ResponseRecorder) {
+	t.Helper()
+	stored, err := handlers.repository.GetNotificationSettings(context.Background(), handlers.codec, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shouldHaveSecret && (stored.PushplusToken != "private-push" || stored.AiApiKey != "private-ai" || stored.AiBackupApiKey != "private-backup") {
+		t.Fatal("secret intent changed")
+	}
+	if strings.Contains(body, "keywords") && (strings.Join(value.Keywords, ",") != "x,x" || value.PushplusTemplate != "markdown") {
+		t.Fatal(response.Body.String())
+	}
+}
+
+// assertDuplicateManualAdmission checks idempotent durable admission and pending cancellation flags.
+func assertDuplicateManualAdmission(t *testing.T, router *http.ServeMux, token string) manualPushStatus {
+	t.Helper()
+	var response *httptest.ResponseRecorder
+	var first manualPushStatus
+	for attempt := 0; attempt < 2; attempt++ {
+		response = authRequest(router, "POST", "/api/tracking/push-weekly", "", token)
+		var current manualPushStatus
+		if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &current) != nil || current.JobId == nil || len(*current.JobId) != 32 || current.Status != "pending" || !current.CanCancel {
+			t.Fatal(response.Code, response.Body.String())
+		}
+		if attempt == 0 {
+			first = current
+		} else if *first.JobId != *current.JobId {
+			t.Fatal("duplicate admission created another job")
+		}
+	}
+
+	return first
+}
+
+// assertQueuedManualDeadline checks a durable queued run with the exact ten-minute deadline.
+func assertQueuedManualDeadline(t *testing.T, handlers *trackingHandlers) {
+	t.Helper()
+	record, err := handlers.repository.LoadLatestManualRun(context.Background(), 1)
+	if err != nil || record.Status != storage.RunStatusQueued || record.DeadlineAt == nil || *record.DeadlineAt-record.CreatedAt != 600 {
+		t.Fatal(record, err)
+	}
+}
+
+// assertAdminCanCancelMemberManualRun checks administrator cancellation of another owner's run.
+func assertAdminCanCancelMemberManualRun(t *testing.T, router *http.ServeMux, token, member string) {
+	t.Helper()
+	var response *httptest.ResponseRecorder
+	response = authRequest(router, "POST", "/api/tracking/push-weekly", "", member)
+	var second manualPushStatus
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &second) != nil || second.JobId == nil {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	if response := authRequest(router, "POST", "/api/tracking/push-weekly/runs/"+*second.JobId+"/cancel", "", token); response.Code != 200 {
+		t.Fatal("admin cannot cancel another owner", response.Code, response.Body.String())
+	}
+}
+
+// assertManualAcknowledgementAuditRollback checks that audit failure leaves the unknown run unchanged.
+func assertManualAcknowledgementAuditRollback(t *testing.T, handlers *trackingHandlers, auth *authHandlers, router *http.ServeMux, path, member string) *storage.RunRecord {
+	t.Helper()
+	if err := auth.repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
+		_, err := connection.ExecContext(context.Background(), "CREATE TRIGGER reject_manual_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'private'); END")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if response := authRequest(router, "POST", path, "", member); response.Code != 500 {
+		t.Fatal("manual audit failure must be500", response.Code, response.Body.String())
+	}
+	latest, err := handlers.repository.LoadLatestManualRun(context.Background(), 2)
+	if err != nil || latest == nil || latest.Status != storage.RunStatusUnknown {
+		t.Fatal("audit failure admitted replacement", latest, err)
+	}
+	if err := auth.repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
+		_, err := connection.ExecContext(context.Background(), "DROP TRIGGER reject_manual_audit")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	return latest
+}
+
+// assertMalformedManualResultsAreHidden checks that malformed result records cannot disclose public metrics.
+func assertMalformedManualResultsAreHidden(t *testing.T) {
+	t.Helper()
+	for _, encoded := range []string{`{}`, `{"status":"completed","message":"private","pushed":null,"selected":1,"summary":"x"}`, `{"status":"invented","message":"private","pushed":1,"selected":1,"summary":"x"}`, `{"status":"completed","status":"completed","message":"private","pushed":1,"selected":1,"summary":"x"}`, `{"status":{"completed":null,"completed":null},"message":"private","pushed":1,"selected":1,"summary":"x"}`} {
+		value := manualStatus(&storage.RunRecord{Status: storage.RunStatusCompleted, ResultJson: &encoded})
+		if value.Message != "Manual push completed" || value.Pushed != 0 || value.Summary != "" {
+			t.Fatal("invalid result disclosed", encoded, value)
+		}
+	}
+}
+
+// assertManualOutcomeStateMessage limits public messages to completion and keeps unknown retry disabled.
+func assertManualOutcomeStateMessage(t *testing.T, state storage.RunStatus, value manualPushStatus) {
+	t.Helper()
+	if state == storage.RunStatusCompleted && value.Message != "Public result" || state != storage.RunStatusCompleted && value.Message == "Public result" {
+		t.Fatal(value)
+	}
+	if state == storage.RunStatusUnknown && value.CanRetry {
+		t.Fatal("ambiguous run can retry without acknowledgement")
 	}
 }

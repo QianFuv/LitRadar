@@ -55,7 +55,20 @@ func TestPublicHealthAndAnnouncementsRemainUnauthenticated(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("/health/ready", 503, `{"status":"unhealthy"}`)
-	err = repository.WithConnection(ctx, func(connection *sql.Conn) error {
+	assertPublicAnnouncements(t, ctx, repository, router)
+	pool.Close()
+	check("/health/live", 200, `{"status":"ok"}`)
+	check("/health/ready", 503, `{"status":"unhealthy"}`)
+	response := authRequest(router, "GET", "/api/announcements", "", "")
+	if response.Code != 503 || response.Header().Get("Retry-After") != "5" {
+		t.Fatal(response.Code, response.Body.String())
+	}
+}
+
+// assertPublicAnnouncements checks public visibility while excluding disabled announcements.
+func assertPublicAnnouncements(t *testing.T, ctx context.Context, repository *storageauth.Repository, router *http.ServeMux) {
+	t.Helper()
+	err := repository.WithConnection(ctx, func(connection *sql.Conn) error {
 		_, err := connection.ExecContext(ctx, "INSERT INTO announcements(title,message,priority,enabled,created_at,updated_at) VALUES('public','message','normal',1,1,1),('hidden','secret','high',0,2,2)")
 		return err
 	})
@@ -64,13 +77,6 @@ func TestPublicHealthAndAnnouncementsRemainUnauthenticated(t *testing.T) {
 	}
 	response := authRequest(router, "GET", "/api/announcements", "", "")
 	if response.Code != 200 || !strings.Contains(response.Body.String(), "public") || strings.Contains(response.Body.String(), "hidden") {
-		t.Fatal(response.Code, response.Body.String())
-	}
-	pool.Close()
-	check("/health/live", 200, `{"status":"ok"}`)
-	check("/health/ready", 503, `{"status":"unhealthy"}`)
-	response = authRequest(router, "GET", "/api/announcements", "", "")
-	if response.Code != 503 || response.Header().Get("Retry-After") != "5" {
 		t.Fatal(response.Code, response.Body.String())
 	}
 }

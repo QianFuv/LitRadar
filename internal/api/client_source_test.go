@@ -20,6 +20,8 @@ func TestClientSourceTrustsOnlyConfiguredProxyChain(t *testing.T) {
 		{"rightmost untrusted", "10.0.0.1", http.Header{"X-Forwarded-For": {"192.0.2.1, 198.51.100.1, 10.0.0.2"}}, "198.51.100.1", "trusted_forwarding_chain"},
 		{"forwarded precedence", "10.0.0.1", http.Header{"Forwarded": {"for=192.0.2.3"}, "X-Forwarded-For": {"192.0.2.4"}}, "192.0.2.3", "trusted_forwarding_chain"},
 		{"invalid does not fall back", "10.0.0.1", http.Header{"Forwarded": {"for=unknown"}, "X-Forwarded-For": {"192.0.2.4"}}, "10.0.0.1", "trusted_proxy_invalid_header"},
+		{"empty forwarded does not fall back", "10.0.0.1", http.Header{"Forwarded": {""}, "X-Forwarded-For": {"192.0.2.4"}}, "10.0.0.1", "trusted_proxy_invalid_header"},
+		{"invalid later header invalidates chain", "10.0.0.1", http.Header{"Forwarded": {"for=192.0.2.3", "for=unknown"}}, "10.0.0.1", "trusted_proxy_invalid_header"},
 		{"all header values", "10.0.0.1", http.Header{"Forwarded": {"for=192.0.2.3;proto=https", "for=10.0.0.2"}}, "192.0.2.3", "trusted_forwarding_chain"},
 		{"duplicate for", "10.0.0.1", http.Header{"Forwarded": {"for=192.0.2.3;FOR=192.0.2.4"}}, "10.0.0.1", "trusted_proxy_invalid_header"},
 		{"bad unknown parameter", "10.0.0.1", http.Header{"Forwarded": {"for=192.0.2.3;proto"}}, "10.0.0.1", "trusted_proxy_invalid_header"},

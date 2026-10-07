@@ -48,6 +48,7 @@ func (failure *apiError) write(writer http.ResponseWriter) {
 	})
 }
 
+// errorCode preserves the public rejection code for each supported status.
 func errorCode(status int) string {
 	switch status {
 	case 400:
@@ -64,6 +65,14 @@ func errorCode(status int) string {
 		return "payload_too_large"
 	case 429:
 		return "rate_limited"
+	default:
+		return serverErrorCode(status)
+	}
+}
+
+// serverErrorCode distinguishes known server failures from the generic fallback.
+func serverErrorCode(status int) string {
+	switch status {
 	case 502:
 		return "bad_gateway"
 	case 503:

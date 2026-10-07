@@ -216,6 +216,7 @@ func (handlers *articleHandlers) status(ctx context.Context, article domain.Arti
 	return &articleAccess{handlers.actionStatus(articleOrder(orders.abstract, catalog), article, "abstract", "查看摘要页", false), handlers.actionStatus(fulltext, article, "fulltext", "获取全文", !session.hasSession && !hasWithoutLogin && hasWithLogin)}, nil
 }
 
+// actionStatus distinguishes missing capabilities, article data and login requirements.
 func (handlers *articleHandlers) actionStatus(order []string, article domain.ArticleLocator, action, label string, requiresLogin bool) articleAction {
 	hasConfigured, hasProvider := false, false
 	for _, name := range order {
@@ -223,7 +224,7 @@ func (handlers *articleHandlers) actionStatus(order []string, article domain.Art
 		if registration == nil {
 			continue
 		}
-		if action == "abstract" && registration.ArticleAbstract() != nil || action == "fulltext" && registration.ArticleFullText() != nil {
+		if hasArticleCapability(registration, action) {
 			hasConfigured = true
 		}
 		hasProvider = hasProvider || articleSupports(registration, article, action)
@@ -242,6 +243,11 @@ func (handlers *articleHandlers) actionStatus(order []string, article domain.Art
 		message = &value
 	}
 	return articleAction{hasProvider && !requiresLogin, label, requiresLogin, message}
+}
+
+// hasArticleCapability checks only the requested registered action.
+func hasArticleCapability(registration *provider.Registration, action string) bool {
+	return action == "abstract" && registration.ArticleAbstract() != nil || action == "fulltext" && registration.ArticleFullText() != nil
 }
 
 type articleFailures struct{ hasAuthentication, hasRetryable, hasGateway bool }
@@ -284,6 +290,7 @@ func (failures articleFailures) response(action string) *apiError {
 	return &apiError{status: 404, detail: detail}
 }
 
+// resolve preserves provider order, the shared deadline and accumulated failure priority.
 func (handlers *articleHandlers) resolve(ctx context.Context, article domain.ArticleLocator, user identity.Id, catalog, action string, deadline time.Time) (domain.ArticleFullTextResolution, *apiError) {
 	empty := domain.ArticleFullTextResolution{}
 	if provider.ValidateArticleLocator(article) != nil {
@@ -304,60 +311,82 @@ func (handlers *articleHandlers) resolve(ctx context.Context, article domain.Art
 		if !articleSupports(registration, article, action) {
 			continue
 		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			failures.record(ctx, name, action, provider.TemporarilyUnavailable, "deadline_expired")
+		resolution, isResolved, shouldStop := handlers.resolveProvider(ctx, name, registration, article, request, action, &failures)
+		if isResolved {
+			return resolution, nil
+		}
+		if shouldStop {
 			break
 		}
-		type result struct {
-			resolution domain.ArticleFullTextResolution
-			err        error
-		}
-		value, err := executor.RunWithQueueTimeout(ctx, handlers.upstream, min(30*time.Second, remaining), func() (result, error) {
-			if action == "abstract" {
-				redirect, err := registration.ArticleAbstract().ResolveAbstract(context.WithoutCancel(ctx), article, request)
-				return result{domain.ArticleFullTextResolution{Redirect: &redirect}, err}, nil
-			}
-			resolution, err := registration.ArticleFullText().ResolveFullText(context.WithoutCancel(ctx), article, request)
-			return result{resolution, err}, nil
-		})
-		if err != nil {
-			switch {
-			case errors.Is(err, admission.ErrClosed):
-				failures.record(ctx, name, action, provider.TemporarilyUnavailable, "executor_closed")
-			case errors.Is(err, context.DeadlineExceeded):
-				failures.record(ctx, name, action, provider.TemporarilyUnavailable, "queue_timeout")
-			default:
-				failures.record(ctx, name, action, provider.Internal, "executor_join_failed")
-			}
-			if errors.Is(err, admission.ErrClosed) || time.Until(deadline) <= 0 || ctx.Err() != nil {
-				break
-			}
-			continue
-		}
-		if time.Until(deadline) <= 0 {
-			if value.err != nil {
-				failures.providerError(ctx, name, action, value.err)
-			}
-			failures.record(ctx, name, action, provider.TemporarilyUnavailable, "deadline_expired")
-			break
-		}
-		if value.err != nil {
-			failures.providerError(ctx, name, action, value.err)
-			continue
-		}
-		isValid := provider.ValidateFullTextResolution(value.resolution, 32*1024*1024) == nil
-		if value.resolution.Redirect != nil {
-			isValid = isValid && approvedArticleRedirect(registration.Descriptor().AllowedRedirectHosts, value.resolution.Redirect.Location)
-		} else if value.resolution.Document != nil {
-			isValid = isValid && value.resolution.Document.ContentType == "application/pdf"
-		}
-		if isValid {
-			return value.resolution, nil
-		}
-		failures.record(ctx, name, action, provider.InvalidResponse, "invalid_response")
 	}
 	return empty, failures.response(action)
+}
+
+type articleProviderResult struct {
+	resolution domain.ArticleFullTextResolution
+	err        error
+}
+
+// resolveProvider admits one provider and discards results that arrive after the shared deadline.
+func (handlers *articleHandlers) resolveProvider(ctx context.Context, name string, registration *provider.Registration, article domain.ArticleLocator, request domain.ArticleAccessContext, action string, failures *articleFailures) (domain.ArticleFullTextResolution, bool, bool) {
+	empty := domain.ArticleFullTextResolution{}
+	remaining := time.Until(request.Deadline)
+	if remaining <= 0 {
+		failures.record(ctx, name, action, provider.TemporarilyUnavailable, "deadline_expired")
+		return empty, false, true
+	}
+	value, err := executor.RunWithQueueTimeout(ctx, handlers.upstream, min(30*time.Second, remaining), func() (articleProviderResult, error) {
+		if action == "abstract" {
+			redirect, err := registration.ArticleAbstract().ResolveAbstract(context.WithoutCancel(ctx), article, request)
+			return articleProviderResult{domain.ArticleFullTextResolution{Redirect: &redirect}, err}, nil
+		}
+		resolution, err := registration.ArticleFullText().ResolveFullText(context.WithoutCancel(ctx), article, request)
+		return articleProviderResult{resolution, err}, nil
+	})
+	if err != nil {
+		return empty, false, failures.executionError(ctx, name, action, request.Deadline, err)
+	}
+	if time.Until(request.Deadline) <= 0 {
+		if value.err != nil {
+			failures.providerError(ctx, name, action, value.err)
+		}
+		failures.record(ctx, name, action, provider.TemporarilyUnavailable, "deadline_expired")
+		return empty, false, true
+	}
+	if value.err != nil {
+		failures.providerError(ctx, name, action, value.err)
+		return empty, false, false
+	}
+	if isApprovedArticleResolution(registration, value.resolution) {
+		return value.resolution, true, false
+	}
+	failures.record(ctx, name, action, provider.InvalidResponse, "invalid_response")
+	return empty, false, false
+}
+
+// executionError records admission or join failures and decides whether fallback can continue.
+func (failures *articleFailures) executionError(ctx context.Context, name, action string, deadline time.Time, err error) bool {
+	switch {
+	case errors.Is(err, admission.ErrClosed):
+		failures.record(ctx, name, action, provider.TemporarilyUnavailable, "executor_closed")
+	case errors.Is(err, context.DeadlineExceeded):
+		failures.record(ctx, name, action, provider.TemporarilyUnavailable, "queue_timeout")
+	default:
+		failures.record(ctx, name, action, provider.Internal, "executor_join_failed")
+	}
+	return errors.Is(err, admission.ErrClosed) || time.Until(deadline) <= 0 || ctx.Err() != nil
+}
+
+// isApprovedArticleResolution enforces provider redirect hosts and PDF document responses.
+func isApprovedArticleResolution(registration *provider.Registration, resolution domain.ArticleFullTextResolution) bool {
+	isValid := provider.ValidateFullTextResolution(resolution, 32*1024*1024) == nil
+	if resolution.Redirect != nil {
+		return isValid && approvedArticleRedirect(registration.Descriptor().AllowedRedirectHosts, resolution.Redirect.Location)
+	}
+	if resolution.Document != nil {
+		return isValid && resolution.Document.ContentType == "application/pdf"
+	}
+	return isValid
 }
 
 func approvedArticleRedirect(allowed []string, location string) bool {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
+	"github.com/QianFuv/LitRadar/internal/domain/identity"
 	"github.com/QianFuv/LitRadar/internal/openapi"
 	"github.com/QianFuv/LitRadar/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/internal/sources/zjlib"
@@ -75,25 +76,12 @@ func cnkiSuperseded() *apiError {
 	return cnkiFailure(409, "cnki_login_superseded", "login", "CNKI login operation was superseded")
 }
 
+// handle validates poll timing before authentication and then dispatches session operations.
 func (handlers *cnkiHandlers) handle(writer http.ResponseWriter, request *http.Request, name string) {
-	timeout, interval := int64(180), 2.0
-	if name == "poll_login" {
-		kind := structBody("CnkiLoginPollRequest", defaultBodyField("timeout_seconds", integerBody, int64(180)), defaultBodyField("interval_seconds", bodyType{kind: "float"}, 2.0))
-		decoded, failure := extractBody(request, kind, false)
-		if failure != nil {
-			failure.write(writer)
-			return
-		}
-		body := decoded.(map[string]any)
-		timeout, interval = body["timeout_seconds"].(int64), body["interval_seconds"].(float64)
-		if timeout < 1 || timeout > 600 {
-			badRequest("timeout_seconds must be between 1 and 600").write(writer)
-			return
-		}
-		if interval < 0.1 || interval > 10 {
-			badRequest("interval_seconds must be between 0.1 and 10.0").write(writer)
-			return
-		}
+	timeout, interval, failure := extractCnkiPollOptions(request, name)
+	if failure != nil {
+		failure.write(writer)
+		return
 	}
 	current, failure := handlers.authenticator.requireUser(request)
 	if failure != nil {
@@ -103,67 +91,106 @@ func (handlers *cnkiHandlers) handle(writer http.ResponseWriter, request *http.R
 	owner := current.authorization.User.Id
 	ctx := context.WithoutCancel(request.Context())
 	if name == "get_session" || name == "clear_session" {
-		status, failure := runCnki(request, handlers.pool, func() (storage.CnkiStatus, error) {
-			if name == "clear_session" {
-				if _, err := handlers.sessions.Clear(ctx, owner); err != nil {
-					return storage.CnkiStatus{}, err
-				}
-			}
-			return handlers.sessions.Status(ctx, owner)
-		})
-		if failure != nil {
-			failure.write(writer)
-			return
-		}
-		writeResponse(writer, status)
+		handlers.respondCnkiSession(writer, request, ctx, owner, name)
 		return
 	}
 	if name == "start_login" {
-		generation, failure := runCnki(request, handlers.pool, func() (int64, error) { return handlers.sessions.Reserve(ctx, owner) })
-		if failure != nil {
-			failure.write(writer)
-			return
-		}
-		type loginResult struct {
-			qr    zjlib.QrLogin
-			state json.RawMessage
-		}
-		login, failure := runCnki(request, handlers.upstream, func() (loginResult, error) {
-			client, close, err := handlers.newClient()
-			if err != nil {
-				return loginResult{}, cnkiFailure(502, "cnki_login_start_failed", "login", "CNKI login start failed")
-			}
-			defer close()
-			qr, err := client.StartQrLogin(ctx)
-			if err != nil {
-				return loginResult{}, cnkiFailure(502, "cnki_login_start_failed", "login", "CNKI login start failed")
-			}
-			state, err := jsonvalue.EncodeJson(client.StateData())
-			return loginResult{qr, json.RawMessage(state)}, err
-		})
-		if failure != nil {
-			failure.write(writer)
-			return
-		}
-		status, failure := runCnki(request, handlers.pool, func() (*storage.CnkiStatus, error) {
-			return handlers.sessions.Complete(ctx, owner, generation, nil, login.state, "waiting_scan", &login.qr.Uuid)
-		})
-		if failure != nil {
-			failure.write(writer)
-			return
-		}
-		if status == nil {
-			cnkiSuperseded().write(writer)
-			return
-		}
-		writeResponse(writer, struct {
-			Uuid    string              `json:"uuid"`
-			Status  string              `json:"status"`
-			QrCode  string              `json:"qr_code"`
-			Session *storage.CnkiStatus `json:"session"`
-		}{login.qr.Uuid, login.qr.Status, login.qr.QrCode, status})
+		handlers.startCnkiLogin(writer, request, ctx, owner)
 		return
 	}
+	handlers.pollCnkiLogin(writer, request, ctx, owner, timeout, interval)
+}
+
+// extractCnkiPollOptions preserves typed defaults and timeout-before-interval validation.
+func extractCnkiPollOptions(request *http.Request, name string) (int64, float64, *apiError) {
+	timeout, interval := int64(180), 2.0
+	if name == "poll_login" {
+		kind := structBody("CnkiLoginPollRequest", defaultBodyField("timeout_seconds", integerBody, int64(180)), defaultBodyField("interval_seconds", bodyType{kind: "float"}, 2.0))
+		decoded, failure := extractBody(request, kind, false)
+		if failure != nil {
+			return timeout, interval, failure
+		}
+		body := decoded.(map[string]any)
+		timeout, interval = body["timeout_seconds"].(int64), body["interval_seconds"].(float64)
+		if timeout < 1 || timeout > 600 {
+			return timeout, interval, badRequest("timeout_seconds must be between 1 and 600")
+		}
+		if interval < 0.1 || interval > 10 {
+			return timeout, interval, badRequest("interval_seconds must be between 0.1 and 10.0")
+		}
+	}
+
+	return timeout, interval, nil
+}
+
+// respondCnkiSession clears the session before projecting status when requested.
+func (handlers *cnkiHandlers) respondCnkiSession(writer http.ResponseWriter, request *http.Request, ctx context.Context, owner identity.Id, name string) {
+	status, failure := runCnki(request, handlers.pool, func() (storage.CnkiStatus, error) {
+		if name == "clear_session" {
+			if _, err := handlers.sessions.Clear(ctx, owner); err != nil {
+				return storage.CnkiStatus{}, err
+			}
+		}
+		return handlers.sessions.Status(ctx, owner)
+	})
+	if failure != nil {
+		failure.write(writer)
+		return
+	}
+	writeResponse(writer, status)
+	return
+}
+
+// startCnkiLogin publishes QR state only for the reserved generation.
+func (handlers *cnkiHandlers) startCnkiLogin(writer http.ResponseWriter, request *http.Request, ctx context.Context, owner identity.Id) {
+	generation, failure := runCnki(request, handlers.pool, func() (int64, error) { return handlers.sessions.Reserve(ctx, owner) })
+	if failure != nil {
+		failure.write(writer)
+		return
+	}
+	type loginResult struct {
+		qr    zjlib.QrLogin
+		state json.RawMessage
+	}
+	login, failure := runCnki(request, handlers.upstream, func() (loginResult, error) {
+		client, close, err := handlers.newClient()
+		if err != nil {
+			return loginResult{}, cnkiFailure(502, "cnki_login_start_failed", "login", "CNKI login start failed")
+		}
+		defer close()
+		qr, err := client.StartQrLogin(ctx)
+		if err != nil {
+			return loginResult{}, cnkiFailure(502, "cnki_login_start_failed", "login", "CNKI login start failed")
+		}
+		state, err := jsonvalue.EncodeJson(client.StateData())
+		return loginResult{qr, json.RawMessage(state)}, err
+	})
+	if failure != nil {
+		failure.write(writer)
+		return
+	}
+	status, failure := runCnki(request, handlers.pool, func() (*storage.CnkiStatus, error) {
+		return handlers.sessions.Complete(ctx, owner, generation, nil, login.state, "waiting_scan", &login.qr.Uuid)
+	})
+	if failure != nil {
+		failure.write(writer)
+		return
+	}
+	if status == nil {
+		cnkiSuperseded().write(writer)
+		return
+	}
+	writeResponse(writer, struct {
+		Uuid    string              `json:"uuid"`
+		Status  string              `json:"status"`
+		QrCode  string              `json:"qr_code"`
+		Session *storage.CnkiStatus `json:"session"`
+	}{login.qr.Uuid, login.qr.Status, login.qr.QrCode, status})
+	return
+}
+
+// pollCnkiLogin preserves stored QR identity and generation-checked completion.
+func (handlers *cnkiHandlers) pollCnkiLogin(writer http.ResponseWriter, request *http.Request, ctx context.Context, owner identity.Id, timeout int64, interval float64) {
 	row, failure := runCnki(request, handlers.pool, func() (*storage.CnkiData, error) { return handlers.sessions.Data(ctx, owner, false) })
 	if failure != nil {
 		failure.write(writer)
@@ -174,33 +201,7 @@ func (handlers *cnkiHandlers) handle(writer http.ResponseWriter, request *http.R
 		return
 	}
 	state, failure := runCnki(request, handlers.upstream, func() (json.RawMessage, error) {
-		data, err := transport.ParseJson(row.SessionData)
-		if err != nil {
-			return nil, err
-		}
-		if object, ok := data.(map[string]any); ok {
-			if _, exists := object["qr_uuid"]; !exists {
-				object["qr_uuid"] = row.QrUuid
-			}
-		}
-		client, close, err := handlers.newClient()
-		if err != nil {
-			return nil, cnkiFailure(400, "cnki_login_failed", "login", "CNKI login failed")
-		}
-		defer close()
-		client.LoadStateData(data)
-		if _, err = client.PollQrLogin(ctx, timeout, interval); err != nil {
-			var upstream *zjlib.Error
-			if errors.As(err, &upstream) && upstream.IsTimeout() {
-				return nil, cnkiFailure(408, "cnki_login_timeout", "login", "CNKI login timed out")
-			}
-			return nil, cnkiFailure(400, "cnki_login_failed", "login", "CNKI login failed")
-		}
-		if _, err = client.WarmUpFulltextSession(ctx); err != nil {
-			return nil, cnkiFailure(502, "cnki_warmup_failed", "warmup", "CNKI full-text session warm-up failed")
-		}
-		encoded, err := jsonvalue.EncodeJson(client.StateData())
-		return json.RawMessage(encoded), err
+		return handlers.pollCnkiClient(ctx, row, timeout, interval)
 	})
 	if failure != nil {
 		failure.write(writer)
@@ -227,4 +228,45 @@ func (handlers *cnkiHandlers) handle(writer http.ResponseWriter, request *http.R
 		Status  string              `json:"status"`
 		Session *storage.CnkiStatus `json:"session"`
 	}{"COMPLETE", status})
+}
+
+// parseCnkiSession adds a missing QR identity without replacing a stored field.
+func parseCnkiSession(row *storage.CnkiData) (any, error) {
+	data, err := transport.ParseJson(row.SessionData)
+	if err != nil {
+		return nil, err
+	}
+	if object, ok := data.(map[string]any); ok {
+		if _, exists := object["qr_uuid"]; !exists {
+			object["qr_uuid"] = row.QrUuid
+		}
+	}
+
+	return data, nil
+}
+
+// pollCnkiClient retains timeout classification and full-text warm-up before persistence.
+func (handlers *cnkiHandlers) pollCnkiClient(ctx context.Context, row *storage.CnkiData, timeout int64, interval float64) (json.RawMessage, error) {
+	data, err := parseCnkiSession(row)
+	if err != nil {
+		return nil, err
+	}
+	client, close, err := handlers.newClient()
+	if err != nil {
+		return nil, cnkiFailure(400, "cnki_login_failed", "login", "CNKI login failed")
+	}
+	defer close()
+	client.LoadStateData(data)
+	if _, err = client.PollQrLogin(ctx, timeout, interval); err != nil {
+		var upstream *zjlib.Error
+		if errors.As(err, &upstream) && upstream.IsTimeout() {
+			return nil, cnkiFailure(408, "cnki_login_timeout", "login", "CNKI login timed out")
+		}
+		return nil, cnkiFailure(400, "cnki_login_failed", "login", "CNKI login failed")
+	}
+	if _, err = client.WarmUpFulltextSession(ctx); err != nil {
+		return nil, cnkiFailure(502, "cnki_warmup_failed", "warmup", "CNKI full-text session warm-up failed")
+	}
+	encoded, err := jsonvalue.EncodeJson(client.StateData())
+	return json.RawMessage(encoded), err
 }

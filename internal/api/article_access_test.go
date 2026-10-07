@@ -228,10 +228,40 @@ func TestArticleStatusUsesCurrentSessionAndLoadsAllSettings(t *testing.T) {
 	if failure != nil || !status.Fulltext.Available || status.Fulltext.RequiresLogin {
 		t.Fatal(status, failure)
 	}
+	assertDisabledArticleCatalog(t, handlers)
+	assertCorruptSettingsAffectArticleStatus(t, handlers, auth)
+
+}
+
+func TestArticleHttpExtractionAndResponseHeaders(t *testing.T) {
+	_, _, router, token := articleFixture(t)
+	for _, scenario := range []struct {
+		path, bearer string
+		status       int
+	}{{"/api/articles/bad/access", "", 400}, {"/api/articles/1/access?db=a&db=b", "", 400}, {"/api/articles/0/access", "", 401}, {"/api/articles/-1/access", token, 404}} {
+		response := authRequest(router, "GET", scenario.path, "", scenario.bearer)
+		if response.Code != scenario.status {
+			t.Fatal(scenario.path, response.Code, response.Body.String())
+		}
+	}
+	assertArticleResolutionHeaders(t)
+
+}
+
+// assertDisabledArticleCatalog checks the missing-capability message for an empty provider order.
+func assertDisabledArticleCatalog(t *testing.T, handlers *articleHandlers) {
+	t.Helper()
+	var status *articleAccess
+	var failure *apiError
 	status, failure = handlers.status(context.Background(), articleLocatorFixture(), 1, "disabled")
 	if failure != nil || status.Fulltext.Available || status.Fulltext.Message == nil || *status.Fulltext.Message != "当前未配置可用的在线能力" {
 		t.Fatal(status, failure)
 	}
+}
+
+// assertCorruptSettingsAffectArticleStatus checks strict status loading and tolerant startup provider loading.
+func assertCorruptSettingsAffectArticleStatus(t *testing.T, handlers *articleHandlers, auth *authHandlers) {
+	t.Helper()
 	if err := auth.repository.WithConnection(context.Background(), func(connection *sql.Conn) error {
 		_, err := connection.ExecContext(context.Background(), `INSERT INTO runtime_settings(key,value,updated_at) VALUES('openalex_api_key_pool','invalid secret',1)`)
 		return err
@@ -247,17 +277,9 @@ func TestArticleStatusUsesCurrentSessionAndLoadsAllSettings(t *testing.T) {
 	}
 }
 
-func TestArticleHttpExtractionAndResponseHeaders(t *testing.T) {
-	_, _, router, token := articleFixture(t)
-	for _, scenario := range []struct {
-		path, bearer string
-		status       int
-	}{{"/api/articles/bad/access", "", 400}, {"/api/articles/1/access?db=a&db=b", "", 400}, {"/api/articles/0/access", "", 401}, {"/api/articles/-1/access", token, 404}} {
-		response := authRequest(router, "GET", scenario.path, "", scenario.bearer)
-		if response.Code != scenario.status {
-			t.Fatal(scenario.path, response.Code, response.Body.String())
-		}
-	}
+// assertArticleResolutionHeaders checks redirect and PDF response bodies and encoded filenames.
+func assertArticleResolutionHeaders(t *testing.T) {
+	t.Helper()
 	writer := httptest.NewRecorder()
 	location := "https://example.org/论文?a=1"
 	writeArticleResolution(writer, domain.ArticleFullTextResolution{Redirect: &domain.ArticleRedirect{Location: location}})

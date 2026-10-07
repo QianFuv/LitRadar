@@ -37,30 +37,15 @@ func TestIndexCancellationStopsActualQueryWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if _, err := migration.Migrate(ctx, configuration.AuthDbPath); err != nil {
-		t.Fatal(err)
-	}
-	repository, err := storageauth.Open(configuration.AuthDbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repository, service, token := indexCancellationIdentity(t, ctx, configuration)
 	defer repository.Close()
-	service := auth.New(repository, 2)
-	user, err := service.Bootstrap(ctx, "cancel_fixture", "fixture password long", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := service.CreateTrustedToken(ctx, user.Id, "fixture", 3600, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	pool := executor.New(1, 30*time.Second)
 	defer pool.Wait()
 	handlers := indexHandlers{configuration, NewAuthenticator(service, pool), pool, &weekly.Cache{}}
 	requestContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	request := httptest.NewRequest("GET", "/api/meta/areas?db=slow.sqlite", nil).WithContext(requestContext)
-	request.Header.Set("Authorization", "Bearer "+token.Token)
+	request.Header.Set("Authorization", "Bearer "+token)
 	done := make(chan struct{})
 	go func() { defer close(done); handlers.handle(httptest.NewRecorder(), request, "list_areas") }()
 	waitForIndexReader(t, database)
@@ -97,4 +82,34 @@ func waitForIndexReader(t *testing.T, database *sql.DB) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("query never held a database read snapshot")
+}
+
+// indexCancellationIdentity creates authentication resources without releasing their outer lifetime.
+func indexCancellationIdentity(t *testing.T, ctx context.Context, configuration config.Config) (*storageauth.Repository, *auth.Service, string) {
+	t.Helper()
+	if _, err := migration.Migrate(ctx, configuration.AuthDbPath); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := storageauth.Open(configuration.AuthDbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	didReturnRepository := false
+	defer func() {
+		if !didReturnRepository {
+			repository.Close()
+		}
+	}()
+	service := auth.New(repository, 2)
+	user, err := service.Bootstrap(ctx, "cancel_fixture", "fixture password long", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := service.CreateTrustedToken(ctx, user.Id, "fixture", 3600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	didReturnRepository = true
+	return repository, service, token.Token
 }

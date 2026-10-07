@@ -70,57 +70,14 @@ func mapBusinessError(err error) *apiError {
 	}
 }
 
+// handle retains syntax extraction, authentication, validation and executor admission order.
 func (handlers *favoriteHandlers) handle(writer http.ResponseWriter, request *http.Request, name string) {
-	var folder, article int64
-	var failure *apiError
-	if request.PathValue("folder_id") != "" {
-		folder, failure = extractPathInteger(request, "folder_id")
-		if name == "remove_favorite" {
-			folder, failure = extractTuplePathInteger(request, "folder_id", 0)
-		}
-		if failure != nil {
-			failure.write(writer)
-			return
-		}
-	}
-	if name == "remove_favorite" {
-		article, failure = extractTuplePathInteger(request, "article_id", 1)
-		if failure != nil {
-			failure.write(writer)
-			return
-		}
-	}
-	fields := map[string]queryKind{}
-	switch name {
-	case "list_folder_articles":
-		fields = map[string]queryKind{"limit": queryInteger, "offset": queryInteger}
-	case "list_folder_article_page":
-		fields = map[string]queryKind{"limit": queryInteger, "cursor": queryText}
-	case "remove_favorite":
-		fields = map[string]queryKind{"db_name": queryText}
-	case "check_favorite":
-		fields = map[string]queryKind{"article_id": queryInteger, "db_name": queryText}
-	case "export_folder":
-		fields = map[string]queryKind{"format": queryText}
-	}
-	query, failure := extractQuery(request.URL.RawQuery, fields)
+	input, failure := extractFavoriteRequest(request, name)
 	if failure != nil {
 		failure.write(writer)
 		return
 	}
-	if name == "check_favorite" && query.integer("article_id") == nil {
-		queryRejection("missing field `article_id`").write(writer)
-		return
-	}
-	var body map[string]any
-	if kind, exists := favoriteBodies[name]; exists {
-		decoded, failure := extractBody(request, requestBodies[kind], false)
-		if failure != nil {
-			failure.write(writer)
-			return
-		}
-		body = decoded.(map[string]any)
-	}
+	folder, article, query, body := input.folder, input.article, input.query, input.body
 	current, failure := handlers.authenticator.requireUser(request)
 	if failure != nil {
 		failure.write(writer)
@@ -157,21 +114,82 @@ func (handlers *favoriteHandlers) handle(writer http.ResponseWriter, request *ht
 	writeResponse(writer, value.payload)
 }
 
+type favoriteRequest struct {
+	folder, article int64
+	query           typedQuery
+	body            map[string]any
+}
+
+// extractFavoriteRequest preserves path, query, required-field and body rejection before authentication.
+func extractFavoriteRequest(request *http.Request, name string) (favoriteRequest, *apiError) {
+	var folder, article int64
+	var failure *apiError
+	folder, article, failure = extractFavoritePaths(request, name)
+	if failure != nil {
+		return favoriteRequest{}, failure
+	}
+	fields := favoriteQueryFields(name)
+	query, failure := extractQuery(request.URL.RawQuery, fields)
+	if failure != nil {
+		return favoriteRequest{}, failure
+	}
+	if name == "check_favorite" && query.integer("article_id") == nil {
+		return favoriteRequest{}, queryRejection("missing field `article_id`")
+	}
+	var body map[string]any
+	if kind, exists := favoriteBodies[name]; exists {
+		decoded, failure := extractBody(request, requestBodies[kind], false)
+		if failure != nil {
+			return favoriteRequest{}, failure
+		}
+		body = decoded.(map[string]any)
+	}
+	return favoriteRequest{folder, article, query, body}, nil
+}
+
+// extractFavoritePaths retains tuple errors for the two remove-favorite captures.
+func extractFavoritePaths(request *http.Request, name string) (int64, int64, *apiError) {
+	var folder, article int64
+	var failure *apiError
+	if request.PathValue("folder_id") != "" {
+		folder, failure = extractPathInteger(request, "folder_id")
+		if name == "remove_favorite" {
+			folder, failure = extractTuplePathInteger(request, "folder_id", 0)
+		}
+		if failure != nil {
+			return folder, article, failure
+		}
+	}
+	if name == "remove_favorite" {
+		article, failure = extractTuplePathInteger(request, "article_id", 1)
+		if failure != nil {
+			return folder, article, failure
+		}
+	}
+	return folder, article, nil
+}
+
+// favoriteQueryFields selects the existing endpoint-specific scalar query schema.
+func favoriteQueryFields(name string) map[string]queryKind {
+	fields := map[string]queryKind{}
+	switch name {
+	case "list_folder_articles":
+		fields = map[string]queryKind{"limit": queryInteger, "offset": queryInteger}
+	case "list_folder_article_page":
+		fields = map[string]queryKind{"limit": queryInteger, "cursor": queryText}
+	case "remove_favorite":
+		fields = map[string]queryKind{"db_name": queryText}
+	case "check_favorite":
+		fields = map[string]queryKind{"article_id": queryInteger, "db_name": queryText}
+	case "export_folder":
+		fields = map[string]queryKind{"format": queryText}
+	}
+	return fields
+}
+
+// perform separates folder operations from article operations without changing ownership.
 func (handlers *favoriteHandlers) perform(ctx context.Context, name string, owner identity.Id, folder, article int64, query typedQuery, body map[string]any) (any, error) {
 	repository := handlers.repository
-	okResult := func(changed bool, err error, detail string) (any, error) {
-		if err != nil {
-			return nil, err
-		}
-		if !changed {
-			return nil, &apiError{status: 404, detail: detail}
-		}
-		return map[string]bool{"ok": true}, nil
-	}
-	db := ""
-	if value := query.text("db_name"); value != nil {
-		db = *value
-	}
 	switch name {
 	case "list_folders":
 		return repository.ListFolders(ctx, owner)
@@ -179,36 +197,62 @@ func (handlers *favoriteHandlers) perform(ctx context.Context, name string, owne
 		return repository.CreateFolder(ctx, owner, body["name"].(string), body["is_tracking"].(bool))
 	case "rename_folder":
 		changed, err := repository.RenameFolder(ctx, owner, folder, body["name"].(string))
-		return okResult(changed, err, "Folder not found")
+		return favoriteChanged(changed, err, "Folder not found")
 	case "delete_folder":
 		changed, err := repository.DeleteFolder(ctx, owner, folder)
-		return okResult(changed, err, "Folder not found")
+		return favoriteChanged(changed, err, "Folder not found")
 	case "get_tracking":
-		selected, err := repository.TrackingFolder(ctx, owner)
-		if err != nil {
-			return nil, err
-		}
-		result := struct {
-			FolderId   *int64  `json:"folder_id"`
-			FolderName *string `json:"folder_name"`
-		}{nil, nil}
-		if selected != nil {
-			result.FolderId, result.FolderName = &selected.Id, &selected.Name
-		}
-		return result, nil
+		return handlers.trackingFolder(ctx, owner)
 	case "set_tracking":
 		changed, err := repository.SetTrackingFolder(ctx, owner, body["folder_id"].(int64))
-		return okResult(changed, err, "Folder not found")
+		return favoriteChanged(changed, err, "Folder not found")
 	case "folder_count":
 		count, err := repository.CountFavorites(ctx, owner, &folder)
 		return map[string]int64{"count": count}, err
+	default:
+		return handlers.performFavoriteArticles(ctx, name, owner, folder, article, query, body)
+
+	}
+}
+
+// favoriteChanged maps unchanged repository mutations to the original missing-target error.
+func favoriteChanged(changed bool, err error, detail string) (any, error) {
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return nil, &apiError{status: 404, detail: detail}
+	}
+	return map[string]bool{"ok": true}, nil
+}
+
+// trackingFolder projects the current optional tracking folder without changing repository ownership.
+func (handlers *favoriteHandlers) trackingFolder(ctx context.Context, owner identity.Id) (any, error) {
+	repository := handlers.repository
+	selected, err := repository.TrackingFolder(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	result := struct {
+		FolderId   *int64  `json:"folder_id"`
+		FolderName *string `json:"folder_name"`
+	}{nil, nil}
+	if selected != nil {
+		result.FolderId, result.FolderName = &selected.Id, &selected.Name
+	}
+	return result, nil
+}
+
+// performFavoriteArticles executes single-article, page, bulk and export operations.
+func (handlers *favoriteHandlers) performFavoriteArticles(ctx context.Context, name string, owner identity.Id, folder, article int64, query typedQuery, body map[string]any) (any, error) {
+	repository := handlers.repository
+	db := ""
+	if value := query.text("db_name"); value != nil {
+		db = *value
+	}
+	switch name {
 	case "list_folder_articles":
-		limit, offset := query.integerDefault("limit", 100), query.integerDefault("offset", 0)
-		rows, err := repository.ListFavorites(ctx, owner, &folder, limit, offset)
-		if err != nil {
-			return nil, err
-		}
-		return favorites.Enrich(ctx, handlers.storage, rows), nil
+		return handlers.listFavoriteArticles(ctx, owner, folder, query)
 	case "list_folder_article_page":
 		limit := query.integerDefault("limit", 50)
 		return repository.ArticlePage(ctx, handlers.storage, owner, folder, limit, query.text("cursor"))
@@ -216,16 +260,45 @@ func (handlers *favoriteHandlers) perform(ctx context.Context, name string, owne
 		return repository.AddFavorite(ctx, owner, folder, favoriteAdd(body))
 	case "remove_favorite":
 		changed, err := repository.RemoveFavorite(ctx, owner, folder, favorites.Reference{ArticleId: identity.Id(article), DbName: db})
-		return okResult(changed, err, "Favorite not found")
+		return favoriteChanged(changed, err, "Favorite not found")
 	case "check_favorite":
 		return repository.IsFavorited(ctx, owner, favorites.Reference{ArticleId: identity.Id(*query.integer("article_id")), DbName: db})
 	case "check_favorites_batch":
-		values := body["article_ids"].([]any)
-		ids := make([]int64, len(values))
-		for index, value := range values {
-			ids[index] = value.(int64)
-		}
-		return repository.BatchIsFavorited(ctx, owner, ids, body["db_name"].(string))
+		return handlers.checkFavoriteBatch(ctx, owner, body)
+	case "bulk_add", "bulk_remove", "bulk_move":
+		return handlers.performFavoriteBulk(ctx, name, owner, folder, body)
+	case "export_folder":
+		return handlers.export(ctx, owner, folder, query.text("format"))
+	}
+	return nil, errors.New("unknown favorite operation")
+}
+
+// listFavoriteArticles retains the list limit and offset defaults before enrichment.
+func (handlers *favoriteHandlers) listFavoriteArticles(ctx context.Context, owner identity.Id, folder int64, query typedQuery) (any, error) {
+	repository := handlers.repository
+	limit, offset := query.integerDefault("limit", 100), query.integerDefault("offset", 0)
+	rows, err := repository.ListFavorites(ctx, owner, &folder, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return favorites.Enrich(ctx, handlers.storage, rows), nil
+}
+
+// checkFavoriteBatch converts every decoded identity before business-layer batch validation.
+func (handlers *favoriteHandlers) checkFavoriteBatch(ctx context.Context, owner identity.Id, body map[string]any) (any, error) {
+	repository := handlers.repository
+	values := body["article_ids"].([]any)
+	ids := make([]int64, len(values))
+	for index, value := range values {
+		ids[index] = value.(int64)
+	}
+	return repository.BatchIsFavorited(ctx, owner, ids, body["db_name"].(string))
+}
+
+// performFavoriteBulk retains ordered item conversion and the distinct bulk result envelopes.
+func (handlers *favoriteHandlers) performFavoriteBulk(ctx context.Context, name string, owner identity.Id, folder int64, body map[string]any) (any, error) {
+	repository := handlers.repository
+	switch name {
 	case "bulk_add":
 		values := body["articles"].([]any)
 		items := make([]favorites.Add, len(values))
@@ -249,8 +322,6 @@ func (handlers *favoriteHandlers) perform(ctx context.Context, name string, owne
 			count, err = repository.BulkMove(ctx, owner, folder, body["target_folder_id"].(int64), items)
 		}
 		return map[string]int64{"count": count}, err
-	case "export_folder":
-		return handlers.export(ctx, owner, folder, query.text("format"))
 	}
 	return nil, errors.New("unknown favorite operation")
 }
@@ -261,22 +332,15 @@ func favoriteAdd(body map[string]any) favorites.Add {
 
 type favoriteExport struct{ content, filename, media string }
 
+// export preserves snapshot limits, metadata batches and output-limit projection.
 func (handlers *favoriteHandlers) export(ctx context.Context, owner identity.Id, folder int64, requested *string) (favoriteExport, error) {
 	format := "bibtex"
 	if requested != nil {
 		format = *requested
 	}
-	var serialize func([]domain.FavoriteCitation, int) (string, error)
-	extension, media := "", ""
-	switch format {
-	case "bibtex":
-		serialize, extension, media = citation.Bibtex, "bib", "application/x-bibtex"
-	case "ris":
-		serialize, extension, media = citation.Ris, "ris", "application/x-research-info-systems"
-	case "endnote":
-		serialize, extension, media = citation.EndnoteXml, "xml", "application/xml"
-	default:
-		return favoriteExport{}, badRequest("Invalid export format")
+	selected, failure := selectFavoriteCitationFormat(format)
+	if failure != nil {
+		return favoriteExport{}, failure
 	}
 	snapshot, err := handlers.repository.LoadCitationSnapshot(ctx, owner, folder, 10000)
 	if err != nil {
@@ -293,14 +357,14 @@ func (handlers *favoriteHandlers) export(ctx context.Context, owner identity.Id,
 		}
 		records = append(records, batch...)
 	}
-	content, err := serialize(records, 8*1024*1024)
+	content, err := selected.serialize(records, 8*1024*1024)
 	if err != nil {
 		if errors.Is(err, citation.ErrOutputLimit) {
 			return favoriteExport{}, &apiError{status: 413, detail: "Favorite export exceeds the 8 MiB output limit"}
 		}
 		return favoriteExport{}, err
 	}
-	return favoriteExport{content, exportFilename(snapshot.FolderName, extension), media}, nil
+	return favoriteExport{content, exportFilename(snapshot.FolderName, selected.extension), selected.media}, nil
 }
 func exportFilename(name, extension string) string {
 	sanitized := strings.Map(func(character rune) rune {
@@ -314,4 +378,26 @@ func exportFilename(name, extension string) string {
 		sanitized = "favorites"
 	}
 	return sanitized + "." + extension
+}
+
+type favoriteCitationFormat struct {
+	serialize        func([]domain.FavoriteCitation, int) (string, error)
+	extension, media string
+}
+
+// selectFavoriteCitationFormat rejects unsupported formats before any metadata or snapshot access.
+func selectFavoriteCitationFormat(format string) (favoriteCitationFormat, *apiError) {
+	var serialize func([]domain.FavoriteCitation, int) (string, error)
+	extension, media := "", ""
+	switch format {
+	case "bibtex":
+		serialize, extension, media = citation.Bibtex, "bib", "application/x-bibtex"
+	case "ris":
+		serialize, extension, media = citation.Ris, "ris", "application/x-research-info-systems"
+	case "endnote":
+		serialize, extension, media = citation.EndnoteXml, "xml", "application/xml"
+	default:
+		return favoriteCitationFormat{}, badRequest("Invalid export format")
+	}
+	return favoriteCitationFormat{serialize, extension, media}, nil
 }

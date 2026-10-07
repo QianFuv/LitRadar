@@ -35,10 +35,7 @@ func TestRateLimitUsernameNormalizationAndRetryDelay(t *testing.T) {
 	if limiter.checkAt(loginAttempt, source, " Alice ", 100) != nil || limiter.checkAt(loginAttempt, source, "alice", 101) != nil {
 		t.Fatal("initial attempts rejected")
 	}
-	failure := limiter.checkAt(loginAttempt, source, "ALICE", 102)
-	if failure == nil || failure.retryAfter != 8 || failure.bucket != "username" || failure.reason != "rate_limit_exceeded" || failure.sourceClass != "direct" || failure.rejectedCount != 1 || !failure.shouldPersistAudit {
-		t.Fatalf("rejection: %+v", failure)
-	}
+	assertUsernameLimitRejection(t, limiter, source)
 	limiter.clearUsername(registerAttempt, "ALIce")
 	if failure := limiter.checkAt(loginAttempt, source, "alice", 106); failure == nil || failure.bucket != "username" {
 		t.Fatal("registration cleared login bucket")
@@ -85,53 +82,15 @@ func TestRateLimitRejectsBeforeTouchingLaterBuckets(t *testing.T) {
 	if failure := limiter.checkAt(loginAttempt, directSource("192.0.2.3"), "gamma", 10); failure == nil || failure.bucket != "global_breaker" {
 		t.Fatal("global not limited")
 	}
-	policy.LoginIp = settings.TokenBucketPolicy{Capacity: 1, RefillTokens: 1, RefillSeconds: 60}
-	limiter = newAuthRateLimiter(policy)
-	if limiter.checkAt(loginAttempt, directSource("192.0.2.1"), "alpha", 20) != nil {
-		t.Fatal("first attempt")
-	}
-	if failure := limiter.checkAt(loginAttempt, directSource("192.0.2.1"), "beta", 20); failure == nil || failure.bucket != "client_ip" {
-		t.Fatal("IP not limited")
-	}
-	if _, exists := limiter.usernameBuckets[bucketKey{kind: loginAttempt, username: "beta"}]; exists {
-		t.Fatal("IP rejection created username state")
-	}
+	assertIpLimitStopsUsernameAdmission(t, policy)
+
 }
 
 func TestRateLimitLruBoundsBothOperationsAndSaturationIsStable(t *testing.T) {
 	limiter := newAuthRateLimiter(rateLimitTestPolicy())
-	for _, scenario := range []struct{ address, username string }{{"192.0.2.1", "alpha"}, {"192.0.2.2", "beta"}, {"192.0.2.1", "alpha"}, {"192.0.2.3", "gamma"}} {
-		if limiter.checkAt(loginAttempt, directSource(scenario.address), scenario.username, 10) != nil {
-			t.Fatal("fixture rejected")
-		}
-	}
-	if limiter.usernameBuckets[bucketKey{kind: loginAttempt, username: "beta"}] != nil {
-		t.Fatal("recent use did not protect alpha")
-	}
-	for index := range 100 {
-		limiter.checkAt(registerAttempt, directSource(fmt.Sprintf("203.0.113.%d", index)), strings.Repeat("密", 1000), 20)
-	}
-	if len(limiter.ipBuckets) > 2 || len(limiter.usernameBuckets) > 2 {
-		t.Fatal("unbounded keyed state")
-	}
-	for key := range limiter.usernameBuckets {
-		if utf8.RuneCountInString(key.username) > 32 {
-			t.Fatal("unbounded username")
-		}
-	}
-	policy := settings.TokenBucketPolicy{Capacity: 1, RefillTokens: 1, RefillSeconds: 10}
-	buckets := make(map[bucketKey]*trackedBucket)
-	var order list.List
-	for _, name := range []string{"z", "a", "m"} {
-		acquireTracked(buckets, &order, bucketKey{username: name}, 2, policy, 0, ^uint64(0))
-	}
-	if buckets[bucketKey{username: "a"}] != nil || buckets[bucketKey{username: "z"}] == nil {
-		t.Fatal("saturated sequence must evict by key order")
-	}
-	bucket := fullBucket(policy, 0)
-	if bucket.acquire(0, policy) != 0 || bucket.acquire(9, policy) != 1 || bucket.acquire(^uint64(0), policy) != 0 {
-		t.Fatal("integer refill/overflow changed")
-	}
+	assertRateLimitBoundsBothOperations(t, limiter)
+	assertRateLimitSaturationAndRefill(t)
+
 }
 
 func TestRateLimiterConcurrentRequestsShareCapacity(t *testing.T) {
@@ -255,5 +214,72 @@ func TestRateLimitRandomizedReferenceTrace(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// assertUsernameLimitRejection checks username rejection metadata and audit sampling.
+func assertUsernameLimitRejection(t *testing.T, limiter *authRateLimiter, source authClientSource) {
+	t.Helper()
+	failure := limiter.checkAt(loginAttempt, source, "ALICE", 102)
+	if failure == nil || failure.retryAfter != 8 || failure.bucket != "username" || failure.reason != "rate_limit_exceeded" || failure.sourceClass != "direct" || failure.rejectedCount != 1 || !failure.shouldPersistAudit {
+		t.Fatalf("rejection: %+v", failure)
+	}
+}
+
+// assertIpLimitStopsUsernameAdmission checks that IP rejection leaves later username state untouched.
+func assertIpLimitStopsUsernameAdmission(t *testing.T, policy settings.RateLimitPolicy) {
+	t.Helper()
+	policy.LoginIp = settings.TokenBucketPolicy{Capacity: 1, RefillTokens: 1, RefillSeconds: 60}
+	limiter := newAuthRateLimiter(policy)
+	if limiter.checkAt(loginAttempt, directSource("192.0.2.1"), "alpha", 20) != nil {
+		t.Fatal("first attempt")
+	}
+	if failure := limiter.checkAt(loginAttempt, directSource("192.0.2.1"), "beta", 20); failure == nil || failure.bucket != "client_ip" {
+		t.Fatal("IP not limited")
+	}
+	if _, exists := limiter.usernameBuckets[bucketKey{kind: loginAttempt, username: "beta"}]; exists {
+		t.Fatal("IP rejection created username state")
+	}
+}
+
+// assertRateLimitBoundsBothOperations checks shared LRU bounds and bounded Unicode usernames.
+func assertRateLimitBoundsBothOperations(t *testing.T, limiter *authRateLimiter) {
+	t.Helper()
+	for _, scenario := range []struct{ address, username string }{{"192.0.2.1", "alpha"}, {"192.0.2.2", "beta"}, {"192.0.2.1", "alpha"}, {"192.0.2.3", "gamma"}} {
+		if limiter.checkAt(loginAttempt, directSource(scenario.address), scenario.username, 10) != nil {
+			t.Fatal("fixture rejected")
+		}
+	}
+	if limiter.usernameBuckets[bucketKey{kind: loginAttempt, username: "beta"}] != nil {
+		t.Fatal("recent use did not protect alpha")
+	}
+	for index := range 100 {
+		limiter.checkAt(registerAttempt, directSource(fmt.Sprintf("203.0.113.%d", index)), strings.Repeat("密", 1000), 20)
+	}
+	if len(limiter.ipBuckets) > 2 || len(limiter.usernameBuckets) > 2 {
+		t.Fatal("unbounded keyed state")
+	}
+	for key := range limiter.usernameBuckets {
+		if utf8.RuneCountInString(key.username) > 32 {
+			t.Fatal("unbounded username")
+		}
+	}
+}
+
+// assertRateLimitSaturationAndRefill checks deterministic saturated eviction and integer refill.
+func assertRateLimitSaturationAndRefill(t *testing.T) {
+	t.Helper()
+	policy := settings.TokenBucketPolicy{Capacity: 1, RefillTokens: 1, RefillSeconds: 10}
+	buckets := make(map[bucketKey]*trackedBucket)
+	var order list.List
+	for _, name := range []string{"z", "a", "m"} {
+		acquireTracked(buckets, &order, bucketKey{username: name}, 2, policy, 0, ^uint64(0))
+	}
+	if buckets[bucketKey{username: "a"}] != nil || buckets[bucketKey{username: "z"}] == nil {
+		t.Fatal("saturated sequence must evict by key order")
+	}
+	bucket := fullBucket(policy, 0)
+	if bucket.acquire(0, policy) != 0 || bucket.acquire(9, policy) != 1 || bucket.acquire(^uint64(0), policy) != 0 {
+		t.Fatal("integer refill/overflow changed")
 	}
 }

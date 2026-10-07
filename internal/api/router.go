@@ -60,8 +60,8 @@ type Handler struct {
 
 // New composes all 86 concrete operations and verifies their OpenAPI bindings before serving.
 func New(services Services, options Options) (*Handler, error) {
-	if services.Auth == nil || services.Cfp == nil || services.Delivery == nil || services.Scheduler == nil || services.Codec == nil || services.StoragePool == nil || services.UpstreamPool == nil || services.KdfPool == nil {
-		return nil, errors.New("API services must be initialized before router construction")
+	if err := validateApiServices(services); err != nil {
+		return nil, err
 	}
 	if options.ContentSecurityPolicy == "" {
 		return nil, errors.New("API content security policy is required")
@@ -111,6 +111,14 @@ func New(services Services, options Options) (*Handler, error) {
 	return &Handler{routes: compileRoutes(routes), document: document, mcp: handler, options: options}, nil
 }
 
+// validateApiServices checks borrowed resources before validating router options.
+func validateApiServices(services Services) error {
+	if services.Auth == nil || services.Cfp == nil || services.Delivery == nil || services.Scheduler == nil || services.Codec == nil || services.StoragePool == nil || services.UpstreamPool == nil || services.KdfPool == nil {
+		return errors.New("API services must be initialized before router construction")
+	}
+	return nil
+}
+
 // Close closes MCP sessions; borrowed repositories and executors remain owned by the host.
 func (handler *Handler) Close() error { return handler.mcp.Close() }
 
@@ -130,27 +138,52 @@ func GenerateOpenAPI() ([]byte, error) {
 	return openapi.Generate(bindings)
 }
 
+// route selects reserved endpoints before ranked application routes and the frontend.
 func (handler *Handler) route(request *http.Request) (http.Handler, string, string) {
 	path := request.URL.EscapedPath()
+	if endpoint, pattern, allow, isHandled := handler.reservedRoute(request, path); isHandled {
+		return endpoint, pattern, allow
+	}
+	pathParts := strings.Split(path, "/")
+	selected := handler.selectRoute(pathParts, request.Method)
+	if selected != nil {
+		if !selected.matchesMethod(request.Method) {
+			return nil, selected.operation.Path, selected.allow
+		}
+		selected.bindParameters(request, pathParts)
+		return selected.handler, selected.operation.Path, ""
+	}
+	if handler.options.Frontend != nil && !isBackendPath(path) {
+		return handler.options.Frontend, unmatchedRoute(path), ""
+	}
+	return nil, unmatchedRoute(path), ""
+}
+
+// reservedRoute retains the method policy of MCP, documentation and schema endpoints.
+func (handler *Handler) reservedRoute(request *http.Request, path string) (http.Handler, string, string, bool) {
 	if path == "/mcp" || strings.HasPrefix(path, "/mcp/") {
-		return handler.mcp, "/mcp", ""
+		return handler.mcp, "/mcp", "", true
 	}
 	if path == "/docs" || strings.HasPrefix(path, "/docs/") {
 		if request.Method != "GET" && request.Method != "HEAD" {
-			return nil, "/docs/{*rest}", "GET,HEAD"
+			return nil, "/docs/{*rest}", "GET,HEAD", true
 		}
-		return http.HandlerFunc(openapi.ServeDocs), "/docs/{*rest}", ""
+		return http.HandlerFunc(openapi.ServeDocs), "/docs/{*rest}", "", true
 	}
 	if path == "/openapi.json" {
 		if request.Method != "GET" && request.Method != "HEAD" {
-			return nil, path, "GET,HEAD"
+			return nil, path, "GET,HEAD", true
 		}
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = writer.Write(handler.document)
-		}), path, ""
+		}), path, "", true
 	}
-	pathParts := strings.Split(path, "/")
+	return nil, "", "", false
+}
+
+// selectRoute prefers static specificity, then the last matching method at that score.
+func (handler *Handler) selectRoute(pathParts []string, method string) *compiledRoute {
 	var selected *compiledRoute
 	best := ""
 	for index := range handler.routes {
@@ -163,26 +196,26 @@ func (handler *Handler) route(request *http.Request) (http.Handler, string, stri
 			selected = candidate
 			best = score
 		}
-		if candidate.operation.Method == request.Method || request.Method == "HEAD" && candidate.operation.Method == "GET" {
+		if candidate.matchesMethod(method) {
 			selected = candidate
 		}
 	}
-	if selected != nil {
-		if selected.operation.Method != request.Method && !(request.Method == "HEAD" && selected.operation.Method == "GET") {
-			return nil, selected.operation.Path, selected.allow
+	return selected
+}
+
+// matchesMethod includes the GET fallback for HEAD requests.
+func (candidate *compiledRoute) matchesMethod(method string) bool {
+	return candidate.operation.Method == method || method == "HEAD" && candidate.operation.Method == "GET"
+}
+
+// bindParameters decodes each capture once, retaining last-wins duplicate names.
+func (candidate *compiledRoute) bindParameters(request *http.Request, pathParts []string) {
+	for index, part := range candidate.parts {
+		if part.isParameter {
+			value, _ := url.PathUnescape(pathParts[index])
+			request.SetPathValue(part.text, value)
 		}
-		for index, part := range selected.parts {
-			if part.isParameter {
-				value, _ := url.PathUnescape(pathParts[index])
-				request.SetPathValue(part.text, value)
-			}
-		}
-		return selected.handler, selected.operation.Path, ""
 	}
-	if handler.options.Frontend != nil && !isBackendPath(path) {
-		return handler.options.Frontend, unmatchedRoute(path), ""
-	}
-	return nil, unmatchedRoute(path), ""
 }
 
 type routePart struct {

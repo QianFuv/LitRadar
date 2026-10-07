@@ -129,6 +129,7 @@ func readIndexDatabaseStats(ctx context.Context, path string) (indexDatabaseStat
 	return result, nil
 }
 
+// readPushStats preserves directory ordering and excludes only the legacy ignored filenames.
 func readPushStats(root string) ([]pushStats, error) {
 	result := []pushStats{}
 	directory := filepath.Join(root, "data", "push_state")
@@ -144,34 +145,42 @@ func readPushStats(root string) ([]pushStats, error) {
 		if name == ".json" || filepath.Ext(name) != ".json" || strings.HasSuffix(name, ".changes.json") {
 			continue
 		}
-		item := pushStats{DbName: strings.TrimSuffix(name, ".json"), Status: "error"}
-		data, err := os.ReadFile(filepath.Join(directory, name))
-		if err == nil {
-			value, err := transport.ParseJson(data)
-			if err == nil {
-				object, _ := value.(map[string]any)
-				status, _ := object["status"].(string)
-				switch status {
-				case "idle", "running", "completed", "failed", "skipped", "error":
-					item.Status = status
-				default:
-					item.Status = "unknown"
-				}
-				if completed, ok := object["last_completed_run_at"].(string); ok {
-					item.LastCompleted = &completed
-				}
-				run, _ := object["run"].(map[string]any)
-				if delivered, ok := run["delivered_article_ids"].([]any); ok {
-					count := len(delivered)
-					item.DeliveredCount = &count
-				}
-				if users, ok := run["user_results"].([]any); ok {
-					count := len(users)
-					item.UserResults = &count
-				}
-			}
-		}
+		item := readPushState(directory, name)
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+// readPushState retains error status for unreadable or malformed legacy state files.
+func readPushState(directory, name string) pushStats {
+	item := pushStats{DbName: strings.TrimSuffix(name, ".json"), Status: "error"}
+	data, err := os.ReadFile(filepath.Join(directory, name))
+	if err != nil {
+		return item
+	}
+	value, err := transport.ParseJson(data)
+	if err != nil {
+		return item
+	}
+	object, _ := value.(map[string]any)
+	status, _ := object["status"].(string)
+	switch status {
+	case "idle", "running", "completed", "failed", "skipped", "error":
+		item.Status = status
+	default:
+		item.Status = "unknown"
+	}
+	if completed, ok := object["last_completed_run_at"].(string); ok {
+		item.LastCompleted = &completed
+	}
+	run, _ := object["run"].(map[string]any)
+	if delivered, ok := run["delivered_article_ids"].([]any); ok {
+		count := len(delivered)
+		item.DeliveredCount = &count
+	}
+	if users, ok := run["user_results"].([]any); ok {
+		count := len(users)
+		item.UserResults = &count
+	}
+	return item
 }

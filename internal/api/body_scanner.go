@@ -55,8 +55,28 @@ func (scanner *bodyScanner) literal(value string) error {
 	}
 	return nil
 }
+
+// number scans each numeric production before applying typed range validation.
 func (scanner *bodyScanner) number() error {
 	start := scanner.position
+	if err := scanner.integerDigits(); err != nil {
+		return err
+	}
+	if err := scanner.fractionDigits(); err != nil {
+		return err
+	}
+	didStop, err := scanner.exponent(start)
+	if err != nil || didStop {
+		return err
+	}
+	if _, err := strconv.ParseFloat(string(scanner.body[start:scanner.position]), 64); !scanner.isIgnoring && err != nil {
+		return scanner.failure("number out of range", false)
+	}
+	return nil
+}
+
+// integerDigits consumes the optional sign and rejects missing or leading-zero digits.
+func (scanner *bodyScanner) integerDigits() error {
 	if scanner.body[scanner.position] == '-' {
 		scanner.position++
 	}
@@ -76,6 +96,11 @@ func (scanner *bodyScanner) number() error {
 			scanner.position++
 		}
 	}
+	return nil
+}
+
+// fractionDigits requires at least one digit after a decimal point.
+func (scanner *bodyScanner) fractionDigits() error {
 	if scanner.position < len(scanner.body) && scanner.body[scanner.position] == '.' {
 		scanner.position++
 		if scanner.position == len(scanner.body) {
@@ -88,6 +113,11 @@ func (scanner *bodyScanner) number() error {
 			scanner.position++
 		}
 	}
+	return nil
+}
+
+// exponent scans an optional exponent and reports the original early overflow termination.
+func (scanner *bodyScanner) exponent(start int) (bool, error) {
 	if scanner.position < len(scanner.body) && (scanner.body[scanner.position] == 'e' || scanner.body[scanner.position] == 'E') {
 		mantissa := scanner.body[start:scanner.position]
 		scanner.position++
@@ -97,31 +127,34 @@ func (scanner *bodyScanner) number() error {
 			scanner.position++
 		}
 		if scanner.position == len(scanner.body) {
-			return scanner.failure("EOF while parsing a value", false)
+			return false, scanner.failure("EOF while parsing a value", false)
 		}
 		if !scanner.digit() {
-			return scanner.failure("invalid number", true)
+			return false, scanner.failure("invalid number", true)
 		}
-		exponent := int64(0)
-		nonzero := bytes.ContainsAny(mantissa, "123456789")
-		for scanner.digit() {
-			exponent = exponent*10 + int64(scanner.body[scanner.position]-'0')
-			scanner.position++
-			if exponent > 2147483647 {
-				if !scanner.isIgnoring && nonzero && positiveExponent {
-					return scanner.failure("number out of range", false)
-				}
-				for scanner.digit() {
-					scanner.position++
-				}
-				return nil
+		return scanner.exponentDigits(mantissa, positiveExponent)
+	}
+	return false, nil
+}
+
+// exponentDigits preserves positive nonzero overflow rejection and ignored-value relaxation.
+func (scanner *bodyScanner) exponentDigits(mantissa []byte, positiveExponent bool) (bool, error) {
+	exponent := int64(0)
+	nonzero := bytes.ContainsAny(mantissa, "123456789")
+	for scanner.digit() {
+		exponent = exponent*10 + int64(scanner.body[scanner.position]-'0')
+		scanner.position++
+		if exponent > 2147483647 {
+			if !scanner.isIgnoring && nonzero && positiveExponent {
+				return true, scanner.failure("number out of range", false)
 			}
+			for scanner.digit() {
+				scanner.position++
+			}
+			return true, nil
 		}
 	}
-	if _, err := strconv.ParseFloat(string(scanner.body[start:scanner.position]), 64); !scanner.isIgnoring && err != nil {
-		return scanner.failure("number out of range", false)
-	}
-	return nil
+	return false, nil
 }
 func (scanner *bodyScanner) digit() bool {
 	return scanner.position < len(scanner.body) && scanner.body[scanner.position] >= '0' && scanner.body[scanner.position] <= '9'
@@ -144,6 +177,7 @@ func (scanner *bodyScanner) hexUnit() (uint64, error) {
 	return value, nil
 }
 
+// stringValue checks UTF-8 after consuming the closing quote.
 func (scanner *bodyScanner) stringValue() error {
 	scanner.position++
 	start := scanner.position
@@ -159,47 +193,68 @@ func (scanner *bodyScanner) stringValue() error {
 		case character < 32:
 			return scanner.failure("control character (\\u0000-\\u001F) found while parsing a string", false)
 		case character == '\\':
-			if scanner.position == len(scanner.body) {
-				return scanner.failure("EOF while parsing a string", false)
-			}
-			escaped := scanner.body[scanner.position]
-			scanner.position++
-			if strings.ContainsRune(`"\/bfnrt`, rune(escaped)) {
-				continue
-			}
-			if escaped != 'u' {
-				return scanner.failure("invalid escape", false)
-			}
-			value, err := scanner.hexUnit()
-			if err != nil {
+			if err := scanner.stringEscape(); err != nil {
 				return err
-			}
-			if scanner.isIgnoring {
-				continue
-			}
-			if value >= 0xdc00 && value <= 0xdfff {
-				return scanner.failure("lone leading surrogate in hex escape", false)
-			}
-			if value >= 0xd800 && value <= 0xdbff {
-				for _, expected := range []byte{'\\', 'u'} {
-					if scanner.position == len(scanner.body) {
-						return scanner.failure("EOF while parsing a string", false)
-					}
-					actual := scanner.body[scanner.position]
-					scanner.position++
-					if actual != expected {
-						return scanner.failure("unexpected end of hex escape", false)
-					}
-				}
-				low, err := scanner.hexUnit()
-				if err != nil {
-					return err
-				}
-				if low < 0xdc00 || low > 0xdfff {
-					return scanner.failure("lone leading surrogate in hex escape", false)
-				}
 			}
 		}
 	}
 	return scanner.failure("EOF while parsing a string", false)
+}
+
+// stringEscape validates one escape while retaining ignored Unicode relaxation.
+func (scanner *bodyScanner) stringEscape() error {
+	if scanner.position == len(scanner.body) {
+		return scanner.failure("EOF while parsing a string", false)
+	}
+	escaped := scanner.body[scanner.position]
+	scanner.position++
+	if strings.ContainsRune(`"\/bfnrt`, rune(escaped)) {
+		return nil
+	}
+	if escaped != 'u' {
+		return scanner.failure("invalid escape", false)
+	}
+	value, err := scanner.hexUnit()
+	if err != nil {
+		return err
+	}
+	if scanner.isIgnoring {
+		return nil
+	}
+	return scanner.surrogate(value)
+}
+
+// surrogate validates paired Unicode escapes at the original consumed-byte positions.
+func (scanner *bodyScanner) surrogate(value uint64) error {
+	if value >= 0xdc00 && value <= 0xdfff {
+		return scanner.failure("lone leading surrogate in hex escape", false)
+	}
+	if value >= 0xd800 && value <= 0xdbff {
+		if err := scanner.surrogatePrefix(); err != nil {
+			return err
+		}
+		low, err := scanner.hexUnit()
+		if err != nil {
+			return err
+		}
+		if low < 0xdc00 || low > 0xdfff {
+			return scanner.failure("lone leading surrogate in hex escape", false)
+		}
+	}
+	return nil
+}
+
+// surrogatePrefix consumes the required second escape prefix before decoding its hex unit.
+func (scanner *bodyScanner) surrogatePrefix() error {
+	for _, expected := range []byte{'\\', 'u'} {
+		if scanner.position == len(scanner.body) {
+			return scanner.failure("EOF while parsing a string", false)
+		}
+		actual := scanner.body[scanner.position]
+		scanner.position++
+		if actual != expected {
+			return scanner.failure("unexpected end of hex escape", false)
+		}
+	}
+	return nil
 }

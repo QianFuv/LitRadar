@@ -70,13 +70,8 @@ func TestRouteCompatibilityOrderingAndCaptures(t *testing.T) {
 			t.Fatalf("%+v: selected=%q label=%q allow=%q id=%q name=%q", scenario, response.Body.String(), label, allow, request.PathValue("id"), request.PathValue("name"))
 		}
 	}
-	handler.routes = compileRoutes(routes[:2])
-	selected, _, _ := handler.route(httptest.NewRequest("HEAD", "/api/x/a", nil))
-	response := httptest.NewRecorder()
-	selected.ServeHTTP(response, httptest.NewRequest("HEAD", "/api/x/a", nil))
-	if response.Body.String() != "1" {
-		t.Fatal("last explicit HEAD declaration lost", response.Body.String())
-	}
+	assertLastExplicitHeadDeclaration(t, handler, routes)
+
 }
 
 func TestRouteMalformedCapturesAreRejected(t *testing.T) {
@@ -166,12 +161,7 @@ func TestRouterSecurityCorsCacheAndPrivateLogs(t *testing.T) {
 		}
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		if response.Code != scenario.status || response.Header().Get("Cache-Control") != scenario.cache || response.Header().Get("Strict-Transport-Security") != "max-age=31536000" || response.Header().Get("Access-Control-Allow-Origin") != "https://allowed.example" {
-			t.Fatal(scenario, response.Code, response.Header())
-		}
-		if scenario.method == "OPTIONS" && (response.Header().Get("Access-Control-Allow-Methods") != "PATCH" || response.Header().Get("Access-Control-Allow-Headers") != "authorization,content-type" || response.Header().Get("Access-Control-Expose-Headers") != "") {
-			t.Fatal(response.Header())
-		}
+		assertRouterSecurityHeaders(t, response, scenario.method, scenario.status, scenario.cache)
 	}
 	if strings.Contains(logs.String(), "private-query") || strings.Contains(logs.String(), "unknown-private") {
 		t.Fatal("request log disclosed private path/query", logs.String())
@@ -280,5 +270,28 @@ func TestMiddlewareFlushesBeforeStreamCompletion(t *testing.T) {
 	line, err := bufio.NewReader(response.Body).ReadString('\n')
 	if err != nil || line != "data: first\n" {
 		t.Fatal(line, err)
+	}
+}
+
+// assertLastExplicitHeadDeclaration checks declaration-order selection of an explicit HEAD handler.
+func assertLastExplicitHeadDeclaration(t *testing.T, handler *Handler, routes []route) {
+	t.Helper()
+	handler.routes = compileRoutes(routes[:2])
+	selected, _, _ := handler.route(httptest.NewRequest("HEAD", "/api/x/a", nil))
+	response := httptest.NewRecorder()
+	selected.ServeHTTP(response, httptest.NewRequest("HEAD", "/api/x/a", nil))
+	if response.Body.String() != "1" {
+		t.Fatal("last explicit HEAD declaration lost", response.Body.String())
+	}
+}
+
+// assertRouterSecurityHeaders checks response, cache, transport policy and preflight headers.
+func assertRouterSecurityHeaders(t *testing.T, response *httptest.ResponseRecorder, method string, status int, cache string) {
+	t.Helper()
+	if response.Code != status || response.Header().Get("Cache-Control") != cache || response.Header().Get("Strict-Transport-Security") != "max-age=31536000" || response.Header().Get("Access-Control-Allow-Origin") != "https://allowed.example" {
+		t.Fatal(method, status, cache, response.Code, response.Header())
+	}
+	if method == "OPTIONS" && (response.Header().Get("Access-Control-Allow-Methods") != "PATCH" || response.Header().Get("Access-Control-Allow-Headers") != "authorization,content-type" || response.Header().Get("Access-Control-Expose-Headers") != "") {
+		t.Fatal(response.Header())
 	}
 }

@@ -140,19 +140,119 @@ func adminRejectionReason(err error) string {
 	}
 }
 
+// handle retains admission order and logs the final mutable audit target.
 func (handlers *adminHandlers) handle(writer http.ResponseWriter, request *http.Request, name string) {
+	target, failure := extractAdminTarget(request)
+	if failure != nil {
+		failure.write(writer)
+		return
+	}
+	body, failure := extractAdminBody(request, name)
+	if failure != nil {
+		failure.write(writer)
+		return
+	}
+	current, failure := handlers.auth.authenticator.requireAdmin(request)
+	if failure != nil {
+		failure.write(writer)
+		return
+	}
+	actor := current.authorization.User.Id
+	action := map[string]string{"set_admin": "user_admin_update", "reset_password": "user_password_reset", "delete_user": "user_delete", "create_invite_code": "invite_create", "revoke_admin_invite_code": "invite_revoke", "create_announcement": "announcement_create", "update_announcement": "announcement_update", "delete_announcement": "announcement_delete", "create_scheduled_task": "scheduled_task_create", "update_scheduled_task": "scheduled_task_update", "delete_scheduled_task": "scheduled_task_delete", "update_runtime_settings": "runtime_settings_update"}[name]
+	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestId: requestId(request), OccurredAt: currentTimestamp()}
+	actorNumber := int64(actor)
+	event.ActorId = &actorNumber
+	if target > 0 {
+		event.TargetId = &target
+	}
+	started := time.Now()
+	isCompleted := false
+	defer logAdminCompletion(request, action, actorNumber, &target, &isCompleted, started)
+	reject := func(reason string, failure *apiError) {
+		rejection := event
+		rejection.Outcome, rejection.Reason = "rejected", reason
+		if persistence := handlers.auth.persistAudit(request, rejection); persistence != nil {
+			failure = persistence
+		}
+		failure.write(writer)
+	}
+
+	reason, failure := validateAdminSelf(name, target, actorNumber, body)
+	if failure != nil {
+		reject(reason, failure)
+		return
+	}
+	if failure = validateAdminOperationBody(name, body); failure != nil {
+		reject("validation_failed", failure)
+		return
+	}
+	payload, reason, failure := handlers.executeAdminOperation(request, name, actor, target, body, event)
+	if failure != nil {
+		if reason != "" {
+			reject(reason, failure)
+		} else {
+			failure.write(writer)
+		}
+		return
+	}
+	payload, target, failure = normalizeAdminPayload(name, payload, target)
+	if failure != nil {
+		reject("target_not_found", failure)
+		return
+	}
+	isCompleted = true
+	writeResponse(writer, payload)
+}
+
+// logAdminCompletion observes the final target and completion state at handler return.
+func logAdminCompletion(request *http.Request, action string, actor int64, target *int64, isCompleted *bool, started time.Time) {
+	if action == "" {
+		return
+	}
+	name, level, outcome := "security.admin.rejected", slog.LevelWarn, "rejected"
+	if *isCompleted {
+		name, level, outcome = "security.admin.completed", slog.LevelInfo, "completed"
+	}
+	slog.Log(request.Context(), level, name, "event", name, "component", "security", "action", action, "outcome", outcome, "actor_id", actor, "target_id", *target, "reason", map[bool]string{true: "", false: "operation_failed"}[*isCompleted], "duration_ms", time.Since(started).Milliseconds())
+}
+
+// perform routes configuration before administrator operation families.
+
+func (handlers *adminHandlers) perform(ctx context.Context, name string, actor identity.Id, target int64, body map[string]any, event domain.AuditEvent) (any, error) {
+	if strings.Contains(name, "scheduled_task") || name == "scheduler_status" || strings.Contains(name, "runtime_settings") || name == "get_provider_catalog" {
+		return handlers.performConfiguration(ctx, name, actor, target, body, event)
+	}
+
+	switch name {
+	case "list_users", "set_admin", "delete_user", "reset_password":
+		return handlers.performAdminUsers(ctx, name, actor, target, body, event)
+	case "list_invite_codes", "create_invite_code", "revoke_admin_invite_code":
+		return handlers.performAdminInvites(ctx, name, actor, target, body, event)
+	case "stats":
+		return readAdminStats(ctx, handlers.auth.repository, handlers.storage)
+	default:
+		return handlers.performAdminAnnouncements(ctx, name, actor, target, body, event)
+	}
+}
+
+// extractAdminTarget validates every populated target capture in its existing order.
+func extractAdminTarget(request *http.Request) (int64, *apiError) {
 	target := int64(0)
 	for _, key := range []string{"user_id", "code_id", "announcement_id", "task_id"} {
 		if request.PathValue(key) != "" {
 			value, failure := extractPathInteger(request, key)
 			if failure != nil {
-				failure.write(writer)
-				return
+				return target, failure
 			}
 			target = value
 		}
 	}
-	var body map[string]any
+
+	return target, nil
+}
+
+// adminRequestBody keeps operation-specific typed schemas and omission defaults.
+func adminRequestBody(name string) bodyType {
 	var kind bodyType
 	switch name {
 	case "set_admin":
@@ -170,11 +270,18 @@ func (handlers *adminHandlers) handle(writer http.ResponseWriter, request *http.
 	case "update_runtime_settings":
 		kind = runtimeSettingsBody()
 	}
+
+	return kind
+}
+
+// extractAdminBody preserves absent invite-body handling before admin authentication.
+func extractAdminBody(request *http.Request, name string) (map[string]any, *apiError) {
+	var body map[string]any
+	kind := adminRequestBody(name)
 	if kind.kind != "" {
 		decoded, failure := extractBody(request, kind, name == "create_invite_code")
 		if failure != nil {
-			failure.write(writer)
-			return
+			return nil, failure
 		}
 		if decoded != nil {
 			body = decoded.(map[string]any)
@@ -182,68 +289,40 @@ func (handlers *adminHandlers) handle(writer http.ResponseWriter, request *http.
 			body = map[string]any{}
 		}
 	}
-	current, failure := handlers.auth.authenticator.requireAdmin(request)
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	actor := current.authorization.User.Id
-	action := map[string]string{"set_admin": "user_admin_update", "reset_password": "user_password_reset", "delete_user": "user_delete", "create_invite_code": "invite_create", "revoke_admin_invite_code": "invite_revoke", "create_announcement": "announcement_create", "update_announcement": "announcement_update", "delete_announcement": "announcement_delete", "create_scheduled_task": "scheduled_task_create", "update_scheduled_task": "scheduled_task_update", "delete_scheduled_task": "scheduled_task_delete", "update_runtime_settings": "runtime_settings_update"}[name]
-	event := domain.AuditEvent{Action: action, Outcome: "completed", RequestId: requestId(request), OccurredAt: currentTimestamp()}
-	actorNumber := int64(actor)
-	event.ActorId = &actorNumber
-	if target > 0 {
-		event.TargetId = &target
-	}
-	started := time.Now()
-	isCompleted := false
-	if action != "" {
-		defer func() {
-			name, level, outcome := "security.admin.rejected", slog.LevelWarn, "rejected"
-			if isCompleted {
-				name, level, outcome = "security.admin.completed", slog.LevelInfo, "completed"
-			}
-			slog.Log(request.Context(), level, name, "event", name, "component", "security", "action", action, "outcome", outcome, "actor_id", actorNumber, "target_id", target, "reason", map[bool]string{true: "", false: "operation_failed"}[isCompleted], "duration_ms", time.Since(started).Milliseconds())
-		}()
-	}
-	reject := func(reason string, failure *apiError) {
-		rejection := event
-		rejection.Outcome, rejection.Reason = "rejected", reason
-		if persistence := handlers.auth.persistAudit(request, rejection); persistence != nil {
-			failure = persistence
-		}
-		failure.write(writer)
-	}
+
+	return body, nil
+}
+
+// validateAdminSelf checks protected self mutations before other business validation.
+func validateAdminSelf(name string, target, actorNumber int64, body map[string]any) (string, *apiError) {
 	if name == "set_admin" && target == actorNumber && !body["is_admin"].(bool) {
-		reject("self_revocation_forbidden", badRequest("Cannot revoke own admin status"))
-		return
+		return "self_revocation_forbidden", badRequest("Cannot revoke own admin status")
 	}
 	if name == "delete_user" && target == actorNumber {
-		reject("self_delete_forbidden", badRequest("Cannot delete yourself"))
-		return
+		return "self_delete_forbidden", badRequest("Cannot delete yourself")
 	}
 	if name == "reset_password" && !cryptography.ValidNewPassword(body["new_password"].(string)) {
-		reject("password_policy_failed", mapAuthError(domain.ErrPasswordShort))
-		return
+		return "password_policy_failed", mapAuthError(domain.ErrPasswordShort)
 	}
-	if name == "create_announcement" || name == "update_announcement" {
-		if failure := validateAnnouncementBody(body); failure != nil {
-			reject("validation_failed", failure)
-			return
-		}
+
+	return "", nil
+}
+
+// validateAdminOperationBody preserves operation-specific normalization before executor admission.
+func validateAdminOperationBody(name string, body map[string]any) *apiError {
+	switch name {
+	case "create_announcement", "update_announcement":
+		return validateAnnouncementBody(body)
+	case "create_scheduled_task", "update_scheduled_task":
+		return validateScheduledBody(body)
+	case "update_runtime_settings":
+		return validateRuntimeBody(body)
 	}
-	if name == "create_scheduled_task" || name == "update_scheduled_task" {
-		if failure := validateScheduledBody(body); failure != nil {
-			reject("validation_failed", failure)
-			return
-		}
-	}
-	if name == "update_runtime_settings" {
-		if failure := validateRuntimeBody(body); failure != nil {
-			reject("validation_failed", failure)
-			return
-		}
-	}
+	return nil
+}
+
+// executeAdminOperation retains KDF admission and avoids repeating an already failed audit write.
+func (handlers *adminHandlers) executeAdminOperation(request *http.Request, name string, actor identity.Id, target int64, body map[string]any, event domain.AuditEvent) (any, string, *apiError) {
 	pool := handlers.auth.pool
 	if name == "reset_password" {
 		pool = handlers.auth.kdfPool
@@ -256,73 +335,69 @@ func (handlers *adminHandlers) handle(writer http.ResponseWriter, request *http.
 		value, err := handlers.perform(context.WithoutCancel(request.Context()), name, actor, target, body, event)
 		return result{value, err}, nil
 	})
+
 	if err != nil {
-		failure = mapExecutorError(err)
-		if action != "" {
-			reject("executor_failed", failure)
-		} else {
-			failure.write(writer)
+		if event.Action != "" {
+			return nil, "executor_failed", mapExecutorError(err)
 		}
-		return
+		return nil, "", mapExecutorError(err)
 	}
 	if observed.err != nil {
-		failure = mapAdminError(observed.err)
-		if action != "" && !errors.Is(observed.err, domain.ErrAudit) {
+		failure := mapAdminError(observed.err)
+		if event.Action != "" && !errors.Is(observed.err, domain.ErrAudit) {
 			reason := adminRejectionReason(observed.err)
 			if name == "reset_password" {
 				reason = "operation_failed"
 			}
-			reject(reason, failure)
-		} else {
-			failure.write(writer)
+			return nil, reason, failure
 		}
-		return
+		return nil, "", failure
 	}
-	if changed, ok := observed.payload.(bool); ok {
-		if !changed {
-			detail := "User not found"
-			if name == "revoke_admin_invite_code" {
-				detail = "Code not found or already revoked"
-			}
-			if name == "delete_announcement" {
-				detail = "Announcement not found"
-			}
-			if name == "delete_scheduled_task" {
-				detail = "Scheduled task not found"
-			}
-			reject("target_not_found", &apiError{status: 404, detail: detail})
-			return
-		}
-		observed.payload = map[string]bool{"ok": true}
-	}
-	if invite, ok := observed.payload.(adminInviteResponse); ok {
-		target = invite.Id
-	}
-	if announcement, ok := observed.payload.(*announcements.Announcement); ok {
-		if announcement == nil {
-			reject("target_not_found", &apiError{status: 404, detail: "Announcement not found"})
-			return
-		}
-		target = announcement.Id
-	}
-	if announcement, ok := observed.payload.(announcements.Announcement); ok {
-		target = announcement.Id
-	}
-	if task, ok := observed.payload.(*scheduled.Task); ok {
-		if task == nil {
-			reject("target_not_found", &apiError{status: 404, detail: "Scheduled task not found"})
-			return
-		}
-		target = task.Id
-	}
-	isCompleted = true
-	writeResponse(writer, observed.payload)
+	return observed.payload, "", nil
 }
 
-func (handlers *adminHandlers) perform(ctx context.Context, name string, actor identity.Id, target int64, body map[string]any, event domain.AuditEvent) (any, error) {
-	if strings.Contains(name, "scheduled_task") || name == "scheduler_status" || strings.Contains(name, "runtime_settings") || name == "get_provider_catalog" {
-		return handlers.performConfiguration(ctx, name, actor, target, body, event)
+// normalizeAdminPayload retains missing-target details and returned audit target identity.
+func normalizeAdminPayload(name string, payload any, target int64) (any, int64, *apiError) {
+	switch value := payload.(type) {
+	case bool:
+		if !value {
+			return payload, target, &apiError{status: 404, detail: adminMissingTargetDetail(name)}
+		}
+		payload = map[string]bool{"ok": true}
+	case adminInviteResponse:
+		target = value.Id
+	case *announcements.Announcement:
+		if value == nil {
+			return payload, target, &apiError{status: 404, detail: "Announcement not found"}
+		}
+		target = value.Id
+	case announcements.Announcement:
+		target = value.Id
+	case *scheduled.Task:
+		if value == nil {
+			return payload, target, &apiError{status: 404, detail: "Scheduled task not found"}
+		}
+		target = value.Id
 	}
+	return payload, target, nil
+}
+
+// adminMissingTargetDetail distinguishes user, invite, announcement and task mutations.
+func adminMissingTargetDetail(name string) string {
+	switch name {
+	case "revoke_admin_invite_code":
+		return "Code not found or already revoked"
+	case "delete_announcement":
+		return "Announcement not found"
+	case "delete_scheduled_task":
+		return "Scheduled task not found"
+	default:
+		return "User not found"
+	}
+}
+
+// performAdminUsers keeps user mutations and their original audit arguments.
+func (handlers *adminHandlers) performAdminUsers(ctx context.Context, name string, actor identity.Id, target int64, body map[string]any, event domain.AuditEvent) (any, error) {
 	repository := handlers.auth.repository
 	switch name {
 	case "list_users":
@@ -335,6 +410,23 @@ func (handlers *adminHandlers) perform(ctx context.Context, name string, actor i
 			result[index] = adminUserResponse{int64(row.Id), row.Username, row.IsAdmin, row.CreatedAt, row.UpdatedAt, row.FolderCount, row.FavoriteCount, row.NotifyEnabled}
 		}
 		return result, nil
+	case "set_admin":
+		err := repository.SetAdministrator(ctx, actor, identity.Id(target), body["is_admin"].(bool), &event)
+		return true, err
+	case "delete_user":
+		err := repository.DeleteUser(ctx, actor, identity.Id(target), &event)
+		return true, err
+	case "reset_password":
+		return handlers.auth.service.ResetPassword(ctx, &actor, identity.Id(target), body["new_password"].(string), &event)
+
+	}
+	return nil, errors.New("unknown administrator operation")
+}
+
+// performAdminInvites preserves optional expiry and usage projections.
+func (handlers *adminHandlers) performAdminInvites(ctx context.Context, name string, actor identity.Id, target int64, body map[string]any, event domain.AuditEvent) (any, error) {
+	repository := handlers.auth.repository
+	switch name {
 	case "list_invite_codes":
 		rows, err := repository.ListInvites(ctx, currentTimestamp())
 		if err != nil {
@@ -345,14 +437,6 @@ func (handlers *adminHandlers) perform(ctx context.Context, name string, actor i
 			result[index] = adminInvite(row)
 		}
 		return result, nil
-	case "set_admin":
-		err := repository.SetAdministrator(ctx, actor, identity.Id(target), body["is_admin"].(bool), &event)
-		return true, err
-	case "delete_user":
-		err := repository.DeleteUser(ctx, actor, identity.Id(target), &event)
-		return true, err
-	case "reset_password":
-		return handlers.auth.service.ResetPassword(ctx, &actor, identity.Id(target), body["new_password"].(string), &event)
 	case "create_invite_code":
 		var expires *float64
 		var maxUses *int64
@@ -366,8 +450,15 @@ func (handlers *adminHandlers) perform(ctx context.Context, name string, actor i
 		return adminInvite(invite), err
 	case "revoke_admin_invite_code":
 		return repository.RevokeAdministratorInvite(ctx, &actor, target, &event)
-	case "stats":
-		return readAdminStats(ctx, repository, handlers.storage)
+
+	}
+	return nil, errors.New("unknown administrator operation")
+}
+
+// performAdminAnnouncements preserves omitted update fields and administrator audit arguments.
+func (handlers *adminHandlers) performAdminAnnouncements(ctx context.Context, name string, actor identity.Id, target int64, body map[string]any, event domain.AuditEvent) (any, error) {
+	repository := handlers.auth.repository
+	switch name {
 	case "list_announcements":
 		return announcements.ListAll(ctx, repository)
 	case "create_announcement":
@@ -389,6 +480,7 @@ func (handlers *adminHandlers) perform(ctx context.Context, name string, actor i
 		return announcements.Modify(ctx, repository, &actor, target, input, &event)
 	case "delete_announcement":
 		return announcements.Delete(ctx, repository, &actor, target, &event)
+
 	}
 	return nil, errors.New("unknown administrator operation")
 }

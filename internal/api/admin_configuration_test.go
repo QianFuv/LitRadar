@@ -71,6 +71,7 @@ func TestAdministratorRuntimeSettingsValidateRawCapabilitiesAndMaskSecrets(t *te
 		{"PUT", "/api/admin/runtime-settings", `{"values":{"index_provider_routes":"{\"fixture\":\"zjlib\"}"}}`, token, 400, "does not support the configured capability"},
 		{"PUT", "/api/admin/runtime-settings", `{"values":{"article_abstract_provider_orders":"{\"default\":[\"CNKI\"],\"catalogs\":{}}"}}`, token, 400, "Provider orders must contain lowercase ASCII names"},
 		{"PUT", "/api/admin/runtime-settings", `{"values":{"article_fulltext_provider_orders":"{\"default\":[\"zjlib_cnki\"],\"catalogs\":{}}"}}`, token, 400, "Unknown Provider: zjlib_cnki"},
+		{"PUT", "/api/admin/runtime-settings", `{"values":{"article_fulltext_provider_orders":"{\"default\":[\"zjlib_cnki\"],\"catalogs\":{}}","log_format":"invalid"}}`, token, 400, "Invalid LitRadar log format"},
 		{"PUT", "/api/admin/runtime-settings", `{"values":{"article_fulltext_provider_orders":"{\"default\":[\"scholarly\"],\"catalogs\":{}}"}}`, token, 400, "does not support the configured capability"},
 		{"PUT", "/api/admin/runtime-settings", `{"values":{"provider_proxy_policy":"{\"unknown\":true}"}}`, token, 400, "Unknown Provider: unknown"},
 		{"PUT", "/api/admin/runtime-settings", `{"values":{"unknown":"x"}}`, token, 400, "Unknown runtime setting: unknown"},

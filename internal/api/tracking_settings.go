@@ -47,6 +47,7 @@ func notificationUpdate(body map[string]any) domain.NotificationSettingsUpdate {
 	return domain.NotificationSettingsUpdate{Keywords: stringsOf("keywords"), Directions: stringsOf("directions"), SelectedDatabases: stringsOf("selected_databases"), DeliveryMethod: body["delivery_method"].(string), PushplusToken: secretOf("pushplus_token"), PushplusTemplate: body["pushplus_template"].(string), PushplusTopic: body["pushplus_topic"].(string), PushplusChannel: body["pushplus_channel"].(string), SyncToTrackingFolder: body["sync_to_tracking_folder"].(bool), AiBaseUrl: body["ai_base_url"].(string), AiApiKey: secretOf("ai_api_key"), AiModel: body["ai_model"].(string), AiSystemPrompt: body["ai_system_prompt"].(string), AiBackupBaseUrl: body["ai_backup_base_url"].(string), AiBackupApiKey: secretOf("ai_backup_api_key"), AiBackupModel: body["ai_backup_model"].(string), AiBackupSystemPrompt: body["ai_backup_system_prompt"].(string), AiRetryAttempts: body["ai_retry_attempts"].(int64), Enabled: body["enabled"].(bool)}
 }
 
+// updateNotification preserves database, delivery, endpoint and persistence validation order.
 func (handlers *trackingHandlers) updateNotification(ctx context.Context, user int64, update domain.NotificationSettingsUpdate) (any, *apiError) {
 	available, failure := trackingStorage(ctx, handlers.pool, func() ([]string, error) {
 		paths, err := handlers.storage.ListIndexDatabases()
@@ -59,6 +60,29 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 	if failure != nil {
 		return nil, failure
 	}
+
+	if failure = normalizeTrackingDatabases(&update, available); failure != nil {
+		return nil, failure
+	}
+	if update.DeliveryMethod != "folder" && update.DeliveryMethod != "pushplus" {
+		return nil, badRequest("delivery_method must be one of: folder, pushplus")
+	}
+	if failure = handlers.validateTrackingDelivery(ctx, user, update); failure != nil {
+		return nil, failure
+	}
+	allowed, failure := trackingStorage(ctx, handlers.pool, func() ([]string, error) { return handlers.settings.AiBaseUrls(context.WithoutCancel(ctx)) })
+	if failure != nil {
+		return nil, failure
+	}
+	if failure = normalizeTrackingEndpoints(&update, allowed); failure != nil {
+		return nil, failure
+	}
+	trimNotificationUpdate(&update)
+	return handlers.persistNotificationUpdate(ctx, user, update)
+}
+
+// normalizeTrackingDatabases deduplicates normalized selection before rejecting unknown entries.
+func normalizeTrackingDatabases(update *domain.NotificationSettingsUpdate, available []string) *apiError {
 	selected, invalid := []string{}, []string{}
 	for _, raw := range update.SelectedDatabases {
 		name := config.NormalizeDatabaseName(raw)
@@ -71,29 +95,39 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 		}
 	}
 	if len(invalid) > 0 {
-		return nil, badRequest("Unknown databases: " + strings.Join(invalid, ", "))
+		return badRequest("Unknown databases: " + strings.Join(invalid, ", "))
 	}
 	if len(selected) > 0 && len(selected) == len(available) {
 		selected = []string{}
 	}
 	update.SelectedDatabases = selected
-	if update.DeliveryMethod != "folder" && update.DeliveryMethod != "pushplus" {
-		return nil, badRequest("delivery_method must be one of: folder, pushplus")
+
+	return nil
+}
+
+// effectivePushplusToken retains a blank replacement and clears an explicit null.
+func effectivePushplusToken(existing *domain.NotificationSettings, secret domain.SecretUpdate) bool {
+	hasToken := existing != nil && existing.PushplusToken != ""
+	if secret.IsPresent {
+		if secret.Value == nil {
+			hasToken = false
+		} else if strings.TrimSpace(*secret.Value) != "" {
+			hasToken = true
+		}
 	}
+
+	return hasToken
+}
+
+// validateTrackingDelivery loads existing secrets before checking token and folder prerequisites.
+func (handlers *trackingHandlers) validateTrackingDelivery(ctx context.Context, user int64, update domain.NotificationSettingsUpdate) *apiError {
 	existing, failure := trackingStorage(ctx, handlers.pool, func() (*domain.NotificationSettings, error) {
 		return handlers.repository.GetNotificationSettings(context.WithoutCancel(ctx), handlers.codec, user)
 	})
 	if failure != nil {
-		return nil, failure
+		return failure
 	}
-	hasToken := existing != nil && existing.PushplusToken != ""
-	if update.PushplusToken.IsPresent {
-		if update.PushplusToken.Value == nil {
-			hasToken = false
-		} else if strings.TrimSpace(*update.PushplusToken.Value) != "" {
-			hasToken = true
-		}
-	}
+	hasToken := effectivePushplusToken(existing, update.PushplusToken)
 	hasFolder := true
 	if update.DeliveryMethod == "folder" || update.SyncToTrackingFolder {
 		var failure *apiError
@@ -102,22 +136,29 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 			return folder != nil, err
 		})
 		if failure != nil {
-			return nil, failure
+			return failure
 		}
 	}
+	return validateTrackingPrerequisites(update, hasToken, hasFolder)
+}
+
+// validateTrackingPrerequisites checks folder, token and optional synchronization in order.
+func validateTrackingPrerequisites(update domain.NotificationSettingsUpdate, hasToken, hasFolder bool) *apiError {
 	if update.DeliveryMethod == "folder" && !hasFolder {
-		return nil, badRequest("A tracking folder is required when delivery_method is 'folder'")
+		return badRequest("A tracking folder is required when delivery_method is 'folder'")
 	}
 	if update.DeliveryMethod == "pushplus" && !hasToken {
-		return nil, badRequest("pushplus_token is required when delivery_method is 'pushplus'")
+		return badRequest("pushplus_token is required when delivery_method is 'pushplus'")
 	}
 	if update.DeliveryMethod == "pushplus" && update.SyncToTrackingFolder && !hasFolder {
-		return nil, badRequest("A tracking folder is required before enabling PushPlus sync to tracking")
+		return badRequest("A tracking folder is required before enabling PushPlus sync to tracking")
 	}
-	allowed, failure := trackingStorage(ctx, handlers.pool, func() ([]string, error) { return handlers.settings.AiBaseUrls(context.WithoutCancel(ctx)) })
-	if failure != nil {
-		return nil, failure
-	}
+
+	return nil
+}
+
+// normalizeTrackingEndpoints validates primary then backup against the current allowlist.
+func normalizeTrackingEndpoints(update *domain.NotificationSettingsUpdate, allowed []string) *apiError {
 	for _, value := range []*string{&update.AiBaseUrl, &update.AiBackupBaseUrl} {
 		if strings.TrimSpace(*value) == "" {
 			*value = ""
@@ -125,10 +166,16 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 		}
 		normalized, err := settings.CanonicalizeBaseUrl(*value)
 		if err != nil || !slices.Contains(allowed, normalized) {
-			return nil, badRequest("AI endpoint is not available")
+			return badRequest("AI endpoint is not available")
 		}
 		*value = normalized
 	}
+
+	return nil
+}
+
+// trimNotificationUpdate preserves repeated entries, default template and secret presence intent.
+func trimNotificationUpdate(update *domain.NotificationSettingsUpdate) {
 	trimEntries := func(values []string) []string {
 		result := []string{}
 		for _, value := range values {
@@ -151,6 +198,10 @@ func (handlers *trackingHandlers) updateNotification(ctx context.Context, user i
 			secret.Value = &value
 		}
 	}
+}
+
+// persistNotificationUpdate revalidates within admitted work and maps repository rejections.
+func (handlers *trackingHandlers) persistNotificationUpdate(ctx context.Context, user int64, update domain.NotificationSettingsUpdate) (any, *apiError) {
 	type result struct {
 		value     *domain.NotificationSettings
 		err       error

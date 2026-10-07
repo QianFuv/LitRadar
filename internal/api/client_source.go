@@ -41,6 +41,7 @@ func isTrustedProxy(address netip.Addr, trusted []netip.Prefix) bool {
 	return false
 }
 
+// parseForwardingChain gives Forwarded precedence and invalidates the entire malformed chain.
 func parseForwardingChain(headers http.Header) ([]netip.Addr, string) {
 	values := headers.Values("Forwarded")
 	isForwarded := len(values) != 0
@@ -52,32 +53,11 @@ func parseForwardingChain(headers http.Header) ([]netip.Addr, string) {
 	}
 	chain := []netip.Addr{}
 	for _, value := range values {
-		for _, character := range []byte(value) {
-			if (character < 32 && character != '\t') || character >= 127 {
-				return nil, "trusted_proxy_invalid_header"
-			}
+		if !validForwardingHeader(value) {
+			return nil, "trusted_proxy_invalid_header"
 		}
 		for _, element := range strings.Split(value, ",") {
-			var address netip.Addr
-			if isForwarded {
-				for _, parameter := range strings.Split(element, ";") {
-					name, raw, hasEquals := strings.Cut(strings.TrimSpace(parameter), "=")
-					if !hasEquals {
-						return nil, "trusted_proxy_invalid_header"
-					}
-					if asciiLower(strings.TrimSpace(name)) == "for" {
-						if address.IsValid() {
-							return nil, "trusted_proxy_invalid_header"
-						}
-						address = parseForwardedNode(strings.TrimSpace(raw))
-						if !address.IsValid() {
-							return nil, "trusted_proxy_invalid_header"
-						}
-					}
-				}
-			} else {
-				address = parseForwardedNode(strings.TrimSpace(element))
-			}
+			address := forwardingElement(element, isForwarded)
 			if !address.IsValid() {
 				return nil, "trusted_proxy_invalid_header"
 			}
@@ -87,15 +67,48 @@ func parseForwardingChain(headers http.Header) ([]netip.Addr, string) {
 	return chain, "trusted_forwarding_chain"
 }
 
-func parseForwardedNode(value string) netip.Addr {
-	if len(value) >= 2 && strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
-		value = value[1 : len(value)-1]
-		if strings.ContainsAny(value, "\"\\") {
+// validForwardingHeader permits tabs but rejects other controls and non-ASCII bytes.
+func validForwardingHeader(value string) bool {
+	for _, character := range []byte(value) {
+		if (character < 32 && character != '\t') || character >= 127 {
+			return false
+		}
+	}
+	return true
+}
+
+// forwardingElement requires exactly one valid for parameter when using Forwarded syntax.
+func forwardingElement(element string, isForwarded bool) netip.Addr {
+	if !isForwarded {
+		return parseForwardedNode(strings.TrimSpace(element))
+	}
+	var address netip.Addr
+	for _, parameter := range strings.Split(element, ";") {
+		name, raw, hasEquals := strings.Cut(strings.TrimSpace(parameter), "=")
+		if !hasEquals {
 			return netip.Addr{}
 		}
-	} else if strings.Contains(value, "\"") {
+		if asciiLower(strings.TrimSpace(name)) != "for" {
+			continue
+		}
+		if address.IsValid() {
+			return netip.Addr{}
+		}
+		address = parseForwardedNode(strings.TrimSpace(raw))
+		if !address.IsValid() {
+			return netip.Addr{}
+		}
+	}
+	return address
+}
+
+// parseForwardedNode retains address, port and legacy bracketed-address forms without zones.
+func parseForwardedNode(value string) netip.Addr {
+	unquoted, isValid := unquoteForwardedNode(value)
+	if !isValid {
 		return netip.Addr{}
 	}
+	value = unquoted
 	if address, err := netip.ParseAddr(value); err == nil && address.Zone() == "" {
 		return address.Unmap()
 	}
@@ -108,4 +121,17 @@ func parseForwardedNode(value string) netip.Addr {
 		}
 	}
 	return netip.Addr{}
+}
+
+// unquoteForwardedNode retains paired quotes and rejects escapes or unmatched quotes.
+func unquoteForwardedNode(value string) (string, bool) {
+	if len(value) >= 2 && strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
+		value = value[1 : len(value)-1]
+		if strings.ContainsAny(value, "\"\\") {
+			return "", false
+		}
+	} else if strings.Contains(value, "\"") {
+		return "", false
+	}
+	return value, true
 }
