@@ -122,10 +122,9 @@ func (solver *Live) SolveDualImage(ctx context.Context, slideImage, backgroundIm
 	if err := ctx.Err(); err != nil {
 		return 0, failure(Request, "article access deadline expired")
 	}
-	slideImage = StripDataUrlBase64(slideImage)
-	backgroundImage = StripDataUrlBase64(backgroundImage)
-	if slideImage == "" || backgroundImage == "" {
-		return 0, failure(InvalidResponse, "jfbym dual-image solve requires slide and background images")
+	slideImage, backgroundImage, err := prepareDualImages(slideImage, backgroundImage)
+	if err != nil {
+		return 0, err
 	}
 	payload, err := json.Marshal(map[string]string{"token": solver.token, "type": solver.typeCode, "slide_image": slideImage, "background_image": backgroundImage})
 	if err != nil {
@@ -150,26 +149,7 @@ func (solver *Live) SolveDualImage(ctx context.Context, slideImage, backgroundIm
 		response.Body.Close()
 		return 0, failure(Request, fmt.Sprintf("jfbym HTTP status %d", response.StatusCode))
 	}
-	body, err := transport.BoundedJson(response, maximumResponse)
-	if err != nil {
-		switch err {
-		case transport.ErrTooLarge:
-			return 0, failure(InvalidResponse, "jfbym response exceeded the configured size limit")
-		case transport.ErrReadFailed:
-			return 0, failure(Request, "jfbym response body could not be read")
-		default:
-			return 0, failure(InvalidResponse, "jfbym response is not valid JSON")
-		}
-	}
-	code, hasCode := responseCode(body)
-	if !hasCode || code != SuccessCode {
-		formatted := "None"
-		if hasCode {
-			formatted = fmt.Sprintf("Some(%d)", code)
-		}
-		return 0, failure(InvalidResponse, "jfbym recognition failed with code "+formatted)
-	}
-	return ParseSliderDistance(body)
+	return recognitionDistance(response)
 }
 
 // StripDataUrlBase64 removes an optional case-insensitive data-URL prefix.
@@ -294,4 +274,38 @@ func PointXCandidates(rawDistance float64) ([]int32, error) {
 		}
 	}
 	return result, nil
+}
+
+// recognitionDistance preserves bounded JSON error classes and exact recognition code diagnostics.
+func recognitionDistance(response *http.Response) (float64, error) {
+	body, err := transport.BoundedJson(response, maximumResponse)
+	if err != nil {
+		switch err {
+		case transport.ErrTooLarge:
+			return 0, failure(InvalidResponse, "jfbym response exceeded the configured size limit")
+		case transport.ErrReadFailed:
+			return 0, failure(Request, "jfbym response body could not be read")
+		default:
+			return 0, failure(InvalidResponse, "jfbym response is not valid JSON")
+		}
+	}
+	code, hasCode := responseCode(body)
+	if !hasCode || code != SuccessCode {
+		formatted := "None"
+		if hasCode {
+			formatted = fmt.Sprintf("Some(%d)", code)
+		}
+		return 0, failure(InvalidResponse, "jfbym recognition failed with code "+formatted)
+	}
+	return ParseSliderDistance(body)
+}
+
+// prepareDualImages strips data prefixes before requiring both recognition images.
+func prepareDualImages(slideImage, backgroundImage string) (string, string, error) {
+	slideImage = StripDataUrlBase64(slideImage)
+	backgroundImage = StripDataUrlBase64(backgroundImage)
+	if slideImage == "" || backgroundImage == "" {
+		return "", "", failure(InvalidResponse, "jfbym dual-image solve requires slide and background images")
+	}
+	return slideImage, backgroundImage, nil
 }

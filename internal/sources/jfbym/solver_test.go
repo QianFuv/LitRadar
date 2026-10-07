@@ -83,6 +83,7 @@ func TestLiveRequestAndFailureBoundaries(t *testing.T) {
 	}
 }
 
+// TestDeadlineAndFixturePrecedence preserves live deadline and fixture input admission order.
 func TestDeadlineAndFixturePrecedence(t *testing.T) {
 	if _, err := NewLive(" ", 1, transport.Proxy{}, time.Time{}); err == nil || err.Error() != "jfbym token is required" {
 		t.Fatal(err)
@@ -98,16 +99,7 @@ func TestDeadlineAndFixturePrecedence(t *testing.T) {
 	if _, err := solver.SolveDualImage(context.Background(), "", ""); err == nil || err.Error() != "article access deadline expired" {
 		t.Fatal(err)
 	}
-	fixture := NewFixture(120, 1)
-	if _, err := fixture.SolveDualImage(context.Background(), "", "bg"); err == nil {
-		t.Fatal("empty image accepted")
-	}
-	if _, err := fixture.SolveDualImage(context.Background(), "slide", "bg"); err == nil || err.Error() != "jfbym fixture forced failure" {
-		t.Fatal(err)
-	}
-	if value, err := fixture.SolveDualImage(context.Background(), "slide", "bg"); err != nil || value != 120 {
-		t.Fatal(value, err)
-	}
+	assertFixtureValidationPrecedence(t)
 }
 
 func TestSolverFormattingRedactsPointersAndValues(t *testing.T) {
@@ -150,5 +142,20 @@ func TestLiveBodyCancellationAndTruncation(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// assertFixtureValidationPrecedence verifies empty input does not consume the forced failure.
+func assertFixtureValidationPrecedence(t *testing.T) {
+	t.Helper()
+	fixture := NewFixture(120, 1)
+	if _, err := fixture.SolveDualImage(context.Background(), "", "bg"); err == nil {
+		t.Fatal("empty image accepted")
+	}
+	if _, err := fixture.SolveDualImage(context.Background(), "slide", "bg"); err == nil || err.Error() != "jfbym fixture forced failure" {
+		t.Fatal(err)
+	}
+	if value, err := fixture.SolveDualImage(context.Background(), "slide", "bg"); err != nil || value != 120 {
+		t.Fatal(value, err)
 	}
 }
