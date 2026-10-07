@@ -62,44 +62,7 @@ func Run(ctx context.Context, values []string, executable string, input io.Reade
 		_, err := fmt.Fprintln(output, applicationUsage)
 		return err
 	}
-	tail := args[1:]
-	switch args[0] {
-	case "serve":
-		if hasHelp(tail) {
-			_, err := fmt.Fprintln(output, serveUsage)
-			return err
-		}
-		configuration, err := parseServe(tail, executable)
-		if err != nil {
-			return err
-		}
-		return runtime.Serve(ctx, configuration)
-	case "openapi":
-		return runOpenapi(tail, output)
-	case "admin", "cfp", "index", "notify", "push", "scheduler", "delivery-run":
-		if args[0] == "delivery-run" && parent == "" {
-			break
-		}
-		return runCommand(ctx, args[0], func(ctx context.Context) error {
-			switch args[0] {
-			case "admin":
-				return runAdmin(ctx, tail, input, output)
-			case "cfp":
-				return runCfp(ctx, tail, output)
-			case "index":
-				return runIndex(ctx, tail, executable, output)
-			case "notify":
-				return runDelivery(ctx, delivery.WorkflowNotify, tail, output)
-			case "push":
-				return runDelivery(ctx, delivery.WorkflowPush, tail, output)
-			case "scheduler":
-				return runScheduler(ctx, tail, executable, output)
-			default:
-				return runManualDelivery(ctx, tail, output)
-			}
-		})
-	}
-	return fmt.Errorf("unknown LitRadar subcommand: %s\n%s", args[0], applicationUsage)
+	return dispatchApplicationCommand(ctx, args, parent, executable, input, output)
 }
 
 func commandName(args []string) string {
@@ -145,4 +108,51 @@ func runOpenapi(values []string, output io.Writer) error {
 		return os.WriteFile(values[1], document, 0666)
 	}
 	return fmt.Errorf("%s", openapiUsage)
+}
+
+// dispatchApplicationCommand retains help, service admission and authenticated internal command routing.
+func dispatchApplicationCommand(ctx context.Context, args arguments, parent, executable string, input io.Reader, output io.Writer) error {
+	tail := args[1:]
+	switch args[0] {
+	case "serve":
+		if hasHelp(tail) {
+			_, err := fmt.Fprintln(output, serveUsage)
+			return err
+		}
+		configuration, err := parseServe(tail, executable)
+		if err != nil {
+			return err
+		}
+		return runtime.Serve(ctx, configuration)
+	case "openapi":
+		return runOpenapi(tail, output)
+	case "admin", "cfp", "index", "notify", "push", "scheduler", "delivery-run":
+		if args[0] == "delivery-run" && parent == "" {
+			break
+		}
+		return runCommand(ctx, args[0], func(ctx context.Context) error {
+			return dispatchNamedCommand(ctx, args[0], tail, executable, input, output)
+		})
+	}
+	return fmt.Errorf("unknown LitRadar subcommand: %s\n%s", args[0], applicationUsage)
+}
+
+// dispatchNamedCommand invokes exactly one named CLI operation within its original command span.
+func dispatchNamedCommand(ctx context.Context, command string, tail []string, executable string, input io.Reader, output io.Writer) error {
+	switch command {
+	case "admin":
+		return runAdmin(ctx, tail, input, output)
+	case "cfp":
+		return runCfp(ctx, tail, output)
+	case "index":
+		return runIndex(ctx, tail, executable, output)
+	case "notify":
+		return runDelivery(ctx, delivery.WorkflowNotify, tail, output)
+	case "push":
+		return runDelivery(ctx, delivery.WorkflowPush, tail, output)
+	case "scheduler":
+		return runScheduler(ctx, tail, executable, output)
+	default:
+		return runManualDelivery(ctx, tail, output)
+	}
 }

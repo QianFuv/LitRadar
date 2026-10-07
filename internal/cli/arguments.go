@@ -76,8 +76,7 @@ func parentRunId(values *arguments) (string, error) {
 	}
 	isValid := len(value) > 0 && len(value) <= 128
 	for index, character := range []byte(value) {
-		isAlphaNumeric := character >= '0' && character <= '9' || character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
-		if !isAlphaNumeric && (index == 0 || !strings.ContainsRune("-_.", rune(character))) {
+		if !isParentRunCharacter(character, index) {
 			isValid = false
 		}
 	}
@@ -85,4 +84,10 @@ func parentRunId(values *arguments) (string, error) {
 		return "", errors.New("invalid internal parent run id")
 	}
 	return value, nil
+}
+
+// isParentRunCharacter preserves ASCII alphanumeric admission and noninitial correlation punctuation.
+func isParentRunCharacter(character byte, index int) bool {
+	isAlphaNumeric := character >= '0' && character <= '9' || character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+	return isAlphaNumeric || index != 0 && strings.ContainsRune("-_.", rune(character))
 }

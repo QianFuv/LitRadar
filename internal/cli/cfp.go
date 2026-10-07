@@ -67,28 +67,7 @@ func runCfp(ctx context.Context, values []string, output io.Writer) error {
 
 func importCfp(ctx context.Context, configuration config.Config, args arguments) (store.ImportResult, error) {
 	var empty store.ImportResult
-	input, err := args.take("--input")
-	if err != nil {
-		return empty, err
-	}
-	if input == nil {
-		return empty, usageError(cfpUsage)
-	}
-	if len(args) != 0 {
-		return empty, fmt.Errorf("Unexpected CFP import arguments: %s", strings.Join(args, " "))
-	}
-	metadata, err := os.Stat(*input)
-	if err != nil {
-		return empty, err
-	}
-	if metadata.Size() > 16*1024*1024 {
-		return empty, errors.New("CFP input exceeds 16 MiB")
-	}
-	data, err := os.ReadFile(*input)
-	if err != nil {
-		return empty, err
-	}
-	seed, err := store.PrepareSeed(data)
+	data, seed, err := readCfpImportSeed(args)
 	if err != nil {
 		return empty, err
 	}
@@ -111,54 +90,11 @@ func importCfp(ctx context.Context, configuration config.Config, args arguments)
 }
 
 func refreshCfp(ctx context.Context, configuration config.Config, args arguments) (any, bool, error) {
-	database, err := args.take("--db")
+	invocation, err := parseCfpRefresh(args)
 	if err != nil {
 		return nil, false, err
 	}
-	catalog, err := args.take("--catalog-id")
-	if err != nil {
-		return nil, false, err
-	}
-	isAll, isFullText, shouldResume := args.flag("--all"), args.flag("--full-text"), args.flag("--resume-captures")
-	capture, err := args.take("--capture-dir")
-	if err != nil {
-		return nil, false, err
-	}
-	options := cfp.DefaultRefreshOptions()
-	for _, option := range []struct {
-		name  string
-		value **string
-	}{{"--obscura-path", &options.ObscuraPath}, {"--pdftotext-path", &options.PdftotextPath}} {
-		value, err := args.take(option.name)
-		if err != nil {
-			return nil, false, err
-		}
-		if value != nil {
-			*option.value = value
-		}
-	}
-	sourceTimeout, err := args.unsigned("--source-timeout", 90)
-	if err != nil {
-		return nil, false, err
-	}
-	timeout, err := args.unsigned("--timeout", 600)
-	if err != nil {
-		return nil, false, err
-	}
-	selections := 0
-	for _, isSelected := range []bool{database != nil, catalog != nil, isAll} {
-		if isSelected {
-			selections++
-		}
-	}
-	if len(args) != 0 || selections != 1 || capture != nil && !isFullText || shouldResume && (!isFullText || capture == nil) {
-		return nil, false, usageError(cfpUsage)
-	}
-	if sourceTimeout == 0 || sourceTimeout > 600 || timeout == 0 || timeout > 3600 {
-		return nil, false, errors.New("CFP source timeout must be 1..600 seconds and batch timeout 1..3600 seconds")
-	}
-	options.SourceTimeout, options.OverallTimeout = time.Duration(sourceTimeout)*time.Second, time.Duration(timeout)*time.Second
-	sources, err := selectCfpSources(configuration, database, catalog, isAll)
+	sources, err := selectCfpSources(configuration, invocation.database, invocation.catalog, invocation.isAll)
 	if err != nil {
 		return nil, false, err
 	}
@@ -170,59 +106,27 @@ func refreshCfp(ctx context.Context, configuration config.Config, args arguments
 		return nil, false, err
 	}
 	defer repository.Close()
-	counts := map[string]int{}
-	if isFullText {
-		results, err := cfp.RefreshFullTexts(ctx, repository, sources, options, capture, shouldResume)
+	if invocation.isFullText {
+		results, err := cfp.RefreshFullTexts(ctx, repository, sources, invocation.options, invocation.capture, invocation.shouldResume)
 		if err != nil {
 			return nil, false, err
 		}
-		var recovered, updated uint64
-		for _, result := range results {
-			counts[result.Status]++
-			recovered += result.Recovered
-			updated += result.Updated
-		}
-		failed := counts["failed"] + counts["partial"]
-		return map[string]any{"success": counts["success"], "partial": counts["partial"], "failed": failed, "noNotices": counts["no_notices"], "notAttempted": counts["not_attempted"], "recoveredNotices": recovered, "updatedNotices": updated, "sources": results}, failed+counts["not_attempted"] > 0, nil
+		return summarizeCfpFullText(results)
 	}
-	results, err := cfp.RefreshSources(ctx, repository, sources, options)
+	results, err := cfp.RefreshSources(ctx, repository, sources, invocation.options)
 	if err != nil {
 		return nil, false, err
 	}
-	for _, result := range results {
-		counts[result.Status]++
-	}
-	return map[string]any{"success": counts["success"], "failed": counts["failed"], "unsupported": counts["unsupported"], "notAttempted": counts["not_attempted"], "sources": results}, counts["failed"]+counts["not_attempted"] > 0, nil
+	return summarizeCfpSources(results)
 }
 
 func selectCfpSources(configuration config.Config, database, catalogId *string, isAll bool) ([]cfp.SourceConfig, error) {
 	if isAll {
 		return cfp.Registry(), nil
 	}
-	identities := map[string]bool{}
-	hasDatabase := database == nil
-	catalogs, err := configuration.ListProviderCatalogs()
+	identities, hasDatabase, err := cfpCatalogIdentities(configuration, database, catalogId)
 	if err != nil {
 		return nil, err
-	}
-	for _, catalog := range catalogs {
-		if database != nil && *database != catalog.Stem+".sqlite" || catalog.CsvFilename == nil {
-			continue
-		}
-		hasDatabase = true
-		journals, err := index.ReadCatalogCsv(filepath.Join(configuration.MetaDir, *catalog.CsvFilename))
-		if err != nil {
-			return nil, err
-		}
-		for _, journal := range journals {
-			if catalogId != nil && *catalogId != journal.CatalogId && !slices.Contains(journal.CatalogAliases, *catalogId) {
-				continue
-			}
-			identities[journal.CatalogId] = true
-			for _, alias := range journal.CatalogAliases {
-				identities[alias] = true
-			}
-		}
 	}
 	if !hasDatabase {
 		return nil, errors.New("CFP database catalog not found")
@@ -230,6 +134,188 @@ func selectCfpSources(configuration config.Config, database, catalogId *string, 
 	if len(identities) == 0 {
 		return nil, errors.New("CFP journal catalog member not found")
 	}
+	sources := cfpSourcesForIdentities(identities)
+	if len(sources) == 0 && catalogId != nil {
+		return nil, errors.New("CFP journal is not yet adapted")
+	}
+	return sources, nil
+}
+
+// readCfpImportSeed retains input admission and complete seed validation before any migration.
+func readCfpImportSeed(args arguments) ([]byte, *store.PreparedSeed, error) {
+	input, err := args.take("--input")
+	if err != nil {
+		return nil, nil, err
+	}
+	if input == nil {
+		return nil, nil, usageError(cfpUsage)
+	}
+	if len(args) != 0 {
+		return nil, nil, fmt.Errorf("Unexpected CFP import arguments: %s", strings.Join(args, " "))
+	}
+	metadata, err := os.Stat(*input)
+	if err != nil {
+		return nil, nil, err
+	}
+	if metadata.Size() > 16*1024*1024 {
+		return nil, nil, errors.New("CFP input exceeds 16 MiB")
+	}
+	data, err := os.ReadFile(*input)
+	if err != nil {
+		return nil, nil, err
+	}
+	seed, err := store.PrepareSeed(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, seed, nil
+}
+
+// cfpRefreshInvocation retains the selected scope and exact full-text/helper options.
+type cfpRefreshInvocation struct {
+	database, catalog, capture      *string
+	isAll, isFullText, shouldResume bool
+	options                         cfp.RefreshOptions
+}
+
+// parseCfpRefresh preserves option parsing, scope admission and timeout validation before storage.
+func parseCfpRefresh(args arguments) (cfpRefreshInvocation, error) {
+	database, err := args.take("--db")
+	if err != nil {
+		return cfpRefreshInvocation{}, err
+	}
+	catalog, err := args.take("--catalog-id")
+	if err != nil {
+		return cfpRefreshInvocation{}, err
+	}
+	isAll, isFullText, shouldResume := args.flag("--all"), args.flag("--full-text"), args.flag("--resume-captures")
+	capture, err := args.take("--capture-dir")
+	if err != nil {
+		return cfpRefreshInvocation{}, err
+	}
+	options := cfp.DefaultRefreshOptions()
+	if err := parseCfpHelperPaths(&args, &options); err != nil {
+		return cfpRefreshInvocation{}, err
+	}
+	sourceTimeout, err := args.unsigned("--source-timeout", 90)
+	if err != nil {
+		return cfpRefreshInvocation{}, err
+	}
+	timeout, err := args.unsigned("--timeout", 600)
+	if err != nil {
+		return cfpRefreshInvocation{}, err
+	}
+	if err := validateCfpRefreshScope(args, database, catalog, capture, isAll, isFullText, shouldResume); err != nil {
+		return cfpRefreshInvocation{}, err
+	}
+	if err := applyCfpRefreshTimeouts(&options, sourceTimeout, timeout); err != nil {
+		return cfpRefreshInvocation{}, err
+	}
+	return cfpRefreshInvocation{database, catalog, capture, isAll, isFullText, shouldResume, options}, nil
+}
+
+// parseCfpHelperPaths replaces only explicitly supplied helper paths after default environment selection.
+func parseCfpHelperPaths(args *arguments, options *cfp.RefreshOptions) error {
+	for _, option := range []struct {
+		name  string
+		value **string
+	}{{"--obscura-path", &options.ObscuraPath}, {"--pdftotext-path", &options.PdftotextPath}} {
+		value, err := args.take(option.name)
+		if err != nil {
+			return err
+		}
+		if value != nil {
+			*option.value = value
+		}
+	}
+	return nil
+}
+
+// validateCfpRefreshScope requires one selector and retains capture/resume dependency checks.
+func validateCfpRefreshScope(args arguments, database, catalog, capture *string, isAll, isFullText, shouldResume bool) error {
+	selections := 0
+	for _, isSelected := range []bool{database != nil, catalog != nil, isAll} {
+		if isSelected {
+			selections++
+		}
+	}
+	if len(args) != 0 || selections != 1 || capture != nil && !isFullText || shouldResume && (!isFullText || capture == nil) {
+		return usageError(cfpUsage)
+	}
+	return nil
+}
+
+// applyCfpRefreshTimeouts rejects invalid budgets only after scope validation.
+func applyCfpRefreshTimeouts(options *cfp.RefreshOptions, sourceTimeout, timeout uint64) error {
+	if sourceTimeout == 0 || sourceTimeout > 600 || timeout == 0 || timeout > 3600 {
+		return errors.New("CFP source timeout must be 1..600 seconds and batch timeout 1..3600 seconds")
+	}
+	options.SourceTimeout, options.OverallTimeout = time.Duration(sourceTimeout)*time.Second, time.Duration(timeout)*time.Second
+	return nil
+}
+
+// summarizeCfpFullText retains partial-as-failed counts and recovered/updated notice totals.
+func summarizeCfpFullText(results []cfp.FullTextResult) (any, bool, error) {
+	counts := map[string]int{}
+	var recovered, updated uint64
+	for _, result := range results {
+		counts[result.Status]++
+		recovered += result.Recovered
+		updated += result.Updated
+	}
+	failed := counts["failed"] + counts["partial"]
+	return map[string]any{"success": counts["success"], "partial": counts["partial"], "failed": failed, "noNotices": counts["no_notices"], "notAttempted": counts["not_attempted"], "recoveredNotices": recovered, "updatedNotices": updated, "sources": results}, failed+counts["not_attempted"] > 0, nil
+}
+
+// summarizeCfpSources retains unsupported and unattempted source reporting.
+func summarizeCfpSources(results []cfp.RefreshResult) (any, bool, error) {
+	counts := map[string]int{}
+	for _, result := range results {
+		counts[result.Status]++
+	}
+	return map[string]any{"success": counts["success"], "failed": counts["failed"], "unsupported": counts["unsupported"], "notAttempted": counts["not_attempted"], "sources": results}, counts["failed"]+counts["not_attempted"] > 0, nil
+}
+
+// cfpCatalogIdentities reads selected CSV catalogs in existing storage order.
+func cfpCatalogIdentities(configuration config.Config, database, catalogId *string) (map[string]bool, bool, error) {
+	identities := map[string]bool{}
+	hasDatabase := database == nil
+	catalogs, err := configuration.ListProviderCatalogs()
+	if err != nil {
+		return nil, false, err
+	}
+	for _, catalog := range catalogs {
+		if database != nil && *database != catalog.Stem+".sqlite" || catalog.CsvFilename == nil {
+			continue
+		}
+		hasDatabase = true
+		if err := addCfpCatalogMembers(filepath.Join(configuration.MetaDir, *catalog.CsvFilename), catalogId, identities); err != nil {
+			return nil, false, err
+		}
+	}
+	return identities, hasDatabase, nil
+}
+
+// addCfpCatalogMembers preserves member and alias identities without normalizing selectors.
+func addCfpCatalogMembers(filename string, catalogId *string, identities map[string]bool) error {
+	journals, err := index.ReadCatalogCsv(filename)
+	if err != nil {
+		return err
+	}
+	for _, journal := range journals {
+		if catalogId != nil && *catalogId != journal.CatalogId && !slices.Contains(journal.CatalogAliases, *catalogId) {
+			continue
+		}
+		identities[journal.CatalogId] = true
+		for _, alias := range journal.CatalogAliases {
+			identities[alias] = true
+		}
+	}
+	return nil
+}
+
+// cfpSourcesForIdentities retains registry order and appends each adapted source at most once.
+func cfpSourcesForIdentities(identities map[string]bool) []cfp.SourceConfig {
 	sources := []cfp.SourceConfig{}
 	for _, source := range cfp.Registry() {
 		for _, id := range source.CatalogIds {
@@ -239,8 +325,5 @@ func selectCfpSources(configuration config.Config, database, catalogId *string, 
 			}
 		}
 	}
-	if len(sources) == 0 && catalogId != nil {
-		return nil, errors.New("CFP journal is not yet adapted")
-	}
-	return sources, nil
+	return sources
 }

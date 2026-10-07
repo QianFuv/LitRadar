@@ -24,24 +24,9 @@ func parseServe(values []string, executable string) (runtime.Config, error) {
 func parseServeWithBundle(values []string, executable, bundle string) (runtime.Config, error) {
 	args := arguments(slices.Clone(values))
 	var empty runtime.Config
-	host := "127.0.0.1"
-	value, err := args.take("--host")
+	host, port, err := parseServeAddress(&args)
 	if err != nil {
 		return empty, err
-	}
-	if value != nil {
-		host = *value
-	}
-	port := uint64(8000)
-	value, err = args.take("--port")
-	if err != nil {
-		return empty, err
-	}
-	if value != nil {
-		port, err = strconv.ParseUint(strings.TrimPrefix(*value, "+"), 10, 16)
-		if err != nil {
-			return empty, fmt.Errorf("invalid serve port: %s", *value)
-		}
 	}
 	root, err := args.projectRoot()
 	if err != nil {
@@ -54,19 +39,9 @@ func parseServeWithBundle(values []string, executable, bundle string) (runtime.C
 	if key == nil {
 		return empty, errors.New("--secret-key-file is required")
 	}
-	interval := uint64(30)
-	value, err = args.take("--scheduler-interval-seconds")
+	interval, err := parseServeInterval(&args)
 	if err != nil {
 		return empty, err
-	}
-	if value != nil {
-		interval, err = strconv.ParseUint(strings.TrimPrefix(*value, "+"), 10, 64)
-		if err != nil {
-			return empty, fmt.Errorf("invalid scheduler interval: %s", *value)
-		}
-	}
-	if interval == 0 {
-		return empty, errors.New("--scheduler-interval-seconds must be greater than zero")
 	}
 	isHardened, isDevelopment := args.flag("--require-secure-cookies"), args.flag("--development")
 	if len(args) > 0 {
@@ -82,4 +57,47 @@ func parseServeWithBundle(values []string, executable, bundle string) (runtime.C
 	configuration.IsDevelopment = isDevelopment
 	configuration.AreSecureCookiesRequired = isHardened
 	return configuration, configuration.ValidateDevelopment()
+}
+
+// parseServeAddress retains host spelling and port parsing before deployment arguments.
+func parseServeAddress(args *arguments) (string, uint64, error) {
+	host := "127.0.0.1"
+	value, err := args.take("--host")
+	if err != nil {
+		return "", 0, err
+	}
+	if value != nil {
+		host = *value
+	}
+	port := uint64(8000)
+	value, err = args.take("--port")
+	if err != nil {
+		return "", 0, err
+	}
+	if value != nil {
+		port, err = strconv.ParseUint(strings.TrimPrefix(*value, "+"), 10, 16)
+		if err != nil {
+			return "", 0, fmt.Errorf("invalid serve port: %s", *value)
+		}
+	}
+	return host, port, nil
+}
+
+// parseServeInterval preserves the explicit plus-prefixed uint64 grammar and zero rejection.
+func parseServeInterval(args *arguments) (uint64, error) {
+	interval := uint64(30)
+	value, err := args.take("--scheduler-interval-seconds")
+	if err != nil {
+		return 0, err
+	}
+	if value != nil {
+		interval, err = strconv.ParseUint(strings.TrimPrefix(*value, "+"), 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid scheduler interval: %s", *value)
+		}
+	}
+	if interval == 0 {
+		return 0, errors.New("--scheduler-interval-seconds must be greater than zero")
+	}
+	return interval, nil
 }

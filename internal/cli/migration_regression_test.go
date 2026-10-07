@@ -7,15 +7,13 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/QianFuv/LitRadar/internal/index"
 )
 
 func TestIndexDefaultsRemainIndependentOfExecutionConcurrency(t *testing.T) {
 	for _, values := range [][]string{nil, {"--workers", "5"}, {"--workers", "32", "--processes", "3"}, {"--stop-after", "catalog.csv"}} {
-		args := arguments(values)
-		configuration, explicit, err := parseIndex(&args)
-		if err != nil || explicit || configuration.IssueBatchSize != 8 || configuration.TimeoutSeconds != 20 || !configuration.ShouldResume || configuration.File != nil || len(args) != 0 {
-			t.Fatalf("%v: %+v explicit=%t err=%v", values, configuration, explicit, err)
-		}
+		configuration := assertIndependentIndexDefaults(t, values)
 		if len(values) == 0 && (configuration.WorkerCount != nil || configuration.ProcessCount != nil) {
 			t.Fatal("defaults forced concurrency")
 		}
@@ -51,4 +49,15 @@ func TestExplicitLegacyBatchWarnsOnceBeforeMissingKeyFailure(t *testing.T) {
 			t.Fatal("warning exposed root")
 		}
 	}
+}
+
+// assertIndependentIndexDefaults checks the complete parse/default/remaining-argument contract for one case.
+func assertIndependentIndexDefaults(t *testing.T, values []string) index.LiveConfig {
+	t.Helper()
+	args := arguments(values)
+	configuration, explicit, err := parseIndex(&args)
+	if err != nil || explicit || configuration.IssueBatchSize != 8 || configuration.TimeoutSeconds != 20 || !configuration.ShouldResume || configuration.File != nil || len(args) != 0 {
+		t.Fatalf("%v: %+v explicit=%t err=%v", values, configuration, explicit, err)
+	}
+	return configuration
 }

@@ -81,76 +81,15 @@ func adminResult(ctx context.Context, args arguments, input io.Reader) (any, err
 	configuration := config.FromProjectRoot(root)
 	switch command {
 	case "bootstrap":
-		username, err := args.take("--username")
-		if err != nil {
-			return nil, err
-		}
-		shouldRead := args.flag("--password-stdin")
-		if username == nil || !shouldRead || len(args) != 0 {
-			return nil, usageError(adminUsage)
-		}
-		if _, err := authmigration.Migrate(ctx, filename); err != nil {
-			return nil, err
-		}
-		password, err := bufio.NewReader(input).ReadString('\n')
-		if err != nil && err != io.EOF {
-			return nil, err
-		}
-		if password == "" {
-			return nil, errors.New("password stdin was empty")
-		}
-		password = strings.TrimRight(password, "\r\n")
-		repository, err := authstorage.Open(filename)
-		if err != nil {
-			return nil, err
-		}
-		defer repository.Close()
-		user, err := auth.New(repository, 2).Bootstrap(ctx, strings.TrimSpace(*username), password, nil)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"status": "created", "user": map[string]any{"id": int64(user.Id), "username": user.Username, "is_admin": user.IsAdmin}}, nil
+		return adminBootstrap(ctx, args, filename, input)
 	case "secrets migrate", "secrets verify", "secrets rotate":
 		return adminSecrets(ctx, command, args, filename)
 	case "backup create":
-		output, err := args.take("--output")
-		if err != nil {
-			return nil, err
-		}
-		includeIndexes, includePush := args.flag("--include-indexes"), args.flag("--include-push-state")
-		if output == nil || len(args) != 0 {
-			return nil, usageError(adminUsage)
-		}
-		directory := projectPath(root, *output)
-		manifest, err := backup.Create(ctx, backup.CreateOptions{Config: configuration, AuthDbPath: filename, OutputDir: directory, IncludeIndexDatabases: includeIndexes, IncludePushState: includePush})
-		return map[string]any{"status": "created", "backup": directory, "manifest": manifest}, err
+		return adminBackupCreate(ctx, args, root, filename, configuration)
 	case "backup verify", "backup restore":
-		input, err := args.take("--backup")
-		if err != nil {
-			return nil, err
-		}
-		isRestore := command == "backup restore"
-		isConfirmed := !isRestore || args.flag("--confirm-restore")
-		if input == nil || len(args) != 0 || !isConfirmed {
-			return nil, usageError(adminUsage)
-		}
-		directory := projectPath(root, *input)
-		if isRestore {
-			report, err := backup.Restore(ctx, backup.RestoreOptions{Config: configuration, AuthDbPath: filename, BackupDir: directory})
-			return map[string]any{"status": "restored", "backup": directory, "report": report}, err
-		}
-		manifest, err := backup.Verify(ctx, directory)
-		return map[string]any{"status": "verified", "backup": directory, "manifest": manifest}, err
+		return adminBackupRead(ctx, command, args, root, filename, configuration)
 	case "index optimize-storage":
-		if hasExplicitAuth {
-			return nil, usageError(adminUsage)
-		}
-		isConfirmed := args.flag("--confirm-index-maintenance")
-		if len(args) != 0 {
-			return nil, usageError(adminUsage)
-		}
-		report, err := maintenance.Optimize(ctx, maintenance.Options{Config: configuration, Confirmed: isConfirmed})
-		return map[string]any{"status": report.Outcome, "report": report}, err
+		return adminIndexMaintenance(ctx, args, configuration, hasExplicitAuth)
 	default:
 		return nil, usageError(adminUsage)
 	}
@@ -181,29 +120,9 @@ func adminCommand(args *arguments) (string, error) {
 }
 
 func adminSecrets(ctx context.Context, command string, args arguments, filename string) (any, error) {
-	option := "--secret-key-file"
-	if command == "secrets rotate" {
-		option = "--old-key-file"
-	}
-	key, err := args.take(option)
+	key, nextKey, err := parseAdminSecretKeys(command, args)
 	if err != nil {
 		return nil, err
-	}
-	if key == nil {
-		return nil, usageError(adminUsage)
-	}
-	var nextKey *string
-	if command == "secrets rotate" {
-		nextKey, err = args.take("--new-key-file")
-		if err != nil {
-			return nil, err
-		}
-		if nextKey == nil {
-			return nil, usageError(adminUsage)
-		}
-	}
-	if len(args) != 0 {
-		return nil, usageError(adminUsage)
 	}
 	if _, err := authmigration.Migrate(ctx, filename); err != nil {
 		return nil, err
@@ -236,4 +155,123 @@ func projectPath(root, selected string) string {
 		return selected
 	}
 	return filepath.Join(root, selected)
+}
+
+// adminBootstrap retains migration before password admission and repository-owned bootstrap.
+func adminBootstrap(ctx context.Context, args arguments, filename string, input io.Reader) (any, error) {
+	username, err := args.take("--username")
+	if err != nil {
+		return nil, err
+	}
+	shouldRead := args.flag("--password-stdin")
+	if username == nil || !shouldRead || len(args) != 0 {
+		return nil, usageError(adminUsage)
+	}
+	if _, err := authmigration.Migrate(ctx, filename); err != nil {
+		return nil, err
+	}
+	password, err := readBootstrapPassword(input)
+	if err != nil {
+		return nil, err
+	}
+	repository, err := authstorage.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer repository.Close()
+	user, err := auth.New(repository, 2).Bootstrap(ctx, strings.TrimSpace(*username), password, nil)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"status": "created", "user": map[string]any{"id": int64(user.Id), "username": user.Username, "is_admin": user.IsAdmin}}, nil
+}
+
+// adminBackupCreate preserves backup options and result payload even on backup failure.
+func adminBackupCreate(ctx context.Context, args arguments, root, filename string, configuration config.Config) (any, error) {
+	output, err := args.take("--output")
+	if err != nil {
+		return nil, err
+	}
+	includeIndexes, includePush := args.flag("--include-indexes"), args.flag("--include-push-state")
+	if output == nil || len(args) != 0 {
+		return nil, usageError(adminUsage)
+	}
+	directory := projectPath(root, *output)
+	manifest, err := backup.Create(ctx, backup.CreateOptions{Config: configuration, AuthDbPath: filename, OutputDir: directory, IncludeIndexDatabases: includeIndexes, IncludePushState: includePush})
+	return map[string]any{"status": "created", "backup": directory, "manifest": manifest}, err
+}
+
+// adminBackupRead retains restore confirmation and verify/restore result-plus-error contracts.
+func adminBackupRead(ctx context.Context, command string, args arguments, root, filename string, configuration config.Config) (any, error) {
+	input, err := args.take("--backup")
+	if err != nil {
+		return nil, err
+	}
+	isRestore := command == "backup restore"
+	isConfirmed := !isRestore || args.flag("--confirm-restore")
+	if input == nil || len(args) != 0 || !isConfirmed {
+		return nil, usageError(adminUsage)
+	}
+	directory := projectPath(root, *input)
+	if isRestore {
+		report, err := backup.Restore(ctx, backup.RestoreOptions{Config: configuration, AuthDbPath: filename, BackupDir: directory})
+		return map[string]any{"status": "restored", "backup": directory, "report": report}, err
+	}
+	manifest, err := backup.Verify(ctx, directory)
+	return map[string]any{"status": "verified", "backup": directory, "manifest": manifest}, err
+}
+
+// adminIndexMaintenance retains explicit-auth exclusion and confirmation reporting.
+func adminIndexMaintenance(ctx context.Context, args arguments, configuration config.Config, hasExplicitAuth bool) (any, error) {
+	if hasExplicitAuth {
+		return nil, usageError(adminUsage)
+	}
+	isConfirmed := args.flag("--confirm-index-maintenance")
+	if len(args) != 0 {
+		return nil, usageError(adminUsage)
+	}
+	report, err := maintenance.Optimize(ctx, maintenance.Options{Config: configuration, Confirmed: isConfirmed})
+	return map[string]any{"status": report.Outcome, "report": report}, err
+}
+
+// readBootstrapPassword preserves first-line EOF admission and emptiness before CR/LF stripping.
+func readBootstrapPassword(input io.Reader) (string, error) {
+	password, err := bufio.NewReader(input).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	if password == "" {
+		return "", errors.New("password stdin was empty")
+	}
+	password = strings.TrimRight(password, "\r\n")
+	return password, nil
+}
+
+// parseAdminSecretKeys preserves old/new key option order and leftover admission before migration.
+func parseAdminSecretKeys(command string, args arguments) (*string, *string, error) {
+	option := "--secret-key-file"
+	if command == "secrets rotate" {
+		option = "--old-key-file"
+	}
+	key, err := args.take(option)
+	if err != nil {
+		return nil, nil, err
+	}
+	if key == nil {
+		return nil, nil, usageError(adminUsage)
+	}
+	var nextKey *string
+	if command == "secrets rotate" {
+		nextKey, err = args.take("--new-key-file")
+		if err != nil {
+			return nil, nil, err
+		}
+		if nextKey == nil {
+			return nil, nil, usageError(adminUsage)
+		}
+	}
+	if len(args) != 0 {
+		return nil, nil, usageError(adminUsage)
+	}
+	return key, nextKey, nil
 }
