@@ -67,3 +67,43 @@ func TestEncodingCompatibilityCorpus(t *testing.T) {
 		}
 	}
 }
+
+// TestValidationStringAndTokenBoundaries checks surrogate keys, mixed depth and number admission.
+func TestValidationStringAndTokenBoundaries(t *testing.T) {
+	for _, scenario := range []struct {
+		value string
+		valid bool
+	}{
+		{`{"\ud800":0}`, false},
+		{`{"\ud83d\ude00":"\uD83d\uDe00"}`, true},
+		{`["\ud83d\ude00","\udc00"]`, false},
+		{`"\u123"`, false},
+		{`"\uZZZZ"`, false},
+		{`"\\ud800"`, true},
+		{`"\\\ud800"`, false},
+		{`18446744073709551616`, true},
+		{`1e-400`, true},
+		{`"1e400"`, true},
+		{strings.Repeat(`[{"x":`, 63) + `0` + strings.Repeat(`}]`, 63), true},
+		{strings.Repeat(`[{"x":`, 64) + `0` + strings.Repeat(`}]`, 64), false},
+	} {
+		if actual := jsonvalue.ValidJson(scenario.value); actual != scenario.valid {
+			t.Fatal(scenario.value, actual, scenario.valid)
+		}
+	}
+}
+
+// TestEncodingRawSeparatorsRetainsEscapeBytes checks separator conversion without decoding raw JSON.
+func TestEncodingRawSeparatorsRetainsEscapeBytes(t *testing.T) {
+	for _, scenario := range []struct{ value, expected string }{
+		{`{"\u2028":"\u2029"}`, "{\"\u2028\":\"\u2029\"}"},
+		{`"\u20280\u2029"`, "\"\u20280\u2029\""},
+		{`"\\u2028\ud83d\ude00"`, `"\\u2028\ud83d\ude00"`},
+		{`"\\\u2028\n\t\"\\"`, "\"\\\\\u2028\\n\\t\\\"\\\\\""},
+	} {
+		encoded, err := jsonvalue.EncodeJson(json.RawMessage(scenario.value))
+		if err != nil || encoded != scenario.expected {
+			t.Fatal(scenario.value, encoded, scenario.expected, err)
+		}
+	}
+}
