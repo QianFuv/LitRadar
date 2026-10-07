@@ -78,6 +78,11 @@ function normalizeLoginReturnPath(candidate: string): string {
  * @returns Login client component.
  */
 export default function LoginClient() {
+  const state = useLoginViewState();
+  return renderLoginPage(state);
+}
+/** Own the original auth hooks, cancellation effects and captured submit closure in their original order. */
+function useLoginViewState() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { loading, login, logoutWarning, recoverLogout, register, user } = useAuth();
@@ -98,19 +103,9 @@ export default function LoginClient() {
   const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const fastTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
   const authModeKey = isLogoutRecovery ? 'recovery' : mode;
-  const title = isLogoutRecovery ? '撤销全部会话' : mode === 'login' ? '登录' : '注册';
-  const description = isLogoutRecovery
-    ? '重新验证账号后，撤销该账号的所有登录令牌和个人访问令牌'
-    : mode === 'login'
-      ? '输入账号和密码登录'
-      : '创建一个新账号';
-  const submitLabel = isSubmitting
-    ? '请稍候…'
-    : isLogoutRecovery
-      ? '重新认证并撤销全部会话'
-      : mode === 'login'
-        ? '登录'
-        : '注册';
+  const title = getLoginTitle(isLogoutRecovery, mode);
+  const description = getLoginDescription(isLogoutRecovery, mode);
+  const submitLabel = getLoginSubmitLabel(isSubmitting, isLogoutRecovery, mode);
 
   useEffect(() => {
     if (!loading && user && !isLogoutRecovery) {
@@ -161,6 +156,51 @@ export default function LoginClient() {
     }
   };
 
+  return {
+    router,
+    searchParams,
+    loading,
+    login,
+    logoutWarning,
+    recoverLogout,
+    register,
+    user,
+    nextParam,
+    nextPath,
+    isLogoutRecovery,
+    username,
+    setUsername,
+    password,
+    setPassword,
+    inviteCode,
+    setInviteCode,
+    error,
+    setError,
+    isSubmitting,
+    setIsSubmitting,
+    isPasswordVisible,
+    setIsPasswordVisible,
+    mode,
+    setMode,
+    inviteRequired,
+    setInviteRequired,
+    bootstrapRequired,
+    setBootstrapRequired,
+    isRecoveryComplete,
+    setIsRecoveryComplete,
+    panelTransition,
+    fastTransition,
+    authModeKey,
+    title,
+    description,
+    submitLabel,
+    handleSubmit,
+  };
+}
+type LoginViewState = ReturnType<typeof useLoginViewState>;
+/** Retain loading suppression and the editable authentication page as plain JSX. */
+function renderLoginPage(state: LoginViewState) {
+  const { loading, user, isLogoutRecovery } = state;
   if (loading || (user && !isLogoutRecovery)) {
     return (
       <main
@@ -188,257 +228,368 @@ export default function LoginClient() {
       <div className="w-full max-w-md">
         <AuthBrand />
         <Card className="gap-0 overflow-hidden border border-border/80 py-0 shadow-lg shadow-black/5 dark:shadow-black/20">
-          <CardHeader className="block border-b bg-muted/20 px-6 py-6">
-            <CardTitle className="sr-only">{title}</CardTitle>
-            <CardDescription className="sr-only">{description}</CardDescription>
-            <MotionPresence mode="wait">
-              <MotionDiv
-                key={authModeKey}
-                aria-hidden="true"
-                data-auth-header-mode={authModeKey}
-                variants={FADE_UP_VARIANTS}
-                initial="hidden"
-                animate="visible"
-                exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
-                transition={fastTransition}
-              >
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  {isLogoutRecovery ? '账户安全' : '欢迎使用'}
-                </p>
-                <div className="mt-2 text-2xl font-semibold tracking-tight">{title}</div>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-              </MotionDiv>
-            </MotionPresence>
-          </CardHeader>
-          <CardContent className="py-6">
-            {logoutWarning && !isRecoveryComplete && (
-              <MotionDiv
-                key={`${logoutWarning.occurredAt}-${logoutWarning.requestId ?? 'unknown'}`}
-                role="alert"
-                data-auth-feedback="logout-warning"
-                className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-foreground"
-                variants={FADE_UP_VARIANTS}
-                initial="hidden"
-                animate="visible"
-                transition={panelTransition}
-              >
-                <p className="font-medium">服务端会话撤销未确认</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  本地会话信息已清除，但旧令牌可能仍有效。
-                  {isLogoutRecovery
-                    ? ' 请重新输入账号密码以撤销全部会话。'
-                    : ' 请重新认证后撤销全部会话。'}
-                </p>
-                {logoutWarning.requestId && (
-                  <p className="mt-1 break-all text-xs text-muted-foreground">
-                    请求 ID：{logoutWarning.requestId}
-                  </p>
-                )}
-                {!isLogoutRecovery && (
-                  <Link
-                    href="/login?logout_recovery=1"
-                    className="motion-control mt-2 inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-[background-color,color] hover:bg-accent hover:text-accent-foreground"
-                  >
-                    重新认证并撤销全部会话
-                  </Link>
-                )}
-              </MotionDiv>
-            )}
-            <MotionPresence mode="wait">
-              {isRecoveryComplete ? (
-                <MotionDiv
-                  key="recovery-complete"
-                  data-auth-state="recovery-complete"
-                  className="space-y-4"
-                  variants={FADE_UP_VARIANTS}
-                  initial="hidden"
-                  animate="visible"
-                  exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-                  transition={panelTransition}
-                >
-                  <div
-                    role="status"
-                    className="rounded-md border border-success-border bg-success px-3 py-2 text-sm text-foreground"
-                  >
-                    全部会话和个人访问令牌已撤销。现在可以重新登录。
-                  </div>
-                  <Button asChild className="w-full">
-                    <Link href="/login">返回登录</Link>
-                  </Button>
-                </MotionDiv>
-              ) : (
-                <MotionForm
-                  key="auth-form"
-                  data-auth-state="form"
-                  aria-label={isLogoutRecovery ? '会话撤销表单' : '身份验证表单'}
-                  onSubmit={handleSubmit}
-                  className="space-y-4"
-                  aria-describedby={error ? 'login-error' : undefined}
-                  variants={FADE_UP_VARIANTS}
-                  initial="hidden"
-                  animate="visible"
-                  exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-                  transition={panelTransition}
-                >
-                  <div className="space-y-2">
-                    <Label htmlFor="username">用户名</Label>
-                    <Input
-                      id="username"
-                      name="username"
-                      type="text"
-                      value={username}
-                      autoComplete="username"
-                      autoFocus
-                      spellCheck={false}
-                      onChange={(event) => setUsername(event.target.value)}
-                      placeholder="3-32位字母数字下划线"
-                      aria-invalid={Boolean(error)}
-                      aria-describedby={error ? 'login-error' : undefined}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">密码</Label>
-                    <div className="relative">
-                      <Input
-                        id="password"
-                        name="password"
-                        type={isPasswordVisible ? 'text' : 'password'}
-                        value={password}
-                        autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-                        onChange={(event) => setPassword(event.target.value)}
-                        placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
-                        minLength={mode === 'register' ? 12 : undefined}
-                        className="pr-10"
-                        aria-invalid={Boolean(error)}
-                        aria-describedby={error ? 'login-error' : undefined}
-                        required
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="absolute inset-y-0 right-0 h-full rounded-l-none text-muted-foreground hover:text-foreground"
-                        aria-label={isPasswordVisible ? '隐藏密码' : '显示密码'}
-                        aria-pressed={isPasswordVisible}
-                        onClick={() => setIsPasswordVisible((current) => !current)}
-                      >
-                        {isPasswordVisible ? (
-                          <EyeOff className="h-4 w-4" aria-hidden="true" />
-                        ) : (
-                          <Eye className="h-4 w-4" aria-hidden="true" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                  {!isLogoutRecovery && mode === 'register' && inviteRequired && (
-                    <MotionDiv
-                      key="invite-code"
-                      data-auth-conditional="invite-code"
-                      className="overflow-hidden"
-                      variants={COLLAPSE_VARIANTS}
-                      initial="hidden"
-                      animate="visible"
-                      transition={fastTransition}
-                    >
-                      <div className="space-y-2">
-                        <Label htmlFor="invite-code">邀请码</Label>
-                        <Input
-                          id="invite-code"
-                          name="invite_code"
-                          type="text"
-                          value={inviteCode}
-                          autoComplete="one-time-code"
-                          spellCheck={false}
-                          onChange={(event) => setInviteCode(event.target.value)}
-                          placeholder="输入邀请码"
-                          aria-invalid={Boolean(error)}
-                          aria-describedby={error ? 'login-error' : undefined}
-                          required
-                        />
-                      </div>
-                    </MotionDiv>
-                  )}
-                  {!isLogoutRecovery && mode === 'register' && bootstrapRequired && (
-                    <MotionDiv
-                      key="bootstrap-required"
-                      role="status"
-                      data-auth-feedback="bootstrap-required"
-                      className="rounded-md border border-warning-border bg-warning px-3 py-2 text-sm text-foreground"
-                      variants={FADE_UP_VARIANTS}
-                      initial="hidden"
-                      animate="visible"
-                      transition={panelTransition}
-                    >
-                      系统管理员尚未完成本机初始化。请先在服务器上运行{' '}
-                      <code>admin bootstrap --username NAME --password-stdin</code>
-                      ，再使用管理员生成的邀请码注册。
-                    </MotionDiv>
-                  )}
-                  {error && (
-                    <MotionDiv
-                      key={error}
-                      id="login-error"
-                      role="alert"
-                      data-auth-feedback="error"
-                      className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                      variants={FADE_UP_VARIANTS}
-                      initial="hidden"
-                      animate="visible"
-                      transition={panelTransition}
-                    >
-                      {error}
-                    </MotionDiv>
-                  )}
-                  <Button
-                    type="submit"
-                    aria-label={submitLabel}
-                    className="w-full"
-                    disabled={
-                      isSubmitting ||
-                      (!isLogoutRecovery && mode === 'register' && bootstrapRequired)
-                    }
-                  >
-                    <span className="grid" aria-hidden="true">
-                      <MotionPresence>
-                        <MotionSpan
-                          key={submitLabel}
-                          className="col-start-1 row-start-1"
-                          variants={FADE_UP_VARIANTS}
-                          initial="hidden"
-                          animate="visible"
-                          exit={{ opacity: 0, y: -2 }}
-                          transition={fastTransition}
-                        >
-                          {submitLabel}
-                        </MotionSpan>
-                      </MotionPresence>
-                    </span>
-                  </Button>
-                </MotionForm>
-              )}
-            </MotionPresence>
-            {!isLogoutRecovery && !isRecoveryComplete && (
-              <div
-                className="mt-4 text-center text-sm text-muted-foreground"
-                data-auth-mode-switch={mode}
-              >
-                {mode === 'login' ? '没有账号？' : '已有账号？'}{' '}
-                <button
-                  type="button"
-                  className="motion-control font-medium text-foreground underline decoration-muted-foreground underline-offset-4 transition-[color,text-decoration-color] hover:text-primary hover:decoration-primary"
-                  onClick={() => {
-                    setMode((current) => (current === 'login' ? 'register' : 'login'));
-                    setError(null);
-                  }}
-                >
-                  {mode === 'login' ? '注册' : '登录'}
-                </button>
-              </div>
-            )}
-          </CardContent>
+          {renderLoginHeader(state)}
+          {renderLoginCardContent(state)}
         </Card>
       </div>
     </main>
   );
+}
+
+/** Retain password bytes, autocomplete, registration minimum and visibility toggle. */
+function renderLoginPassword(state: LoginViewState) {
+  const { password, setPassword, error, isPasswordVisible, setIsPasswordVisible, mode } = state;
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="password">密码</Label>
+      <div className="relative">
+        <Input
+          id="password"
+          name="password"
+          type={isPasswordVisible ? 'text' : 'password'}
+          value={password}
+          autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
+          minLength={mode === 'register' ? 12 : undefined}
+          className="pr-10"
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? 'login-error' : undefined}
+          required
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="absolute inset-y-0 right-0 h-full rounded-l-none text-muted-foreground hover:text-foreground"
+          aria-label={isPasswordVisible ? '隐藏密码' : '显示密码'}
+          aria-pressed={isPasswordVisible}
+          onClick={() => setIsPasswordVisible((current) => !current)}
+        >
+          {isPasswordVisible ? (
+            <EyeOff className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <Eye className="h-4 w-4" aria-hidden="true" />
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Retain conditional invite field and captured value. */
+function renderLoginInvite(state: LoginViewState) {
+  const {
+    isLogoutRecovery,
+    inviteCode,
+    setInviteCode,
+    error,
+    mode,
+    inviteRequired,
+    fastTransition,
+  } = state;
+
+  return (
+    !isLogoutRecovery &&
+    mode === 'register' &&
+    inviteRequired && (
+      <MotionDiv
+        key="invite-code"
+        data-auth-conditional="invite-code"
+        className="overflow-hidden"
+        variants={COLLAPSE_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        transition={fastTransition}
+      >
+        <div className="space-y-2">
+          <Label htmlFor="invite-code">邀请码</Label>
+          <Input
+            id="invite-code"
+            name="invite_code"
+            type="text"
+            value={inviteCode}
+            autoComplete="one-time-code"
+            spellCheck={false}
+            onChange={(event) => setInviteCode(event.target.value)}
+            placeholder="输入邀请码"
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? 'login-error' : undefined}
+            required
+          />
+        </div>
+      </MotionDiv>
+    )
+  );
+}
+
+/** Retain the registration bootstrap guard and exact command spacing. */
+function renderLoginBootstrap(state: LoginViewState) {
+  const { isLogoutRecovery, mode, bootstrapRequired, panelTransition } = state;
+
+  return (
+    !isLogoutRecovery &&
+    mode === 'register' &&
+    bootstrapRequired && (
+      <MotionDiv
+        key="bootstrap-required"
+        role="status"
+        data-auth-feedback="bootstrap-required"
+        className="rounded-md border border-warning-border bg-warning px-3 py-2 text-sm text-foreground"
+        variants={FADE_UP_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        transition={panelTransition}
+      >
+        系统管理员尚未完成本机初始化。请先在服务器上运行{' '}
+        <code>admin bootstrap --username NAME --password-stdin</code>
+        ，再使用管理员生成的邀请码注册。
+      </MotionDiv>
+    )
+  );
+}
+
+/** Retain the immediate keyed authentication error and its semantic ID. */
+function renderLoginError(state: LoginViewState) {
+  const { error, panelTransition } = state;
+
+  return (
+    error && (
+      <MotionDiv
+        key={error}
+        id="login-error"
+        role="alert"
+        data-auth-feedback="error"
+        className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        variants={FADE_UP_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        transition={panelTransition}
+      >
+        {error}
+      </MotionDiv>
+    )
+  );
+}
+
+/** Retain warning identity, recovery link and request metadata. */
+function renderLoginLogoutWarning(state: LoginViewState) {
+  const { logoutWarning, isLogoutRecovery, isRecoveryComplete, panelTransition } = state;
+
+  return (
+    logoutWarning &&
+    !isRecoveryComplete && (
+      <MotionDiv
+        key={`${logoutWarning.occurredAt}-${logoutWarning.requestId ?? 'unknown'}`}
+        role="alert"
+        data-auth-feedback="logout-warning"
+        className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-foreground"
+        variants={FADE_UP_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        transition={panelTransition}
+      >
+        <p className="font-medium">服务端会话撤销未确认</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          本地会话信息已清除，但旧令牌可能仍有效。
+          {isLogoutRecovery ? ' 请重新输入账号密码以撤销全部会话。' : ' 请重新认证后撤销全部会话。'}
+        </p>
+        {logoutWarning.requestId && (
+          <p className="mt-1 break-all text-xs text-muted-foreground">
+            请求 ID：{logoutWarning.requestId}
+          </p>
+        )}
+        {!isLogoutRecovery && (
+          <Link
+            href="/login?logout_recovery=1"
+            className="motion-control mt-2 inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-[background-color,color] hover:bg-accent hover:text-accent-foreground"
+          >
+            重新认证并撤销全部会话
+          </Link>
+        )}
+      </MotionDiv>
+    )
+  );
+}
+
+/** Retain pending/bootstrap admission guards and keyed animated submit label. */
+function renderLoginSubmit(state: LoginViewState) {
+  const { isLogoutRecovery, isSubmitting, mode, bootstrapRequired, fastTransition, submitLabel } =
+    state;
+
+  return (
+    <Button
+      type="submit"
+      aria-label={submitLabel}
+      className="w-full"
+      disabled={isSubmitting || (!isLogoutRecovery && mode === 'register' && bootstrapRequired)}
+    >
+      <span className="grid" aria-hidden="true">
+        <MotionPresence>
+          <MotionSpan
+            key={submitLabel}
+            className="col-start-1 row-start-1"
+            variants={FADE_UP_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, y: -2 }}
+            transition={fastTransition}
+          >
+            {submitLabel}
+          </MotionSpan>
+        </MotionPresence>
+      </span>
+    </Button>
+  );
+}
+
+/** Retain the stable auth-form element and input identity across mode switches. */
+function renderLoginForm(state: LoginViewState) {
+  const { isLogoutRecovery, username, setUsername, error, panelTransition, handleSubmit } = state;
+
+  return (
+    <MotionForm
+      key="auth-form"
+      data-auth-state="form"
+      aria-label={isLogoutRecovery ? '会话撤销表单' : '身份验证表单'}
+      onSubmit={handleSubmit}
+      className="space-y-4"
+      aria-describedby={error ? 'login-error' : undefined}
+      variants={FADE_UP_VARIANTS}
+      initial="hidden"
+      animate="visible"
+      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+      transition={panelTransition}
+    >
+      <div className="space-y-2">
+        <Label htmlFor="username">用户名</Label>
+        <Input
+          id="username"
+          name="username"
+          type="text"
+          value={username}
+          autoComplete="username"
+          autoFocus
+          spellCheck={false}
+          onChange={(event) => setUsername(event.target.value)}
+          placeholder="3-32位字母数字下划线"
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? 'login-error' : undefined}
+          required
+        />
+      </div>
+      {renderLoginPassword(state)}
+      {renderLoginInvite(state)}
+      {renderLoginBootstrap(state)}
+      {renderLoginError(state)}
+      {renderLoginSubmit(state)}
+    </MotionForm>
+  );
+}
+
+/** Retain the mode-keyed visual header and immediate accessible title. */
+function renderLoginHeader(state: LoginViewState) {
+  const { isLogoutRecovery, fastTransition, authModeKey, title, description } = state;
+
+  return (
+    <CardHeader className="block border-b bg-muted/20 px-6 py-6">
+      <CardTitle className="sr-only">{title}</CardTitle>
+      <CardDescription className="sr-only">{description}</CardDescription>
+      <MotionPresence mode="wait">
+        <MotionDiv
+          key={authModeKey}
+          aria-hidden="true"
+          data-auth-header-mode={authModeKey}
+          variants={FADE_UP_VARIANTS}
+          initial="hidden"
+          animate="visible"
+          exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
+          transition={fastTransition}
+        >
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            {isLogoutRecovery ? '账户安全' : '欢迎使用'}
+          </p>
+          <div className="mt-2 text-2xl font-semibold tracking-tight">{title}</div>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+        </MotionDiv>
+      </MotionPresence>
+    </CardHeader>
+  );
+}
+
+/** Retain recovery result, stable form and original mode-switch event order. */
+function renderLoginCardContent(state: LoginViewState) {
+  const { isLogoutRecovery, setError, mode, setMode, isRecoveryComplete, panelTransition } = state;
+
+  return (
+    <CardContent className="py-6">
+      {renderLoginLogoutWarning(state)}
+      <MotionPresence mode="wait">
+        {isRecoveryComplete ? (
+          <MotionDiv
+            key="recovery-complete"
+            data-auth-state="recovery-complete"
+            className="space-y-4"
+            variants={FADE_UP_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
+            transition={panelTransition}
+          >
+            <div
+              role="status"
+              className="rounded-md border border-success-border bg-success px-3 py-2 text-sm text-foreground"
+            >
+              全部会话和个人访问令牌已撤销。现在可以重新登录。
+            </div>
+            <Button asChild className="w-full">
+              <Link href="/login">返回登录</Link>
+            </Button>
+          </MotionDiv>
+        ) : (
+          renderLoginForm(state)
+        )}
+      </MotionPresence>
+      {!isLogoutRecovery && !isRecoveryComplete && (
+        <div
+          className="mt-4 text-center text-sm text-muted-foreground"
+          data-auth-mode-switch={mode}
+        >
+          {mode === 'login' ? '没有账号？' : '已有账号？'}{' '}
+          <button
+            type="button"
+            className="motion-control font-medium text-foreground underline decoration-muted-foreground underline-offset-4 transition-[color,text-decoration-color] hover:text-primary hover:decoration-primary"
+            onClick={() => {
+              setMode((current) => (current === 'login' ? 'register' : 'login'));
+              setError(null);
+            }}
+          >
+            {mode === 'login' ? '注册' : '登录'}
+          </button>
+        </div>
+      )}
+    </CardContent>
+  );
+}
+
+/** Resolve the recovery, login and registration title in its original priority. */
+function getLoginTitle(isRecovery: boolean, mode: AuthFormMode): string {
+  if (isRecovery) return '撤销全部会话';
+  return mode === 'login' ? '登录' : '注册';
+}
+/** Retain the authentication mode's original explanatory text. */
+function getLoginDescription(isRecovery: boolean, mode: AuthFormMode): string {
+  if (isRecovery) return '重新验证账号后，撤销该账号的所有登录令牌和个人访问令牌';
+  return mode === 'login' ? '输入账号和密码登录' : '创建一个新账号';
+}
+/** Resolve pending feedback before recovery and normal authentication labels. */
+function getLoginSubmitLabel(
+  isSubmitting: boolean,
+  isRecovery: boolean,
+  mode: AuthFormMode,
+): string {
+  if (isSubmitting) return '请稍候…';
+  if (isRecovery) return '重新认证并撤销全部会话';
+  return mode === 'login' ? '登录' : '注册';
 }
