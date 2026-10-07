@@ -32,6 +32,28 @@ func (fixture *pushFixture) PostJson(ctx context.Context, location string, heade
 	if len(fixture.responses) == 0 {
 		return outbound.Response{}, errors.New("fixture exhausted")
 	}
+	return fixture.nextResponse()
+
+}
+
+func TestPushplusDoesNotConsumeAiBudgetAndCancellationStopsRetry(t *testing.T) {
+	isCancelled := false
+	control := domain.NewExecutionControl(float64(time.Now().Unix()+60), 0, func() (bool, error) { return isCancelled, nil })
+	fixture := &pushFixture{responses: []json.RawMessage{json.RawMessage(`{"body":{"code":200}}`)}}
+	client := NewPushplusClient(10, time.Second, control)
+	client.transport = fixture
+	if _, err := client.Send(context.Background(), PushplusMessage{}); err != nil {
+		t.Fatalf("non-AI request consumed AI budget: %v", err)
+	}
+	fixture.responses = []json.RawMessage{json.RawMessage(`{"error":"connect_failed"}`)}
+	fixture.after = func() { isCancelled = true }
+	_, err := client.Send(context.Background(), PushplusMessage{})
+	if !errors.Is(err, domain.ControlCancelled) || len(fixture.requests) != 2 {
+		t.Fatalf("cancelled retry sent: %v count=%d", err, len(fixture.requests))
+	}
+}
+
+func (fixture *pushFixture) nextResponse() (outbound.Response, error) {
 	var response struct {
 		Error      string
 		Status     int
@@ -63,21 +85,4 @@ func (fixture *pushFixture) PostJson(ctx context.Context, location string, heade
 		}
 	}
 	return outbound.Response{StatusCode: response.Status, RequestId: response.RequestId, RetryAfterSeconds: response.RetryAfter, Body: parsed}, nil
-}
-
-func TestPushplusDoesNotConsumeAiBudgetAndCancellationStopsRetry(t *testing.T) {
-	isCancelled := false
-	control := domain.NewExecutionControl(float64(time.Now().Unix()+60), 0, func() (bool, error) { return isCancelled, nil })
-	fixture := &pushFixture{responses: []json.RawMessage{json.RawMessage(`{"body":{"code":200}}`)}}
-	client := NewPushplusClient(10, time.Second, control)
-	client.transport = fixture
-	if _, err := client.Send(context.Background(), PushplusMessage{}); err != nil {
-		t.Fatalf("non-AI request consumed AI budget: %v", err)
-	}
-	fixture.responses = []json.RawMessage{json.RawMessage(`{"error":"connect_failed"}`)}
-	fixture.after = func() { isCancelled = true }
-	_, err := client.Send(context.Background(), PushplusMessage{})
-	if !errors.Is(err, domain.ControlCancelled) || len(fixture.requests) != 2 {
-		t.Fatalf("cancelled retry sent: %v count=%d", err, len(fixture.requests))
-	}
 }

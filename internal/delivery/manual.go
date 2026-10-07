@@ -84,10 +84,8 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 			logger.InfoContext(ctx, "delivery.manual.completed", append(attributes, "event", "delivery.manual.completed", "outcome", "success")...)
 		}
 	}()
-	if config.ExecutionControl != nil {
-		if err := config.ExecutionControl.Check(); err != nil {
-			return result, err
-		}
+	if err := checkManualExecution(config); err != nil {
+		return result, err
 	}
 	repository, err := store.Open(config.StorageConfig.AuthDbPath)
 	if err != nil {
@@ -114,12 +112,64 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 	if err != nil {
 		return result, classified("business_storage", err)
 	}
-	if (method == "folder" || preferences.SyncToTrackingFolder) && folder == nil {
-		return result, errors.New("No tracking folder configured. Create a folder and set it as tracking first.")
+	if err := validateManualTrackingFolder(method, preferences, folder); err != nil {
+		return result, err
 	}
+	return deliverManualWeeklyWindow(ctx, config, method, folder, preferences, deliver)
+}
+
+func manualOutcome(message string, folder *favorites.Folder) ManualWeeklyPushOutcome {
+	result := ManualWeeklyPushOutcome{Status: "completed", Message: message}
+	if folder != nil {
+		result.FolderId = &folder.Id
+		result.FolderName = &folder.Name
+	}
+	return result
+}
+
+func manualOutcomeFromDelivery(method string, folder *favorites.Folder, outcomes []RunOutcome) ManualWeeklyPushOutcome {
+	result := manualOutcome("", folder)
+	totals := collectManualDeliveryOutcomes(&result, outcomes)
+	result.TotalCandidates = &totals.candidates
+	if len(totals.failures) > 0 {
+		result.Status = "failed"
+		if totals.hasUnknown {
+			result.Status = "unknown"
+		}
+		result.Message = strings.Join(totals.failures, "; ")
+		return result
+	}
+	if result.Selected > 0 && method == "pushplus" {
+		suffix := func(count int64) string {
+			if count == 1 {
+				return ""
+			}
+			return "s"
+		}
+		result.Message = fmt.Sprintf("PushPlus sent successfully (%d message%s); selected %d article%s across %d database%s", totals.messages, suffix(totals.messages), result.Selected, suffix(result.Selected), len(totals.selectedDatabases), suffix(int64(len(totals.selectedDatabases))))
+		if result.Pushed > 0 {
+			result.Message += fmt.Sprintf("; synced %d article%s to the tracking folder", result.Pushed, suffix(result.Pushed))
+		}
+	} else if result.Selected == 0 {
+		result.Message = "AI selection found no matching articles"
+		if len(totals.skips) > 0 {
+			result.Message = totals.skips[0]
+		}
+	}
+	return result
+}
+
+func validateManualTrackingFolder(method string, preferences *domain.NotificationSettings, folder *favorites.Folder) error {
+	if (method == "folder" || preferences.SyncToTrackingFolder) && folder == nil {
+		return errors.New("No tracking folder configured. Create a folder and set it as tracking first.")
+	}
+	return nil
+}
+
+func deliverManualWeeklyWindow(ctx context.Context, config ManualWeeklyPushConfig, method string, folder *favorites.Folder, preferences *domain.NotificationSettings, deliver func(context.Context, RunConfig, *int64, *recommend.ChangeManifest) (RunOutcome, error)) (ManualWeeklyPushOutcome, error) {
 	publications, err := weekly.LoadAvailable(ctx, config.StorageConfig, config.WindowEnd, preferences.SelectedDatabases)
 	if err != nil {
-		return result, classified("index_storage", err)
+		return ManualWeeklyPushOutcome{}, classified("index_storage", err)
 	}
 	manifests := []weekly.Manifest{}
 	for _, publication := range publications {
@@ -141,90 +191,79 @@ func runManualWeeklyPush(ctx context.Context, config ManualWeeklyPushConfig, del
 	if method == "pushplus" {
 		workflow = store.WorkflowNotify
 	}
+	outcomes, err := executeManualPublications(ctx, config, workflow, manifests, deliver)
+	if err != nil {
+		return ManualWeeklyPushOutcome{}, err
+	}
+	return manualOutcomeFromDelivery(method, folder, outcomes), nil
+}
+
+func executeManualPublications(ctx context.Context, config ManualWeeklyPushConfig, workflow store.Workflow, manifests []weekly.Manifest, deliver func(context.Context, RunConfig, *int64, *recommend.ChangeManifest) (RunOutcome, error)) ([]RunOutcome, error) {
 	outcomes := []RunOutcome{}
 	for _, publication := range manifests {
 		if config.ExecutionControl != nil {
 			if err := config.ExecutionControl.Check(); err != nil {
-				return result, err
+				return nil, err
 			}
 		}
 		filename, err := config.StorageConfig.ResolveIndexDbPath(&publication.DbName)
 		if err != nil {
-			return result, classified("index_storage", err)
+			return nil, classified("index_storage", err)
 		}
 		child := RunConfig{AuthDbPath: config.StorageConfig.AuthDbPath, SecretCodec: config.SecretCodec, IndexDbPath: filename, DbName: publication.DbName, AttemptId: &config.AttemptId, AiModel: config.AiModel, MaxCandidates: config.MaxCandidates, TimeoutSeconds: config.TimeoutSeconds, RetryAttempts: config.RetryAttempts, DedupeRetentionDays: config.DedupeRetentionDays, Mode: store.RunModeExecute, Workflow: workflow, Trigger: store.TriggerKindScheduled, ExecutionControl: config.ExecutionControl}
 		manifest := recommend.ChangeManifest{PendingIssueKeys: []string{}, PendingInpressKeys: []string{}, PendingArticleIds: publication.ArticleIds, RunId: publication.RunId}
 		outcome, err := deliver(ctx, child, &config.UserId, &manifest)
 		if err != nil {
-			return result, err
+			return nil, err
 		}
 		outcomes = append(outcomes, outcome)
 	}
-	return manualOutcomeFromDelivery(method, folder, outcomes), nil
+	return outcomes, nil
 }
 
-func manualOutcome(message string, folder *favorites.Folder) ManualWeeklyPushOutcome {
-	result := ManualWeeklyPushOutcome{Status: "completed", Message: message}
-	if folder != nil {
-		result.FolderId = &folder.Id
-		result.FolderName = &folder.Name
-	}
-	return result
+type manualDeliveryTotals struct {
+	candidates, messages int64
+	selectedDatabases    map[string]bool
+	failures, skips      []string
+	hasUnknown           bool
 }
 
-func manualOutcomeFromDelivery(method string, folder *favorites.Folder, outcomes []RunOutcome) ManualWeeklyPushOutcome {
-	result := manualOutcome("", folder)
-	candidates, messages := int64(0), int64(0)
-	selectedDatabases := map[string]bool{}
-	failures, skips := []string{}, []string{}
-	hasUnknown := false
+func collectManualDeliveryOutcomes(result *ManualWeeklyPushOutcome, outcomes []RunOutcome) manualDeliveryTotals {
+	totals := manualDeliveryTotals{selectedDatabases: map[string]bool{}, failures: []string{}, skips: []string{}}
 	for _, outcome := range outcomes {
-		candidates += int64(len(outcome.CandidateArticleIds))
+		totals.candidates += int64(len(outcome.CandidateArticleIds))
 		if outcome.Status == "failed" {
-			failures = append(failures, outcome.DbName+" delivery failed")
+			totals.failures = append(totals.failures, outcome.DbName+" delivery failed")
 		} else if outcome.Status == "unknown" {
-			hasUnknown = true
-			failures = append(failures, outcome.DbName+" delivery outcome is unknown")
+			totals.hasUnknown = true
+			totals.failures = append(totals.failures, outcome.DbName+" delivery outcome is unknown")
 		}
 		for _, subscriber := range outcome.Subscribers {
-			result.Selected += int64(len(subscriber.SelectedArticleIds))
-			result.Pushed += int64(subscriber.FolderSyncedCount)
-			if subscriber.MessageId != nil {
-				messages++
-			}
-			if len(subscriber.SelectedArticleIds) > 0 {
-				selectedDatabases[outcome.DbName] = true
-			}
-			if subscriber.Error != nil {
-				skips = append(skips, *subscriber.Error)
-			}
+			collectManualSubscriber(result, &totals, outcome.DbName, subscriber)
 		}
 	}
-	result.TotalCandidates = &candidates
-	if len(failures) > 0 {
-		result.Status = "failed"
-		if hasUnknown {
-			result.Status = "unknown"
-		}
-		result.Message = strings.Join(failures, "; ")
-		return result
+	return totals
+}
+
+func collectManualSubscriber(result *ManualWeeklyPushOutcome, totals *manualDeliveryTotals, database string, subscriber SubscriberPlan) {
+	result.Selected += int64(len(subscriber.SelectedArticleIds))
+	result.Pushed += int64(subscriber.FolderSyncedCount)
+	if subscriber.MessageId != nil {
+		totals.messages++
 	}
-	if result.Selected > 0 && method == "pushplus" {
-		suffix := func(count int64) string {
-			if count == 1 {
-				return ""
-			}
-			return "s"
-		}
-		result.Message = fmt.Sprintf("PushPlus sent successfully (%d message%s); selected %d article%s across %d database%s", messages, suffix(messages), result.Selected, suffix(result.Selected), len(selectedDatabases), suffix(int64(len(selectedDatabases))))
-		if result.Pushed > 0 {
-			result.Message += fmt.Sprintf("; synced %d article%s to the tracking folder", result.Pushed, suffix(result.Pushed))
-		}
-	} else if result.Selected == 0 {
-		result.Message = "AI selection found no matching articles"
-		if len(skips) > 0 {
-			result.Message = skips[0]
+	if len(subscriber.SelectedArticleIds) > 0 {
+		totals.selectedDatabases[database] = true
+	}
+	if subscriber.Error != nil {
+		totals.skips = append(totals.skips, *subscriber.Error)
+	}
+}
+
+func checkManualExecution(config ManualWeeklyPushConfig) error {
+	if config.ExecutionControl != nil {
+		if err := config.ExecutionControl.Check(); err != nil {
+			return err
 		}
 	}
-	return result
+	return nil
 }

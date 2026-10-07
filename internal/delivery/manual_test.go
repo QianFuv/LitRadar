@@ -55,9 +55,7 @@ func TestManualWeeklyUsesFixedMembershipAndStableAttempt(t *testing.T) {
 	config := manualWeeklyFixture(t, []string{"first", "second"})
 	seen := []string{}
 	execute := func(ctx context.Context, child RunConfig, user *int64, manifest *recommend.ChangeManifest) (RunOutcome, error) {
-		if user == nil || *user != 1 || child.Trigger != store.TriggerKindScheduled || child.Mode != store.RunModeExecute || child.AttemptId == nil || *child.AttemptId != "parent-attempt" || !reflect.DeepEqual(manifest.PendingArticleIds, []int64{7}) || manifest.RunId == nil || *manifest.RunId != "source-"+child.DbName[:len(child.DbName)-7] {
-			t.Fatal("manual source/context changed")
-		}
+		assertManualSourceContext(t, child, user, manifest)
 		seen = append(seen, child.DbName)
 		return runOutcome(child, 1, "completed", []int64{7}, []SubscriberPlan{{SelectedArticleIds: []int64{7}, FolderSyncedCount: 1}}), nil
 	}
@@ -65,12 +63,8 @@ func TestManualWeeklyUsesFixedMembershipAndStableAttempt(t *testing.T) {
 	if err != nil || outcome.Selected != 2 || outcome.Pushed != 2 || outcome.TotalCandidates == nil || *outcome.TotalCandidates != 2 || len(seen) != 2 {
 		t.Fatal("manual aggregate", err)
 	}
-	seen = nil
-	config.WindowEnd.Nanoseconds--
-	outcome, err = runManualWeeklyPush(context.Background(), config, execute)
-	if err != nil || outcome.Message != "No new weekly articles available" || outcome.TotalCandidates != nil || len(seen) != 0 {
-		t.Fatal("publication beyond captured window included", err)
-	}
+	assertManualCapturedWindow(t, config, &seen, execute)
+
 }
 
 func TestManualWeeklySharesBudgetAndStopsAfterFailure(t *testing.T) {
@@ -106,8 +100,31 @@ func TestManualAggregationPreservesUnknownPriorityAndPublicMessages(t *testing.T
 	if result.Status != "unknown" || result.Message != "second.sqlite delivery failed; third.sqlite delivery outcome is unknown" || result.Selected != 1 || result.Pushed != 1 {
 		t.Fatal("unknown aggregation changed")
 	}
-	result = manualOutcomeFromDelivery("folder", nil, []RunOutcome{{Subscribers: []SubscriberPlan{{Error: pointer("first skip")}, {Error: pointer("second skip")}}}})
+	assertManualSkipSummary(t)
+
+}
+
+func assertManualSourceContext(t *testing.T, child RunConfig, user *int64, manifest *recommend.ChangeManifest) {
+	t.Helper()
+	if user == nil || *user != 1 || child.Trigger != store.TriggerKindScheduled || child.Mode != store.RunModeExecute || child.AttemptId == nil || *child.AttemptId != "parent-attempt" || !reflect.DeepEqual(manifest.PendingArticleIds, []int64{7}) || manifest.RunId == nil || *manifest.RunId != "source-"+child.DbName[:len(child.DbName)-7] {
+		t.Fatal("manual source/context changed")
+	}
+}
+
+func assertManualSkipSummary(t *testing.T) {
+	t.Helper()
+	result := manualOutcomeFromDelivery("folder", nil, []RunOutcome{{Subscribers: []SubscriberPlan{{Error: pointer("first skip")}, {Error: pointer("second skip")}}}})
 	if result.Message != "first skip" || result.TotalCandidates == nil || *result.TotalCandidates != 0 {
 		t.Fatal("skip summary changed")
+	}
+}
+
+func assertManualCapturedWindow(t *testing.T, config ManualWeeklyPushConfig, seen *[]string, execute func(context.Context, RunConfig, *int64, *recommend.ChangeManifest) (RunOutcome, error)) {
+	t.Helper()
+	*seen = nil
+	config.WindowEnd.Nanoseconds--
+	outcome, err := runManualWeeklyPush(context.Background(), config, execute)
+	if err != nil || outcome.Message != "No new weekly articles available" || outcome.TotalCandidates != nil || len(*seen) != 0 {
+		t.Fatal("publication beyond captured window included", err)
 	}
 }

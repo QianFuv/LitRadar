@@ -42,15 +42,7 @@ func TestDurableAdmissionFinalizesAtomicallyAndReusesTerminalIdentity(t *testing
 	if err != nil || terminal != nil || run == nil || run.run.Status != store.RunStatusRunning {
 		t.Fatalf("admission: %v", err)
 	}
-	if err := run.renew(ctx, repository, 101); err != nil {
-		t.Fatal(err)
-	}
-	if err := run.finalizeWithCheckpoint(ctx, repository, store.RunStatusCompleted, store.CheckpointStatusCompleted, recommend.Snapshot{IssueArticleCounts: map[string]int64{"1:2": 4}}, pointer("completed"), pointer(`{"selected":1}`), nil, 102); err != nil {
-		t.Fatal(err)
-	}
-	if run.lease.OwnerId != nil || run.checkpoint.SnapshotJson != `{"issue_article_counts":{"1:2":4},"inpress_article_counts":{}}` {
-		t.Fatalf("atomic checkpoint projection: %s", run.checkpoint.SnapshotJson)
-	}
+	assertAtomicDeliveryFinalization(t, repository, run, ctx)
 	next, terminal, err := admitDurableRun(ctx, repository, config, nil, "attempt", 103)
 	if err != nil || next != nil || terminal == nil || terminal.Id != run.run.Id || terminal.Status != store.RunStatusCompleted {
 		t.Fatal("terminal attempt was rerun", err)
@@ -64,32 +56,12 @@ func TestDurableAdmissionTakesOverExpiredCompetitorAndQuarantinesAmbiguousSend(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := repository.EnsureRunItems(ctx, old.run.Id, []store.RunItemCreate{{ItemKind: store.ItemKindSubscriber, ItemKey: "1", UserId: pointer(int64(1))}}, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	claimed, err := repository.ClaimItem(ctx, old.run.Id, old.owner, old.run.Revision, items[0].Id, old.owner, 100, deliveryLeaseSeconds)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.ReserveDedupe(ctx, config.Workflow, config.DbName, 1, 7, old.run.Id, old.owner, 100); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.MarkItemSending(ctx, claimed.Id, old.owner, claimed.Revision, 100); err != nil {
-		t.Fatal(err)
-	}
+	prepareAmbiguousDurableItem(t, repository, config, old, ctx)
 	taken, _, err := admitDurableRun(ctx, repository, config, nil, "new-attempt", 3700)
 	if err != nil || taken == nil || !taken.didTakeOverCompetingRun || taken.run.Id != old.run.Id {
 		t.Fatalf("expired takeover: %v", err)
 	}
-	items, err = repository.ListRunItems(ctx, old.run.Id)
-	if err != nil || items[0].Status != store.ItemStatusUnknown {
-		t.Fatalf("ambiguous item retried: %v %v", items, err)
-	}
-	dedupe, err := repository.LoadDedupe(ctx, config.Workflow, config.DbName, 1, 7)
-	if err != nil || dedupe.Status != store.DedupeStatusUnknown {
-		t.Fatal("unknown dedupe released", err)
-	}
+	assertQuarantinedDurableState(t, repository, config, old, ctx)
 	if err := old.renew(ctx, repository, 3701); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("stale owner renewed: %v", err)
 	}
@@ -139,5 +111,48 @@ func TestBestEffortFailureQuarantinesSendingAndPreservesCheckpoint(t *testing.T)
 	run.failBestEffort(ctx, repository, "worker_failed", 101)
 	if run.run.Status != store.RunStatusUnknown || run.checkpoint.Status != store.CheckpointStatusUnknown || run.checkpoint.SnapshotJson != ` {"prior":true} ` || run.lease.OwnerId != nil {
 		t.Fatal("failed send was treated as safely repeatable")
+	}
+}
+
+func assertAtomicDeliveryFinalization(t *testing.T, repository *store.Repository, run *durableRun, ctx context.Context) {
+	t.Helper()
+	if err := run.renew(ctx, repository, 101); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.finalizeWithCheckpoint(ctx, repository, store.RunStatusCompleted, store.CheckpointStatusCompleted, recommend.Snapshot{IssueArticleCounts: map[string]int64{"1:2": 4}}, pointer("completed"), pointer(`{"selected":1}`), nil, 102); err != nil {
+		t.Fatal(err)
+	}
+	if run.lease.OwnerId != nil || run.checkpoint.SnapshotJson != `{"issue_article_counts":{"1:2":4},"inpress_article_counts":{}}` {
+		t.Fatalf("atomic checkpoint projection: %s", run.checkpoint.SnapshotJson)
+	}
+}
+
+func prepareAmbiguousDurableItem(t *testing.T, repository *store.Repository, config RunConfig, old *durableRun, ctx context.Context) {
+	t.Helper()
+	items, err := repository.EnsureRunItems(ctx, old.run.Id, []store.RunItemCreate{{ItemKind: store.ItemKindSubscriber, ItemKey: "1", UserId: pointer(int64(1))}}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := repository.ClaimItem(ctx, old.run.Id, old.owner, old.run.Revision, items[0].Id, old.owner, 100, deliveryLeaseSeconds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.ReserveDedupe(ctx, config.Workflow, config.DbName, 1, 7, old.run.Id, old.owner, 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.MarkItemSending(ctx, claimed.Id, old.owner, claimed.Revision, 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertQuarantinedDurableState(t *testing.T, repository *store.Repository, config RunConfig, old *durableRun, ctx context.Context) {
+	t.Helper()
+	items, err := repository.ListRunItems(ctx, old.run.Id)
+	if err != nil || items[0].Status != store.ItemStatusUnknown {
+		t.Fatalf("ambiguous item retried: %v %v", items, err)
+	}
+	dedupe, err := repository.LoadDedupe(ctx, config.Workflow, config.DbName, 1, 7)
+	if err != nil || dedupe.Status != store.DedupeStatusUnknown {
+		t.Fatal("unknown dedupe released", err)
 	}
 }

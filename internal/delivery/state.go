@@ -94,14 +94,9 @@ func (run *durableRun) failBestEffort(ctx context.Context, repository *store.Rep
 }
 
 func admitDurableRun(ctx context.Context, repository *store.Repository, config RunConfig, userId *int64, externalId string, now float64) (*durableRun, *store.RunRecord, error) {
-	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
+	owner, deadline, err := newDeliveryOwner(config)
+	if err != nil {
 		return nil, nil, err
-	}
-	owner := "worker-" + hex.EncodeToString(random[:])
-	var deadline *float64
-	if config.ExecutionControl != nil {
-		deadline = pointer(config.ExecutionControl.Deadline())
 	}
 	admission, err := repository.AdmitRun(ctx, store.RunCreate{ExternalId: externalId, Workflow: config.Workflow, ScopeKey: config.DbName, DbName: &config.DbName, TriggerKind: config.Trigger, Mode: config.Mode, UserId: userId, DeadlineAt: deadline, CreatedAt: now})
 	if err != nil {
@@ -120,39 +115,16 @@ func admitDurableRun(ctx context.Context, repository *store.Repository, config R
 	if claimed.Status.IsTerminal() {
 		return nil, claimed, nil
 	}
-	if claimed.Mode != config.Mode || claimed.TriggerKind != config.Trigger || !reflect.DeepEqual(claimed.UserId, userId) {
-		repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusFailed, nil, pointer("recovery_context_mismatch"), now)
-		return nil, nil, errors.New("Recovered delivery run does not match the current invocation")
-	}
-	lease, err := repository.AcquireLease(ctx, config.Workflow, config.DbName, claimed.Id, owner, now, deliveryLeaseSeconds)
-	if err != nil {
+	if err := validateRecoveredDelivery(ctx, repository, config, userId, claimed, owner, now); err != nil {
 		return nil, nil, err
 	}
-	if lease.Kind == "busy" {
-		repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusSkipped, nil, pointer("workflow_lease_busy"), now)
-		return nil, nil, ErrBusy
+	lease, err := acquireDeliveryWorkflowLease(ctx, repository, config, claimed, owner, now)
+	if err != nil {
+		return nil, nil, err
 	}
 	run := &durableRun{run: claimed, lease: lease.Lease, owner: owner, workflow: config.Workflow, dbName: config.DbName, didTakeOverCompetingRun: didTakeOver}
-	run.checkpoint, err = repository.LoadCheckpoint(ctx, config.Workflow, config.DbName)
-	if err != nil {
-		run.failBestEffort(ctx, repository, "checkpoint_load_failed", now)
+	if err := initializeAdmittedDelivery(ctx, repository, config, run, owner, now); err != nil {
 		return nil, nil, err
-	}
-	if _, err = repository.ReconcileAfterTakeover(ctx, run.run.Id, owner, run.run.Revision, now); err != nil {
-		run.failBestEffort(ctx, repository, "recovery_failed", now)
-		return nil, nil, err
-	}
-	started, err := repository.StartRun(ctx, run.run.Id, owner, run.run.Revision, now)
-	if err != nil {
-		run.failBestEffort(ctx, repository, "run_start_failed", now)
-		return nil, nil, err
-	}
-	run.run = started
-	if config.DedupeRetentionDays > 0 {
-		if _, err := repository.CleanupConfirmedDedupe(ctx, config.Workflow, config.DbName, math.Max(0, now-float64(config.DedupeRetentionDays)*86400)); err != nil {
-			run.failBestEffort(ctx, repository, "dedupe_cleanup_failed", now)
-			return nil, nil, err
-		}
 	}
 	return run, nil, nil
 }
@@ -162,7 +134,7 @@ func claimCandidate(ctx context.Context, repository *store.Repository, candidate
 	if err != nil {
 		return nil, false, err
 	}
-	if claim.Kind == "claimed" || claim.Kind == "unavailable" && claim.Run.Status.IsTerminal() {
+	if acceptsDeliveryClaim(claim) {
 		return claim.Run, false, nil
 	}
 	if claim.Kind != "busy" {
@@ -179,8 +151,71 @@ func claimCandidate(ctx context.Context, repository *store.Repository, candidate
 	if err != nil {
 		return nil, false, err
 	}
-	if claim.Kind == "claimed" || claim.Kind == "unavailable" && claim.Run.Status.IsTerminal() {
+	if acceptsDeliveryClaim(claim) {
 		return claim.Run, true, nil
 	}
 	return nil, false, ErrBusy
+}
+
+func acceptsDeliveryClaim(claim store.RunOutcome) bool {
+	return claim.Kind == "claimed" || claim.Kind == "unavailable" && claim.Run.Status.IsTerminal()
+}
+
+func validateRecoveredDelivery(ctx context.Context, repository *store.Repository, config RunConfig, userId *int64, claimed *store.RunRecord, owner string, now float64) error {
+	if claimed.Mode != config.Mode || claimed.TriggerKind != config.Trigger || !reflect.DeepEqual(claimed.UserId, userId) {
+		repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusFailed, nil, pointer("recovery_context_mismatch"), now)
+		return errors.New("Recovered delivery run does not match the current invocation")
+	}
+	return nil
+}
+
+func initializeAdmittedDelivery(ctx context.Context, repository *store.Repository, config RunConfig, run *durableRun, owner string, now float64) error {
+	var err error
+	run.checkpoint, err = repository.LoadCheckpoint(ctx, config.Workflow, config.DbName)
+	if err != nil {
+		run.failBestEffort(ctx, repository, "checkpoint_load_failed", now)
+		return err
+	}
+	if _, err = repository.ReconcileAfterTakeover(ctx, run.run.Id, owner, run.run.Revision, now); err != nil {
+		run.failBestEffort(ctx, repository, "recovery_failed", now)
+		return err
+	}
+	started, err := repository.StartRun(ctx, run.run.Id, owner, run.run.Revision, now)
+	if err != nil {
+		run.failBestEffort(ctx, repository, "run_start_failed", now)
+		return err
+	}
+	run.run = started
+	if config.DedupeRetentionDays > 0 {
+		if _, err := repository.CleanupConfirmedDedupe(ctx, config.Workflow, config.DbName, math.Max(0, now-float64(config.DedupeRetentionDays)*86400)); err != nil {
+			run.failBestEffort(ctx, repository, "dedupe_cleanup_failed", now)
+			return err
+		}
+	}
+	return nil
+}
+
+func newDeliveryOwner(config RunConfig) (string, *float64, error) {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", nil, err
+	}
+	owner := "worker-" + hex.EncodeToString(random[:])
+	var deadline *float64
+	if config.ExecutionControl != nil {
+		deadline = pointer(config.ExecutionControl.Deadline())
+	}
+	return owner, deadline, nil
+}
+
+func acquireDeliveryWorkflowLease(ctx context.Context, repository *store.Repository, config RunConfig, claimed *store.RunRecord, owner string, now float64) (store.LeaseOutcome, error) {
+	lease, err := repository.AcquireLease(ctx, config.Workflow, config.DbName, claimed.Id, owner, now, deliveryLeaseSeconds)
+	if err != nil {
+		return store.LeaseOutcome{}, err
+	}
+	if lease.Kind == "busy" {
+		repository.FinalizeRun(ctx, claimed.Id, owner, claimed.Revision, store.RunStatusSkipped, nil, pointer("workflow_lease_busy"), now)
+		return store.LeaseOutcome{}, ErrBusy
+	}
+	return lease, nil
 }

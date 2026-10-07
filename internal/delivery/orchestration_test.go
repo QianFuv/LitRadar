@@ -145,14 +145,7 @@ func TestWorkflowAmbiguousSendQuarantinesAllReservationsAndPreservesCheckpoint(t
 	if err != nil || outcome.Status != "unknown" || outcome.Subscribers[0].Status != "unknown" {
 		t.Fatalf("ambiguous: %v %v", outcome, err)
 	}
-	checkpoint, err := engine.repository.LoadCheckpoint(context.Background(), config.Workflow, config.DbName)
-	if err != nil || checkpoint.Status != store.CheckpointStatusUnknown || checkpoint.SnapshotJson != `{"issue_article_counts":{},"inpress_article_counts":{}}` {
-		t.Fatal("ambiguous checkpoint advanced", err)
-	}
-	dedupe, err := engine.repository.LoadDedupe(context.Background(), config.Workflow, config.DbName, 1, 7)
-	if err != nil || dedupe.Status != store.DedupeStatusUnknown {
-		t.Fatal("reservation not quarantined", err)
-	}
+	assertAmbiguousWorkflowState(t, engine, config)
 	_, err = engine.execute(context.Background(), config, nil, manifestFor("later", 7))
 	if err != nil || sent != 1 || countRows(t, database, "favorites") != 1 {
 		t.Fatal("unknown send retried", err)
@@ -190,20 +183,7 @@ func TestWorkflowRecoversSendingItemFromDurableInputsWithoutCallingProviders(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := engine.repository.EnsureRunItems(ctx, run.run.Id, []store.RunItemCreate{{ItemKind: store.ItemKindArticle, ItemKey: "7", ArticleId: pointer(int64(7))}, {ItemKind: store.ItemKindSubscriber, ItemKey: "1", UserId: pointer(int64(1))}}, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	item, err := engine.repository.ClaimItem(ctx, run.run.Id, run.owner, run.run.Revision, items[1].Id, run.owner, 100, 3600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = engine.repository.ReserveDedupe(ctx, config.Workflow, config.DbName, 1, 7, run.run.Id, run.owner, 100); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = engine.repository.MarkItemSending(ctx, item.Id, run.owner, item.Revision, 100); err != nil {
-		t.Fatal(err)
-	}
+	prepareAmbiguousWorkflowItem(t, engine, config, run, ctx)
 	engine.selectArticles = func(context.Context, recommend.SelectionRequest) (recommend.SelectionOutcome, error) {
 		t.Fatal("reselected ambiguous subscriber")
 		return recommend.SelectionOutcome{}, nil
@@ -252,10 +232,7 @@ func TestWorkflowMissingSubscriberDoesNotConsumeSnapshot(t *testing.T) {
 	if err != nil || outcome.Status != "skipped" {
 		t.Fatal(err)
 	}
-	checkpoint, err := engine.repository.LoadCheckpoint(context.Background(), config.Workflow, config.DbName)
-	if err != nil || checkpoint.SnapshotJson != `{"issue_article_counts":{},"inpress_article_counts":{}}` {
-		t.Fatal("snapshot consumed without subscribers", err)
-	}
+	assertUnconsumedWorkflowSnapshot(t, engine, config)
 	if _, err = database.Exec("UPDATE notification_settings SET enabled=1"); err != nil {
 		t.Fatal(err)
 	}
@@ -285,15 +262,7 @@ func TestWorkflowSelectionFailurePreservesProgressAndRetriesWithoutReplay(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	index, err := platform.Open(platform.Config{Filename: config.IndexDbPath, Mode: "rwc", MaxConnections: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = index.Exec(`INSERT INTO articles VALUES(9,1,2,'science third','abstract','2026-10-03',0,0,NULL)`)
-	index.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
+	insertWorkflowRetryArticle(t, config)
 	selectArticles := engine.selectArticles
 	engine.selectArticles = func(context.Context, recommend.SelectionRequest) (recommend.SelectionOutcome, error) {
 		return recommend.SelectionOutcome{}, errors.New("all endpoints failed")
@@ -302,32 +271,10 @@ func TestWorkflowSelectionFailurePreservesProgressAndRetriesWithoutReplay(t *tes
 	if err != nil || failed.Status != "failed" || len(failed.Subscribers) != 1 || failed.Subscribers[0].Status != "error" {
 		t.Fatalf("selection failure: %+v %v", failed, err)
 	}
-	checkpoint, err := engine.repository.LoadCheckpoint(ctx, config.Workflow, config.DbName)
-	if err != nil || checkpoint.Status != store.CheckpointStatusFailed || checkpoint.SnapshotJson != previous.SnapshotJson || !reflect.DeepEqual(checkpoint.LastCompletedRunAt, previous.LastCompletedRunAt) {
-		t.Fatal("failed selection advanced progress", err)
-	}
-	items, err := engine.repository.ListRunItems(ctx, failed.DeliveryRunId)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hasFailedSubscriber := false
-	for _, item := range items {
-		if item.ItemKind == store.ItemKindSubscriber {
-			hasFailedSubscriber = item.Status == store.ItemStatusFailed && item.ErrorCode != nil && *item.ErrorCode == "selection_failed"
-		}
-	}
-	if !hasFailedSubscriber || sent != 1 || countRows(t, database, "favorites") != 2 || countRows(t, database, "delivery_dedupe") != 2 {
-		t.Fatal("failed selection changed durable effects or lost failure classification")
-	}
+	assertFailedWorkflowProgress(t, engine, database, config, previous, failed, sent, ctx)
 	engine.selectArticles = selectArticles
-	retried, err := engine.execute(ctx, config, nil, nil)
-	if err != nil || retried.Status != "completed" || len(retried.Subscribers) != 1 || !reflect.DeepEqual(retried.Subscribers[0].SelectedArticleIds, []int64{9}) || sent != 2 || countRows(t, database, "favorites") != 3 || countRows(t, database, "delivery_dedupe") != 3 {
-		t.Fatalf("retry lost pending article or replayed confirmed delivery: %+v %v", retried, err)
-	}
-	idle, err := engine.execute(ctx, config, nil, nil)
-	if err != nil || idle.Status != "idle" || sent != 2 {
-		t.Fatal("successful retry did not advance progress", err)
-	}
+	assertWorkflowRetryWithoutReplay(t, engine, database, config, &sent, ctx)
+
 }
 
 func TestWorkflowMalformedManifestPrecedesFilesystemAdmission(t *testing.T) {
@@ -378,5 +325,101 @@ func TestWorkflowEmptyUpstreamMessageIdRetainsOriginalStorageRejection(t *testin
 	record, err := engine.repository.LoadDedupe(context.Background(), config.Workflow, config.DbName, 1, 7)
 	if err != nil || record.Status != store.DedupeStatusUnknown {
 		t.Fatal("uncommitted successful send was not quarantined", err)
+	}
+}
+
+func assertAmbiguousWorkflowState(t *testing.T, engine *deliveryEngine, config RunConfig) {
+	t.Helper()
+	checkpoint, err := engine.repository.LoadCheckpoint(context.Background(), config.Workflow, config.DbName)
+	if err != nil || checkpoint.Status != store.CheckpointStatusUnknown || checkpoint.SnapshotJson != `{"issue_article_counts":{},"inpress_article_counts":{}}` {
+		t.Fatal("ambiguous checkpoint advanced", err)
+	}
+	dedupe, err := engine.repository.LoadDedupe(context.Background(), config.Workflow, config.DbName, 1, 7)
+	if err != nil || dedupe.Status != store.DedupeStatusUnknown {
+		t.Fatal("reservation not quarantined", err)
+	}
+}
+
+func prepareAmbiguousWorkflowItem(t *testing.T, engine *deliveryEngine, config RunConfig, run *durableRun, ctx context.Context) {
+	t.Helper()
+	items, err := engine.repository.EnsureRunItems(ctx, run.run.Id, []store.RunItemCreate{{ItemKind: store.ItemKindArticle, ItemKey: "7", ArticleId: pointer(int64(7))}, {ItemKind: store.ItemKindSubscriber, ItemKey: "1", UserId: pointer(int64(1))}}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := engine.repository.ClaimItem(ctx, run.run.Id, run.owner, run.run.Revision, items[1].Id, run.owner, 100, 3600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = engine.repository.ReserveDedupe(ctx, config.Workflow, config.DbName, 1, 7, run.run.Id, run.owner, 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = engine.repository.MarkItemSending(ctx, item.Id, run.owner, item.Revision, 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertUnconsumedWorkflowSnapshot(t *testing.T, engine *deliveryEngine, config RunConfig) {
+	t.Helper()
+	checkpoint, err := engine.repository.LoadCheckpoint(context.Background(), config.Workflow, config.DbName)
+	if err != nil || checkpoint.SnapshotJson != `{"issue_article_counts":{},"inpress_article_counts":{}}` {
+		t.Fatal("snapshot consumed without subscribers", err)
+	}
+}
+
+func insertWorkflowRetryArticle(t *testing.T, config RunConfig) {
+	t.Helper()
+	index, err := platform.Open(platform.Config{Filename: config.IndexDbPath, Mode: "rwc", MaxConnections: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = index.Exec(`INSERT INTO articles VALUES(9,1,2,'science third','abstract','2026-10-03',0,0,NULL)`)
+	index.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertFailedWorkflowProgress(t *testing.T, engine *deliveryEngine, database *sql.DB, config RunConfig, previous *store.CheckpointRecord, failed RunOutcome, sent int, ctx context.Context) {
+	t.Helper()
+	checkpoint, err := engine.repository.LoadCheckpoint(ctx, config.Workflow, config.DbName)
+	if err != nil || checkpoint.Status != store.CheckpointStatusFailed || checkpoint.SnapshotJson != previous.SnapshotJson || !reflect.DeepEqual(checkpoint.LastCompletedRunAt, previous.LastCompletedRunAt) {
+		t.Fatal("failed selection advanced progress", err)
+	}
+	hasFailedSubscriber := hasSelectionFailureItem(t, engine, failed, ctx)
+	if !hasFailedSubscriber || sent != 1 || countRows(t, database, "favorites") != 2 || countRows(t, database, "delivery_dedupe") != 2 {
+		t.Fatal("failed selection changed durable effects or lost failure classification")
+	}
+}
+
+func assertWorkflowRetryWithoutReplay(t *testing.T, engine *deliveryEngine, database *sql.DB, config RunConfig, sent *int, ctx context.Context) {
+	t.Helper()
+	retried, err := engine.execute(ctx, config, nil, nil)
+	if err != nil || retried.Status != "completed" || len(retried.Subscribers) != 1 || !reflect.DeepEqual(retried.Subscribers[0].SelectedArticleIds, []int64{9}) || *sent != 2 || countRows(t, database, "favorites") != 3 || countRows(t, database, "delivery_dedupe") != 3 {
+		t.Fatalf("retry lost pending article or replayed confirmed delivery: %+v %v", retried, err)
+	}
+	assertWorkflowIdleAfterRetry(t, engine, config, sent, ctx)
+
+}
+
+func hasSelectionFailureItem(t *testing.T, engine *deliveryEngine, failed RunOutcome, ctx context.Context) bool {
+	t.Helper()
+	items, err := engine.repository.ListRunItems(ctx, failed.DeliveryRunId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasFailedSubscriber := false
+	for _, item := range items {
+		if item.ItemKind == store.ItemKindSubscriber {
+			hasFailedSubscriber = item.Status == store.ItemStatusFailed && item.ErrorCode != nil && *item.ErrorCode == "selection_failed"
+		}
+	}
+	return hasFailedSubscriber
+}
+
+func assertWorkflowIdleAfterRetry(t *testing.T, engine *deliveryEngine, config RunConfig, sent *int, ctx context.Context) {
+	t.Helper()
+	idle, err := engine.execute(ctx, config, nil, nil)
+	if err != nil || idle.Status != "idle" || *sent != 2 {
+		t.Fatal("successful retry did not advance progress", err)
 	}
 }
