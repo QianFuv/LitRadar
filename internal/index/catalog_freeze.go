@@ -16,21 +16,10 @@ import (
 // FreezeCatalog hashes and parses one exact file read before batch admission can mutate durable state.
 func FreezeCatalog(path, provider string) (storage.CatalogInput, error) {
 	filename := frozenCatalogBasename(path)
-	if path == "" || filename == "." || filename == ".." || filename == string(filepath.Separator) || !utf8.ValidString(filename) {
+	if invalidFrozenCatalogBasename(path, filename) {
 		return storage.CatalogInput{}, &storage.BatchError{Kind: "input", Reason: "catalog path must have a non-empty UTF-8 basename"}
 	}
-	validate := func(value, reason string) error {
-		if value == "" || len(value) > 512 || !utf8.ValidString(value) {
-			return &storage.BatchError{Kind: "input", Reason: reason}
-		}
-		for _, character := range value {
-			if unicode.IsControl(character) {
-				return &storage.BatchError{Kind: "input", Reason: reason}
-			}
-		}
-		return nil
-	}
-	if err := validate(filename, "catalog filename must be non-empty and bounded"); err != nil {
+	if err := validateFrozenCatalogField(filename, "catalog filename must be non-empty and bounded"); err != nil {
 		return storage.CatalogInput{}, err
 	}
 	name := filename
@@ -40,7 +29,7 @@ func FreezeCatalog(path, provider string) (storage.CatalogInput, error) {
 	if name == "" {
 		return storage.CatalogInput{}, &storage.BatchError{Kind: "input", Reason: "catalog filename must have a non-empty UTF-8 stem"}
 	}
-	if err := validate(provider, "provider route must be non-empty and bounded"); err != nil {
+	if err := validateFrozenCatalogField(provider, "provider route must be non-empty and bounded"); err != nil {
 		return storage.CatalogInput{}, err
 	}
 	body, err := os.ReadFile(path)
@@ -70,4 +59,22 @@ func frozenCatalogBasename(path string) string {
 		}
 		value = strings.TrimSuffix(value, ".")
 	}
+}
+
+// invalidFrozenCatalogBasename rejects empty and special basenames before reading catalog bytes.
+func invalidFrozenCatalogBasename(path, filename string) bool {
+	return path == "" || filename == "." || filename == ".." || filename == string(filepath.Separator) || !utf8.ValidString(filename)
+}
+
+// validateFrozenCatalogField enforces the original byte, UTF-8 and control-character bounds.
+func validateFrozenCatalogField(value, reason string) error {
+	if value == "" || len(value) > 512 || !utf8.ValidString(value) {
+		return &storage.BatchError{Kind: "input", Reason: reason}
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return &storage.BatchError{Kind: "input", Reason: reason}
+		}
+	}
+	return nil
 }

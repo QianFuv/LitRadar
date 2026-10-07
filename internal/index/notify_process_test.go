@@ -28,26 +28,10 @@ func TestMain(tests *testing.M) {
 	os.Exit(tests.Run())
 }
 
+// runNotifyChildFixture admits arguments, observes stdin closure and emits handoff outcomes.
 func runNotifyChildFixture(mode string) {
-	options := map[string]string{}
-	isDryRun := false
-	for position := 2; position < len(os.Args); position++ {
-		argument := os.Args[position]
-		if argument == "--dry-run" {
-			isDryRun = true
-			continue
-		}
-		if argument == "--internal-handoff-json" {
-			options[argument] = "true"
-			continue
-		}
-		if position+1 >= len(os.Args) {
-			os.Exit(90)
-		}
-		position++
-		options[argument] = os.Args[position]
-	}
-	if options["--secret-key-file"] != "private-key-path" || options["--changes-file"] != "manifest-path" || options["--project-root"] != "project-root" || options["--internal-handoff-json"] != "true" {
+	options, isDryRun := notifyChildFixtureArguments()
+	if invalidNotifyChildFixtureArguments(options) {
 		os.Exit(91)
 	}
 	if mode == "wait" {
@@ -57,25 +41,7 @@ func runNotifyChildFixture(mode string) {
 	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
 		os.Exit(92)
 	}
-	payload := notifyPayload{ProtocolVersion: 1, AttemptId: options["--attempt-id"], Workflow: "notify", Mode: "execute", Status: "completed", DbName: options["--db"]}
-	if isDryRun {
-		payload.Mode = "dry_run"
-	}
-	if mode == "stale" {
-		payload.AttemptId = "previous-attempt"
-	}
-	if mode == "failed" {
-		payload.Status = "failed"
-	}
-	if mode == "oversize" {
-		fmt.Fprint(os.Stdout, strings.Repeat(" ", 1024*1024))
-	}
-	if err := json.NewEncoder(os.Stdout).Encode(payload); err != nil {
-		os.Exit(93)
-	}
-	if mode == "failed" || mode == "inconsistent" {
-		os.Exit(1)
-	}
+	emitNotifyChildFixture(mode, options, isDryRun)
 }
 
 func TestActualNotificationProcessDrainsAndClassifies(t *testing.T) {
@@ -122,5 +88,56 @@ func TestActualNotificationCancellationAndSpawnFailure(t *testing.T) {
 	}
 	if _, err := RunNotifyProcess(context.Background(), NotifyProcessConfig{Executable: "missing-notify-executable"}, "db", "manifest", "attempt"); err == nil {
 		t.Fatal("spawn failure was swallowed")
+	}
+}
+
+// notifyChildFixtureArguments preserves flag handling and the original missing-value exit.
+func notifyChildFixtureArguments() (map[string]string, bool) {
+	options := map[string]string{}
+	isDryRun := false
+	for position := 2; position < len(os.Args); position++ {
+		argument := os.Args[position]
+		if argument == "--dry-run" {
+			isDryRun = true
+			continue
+		}
+		if argument == "--internal-handoff-json" {
+			options[argument] = "true"
+			continue
+		}
+		if position+1 >= len(os.Args) {
+			os.Exit(90)
+		}
+		position++
+		options[argument] = os.Args[position]
+	}
+	return options, isDryRun
+}
+
+// invalidNotifyChildFixtureArguments verifies all fixed invocation values before child behavior.
+func invalidNotifyChildFixtureArguments(options map[string]string) bool {
+	return options["--secret-key-file"] != "private-key-path" || options["--changes-file"] != "manifest-path" || options["--project-root"] != "project-root" || options["--internal-handoff-json"] != "true"
+}
+
+// emitNotifyChildFixture emits the same handoff payload and mode-specific exit status.
+func emitNotifyChildFixture(mode string, options map[string]string, isDryRun bool) {
+	payload := notifyPayload{ProtocolVersion: 1, AttemptId: options["--attempt-id"], Workflow: "notify", Mode: "execute", Status: "completed", DbName: options["--db"]}
+	if isDryRun {
+		payload.Mode = "dry_run"
+	}
+	if mode == "stale" {
+		payload.AttemptId = "previous-attempt"
+	}
+	if mode == "failed" {
+		payload.Status = "failed"
+	}
+	if mode == "oversize" {
+		fmt.Fprint(os.Stdout, strings.Repeat(" ", 1024*1024))
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(payload); err != nil {
+		os.Exit(93)
+	}
+	if mode == "failed" || mode == "inconsistent" {
+		os.Exit(1)
 	}
 }

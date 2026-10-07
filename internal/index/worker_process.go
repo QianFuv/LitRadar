@@ -48,22 +48,17 @@ func workerEnvironment() []string {
 	}
 	return append(environment, process.ParentEnvironment+"="+strconv.Itoa(os.Getpid()))
 }
+
+// runWorkerProcesses validates before file operations and owns cancellation, children and reader joins.
 func runWorkerProcesses(ctx context.Context, writer *ParentWriter, requests []WorkerRequest, config WorkerProcessConfig, heartbeatInterval time.Duration, launcher workerLauncher) (RunMetrics, error) {
 	if _, err := NewParentWriter(writer.content, writer.control, writer.context, writer.shouldRecordEvents, requests, writer.Metrics); err != nil {
 		return writer.Metrics, err
 	}
+	if err := prepareWorkerRequestDirectory(config.RequestDirectory); err != nil {
+		return writer.Metrics, err
+	}
 	if len(requests) == 0 {
-		if err := os.MkdirAll(config.RequestDirectory, 0777); err != nil {
-			return writer.Metrics, err
-		}
-		_, err := CleanupLegacyWorkerRequests(config.RequestDirectory, time.Now())
-		return writer.Metrics, err
-	}
-	if err := os.MkdirAll(config.RequestDirectory, 0777); err != nil {
-		return writer.Metrics, err
-	}
-	if _, err := CleanupLegacyWorkerRequests(config.RequestDirectory, time.Now()); err != nil {
-		return writer.Metrics, err
+		return writer.Metrics, nil
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	events := make(chan workerReaderEvent, len(requests))
@@ -78,81 +73,112 @@ func runWorkerProcesses(ctx context.Context, writer *ParentWriter, requests []Wo
 		readers.Wait()
 	}()
 	for _, request := range requests {
-		path := filepath.Join(config.RequestDirectory, request.RunId+"-worker-"+strconv.FormatUint(request.WorkerId, 10)+".json")
-		body, err := json.Marshal(request)
+		worker, err := launchOwnedWorker(lifetime, request, config, launcher)
 		if err != nil {
 			return writer.Metrics, err
 		}
-		if err := os.WriteFile(path, body, 0666); err != nil {
-			removeWorkerFile(path)
-			return writer.Metrics, err
-		}
-		child, err := launcher(lifetime, path, request.WorkerId)
-		if err != nil {
-			removeWorkerFile(path)
-			return writer.Metrics, err
-		}
-		children = append(children, ownedWorker{child, path})
-		if err := WriteProtocol(child.Stdin, config.Bootstrap(request)); err != nil {
+		children = append(children, worker)
+		if err := WriteProtocol(worker.child.Stdin, config.Bootstrap(request)); err != nil {
 			return writer.Metrics, parentProtocolFailure(request.WorkerId)
 		}
 		readers.Add(1)
-		go func(worker uint64, child *process.Child) {
-			defer readers.Done()
-			reader := NewProtocolReader(child.Stdout)
-			for {
-				var message WorkerMessage
-				err := reader.Read(&message)
-				select {
-				case events <- workerReaderEvent{worker, message, err}:
-				case <-lifetime.Done():
-					return
-				}
-				if err != nil {
-					return
-				}
-			}
-		}(request.WorkerId, child)
+		go readWorkerFrames(lifetime, request.WorkerId, worker.child, events, &readers)
 	}
+	err := superviseWorkerFrames(ctx, writer, children, events, heartbeatInterval)
+	return writer.Metrics, err
+}
+
+// prepareWorkerRequestDirectory cleans recognizable stale requests even when no executor is needed.
+func prepareWorkerRequestDirectory(directory string) error {
+	if err := os.MkdirAll(directory, 0777); err != nil {
+		return err
+	}
+	_, err := CleanupLegacyWorkerRequests(directory, time.Now())
+	return err
+}
+
+// launchOwnedWorker removes its request on failure and returns ownership before bootstrap writing.
+func launchOwnedWorker(ctx context.Context, request WorkerRequest, config WorkerProcessConfig, launcher workerLauncher) (ownedWorker, error) {
+	path := filepath.Join(config.RequestDirectory, request.RunId+"-worker-"+strconv.FormatUint(request.WorkerId, 10)+".json")
+	body, err := json.Marshal(request)
+	if err != nil {
+		return ownedWorker{}, err
+	}
+	if err := os.WriteFile(path, body, 0666); err != nil {
+		removeWorkerFile(path)
+		return ownedWorker{}, err
+	}
+	child, err := launcher(ctx, path, request.WorkerId)
+	if err != nil {
+		removeWorkerFile(path)
+		return ownedWorker{}, err
+	}
+	return ownedWorker{child, path}, nil
+}
+
+// readWorkerFrames makes every frame delivery cancellable so teardown can join blocked readers.
+func readWorkerFrames(ctx context.Context, worker uint64, child *process.Child, events chan<- workerReaderEvent, readers *sync.WaitGroup) {
+	defer readers.Done()
+	reader := NewProtocolReader(child.Stdout)
+	for {
+		var message WorkerMessage
+		err := reader.Read(&message)
+		select {
+		case events <- workerReaderEvent{worker, message, err}:
+		case <-ctx.Done():
+			return
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// superviseWorkerFrames serializes page commits and requires terminal, EOF and successful exit.
+func superviseWorkerFrames(ctx context.Context, writer *ParentWriter, children []ownedWorker, events <-chan workerReaderEvent, heartbeatInterval time.Duration) error {
 	remaining := len(children)
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
-	heartbeat := func() error {
-		return storage.HeartbeatLease(ctx, writer.control, writer.context.CatalogName, writer.context.ProviderName, writer.context.RunId, time.Now().Unix())
-	}
 	for remaining > 0 {
 		select {
 		case <-ctx.Done():
-			return writer.Metrics, ctx.Err()
+			return ctx.Err()
 		case <-ticker.C:
-			if err := heartbeat(); err != nil {
-				return writer.Metrics, err
+			if err := storage.HeartbeatLease(ctx, writer.control, writer.context.CatalogName, writer.context.ProviderName, writer.context.RunId, time.Now().Unix()); err != nil {
+				return err
 			}
 		case event := <-events:
 			if event.err != nil {
-				var framing *ProtocolError
-				if !errors.As(event.err, &framing) || framing.Kind != "end" {
-					return writer.Metrics, parentProtocolFailure(event.worker)
+				if err := finishWorkerProcess(ctx, writer, children[event.worker], event); err != nil {
+					return err
 				}
-				if !writer.progress[event.worker].hasTerminal {
-					return writer.Metrics, parentProtocolFailure(event.worker)
-				}
-				child := children[event.worker].child
-				child.Stdin.Close()
-				if err := writer.End(event.worker, child.Wait(ctx)); err != nil {
-					return writer.Metrics, err
-				}
-				if err := child.Close(); err != nil {
-					return writer.Metrics, parentFailure(event.worker, WorkerFailure{Class: "worker", Operation: "worker_process"})
-				}
-				removeWorkerFile(children[event.worker].path)
 				remaining--
 			} else if err := writer.Handle(ctx, event.worker, event.message, children[event.worker].child.Stdin); err != nil {
-				return writer.Metrics, err
+				return err
 			}
 		}
 	}
-	return writer.Metrics, nil
+	return nil
+}
+
+// finishWorkerProcess closes stdin before waiting and removes the request only after tree cleanup.
+func finishWorkerProcess(ctx context.Context, writer *ParentWriter, worker ownedWorker, event workerReaderEvent) error {
+	var framing *ProtocolError
+	if !errors.As(event.err, &framing) || framing.Kind != "end" {
+		return parentProtocolFailure(event.worker)
+	}
+	if !writer.progress[event.worker].hasTerminal {
+		return parentProtocolFailure(event.worker)
+	}
+	worker.child.Stdin.Close()
+	if err := writer.End(event.worker, worker.child.Wait(ctx)); err != nil {
+		return err
+	}
+	if err := worker.child.Close(); err != nil {
+		return parentFailure(event.worker, WorkerFailure{Class: "worker", Operation: "worker_process"})
+	}
+	removeWorkerFile(worker.path)
+	return nil
 }
 
 // CleanupLegacyWorkerRequests deletes only old, recognizable pre-v8 ordinary request files.
@@ -163,38 +189,49 @@ func CleanupLegacyWorkerRequests(directory string, now time.Time) (uint64, error
 	}
 	var removed uint64
 	for _, entry := range entries {
-		if !entry.Type().IsRegular() {
-			continue
-		}
-		metadata, err := entry.Info()
+		didRemove, err := removeLegacyWorkerRequest(directory, entry, now)
 		if err != nil {
 			return removed, err
 		}
-		if metadata.Size() > 64*1024*1024 || now.Sub(metadata.ModTime()) < 300*time.Second {
-			continue
+		if didRemove {
+			removed++
 		}
-		path := filepath.Join(directory, entry.Name())
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return removed, err
-		}
-		var metadataFields struct {
-			Version uint32 `json:"protocol_version"`
-			Run     string `json:"run_id"`
-			Worker  uint64 `json:"worker_id"`
-		}
-		if decodeWorkerFields(body, &metadataFields, 0, true) != nil {
-			continue
-		}
-		if metadataFields.Version >= WorkerProtocolVersion || entry.Name() != metadataFields.Run+"-worker-"+strconv.FormatUint(metadataFields.Worker, 10)+".json" {
-			continue
-		}
-		if err := removeWorkerFile(path); err != nil {
-			return removed, err
-		}
-		removed++
 	}
 	return removed, nil
+}
+
+// removeLegacyWorkerRequest retains recent, oversized, unrecognized and current protocol files.
+func removeLegacyWorkerRequest(directory string, entry os.DirEntry, now time.Time) (bool, error) {
+	if !entry.Type().IsRegular() {
+		return false, nil
+	}
+	metadata, err := entry.Info()
+	if err != nil {
+		return false, err
+	}
+	if metadata.Size() > 64*1024*1024 || now.Sub(metadata.ModTime()) < 300*time.Second {
+		return false, nil
+	}
+	path := filepath.Join(directory, entry.Name())
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	var metadataFields struct {
+		Version uint32 `json:"protocol_version"`
+		Run     string `json:"run_id"`
+		Worker  uint64 `json:"worker_id"`
+	}
+	if decodeWorkerFields(body, &metadataFields, 0, true) != nil {
+		return false, nil
+	}
+	if metadataFields.Version >= WorkerProtocolVersion || entry.Name() != metadataFields.Run+"-worker-"+strconv.FormatUint(metadataFields.Worker, 10)+".json" {
+		return false, nil
+	}
+	if err := removeWorkerFile(path); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RunWorkerRequestFile activates parent-death protection before reading request data or bootstrap secrets.

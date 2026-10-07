@@ -104,7 +104,7 @@ func NewParentWriter(content, control *sql.Conn, context WriterContext, shouldRe
 	progress := make([]writerProgress, len(requests))
 	ordinals := map[uint64]bool{}
 	for ordinal, request := range requests {
-		if request.ProtocolVersion != WorkerProtocolVersion || request.WorkerId != uint64(ordinal) || request.ProcessCount != uint64(len(requests)) || request.CatalogName != context.CatalogName || request.ProviderName != context.ProviderName || request.RunId != context.RunId || len(request.Assignments) == 0 {
+		if invalidParentWorkerRequest(request, uint64(ordinal), uint64(len(requests)), context) {
 			return nil, parentProtocolFailure(uint64(ordinal))
 		}
 		for _, assignment := range request.Assignments {
@@ -116,6 +116,11 @@ func NewParentWriter(content, control *sql.Conn, context WriterContext, shouldRe
 		progress[ordinal].assignments = request.Assignments
 	}
 	return &ParentWriter{content, control, context, shouldRecordEvents, progress, metrics}, nil
+}
+
+// invalidParentWorkerRequest binds a nonempty assignment list to its parent pipe and catalog.
+func invalidParentWorkerRequest(request WorkerRequest, worker, count uint64, context WriterContext) bool {
+	return request.ProtocolVersion != WorkerProtocolVersion || request.WorkerId != worker || request.ProcessCount != count || request.CatalogName != context.CatalogName || request.ProviderName != context.ProviderName || request.RunId != context.RunId || len(request.Assignments) == 0
 }
 func parentProtocolFailure(worker uint64) error {
 	return parentFailure(worker, WorkerFailure{Class: "worker", Operation: "worker_protocol"})
@@ -130,45 +135,12 @@ func (writer *ParentWriter) Handle(ctx context.Context, pipeWorker uint64, messa
 		return parentProtocolFailure(pipeWorker)
 	}
 	progress := &writer.progress[pipeWorker]
-	if progress.hasTerminal || message.ProtocolVersion != WorkerProtocolVersion || message.WorkerId != pipeWorker || message.Sequence != progress.nextSequence {
+	if invalidWorkerFrame(progress, pipeWorker, message) {
 		return parentProtocolFailure(pipeWorker)
 	}
 	switch message.Type {
 	case "batch":
-		if message.Batch == nil || message.PageIndex != progress.nextPage || message.PageIndex >= maximumProviderPages || progress.position >= len(progress.assignments) {
-			return parentProtocolFailure(pipeWorker)
-		}
-		assignment := progress.assignments[progress.position]
-		batch := *message.Batch
-		if message.JournalOrdinal != assignment.JournalOrdinal || batch.CatalogId != assignment.Entry.CatalogId {
-			return parentProtocolFailure(pipeWorker)
-		}
-		revision := fmt.Sprintf("%s:%s:%d", writer.context.RunId, assignment.Entry.CatalogId, message.PageIndex)
-		outcome, err := storage.CommitContentThenProgress(ctx, writer.control, writer.context.syncRun(assignment), batch.Progress, writer.context.Timestamp, func() (storage.ContentWriteOutcome, error) {
-			return storage.WriteContentBatchWithEvents(ctx, writer.content, assignment.Entry, batch, revision, writer.context.Timestamp, writer.shouldRecordEvents)
-		})
-		if err != nil {
-			return err
-		}
-		writer.Metrics.record(outcome)
-		isComplete := batch.Progress.State == domain.Complete
-		if acknowledgements == nil {
-			return parentProtocolFailure(pipeWorker)
-		}
-		if err := WriteProtocol(acknowledgements, ParentMessage{"committed", WorkerProtocolVersion, pipeWorker, message.Sequence, message.JournalOrdinal, message.PageIndex, isComplete}); err != nil {
-			return parentProtocolFailure(pipeWorker)
-		}
-		if progress.nextSequence == math.MaxUint64 {
-			return parentProtocolFailure(pipeWorker)
-		}
-		progress.nextSequence++
-		if isComplete {
-			progress.position++
-			progress.nextPage = 0
-			writer.Metrics.JournalsSucceeded++
-		} else {
-			progress.nextPage++
-		}
+		return writer.commitWorkerPage(ctx, pipeWorker, message, acknowledgements, progress)
 	case "succeeded":
 		if progress.position != len(progress.assignments) {
 			return parentProtocolFailure(pipeWorker)
@@ -182,6 +154,57 @@ func (writer *ParentWriter) Handle(ctx context.Context, pipeWorker uint64, messa
 	default:
 		return parentProtocolFailure(pipeWorker)
 	}
+	return nil
+}
+
+// invalidWorkerFrame rejects frames after terminal success or with mismatched pipe correlation.
+func invalidWorkerFrame(progress *writerProgress, pipeWorker uint64, message WorkerMessage) bool {
+	return progress.hasTerminal || message.ProtocolVersion != WorkerProtocolVersion || message.WorkerId != pipeWorker || message.Sequence != progress.nextSequence
+}
+
+// commitWorkerPage commits content and checkpoint before acknowledging or advancing memory.
+func (writer *ParentWriter) commitWorkerPage(ctx context.Context, pipeWorker uint64, message WorkerMessage, acknowledgements io.Writer, progress *writerProgress) error {
+
+	if message.Batch == nil || message.PageIndex != progress.nextPage || message.PageIndex >= maximumProviderPages || progress.position >= len(progress.assignments) {
+		return parentProtocolFailure(pipeWorker)
+	}
+	assignment := progress.assignments[progress.position]
+	batch := *message.Batch
+	if message.JournalOrdinal != assignment.JournalOrdinal || batch.CatalogId != assignment.Entry.CatalogId {
+		return parentProtocolFailure(pipeWorker)
+	}
+	revision := fmt.Sprintf("%s:%s:%d", writer.context.RunId, assignment.Entry.CatalogId, message.PageIndex)
+	outcome, err := storage.CommitContentThenProgress(ctx, writer.control, writer.context.syncRun(assignment), batch.Progress, writer.context.Timestamp, func() (storage.ContentWriteOutcome, error) {
+		return storage.WriteContentBatchWithEvents(ctx, writer.content, assignment.Entry, batch, revision, writer.context.Timestamp, writer.shouldRecordEvents)
+	})
+	if err != nil {
+		return err
+	}
+	writer.Metrics.record(outcome)
+	isComplete := batch.Progress.State == domain.Complete
+	if acknowledgements == nil {
+		return parentProtocolFailure(pipeWorker)
+	}
+	if err := WriteProtocol(acknowledgements, ParentMessage{"committed", WorkerProtocolVersion, pipeWorker, message.Sequence, message.JournalOrdinal, message.PageIndex, isComplete}); err != nil {
+		return parentProtocolFailure(pipeWorker)
+	}
+	return writer.advanceAcknowledgedPage(pipeWorker, progress, isComplete)
+}
+
+// advanceAcknowledgedPage updates memory and completion metrics only after the ACK flush.
+func (writer *ParentWriter) advanceAcknowledgedPage(pipeWorker uint64, progress *writerProgress, isComplete bool) error {
+	if progress.nextSequence == math.MaxUint64 {
+		return parentProtocolFailure(pipeWorker)
+	}
+	progress.nextSequence++
+	if isComplete {
+		progress.position++
+		progress.nextPage = 0
+		writer.Metrics.JournalsSucceeded++
+	} else {
+		progress.nextPage++
+	}
+
 	return nil
 }
 

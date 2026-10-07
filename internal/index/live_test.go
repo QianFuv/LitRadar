@@ -68,6 +68,7 @@ func assertLiveContent(t *testing.T, config LiveConfig, name string, articles, e
 	}
 }
 
+// TestLiveBoundaryResumeAndNoChangePreservePublication checks pause, resume and no-change publication across separate invocations.
 func TestLiveBoundaryResumeAndNoChangePreservePublication(t *testing.T) {
 	ctx := context.Background()
 	config := liveFixture(t, "alpha", "beta")
@@ -78,31 +79,17 @@ func TestLiveBoundaryResumeAndNoChangePreservePublication(t *testing.T) {
 		return liveBatch(entry), nil
 	})
 	first, err := runLiveIndex(ctx, config, run, rejectNotify(t))
-	if err != nil || first.Status != "paused" || len(first.Csvs) != 1 || first.Csvs[0].WrittenArticleCount != 1 || first.Csvs[0].SourceAttemptCount != 1 || first.Csvs[0].Concurrency.InlineExecutorCount != 1 {
-		t.Fatalf("first=%+v err=%v", first, err)
-	}
-	manifest := *first.Csvs[0].ManifestPath
-	original, err := os.ReadFile(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	manifest, original := assertLivePausedBoundary(t, first, err)
 	assertLiveContent(t, config, "alpha", 1, 0)
 	config.StopAfter = nil
 	second, err := runLiveIndex(ctx, config, run, rejectNotify(t))
-	if err != nil || second.Status != "succeeded" || len(second.Csvs) != 2 || second.Csvs[0].RunId != first.Csvs[0].RunId || second.Csvs[0].Concurrency.ExecutorCount != 0 || calls["journal-alpha"] != 1 || calls["journal-beta"] != 1 {
-		t.Fatalf("second=%+v calls=%v err=%v", second, calls, err)
-	}
+	assertLiveResumedBoundary(t, first, second, calls, err)
 	third, err := runLiveIndex(ctx, config, run, rejectNotify(t))
-	if err != nil || third.Status != "succeeded" || third.Csvs[0].WrittenArticleCount != 0 || third.Csvs[0].ManifestPath != nil {
-		t.Fatalf("unchanged=%+v err=%v", third, err)
-	}
-	current, err := os.ReadFile(manifest)
-	if err != nil || !bytes.Equal(original, current) {
-		t.Fatalf("no-change run replaced prior manifest: %v", err)
-	}
+	assertLiveUnchangedPublication(t, third, err, manifest, original)
 	assertLiveContent(t, config, "alpha", 1, 0)
 }
 
+// TestLiveResumePublishesFrozenIntentAfterFilesystemFailure checks publication recovery uses its frozen intent without another fetch.
 func TestLiveResumePublishesFrozenIntentAfterFilesystemFailure(t *testing.T) {
 	ctx := context.Background()
 	config := liveFixture(t, "alpha")
@@ -127,16 +114,10 @@ func TestLiveResumePublishesFrozenIntentAfterFilesystemFailure(t *testing.T) {
 		t.Fatalf("recovered=%+v calls=%d err=%v", recovered, calls, err)
 	}
 	assertLiveContent(t, config, "alpha", 1, 0)
-	body, err := os.ReadFile(*recovered.Csvs[0].ManifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest map[string]any
-	if err := json.Unmarshal(body, &manifest); err != nil || manifest["run_id"] != recovered.Csvs[0].RunId {
-		t.Fatalf("manifest=%v err=%v", manifest, err)
-	}
+	assertRecoveredLiveManifest(t, recovered)
 }
 
+// TestLiveUnknownNotificationRequiresAcknowledgmentAndNewAttempt checks ambiguous handoffs require explicit acknowledgment before retry.
 func TestLiveUnknownNotificationRequiresAcknowledgmentAndNewAttempt(t *testing.T) {
 	ctx := context.Background()
 	config := liveFixture(t, "alpha")
@@ -169,9 +150,7 @@ func TestLiveUnknownNotificationRequiresAcknowledgmentAndNewAttempt(t *testing.T
 	}
 	config.ShouldAcknowledgeUnknownNotify = true
 	result, err := runLiveIndex(ctx, config, run, notify)
-	if err != nil || result.Status != "succeeded" || len(notifications) != 2 || notifications[0] == notifications[1] || fetches != 1 {
-		t.Fatalf("result=%+v attempts=%v fetches=%d err=%v", result, notifications, fetches, err)
-	}
+	assertAcknowledgedLiveNotification(t, result, notifications, fetches, err)
 }
 
 func TestLiveFailedPageResumesCommittedCheckpoint(t *testing.T) {
@@ -293,5 +272,60 @@ func TestLiveProviderCleanupRunsDuringPanic(t *testing.T) {
 	}()
 	if !closed {
 		t.Fatal("provider resources survived panic")
+	}
+}
+
+// assertLivePausedBoundary checks the first executor and captures its published manifest bytes.
+func assertLivePausedBoundary(t *testing.T, first LiveRunOutcome, err error) (string, []byte) {
+	t.Helper()
+	if err != nil || first.Status != "paused" || len(first.Csvs) != 1 || first.Csvs[0].WrittenArticleCount != 1 || first.Csvs[0].SourceAttemptCount != 1 || first.Csvs[0].Concurrency.InlineExecutorCount != 1 {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	manifest := *first.Csvs[0].ManifestPath
+	original, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manifest, original
+}
+
+// assertLiveResumedBoundary checks completed catalogs resume without starting another executor.
+func assertLiveResumedBoundary(t *testing.T, first, second LiveRunOutcome, calls map[string]int, err error) {
+	t.Helper()
+	if err != nil || second.Status != "succeeded" || len(second.Csvs) != 2 || second.Csvs[0].RunId != first.Csvs[0].RunId || second.Csvs[0].Concurrency.ExecutorCount != 0 || calls["journal-alpha"] != 1 || calls["journal-beta"] != 1 {
+		t.Fatalf("second=%+v calls=%v err=%v", second, calls, err)
+	}
+}
+
+// assertLiveUnchangedPublication checks a no-change run retains the previous manifest bytes.
+func assertLiveUnchangedPublication(t *testing.T, third LiveRunOutcome, err error, manifest string, original []byte) {
+	t.Helper()
+	if err != nil || third.Status != "succeeded" || third.Csvs[0].WrittenArticleCount != 0 || third.Csvs[0].ManifestPath != nil {
+		t.Fatalf("unchanged=%+v err=%v", third, err)
+	}
+	current, err := os.ReadFile(manifest)
+	if err != nil || !bytes.Equal(original, current) {
+		t.Fatalf("no-change run replaced prior manifest: %v", err)
+	}
+}
+
+// assertRecoveredLiveManifest checks the frozen publication refers to the persisted indexing run.
+func assertRecoveredLiveManifest(t *testing.T, recovered LiveRunOutcome) {
+	t.Helper()
+	body, err := os.ReadFile(*recovered.Csvs[0].ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(body, &manifest); err != nil || manifest["run_id"] != recovered.Csvs[0].RunId {
+		t.Fatalf("manifest=%v err=%v", manifest, err)
+	}
+}
+
+// assertAcknowledgedLiveNotification checks acknowledged ambiguity creates one new attempt without fetching.
+func assertAcknowledgedLiveNotification(t *testing.T, result LiveRunOutcome, notifications []string, fetches int, err error) {
+	t.Helper()
+	if err != nil || result.Status != "succeeded" || len(notifications) != 2 || notifications[0] == notifications[1] || fetches != 1 {
+		t.Fatalf("result=%+v attempts=%v fetches=%d err=%v", result, notifications, fetches, err)
 	}
 }

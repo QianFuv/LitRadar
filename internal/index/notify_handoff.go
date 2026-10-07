@@ -38,7 +38,7 @@ func ClassifyNotifyOutput(body []byte, hasExceededLimit bool, attempt, database 
 	if isDryRun {
 		expectedMode = "dry_run"
 	}
-	if payload.ProtocolVersion != 1 || payload.AttemptId != attempt || payload.Workflow != "notify" || payload.Mode != expectedMode || payload.DbName != database {
+	if mismatchedNotifyIdentity(payload, attempt, database, expectedMode) {
 		return unknown
 	}
 	status := storage.NotifyStatus(payload.Status)
@@ -110,4 +110,9 @@ func RunNotifyProcess(ctx context.Context, config NotifyProcessConfig, database,
 		return NotifyObservation{Status: storage.NotifyUnknown, ExitCode: exit}, nil
 	}
 	return ClassifyNotifyOutput(body, exceeded, attempt, database, config.IsDryRun, exit), nil
+}
+
+// mismatchedNotifyIdentity rejects any mismatch in the exact trusted notification handoff identity.
+func mismatchedNotifyIdentity(payload notifyPayload, attempt, database, expectedMode string) bool {
+	return payload.ProtocolVersion != 1 || payload.AttemptId != attempt || payload.Workflow != "notify" || payload.Mode != expectedMode || payload.DbName != database
 }

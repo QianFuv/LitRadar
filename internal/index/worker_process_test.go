@@ -21,6 +21,7 @@ import (
 	storage "github.com/QianFuv/LitRadar/internal/storage/index"
 )
 
+// TestIndexChildFixture runs the task-owned child protocol and lifecycle fixtures.
 func TestIndexChildFixture(t *testing.T) {
 	mode := os.Getenv("LITRADAR_INDEX_CHILD_FIXTURE")
 	if mode == "" {
@@ -31,36 +32,58 @@ func TestIndexChildFixture(t *testing.T) {
 		os.Exit(0)
 	}
 	if mode == "stderr-owner" {
-		executable, _ := os.Executable()
-		environment := []string{}
-		for _, value := range os.Environ() {
-			if !strings.HasPrefix(value, "LITRADAR_INDEX_CHILD_FIXTURE=") {
-				environment = append(environment, value)
-			}
-		}
-		environment = append(environment, "LITRADAR_INDEX_CHILD_FIXTURE=stderr")
-		child, err := process.Start(context.Background(), process.Config{Path: executable, Args: []string{"-test.run=^TestIndexChildFixture$"}, Environment: environment, InheritStderr: true, OutputLimit: 1024})
-		if err != nil {
-			os.Exit(30)
-		}
-		if child.Wait(context.Background()) != nil {
-			child.Close()
-			os.Exit(31)
-		}
-		if child.Close() != nil {
-			os.Exit(32)
-		}
-		diagnostics, truncated := child.Diagnostics()
-		if len(diagnostics) != 0 || truncated {
-			os.Exit(33)
-		}
-		os.Exit(0)
+		runIndexStderrOwnerFixture()
 	}
 	stop, err := process.StartParentGuard()
 	if err != nil {
 		os.Exit(20)
 	}
 	defer stop()
+	request := readIndexChildFixtureRequest()
+	runEarlyIndexChildFixture(mode, request)
+	implementation := indexChildFixtureProvider(mode)
+	err = RunFetchWorker(context.Background(), request, os.Stdin, os.Stdout, func(request WorkerRequest, bootstrap WorkerBootstrap) (provider.IndexContent, func(), error) {
+		if bootstrap.CnkiCaptchaToken == nil || *bootstrap.CnkiCaptchaToken != "private-bootstrap-secret" {
+			return nil, nil, errors.New("bootstrap missing")
+		}
+		return implementation, nil, nil
+	})
+	if err != nil {
+		os.Exit(24)
+	}
+	finishIndexChildFixture(mode)
+}
+
+// runIndexStderrOwnerFixture verifies inherited diagnostics stay out of the captured output.
+func runIndexStderrOwnerFixture() {
+	executable, _ := os.Executable()
+	environment := []string{}
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "LITRADAR_INDEX_CHILD_FIXTURE=") {
+			environment = append(environment, value)
+		}
+	}
+	environment = append(environment, "LITRADAR_INDEX_CHILD_FIXTURE=stderr")
+	child, err := process.Start(context.Background(), process.Config{Path: executable, Args: []string{"-test.run=^TestIndexChildFixture$"}, Environment: environment, InheritStderr: true, OutputLimit: 1024})
+	if err != nil {
+		os.Exit(30)
+	}
+	if child.Wait(context.Background()) != nil {
+		child.Close()
+		os.Exit(31)
+	}
+	if child.Close() != nil {
+		os.Exit(32)
+	}
+	diagnostics, truncated := child.Diagnostics()
+	if len(diagnostics) != 0 || truncated {
+		os.Exit(33)
+	}
+	os.Exit(0)
+}
+
+// readIndexChildFixtureRequest rejects bootstrap secrets before strict request decoding.
+func readIndexChildFixtureRequest() WorkerRequest {
 	body, err := os.ReadFile(os.Getenv("LITRADAR_INDEX_CHILD_REQUEST"))
 	if err != nil {
 		os.Exit(21)
@@ -72,6 +95,11 @@ func TestIndexChildFixture(t *testing.T) {
 	if json.Unmarshal(body, &request) != nil {
 		os.Exit(23)
 	}
+	return request
+}
+
+// runEarlyIndexChildFixture emits the original malformed and terminal lifecycle scenarios.
+func runEarlyIndexChildFixture(mode string, request WorkerRequest) {
 	if mode == "malformed" {
 		fmt.Fprint(os.Stdout, "!")
 		os.Exit(0)
@@ -91,35 +119,19 @@ func TestIndexChildFixture(t *testing.T) {
 		WriteProtocol(os.Stdout, WorkerMessage{Type: "succeeded", ProtocolVersion: 8, WorkerId: request.WorkerId})
 		os.Exit(0)
 	}
+}
+
+// indexChildFixtureProvider retains independent acknowledged page counters per journal.
+func indexChildFixtureProvider(mode string) provider.IndexContent {
 	pages := map[string]int{}
 	implementation := workerTestProvider(func(ctx context.Context, entry domain.JournalCatalogEntry, fetch domain.IndexFetchContext) (domain.ProviderBatch, error) {
-		page := pages[entry.CatalogId]
-		pages[entry.CatalogId]++
-		progress := domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint(strconv.Itoa(page + 1))}
-		if page == 2 {
-			progress = domain.ProviderProgress{State: domain.Complete, NextAnchor: testCheckpoint("done")}
-		}
-		if page > 0 && (fetch.TraversalCheckpoint == nil || *fetch.TraversalCheckpoint != strconv.Itoa(page)) {
-			return domain.ProviderBatch{}, errors.New("checkpoint did not follow acknowledged page")
-		}
-		articles := []domain.ArticleDraft{}
-		for ordinal := 0; ordinal < 4; ordinal++ {
-			articles = append(articles, domain.ArticleDraft{CatalogId: entry.CatalogId, Title: fmt.Sprintf("Synthetic %d %d", page, ordinal), Doi: testCheckpoint(fmt.Sprintf("10.1234/%s-%d-%d", entry.CatalogId, page, ordinal)), Authors: []domain.ArticleAuthorDraft{}, RetractionDois: []string{}})
-			if mode == "pressure" {
-				articles[len(articles)-1].AbstractText = testCheckpoint(strings.TrimSpace(strings.Repeat("bounded-pipe-page ", 8192)))
-			}
-		}
-		return domain.ProviderBatch{CatalogId: entry.CatalogId, Journal: domain.JournalDraft{CatalogId: entry.CatalogId}, Articles: articles, Progress: progress}, nil
+		return indexChildFixturePage(mode, pages, entry, fetch)
 	})
-	err = RunFetchWorker(context.Background(), request, os.Stdin, os.Stdout, func(request WorkerRequest, bootstrap WorkerBootstrap) (provider.IndexContent, func(), error) {
-		if bootstrap.CnkiCaptchaToken == nil || *bootstrap.CnkiCaptchaToken != "private-bootstrap-secret" {
-			return nil, nil, errors.New("bootstrap missing")
-		}
-		return implementation, nil, nil
-	})
-	if err != nil {
-		os.Exit(24)
-	}
+	return implementation
+}
+
+// finishIndexChildFixture preserves stdin EOF, exit status and extra-frame fixture behavior.
+func finishIndexChildFixture(mode string) {
 	if mode == "stdin-eof" {
 		os.Stdout.Close()
 		io.Copy(io.Discard, os.Stdin)
@@ -132,7 +144,6 @@ func TestIndexChildFixture(t *testing.T) {
 	}
 	os.Exit(0)
 }
-
 func processWriterFixture(t *testing.T) (*ParentWriter, []WorkerRequest, WorkerProcessConfig, *storage.Connection) {
 	t.Helper()
 	_, base, _, content, control := parentWriterFixture(t)
@@ -177,6 +188,7 @@ func fixtureLauncher(mode string, started *[]*process.Child) workerLauncher {
 	}
 }
 
+// TestActualThreeWorkersDurablyCommitNinePages checks durable metrics, content, file cleanup and reaping.
 func TestActualThreeWorkersDurablyCommitNinePages(t *testing.T) {
 	writer, requests, config, content := processWriterFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -198,11 +210,7 @@ func TestActualThreeWorkersDurablyCommitNinePages(t *testing.T) {
 	if err != nil || len(paths) != 0 {
 		t.Fatal("request files retained", err)
 	}
-	for _, child := range started {
-		if err := child.Wait(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
+	assertIndexWorkersReaped(t, ctx, started)
 }
 
 func TestSuccessfulWorkerReceivesStdinEofBeforeWait(t *testing.T) {
@@ -317,6 +325,37 @@ func TestLegacyRequestCleanupKeepsUnknownAndCurrentFiles(t *testing.T) {
 	for _, name := range []string{"current-worker-1.json", "duplicate-worker-1.json", "wrong.json", "invalid-worker-1.json"} {
 		if _, err := os.Stat(filepath.Join(directory, name)); err != nil {
 			t.Fatal(name, err)
+		}
+	}
+}
+
+// indexChildFixturePage verifies acknowledged traversal before constructing each synthetic page.
+func indexChildFixturePage(mode string, pages map[string]int, entry domain.JournalCatalogEntry, fetch domain.IndexFetchContext) (domain.ProviderBatch, error) {
+	page := pages[entry.CatalogId]
+	pages[entry.CatalogId]++
+	progress := domain.ProviderProgress{State: domain.Continue, Checkpoint: testCheckpoint(strconv.Itoa(page + 1))}
+	if page == 2 {
+		progress = domain.ProviderProgress{State: domain.Complete, NextAnchor: testCheckpoint("done")}
+	}
+	if page > 0 && (fetch.TraversalCheckpoint == nil || *fetch.TraversalCheckpoint != strconv.Itoa(page)) {
+		return domain.ProviderBatch{}, errors.New("checkpoint did not follow acknowledged page")
+	}
+	articles := []domain.ArticleDraft{}
+	for ordinal := 0; ordinal < 4; ordinal++ {
+		articles = append(articles, domain.ArticleDraft{CatalogId: entry.CatalogId, Title: fmt.Sprintf("Synthetic %d %d", page, ordinal), Doi: testCheckpoint(fmt.Sprintf("10.1234/%s-%d-%d", entry.CatalogId, page, ordinal)), Authors: []domain.ArticleAuthorDraft{}, RetractionDois: []string{}})
+		if mode == "pressure" {
+			articles[len(articles)-1].AbstractText = testCheckpoint(strings.TrimSpace(strings.Repeat("bounded-pipe-page ", 8192)))
+		}
+	}
+	return domain.ProviderBatch{CatalogId: entry.CatalogId, Journal: domain.JournalDraft{CatalogId: entry.CatalogId}, Articles: articles, Progress: progress}, nil
+}
+
+// assertIndexWorkersReaped checks every launched leader after successful request cleanup.
+func assertIndexWorkersReaped(t *testing.T, ctx context.Context, started []*process.Child) {
+	t.Helper()
+	for _, child := range started {
+		if err := child.Wait(ctx); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

@@ -38,6 +38,7 @@ func workerFixtureRequest(t *testing.T) (WorkerRequest, domain.ProviderBatch) {
 }
 func testCheckpoint(value string) *string { return &value }
 
+// TestFetchWorkerWaitsForExactDurableAck verifies each fetch waits for its correlated durable ACK.
 func TestFetchWorkerWaitsForExactDurableAck(t *testing.T) {
 	request, batch := workerFixtureRequest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -89,13 +90,7 @@ func TestFetchWorkerWaitsForExactDurableAck(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var terminal WorkerMessage
-	if err := reader.Read(&terminal); err != nil || terminal.Type != "succeeded" || terminal.Sequence != 2 {
-		t.Fatalf("terminal=%+v err=%v", terminal, err)
-	}
-	if err := <-done; err != nil || !closed.Load() {
-		t.Fatalf("cleanup=%t err=%v", closed.Load(), err)
-	}
+	assertFetchWorkerTerminalAndCleanup(t, reader, done, &closed)
 }
 
 func TestFetchWorkerRejectsEveryAckCorrelationMismatch(t *testing.T) {
@@ -212,6 +207,7 @@ type rejectedAck struct{}
 
 func (rejectedAck) Write([]byte) (int, error) { return 0, errors.New("closed ACK pipe") }
 
+// TestParentNeverAcknowledgesFailedCheckpoint verifies failed progress never advances metrics or ACKs.
 func TestParentNeverAcknowledgesFailedCheckpoint(t *testing.T) {
 	writer, _, batch, content, control := parentWriterFixture(t)
 	ctx := context.Background()
@@ -227,19 +223,7 @@ func TestParentNeverAcknowledgesFailedCheckpoint(t *testing.T) {
 	if acknowledgements.Len() != 0 || writer.Metrics.PagesCommitted != 0 || writer.progress[0].nextSequence != 0 {
 		t.Fatal("failure advanced parent")
 	}
-	var articles int
-	if err := content.QueryRowContext(ctx, "SELECT COUNT(*) FROM articles").Scan(&articles); err != nil || articles == 0 {
-		t.Fatalf("content not committed: %d %v", articles, err)
-	}
-	if _, err := control.ExecContext(ctx, "DROP TRIGGER reject_progress"); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Handle(ctx, 0, message, &acknowledgements); err != nil {
-		t.Fatal(err)
-	}
-	if writer.Metrics.PagesCommitted != 1 || writer.Metrics.ArticlesChanged != 0 || acknowledgements.Len() == 0 {
-		t.Fatalf("replay duplicated or lost content: %+v", writer.Metrics)
-	}
+	assertCheckpointFailureReplay(t, ctx, writer, message, content, control, &acknowledgements)
 }
 
 func TestParentAckFailureKeepsMemoryBehindDurableProgress(t *testing.T) {
@@ -343,5 +327,35 @@ func TestWorkerFailureDoesNotExposeProviderMessage(t *testing.T) {
 	var terminal WorkerMessage
 	if NewProtocolReader(&output).Read(&terminal) != nil || terminal.Type != "failed" || terminal.Failure.Class != "provider" {
 		t.Fatalf("terminal=%+v", terminal)
+	}
+}
+
+// assertFetchWorkerTerminalAndCleanup checks the final sequence and provider cleanup after both ACKs.
+func assertFetchWorkerTerminalAndCleanup(t *testing.T, reader *ProtocolReader, done <-chan error, closed *atomic.Bool) {
+	t.Helper()
+	var terminal WorkerMessage
+	if err := reader.Read(&terminal); err != nil || terminal.Type != "succeeded" || terminal.Sequence != 2 {
+		t.Fatalf("terminal=%+v err=%v", terminal, err)
+	}
+	if err := <-done; err != nil || !closed.Load() {
+		t.Fatalf("cleanup=%t err=%v", closed.Load(), err)
+	}
+}
+
+// assertCheckpointFailureReplay verifies content survived and replay changes only progress and ACKs.
+func assertCheckpointFailureReplay(t *testing.T, ctx context.Context, writer *ParentWriter, message WorkerMessage, content, control *storage.Connection, acknowledgements *bytes.Buffer) {
+	t.Helper()
+	var articles int
+	if err := content.QueryRowContext(ctx, "SELECT COUNT(*) FROM articles").Scan(&articles); err != nil || articles == 0 {
+		t.Fatalf("content not committed: %d %v", articles, err)
+	}
+	if _, err := control.ExecContext(ctx, "DROP TRIGGER reject_progress"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Handle(ctx, 0, message, acknowledgements); err != nil {
+		t.Fatal(err)
+	}
+	if writer.Metrics.PagesCommitted != 1 || writer.Metrics.ArticlesChanged != 0 || acknowledgements.Len() == 0 {
+		t.Fatalf("replay duplicated or lost content: %+v", writer.Metrics)
 	}
 }

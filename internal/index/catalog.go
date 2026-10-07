@@ -94,21 +94,8 @@ func parseCatalogLine(line string) ([]string, error) {
 // BuildCatalogEntry normalizes a complete v3 row in its original validation order.
 func BuildCatalogEntry(row map[string]string) (domain.JournalCatalogEntry, error) {
 	entry := domain.JournalCatalogEntry{}
-	missing, unexpected := []string{}, []string{}
-	for _, column := range catalogColumns {
-		if _, ok := row[column]; !ok {
-			missing = append(missing, column)
-		}
-	}
-	for column := range row {
-		if !slices.Contains(catalogColumns, column) {
-			unexpected = append(unexpected, column)
-		}
-	}
-	if len(missing) > 0 || len(unexpected) > 0 {
-		slices.Sort(missing)
-		slices.Sort(unexpected)
-		return entry, fmt.Errorf("catalog row must use exact v3 columns; missing=%s, unexpected=%s", debugStrings(missing), debugStrings(unexpected))
+	if err := validateCatalogColumns(row); err != nil {
+		return entry, err
 	}
 	catalogId := domain.NormalizeText(row["catalog_id"])
 	if catalogId == nil {
@@ -128,17 +115,8 @@ func BuildCatalogEntry(row map[string]string) (domain.JournalCatalogEntry, error
 		return entry, errors.New("title must not be blank")
 	}
 	entry.Title = *title
-	for _, field := range []struct {
-		name        string
-		destination **string
-	}{{"issn", &entry.Issn}, {"eissn", &entry.Eissn}} {
-		if text := domain.NormalizeText(row[field.name]); text != nil {
-			value := domain.NormalizeIssn(*text)
-			if value == nil {
-				return entry, fmt.Errorf("%s contains an invalid ISSN", field.name)
-			}
-			*field.destination = value
-		}
+	if err := normalizeCatalogPrimaryIssns(row, &entry); err != nil {
+		return entry, err
 	}
 	entry.AllIssns, err = catalogList(row, "all_issns", false, true)
 	if err != nil {
@@ -159,18 +137,12 @@ func BuildCatalogEntry(row map[string]string) (domain.JournalCatalogEntry, error
 func catalogList(row map[string]string, field string, isIdentity, isIssn bool) ([]string, error) {
 	values := []string{}
 	for _, raw := range strings.Split(row[field], ";") {
-		value := domain.NormalizeText(raw)
+		value, err := catalogListValue(raw, field, isIdentity, isIssn)
+		if err != nil {
+			return nil, err
+		}
 		if value == nil {
 			continue
-		}
-		if isIdentity && *value != raw {
-			return nil, fmt.Errorf("%s must already use canonical trimmed form", field)
-		}
-		if isIssn {
-			value = domain.NormalizeIssn(*value)
-			if value == nil {
-				return nil, fmt.Errorf("%s contains an invalid ISSN", field)
-			}
 		}
 		if slices.Contains(values, *value) {
 			if isIssn {
@@ -223,32 +195,98 @@ func debugStrings(values []string) string {
 		var text strings.Builder
 		text.WriteByte('"')
 		for _, character := range value {
-			switch character {
-			case 0:
-				text.WriteString(`\0`)
-			case '\n':
-				text.WriteString(`\n`)
-			case '\r':
-				text.WriteString(`\r`)
-			case '\t':
-				text.WriteString(`\t`)
-			case '\\', '"':
-				text.WriteByte('\\')
-				text.WriteRune(character)
-			default:
-				isExtended := unicode.Is(unicode.Mn, character) || unicode.Is(unicode.Me, character)
-				if table := unicode.Properties["Other_Grapheme_Extend"]; table != nil && unicode.Is(table, character) {
-					isExtended = true
-				}
-				if !unicode.IsPrint(character) || isExtended {
-					text.WriteString(`\u{` + strconv.FormatInt(int64(character), 16) + `}`)
-				} else {
-					text.WriteRune(character)
-				}
-			}
+			writeDebugCharacter(&text, character)
 		}
 		text.WriteByte('"')
 		quoted[position] = text.String()
 	}
 	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// validateCatalogColumns reports sorted missing and unexpected names before decoding any row field.
+func validateCatalogColumns(row map[string]string) error {
+	missing, unexpected := []string{}, []string{}
+	for _, column := range catalogColumns {
+		if _, ok := row[column]; !ok {
+			missing = append(missing, column)
+		}
+	}
+	for column := range row {
+		if !slices.Contains(catalogColumns, column) {
+			unexpected = append(unexpected, column)
+		}
+	}
+	if len(missing) > 0 || len(unexpected) > 0 {
+		slices.Sort(missing)
+		slices.Sort(unexpected)
+		return fmt.Errorf("catalog row must use exact v3 columns; missing=%s, unexpected=%s", debugStrings(missing), debugStrings(unexpected))
+	}
+	return nil
+}
+
+// normalizeCatalogPrimaryIssns preserves ISSN-before-eISSN admission and partial row state on failure.
+func normalizeCatalogPrimaryIssns(row map[string]string, entry *domain.JournalCatalogEntry) error {
+	for _, field := range []struct {
+		name        string
+		destination **string
+	}{{"issn", &entry.Issn}, {"eissn", &entry.Eissn}} {
+		if text := domain.NormalizeText(row[field.name]); text != nil {
+			value := domain.NormalizeIssn(*text)
+			if value == nil {
+				return fmt.Errorf("%s contains an invalid ISSN", field.name)
+			}
+			*field.destination = value
+		}
+	}
+	return nil
+}
+
+// catalogListValue preserves blank omission, canonical identity admission and optional ISSN normalization.
+func catalogListValue(raw, field string, isIdentity, isIssn bool) (*string, error) {
+	value := domain.NormalizeText(raw)
+	if value == nil {
+		return nil, nil
+	}
+	if isIdentity && *value != raw {
+		return nil, fmt.Errorf("%s must already use canonical trimmed form", field)
+	}
+	if isIssn {
+		value = domain.NormalizeIssn(*value)
+		if value == nil {
+			return nil, fmt.Errorf("%s contains an invalid ISSN", field)
+		}
+	}
+	return value, nil
+}
+
+// writeDebugCharacter preserves Rust-style diagnostic escaping for each observed Unicode rune.
+func writeDebugCharacter(text *strings.Builder, character rune) {
+	switch character {
+	case 0:
+		text.WriteString(`\0`)
+	case '\n':
+		text.WriteString(`\n`)
+	case '\r':
+		text.WriteString(`\r`)
+	case '\t':
+		text.WriteString(`\t`)
+	case '\\', '"':
+		text.WriteByte('\\')
+		text.WriteRune(character)
+	default:
+		if !unicode.IsPrint(character) || isExtendedDebugCharacter(character) {
+			text.WriteString(`\u{` + strconv.FormatInt(int64(character), 16) + `}`)
+		} else {
+			text.WriteRune(character)
+		}
+	}
+}
+
+// isExtendedDebugCharacter includes combining marks and the Unicode grapheme-extend property.
+func isExtendedDebugCharacter(character rune) bool {
+	isExtended := unicode.Is(unicode.Mn, character) || unicode.Is(unicode.Me, character)
+	if table := unicode.Properties["Other_Grapheme_Extend"]; table != nil && unicode.Is(table, character) {
+		isExtended = true
+	}
+	return isExtended
 }

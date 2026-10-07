@@ -118,6 +118,7 @@ func TestResumedInlineAndWorkerFetchPreserveFrozenModeAnchorAndCheckpoint(t *tes
 	}
 }
 
+// TestBootstrapRetainsOldOutboxUntilResumedCatalogCompletes checks outbox disposal follows successful resumed completion.
 func TestBootstrapRetainsOldOutboxUntilResumedCatalogCompletes(t *testing.T) {
 	ctx := context.Background()
 	config := liveFixture(t, "alpha")
@@ -160,7 +161,20 @@ func TestBootstrapRetainsOldOutboxUntilResumedCatalogCompletes(t *testing.T) {
 		t.Fatal("interruption was ignored")
 	}
 	assertLiveContent(t, config, "alpha", 1, 1)
-	connection, err = storage.OpenContent(ctx, filename)
+	originalId = assertRetainedBootstrapOutbox(t, ctx, filename)
+	result, err := runLiveIndex(ctx, config, run, rejectNotify(t))
+	if err != nil || result.Status != "succeeded" || calls != 3 || result.Csvs[0].ManifestPath != nil {
+		t.Fatalf("result=%+v calls=%d err=%v", result, calls, err)
+	}
+	assertLiveContent(t, config, "alpha", 1, 0)
+	assertResumedBootstrapIdentity(t, ctx, filename, originalId)
+}
+
+// assertRetainedBootstrapOutbox checks interrupted bootstrap retains old events and canonical identity.
+func assertRetainedBootstrapOutbox(t *testing.T, ctx context.Context, filename string) int64 {
+	t.Helper()
+	var originalId int64
+	connection, err := storage.OpenContent(ctx, filename)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,12 +186,13 @@ func TestBootstrapRetainsOldOutboxUntilResumedCatalogCompletes(t *testing.T) {
 		t.Fatal(err)
 	}
 	connection.Close()
-	result, err := runLiveIndex(ctx, config, run, rejectNotify(t))
-	if err != nil || result.Status != "succeeded" || calls != 3 || result.Csvs[0].ManifestPath != nil {
-		t.Fatalf("result=%+v calls=%d err=%v", result, calls, err)
-	}
-	assertLiveContent(t, config, "alpha", 1, 0)
-	connection, err = storage.OpenContent(ctx, filename)
+	return originalId
+}
+
+// assertResumedBootstrapIdentity checks successful completion retains the original article identity.
+func assertResumedBootstrapIdentity(t *testing.T, ctx context.Context, filename string, originalId int64) {
+	t.Helper()
+	connection, err := storage.OpenContent(ctx, filename)
 	if err != nil {
 		t.Fatal(err)
 	}

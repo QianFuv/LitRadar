@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ func RunLiveIndex(ctx context.Context, config LiveConfig) (LiveRunOutcome, error
 	return runLiveIndex(ctx, config, runLiveCatalog, RunNotifyProcess)
 }
 
+// runLiveIndex completes configuration and frozen selection admission before owning a batch connection.
 func runLiveIndex(ctx context.Context, config LiveConfig, run catalogRunner, notify notifyRunner) (LiveRunOutcome, error) {
 	if err := validateLiveConfig(config); err != nil {
 		return LiveRunOutcome{}, err
@@ -35,49 +37,13 @@ func runLiveIndex(ctx context.Context, config LiveConfig, run catalogRunner, not
 		message := "no canonical catalog CSV files were selected"
 		return LiveRunOutcome{Status: "skipped", Message: &message, Csvs: []LiveCatalogOutcome{}}, nil
 	}
-	inputs := []storage.CatalogInput{}
-	for _, path := range paths {
-		filename := frozenCatalogBasename(path)
-		name := filename
-		if extension := filepath.Ext(name); extension != "" && extension != name {
-			name = strings.TrimSuffix(name, extension)
-		}
-		if name == "" || !utf8.ValidString(name) {
-			return LiveRunOutcome{}, invalidWorker("catalog filename must have a UTF-8 stem")
-		}
-		route, exists := config.IndexProviderRoutes[name]
-		if !exists {
-			return LiveRunOutcome{}, invalidWorker("index_provider_routes has no route for catalog " + name)
-		}
-		input, err := FreezeCatalog(path, route)
-		if err != nil {
-			return LiveRunOutcome{}, err
-		}
-		inputs = append(inputs, input)
-	}
-	if err := validateSelectedCatalogs(config, inputs); err != nil {
-		return LiveRunOutcome{}, err
-	}
-	selection := "all"
-	if config.File != nil {
-		selection = "explicit_file"
-	}
-	request, err := storage.NewBatchRequest(inputs, selection, requestedMode(config), config.IssueBatchSize, config.ShouldNotify, config.IsNotifyDryRun)
+	request, err := prepareLiveBatchRequest(config, paths)
 	if err != nil {
 		return LiveRunOutcome{}, err
 	}
-	stopAfter := len(inputs) - 1
-	if config.StopAfter != nil {
-		stopAfter = -1
-		for ordinal, input := range inputs {
-			if input.Filename == *config.StopAfter {
-				stopAfter = ordinal
-				break
-			}
-		}
-		if stopAfter < 0 {
-			return LiveRunOutcome{}, invalidWorker("--stop-after must name an exact CSV in the selected catalogs")
-		}
+	stopAfter, err := liveBatchStopBoundary(config, request)
+	if err != nil {
+		return LiveRunOutcome{}, err
 	}
 	batchPath := filepath.Join(config.ProjectRoot, "data", "index-control", storage.BatchDatabaseFilename)
 	connection, err := storage.OpenBatch(ctx, batchPath)
@@ -90,74 +56,9 @@ func runLiveIndex(ctx context.Context, config LiveConfig, run catalogRunner, not
 	if err != nil {
 		return LiveRunOutcome{}, err
 	}
-	batch := admission.Batch
-	if admission.IsAbandoning {
-		replacement, err := func() (storage.IndexBatch, error) {
-			for _, catalog := range batch.Catalogs {
-				control, err := storage.OpenControl(ctx, catalogControlPath(config, catalog.CatalogName))
-				if err != nil {
-					return storage.IndexBatch{}, err
-				}
-				_, err = storage.AbandonBatchCheckpoints(ctx, control.Conn, batch.BatchId)
-				control.Close()
-				if err != nil {
-					return storage.IndexBatch{}, err
-				}
-			}
-			return storage.ReplaceAbandoningBatch(ctx, connection.Conn, batch.BatchId, request, owner, time.Now().Unix())
-		}()
-		if err != nil {
-			storage.ReleaseBatchLease(context.Background(), connection.Conn, batch.BatchId, owner)
-			return LiveRunOutcome{}, err
-		}
-		batch = replacement
-	}
-	heartbeat := startLeaseHeartbeat(func() error {
-		separate, err := storage.OpenBatch(context.Background(), batchPath)
-		if err != nil {
-			return err
-		}
-		defer separate.Close()
-		return storage.HeartbeatBatchLease(context.Background(), separate.Conn, batch.BatchId, owner, time.Now().Unix())
-	}, "batch heartbeat thread panicked", 30*time.Second)
-	defer heartbeat.stopAndCheck()
-	outcomes, executionError := func() ([]LiveCatalogOutcome, error) {
-		if config.ShouldResume {
-			for _, input := range request.Catalogs {
-				control, err := storage.OpenControl(ctx, catalogControlPath(config, input.CatalogName))
-				if err != nil {
-					return nil, err
-				}
-				_, err = storage.AdoptLegacyBatchState(ctx, control.Conn, input.CatalogName, input.ProviderName, batch.BatchId, request.Mode, request.Selection == "explicit_file")
-				control.Close()
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-		return runBatchCatalogs(ctx, connection.Conn, config, request, batch, stopAfter, run, notify)
-	}()
-	heartbeatError := heartbeat.stopAndCheck()
-	if executionError != nil || heartbeatError != nil {
-		storage.ReleaseBatchLease(context.Background(), connection.Conn, batch.BatchId, owner)
-		if executionError != nil {
-			return LiveRunOutcome{}, executionError
-		}
-		return LiveRunOutcome{}, heartbeatError
-	}
-	if len(outcomes) < len(batch.Catalogs) {
-		if err := storage.ReleaseBatchLease(ctx, connection.Conn, batch.BatchId, owner); err != nil {
-			return LiveRunOutcome{}, err
-		}
-		message := "Requested catalog boundary reached; resume without --stop-after to continue."
-		return LiveRunOutcome{Status: "paused", Message: &message, Csvs: outcomes}, nil
-	}
-	if err := storage.CompleteBatch(ctx, connection.Conn, batch.BatchId, owner, time.Now().Unix()); err != nil {
-		storage.ReleaseBatchLease(context.Background(), connection.Conn, batch.BatchId, owner)
-		return LiveRunOutcome{}, err
-	}
-	return LiveRunOutcome{Status: "succeeded", Csvs: outcomes}, nil
+	return runAdmittedLiveBatch(ctx, connection.Conn, config, request, admission, owner, batchPath, stopAfter, run, notify)
 }
+
 func validateLiveConfig(config LiveConfig) error {
 	if err := indexdomain.ValidateConcurrencyOptions(config.WorkerCount, config.ProcessCount); err != nil {
 		return err
@@ -255,4 +156,149 @@ func (heartbeat *leaseHeartbeat) stopAndCheck() error {
 	heartbeat.once.Do(func() { close(heartbeat.stop) })
 	<-heartbeat.done
 	return heartbeat.err
+}
+
+// prepareLiveBatchRequest freezes every selected route before validating provider configuration.
+func prepareLiveBatchRequest(config LiveConfig, paths []string) (storage.BatchRequest, error) {
+	inputs, err := freezeSelectedLiveCatalogs(config, paths)
+	if err != nil {
+		return storage.BatchRequest{}, err
+	}
+	if err := validateSelectedCatalogs(config, inputs); err != nil {
+		return storage.BatchRequest{}, err
+	}
+	selection := "all"
+	if config.File != nil {
+		selection = "explicit_file"
+	}
+	request, err := storage.NewBatchRequest(inputs, selection, requestedMode(config), config.IssueBatchSize, config.ShouldNotify, config.IsNotifyDryRun)
+	if err != nil {
+		return storage.BatchRequest{}, err
+	}
+	return request, nil
+}
+
+// liveBatchStopBoundary resolves the exact selected filename before opening the batch database.
+func liveBatchStopBoundary(config LiveConfig, request storage.BatchRequest) (int, error) {
+	stopAfter := len(request.Catalogs) - 1
+	if config.StopAfter != nil {
+		stopAfter = -1
+		for ordinal, input := range request.Catalogs {
+			if input.Filename == *config.StopAfter {
+				stopAfter = ordinal
+				break
+			}
+		}
+		if stopAfter < 0 {
+			return 0, invalidWorker("--stop-after must name an exact CSV in the selected catalogs")
+		}
+	}
+	return stopAfter, nil
+}
+
+// runAdmittedLiveBatch stops and joins the heartbeat before any final lease disposition.
+func runAdmittedLiveBatch(ctx context.Context, connection *sql.Conn, config LiveConfig, request storage.BatchRequest, admission storage.BatchAdmission, owner, batchPath string, stopAfter int, run catalogRunner, notify notifyRunner) (LiveRunOutcome, error) {
+	batch := admission.Batch
+	if admission.IsAbandoning {
+		replacement, err := replaceAbandoningLiveBatch(ctx, connection, config, batch, request, owner)
+		if err != nil {
+			storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner)
+			return LiveRunOutcome{}, err
+		}
+		batch = replacement
+	}
+	heartbeat := startLeaseHeartbeat(func() error {
+		separate, err := storage.OpenBatch(context.Background(), batchPath)
+		if err != nil {
+			return err
+		}
+		defer separate.Close()
+		return storage.HeartbeatBatchLease(context.Background(), separate.Conn, batch.BatchId, owner, time.Now().Unix())
+	}, "batch heartbeat thread panicked", 30*time.Second)
+	defer heartbeat.stopAndCheck()
+	outcomes, executionError := executeAdmittedLiveBatch(ctx, connection, config, request, batch, stopAfter, run, notify)
+	heartbeatError := heartbeat.stopAndCheck()
+	if executionError != nil || heartbeatError != nil {
+		storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner)
+		if executionError != nil {
+			return LiveRunOutcome{}, executionError
+		}
+		return LiveRunOutcome{}, heartbeatError
+	}
+	return finishLiveBatch(ctx, connection, batch, owner, outcomes)
+}
+
+// replaceAbandoningLiveBatch closes each checkpoint connection before considering replacement.
+func replaceAbandoningLiveBatch(ctx context.Context, connection *sql.Conn, config LiveConfig, batch storage.IndexBatch, request storage.BatchRequest, owner string) (storage.IndexBatch, error) {
+	for _, catalog := range batch.Catalogs {
+		control, err := storage.OpenControl(ctx, catalogControlPath(config, catalog.CatalogName))
+		if err != nil {
+			return storage.IndexBatch{}, err
+		}
+		_, err = storage.AbandonBatchCheckpoints(ctx, control.Conn, batch.BatchId)
+		control.Close()
+		if err != nil {
+			return storage.IndexBatch{}, err
+		}
+	}
+	return storage.ReplaceAbandoningBatch(ctx, connection, batch.BatchId, request, owner, time.Now().Unix())
+}
+
+// executeAdmittedLiveBatch adopts legacy state for every requested catalog before any stop boundary.
+func executeAdmittedLiveBatch(ctx context.Context, connection *sql.Conn, config LiveConfig, request storage.BatchRequest, batch storage.IndexBatch, stopAfter int, run catalogRunner, notify notifyRunner) ([]LiveCatalogOutcome, error) {
+	if config.ShouldResume {
+		for _, input := range request.Catalogs {
+			control, err := storage.OpenControl(ctx, catalogControlPath(config, input.CatalogName))
+			if err != nil {
+				return nil, err
+			}
+			_, err = storage.AdoptLegacyBatchState(ctx, control.Conn, input.CatalogName, input.ProviderName, batch.BatchId, request.Mode, request.Selection == "explicit_file")
+			control.Close()
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return runBatchCatalogs(ctx, connection, config, request, batch, stopAfter, run, notify)
+}
+
+// finishLiveBatch preserves caller-context pause release and completion-error precedence.
+func finishLiveBatch(ctx context.Context, connection *sql.Conn, batch storage.IndexBatch, owner string, outcomes []LiveCatalogOutcome) (LiveRunOutcome, error) {
+	if len(outcomes) < len(batch.Catalogs) {
+		if err := storage.ReleaseBatchLease(ctx, connection, batch.BatchId, owner); err != nil {
+			return LiveRunOutcome{}, err
+		}
+		message := "Requested catalog boundary reached; resume without --stop-after to continue."
+		return LiveRunOutcome{Status: "paused", Message: &message, Csvs: outcomes}, nil
+	}
+	if err := storage.CompleteBatch(ctx, connection, batch.BatchId, owner, time.Now().Unix()); err != nil {
+		storage.ReleaseBatchLease(context.Background(), connection, batch.BatchId, owner)
+		return LiveRunOutcome{}, err
+	}
+	return LiveRunOutcome{Status: "succeeded", Csvs: outcomes}, nil
+}
+
+// freezeSelectedLiveCatalogs admits UTF-8 catalog stems and their configured routes in selection order.
+func freezeSelectedLiveCatalogs(config LiveConfig, paths []string) ([]storage.CatalogInput, error) {
+	inputs := []storage.CatalogInput{}
+	for _, path := range paths {
+		filename := frozenCatalogBasename(path)
+		name := filename
+		if extension := filepath.Ext(name); extension != "" && extension != name {
+			name = strings.TrimSuffix(name, extension)
+		}
+		if name == "" || !utf8.ValidString(name) {
+			return nil, invalidWorker("catalog filename must have a UTF-8 stem")
+		}
+		route, exists := config.IndexProviderRoutes[name]
+		if !exists {
+			return nil, invalidWorker("index_provider_routes has no route for catalog " + name)
+		}
+		input, err := FreezeCatalog(path, route)
+		if err != nil {
+			return nil, err
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs, nil
 }

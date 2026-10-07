@@ -3,6 +3,7 @@ package index
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,6 +26,7 @@ func crashConfiguration(root string) LiveConfig {
 	return LiveConfig{ProjectRoot: root, IssueBatchSize: 8, TimeoutSeconds: 20, ShouldResume: true, ShouldUpdate: true, ShouldNotify: true, IndexProviderRoutes: map[string]string{"alpha": "cnki"}}
 }
 
+// runCrashFixture reproduces each original kill boundary using its own durable operations.
 func runCrashFixture(root, point string) error {
 	ctx := context.Background()
 	config := crashConfiguration(root)
@@ -74,35 +76,7 @@ func runCrashFixture(root, point string) error {
 	}
 	boundary("indexing")
 	if point == "content" {
-		if err := os.MkdirAll(filepath.Dir(catalogContentPath(config, input)), 0700); err != nil {
-			return err
-		}
-		control, err := storage.OpenControl(ctx, catalogControlPath(config, "alpha"))
-		if err != nil {
-			return err
-		}
-		defer control.Close()
-		content, err := storage.OpenContent(ctx, catalogContentPath(config, input))
-		if err != nil {
-			return err
-		}
-		defer content.Close()
-		run := storage.SyncRun{Scope: storage.SyncScope{CatalogName: "alpha", ProviderName: "cnki", CatalogId: input.Entries[0].CatalogId}, BatchId: batch.BatchId, RunId: "crash-run", Mode: domain.Incremental}
-		if err := storage.AcquireLease(ctx, control.Conn, "alpha", "cnki", run.RunId, time.Now().Unix()); err != nil {
-			return err
-		}
-		if _, err := storage.PrepareJournalSync(ctx, control.Conn, run, true, "epoch"); err != nil {
-			return err
-		}
-		page := liveBatch(input.Entries[0])
-		_, err = storage.CommitContentThenProgress(ctx, control.Conn, run, page.Progress, "epoch", func() (storage.ContentWriteOutcome, error) {
-			outcome, err := storage.WriteContentBatchWithEvents(ctx, content.Conn, input.Entries[0], page, "crash-revision", "epoch", true)
-			if err == nil {
-				boundary("content")
-			}
-			return outcome, err
-		})
-		return err
+		return commitCrashFixtureContent(ctx, config, input, batch, boundary)
 	}
 	observed, err := runLiveCatalogWithFactory(ctx, config, input, batch.BatchId, func(WorkerRequest, WorkerBootstrap) (provider.IndexContent, func(), error) {
 		return workerTestProvider(func(ctx context.Context, entry domain.JournalCatalogEntry, fetch domain.IndexFetchContext) (domain.ProviderBatch, error) {
@@ -118,62 +92,11 @@ func runCrashFixture(root, point string) error {
 		return err
 	}
 	boundary("outcome")
-	intent, err := prepareCatalogManifest(ctx, config, input, outcome)
+	outcome, err = publishCrashFixtureManifest(ctx, connection.Conn, config, input, batch, outcome, &ready, boundary)
 	if err != nil {
 		return err
 	}
-	if err := storage.StoreManifestIntent(ctx, connection.Conn, batch.BatchId, batch.OwnerId, 0, intent, time.Now().Unix()); err != nil {
-		return err
-	}
-	ready.Payload = intent.Payload
-	boundary("intent")
-	outcome.ManifestPath = &intent.Path
-	if err := storage.StoreCatalogOutcome(ctx, connection.Conn, batch.BatchId, batch.OwnerId, 0, outcome, time.Now().Unix()); err != nil {
-		return err
-	}
-	boundary("manifest-path")
-	if err := storage.PublishContentChangeHistory(filepath.Join(catalogHistoryDirectory(config, input), intent.Sha256+".changes.json"), intent.Payload); err != nil {
-		return err
-	}
-	boundary("history")
-	if err := storage.PublishContentChangeManifest(filepath.Join(root, intent.Path), intent.Payload); err != nil {
-		return err
-	}
-	boundary("current")
-	content, err := storage.OpenContent(ctx, catalogContentPath(config, input))
-	if err != nil {
-		return err
-	}
-	_, err = storage.AcknowledgeContentChangeEvents(ctx, content.Conn, *intent.ThroughEventId)
-	content.Close()
-	if err != nil {
-		return err
-	}
-	boundary("ack")
-	if err := transition(storage.CatalogManifestPublished); err != nil {
-		return err
-	}
-	boundary("published")
-	if err := transition(storage.CatalogNotifying); err != nil {
-		return err
-	}
-	boundary("notifying")
-	attempt, err := storage.PrepareNotifyAttempt(ctx, connection.Conn, batch.BatchId, batch.OwnerId, 0, "durable-notification-attempt", false, time.Now().Unix())
-	if err != nil {
-		return err
-	}
-	ready.Attempt = attempt.State.AttemptId
-	boundary("notify-running")
-	zero := int32(0)
-	if _, err := storage.RecordNotifyAttemptResult(ctx, connection.Conn, batch.BatchId, batch.OwnerId, 0, ready.Attempt, storage.NotifyCompleted, &zero, time.Now().Unix()); err != nil {
-		return err
-	}
-	boundary("notify-completed")
-	if err := storage.CompleteCatalog(ctx, connection.Conn, batch.BatchId, batch.OwnerId, 0, outcome, time.Now().Unix()); err != nil {
-		return err
-	}
-	boundary("catalog-completed")
-	return fmt.Errorf("unknown crash point %s", point)
+	return completeCrashFixtureNotification(ctx, connection.Conn, batch, outcome, &ready, boundary, transition, point)
 }
 
 func TestActualKillRestartAtEveryIndexDurableBoundary(t *testing.T) {
@@ -271,4 +194,102 @@ func TestActualKillRestartAtEveryIndexDurableBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+// commitCrashFixtureContent stops between canonical content and checkpoint commit.
+func commitCrashFixtureContent(ctx context.Context, config LiveConfig, input storage.CatalogInput, batch storage.IndexBatch, boundary func(string)) error {
+	if err := os.MkdirAll(filepath.Dir(catalogContentPath(config, input)), 0700); err != nil {
+		return err
+	}
+	control, err := storage.OpenControl(ctx, catalogControlPath(config, "alpha"))
+	if err != nil {
+		return err
+	}
+	defer control.Close()
+	content, err := storage.OpenContent(ctx, catalogContentPath(config, input))
+	if err != nil {
+		return err
+	}
+	defer content.Close()
+	run := storage.SyncRun{Scope: storage.SyncScope{CatalogName: "alpha", ProviderName: "cnki", CatalogId: input.Entries[0].CatalogId}, BatchId: batch.BatchId, RunId: "crash-run", Mode: domain.Incremental}
+	if err := storage.AcquireLease(ctx, control.Conn, "alpha", "cnki", run.RunId, time.Now().Unix()); err != nil {
+		return err
+	}
+	if _, err := storage.PrepareJournalSync(ctx, control.Conn, run, true, "epoch"); err != nil {
+		return err
+	}
+	page := liveBatch(input.Entries[0])
+	_, err = storage.CommitContentThenProgress(ctx, control.Conn, run, page.Progress, "epoch", func() (storage.ContentWriteOutcome, error) {
+		outcome, err := storage.WriteContentBatchWithEvents(ctx, content.Conn, input.Entries[0], page, "crash-revision", "epoch", true)
+		if err == nil {
+			boundary("content")
+		}
+		return outcome, err
+	})
+	return err
+}
+
+// publishCrashFixtureManifest exposes frozen intent, path, history, current file and event ACK boundaries.
+func publishCrashFixtureManifest(ctx context.Context, connection *sql.Conn, config LiveConfig, input storage.CatalogInput, batch storage.IndexBatch, outcome storage.BatchCatalogOutcome, ready *crashReady, boundary func(string)) (storage.BatchCatalogOutcome, error) {
+	intent, err := prepareCatalogManifest(ctx, config, input, outcome)
+	if err != nil {
+		return outcome, err
+	}
+	if err := storage.StoreManifestIntent(ctx, connection, batch.BatchId, batch.OwnerId, 0, intent, time.Now().Unix()); err != nil {
+		return outcome, err
+	}
+	ready.Payload = intent.Payload
+	boundary("intent")
+	outcome.ManifestPath = &intent.Path
+	if err := storage.StoreCatalogOutcome(ctx, connection, batch.BatchId, batch.OwnerId, 0, outcome, time.Now().Unix()); err != nil {
+		return outcome, err
+	}
+	boundary("manifest-path")
+	if err := storage.PublishContentChangeHistory(filepath.Join(catalogHistoryDirectory(config, input), intent.Sha256+".changes.json"), intent.Payload); err != nil {
+		return outcome, err
+	}
+	boundary("history")
+	if err := storage.PublishContentChangeManifest(filepath.Join(config.ProjectRoot, intent.Path), intent.Payload); err != nil {
+		return outcome, err
+	}
+	boundary("current")
+	content, err := storage.OpenContent(ctx, catalogContentPath(config, input))
+	if err != nil {
+		return outcome, err
+	}
+	_, err = storage.AcknowledgeContentChangeEvents(ctx, content.Conn, *intent.ThroughEventId)
+	content.Close()
+	if err != nil {
+		return outcome, err
+	}
+	boundary("ack")
+	return outcome, nil
+}
+
+// completeCrashFixtureNotification exposes published, notifying, attempt and completed catalog boundaries.
+func completeCrashFixtureNotification(ctx context.Context, connection *sql.Conn, batch storage.IndexBatch, outcome storage.BatchCatalogOutcome, ready *crashReady, boundary func(string), transition func(storage.CatalogPhase) error, point string) error {
+	if err := transition(storage.CatalogManifestPublished); err != nil {
+		return err
+	}
+	boundary("published")
+	if err := transition(storage.CatalogNotifying); err != nil {
+		return err
+	}
+	boundary("notifying")
+	attempt, err := storage.PrepareNotifyAttempt(ctx, connection, batch.BatchId, batch.OwnerId, 0, "durable-notification-attempt", false, time.Now().Unix())
+	if err != nil {
+		return err
+	}
+	ready.Attempt = attempt.State.AttemptId
+	boundary("notify-running")
+	zero := int32(0)
+	if _, err := storage.RecordNotifyAttemptResult(ctx, connection, batch.BatchId, batch.OwnerId, 0, ready.Attempt, storage.NotifyCompleted, &zero, time.Now().Unix()); err != nil {
+		return err
+	}
+	boundary("notify-completed")
+	if err := storage.CompleteCatalog(ctx, connection, batch.BatchId, batch.OwnerId, 0, outcome, time.Now().Unix()); err != nil {
+		return err
+	}
+	boundary("catalog-completed")
+	return fmt.Errorf("unknown crash point %s", point)
 }

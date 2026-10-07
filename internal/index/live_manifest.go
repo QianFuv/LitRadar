@@ -47,7 +47,7 @@ func shouldPublishManifest(config LiveConfig, input storage.CatalogInput, outcom
 	if err != nil {
 		return false, err
 	}
-	if !metadata.Mode().IsRegular() || metadata.Size() > 64*1024*1024 {
+	if invalidExistingManifestFile(metadata) {
 		return false, invalidWorker("existing change manifest is not a bounded regular file")
 	}
 	body, err := os.ReadFile(path)
@@ -61,10 +61,8 @@ func shouldPublishManifest(config LiveConfig, input storage.CatalogInput, outcom
 	if json.Unmarshal(body, &manifest) != nil {
 		return false, invalidWorker("existing change manifest does not match the selected catalog")
 	}
-	var run, generated, database string
-	var summary map[string]json.RawMessage
-	if json.Unmarshal(manifest["run_id"], &run) != nil || run == "" || json.Unmarshal(manifest["generated_at"], &generated) != nil || generated == "" || json.Unmarshal(manifest["db_name"], &database) != nil || database != catalogDatabaseName(input) || json.Unmarshal(manifest["summary"], &summary) != nil || summary == nil {
-		return false, invalidWorker("existing change manifest does not match the selected catalog")
+	if err := validateExistingManifestIdentity(manifest, input); err != nil {
+		return false, err
 	}
 	return false, nil
 }
@@ -95,4 +93,19 @@ func publishCatalogManifest(ctx context.Context, config LiveConfig, input storag
 		slog.InfoContext(ctx, "index.batch.manifest_history_pruned", "component", "index", "catalog", input.CatalogName, "removed", removed)
 	}
 	return nil
+}
+
+// validateExistingManifestIdentity preserves ordered existing-manifest fields without requiring the current run.
+func validateExistingManifestIdentity(manifest map[string]json.RawMessage, input storage.CatalogInput) error {
+	var run, generated, database string
+	var summary map[string]json.RawMessage
+	if json.Unmarshal(manifest["run_id"], &run) != nil || run == "" || json.Unmarshal(manifest["generated_at"], &generated) != nil || generated == "" || json.Unmarshal(manifest["db_name"], &database) != nil || database != catalogDatabaseName(input) || json.Unmarshal(manifest["summary"], &summary) != nil || summary == nil {
+		return invalidWorker("existing change manifest does not match the selected catalog")
+	}
+	return nil
+}
+
+// invalidExistingManifestFile bounds existing manifests before reading their bytes.
+func invalidExistingManifestFile(metadata os.FileInfo) bool {
+	return !metadata.Mode().IsRegular() || metadata.Size() > 64*1024*1024
 }
