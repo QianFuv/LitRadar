@@ -70,84 +70,121 @@ export function TrackingSettingsContent({
   const isInitialLoading = recommendation.notificationQuery.isPending && !recommendation.hasDraft;
   const isInitialError = recommendation.notificationQuery.isError && !recommendation.hasDraft;
 
+  const state = { trackingPage, recommendation, isInitialLoading, isInitialError, section };
   return (
     <div className="flex min-h-full flex-col">
       <fieldset
         className="m-0 min-w-0 flex-1 border-0 p-0"
         disabled={recommendation.save.mutation.isPending}
       >
-        {isInitialLoading ? (
-          <div role="status" className="rounded-md border px-3 py-4 text-sm text-muted-foreground">
-            正在加载已保存的推荐配置…
-          </div>
-        ) : isInitialError ? (
-          <div
-            role="alert"
-            className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive"
-          >
-            {recommendation.notificationQuery.error instanceof Error
-              ? recommendation.notificationQuery.error.message
-              : '加载推荐配置失败'}
-          </div>
-        ) : section === 'tracking' ? (
-          <>
-            <TrackingFolderCard model={trackingPage.folder} />
-            <RecommendationSettingsSection model={recommendation} />
-            <TrackingHelpCard />
-          </>
-        ) : (
-          <>
-            <DeliverySettingsSection model={recommendation} />
-            <ManualPushCard model={trackingPage.manualPush} />
-          </>
-        )}
+        {renderTrackingCategory(state)}
       </fieldset>
 
-      {!isInitialLoading && !isInitialError && (
-        <div className="sticky bottom-0 -mx-5 mt-6 flex flex-col gap-3 border-t bg-background/95 px-5 py-4 backdrop-blur-sm sm:flex-row sm:items-center sm:justify-end md:-mx-8 md:px-8">
-          <div className="min-h-5 flex-1 text-sm">
-            {recommendation.databaseSelection.unavailable.length > 0 && (
-              <span role="alert" className="text-destructive">
-                推送数据库已不可用，请在“文献追踪”中重新选择或明确设为全部。
-              </span>
-            )}
-            {recommendation.save.didSave && (
-              <span role="status" className="text-success-foreground">
-                已保存
-              </span>
-            )}
-            {recommendation.save.mutation.isError && (
-              <span role="alert" className="text-destructive">
-                {recommendation.save.mutation.error instanceof Error
-                  ? recommendation.save.mutation.error.message
-                  : '保存失败'}
-              </span>
-            )}
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full sm:w-auto"
-            disabled={!trackingPage.hasUnsavedSettings || recommendation.save.mutation.isPending}
-            onClick={trackingPage.discardSettings}
-          >
-            取消更改
-          </Button>
-          <Button
-            type="button"
-            className="w-full sm:w-auto"
-            disabled={
-              !trackingPage.hasUnsavedSettings ||
-              recommendation.save.mutation.isPending ||
-              recommendation.databaseSelection.unavailable.length > 0
-            }
-            onClick={() => recommendation.save.mutation.mutate()}
-          >
-            <Save className="size-4" />
-            {recommendation.save.mutation.isPending ? '保存中…' : '保存更改'}
-          </Button>
-        </div>
+      {!isInitialLoading && !isInitialError && renderTrackingSaveBar(state)}
+    </div>
+  );
+}
+
+/** Retain draft-aware initial loading/error and category content precedence. */
+function renderTrackingCategory(state: TrackingSettingsViewState) {
+  const { section, trackingPage, recommendation, isInitialLoading, isInitialError } = state;
+  if (isInitialLoading)
+    return (
+      <div role="status" className="rounded-md border px-3 py-4 text-sm text-muted-foreground">
+        正在加载已保存的推荐配置…
+      </div>
+    );
+  if (isInitialError)
+    return (
+      <div
+        role="alert"
+        className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive"
+      >
+        {recommendation.notificationQuery.error instanceof Error
+          ? recommendation.notificationQuery.error.message
+          : '加载推荐配置失败'}
+      </div>
+    );
+  if (section === 'tracking')
+    return (
+      <>
+        <TrackingFolderCard model={trackingPage.folder} />
+        <RecommendationSettingsSection model={recommendation} />
+        <TrackingHelpCard />
+      </>
+    );
+  return (
+    <>
+      <DeliverySettingsSection model={recommendation} />
+      <ManualPushCard model={trackingPage.manualPush} />
+    </>
+  );
+}
+
+/** Retain unavailable database, saved and failed-save feedback order. */
+function renderTrackingSaveFeedback(state: TrackingSettingsViewState) {
+  const { recommendation } = state;
+
+  return (
+    <div className="min-h-5 flex-1 text-sm">
+      {recommendation.databaseSelection.unavailable.length > 0 && (
+        <span role="alert" className="text-destructive">
+          推送数据库已不可用，请在“文献追踪”中重新选择或明确设为全部。
+        </span>
+      )}
+      {recommendation.save.didSave && (
+        <span role="status" className="text-success-foreground">
+          已保存
+        </span>
+      )}
+      {recommendation.save.mutation.isError && (
+        <span role="alert" className="text-destructive">
+          {recommendation.save.mutation.error instanceof Error
+            ? recommendation.save.mutation.error.message
+            : '保存失败'}
+        </span>
       )}
     </div>
   );
 }
+
+/** Retain discard/save admission guards and draft ownership. */
+function renderTrackingSaveBar(state: TrackingSettingsViewState) {
+  const { trackingPage, recommendation } = state;
+
+  return (
+    <div className="sticky bottom-0 -mx-5 mt-6 flex flex-col gap-3 border-t bg-background/95 px-5 py-4 backdrop-blur-sm sm:flex-row sm:items-center sm:justify-end md:-mx-8 md:px-8">
+      {renderTrackingSaveFeedback(state)}
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full sm:w-auto"
+        disabled={!trackingPage.hasUnsavedSettings || recommendation.save.mutation.isPending}
+        onClick={trackingPage.discardSettings}
+      >
+        取消更改
+      </Button>
+      <Button
+        type="button"
+        className="w-full sm:w-auto"
+        disabled={
+          !trackingPage.hasUnsavedSettings ||
+          recommendation.save.mutation.isPending ||
+          recommendation.databaseSelection.unavailable.length > 0
+        }
+        onClick={() => recommendation.save.mutation.mutate()}
+      >
+        <Save className="size-4" />
+        {recommendation.save.mutation.isPending ? '保存中…' : '保存更改'}
+      </Button>
+    </div>
+  );
+}
+
+type TrackingSettingsViewState = {
+  trackingPage: ReturnType<typeof useTrackingPage>;
+  recommendation: ReturnType<typeof useTrackingPage>['recommendation'];
+  isInitialLoading: boolean;
+  isInitialError: boolean;
+  section: TrackingSettingsSectionId;
+};

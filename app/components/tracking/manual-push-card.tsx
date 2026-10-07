@@ -36,6 +36,7 @@ type ManualPushCardProps = {
 export function ManualPushCard({ model }: ManualPushCardProps) {
   const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
 
+  const state = { model, feedbackTransition };
   return (
     <SettingsSection>
       <SettingsSectionHeader>
@@ -48,43 +49,11 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
             可推送文章: {model.weeklyArticlesAvailable ?? '…'} 篇
           </div>
           <div className="flex w-full gap-2 sm:w-auto">
-            {model.status?.status === 'unknown' && model.status.job_id && (
-              <Button
-                className="flex-1 sm:flex-none"
-                variant="outline"
-                onClick={() => model.acknowledgeUnknownMutation.mutate(model.status?.job_id ?? '')}
-                disabled={model.acknowledgeUnknownMutation.isPending}
-              >
-                <ShieldCheck className="mr-1 h-4 w-4" />
-                {model.acknowledgeUnknownMutation.isPending ? '确认中…' : '确认未知并继续'}
-              </Button>
-            )}
-            {model.status?.can_cancel && model.status.job_id && (
-              <Button
-                className="flex-1 sm:flex-none"
-                variant="outline"
-                onClick={() => model.cancelMutation.mutate(model.status?.job_id ?? '')}
-                disabled={model.cancelMutation.isPending}
-              >
-                <X className="mr-1 h-4 w-4" />
-                {model.cancelMutation.isPending ? '取消中…' : '取消任务'}
-              </Button>
-            )}
-            <Button
-              className="flex-1 sm:flex-none"
-              onClick={() => model.mutation.mutate()}
-              disabled={
-                model.isLoading ||
-                model.mutation.isPending ||
-                model.acknowledgeUnknownMutation.isPending ||
-                model.isPolling ||
-                model.status?.status === 'unknown' ||
-                (model.requiresTrackingFolder && !model.trackingFolder)
-              }
-            >
-              <Download className="mr-1 h-4 w-4" />
-              {model.label}
-            </Button>
+            {model.status?.status === 'unknown' &&
+              model.status.job_id &&
+              renderUnknownPushAcknowledgement(state)}
+            {model.status?.can_cancel && model.status.job_id && renderManualPushCancel(state)}
+            {renderManualPushTrigger(state)}
           </div>
         </div>
         <MotionPresence>
@@ -108,3 +77,64 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
     </SettingsSection>
   );
 }
+
+/** Retain the explicit unknown-result acknowledgement action. */
+function renderUnknownPushAcknowledgement(state: ManualPushViewState) {
+  const { model } = state;
+
+  return (
+    <Button
+      className="flex-1 sm:flex-none"
+      variant="outline"
+      onClick={() => model.acknowledgeUnknownMutation.mutate(model.status?.job_id ?? '')}
+      disabled={model.acknowledgeUnknownMutation.isPending}
+    >
+      <ShieldCheck className="mr-1 h-4 w-4" />
+      {model.acknowledgeUnknownMutation.isPending ? '确认中…' : '确认未知并继续'}
+    </Button>
+  );
+}
+
+/** Retain the cancellable job action and its original pending guard. */
+function renderManualPushCancel(state: ManualPushViewState) {
+  const { model } = state;
+
+  return (
+    <Button
+      className="flex-1 sm:flex-none"
+      variant="outline"
+      onClick={() => model.cancelMutation.mutate(model.status?.job_id ?? '')}
+      disabled={model.cancelMutation.isPending}
+    >
+      <X className="mr-1 h-4 w-4" />
+      {model.cancelMutation.isPending ? '取消中…' : '取消任务'}
+    </Button>
+  );
+}
+
+/** Retain every original push admission guard without adding cancel-pending blocking. */
+function renderManualPushTrigger(state: ManualPushViewState) {
+  const { model } = state;
+
+  return (
+    <Button
+      className="flex-1 sm:flex-none"
+      onClick={() => model.mutation.mutate()}
+      disabled={
+        model.isLoading ||
+        model.mutation.isPending ||
+        model.acknowledgeUnknownMutation.isPending ||
+        model.isPolling ||
+        model.status?.status === 'unknown' ||
+        (model.requiresTrackingFolder && !model.trackingFolder)
+      }
+    >
+      <Download className="mr-1 h-4 w-4" />
+      {model.label}
+    </Button>
+  );
+}
+
+type ManualPushViewState = ManualPushCardProps & {
+  feedbackTransition: ReturnType<typeof useMotionTransition>;
+};

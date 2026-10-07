@@ -115,27 +115,8 @@ export function useTrackingPage(userId: number) {
   });
 
   const normalizeSettings = useCallback(
-    (settings: NotificationSettings | null | undefined): NotificationSettingsUpdate => ({
-      keywords: settings?.keywords || [],
-      directions: settings?.directions || [],
-      selected_databases: settings?.selected_databases || [],
-      delivery_method: settings?.delivery_method || 'folder',
-      pushplus_token: undefined,
-      pushplus_template: settings?.pushplus_template || 'markdown',
-      pushplus_topic: settings?.pushplus_topic || '',
-      pushplus_channel: settings?.pushplus_channel || 'wechat',
-      sync_to_tracking_folder: settings?.sync_to_tracking_folder ?? false,
-      ai_base_url: settings?.ai_base_url || '',
-      ai_api_key: undefined,
-      ai_model: settings?.ai_model || '',
-      ai_system_prompt: settings?.ai_system_prompt || '',
-      ai_backup_base_url: settings?.ai_backup_base_url || '',
-      ai_backup_api_key: undefined,
-      ai_backup_model: settings?.ai_backup_model || '',
-      ai_backup_system_prompt: settings?.ai_backup_system_prompt || '',
-      ai_retry_attempts: settings?.ai_retry_attempts ?? 3,
-      enabled: settings?.enabled ?? true,
-    }),
+    (settings: NotificationSettings | null | undefined): NotificationSettingsUpdate =>
+      normalizeTrackingSettings(settings),
     [],
   );
 
@@ -223,29 +204,21 @@ export function useTrackingPage(userId: number) {
   });
   const requiresTrackingFolder = deliveryMethod === 'folder' || syncToTrackingFolder;
   const effectiveSelectedDatabases = Array.from(new Set(selectedDatabases));
-  const unavailableSelectedDatabases = databasesQuery.isSuccess
-    ? effectiveSelectedDatabases.filter((dbName) => !availableDatabases.includes(dbName))
-    : [];
+  const unavailableSelectedDatabases = getUnavailableTrackingDatabases(
+    databasesQuery.isSuccess,
+    effectiveSelectedDatabases,
+    availableDatabases,
+  );
   const allDatabasesSelected = effectiveSelectedDatabases.length === 0;
   const manualPushStatus = manualPushQuery.data;
-  const isManualPushActive =
-    manualPushStatus?.status === 'pending' || manualPushStatus?.status === 'running';
-  const manualPushLabel =
-    pushMut.isPending || manualPushStatus?.status === 'pending'
-      ? '排队中…'
-      : manualPushStatus?.status === 'running'
-        ? '推送中…'
-        : deliveryMethod === 'pushplus'
-          ? syncToTrackingFolder
-            ? '推送到 PushPlus 并同步文件夹'
-            : '推送到 PushPlus'
-          : '推送到追踪文件夹';
-  const manualPushDescription =
-    deliveryMethod === 'pushplus'
-      ? syncToTrackingFolder
-        ? '将选中数据库中最近一周的文章按当前 AI 推荐规则发送到 PushPlus，并同步写入追踪文件夹。任务会在后台执行。'
-        : '将选中数据库中最近一周的文章按当前 AI 推荐规则发送到 PushPlus。任务会在后台执行。'
-      : '将选中数据库中最近一周的文章按当前 AI 推荐规则同步到追踪文件夹。任务会在后台执行。';
+  const isManualPushActive = isActiveManualPush(manualPushStatus);
+  const manualPushLabel = getManualPushLabel(
+    pushMut.isPending,
+    manualPushStatus,
+    deliveryMethod,
+    syncToTrackingFolder,
+  );
+  const manualPushDescription = getManualPushDescription(deliveryMethod, syncToTrackingFolder);
 
   const formatManualPushResult = useCallback((data: ManualPushStatus): string => {
     if (data.message) {
@@ -258,13 +231,7 @@ export function useTrackingPage(userId: number) {
     cancelPushMut.error ??
     acknowledgeUnknownPushMut.error ??
     manualPushQuery.error;
-  const pushResult = manualPushError
-    ? manualPushError instanceof Error
-      ? manualPushError.message
-      : '推送任务操作失败'
-    : manualPushStatus && manualPushStatus.status !== 'idle'
-      ? formatManualPushResult(manualPushStatus)
-      : null;
+  const pushResult = getManualPushResult(manualPushError, manualPushStatus, formatManualPushResult);
 
   useEffect(() => {
     if (
@@ -372,7 +339,7 @@ export function useTrackingPage(userId: number) {
     });
   }
 
-  const trackingFolder = status?.tracking_folder ?? null;
+  const trackingFolder = getTrackingFolder(status);
 
   return {
     folder: {
@@ -470,3 +437,115 @@ export function useTrackingPage(userId: number) {
 
 /** Tracking page view model grouped by rendered section. */
 export type TrackingPageViewModel = ReturnType<typeof useTrackingPage>;
+
+/** Retain preferences arrays and the original delivery-method default. */
+function normalizeTrackingPreferences(settings: NotificationSettings | null | undefined) {
+  return {
+    keywords: settings?.keywords || [],
+    directions: settings?.directions || [],
+    selected_databases: settings?.selected_databases || [],
+    delivery_method: settings?.delivery_method || 'folder',
+  };
+}
+
+/** Retain omitted PushPlus secret and each original transport fallback. */
+function normalizeTrackingDelivery(settings: NotificationSettings | null | undefined) {
+  return {
+    pushplus_token: undefined,
+    pushplus_template: settings?.pushplus_template || 'markdown',
+    pushplus_topic: settings?.pushplus_topic || '',
+    pushplus_channel: settings?.pushplus_channel || 'wechat',
+    sync_to_tracking_folder: settings?.sync_to_tracking_folder ?? false,
+  };
+}
+
+/** Retain primary AI defaults without exposing the stored credential. */
+function normalizePrimaryAiSettings(settings: NotificationSettings | null | undefined) {
+  return {
+    ai_base_url: settings?.ai_base_url || '',
+    ai_api_key: undefined,
+    ai_model: settings?.ai_model || '',
+    ai_system_prompt: settings?.ai_system_prompt || '',
+  };
+}
+
+/** Retain backup AI defaults without exposing the stored credential. */
+function normalizeBackupAiSettings(settings: NotificationSettings | null | undefined) {
+  return {
+    ai_backup_base_url: settings?.ai_backup_base_url || '',
+    ai_backup_api_key: undefined,
+    ai_backup_model: settings?.ai_backup_model || '',
+    ai_backup_system_prompt: settings?.ai_backup_system_prompt || '',
+  };
+}
+
+/** Retain nullish retry and enablement defaults. */
+function normalizeTrackingEnablement(settings: NotificationSettings | null | undefined) {
+  return {
+    ai_retry_attempts: settings?.ai_retry_attempts ?? 3,
+    enabled: settings?.enabled ?? true,
+  };
+}
+
+/** Normalize saved tracking fields in their original key and evaluation order. */
+function normalizeTrackingSettings(
+  settings: NotificationSettings | null | undefined,
+): NotificationSettingsUpdate {
+  return {
+    ...normalizeTrackingPreferences(settings),
+    ...normalizeTrackingDelivery(settings),
+    ...normalizePrimaryAiSettings(settings),
+    ...normalizeBackupAiSettings(settings),
+    ...normalizeTrackingEnablement(settings),
+  };
+}
+
+/** Preserve unavailable-database filtering only after successful catalog acquisition. */
+function getUnavailableTrackingDatabases(
+  isSuccess: boolean,
+  selected: string[],
+  available: string[],
+): string[] {
+  return isSuccess ? selected.filter((name) => !available.includes(name)) : [];
+}
+/** Identify only pending and running jobs as active. */
+function isActiveManualPush(status: ManualPushStatus | undefined): boolean {
+  return status?.status === 'pending' || status?.status === 'running';
+}
+/** Resolve queued/running feedback before delivery configuration. */
+function getManualPushLabel(
+  isPending: boolean,
+  status: ManualPushStatus | undefined,
+  method: NotificationSettingsUpdate['delivery_method'],
+  shouldSync: boolean,
+): string {
+  if (isPending || status?.status === 'pending') return '排队中…';
+  if (status?.status === 'running') return '推送中…';
+  if (method === 'pushplus') return shouldSync ? '推送到 PushPlus 并同步文件夹' : '推送到 PushPlus';
+  return '推送到追踪文件夹';
+}
+/** Retain the original delivery-specific explanation. */
+function getManualPushDescription(
+  method: NotificationSettingsUpdate['delivery_method'],
+  shouldSync: boolean,
+): string {
+  if (method === 'pushplus')
+    return shouldSync
+      ? '将选中数据库中最近一周的文章按当前 AI 推荐规则发送到 PushPlus，并同步写入追踪文件夹。任务会在后台执行。'
+      : '将选中数据库中最近一周的文章按当前 AI 推荐规则发送到 PushPlus。任务会在后台执行。';
+  return '将选中数据库中最近一周的文章按当前 AI 推荐规则同步到追踪文件夹。任务会在后台执行。';
+}
+/** Resolve the existing error priority before a non-idle job's message. */
+function getManualPushResult(
+  error: unknown,
+  status: ManualPushStatus | undefined,
+  format: (data: ManualPushStatus) => string,
+): string | null {
+  if (error) return error instanceof Error ? error.message : '推送任务操作失败';
+  if (status && status.status !== 'idle') return format(status);
+  return null;
+}
+/** Retain the server tracking-folder fallback without changing query ownership. */
+function getTrackingFolder(status: Awaited<ReturnType<typeof getTrackingStatus>> | undefined) {
+  return status?.tracking_folder ?? null;
+}

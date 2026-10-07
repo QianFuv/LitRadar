@@ -53,6 +53,17 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
   const databaseSelection = model.databaseSelection;
   const chipTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
 
+  const state = {
+    model,
+    backup,
+    endpoints,
+    primary,
+    retryAttempts,
+    directions,
+    keywords,
+    databaseSelection,
+    chipTransition,
+  };
   return (
     <SettingsSection>
       <SettingsSectionHeader>
@@ -77,524 +88,619 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
           />
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="keyword-input">关键词</Label>
-          <div className="flex min-h-[2rem] flex-wrap gap-1.5">
-            <MotionPresence>
-              {keywords.items.map((keyword) => (
-                <MotionSpan
-                  key={keyword}
-                  className="inline-flex"
-                  data-motion-preference-chip={`keyword-${keyword}`}
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, pointerEvents: 'none', scale: 0.96 }}
-                  transition={chipTransition}
-                >
-                  <Badge variant="secondary" className="gap-1 pr-1">
-                    {keyword}
-                    <button
-                      type="button"
-                      aria-label={`移除关键词 ${keyword}`}
-                      onClick={() =>
-                        model.updateSettings((current) => ({
-                          ...current,
-                          keywords: current.keywords.filter((item) => item !== keyword),
-                        }))
-                      }
-                      className="motion-control rounded-full p-0.5 transition-colors hover:bg-accent-pressed active:bg-accent-pressed focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                </MotionSpan>
-              ))}
-            </MotionPresence>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input
-              id="keyword-input"
-              name="notification_keyword"
-              autoComplete="off"
-              spellCheck={false}
-              value={keywords.input}
-              onChange={(event) => keywords.setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  keywords.add();
-                }
-              }}
-              placeholder="输入关键词后回车添加"
-              className="flex-1"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full sm:w-auto"
-              aria-label="添加关键词"
-              onClick={keywords.add}
-              disabled={!keywords.input.trim()}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+        {renderRecommendationKeywords(state)}
 
-        <div className="space-y-2">
-          <Label htmlFor="direction-input">研究方向</Label>
-          <div className="flex min-h-[2rem] flex-wrap gap-1.5">
-            <MotionPresence>
-              {directions.items.map((direction) => (
-                <MotionSpan
-                  key={direction}
-                  className="inline-flex"
-                  data-motion-preference-chip={`direction-${direction}`}
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, pointerEvents: 'none', scale: 0.96 }}
-                  transition={chipTransition}
-                >
-                  <Badge variant="secondary" className="gap-1 pr-1">
-                    {direction}
-                    <button
-                      type="button"
-                      aria-label={`移除研究方向 ${direction}`}
-                      onClick={() =>
-                        model.updateSettings((current) => ({
-                          ...current,
-                          directions: current.directions.filter((item) => item !== direction),
-                        }))
-                      }
-                      className="motion-control rounded-full p-0.5 transition-colors hover:bg-accent-pressed active:bg-accent-pressed focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                </MotionSpan>
-              ))}
-            </MotionPresence>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input
-              id="direction-input"
-              name="notification_direction"
-              autoComplete="off"
-              spellCheck={false}
-              value={directions.input}
-              onChange={(event) => directions.setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  directions.add();
-                }
-              }}
-              placeholder="输入研究方向后回车添加"
-              className="flex-1"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full sm:w-auto"
-              aria-label="添加研究方向"
-              onClick={directions.add}
-              disabled={!directions.input.trim()}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+        {renderRecommendationDirections(state)}
 
-        <div
-          className="space-y-3 rounded-md border p-3"
-          role="group"
-          aria-labelledby="push-databases-label"
-        >
-          <div className="space-y-1">
-            <div id="push-databases-label" className="text-base font-medium">
-              推送数据库
-            </div>
-            <p className="text-xs text-muted-foreground">
-              手动推送和自动推送都会按这里的数据库范围执行；不限制时表示全部数据库。
-            </p>
-          </div>
-          {databaseSelection.query.isPending ? (
-            <div
-              role="status"
-              className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
-            >
-              正在加载数据库列表…
-            </div>
-          ) : databaseSelection.query.isError ? (
-            <div
-              role="alert"
-              className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive"
-            >
-              {databaseSelection.query.error instanceof Error
-                ? databaseSelection.query.error.message
-                : '加载数据库列表失败'}
-            </div>
-          ) : databaseSelection.available.length === 0 ? (
-            <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-              当前没有可用数据库。
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex flex-col gap-2 rounded-md border border-dashed p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">全部数据库</div>
-                  <p className="text-xs text-muted-foreground">
-                    选中后，新增加的数据库也会自动纳入推送范围。
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant={databaseSelection.allSelected ? 'default' : 'outline'}
-                  size="sm"
-                  className="w-full sm:w-auto"
-                  onClick={databaseSelection.selectAll}
-                >
-                  设为全部数据库
-                </Button>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {databaseSelection.available.map((databaseName) => {
-                  const isChecked =
-                    databaseSelection.allSelected ||
-                    databaseSelection.effectiveSelected.includes(databaseName);
-                  return (
-                    <label
-                      key={databaseName}
-                      className="motion-control content-visibility-row flex items-start gap-3 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-accent focus-within:bg-accent"
-                    >
-                      <Checkbox
-                        checked={isChecked}
-                        onCheckedChange={(checked: boolean | 'indeterminate') =>
-                          databaseSelection.setSelected(databaseName, Boolean(checked))
-                        }
-                      />
-                      <span className="break-all">{databaseName}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                当前范围:{' '}
-                {databaseSelection.allSelected
-                  ? `全部数据库（${databaseSelection.available.length} 个）`
-                  : `已选 ${databaseSelection.effectiveSelected.filter((name) => databaseSelection.available.includes(name)).length} / ${databaseSelection.available.length} 个数据库`}
-              </p>
-            </div>
-          )}
-          {databaseSelection.unavailable.length > 0 && (
-            <div className="space-y-2 rounded-md border border-destructive/50 p-3 text-sm">
-              <p className="text-destructive">已失效的数据库选择</p>
-              {databaseSelection.unavailable.map((dbName) => (
-                <div key={dbName} className="flex items-center justify-between gap-2">
-                  <span className="break-all">{dbName}</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    aria-label={`移除失效数据库 ${dbName}`}
-                    disabled={databaseSelection.effectiveSelected.length === 1}
-                    onClick={() => databaseSelection.setSelected(dbName, false)}
-                  >
-                    移除
-                  </Button>
-                </div>
-              ))}
-              <p className="text-muted-foreground">
-                请先选择可用数据库并移除失效项，或明确设为全部数据库。
-              </p>
-              {databaseSelection.available.length === 0 && (
-                <Button type="button" variant="outline" onClick={databaseSelection.selectAll}>
-                  设为全部数据库
-                </Button>
-              )}
-            </div>
-          )}
-          {databaseSelection.notice && (
-            <p role="status" className="text-sm text-muted-foreground">
-              {databaseSelection.notice}
-            </p>
-          )}
-        </div>
+        {renderRecommendationDatabases(state)}
 
-        <div className="space-y-4 rounded-md border p-3">
-          <div>
-            <div className="text-base font-medium">主 AI 配置</div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              优先使用这套配置进行筛选；留空字段会回退到服务端默认值。
-            </p>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="ai-base-url">Base URL</Label>
-              <Select
-                value={
-                  endpoints.available.includes(primary.baseUrl)
-                    ? primary.baseUrl
-                    : DEFAULT_AI_ENDPOINT_VALUE
-                }
-                onValueChange={(value) =>
-                  model.updateSettings((current) => ({
-                    ...current,
-                    ai_base_url: value === DEFAULT_AI_ENDPOINT_VALUE ? '' : value,
-                  }))
-                }
-                disabled={endpoints.query.isPending || endpoints.query.isError}
-              >
-                <SelectTrigger id="ai-base-url" className="w-full">
-                  <SelectValue placeholder="选择管理员批准的 Endpoint" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={DEFAULT_AI_ENDPOINT_VALUE}>
-                    使用服务端默认 Endpoint（若已批准）
-                  </SelectItem>
-                  {endpoints.available.map((endpoint) => (
-                    <SelectItem key={endpoint} value={endpoint}>
-                      {endpoint}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {endpoints.query.isError ? (
-                <p role="alert" className="text-xs text-destructive">
-                  {endpoints.query.error instanceof Error
-                    ? endpoints.query.error.message
-                    : '加载 AI Endpoint 列表失败'}
-                </p>
-              ) : endpoints.available.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  管理员尚未批准任何 AI Endpoint，AI 推荐将保持禁用。
-                </p>
-              ) : null}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="ai-model">Model</Label>
-              <Input
-                id="ai-model"
-                name="ai_model"
-                autoComplete="off"
-                spellCheck={false}
-                value={primary.model}
-                onChange={(event) =>
-                  model.updateSettings((current) => ({
-                    ...current,
-                    ai_model: event.target.value,
-                  }))
-                }
-                placeholder="gpt-4.1-mini"
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="ai-api-key">API Key</Label>
-            <Input
-              id="ai-api-key"
-              name="ai_api_key"
-              type="password"
-              autoComplete="new-password"
-              spellCheck={false}
-              value={primary.apiKey ?? ''}
-              onChange={(event) =>
-                model.updateSettings((current) => ({
-                  ...current,
-                  ai_api_key: event.target.value,
-                }))
-              }
-              placeholder="sk-…"
-            />
-            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>
-                {model.storedSettings?.has_ai_api_key
-                  ? primary.apiKey === null
-                    ? '保存后清除当前密钥'
-                    : '已安全保存；留空不会覆盖'
-                  : '尚未配置'}
-              </span>
-              {model.storedSettings?.has_ai_api_key && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    model.updateSettings((current) => ({
-                      ...current,
-                      ai_api_key: current.ai_api_key === null ? undefined : null,
-                    }))
-                  }
-                >
-                  {primary.apiKey === null ? '保留原密钥' : '清除密钥'}
-                </Button>
-              )}
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="ai-system-prompt">System Prompt</Label>
-            <Textarea
-              id="ai-system-prompt"
-              name="ai_system_prompt"
-              autoComplete="off"
-              spellCheck={false}
-              value={primary.systemPrompt}
-              onChange={(event) =>
-                model.updateSettings((current) => ({
-                  ...current,
-                  ai_system_prompt: event.target.value,
-                }))
-              }
-              placeholder="Describe how the model should evaluate article relevance."
-              className="min-h-28"
-            />
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="ai-retry-attempts">失败重试次数</Label>
-              <Input
-                id="ai-retry-attempts"
-                name="ai_retry_attempts"
-                type="number"
-                autoComplete="off"
-                inputMode="numeric"
-                min={1}
-                max={10}
-                value={retryAttempts}
-                onChange={(event) =>
-                  model.updateSettings((current) => ({
-                    ...current,
-                    ai_retry_attempts: Math.max(1, Math.min(10, Number(event.target.value) || 1)),
-                  }))
-                }
-              />
-            </div>
-          </div>
-          <div className="space-y-3 rounded-md border border-dashed p-3">
-            <div>
-              <div className="text-base font-medium">备用 AI 配置</div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                当主配置连续失败后，系统会自动切换到这套备用配置重试。
-              </p>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="ai-backup-base-url">Backup Base URL</Label>
-                <Select
-                  value={
-                    endpoints.available.includes(backup.baseUrl)
-                      ? backup.baseUrl
-                      : DEFAULT_AI_ENDPOINT_VALUE
-                  }
-                  onValueChange={(value) =>
-                    model.updateSettings((current) => ({
-                      ...current,
-                      ai_backup_base_url: value === DEFAULT_AI_ENDPOINT_VALUE ? '' : value,
-                    }))
-                  }
-                  disabled={endpoints.query.isPending || endpoints.query.isError}
-                >
-                  <SelectTrigger id="ai-backup-base-url" className="w-full">
-                    <SelectValue placeholder="选择备用 Endpoint" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={DEFAULT_AI_ENDPOINT_VALUE}>
-                      使用服务端默认 Endpoint（若已批准）
-                    </SelectItem>
-                    {endpoints.available.map((endpoint) => (
-                      <SelectItem key={endpoint} value={endpoint}>
-                        {endpoint}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="ai-backup-model">Backup Model</Label>
-                <Input
-                  id="ai-backup-model"
-                  name="ai_backup_model"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={backup.model}
-                  onChange={(event) =>
-                    model.updateSettings((current) => ({
-                      ...current,
-                      ai_backup_model: event.target.value,
-                    }))
-                  }
-                  placeholder="gpt-4.1-mini"
-                />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="ai-backup-api-key">Backup API Key</Label>
-              <Input
-                id="ai-backup-api-key"
-                name="ai_backup_api_key"
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                value={backup.apiKey ?? ''}
-                onChange={(event) =>
-                  model.updateSettings((current) => ({
-                    ...current,
-                    ai_backup_api_key: event.target.value,
-                  }))
-                }
-                placeholder="sk-…"
-              />
-              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>
-                  {model.storedSettings?.has_ai_backup_api_key
-                    ? backup.apiKey === null
-                      ? '保存后清除当前密钥'
-                      : '已安全保存；留空不会覆盖'
-                    : '尚未配置'}
-                </span>
-                {model.storedSettings?.has_ai_backup_api_key && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      model.updateSettings((current) => ({
-                        ...current,
-                        ai_backup_api_key: current.ai_backup_api_key === null ? undefined : null,
-                      }))
-                    }
-                  >
-                    {backup.apiKey === null ? '保留原密钥' : '清除密钥'}
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="ai-backup-system-prompt">Backup System Prompt</Label>
-              <Textarea
-                id="ai-backup-system-prompt"
-                name="ai_backup_system_prompt"
-                autoComplete="off"
-                spellCheck={false}
-                value={backup.systemPrompt}
-                onChange={(event) =>
-                  model.updateSettings((current) => ({
-                    ...current,
-                    ai_backup_system_prompt: event.target.value,
-                  }))
-                }
-                placeholder="Optional backup prompt override."
-                className="min-h-28"
-              />
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            未配置关键词或研究方向时不会推送；主备 AI 都不可用时同样会跳过推送。
-          </p>
-        </div>
+        {renderPrimaryAiSettings(state)}
       </SettingsSectionContent>
     </SettingsSection>
   );
 }
+
+/** Retain the keyed keyword chips and original add/remove/input handlers. */
+function renderRecommendationKeywords(state: RecommendationViewState) {
+  const { model, keywords, chipTransition } = state;
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="keyword-input">关键词</Label>
+      <div className="flex min-h-[2rem] flex-wrap gap-1.5">
+        <MotionPresence>
+          {keywords.items.map((keyword) => (
+            <MotionSpan
+              key={keyword}
+              className="inline-flex"
+              data-motion-preference-chip={`keyword-${keyword}`}
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, pointerEvents: 'none', scale: 0.96 }}
+              transition={chipTransition}
+            >
+              <Badge variant="secondary" className="gap-1 pr-1">
+                {keyword}
+                <button
+                  type="button"
+                  aria-label={`移除关键词 ${keyword}`}
+                  onClick={() =>
+                    model.updateSettings((current) => ({
+                      ...current,
+                      keywords: current.keywords.filter((item) => item !== keyword),
+                    }))
+                  }
+                  className="motion-control rounded-full p-0.5 transition-colors hover:bg-accent-pressed active:bg-accent-pressed focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            </MotionSpan>
+          ))}
+        </MotionPresence>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          id="keyword-input"
+          name="notification_keyword"
+          autoComplete="off"
+          spellCheck={false}
+          value={keywords.input}
+          onChange={(event) => keywords.setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              keywords.add();
+            }
+          }}
+          placeholder="输入关键词后回车添加"
+          className="flex-1"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full sm:w-auto"
+          aria-label="添加关键词"
+          onClick={keywords.add}
+          disabled={!keywords.input.trim()}
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Retain the keyed direction chips and original add/remove/input handlers. */
+function renderRecommendationDirections(state: RecommendationViewState) {
+  const { model, directions, chipTransition } = state;
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="direction-input">研究方向</Label>
+      <div className="flex min-h-[2rem] flex-wrap gap-1.5">
+        <MotionPresence>
+          {directions.items.map((direction) => (
+            <MotionSpan
+              key={direction}
+              className="inline-flex"
+              data-motion-preference-chip={`direction-${direction}`}
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, pointerEvents: 'none', scale: 0.96 }}
+              transition={chipTransition}
+            >
+              <Badge variant="secondary" className="gap-1 pr-1">
+                {direction}
+                <button
+                  type="button"
+                  aria-label={`移除研究方向 ${direction}`}
+                  onClick={() =>
+                    model.updateSettings((current) => ({
+                      ...current,
+                      directions: current.directions.filter((item) => item !== direction),
+                    }))
+                  }
+                  className="motion-control rounded-full p-0.5 transition-colors hover:bg-accent-pressed active:bg-accent-pressed focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            </MotionSpan>
+          ))}
+        </MotionPresence>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          id="direction-input"
+          name="notification_direction"
+          autoComplete="off"
+          spellCheck={false}
+          value={directions.input}
+          onChange={(event) => directions.setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              directions.add();
+            }
+          }}
+          placeholder="输入研究方向后回车添加"
+          className="flex-1"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full sm:w-auto"
+          aria-label="添加研究方向"
+          onClick={directions.add}
+          disabled={!directions.input.trim()}
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Retain primary credential display and functional null/undefined clear toggles. */
+function renderPrimaryAiSecret(state: RecommendationViewState) {
+  const { model, primary } = state;
+
+  return (
+    <div className="space-y-1">
+      <Label htmlFor="ai-api-key">API Key</Label>
+      <Input
+        id="ai-api-key"
+        name="ai_api_key"
+        type="password"
+        autoComplete="new-password"
+        spellCheck={false}
+        value={primary.apiKey ?? ''}
+        onChange={(event) =>
+          model.updateSettings((current) => ({
+            ...current,
+            ai_api_key: event.target.value,
+          }))
+        }
+        placeholder="sk-…"
+      />
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          {model.storedSettings?.has_ai_api_key
+            ? primary.apiKey === null
+              ? '保存后清除当前密钥'
+              : '已安全保存；留空不会覆盖'
+            : '尚未配置'}
+        </span>
+        {model.storedSettings?.has_ai_api_key && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              model.updateSettings((current) => ({
+                ...current,
+                ai_api_key: current.ai_api_key === null ? undefined : null,
+              }))
+            }
+          >
+            {primary.apiKey === null ? '保留原密钥' : '清除密钥'}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Retain backup credential display and functional null/undefined clear toggles. */
+function renderBackupAiSecret(state: RecommendationViewState) {
+  const { model, backup } = state;
+
+  return (
+    <div className="space-y-1">
+      <Label htmlFor="ai-backup-api-key">Backup API Key</Label>
+      <Input
+        id="ai-backup-api-key"
+        name="ai_backup_api_key"
+        type="password"
+        autoComplete="new-password"
+        spellCheck={false}
+        value={backup.apiKey ?? ''}
+        onChange={(event) =>
+          model.updateSettings((current) => ({
+            ...current,
+            ai_backup_api_key: event.target.value,
+          }))
+        }
+        placeholder="sk-…"
+      />
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          {model.storedSettings?.has_ai_backup_api_key
+            ? backup.apiKey === null
+              ? '保存后清除当前密钥'
+              : '已安全保存；留空不会覆盖'
+            : '尚未配置'}
+        </span>
+        {model.storedSettings?.has_ai_backup_api_key && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              model.updateSettings((current) => ({
+                ...current,
+                ai_backup_api_key: current.ai_backup_api_key === null ? undefined : null,
+              }))
+            }
+          >
+            {backup.apiKey === null ? '保留原密钥' : '清除密钥'}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Retain approved endpoint fallback, pending/error guards and feedback. */
+function renderPrimaryAiEndpoint(state: RecommendationViewState) {
+  const { model, endpoints, primary } = state;
+
+  return (
+    <div className="space-y-1">
+      <Label htmlFor="ai-base-url">Base URL</Label>
+      <Select
+        value={
+          endpoints.available.includes(primary.baseUrl)
+            ? primary.baseUrl
+            : DEFAULT_AI_ENDPOINT_VALUE
+        }
+        onValueChange={(value) =>
+          model.updateSettings((current) => ({
+            ...current,
+            ai_base_url: value === DEFAULT_AI_ENDPOINT_VALUE ? '' : value,
+          }))
+        }
+        disabled={endpoints.query.isPending || endpoints.query.isError}
+      >
+        <SelectTrigger id="ai-base-url" className="w-full">
+          <SelectValue placeholder="选择管理员批准的 Endpoint" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={DEFAULT_AI_ENDPOINT_VALUE}>
+            使用服务端默认 Endpoint（若已批准）
+          </SelectItem>
+          {endpoints.available.map((endpoint) => (
+            <SelectItem key={endpoint} value={endpoint}>
+              {endpoint}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {endpoints.query.isError ? (
+        <p role="alert" className="text-xs text-destructive">
+          {endpoints.query.error instanceof Error
+            ? endpoints.query.error.message
+            : '加载 AI Endpoint 列表失败'}
+        </p>
+      ) : endpoints.available.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          管理员尚未批准任何 AI Endpoint，AI 推荐将保持禁用。
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Retain the backup configuration fields and their distinct payload names. */
+function renderBackupAiSettings(state: RecommendationViewState) {
+  const { model, backup, endpoints } = state;
+
+  return (
+    <div className="space-y-3 rounded-md border border-dashed p-3">
+      <div>
+        <div className="text-base font-medium">备用 AI 配置</div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          当主配置连续失败后，系统会自动切换到这套备用配置重试。
+        </p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor="ai-backup-base-url">Backup Base URL</Label>
+          <Select
+            value={
+              endpoints.available.includes(backup.baseUrl)
+                ? backup.baseUrl
+                : DEFAULT_AI_ENDPOINT_VALUE
+            }
+            onValueChange={(value) =>
+              model.updateSettings((current) => ({
+                ...current,
+                ai_backup_base_url: value === DEFAULT_AI_ENDPOINT_VALUE ? '' : value,
+              }))
+            }
+            disabled={endpoints.query.isPending || endpoints.query.isError}
+          >
+            <SelectTrigger id="ai-backup-base-url" className="w-full">
+              <SelectValue placeholder="选择备用 Endpoint" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DEFAULT_AI_ENDPOINT_VALUE}>
+                使用服务端默认 Endpoint（若已批准）
+              </SelectItem>
+              {endpoints.available.map((endpoint) => (
+                <SelectItem key={endpoint} value={endpoint}>
+                  {endpoint}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="ai-backup-model">Backup Model</Label>
+          <Input
+            id="ai-backup-model"
+            name="ai_backup_model"
+            autoComplete="off"
+            spellCheck={false}
+            value={backup.model}
+            onChange={(event) =>
+              model.updateSettings((current) => ({
+                ...current,
+                ai_backup_model: event.target.value,
+              }))
+            }
+            placeholder="gpt-4.1-mini"
+          />
+        </div>
+      </div>
+      {renderBackupAiSecret(state)}
+      <div className="space-y-1">
+        <Label htmlFor="ai-backup-system-prompt">Backup System Prompt</Label>
+        <Textarea
+          id="ai-backup-system-prompt"
+          name="ai_backup_system_prompt"
+          autoComplete="off"
+          spellCheck={false}
+          value={backup.systemPrompt}
+          onChange={(event) =>
+            model.updateSettings((current) => ({
+              ...current,
+              ai_backup_system_prompt: event.target.value,
+            }))
+          }
+          placeholder="Optional backup prompt override."
+          className="min-h-28"
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Retain primary, retry and backup configuration order. */
+function renderPrimaryAiSettings(state: RecommendationViewState) {
+  const { model, primary, retryAttempts } = state;
+
+  return (
+    <div className="space-y-4 rounded-md border p-3">
+      <div>
+        <div className="text-base font-medium">主 AI 配置</div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          优先使用这套配置进行筛选；留空字段会回退到服务端默认值。
+        </p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {renderPrimaryAiEndpoint(state)}
+        <div className="space-y-1">
+          <Label htmlFor="ai-model">Model</Label>
+          <Input
+            id="ai-model"
+            name="ai_model"
+            autoComplete="off"
+            spellCheck={false}
+            value={primary.model}
+            onChange={(event) =>
+              model.updateSettings((current) => ({
+                ...current,
+                ai_model: event.target.value,
+              }))
+            }
+            placeholder="gpt-4.1-mini"
+          />
+        </div>
+      </div>
+      {renderPrimaryAiSecret(state)}
+      <div className="space-y-1">
+        <Label htmlFor="ai-system-prompt">System Prompt</Label>
+        <Textarea
+          id="ai-system-prompt"
+          name="ai_system_prompt"
+          autoComplete="off"
+          spellCheck={false}
+          value={primary.systemPrompt}
+          onChange={(event) =>
+            model.updateSettings((current) => ({
+              ...current,
+              ai_system_prompt: event.target.value,
+            }))
+          }
+          placeholder="Describe how the model should evaluate article relevance."
+          className="min-h-28"
+        />
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor="ai-retry-attempts">失败重试次数</Label>
+          <Input
+            id="ai-retry-attempts"
+            name="ai_retry_attempts"
+            type="number"
+            autoComplete="off"
+            inputMode="numeric"
+            min={1}
+            max={10}
+            value={retryAttempts}
+            onChange={(event) =>
+              model.updateSettings((current) => ({
+                ...current,
+                ai_retry_attempts: Math.max(1, Math.min(10, Number(event.target.value) || 1)),
+              }))
+            }
+          />
+        </div>
+      </div>
+      {renderBackupAiSettings(state)}
+      <p className="text-xs text-muted-foreground">
+        未配置关键词或研究方向时不会推送；主备 AI 都不可用时同样会跳过推送。
+      </p>
+    </div>
+  );
+}
+
+/** Retain database pending, error, empty and available selection priority. */
+function renderDatabaseSelectionState(state: RecommendationViewState) {
+  const { databaseSelection } = state;
+  if (databaseSelection.query.isPending)
+    return (
+      <div
+        role="status"
+        className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
+      >
+        正在加载数据库列表…
+      </div>
+    );
+  if (databaseSelection.query.isError)
+    return (
+      <div
+        role="alert"
+        className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive"
+      >
+        {databaseSelection.query.error instanceof Error
+          ? databaseSelection.query.error.message
+          : '加载数据库列表失败'}
+      </div>
+    );
+  if (databaseSelection.available.length === 0)
+    return (
+      <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+        当前没有可用数据库。
+      </div>
+    );
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col gap-2 rounded-md border border-dashed p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <div className="text-sm font-medium">全部数据库</div>
+          <p className="text-xs text-muted-foreground">
+            选中后，新增加的数据库也会自动纳入推送范围。
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant={databaseSelection.allSelected ? 'default' : 'outline'}
+          size="sm"
+          className="w-full sm:w-auto"
+          onClick={databaseSelection.selectAll}
+        >
+          设为全部数据库
+        </Button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {databaseSelection.available.map((databaseName) => {
+          const isChecked =
+            databaseSelection.allSelected ||
+            databaseSelection.effectiveSelected.includes(databaseName);
+          return (
+            <label
+              key={databaseName}
+              className="motion-control content-visibility-row flex items-start gap-3 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-accent focus-within:bg-accent"
+            >
+              <Checkbox
+                checked={isChecked}
+                onCheckedChange={(checked: boolean | 'indeterminate') =>
+                  databaseSelection.setSelected(databaseName, Boolean(checked))
+                }
+              />
+              <span className="break-all">{databaseName}</span>
+            </label>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        当前范围:{' '}
+        {databaseSelection.allSelected
+          ? `全部数据库（${databaseSelection.available.length} 个）`
+          : `已选 ${databaseSelection.effectiveSelected.filter((name) => databaseSelection.available.includes(name)).length} / ${databaseSelection.available.length} 个数据库`}
+      </p>
+    </div>
+  );
+}
+
+/** Retain available and unavailable database choices and notice siblings. */
+function renderRecommendationDatabases(state: RecommendationViewState) {
+  const { databaseSelection } = state;
+
+  return (
+    <div
+      className="space-y-3 rounded-md border p-3"
+      role="group"
+      aria-labelledby="push-databases-label"
+    >
+      <div className="space-y-1">
+        <div id="push-databases-label" className="text-base font-medium">
+          推送数据库
+        </div>
+        <p className="text-xs text-muted-foreground">
+          手动推送和自动推送都会按这里的数据库范围执行；不限制时表示全部数据库。
+        </p>
+      </div>
+      {renderDatabaseSelectionState(state)}
+      {databaseSelection.unavailable.length > 0 && (
+        <div className="space-y-2 rounded-md border border-destructive/50 p-3 text-sm">
+          <p className="text-destructive">已失效的数据库选择</p>
+          {databaseSelection.unavailable.map((dbName) => (
+            <div key={dbName} className="flex items-center justify-between gap-2">
+              <span className="break-all">{dbName}</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-label={`移除失效数据库 ${dbName}`}
+                disabled={databaseSelection.effectiveSelected.length === 1}
+                onClick={() => databaseSelection.setSelected(dbName, false)}
+              >
+                移除
+              </Button>
+            </div>
+          ))}
+          <p className="text-muted-foreground">
+            请先选择可用数据库并移除失效项，或明确设为全部数据库。
+          </p>
+          {databaseSelection.available.length === 0 && (
+            <Button type="button" variant="outline" onClick={databaseSelection.selectAll}>
+              设为全部数据库
+            </Button>
+          )}
+        </div>
+      )}
+      {databaseSelection.notice && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {databaseSelection.notice}
+        </p>
+      )}
+    </div>
+  );
+}
+
+type RecommendationViewState = RecommendationSettingsSectionProps & {
+  backup: RecommendationSettingsSectionProps['model']['ai']['backup'];
+  endpoints: RecommendationSettingsSectionProps['model']['ai']['endpoints'];
+  primary: RecommendationSettingsSectionProps['model']['ai']['primary'];
+  retryAttempts: number;
+  directions: RecommendationSettingsSectionProps['model']['preferences']['directions'];
+  keywords: RecommendationSettingsSectionProps['model']['preferences']['keywords'];
+  databaseSelection: RecommendationSettingsSectionProps['model']['databaseSelection'];
+  chipTransition: ReturnType<typeof useMotionTransition>;
+};

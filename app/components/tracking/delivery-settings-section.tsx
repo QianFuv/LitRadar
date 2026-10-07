@@ -45,6 +45,7 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
   const isPushplus = model.delivery.method === 'pushplus';
   const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
+  const state = { model, pushplus, isPushplus, panelTransition };
   return (
     <SettingsSection>
       <SettingsSectionHeader>
@@ -87,128 +88,152 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
           className="overflow-hidden"
           style={{ pointerEvents: isPushplus ? 'auto' : 'none' }}
         >
-          <div className="space-y-3 rounded-md border p-3">
-            <div className="space-y-1">
-              <Label htmlFor="pp-token">PushPlus 令牌</Label>
-              <Input
-                id="pp-token"
-                name="pushplus_token"
-                autoComplete="off"
-                spellCheck={false}
-                type="password"
-                value={pushplus.token ?? ''}
-                onChange={(event) =>
-                  model.updateSettings((current) => ({
-                    ...current,
-                    pushplus_token: event.target.value,
-                  }))
-                }
-                placeholder="输入你的 PushPlus 令牌"
-              />
-              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>
-                  {model.storedSettings?.has_pushplus_token
-                    ? pushplus.token === null
-                      ? '保存后清除当前令牌'
-                      : '已安全保存；留空不会覆盖'
-                    : '尚未配置'}
-                </span>
-                {model.storedSettings?.has_pushplus_token && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      model.updateSettings((current) => ({
-                        ...current,
-                        pushplus_token: current.pushplus_token === null ? undefined : null,
-                      }))
-                    }
-                  >
-                    {pushplus.token === null ? '保留原令牌' : '清除令牌'}
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="pp-template">模板</Label>
-                <Input
-                  id="pp-template"
-                  name="pushplus_template"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={pushplus.template}
-                  onChange={(event) =>
-                    model.updateSettings((current) => ({
-                      ...current,
-                      pushplus_template: event.target.value,
-                    }))
-                  }
-                  placeholder="markdown"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="pp-topic">主题</Label>
-                <Input
-                  id="pp-topic"
-                  name="pushplus_topic"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={pushplus.topic}
-                  onChange={(event) =>
-                    model.updateSettings((current) => ({
-                      ...current,
-                      pushplus_topic: event.target.value,
-                    }))
-                  }
-                  placeholder="可选"
-                />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pp-channel">渠道</Label>
-              <Input
-                id="pp-channel"
-                name="pushplus_channel"
-                autoComplete="off"
-                spellCheck={false}
-                value={pushplus.channel}
-                onChange={(event) =>
-                  model.updateSettings((current) => ({
-                    ...current,
-                    pushplus_channel: event.target.value,
-                  }))
-                }
-                placeholder="wechat"
-              />
-              <p className="text-xs text-muted-foreground">填写 PushPlus 渠道，例如 `wechat`。</p>
-            </div>
-            <div className="flex flex-col gap-3 rounded-md border border-dashed p-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="space-y-1">
-                <Label htmlFor="pp-sync-tracking">同步写入追踪文件夹</Label>
-                <p className="text-xs text-muted-foreground">
-                  {model.trackingFolder
-                    ? `发送 PushPlus 时，同时写入“${model.trackingFolder.name}”`
-                    : '需要先设置追踪文件夹后才能开启'}
-                </p>
-              </div>
-              <Switch
-                id="pp-sync-tracking"
-                name="sync_to_tracking_folder"
-                checked={model.delivery.syncToTrackingFolder}
-                disabled={!model.trackingFolder}
-                onCheckedChange={(checked: boolean) =>
-                  model.updateSettings((current) => ({
-                    ...current,
-                    sync_to_tracking_folder: checked,
-                  }))
-                }
-              />
-            </div>
-          </div>
+          {renderPushplusSettings(state)}
         </MotionDiv>
       </SettingsSectionContent>
     </SettingsSection>
   );
 }
+
+/** Retain PushPlus secret display, current-value toggle and saved-presence hint. */
+function renderPushplusToken(state: DeliveryViewState) {
+  const { model, pushplus } = state;
+
+  return (
+    <div className="space-y-1">
+      <Label htmlFor="pp-token">PushPlus 令牌</Label>
+      <Input
+        id="pp-token"
+        name="pushplus_token"
+        autoComplete="off"
+        spellCheck={false}
+        type="password"
+        value={pushplus.token ?? ''}
+        onChange={(event) =>
+          model.updateSettings((current) => ({
+            ...current,
+            pushplus_token: event.target.value,
+          }))
+        }
+        placeholder="输入你的 PushPlus 令牌"
+      />
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          {model.storedSettings?.has_pushplus_token
+            ? pushplus.token === null
+              ? '保存后清除当前令牌'
+              : '已安全保存；留空不会覆盖'
+            : '尚未配置'}
+        </span>
+        {model.storedSettings?.has_pushplus_token && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              model.updateSettings((current) => ({
+                ...current,
+                pushplus_token: current.pushplus_token === null ? undefined : null,
+              }))
+            }
+          >
+            {pushplus.token === null ? '保留原令牌' : '清除令牌'}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Retain delivery settings inside the permanently mounted collapsed panel. */
+function renderPushplusSettings(state: DeliveryViewState) {
+  const { model, pushplus } = state;
+
+  return (
+    <div className="space-y-3 rounded-md border p-3">
+      {renderPushplusToken(state)}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor="pp-template">模板</Label>
+          <Input
+            id="pp-template"
+            name="pushplus_template"
+            autoComplete="off"
+            spellCheck={false}
+            value={pushplus.template}
+            onChange={(event) =>
+              model.updateSettings((current) => ({
+                ...current,
+                pushplus_template: event.target.value,
+              }))
+            }
+            placeholder="markdown"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="pp-topic">主题</Label>
+          <Input
+            id="pp-topic"
+            name="pushplus_topic"
+            autoComplete="off"
+            spellCheck={false}
+            value={pushplus.topic}
+            onChange={(event) =>
+              model.updateSettings((current) => ({
+                ...current,
+                pushplus_topic: event.target.value,
+              }))
+            }
+            placeholder="可选"
+          />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="pp-channel">渠道</Label>
+        <Input
+          id="pp-channel"
+          name="pushplus_channel"
+          autoComplete="off"
+          spellCheck={false}
+          value={pushplus.channel}
+          onChange={(event) =>
+            model.updateSettings((current) => ({
+              ...current,
+              pushplus_channel: event.target.value,
+            }))
+          }
+          placeholder="wechat"
+        />
+        <p className="text-xs text-muted-foreground">填写 PushPlus 渠道，例如 `wechat`。</p>
+      </div>
+      <div className="flex flex-col gap-3 rounded-md border border-dashed p-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <Label htmlFor="pp-sync-tracking">同步写入追踪文件夹</Label>
+          <p className="text-xs text-muted-foreground">
+            {model.trackingFolder
+              ? `发送 PushPlus 时，同时写入“${model.trackingFolder.name}”`
+              : '需要先设置追踪文件夹后才能开启'}
+          </p>
+        </div>
+        <Switch
+          id="pp-sync-tracking"
+          name="sync_to_tracking_folder"
+          checked={model.delivery.syncToTrackingFolder}
+          disabled={!model.trackingFolder}
+          onCheckedChange={(checked: boolean) =>
+            model.updateSettings((current) => ({
+              ...current,
+              sync_to_tracking_folder: checked,
+            }))
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+type DeliveryViewState = DeliverySettingsSectionProps & {
+  pushplus: DeliverySettingsSectionProps['model']['delivery']['pushplus'];
+  isPushplus: boolean;
+  panelTransition: ReturnType<typeof useMotionTransition>;
+};
