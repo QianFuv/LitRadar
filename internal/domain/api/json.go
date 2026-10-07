@@ -25,17 +25,22 @@ func DebugString(value string) string {
 			output.WriteByte('\\')
 			output.WriteRune(character)
 		default:
-			isExtended := unicode.Is(unicode.Mn, character) || unicode.Is(unicode.Me, character)
-			if table := unicode.Properties["Other_Grapheme_Extend"]; table != nil && unicode.Is(table, character) {
-				isExtended = true
-			}
-			if !unicode.IsPrint(character) || isExtended {
-				output.WriteString(`\u{` + strconv.FormatInt(int64(character), 16) + `}`)
-			} else {
-				output.WriteRune(character)
-			}
+			writeDebugRune(&output, character)
 		}
 	}
 	output.WriteByte('"')
 	return output.String()
+}
+
+// writeDebugRune escapes nonprinting and grapheme-extending characters in diagnostics.
+func writeDebugRune(output *strings.Builder, character rune) {
+	isExtended := unicode.Is(unicode.Mn, character) || unicode.Is(unicode.Me, character)
+	if table := unicode.Properties["Other_Grapheme_Extend"]; table != nil && unicode.Is(table, character) {
+		isExtended = true
+	}
+	if !unicode.IsPrint(character) || isExtended {
+		output.WriteString(`\u{` + strconv.FormatInt(int64(character), 16) + `}`)
+	} else {
+		output.WriteRune(character)
+	}
 }
