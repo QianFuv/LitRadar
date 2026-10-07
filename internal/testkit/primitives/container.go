@@ -41,39 +41,14 @@ func Run(mode, directory string) error {
 	}
 }
 
+// certificates creates the directory and publishes the three fixture identities in order.
 func certificates(directory string) error {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return err
 	}
 	for _, identity := range []string{"valid", "wrong-san", "wrong-ca"} {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
+		if err := writeFixtureCertificateIdentity(directory, identity); err != nil {
 			return err
-		}
-		template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "LitRadar migration fixture"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
-		root, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(directory, identity+"-ca.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root}), 0644); err != nil {
-			return err
-		}
-		leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "www.pushplus.plus"}, DNSNames: []string{"www.pushplus.plus"}, NotBefore: template.NotBefore, NotAfter: template.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-		if identity == "wrong-san" {
-			leaf.DNSNames = []string{"wrong.fixture.invalid"}
-		}
-		certificate, err := x509.CreateCertificate(rand.Reader, leaf, template, &key.PublicKey, key)
-		if err != nil {
-			return err
-		}
-		private, err := x509.MarshalPKCS8PrivateKey(key)
-		if err != nil {
-			return err
-		}
-		for name, data := range map[string][]byte{identity + ".pem": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate}), identity + "-key.pem": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})} {
-			if err := os.WriteFile(filepath.Join(directory, name), data, 0644); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -147,5 +122,39 @@ func probe() error {
 		return fmt.Errorf("unexpected ledger count %d", result.Count)
 	}
 	fmt.Println(`{"fixedHostTls":true,"deliveryCount":1,"outboundDenied":true}`)
+	return nil
+}
+
+// writeFixtureCertificateIdentity publishes its CA before generating and writing the leaf and key pair.
+func writeFixtureCertificateIdentity(directory, identity string) error {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "LitRadar migration fixture"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	root, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(directory, identity+"-ca.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root}), 0644); err != nil {
+		return err
+	}
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "www.pushplus.plus"}, DNSNames: []string{"www.pushplus.plus"}, NotBefore: template.NotBefore, NotAfter: template.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	if identity == "wrong-san" {
+		leaf.DNSNames = []string{"wrong.fixture.invalid"}
+	}
+	certificate, err := x509.CreateCertificate(rand.Reader, leaf, template, &key.PublicKey, key)
+	if err != nil {
+		return err
+	}
+	private, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return err
+	}
+	for name, data := range map[string][]byte{identity + ".pem": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate}), identity + "-key.pem": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})} {
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0644); err != nil {
+			return err
+		}
+	}
 	return nil
 }

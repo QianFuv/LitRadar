@@ -45,19 +45,10 @@ func helperCommand(ctx context.Context, executable string, args []string, input 
 	return string(output), string(diagnostics), errors.Join(waitError, closeError, writeError)
 }
 
+// helpers owns the local server and shared deadline through ordered native protocol checks.
 func helpers() error {
-	if os.Getuid() != 10001 {
-		return errors.New("helper fixture is not nonroot uid10001")
-	}
-	status, err := os.ReadFile("/proc/self/status")
-	if err != nil {
+	if err := verifyFixtureHardening(); err != nil {
 		return err
-	}
-	if !strings.Contains(string(status), "CapEff:\t0000000000000000") || !strings.Contains(string(status), "NoNewPrivs:\t1") {
-		return errors.New("container hardening missing")
-	}
-	if err := os.WriteFile("/app/forbidden-write", nil, 0600); err == nil {
-		return errors.New("root filesystem is writable")
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:8081")
 	if err != nil {
@@ -71,36 +62,14 @@ func helpers() error {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	version, diagnostics, err := helperCommand(ctx, "/usr/local/bin/obscura", []string{"--version"}, "", false)
-	if err != nil || strings.TrimSpace(version) != "obscura 0.2.2+litradar.1" {
-		return fmt.Errorf("fixed browser version: %q %q %v", version, diagnostics, err)
-	}
-	_, diagnostics, err = helperCommand(ctx, "/usr/local/bin/obscura", []string{"fetch", "http://127.0.0.1:8081/", "--stealth", "--timeout", "5", "--quiet"}, "", false)
-	if err == nil || !strings.Contains(diagnostics, "Access to private/internal IP address 127.0.0.1 is not allowed") {
-		return fmt.Errorf("private address policy failed: %q %v", diagnostics, err)
-	}
-	_, diagnostics, err = helperCommand(ctx, "/usr/local/bin/obscura", []string{"fetch", "http://127.0.0.1:8081/", "--stealth", "--timeout", "30", "--wait-until", "domcontentloaded", "--wait", "0", "--eval", "JSON.stringify({protocol:'litradar.cfp.page.v1',finalUrl:location.href,html:document.documentElement.outerHTML})", "--quiet", "--output", "/tmp/page.json"}, "", true)
-	if err != nil {
-		return fmt.Errorf("browser protocol: %s %w", diagnostics, err)
-	}
-	data, err := os.ReadFile("/tmp/page.json")
-	if err != nil {
+	if err := verifyFixtureBrowserPolicy(ctx); err != nil {
 		return err
 	}
-	var page struct{ Protocol, FinalUrl, Html string }
-	if err := json.Unmarshal(data, &page); err != nil {
+	if err := verifyFixtureRenderedPage(ctx); err != nil {
 		return err
 	}
-	if page.Protocol != "litradar.cfp.page.v1" || page.FinalUrl != "http://127.0.0.1:8081/" || !strings.Contains(page.Html, ">rendered 4<") {
-		return fmt.Errorf("rendered HTML protocol mismatch: %s", data)
-	}
-	pdf, err := pdfFixture("LitRadar 征稿原文")
-	if err != nil {
+	if err := verifyFixturePdf(ctx); err != nil {
 		return err
-	}
-	text, diagnostics, err := helperCommand(ctx, "/usr/bin/pdftotext", []string{"-enc", "UTF-8", "-eol", "unix", "-nopgbrk", "-", "-"}, pdf, false)
-	if err != nil || strings.Join(strings.Fields(text), " ") != "LitRadar 征稿原文" {
-		return fmt.Errorf("PDF original text: %q %q %v", text, diagnostics, err)
 	}
 	fmt.Println(`{"uid":10001,"readOnly":true,"noCapabilities":true,"noNewPrivileges":true,"obscura":"0.2.2+litradar.1","privateNetworkDenied":true,"javascript":true,"originalHtml":true,"pdfCjk":true}`)
 	return nil
@@ -130,4 +99,68 @@ func pdfFixture(text string) (string, error) {
 	start := len(document)
 	document += fmt.Sprintf("xref\n0 %d\n%strailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets), strings.Join(offsets, ""), len(offsets), start)
 	return document, nil
+}
+
+// verifyFixtureHardening requires the original nonroot, capability, privilege and read-only boundaries.
+func verifyFixtureHardening() error {
+	if os.Getuid() != 10001 {
+		return errors.New("helper fixture is not nonroot uid10001")
+	}
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(status), "CapEff:\t0000000000000000") || !strings.Contains(string(status), "NoNewPrivs:\t1") {
+		return errors.New("container hardening missing")
+	}
+	if err := os.WriteFile("/app/forbidden-write", nil, 0600); err == nil {
+		return errors.New("root filesystem is writable")
+	}
+	return nil
+}
+
+// verifyFixtureBrowserPolicy checks the fixed browser version before explicit private-address denial.
+func verifyFixtureBrowserPolicy(ctx context.Context) error {
+	version, diagnostics, err := helperCommand(ctx, "/usr/local/bin/obscura", []string{"--version"}, "", false)
+	if err != nil || strings.TrimSpace(version) != "obscura 0.2.2+litradar.1" {
+		return fmt.Errorf("fixed browser version: %q %q %v", version, diagnostics, err)
+	}
+	_, diagnostics, err = helperCommand(ctx, "/usr/local/bin/obscura", []string{"fetch", "http://127.0.0.1:8081/", "--stealth", "--timeout", "5", "--quiet"}, "", false)
+	if err == nil || !strings.Contains(diagnostics, "Access to private/internal IP address 127.0.0.1 is not allowed") {
+		return fmt.Errorf("private address policy failed: %q %v", diagnostics, err)
+	}
+	return nil
+}
+
+// verifyFixtureRenderedPage preserves exact invocation and original rendered-page protocol assertions.
+func verifyFixtureRenderedPage(ctx context.Context) error {
+	_, diagnostics, err := helperCommand(ctx, "/usr/local/bin/obscura", []string{"fetch", "http://127.0.0.1:8081/", "--stealth", "--timeout", "30", "--wait-until", "domcontentloaded", "--wait", "0", "--eval", "JSON.stringify({protocol:'litradar.cfp.page.v1',finalUrl:location.href,html:document.documentElement.outerHTML})", "--quiet", "--output", "/tmp/page.json"}, "", true)
+	if err != nil {
+		return fmt.Errorf("browser protocol: %s %w", diagnostics, err)
+	}
+	data, err := os.ReadFile("/tmp/page.json")
+	if err != nil {
+		return err
+	}
+	var page struct{ Protocol, FinalUrl, Html string }
+	if err := json.Unmarshal(data, &page); err != nil {
+		return err
+	}
+	if page.Protocol != "litradar.cfp.page.v1" || page.FinalUrl != "http://127.0.0.1:8081/" || !strings.Contains(page.Html, ">rendered 4<") {
+		return fmt.Errorf("rendered HTML protocol mismatch: %s", data)
+	}
+	return nil
+}
+
+// verifyFixturePdf preserves CJK input, UTF8 extraction arguments and normalized original-text assertion.
+func verifyFixturePdf(ctx context.Context) error {
+	pdf, err := pdfFixture("LitRadar 征稿原文")
+	if err != nil {
+		return err
+	}
+	text, diagnostics, err := helperCommand(ctx, "/usr/bin/pdftotext", []string{"-enc", "UTF-8", "-eol", "unix", "-nopgbrk", "-", "-"}, pdf, false)
+	if err != nil || strings.Join(strings.Fields(text), " ") != "LitRadar 征稿原文" {
+		return fmt.Errorf("PDF original text: %q %q %v", text, diagnostics, err)
+	}
+	return nil
 }
