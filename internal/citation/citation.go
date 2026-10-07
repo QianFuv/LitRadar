@@ -94,32 +94,13 @@ func Bibtex(articles []domain.FavoriteCitation, maximumBytes int) (string, error
 			output.write("\n\n")
 		}
 		output.write("@article{")
-		hasKey := false
-		for _, character := range text(article.Doi) {
-			if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
-				output.write(string(character))
-				hasKey = true
-			}
-			if output.err != nil {
-				return "", output.err
-			}
+		if err := output.bibtexKey(article.Doi, index); err != nil {
+			return "", err
 		}
-		if !hasKey {
-			output.write("favorite")
-		}
-		output.write(strconv.Itoa(index+1) + ",\n")
 		output.bibtexField("title", text(article.Title), true)
-		output.write("  author = {")
-		for position, author := range article.Authors {
-			if position > 0 {
-				output.write(" and ")
-			}
-			output.bibtex(author)
-			if output.err != nil {
-				return "", output.err
-			}
+		if err := output.bibtexAuthors(article.Authors); err != nil {
+			return "", err
 		}
-		output.write("},\n")
 		output.bibtexField("journal", text(article.JournalTitle), true)
 		output.bibtexField("year", text(article.Date), true)
 		output.bibtexField("doi", text(article.Doi), false)
@@ -192,7 +173,7 @@ func (output *boundedText) xml(value string) {
 		case '\'':
 			output.write("&apos;")
 		default:
-			if character == 9 || character == 10 || character == 13 || character >= 0x20 && character <= 0xd7ff || character >= 0xe000 && character <= 0xfffd || character >= 0x10000 && character <= 0x10ffff {
+			if isXmlCharacter(character) {
 				output.write(string(character))
 			} else {
 				output.write(" ")
@@ -231,4 +212,45 @@ func EndnoteXml(articles []domain.FavoriteCitation, maximumBytes int) (string, e
 	}
 	output.write("</records></xml>")
 	return output.finish()
+}
+
+func (output *boundedText) bibtexKey(doi *string, index int) error {
+	hasKey := false
+	for _, character := range text(doi) {
+		if isBibtexKeyCharacter(character) {
+			output.write(string(character))
+			hasKey = true
+		}
+		if output.err != nil {
+			return output.err
+		}
+	}
+	if !hasKey {
+		output.write("favorite")
+	}
+	output.write(strconv.Itoa(index+1) + ",\n")
+	return nil
+}
+
+func (output *boundedText) bibtexAuthors(authors []string) error {
+	output.write("  author = {")
+	for position, author := range authors {
+		if position > 0 {
+			output.write(" and ")
+		}
+		output.bibtex(author)
+		if output.err != nil {
+			return output.err
+		}
+	}
+	output.write("},\n")
+	return nil
+}
+
+func isBibtexKeyCharacter(character rune) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9'
+}
+
+func isXmlCharacter(character rune) bool {
+	return character == 9 || character == 10 || character == 13 || character >= 0x20 && character <= 0xd7ff || character >= 0xe000 && character <= 0xfffd || character >= 0x10000 && character <= 0x10ffff
 }
