@@ -64,37 +64,19 @@ func parseValue(value string, minimum, maximum int64, names []string) (int64, er
 	return parsed, nil
 }
 
+// parsePart combines validated step and interval without extending single-value steps.
 func parsePart(part string, minimum, maximum int64, names []string) (uint64, error) {
 	if part == "" {
 		return 0, fmt.Errorf("empty cron field part")
 	}
 	base, stepText, hasStep := strings.Cut(part, "/")
-	step := int64(1)
-	if hasStep {
-		parsed, err := strconv.ParseInt(stepText, 10, 64)
-		if err != nil || parsed <= 0 {
-			return 0, fmt.Errorf("cron step must be a positive integer")
-		}
-		step = parsed
+	step, err := cronStep(stepText, hasStep)
+	if err != nil {
+		return 0, err
 	}
-	start, end := minimum, maximum
-	if base != "*" {
-		startText, endText, hasRange := strings.Cut(base, "-")
-		var err error
-		start, err = parseValue(startText, minimum, maximum, names)
-		if err != nil {
-			return 0, err
-		}
-		end = start
-		if hasRange {
-			end, err = parseValue(endText, minimum, maximum, names)
-			if err != nil {
-				return 0, err
-			}
-		}
-		if start > end {
-			return 0, fmt.Errorf("cron range start must be less than or equal to end")
-		}
+	start, end, err := cronRange(base, minimum, maximum, names)
+	if err != nil {
+		return 0, err
 	}
 	var values uint64
 	for candidate := start; candidate <= end; candidate++ {
@@ -142,4 +124,41 @@ func (schedule Schedule) Slots(timezone string, checkedFrom, checkedTo float64) 
 		}
 	}
 	return result, nil
+}
+
+// cronStep validates the optional positive signed step before range parsing.
+func cronStep(stepText string, hasStep bool) (int64, error) {
+	step := int64(1)
+	if hasStep {
+		parsed, err := strconv.ParseInt(stepText, 10, 64)
+		if err != nil || parsed <= 0 {
+			return 0, fmt.Errorf("cron step must be a positive integer")
+		}
+		step = parsed
+	}
+	return step, nil
+}
+
+// cronRange preserves wildcard bounds, named values and ordered endpoint errors.
+func cronRange(base string, minimum, maximum int64, names []string) (int64, int64, error) {
+	start, end := minimum, maximum
+	if base != "*" {
+		startText, endText, hasRange := strings.Cut(base, "-")
+		var err error
+		start, err = parseValue(startText, minimum, maximum, names)
+		if err != nil {
+			return 0, 0, err
+		}
+		end = start
+		if hasRange {
+			end, err = parseValue(endText, minimum, maximum, names)
+			if err != nil {
+				return 0, 0, err
+			}
+		}
+		if start > end {
+			return 0, 0, fmt.Errorf("cron range start must be less than or equal to end")
+		}
+	}
+	return start, end, nil
 }
