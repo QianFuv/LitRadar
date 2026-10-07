@@ -76,15 +76,8 @@ func ListJournals(ctx context.Context, configuration config.Config, name *string
 	if err := validatePagination(params.Limit, params.Offset); err != nil {
 		return empty, err
 	}
-	count := 0
-	if params.Area != nil {
-		count++
-	}
-	for _, group := range ratingGroups(params.Ratings) {
-		count += len(group.values)
-	}
-	if count > 500 {
-		return empty, InvalidInput{"search filters must contain at most 500 items"}
+	if err := validateJournalFilterCount(params); err != nil {
+		return empty, err
 	}
 	database, err := open(configuration, name)
 	if err != nil {
@@ -94,24 +87,9 @@ func ListJournals(ctx context.Context, configuration config.Config, name *string
 	if err := database.PingContext(ctx); err != nil {
 		return empty, err
 	}
-	filters := filter{}
-	if params.Area != nil {
-		if value := strings.TrimSpace(*params.Area); value != "" {
-			filters.add("j.area = ?", value)
-		}
-	}
-	if err := filters.ratings(params.Ratings); err != nil {
+	filters, err := journalFilters(params)
+	if err != nil {
 		return empty, err
-	}
-	if params.HasArticles != nil {
-		prefix := ""
-		if !*params.HasArticles {
-			prefix = "NOT "
-		}
-		filters.add(prefix + "EXISTS(SELECT 1 FROM articles a WHERE a.journal_id=j.journal_id)")
-	}
-	if params.Year != nil {
-		filters.add("EXISTS(SELECT 1 FROM issues i WHERE i.journal_id=j.journal_id AND i.publication_year=?)", *params.Year)
 	}
 	order, err := orderBy(params.Sort, "title:asc", "j", "journal_id", "title", "issn", "eissn", "area")
 	if err != nil {
@@ -262,4 +240,43 @@ func ListYears(ctx context.Context, configuration config.Config, name *string) (
 		}
 		return domain.YearSummary{Year: int64(year), IssueCount: int64(issues), JournalCount: int64(journals)}, nil
 	})
+}
+
+// validateJournalFilterCount counts a supplied area even when its value is blank.
+func validateJournalFilterCount(params JournalListParams) error {
+	count := 0
+	if params.Area != nil {
+		count++
+	}
+	for _, group := range ratingGroups(params.Ratings) {
+		count += len(group.values)
+	}
+	if count > 500 {
+		return InvalidInput{"search filters must contain at most 500 items"}
+	}
+	return nil
+}
+
+// journalFilters preserves area, ratings, canonical article and issue-year clause order.
+func journalFilters(params JournalListParams) (filter, error) {
+	filters := filter{}
+	if params.Area != nil {
+		if value := strings.TrimSpace(*params.Area); value != "" {
+			filters.add("j.area = ?", value)
+		}
+	}
+	if err := filters.ratings(params.Ratings); err != nil {
+		return filter{}, err
+	}
+	if params.HasArticles != nil {
+		prefix := ""
+		if !*params.HasArticles {
+			prefix = "NOT "
+		}
+		filters.add(prefix + "EXISTS(SELECT 1 FROM articles a WHERE a.journal_id=j.journal_id)")
+	}
+	if params.Year != nil {
+		filters.add("EXISTS(SELECT 1 FROM issues i WHERE i.journal_id=j.journal_id AND i.publication_year=?)", *params.Year)
+	}
+	return filters, nil
 }

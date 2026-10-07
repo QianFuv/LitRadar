@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -33,6 +34,7 @@ INSERT INTO articles VALUES(1,1,7,'first',NULL,'2026-10-01',0,0,NULL),(2,2,8,'se
 	return filename
 }
 
+// TestLargeCandidateCancellationCleansPinnedConnection retains start/cancel/join/cleanup and reuse ordering.
 func TestLargeCandidateCancellationCleansPinnedConnection(t *testing.T) {
 	database, err := storage.OpenPlain(candidateFixture(t))
 	if err != nil {
@@ -44,17 +46,7 @@ func TestLargeCandidateCancellationCleansPinnedConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	started := make(chan struct{})
-	var once sync.Once
-	if err := connection.Raw(func(raw any) error {
-		return raw.(*sqlite3.SQLiteConn).RegisterFunc("candidate_started", func() int { once.Do(func() { close(started) }); return 0 }, false)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := connection.ExecContext(context.Background(), `ALTER TABLE journals RENAME TO saved_journals;
-CREATE VIEW journals AS WITH RECURSIVE numbers(value) AS (SELECT candidate_started() UNION ALL SELECT value+1 FROM numbers WHERE value<1000000000) SELECT 1 AS journal_id,CAST(sum(value) AS TEXT) AS title FROM numbers`); err != nil {
-		t.Fatal(err)
-	}
+	started := installCandidateCancellationSignal(t, connection)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
@@ -71,22 +63,14 @@ CREATE VIEW journals AS WITH RECURSIVE numbers(value) AS (SELECT candidate_start
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatal("executing SELECT did not report cancellation", err)
 	}
-	var tables int
-	if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM sqlite_temp_master WHERE name='candidate_membership'").Scan(&tables); err != nil || tables != 0 {
-		t.Fatal("cancellation left TEMP membership behind", tables, err)
-	}
+	assertCanceledMembershipCleared(t, connection)
 	if _, err := connection.ExecContext(context.Background(), "DROP VIEW journals; ALTER TABLE saved_journals RENAME TO journals"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := largeCandidateRows(context.Background(), connection, "a.article_id", []int64{1, 1}, ""); err == nil {
 		t.Fatal("fixture failed to induce a membership insert error")
 	}
-	for _, id := range []int64{50001, 1} {
-		items, err := largeCandidateRows(context.Background(), connection, "a.article_id", []int64{id}, "")
-		if err != nil || len(items) != 1 || items[0].ArticleId != id {
-			t.Fatal("reused connection retained stale membership", items, err)
-		}
-	}
+	assertCandidateConnectionReuse(t, connection)
 }
 
 func TestLargeCandidateMembershipPreservesAllThreeSelectors(t *testing.T) {
@@ -144,5 +128,42 @@ func TestLargeCandidateMembershipPreservesAllThreeSelectors(t *testing.T) {
 				t.Fatal("caller identifiers were mutated")
 			}
 		})
+	}
+}
+
+// installCandidateCancellationSignal preserves the callback lifetime and deliberately long-running SELECT.
+func installCandidateCancellationSignal(t *testing.T, connection *sql.Conn) chan struct{} {
+	t.Helper()
+	started := make(chan struct{})
+	var once sync.Once
+	if err := connection.Raw(func(raw any) error {
+		return raw.(*sqlite3.SQLiteConn).RegisterFunc("candidate_started", func() int { once.Do(func() { close(started) }); return 0 }, false)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.ExecContext(context.Background(), `ALTER TABLE journals RENAME TO saved_journals;
+CREATE VIEW journals AS WITH RECURSIVE numbers(value) AS (SELECT candidate_started() UNION ALL SELECT value+1 FROM numbers WHERE value<1000000000) SELECT 1 AS journal_id,CAST(sum(value) AS TEXT) AS title FROM numbers`); err != nil {
+		t.Fatal(err)
+	}
+	return started
+}
+
+// assertCanceledMembershipCleared inspects TEMP state only after the canceled worker has joined.
+func assertCanceledMembershipCleared(t *testing.T, connection *sql.Conn) {
+	t.Helper()
+	var tables int
+	if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM sqlite_temp_master WHERE name='candidate_membership'").Scan(&tables); err != nil || tables != 0 {
+		t.Fatal("cancellation left TEMP membership behind", tables, err)
+	}
+}
+
+// assertCandidateConnectionReuse checks successive memberships after the deliberate insertion failure.
+func assertCandidateConnectionReuse(t *testing.T, connection *sql.Conn) {
+	t.Helper()
+	for _, id := range []int64{50001, 1} {
+		items, err := largeCandidateRows(context.Background(), connection, "a.article_id", []int64{id}, "")
+		if err != nil || len(items) != 1 || items[0].ArticleId != id {
+			t.Fatal("reused connection retained stale membership", items, err)
+		}
 	}
 }

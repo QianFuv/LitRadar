@@ -2,10 +2,12 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
 
+	domain "github.com/QianFuv/LitRadar/internal/domain/storage"
 	"github.com/QianFuv/LitRadar/internal/storage/config"
 	migration "github.com/QianFuv/LitRadar/internal/storage/migrations/index"
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
@@ -76,6 +78,7 @@ func BenchmarkCandidates(b *testing.B) {
 	}
 }
 
+// BenchmarkArticleLookup preserves untimed fixture validation and native lookup measurements.
 func BenchmarkArticleLookup(b *testing.B) {
 	configuration, filename := benchmarkCatalog(b)
 	ctx := context.Background()
@@ -83,80 +86,122 @@ func BenchmarkArticleLookup(b *testing.B) {
 		for _, hasMatch := range []bool{true, false} {
 			for _, includesTotal := range []bool{true, false} {
 				b.Run(fmt.Sprintf("%s/hit=%t/total=%t", field, hasMatch, includesTotal), func(b *testing.B) {
-					params := DefaultArticleListParams()
-					value := "30001"
-					if !hasMatch {
-						value = "999999"
-					}
-					if field == "doi" {
-						value = "10.0000/synthetic." + value
-						params.Doi = &value
-					} else {
-						params.Pmid = &value
-					}
-					params.IncludeTotal = &includesTotal
-					probe, err := ListArticles(ctx, configuration, nil, params)
-					if err != nil || len(probe.Items) > 1 || (len(probe.Items) == 1) != hasMatch {
-						b.Fatalf("invalid lookup fixture: items=%d error=%v", len(probe.Items), err)
-					}
-					if hasMatch && int64(probe.Items[0].ArticleId) != 30001 {
-						b.Fatal("lookup returned a different article")
-					}
-					if includesTotal {
-						if probe.Page.Total == nil || *probe.Page.Total != int64(len(probe.Items)) {
-							b.Fatal("lookup omitted or miscounted total")
-						}
-					} else if probe.Page.Total != nil {
-						b.Fatal("lookup unexpectedly counted total")
-					}
-					b.ReportAllocs()
-					for b.Loop() {
-						page, err := ListArticles(ctx, configuration, nil, params)
-						if err != nil || len(page.Items) > 1 || (len(page.Items) == 1) != hasMatch {
-							b.Fatalf("items=%d error=%v", len(page.Items), err)
-						}
-					}
+					benchmarkArticleLookupCase(b, ctx, configuration, field, hasMatch, includesTotal)
 				})
 			}
 		}
 	}
 	b.Run("OpenSimple", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			database, err := storage.Open(filename, false, 1)
-			if err != nil {
-				b.Fatal(err)
-			}
-			var value int
-			err = database.QueryRowContext(ctx, "SELECT 1").Scan(&value)
-			closeError := database.Close()
-			if err != nil || closeError != nil || value != 1 {
-				b.Fatal(err, closeError, value)
-			}
-		}
+		benchmarkArticleOpen(b, ctx, filename)
 	})
 	b.Run("WarmSelect", func(b *testing.B) {
-		database, err := storage.Open(filename, false, 1)
-		if err != nil {
-			b.Fatal(err)
-		}
-		defer database.Close()
-		if err := database.PingContext(ctx); err != nil {
-			b.Fatal(err)
-		}
-		b.ReportAllocs()
-		for b.Loop() {
-			var value int
-			if err := database.QueryRowContext(ctx, "SELECT 1").Scan(&value); err != nil || value != 1 {
-				b.Fatal(err, value)
-			}
-		}
+		benchmarkWarmArticleSelect(b, ctx, filename)
 	})
 	database, err := storage.Open(filename, false, 1)
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer database.Close()
+	logArticleLookupPlans(b, ctx, database)
+}
+
+// articleLookupParams preserves all eight identifier/count benchmark combinations.
+func articleLookupParams(field string, hasMatch, includesTotal bool) ArticleListParams {
+	params := DefaultArticleListParams()
+	value := "30001"
+	if !hasMatch {
+		value = "999999"
+	}
+	if field == "doi" {
+		value = "10.0000/synthetic." + value
+		params.Doi = &value
+	} else {
+		params.Pmid = &value
+	}
+	params.IncludeTotal = &includesTotal
+	return params
+}
+
+// assertArticleLookupTotal retains the untimed total-policy assertions.
+func assertArticleLookupTotal(b *testing.B, probe domain.Page[domain.Article], includesTotal bool) {
+	b.Helper()
+	if includesTotal {
+		if probe.Page.Total == nil || *probe.Page.Total != int64(len(probe.Items)) {
+			b.Fatal("lookup omitted or miscounted total")
+		}
+	} else if probe.Page.Total != nil {
+		b.Fatal("lookup unexpectedly counted total")
+	}
+}
+
+// assertArticleLookupFixture validates untimed identity before allocation reporting and measured iterations.
+func assertArticleLookupFixture(b *testing.B, ctx context.Context, configuration config.Config, params ArticleListParams, hasMatch, includesTotal bool) {
+	b.Helper()
+	probe, err := ListArticles(ctx, configuration, nil, params)
+	if err != nil || len(probe.Items) > 1 || (len(probe.Items) == 1) != hasMatch {
+		b.Fatalf("invalid lookup fixture: items=%d error=%v", len(probe.Items), err)
+	}
+	if hasMatch && int64(probe.Items[0].ArticleId) != 30001 {
+		b.Fatal("lookup returned a different article")
+	}
+	assertArticleLookupTotal(b, probe, includesTotal)
+}
+
+// benchmarkArticleLookupCase retains validation inside every measured lookup iteration.
+func benchmarkArticleLookupCase(b *testing.B, ctx context.Context, configuration config.Config, field string, hasMatch, includesTotal bool) {
+	b.Helper()
+	params := articleLookupParams(field, hasMatch, includesTotal)
+	assertArticleLookupFixture(b, ctx, configuration, params, hasMatch, includesTotal)
+	b.ReportAllocs()
+	for b.Loop() {
+		page, err := ListArticles(ctx, configuration, nil, params)
+		if err != nil || len(page.Items) > 1 || (len(page.Items) == 1) != hasMatch {
+			b.Fatalf("items=%d error=%v", len(page.Items), err)
+		}
+	}
+}
+
+// benchmarkArticleOpen closes each newly opened native pool within its measured iteration.
+func benchmarkArticleOpen(b *testing.B, ctx context.Context, filename string) {
+	b.Helper()
+	b.ReportAllocs()
+	for b.Loop() {
+		database, err := storage.Open(filename, false, 1)
+		if err != nil {
+			b.Fatal(err)
+		}
+		var value int
+		err = database.QueryRowContext(ctx, "SELECT 1").Scan(&value)
+		closeError := database.Close()
+		if err != nil || closeError != nil || value != 1 {
+			b.Fatal(err, closeError, value)
+		}
+	}
+}
+
+// benchmarkWarmArticleSelect retains one pinged native pool through all measured selections.
+func benchmarkWarmArticleSelect(b *testing.B, ctx context.Context, filename string) {
+	b.Helper()
+	database, err := storage.Open(filename, false, 1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.PingContext(ctx); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		var value int
+		if err := database.QueryRowContext(ctx, "SELECT 1").Scan(&value); err != nil || value != 1 {
+			b.Fatal(err, value)
+		}
+	}
+}
+
+// logArticleLookupPlans retains all six original probes and row-close ordering.
+func logArticleLookupPlans(b *testing.B, ctx context.Context, database *sql.DB) {
+	b.Helper()
 	for _, statement := range []string{
 		"SELECT COUNT(*) FROM article_listing l WHERE l.doi='10.0000/synthetic.30001'",
 		"SELECT l.article_id,l.date FROM article_listing l WHERE l.doi='10.0000/synthetic.30001' ORDER BY l.date DESC,l.article_id DESC LIMIT 51 OFFSET 0",

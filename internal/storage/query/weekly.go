@@ -176,37 +176,9 @@ type WeeklyArticlePageParams struct {
 // WeeklyArticles validates the selected journal before loading every publication in the fixed window.
 func WeeklyArticles(ctx context.Context, configuration config.Config, params WeeklyArticlePageParams, cache *weekly.Cache) (domain.Page[domain.WeeklyArticle], error) {
 	empty := domain.Page[domain.WeeklyArticle]{}
-	for _, field := range []struct {
-		name, value string
-		limit       int
-	}{{"db", params.DbName, 255}, {"window_end", params.WindowEnd, 2048}} {
-		if err := validateCharacters(field.name, field.value, field.limit); err != nil {
-			return empty, err
-		}
-	}
-	if params.Query != nil {
-		if err := validateCharacters("q", *params.Query, 2048); err != nil {
-			return empty, err
-		}
-	}
-	if params.Cursor != nil {
-		if err := validateCharacters("cursor", *params.Cursor, 2048); err != nil {
-			return empty, err
-		}
-	}
-	if params.JournalId <= 0 {
-		return empty, InvalidInput{"journal_id must be greater than 0"}
-	}
-	if err := validatePagination(params.Limit, 0); err != nil {
+	end, name, err := validateWeeklyArticleParams(params)
+	if err != nil {
 		return empty, err
-	}
-	end, ok := weekly.ParseTimestamp(params.WindowEnd)
-	if !ok {
-		return empty, InvalidInput{"window_end must be a valid RFC3339 timestamp"}
-	}
-	name := config.NormalizeDatabaseName(params.DbName)
-	if name == "" {
-		return empty, InvalidInput{"db must select a database"}
 	}
 	database, err := open(configuration, &name)
 	if err != nil {
@@ -218,39 +190,8 @@ func WeeklyArticles(ctx context.Context, configuration config.Config, params Wee
 		return empty, err
 	}
 	defer connection.Close()
-	var exists bool
-	if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM journals WHERE journal_id=?)", params.JournalId).Scan(&exists); err != nil {
-		return empty, err
-	}
-	if !exists {
-		return empty, NotFound{"Journal not found"}
-	}
-	buckets, err := loadWeeklyBuckets(configuration, end, cache)
+	filters, err := weeklyArticleFilters(ctx, configuration, params, cache, connection, end, name)
 	if err != nil {
-		return empty, err
-	}
-	ids := []int64{}
-	if bucket := buckets[name]; bucket != nil {
-		ids = bucket.ids
-	}
-	if err := installWeeklyMembership(ctx, connection, ids); err != nil {
-		return empty, err
-	}
-	usesSimple, err := search.UsesSimple(ctx, connection)
-	if err != nil {
-		return empty, err
-	}
-	query := params.Query
-	if query != nil {
-		value := search.PrepareQuery(*query, usesSimple, domain.SearchSimple)
-		query = &value
-	}
-	filters := filter{}
-	filters.add("l.journal_id=?", params.JournalId)
-	if match := preparedMatch(ArticleListParams{Query: query}); match != "" {
-		filters.add("l.article_id IN (SELECT rowid FROM article_search WHERE article_search MATCH ?)", match)
-	}
-	if err := filters.articleCursor(params.Cursor, "DESC"); err != nil {
 		return empty, err
 	}
 	positions, err := collect(ctx, connection, "SELECT l.article_id,l.date FROM temp.weekly_membership membership JOIN article_listing l ON l.article_id=membership.article_id "+filters.where()+" ORDER BY l.date DESC,l.article_id DESC LIMIT ?", append(filters.values, params.Limit+1), func(row scanner) (articlePosition, error) {
@@ -264,31 +205,7 @@ func WeeklyArticles(ctx context.Context, configuration config.Config, params Wee
 	if err != nil {
 		return empty, err
 	}
-	hasMore := int64(len(positions)) > params.Limit
-	var cursor *string
-	if hasMore {
-		positions = positions[:params.Limit]
-		last := positions[len(positions)-1]
-		date := ""
-		if last.date != nil {
-			date = *last.date
-		}
-		value := date + "|" + strconv.FormatInt(last.id, 10)
-		cursor = &value
-	}
-	selected := make([]int64, len(positions))
-	for index, position := range positions {
-		selected[index] = position.id
-	}
-	articles, err := fetchArticles(ctx, connection, selected)
-	if err != nil {
-		return empty, err
-	}
-	items := make([]domain.WeeklyArticle, 0, len(articles))
-	for _, article := range articles {
-		items = append(items, weeklyArticle(article))
-	}
-	return domain.Page[domain.WeeklyArticle]{Items: items, Page: domain.PageMeta{Limit: params.Limit, NextCursor: cursor, HasMore: &hasMore}}, nil
+	return weeklyArticlePage(ctx, connection, positions, params)
 }
 
 func weeklyArticle(article domain.Article) domain.WeeklyArticle {
@@ -302,12 +219,8 @@ func WeeklyUpdates(ctx context.Context, configuration config.Config, end weekly.
 	if err != nil {
 		return result, err
 	}
-	count := 0
-	for _, bucket := range buckets {
-		count += len(bucket.ids)
-		if count > 2000 {
-			return domain.WeeklyResponse[domain.WeeklyJournalUpdate]{}, ErrLegacyWeeklyLimit
-		}
+	if err := validateLegacyWeeklyCount(buckets); err != nil {
+		return domain.WeeklyResponse[domain.WeeklyJournalUpdate]{}, err
 	}
 	for name, bucket := range buckets {
 		filename := filepath.Join(configuration.IndexDir, name)
@@ -321,19 +234,7 @@ func WeeklyUpdates(ctx context.Context, configuration config.Config, end weekly.
 		if len(articles) == 0 {
 			continue
 		}
-		groups := map[identity.Id][]domain.WeeklyArticle{}
-		for _, article := range articles {
-			groups[article.JournalId] = append(groups[article.JournalId], article)
-		}
-		journals := make([]domain.WeeklyJournalUpdate, 0, len(groups))
-		for id, items := range groups {
-			title := items[0].JournalTitle
-			journals = append(journals, domain.WeeklyJournalUpdate{WeeklyJournalSummary: domain.WeeklyJournalSummary{JournalId: id, JournalTitle: &title, NewArticleCount: len(items)}, Articles: items})
-		}
-		slices.SortFunc(journals, func(first, second domain.WeeklyJournalUpdate) int {
-			return sortWeeklyJournals(first.WeeklyJournalSummary, second.WeeklyJournalSummary)
-		})
-		result.Databases = append(result.Databases, domain.WeeklyDatabase[domain.WeeklyJournalUpdate]{DbName: name, RunId: bucket.runId, GeneratedAt: bucket.generated.Format(false), NewArticleCount: len(articles), Journals: journals})
+		result.Databases = append(result.Databases, legacyWeeklyDatabase(name, bucket, articles))
 	}
 	sortWeeklyDatabases(result.Databases)
 	return result, nil
@@ -381,4 +282,148 @@ func fetchLegacyWeeklyArticles(ctx context.Context, filename string, ids []int64
 		}
 	}
 	return result, nil
+}
+
+// validateWeeklyArticleLengths preserves db/window/query/cursor validation priority.
+func validateWeeklyArticleLengths(params WeeklyArticlePageParams) error {
+	for _, field := range []struct {
+		name, value string
+		limit       int
+	}{{"db", params.DbName, 255}, {"window_end", params.WindowEnd, 2048}} {
+		if err := validateCharacters(field.name, field.value, field.limit); err != nil {
+			return err
+		}
+	}
+	if params.Query != nil {
+		if err := validateCharacters("q", *params.Query, 2048); err != nil {
+			return err
+		}
+	}
+	if params.Cursor != nil {
+		if err := validateCharacters("cursor", *params.Cursor, 2048); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateWeeklyArticleParams admits journal, pagination, timestamp and database in the original order.
+func validateWeeklyArticleParams(params WeeklyArticlePageParams) (weekly.Timestamp, string, error) {
+	if err := validateWeeklyArticleLengths(params); err != nil {
+		return weekly.Timestamp{}, "", err
+	}
+	if params.JournalId <= 0 {
+		return weekly.Timestamp{}, "", InvalidInput{"journal_id must be greater than 0"}
+	}
+	if err := validatePagination(params.Limit, 0); err != nil {
+		return weekly.Timestamp{}, "", err
+	}
+	end, ok := weekly.ParseTimestamp(params.WindowEnd)
+	if !ok {
+		return weekly.Timestamp{}, "", InvalidInput{"window_end must be a valid RFC3339 timestamp"}
+	}
+	name := config.NormalizeDatabaseName(params.DbName)
+	if name == "" {
+		return weekly.Timestamp{}, "", InvalidInput{"db must select a database"}
+	}
+	return end, name, nil
+}
+
+// weeklyArticleFilters keeps journal admission before manifests on the caller's pinned connection.
+func weeklyArticleFilters(ctx context.Context, configuration config.Config, params WeeklyArticlePageParams, cache *weekly.Cache, connection *sql.Conn, end weekly.Timestamp, name string) (filter, error) {
+	var exists bool
+	if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM journals WHERE journal_id=?)", params.JournalId).Scan(&exists); err != nil {
+		return filter{}, err
+	}
+	if !exists {
+		return filter{}, NotFound{"Journal not found"}
+	}
+	buckets, err := loadWeeklyBuckets(configuration, end, cache)
+	if err != nil {
+		return filter{}, err
+	}
+	ids := []int64{}
+	if bucket := buckets[name]; bucket != nil {
+		ids = bucket.ids
+	}
+	if err := installWeeklyMembership(ctx, connection, ids); err != nil {
+		return filter{}, err
+	}
+	usesSimple, err := search.UsesSimple(ctx, connection)
+	if err != nil {
+		return filter{}, err
+	}
+	query := params.Query
+	if query != nil {
+		value := search.PrepareQuery(*query, usesSimple, domain.SearchSimple)
+		query = &value
+	}
+	filters := filter{}
+	filters.add("l.journal_id=?", params.JournalId)
+	if match := preparedMatch(ArticleListParams{Query: query}); match != "" {
+		filters.add("l.article_id IN (SELECT rowid FROM article_search WHERE article_search MATCH ?)", match)
+	}
+	if err := filters.articleCursor(params.Cursor, "DESC"); err != nil {
+		return filter{}, err
+	}
+	return filters, nil
+}
+
+// weeklyArticlePage creates cursor metadata from positions before canonical enrichment.
+func weeklyArticlePage(ctx context.Context, connection *sql.Conn, positions []articlePosition, params WeeklyArticlePageParams) (domain.Page[domain.WeeklyArticle], error) {
+	empty := domain.Page[domain.WeeklyArticle]{}
+	hasMore := int64(len(positions)) > params.Limit
+	var cursor *string
+	if hasMore {
+		positions = positions[:params.Limit]
+		last := positions[len(positions)-1]
+		date := ""
+		if last.date != nil {
+			date = *last.date
+		}
+		value := date + "|" + strconv.FormatInt(last.id, 10)
+		cursor = &value
+	}
+	selected := make([]int64, len(positions))
+	for index, position := range positions {
+		selected[index] = position.id
+	}
+	articles, err := fetchArticles(ctx, connection, selected)
+	if err != nil {
+		return empty, err
+	}
+	items := make([]domain.WeeklyArticle, 0, len(articles))
+	for _, article := range articles {
+		items = append(items, weeklyArticle(article))
+	}
+	return domain.Page[domain.WeeklyArticle]{Items: items, Page: domain.PageMeta{Limit: params.Limit, NextCursor: cursor, HasMore: &hasMore}}, nil
+}
+
+// validateLegacyWeeklyCount retains the reference ceiling before any availability pruning.
+func validateLegacyWeeklyCount(buckets map[string]*weeklyBucket) error {
+	count := 0
+	for _, bucket := range buckets {
+		count += len(bucket.ids)
+		if count > 2000 {
+			return ErrLegacyWeeklyLimit
+		}
+	}
+	return nil
+}
+
+// legacyWeeklyDatabase preserves per-journal item order and summary sorting for one publication.
+func legacyWeeklyDatabase(name string, bucket *weeklyBucket, articles []domain.WeeklyArticle) domain.WeeklyDatabase[domain.WeeklyJournalUpdate] {
+	groups := map[identity.Id][]domain.WeeklyArticle{}
+	for _, article := range articles {
+		groups[article.JournalId] = append(groups[article.JournalId], article)
+	}
+	journals := make([]domain.WeeklyJournalUpdate, 0, len(groups))
+	for id, items := range groups {
+		title := items[0].JournalTitle
+		journals = append(journals, domain.WeeklyJournalUpdate{WeeklyJournalSummary: domain.WeeklyJournalSummary{JournalId: id, JournalTitle: &title, NewArticleCount: len(items)}, Articles: items})
+	}
+	slices.SortFunc(journals, func(first, second domain.WeeklyJournalUpdate) int {
+		return sortWeeklyJournals(first.WeeklyJournalSummary, second.WeeklyJournalSummary)
+	})
+	return domain.WeeklyDatabase[domain.WeeklyJournalUpdate]{DbName: name, RunId: bucket.runId, GeneratedAt: bucket.generated.Format(false), NewArticleCount: len(articles), Journals: journals}
 }
