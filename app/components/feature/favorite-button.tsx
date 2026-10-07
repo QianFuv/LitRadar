@@ -30,17 +30,26 @@ import { cn } from '@/lib/utils';
  * @param props - Article identity, source database, and optional cached folder ids.
  * @returns Favorite popover and destructive removal confirmation.
  */
-export function FavoriteButton({
-  articleId,
-  dbName,
-  initialFolderIds = [],
-  isFavoriteStateUnavailable = false,
-}: {
+export function FavoriteButton(props: FavoriteButtonProps) {
+  const queryState = useFavoriteButtonState(props);
+  if (!queryState.user) return null;
+  const state = { ...queryState, ...getFavoriteButtonPresentation(queryState) };
+  return renderFavoriteButton(state);
+}
+
+type FavoriteButtonProps = {
   articleId: ArticleId;
   dbName: string;
   initialFolderIds?: number[];
   isFavoriteStateUnavailable?: boolean;
-}) {
+};
+/** Own the unchanged cache, optimistic state, queries, mutations and confirmation ref. */
+function useFavoriteButtonState({
+  articleId,
+  dbName,
+  initialFolderIds = [],
+  isFavoriteStateUnavailable = false,
+}: FavoriteButtonProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const db = dbName;
@@ -133,13 +142,56 @@ export function FavoriteButton({
     },
   });
 
-  if (!user) return null;
+  return {
+    user,
+    queryClient,
+    db,
+    articleId,
+    open,
+    setOpen,
+    triggerRef,
+    folderToRemove,
+    setFolderToRemove,
+    queryKey,
+    initialFolderIdsValue,
+    optimisticFolderIds,
+    cachedFolderIds,
+    checks,
+    checksError,
+    isCheckingFavorite,
+    refetchChecks,
+    folders,
+    isFoldersPending,
+    foldersError,
+    refetchFolders,
+    addMut,
+    removeMut,
+    isFavoriteStateUnavailable,
+  };
+}
 
-  const resolvedFolderIds =
-    checks?.map((item) => item.folder_id) ??
-    optimisticFolderIds ??
-    cachedFolderIds ??
-    initialFolderIdsValue;
+type FavoriteButtonQueryState = ReturnType<typeof useFavoriteButtonState>;
+type FavoriteButtonViewState = FavoriteButtonQueryState &
+  ReturnType<typeof getFavoriteButtonPresentation>;
+/** Derive authenticated membership presentation using the original fallback and unknown-state precedence. */
+function getFavoriteButtonPresentation(state: FavoriteButtonQueryState) {
+  const {
+    queryClient,
+    queryKey,
+    initialFolderIdsValue,
+    optimisticFolderIds,
+    cachedFolderIds,
+    checks,
+    checksError,
+    foldersError,
+    isFavoriteStateUnavailable,
+  } = state;
+  const resolvedFolderIds = getResolvedFavoriteFolderIds(
+    checks,
+    optimisticFolderIds,
+    cachedFolderIds,
+    initialFolderIdsValue,
+  );
   const isFavoriteUnknown =
     Boolean(checksError) ||
     (isFavoriteStateUnavailable && readFreshFavoriteCheck(queryClient, queryKey) === undefined);
@@ -148,6 +200,21 @@ export function FavoriteButton({
   const lookupError = checksError ?? foldersError;
   const favFolderIds = new Set(resolvedFolderIds);
 
+  return { isFavoriteUnknown, isFav, favoriteLabel, lookupError, favFolderIds };
+}
+/** Render the unchanged trigger, popover and captured confirmation as their original siblings. */
+function renderFavoriteButton(state: FavoriteButtonViewState) {
+  const {
+    open,
+    setOpen,
+    triggerRef,
+    folderToRemove,
+    setFolderToRemove,
+    removeMut,
+    isFavoriteUnknown,
+    isFav,
+    favoriteLabel,
+  } = state;
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
@@ -187,70 +254,7 @@ export function FavoriteButton({
         >
           <div className="space-y-1">
             <div className="px-2 py-1 text-xs text-muted-foreground font-medium">选择收藏夹</div>
-            {lookupError ? (
-              <div role="alert" className="space-y-2 px-2 py-2 text-xs text-destructive">
-                <p>{lookupError instanceof Error ? lookupError.message : '无法读取收藏状态'}</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    void Promise.all([refetchChecks(), refetchFolders()]);
-                  }}
-                >
-                  重试收藏状态
-                </Button>
-              </div>
-            ) : isFoldersPending || (isCheckingFavorite && checks === undefined) ? (
-              <div role="status" className="px-2 py-2 text-xs text-muted-foreground">
-                加载中…
-              </div>
-            ) : folders.length === 0 ? (
-              <div className="px-2 py-2 text-xs text-muted-foreground">
-                暂无收藏夹，请先在「我的收藏」中创建
-              </div>
-            ) : (
-              folders.map((folder) => {
-                const isInFolder = favFolderIds.has(folder.id);
-                return (
-                  <button
-                    key={folder.id}
-                    type="button"
-                    aria-pressed={isInFolder}
-                    className={cn(
-                      'motion-control flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 md:min-h-10',
-                      isInFolder
-                        ? 'bg-warning text-warning-foreground hover:bg-warning/70 active:bg-warning/50'
-                        : 'hover:bg-accent active:bg-accent-pressed',
-                    )}
-                    disabled={
-                      addMut.isPending ||
-                      removeMut.isPending ||
-                      isCheckingFavorite ||
-                      isFavoriteUnknown
-                    }
-                    onClick={() => {
-                      if (isInFolder) {
-                        removeMut.reset();
-                        setFolderToRemove(folder);
-                      } else {
-                        addMut.mutate(folder.id);
-                      }
-                    }}
-                  >
-                    <Star
-                      className={cn(
-                        'motion-control size-4 shrink-0 transition-[fill]',
-                        isInFolder && 'fill-current',
-                      )}
-                      strokeWidth={1.5}
-                      aria-hidden="true"
-                    />
-                    <span className="truncate">{folder.name}</span>
-                  </button>
-                );
-              })
-            )}
+            {renderFavoriteLookup(state)}
           </div>
         </PopoverContent>
       </Popover>
@@ -276,4 +280,101 @@ export function FavoriteButton({
       />
     </>
   );
+}
+/** Retain each folder button, pending guards and reset-before-target event order. */
+function renderFavoriteFolderButton(state: FavoriteButtonViewState, folder: Folder) {
+  const {
+    setFolderToRemove,
+    isCheckingFavorite,
+    addMut,
+    removeMut,
+    isFavoriteUnknown,
+    favFolderIds,
+  } = state;
+
+  const isInFolder = favFolderIds.has(folder.id);
+  return (
+    <button
+      key={folder.id}
+      type="button"
+      aria-pressed={isInFolder}
+      className={cn(
+        'motion-control flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 md:min-h-10',
+        isInFolder
+          ? 'bg-warning text-warning-foreground hover:bg-warning/70 active:bg-warning/50'
+          : 'hover:bg-accent active:bg-accent-pressed',
+      )}
+      disabled={addMut.isPending || removeMut.isPending || isCheckingFavorite || isFavoriteUnknown}
+      onClick={() => {
+        if (isInFolder) {
+          removeMut.reset();
+          setFolderToRemove(folder);
+        } else {
+          addMut.mutate(folder.id);
+        }
+      }}
+    >
+      <Star
+        className={cn(
+          'motion-control size-4 shrink-0 transition-[fill]',
+          isInFolder && 'fill-current',
+        )}
+        strokeWidth={1.5}
+        aria-hidden="true"
+      />
+      <span className="truncate">{folder.name}</span>
+    </button>
+  );
+}
+
+/** Retain error, loading, empty-folder and available-membership presentation priority. */
+function renderFavoriteLookup(state: FavoriteButtonViewState) {
+  const {
+    checks,
+    isCheckingFavorite,
+    refetchChecks,
+    folders,
+    isFoldersPending,
+    refetchFolders,
+    lookupError,
+  } = state;
+  if (lookupError)
+    return (
+      <div role="alert" className="space-y-2 px-2 py-2 text-xs text-destructive">
+        <p>{lookupError instanceof Error ? lookupError.message : '无法读取收藏状态'}</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void Promise.all([refetchChecks(), refetchFolders()]);
+          }}
+        >
+          重试收藏状态
+        </Button>
+      </div>
+    );
+  if (isFoldersPending || (isCheckingFavorite && checks === undefined))
+    return (
+      <div role="status" className="px-2 py-2 text-xs text-muted-foreground">
+        加载中…
+      </div>
+    );
+  if (folders.length === 0)
+    return (
+      <div className="px-2 py-2 text-xs text-muted-foreground">
+        暂无收藏夹，请先在「我的收藏」中创建
+      </div>
+    );
+  return folders.map((folder) => renderFavoriteFolderButton(state, folder));
+}
+
+/** Resolve visible membership from checks before optimistic, cached and initial values. */
+function getResolvedFavoriteFolderIds(
+  checks: FavoriteCheck[] | undefined,
+  optimistic: number[] | null,
+  cached: number[] | null,
+  initial: number[],
+): number[] {
+  return checks?.map((item) => item.folder_id) ?? optimistic ?? cached ?? initial;
 }

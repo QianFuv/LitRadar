@@ -20,6 +20,7 @@ import {
   type FavoriteArticleItem,
   type FavoriteArticleRef,
   type FavoriteItem,
+  type Folder,
 } from '@/lib/api';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { invalidateFavoriteMemberships } from '@/components/feature/use-favorite-checks';
@@ -115,10 +116,7 @@ export function useFavoritesPage(userId: number) {
     queryFn: () => getFolders(),
     enabled: true,
   });
-  const activeFolderId =
-    selectedFolderId !== null && folders.some((folder) => folder.id === selectedFolderId)
-      ? selectedFolderId
-      : (folders.find((folder) => folder.is_tracking)?.id ?? folders[0]?.id ?? null);
+  const activeFolderId = getActiveFavoriteFolderId(folders, selectedFolderId);
   const selectedFolder = folders.find((folder) => folder.id === activeFolderId) || null;
 
   const PAGE_SIZE = 50;
@@ -162,11 +160,10 @@ export function useFavoritesPage(userId: number) {
   );
   const allLoadedSelected = favorites.length > 0 && selectedFavorites.length === favorites.length;
   const moveTargetFolders = folders.filter((folder) => folder.id !== activeFolderId);
-  const effectiveMoveTargetFolderId = moveTargetFolders.some(
-    (folder) => String(folder.id) === moveTargetFolderId,
-  )
-    ? moveTargetFolderId
-    : '';
+  const effectiveMoveTargetFolderId = getEffectiveMoveTargetFolderId(
+    moveTargetFolders,
+    moveTargetFolderId,
+  );
 
   const createMut = useMutation({
     mutationFn: (name: string) => createFolder(name),
@@ -404,4 +401,14 @@ export function useFavoritesPage(userId: number) {
     trackMut,
     visiblePageCount,
   };
+}
+
+/** Select a valid URL folder before the tracking, first-folder and empty fallbacks. */
+function getActiveFavoriteFolderId(folders: Folder[], selectedId: number | null): number | null {
+  if (selectedId !== null && folders.some((folder) => folder.id === selectedId)) return selectedId;
+  return folders.find((folder) => folder.is_tracking)?.id ?? folders[0]?.id ?? null;
+}
+/** Retain an available move target using the original string identity comparison. */
+function getEffectiveMoveTargetFolderId(folders: Folder[], value: string): string {
+  return folders.some((folder) => String(folder.id) === value) ? value : '';
 }
