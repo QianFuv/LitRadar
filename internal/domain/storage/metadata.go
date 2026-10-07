@@ -95,17 +95,8 @@ type JournalOption struct {
 // DatePrecision validates the complete partial-date grammar including year zero and real calendar dates.
 func DatePrecision(value string) *string {
 	value = strings.TrimSpace(norm.NFC.String(value))
-	if len(value) != 4 && len(value) != 7 && len(value) != 10 {
+	if !hasPartialDateGrammar(value) {
 		return nil
-	}
-	for index := range len(value) {
-		if index == 4 || index == 7 {
-			if value[index] != '-' {
-				return nil
-			}
-		} else if value[index] < '0' || value[index] > '9' {
-			return nil
-		}
 	}
 	year, _ := strconv.Atoi(value[:4])
 	month, day := 1, 1
@@ -123,4 +114,21 @@ func DatePrecision(value string) *string {
 		return nil
 	}
 	return &precision
+}
+
+// hasPartialDateGrammar requires the complete fixed-width ASCII year/month/day shape.
+func hasPartialDateGrammar(value string) bool {
+	if len(value) != 4 && len(value) != 7 && len(value) != 10 {
+		return false
+	}
+	for index := range len(value) {
+		if index == 4 || index == 7 {
+			if value[index] != '-' {
+				return false
+			}
+		} else if value[index] < '0' || value[index] > '9' {
+			return false
+		}
+	}
+	return true
 }
