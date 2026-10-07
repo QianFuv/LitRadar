@@ -103,27 +103,52 @@ func insertAudit(ctx context.Context, connection *sql.Conn, event *domain.AuditE
 	return nil
 }
 
+// validAudit checks symbols, scalar metadata and request bytes in their original order.
 func validAudit(event *domain.AuditEvent) bool {
-	validSymbol := func(value string, allowEmpty bool) bool {
-		if (!allowEmpty && value == "") || len(value) > 64 {
-			return false
-		}
-		for _, character := range []byte(value) {
-			if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_') {
-				return false
-			}
-		}
-		return true
-	}
-	if !validSymbol(event.Action, false) || !validSymbol(event.Outcome, false) || !validSymbol(event.Reason, true) || !validSymbol(event.SourceClass, true) || !validSymbol(event.Bucket, true) || event.ActorId != nil && *event.ActorId <= 0 || event.TargetId != nil && *event.TargetId <= 0 || math.IsNaN(event.OccurredAt) || math.IsInf(event.OccurredAt, 0) || len(event.RequestId) > 128 {
+	return validAuditSymbols(event) && validAuditScalars(event) && validAuditRequestId(event.RequestId)
+}
+
+// validAuditSymbols keeps required and optional fixed metadata distinct.
+func validAuditSymbols(event *domain.AuditEvent) bool {
+	return validAuditSymbol(event.Action, false) && validAuditSymbol(event.Outcome, false) && validAuditSymbol(event.Reason, true) && validAuditSymbol(event.SourceClass, true) && validAuditSymbol(event.Bucket, true)
+}
+
+// validAuditSymbol admits lowercase ASCII symbols without trimming or enum restrictions.
+func validAuditSymbol(value string, shouldAllowEmpty bool) bool {
+	if (!shouldAllowEmpty && value == "") || len(value) > 64 {
 		return false
 	}
-	for _, character := range []byte(event.RequestId) {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.' || character == ':') {
+	for _, character := range []byte(value) {
+		if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_') {
 			return false
 		}
 	}
 	return true
+}
+
+// validAuditScalars retains optional positive identities and finite unrestricted timestamps.
+func validAuditScalars(event *domain.AuditEvent) bool {
+	return validAuditIdentity(event.ActorId) && validAuditIdentity(event.TargetId) && !math.IsNaN(event.OccurredAt) && !math.IsInf(event.OccurredAt, 0) && len(event.RequestId) <= 128
+}
+
+// validAuditIdentity allows an omitted identity but requires a positive supplied value.
+func validAuditIdentity(value *int64) bool {
+	return value == nil || *value > 0
+}
+
+// validAuditRequestId permits only the original request correlation alphabet.
+func validAuditRequestId(value string) bool {
+	for _, character := range []byte(value) {
+		if !isAuditRequestIdByte(character) {
+			return false
+		}
+	}
+	return true
+}
+
+// isAuditRequestIdByte recognizes case-sensitive ASCII request metadata without normalization.
+func isAuditRequestIdByte(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.' || character == ':'
 }
 
 // RequireAdministrator rechecks live authority while the caller owns the write transaction.

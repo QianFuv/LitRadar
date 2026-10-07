@@ -113,22 +113,11 @@ func TestBootstrapHasOneConcurrentWinnerAndRegistrationCannotBootstrap(t *testin
 	}
 }
 
+// TestRegistrationErrorPriorityAndAlwaysRequiredRedemptionAudit checks failure ordering and successful redemption persistence.
 func TestRegistrationErrorPriorityAndAlwaysRequiredRedemptionAudit(t *testing.T) {
 	repository := testRepository(t)
 	owner := testAdmin(t, repository)
-	if _, err := repository.Register(context.Background(), "admin", "hash", "salt", nil, 100, nil); !errors.Is(err, domain.ErrInviteRequired) {
-		t.Fatal(err)
-	}
-	bad := "missing"
-	if _, err := repository.Register(context.Background(), "ADMIN", "hash", "salt", &bad, 100, nil); !errors.Is(err, domain.ErrUsernameExists) {
-		t.Fatal(err)
-	}
-	if _, err := repository.Register(context.Background(), "member", "hash", "salt", &bad, 100, nil); !errors.Is(err, domain.ErrInvite) {
-		t.Fatal(err)
-	}
-	if count := queryScalar[int](t, repository, "SELECT count(*) FROM users"); count != 1 {
-		t.Fatal("failed redemption persisted user")
-	}
+	assertRegistrationFailurePriority(t, repository)
 	code := "invite"
 	if _, err := repository.IssueInvite(context.Background(), owner.User.Id, code, 100, 200, 2, false, nil); err != nil {
 		t.Fatal(err)
@@ -149,6 +138,7 @@ func TestRegistrationErrorPriorityAndAlwaysRequiredRedemptionAudit(t *testing.T)
 	}
 }
 
+// TestFinalInviteUseAndConcurrentIssuanceSerialize checks both joined concurrent invitation phases.
 func TestFinalInviteUseAndConcurrentIssuanceSerialize(t *testing.T) {
 	repository := testRepository(t)
 	owner := testAdmin(t, repository)
@@ -165,17 +155,7 @@ func TestFinalInviteUseAndConcurrentIssuanceSerialize(t *testing.T) {
 	}
 	workers.Wait()
 	close(results)
-	successes := 0
-	for err := range results {
-		if err == nil {
-			successes++
-		} else if !errors.Is(err, domain.ErrActiveInvite) {
-			t.Fatal(err)
-		}
-	}
-	if successes != 1 {
-		t.Fatal(successes)
-	}
+	assertSingleInviteIssuanceWinner(t, results)
 	invite, err := repository.Invite(ctx, owner.User.Id)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +171,7 @@ func TestFinalInviteUseAndConcurrentIssuanceSerialize(t *testing.T) {
 	}
 	workers.Wait()
 	close(results)
-	successes = 0
+	successes := 0
 	for err := range results {
 		if err == nil {
 			successes++
@@ -204,6 +184,7 @@ func TestFinalInviteUseAndConcurrentIssuanceSerialize(t *testing.T) {
 	}
 }
 
+// TestPersonalTokenQuotaAndLoginReplacementSerialize checks personal issuance quota and browser replacement under contention.
 func TestPersonalTokenQuotaAndLoginReplacementSerialize(t *testing.T) {
 	repository := testRepository(t)
 	authorization := testAdmin(t, repository)
@@ -223,17 +204,7 @@ func TestPersonalTokenQuotaAndLoginReplacementSerialize(t *testing.T) {
 	}
 	workers.Wait()
 	close(results)
-	successes := 0
-	for err := range results {
-		if err == nil {
-			successes++
-		} else if !errors.Is(err, domain.ErrTokenLimit) {
-			t.Fatal(err)
-		}
-	}
-	if successes != 2 {
-		t.Fatal(successes)
-	}
+	assertPersonalTokenQuotaWinners(t, results)
 	results = make(chan error, 8)
 	for index := 0; index < 8; index++ {
 		workers.Add(1)
@@ -259,17 +230,12 @@ func TestPersonalTokenQuotaAndLoginReplacementSerialize(t *testing.T) {
 	}
 }
 
+// TestTokenExpiryAndExactAuthorizationFences checks expiration, captured bearer revocation and global generation fences.
 func TestTokenExpiryAndExactAuthorizationFences(t *testing.T) {
 	repository := testRepository(t)
 	authorization := testAdmin(t, repository)
 	ctx := context.Background()
-	issue(t, repository, authorization, "expired", false)
-	if found, err := repository.VerifyToken(ctx, "expired", 1000); err != nil || found != nil {
-		t.Fatalf("%v %v", found, err)
-	}
-	if count := queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens"); count != 0 {
-		t.Fatal(count)
-	}
+	assertTokenExpiryPrunesRow(t, repository, ctx, authorization)
 	token := issue(t, repository, authorization, "authorizer", false)
 	observed, err := repository.VerifyToken(ctx, "authorizer", 100)
 	if err != nil || observed == nil {
@@ -298,6 +264,7 @@ func TestTokenExpiryAndExactAuthorizationFences(t *testing.T) {
 	}
 }
 
+// TestCredentialCasHasOneWinnerAndLegacyUpgradeDoesNotRevoke checks opaque legacy upgrade and one-winner password side effects.
 func TestCredentialCasHasOneWinnerAndLegacyUpgradeDoesNotRevoke(t *testing.T) {
 	repository := testRepository(t)
 	authorization := testAdmin(t, repository)
@@ -307,18 +274,7 @@ func TestCredentialCasHasOneWinnerAndLegacyUpgradeDoesNotRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed, err := repository.UpgradeLegacy(ctx, *observed, "upgraded", 101); err != nil || !changed {
-		t.Fatalf("%t %v", changed, err)
-	}
-	if changed, err := repository.UpgradeLegacy(ctx, *observed, "loser", 102); err != nil || changed {
-		t.Fatalf("%t %v", changed, err)
-	}
-	if count := queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens"); count != 1 {
-		t.Fatal("upgrade revoked token")
-	}
-	if generation := queryScalar[int](t, repository, "SELECT token_generation FROM users"); generation != 0 {
-		t.Fatal(generation)
-	}
+	assertLegacyUpgradePreservesAuthority(t, repository, ctx, observed)
 	observed, err = repository.CredentialsById(ctx, authorization.User.Id)
 	if err != nil {
 		t.Fatal(err)
@@ -349,9 +305,7 @@ func TestCredentialCasHasOneWinnerAndLegacyUpgradeDoesNotRevoke(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if successes != 1 || queryScalar[int](t, repository, "SELECT token_generation FROM users") != 1 || queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens") != 0 || queryScalar[int](t, repository, "SELECT count(*) FROM security_audit_events") != 1 {
-		t.Fatal("CAS loser had side effects")
-	}
+	assertCredentialCasSideEffects(t, repository, successes)
 }
 
 func TestProtectedMutationsRollBackAuditAndTokenDeleteFailures(t *testing.T) {
@@ -553,5 +507,92 @@ func TestAuditValidationRejectsSensitiveFreeTextWithoutMutation(t *testing.T) {
 	err := repository.Immediate(context.Background(), false, func(connection *sql.Conn) error { return InsertAudit(context.Background(), connection, &audit) })
 	if !errors.Is(err, domain.ErrAudit) || queryScalar[int](t, repository, "SELECT count(*) FROM security_audit_events") != 0 {
 		t.Fatal(err)
+	}
+}
+
+// assertRegistrationFailurePriority checks missing invite, username conflict and invalid invite priorities before mutation.
+func assertRegistrationFailurePriority(t *testing.T, repository *Repository) {
+	t.Helper()
+	if _, err := repository.Register(context.Background(), "admin", "hash", "salt", nil, 100, nil); !errors.Is(err, domain.ErrInviteRequired) {
+		t.Fatal(err)
+	}
+	bad := "missing"
+	if _, err := repository.Register(context.Background(), "ADMIN", "hash", "salt", &bad, 100, nil); !errors.Is(err, domain.ErrUsernameExists) {
+		t.Fatal(err)
+	}
+	if _, err := repository.Register(context.Background(), "member", "hash", "salt", &bad, 100, nil); !errors.Is(err, domain.ErrInvite) {
+		t.Fatal(err)
+	}
+	if count := queryScalar[int](t, repository, "SELECT count(*) FROM users"); count != 1 {
+		t.Fatal("failed redemption persisted user")
+	}
+}
+
+// assertSingleInviteIssuanceWinner drains joined issuance results and permits only one successful owner invite.
+func assertSingleInviteIssuanceWinner(t *testing.T, results <-chan error) {
+	t.Helper()
+	successes := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if !errors.Is(err, domain.ErrActiveInvite) {
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 {
+		t.Fatal(successes)
+	}
+}
+
+// assertPersonalTokenQuotaWinners drains joined personal issuance results and checks exactly two quota winners.
+func assertPersonalTokenQuotaWinners(t *testing.T, results <-chan error) {
+	t.Helper()
+	successes := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if !errors.Is(err, domain.ErrTokenLimit) {
+			t.Fatal(err)
+		}
+	}
+	if successes != 2 {
+		t.Fatal(successes)
+	}
+}
+
+// assertTokenExpiryPrunesRow checks expiry exactly at the boundary deletes the persisted bearer row.
+func assertTokenExpiryPrunesRow(t *testing.T, repository *Repository, ctx context.Context, authorization domain.Authorization) {
+	t.Helper()
+	issue(t, repository, authorization, "expired", false)
+	if found, err := repository.VerifyToken(ctx, "expired", 1000); err != nil || found != nil {
+		t.Fatalf("%v %v", found, err)
+	}
+	if count := queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens"); count != 0 {
+		t.Fatal(count)
+	}
+}
+
+// assertLegacyUpgradePreservesAuthority checks the first opaque upgrade wins without revoking tokens or generation.
+func assertLegacyUpgradePreservesAuthority(t *testing.T, repository *Repository, ctx context.Context, observed *domain.Credentials) {
+	t.Helper()
+	if changed, err := repository.UpgradeLegacy(ctx, *observed, "upgraded", 101); err != nil || !changed {
+		t.Fatalf("%t %v", changed, err)
+	}
+	if changed, err := repository.UpgradeLegacy(ctx, *observed, "loser", 102); err != nil || changed {
+		t.Fatalf("%t %v", changed, err)
+	}
+	if count := queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens"); count != 1 {
+		t.Fatal("upgrade revoked token")
+	}
+	if generation := queryScalar[int](t, repository, "SELECT token_generation FROM users"); generation != 0 {
+		t.Fatal(generation)
+	}
+}
+
+// assertCredentialCasSideEffects checks only the winning password update advances generation, removes tokens and writes audit.
+func assertCredentialCasSideEffects(t *testing.T, repository *Repository, successes int) {
+	t.Helper()
+	if successes != 1 || queryScalar[int](t, repository, "SELECT token_generation FROM users") != 1 || queryScalar[int](t, repository, "SELECT count(*) FROM access_tokens") != 0 || queryScalar[int](t, repository, "SELECT count(*) FROM security_audit_events") != 1 {
+		t.Fatal("CAS loser had side effects")
 	}
 }

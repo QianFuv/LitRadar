@@ -20,6 +20,7 @@ func TestAdministratorCountsExactlyFlagOneInLegacyRows(t *testing.T) {
 	}
 }
 
+// TestAdministratorInvitePolicyAuthorityAndPublicProjections checks protected ownerless invitation lifecycle and public metadata.
 func TestAdministratorInvitePolicyAuthorityAndPublicProjections(t *testing.T) {
 	repository := testRepository(t)
 	owner := testAdmin(t, repository)
@@ -37,60 +38,18 @@ func TestAdministratorInvitePolicyAuthorityAndPublicProjections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expired := float64(0)
-	if _, err := repository.CreateAdministratorInvite(ctx, &member.Id, &expired, nil, nil); !errors.Is(err, domain.ErrAdminForbidden) {
-		t.Fatal("invalid policy preempted actor recheck")
-	}
-	if _, err := repository.CreateAdministratorInvite(ctx, &owner.User.Id, &expired, nil, nil); !errors.Is(err, ErrAdminInvitePolicy) {
-		t.Fatal(err)
-	}
-	if revoked, err := repository.RevokeAdministratorInvite(ctx, &member.Id, invite.Id, nil); err == nil || revoked {
-		t.Fatal("non-administrator revoked invite")
-	}
-	if revoked, err := repository.RevokeAdministratorInvite(ctx, &owner.User.Id, invite.Id, nil); err != nil || !revoked {
-		t.Fatal(err)
-	}
-	items, err := repository.ListInvites(ctx, invite.CreatedAt+2)
-	if err != nil || len(items) != 2 {
-		t.Fatal(err)
-	}
-	var found bool
-	for _, item := range items {
-		if item.Id == invite.Id {
-			found = true
-			if item.Status != "revoked" || item.UsedBy == nil || *item.UsedBy != member.Id || item.UsedByName == nil || *item.UsedByName != "member" {
-				t.Fatal("administrator invite history lost")
-			}
-		}
-	}
-	if !found {
-		t.Fatal("invite omitted")
-	}
-	users, err := repository.ListUsers(ctx)
-	if err != nil || len(users) != 2 || users[0].Id != identity.Id(1) || users[1].FolderCount != 1 || users[1].FavoriteCount != 0 || users[1].NotifyEnabled {
-		t.Fatalf("%+v %v", users, err)
-	}
+	assertAdministratorInviteAuthority(t, repository, ctx, owner, member, invite)
+	assertAdministratorInviteHistory(t, repository, ctx, member, invite)
+	assertAdministratorUserProjection(t, repository, ctx)
 }
 
+// TestAuditRetentionDrainsBoundedBatchesBeforeAdvancingWindow checks bounded drainage before its daily retention marker advances.
 func TestAuditRetentionDrainsBoundedBatchesBeforeAdvancingWindow(t *testing.T) {
 	repository := testRepository(t)
 	ctx := context.Background()
 	runSql(t, repository, `WITH RECURSIVE sequence(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM sequence WHERE value<10005) INSERT INTO security_audit_events(action,outcome,occurred_at) SELECT 'login','completed',1 FROM sequence`)
-	first, err := repository.CleanupAudit(ctx, 1, 100000)
-	if err != nil || !first.DidRun || first.DeletedCount != 10000 || !first.HasMoreExpired {
-		t.Fatalf("%+v %v", first, err)
-	}
-	if isNull := queryScalar[bool](t, repository, "SELECT last_retention_at IS NULL FROM security_audit_maintenance"); !isNull {
-		t.Fatal("window advanced before backlog drained")
-	}
-	second, err := repository.CleanupAudit(ctx, 1, 100000)
-	if err != nil || !second.DidRun || second.DeletedCount != 5 || second.HasMoreExpired {
-		t.Fatalf("%+v %v", second, err)
-	}
-	third, err := repository.CleanupAudit(ctx, 1, 100001)
-	if err != nil || third.DidRun || third.DeletedCount != 0 {
-		t.Fatalf("%+v %v", third, err)
-	}
+	assertFirstAuditRetentionBatch(t, repository, ctx)
+	assertAuditRetentionDrainAndWindow(t, repository, ctx)
 	if _, err := repository.AppendAudit(ctx, testAudit("login")); err != nil {
 		t.Fatal(err)
 	}
@@ -177,5 +136,84 @@ CREATE TRIGGER retention_commit_fault AFTER UPDATE ON security_audit_maintenance
 				t.Fatal("failed commit advanced retention")
 			}
 		})
+	}
+}
+
+// assertAdministratorInviteAuthority checks live actor authority before policy and revocation results.
+func assertAdministratorInviteAuthority(t *testing.T, repository *Repository, ctx context.Context, owner domain.Authorization, member domain.User, invite AdminInviteInfo) {
+	t.Helper()
+	expired := float64(0)
+	if _, err := repository.CreateAdministratorInvite(ctx, &member.Id, &expired, nil, nil); !errors.Is(err, domain.ErrAdminForbidden) {
+		t.Fatal("invalid policy preempted actor recheck")
+	}
+	if _, err := repository.CreateAdministratorInvite(ctx, &owner.User.Id, &expired, nil, nil); !errors.Is(err, ErrAdminInvitePolicy) {
+		t.Fatal(err)
+	}
+	if revoked, err := repository.RevokeAdministratorInvite(ctx, &member.Id, invite.Id, nil); err == nil || revoked {
+		t.Fatal("non-administrator revoked invite")
+	}
+	if revoked, err := repository.RevokeAdministratorInvite(ctx, &owner.User.Id, invite.Id, nil); err != nil || !revoked {
+		t.Fatal(err)
+	}
+}
+
+// assertAdministratorInviteHistory checks the revoked issuance retains its redemption history.
+func assertAdministratorInviteHistory(t *testing.T, repository *Repository, ctx context.Context, member domain.User, invite AdminInviteInfo) {
+	t.Helper()
+	items, err := repository.ListInvites(ctx, invite.CreatedAt+2)
+	if err != nil || len(items) != 2 {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, item := range items {
+		if item.Id == invite.Id {
+			found = true
+			assertRevokedAdministratorInviteHistory(t, item, member)
+		}
+	}
+	if !found {
+		t.Fatal("invite omitted")
+	}
+}
+
+// assertRevokedAdministratorInviteHistory checks the matching issuance retains redeemed identity.
+func assertRevokedAdministratorInviteHistory(t *testing.T, item AdminInviteInfo, member domain.User) {
+	t.Helper()
+	if item.Status != "revoked" || item.UsedBy == nil || *item.UsedBy != member.Id || item.UsedByName == nil || *item.UsedByName != "member" {
+		t.Fatal("administrator invite history lost")
+	}
+}
+
+// assertAdministratorUserProjection checks ordered identities and public folder/favorite/notification metadata.
+func assertAdministratorUserProjection(t *testing.T, repository *Repository, ctx context.Context) {
+	t.Helper()
+	users, err := repository.ListUsers(ctx)
+	if err != nil || len(users) != 2 || users[0].Id != identity.Id(1) || users[1].FolderCount != 1 || users[1].FavoriteCount != 0 || users[1].NotifyEnabled {
+		t.Fatalf("%+v %v", users, err)
+	}
+}
+
+// assertFirstAuditRetentionBatch checks the bounded batch leaves its window unadvanced while backlog remains.
+func assertFirstAuditRetentionBatch(t *testing.T, repository *Repository, ctx context.Context) {
+	t.Helper()
+	first, err := repository.CleanupAudit(ctx, 1, 100000)
+	if err != nil || !first.DidRun || first.DeletedCount != 10000 || !first.HasMoreExpired {
+		t.Fatalf("%+v %v", first, err)
+	}
+	if isNull := queryScalar[bool](t, repository, "SELECT last_retention_at IS NULL FROM security_audit_maintenance"); !isNull {
+		t.Fatal("window advanced before backlog drained")
+	}
+}
+
+// assertAuditRetentionDrainAndWindow checks remaining drainage precedes the daily-window skip.
+func assertAuditRetentionDrainAndWindow(t *testing.T, repository *Repository, ctx context.Context) {
+	t.Helper()
+	second, err := repository.CleanupAudit(ctx, 1, 100000)
+	if err != nil || !second.DidRun || second.DeletedCount != 5 || second.HasMoreExpired {
+		t.Fatalf("%+v %v", second, err)
+	}
+	third, err := repository.CleanupAudit(ctx, 1, 100001)
+	if err != nil || third.DidRun || third.DeletedCount != 0 {
+		t.Fatalf("%+v %v", third, err)
 	}
 }

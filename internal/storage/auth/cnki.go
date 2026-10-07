@@ -282,34 +282,9 @@ func jwtExpiration(token string) *float64 {
 	if len(parts) < 2 {
 		return nil
 	}
-	var buffer uint32
-	bits := uint8(0)
-	output := []byte{}
-	for _, character := range []byte(parts[1]) {
-		if character == '=' {
-			continue
-		}
-		var digit byte
-		switch {
-		case character >= 'A' && character <= 'Z':
-			digit = character - 'A'
-		case character >= 'a' && character <= 'z':
-			digit = character - 'a' + 26
-		case character >= '0' && character <= '9':
-			digit = character - '0' + 52
-		case character == '-':
-			digit = 62
-		case character == '_':
-			digit = 63
-		default:
-			return nil
-		}
-		buffer = buffer<<6 | uint32(digit)
-		bits += 6
-		for bits >= 8 {
-			bits -= 8
-			output = append(output, byte(buffer>>bits))
-		}
+	output, isValid := decodeJwtPayload(parts[1])
+	if !isValid {
+		return nil
 	}
 	value, err := decodeSession(string(output))
 	if err != nil {
@@ -324,4 +299,45 @@ func jwtExpiration(token string) *float64 {
 		return nil
 	}
 	return &expires
+}
+
+// decodeJwtPayload preserves embedded padding and incomplete trailing sextets.
+func decodeJwtPayload(payload string) ([]byte, bool) {
+	var buffer uint32
+	bits := uint8(0)
+	output := []byte{}
+	for _, character := range []byte(payload) {
+		if character == '=' {
+			continue
+		}
+		digit, isValid := jwtPayloadDigit(character)
+		if !isValid {
+			return nil, false
+		}
+		buffer = buffer<<6 | uint32(digit)
+		bits += 6
+		for bits >= 8 {
+			bits -= 8
+			output = append(output, byte(buffer>>bits))
+		}
+	}
+	return output, true
+}
+
+// jwtPayloadDigit maps only the historical URL-safe base64 alphabet.
+func jwtPayloadDigit(character byte) (byte, bool) {
+	switch {
+	case character >= 'A' && character <= 'Z':
+		return character - 'A', true
+	case character >= 'a' && character <= 'z':
+		return character - 'a' + 26, true
+	case character >= '0' && character <= '9':
+		return character - '0' + 52, true
+	case character == '-':
+		return 62, true
+	case character == '_':
+		return 63, true
+	default:
+		return 0, false
+	}
 }

@@ -40,6 +40,7 @@ func sessionJson(t *testing.T, token string) json.RawMessage {
 	return encoded
 }
 
+// TestCnkiStatusHidesSecretsAndPreservesCookieOrder checks credential-free status and private state availability.
 func TestCnkiStatusHidesSecretsAndPreservesCookieOrder(t *testing.T) {
 	repository, sessions := testCnki(t)
 	ctx := context.Background()
@@ -48,30 +49,15 @@ func TestCnkiStatusHidesSecretsAndPreservesCookieOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !summary.Configured || summary.Status != "active" || !summary.HasBffUserToken || *summary.ExpiresAt != 200.75 || *summary.SecondsRemaining != 100 || !reflect.DeepEqual(summary.CookieNames, []string{"cookie", "cookie"}) {
-		t.Fatalf("%+v", summary)
-	}
-	encoded, err := json.Marshal(summary)
-	if err != nil || strings.Contains(string(encoded), token) || strings.Contains(string(encoded), "synthetic-secret") {
-		t.Fatal("status leaked credentials")
-	}
+	assertCnkiStatusProjection(t, summary, token)
 	stored := queryScalar[string](t, repository, "SELECT session_json FROM cnki_sessions")
 	if !strings.HasPrefix(stored, "litradarenc:v1:") || strings.Contains(stored, token) {
 		t.Fatal("session persisted plaintext")
 	}
-	data, err := sessions.Data(ctx, 1, false)
-	if err != nil || data == nil || !strings.Contains(string(data.SessionData), token) {
-		t.Fatalf("%v %v", data, err)
-	}
-	if strings.Contains(fmt.Sprintf("%+v %#v", data, data), token) {
-		t.Fatal("raw state logged")
-	}
-	encoded, err = json.Marshal(data)
-	if err != nil || strings.Contains(string(encoded), token) {
-		t.Fatal("raw state serialized")
-	}
+	assertCnkiRawStateRedaction(t, sessions, ctx, token)
 }
 
+// TestCnkiReserveKeepsActiveSessionAndClearFencesLateCompletion checks pending reservation and clear generation fencing.
 func TestCnkiReserveKeepsActiveSessionAndClearFencesLateCompletion(t *testing.T) {
 	repository, sessions := testCnki(t)
 	ctx := context.Background()
@@ -85,38 +71,9 @@ func TestCnkiReserveKeepsActiveSessionAndClearFencesLateCompletion(t *testing.T)
 	}
 	before := queryScalar[string](t, repository, "SELECT session_json FROM cnki_sessions")
 	sessions.now = func() float64 { return 110 }
-	generation, err := sessions.Reserve(ctx, 1)
-	if err != nil || generation != 2 {
-		t.Fatalf("%d %v", generation, err)
-	}
-	if stored := queryScalar[string](t, repository, "SELECT session_json FROM cnki_sessions"); stored != before {
-		t.Fatal("reserve replaced active credentials")
-	}
-	if updated := queryScalar[float64](t, repository, "SELECT updated_at FROM cnki_sessions"); updated != 100 {
-		t.Fatal("reserve touched last completion")
-	}
-	active, err := sessions.Data(ctx, 1, true)
-	if err != nil || active == nil || active.QrUuid != "" || active.Generation != 2 {
-		t.Fatalf("%v %v", active, err)
-	}
-	if existed, err := sessions.Clear(ctx, 1); err != nil || !existed {
-		t.Fatalf("%t %v", existed, err)
-	}
-	if result, err := sessions.Complete(ctx, 1, generation, nil, data, "active", nil); err != nil || result != nil {
-		t.Fatal("late completion resurrected cleared credentials")
-	}
-	if count := queryScalar[int](t, repository, "SELECT count(*) FROM cnki_sessions WHERE status='empty' AND generation=3 AND last_used_at IS NULL"); count != 1 {
-		t.Fatal("missing generation tombstone")
-	}
-	if touched, err := sessions.TouchUsed(ctx, 1); err != nil || touched {
-		t.Fatalf("%t %v", touched, err)
-	}
-	if data, err := sessions.Data(ctx, 1, false); err != nil || data != nil {
-		t.Fatal("tombstone visible")
-	}
-	if summary, err := sessions.Status(ctx, 1); err != nil || summary.Configured || summary.Status != "empty" || summary.CookieNames == nil {
-		t.Fatalf("%+v %v", summary, err)
-	}
+	generation := assertCnkiReserveKeepsActive(t, repository, sessions, ctx, before)
+	assertCnkiClearFencesLateCompletion(t, repository, sessions, ctx, generation, data)
+	assertCnkiEmptyProjection(t, sessions, ctx)
 }
 
 func TestCnkiGenerationAndExactQrMustBothMatch(t *testing.T) {
@@ -205,6 +162,82 @@ func TestCnkiClearingAbsentRowStillCreatesFenceAndQrFallback(t *testing.T) {
 		t.Fatalf("%v %v", data, err)
 	}
 	if summary, err := sessions.Status(ctx, 1); err != nil || summary.Status != "waiting_scan" {
+		t.Fatalf("%+v %v", summary, err)
+	}
+}
+
+// assertCnkiStatusProjection checks effective expiry, ordered cookie names and public secret omission.
+func assertCnkiStatusProjection(t *testing.T, summary CnkiStatus, token string) {
+	t.Helper()
+	if !summary.Configured || summary.Status != "active" || !summary.HasBffUserToken || *summary.ExpiresAt != 200.75 || *summary.SecondsRemaining != 100 || !reflect.DeepEqual(summary.CookieNames, []string{"cookie", "cookie"}) {
+		t.Fatalf("%+v", summary)
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil || strings.Contains(string(encoded), token) || strings.Contains(string(encoded), "synthetic-secret") {
+		t.Fatal("status leaked credentials")
+	}
+}
+
+// assertCnkiRawStateRedaction checks private raw availability without formatting or JSON disclosure.
+func assertCnkiRawStateRedaction(t *testing.T, sessions *CnkiSessions, ctx context.Context, token string) {
+	t.Helper()
+	data, err := sessions.Data(ctx, 1, false)
+	if err != nil || data == nil || !strings.Contains(string(data.SessionData), token) {
+		t.Fatalf("%v %v", data, err)
+	}
+	if strings.Contains(fmt.Sprintf("%+v %#v", data, data), token) {
+		t.Fatal("raw state logged")
+	}
+	encoded, err := json.Marshal(data)
+	if err != nil || strings.Contains(string(encoded), token) {
+		t.Fatal("raw state serialized")
+	}
+}
+
+// assertCnkiReserveKeepsActive checks generation advancement without replacing completed credentials.
+func assertCnkiReserveKeepsActive(t *testing.T, repository *Repository, sessions *CnkiSessions, ctx context.Context, before string) int64 {
+	t.Helper()
+	generation, err := sessions.Reserve(ctx, 1)
+	if err != nil || generation != 2 {
+		t.Fatalf("%d %v", generation, err)
+	}
+	if stored := queryScalar[string](t, repository, "SELECT session_json FROM cnki_sessions"); stored != before {
+		t.Fatal("reserve replaced active credentials")
+	}
+	if updated := queryScalar[float64](t, repository, "SELECT updated_at FROM cnki_sessions"); updated != 100 {
+		t.Fatal("reserve touched last completion")
+	}
+	active, err := sessions.Data(ctx, 1, true)
+	if err != nil || active == nil || active.QrUuid != "" || active.Generation != 2 {
+		t.Fatalf("%v %v", active, err)
+	}
+	return generation
+}
+
+// assertCnkiClearFencesLateCompletion checks the clear tombstone rejects a captured late completion.
+func assertCnkiClearFencesLateCompletion(t *testing.T, repository *Repository, sessions *CnkiSessions, ctx context.Context, generation int64, data json.RawMessage) {
+	t.Helper()
+	if existed, err := sessions.Clear(ctx, 1); err != nil || !existed {
+		t.Fatalf("%t %v", existed, err)
+	}
+	if result, err := sessions.Complete(ctx, 1, generation, nil, data, "active", nil); err != nil || result != nil {
+		t.Fatal("late completion resurrected cleared credentials")
+	}
+	if count := queryScalar[int](t, repository, "SELECT count(*) FROM cnki_sessions WHERE status='empty' AND generation=3 AND last_used_at IS NULL"); count != 1 {
+		t.Fatal("missing generation tombstone")
+	}
+}
+
+// assertCnkiEmptyProjection checks tombstones cannot be touched or exposed as visible session data.
+func assertCnkiEmptyProjection(t *testing.T, sessions *CnkiSessions, ctx context.Context) {
+	t.Helper()
+	if touched, err := sessions.TouchUsed(ctx, 1); err != nil || touched {
+		t.Fatalf("%t %v", touched, err)
+	}
+	if data, err := sessions.Data(ctx, 1, false); err != nil || data != nil {
+		t.Fatal("tombstone visible")
+	}
+	if summary, err := sessions.Status(ctx, 1); err != nil || summary.Configured || summary.Status != "empty" || summary.CookieNames == nil {
 		t.Fatalf("%+v %v", summary, err)
 	}
 }
