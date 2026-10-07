@@ -199,6 +199,7 @@ func (value *strictText) Scan(source any) error {
 	return nil
 }
 
+// visit owns connection and optional transaction lifetimes across ordered table reads.
 func visit(ctx context.Context, filename string, isMutation bool, visitor func(string, string) (*string, error)) error {
 	database, err := platformsqlite.Open(platformsqlite.Config{Filename: filename, Mode: "rwc", MaxConnections: 1})
 	if err != nil {
@@ -221,21 +222,29 @@ func visit(ctx context.Context, filename string, isMutation bool, visitor func(s
 		if err != nil {
 			return err
 		}
-		for _, value := range values {
-			replacement, err := visitor(value.stored, value.associated)
-			if err != nil {
-				return err
-			}
-			if replacement != nil {
-				if _, err := connection.ExecContext(ctx, value.statement, *replacement, value.identity); err != nil {
-					return err
-				}
-			}
+		if err := visitSecretValues(ctx, connection, values, visitor); err != nil {
+			return err
 		}
 	}
 	if isMutation {
 		_, err = connection.ExecContext(ctx, "COMMIT")
 		return err
+	}
+	return nil
+}
+
+// visitSecretValues applies callbacks and optional replacements after a complete table read.
+func visitSecretValues(ctx context.Context, connection *sql.Conn, values []secretValue, visitor func(string, string) (*string, error)) error {
+	for _, value := range values {
+		replacement, err := visitor(value.stored, value.associated)
+		if err != nil {
+			return err
+		}
+		if replacement != nil {
+			if _, err := connection.ExecContext(ctx, value.statement, *replacement, value.identity); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

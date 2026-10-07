@@ -46,26 +46,13 @@ func testCodec(t *testing.T, value byte) *Codec {
 	return codec
 }
 
+// TestThreeTableMigrateVerifyAndRotatePreserveMetadata checks three-table migration, authentication and key replacement.
 func TestThreeTableMigrateVerifyAndRotatePreserveMetadata(t *testing.T) {
 	filename, database := secretDatabase(t)
 	codec := testCodec(t, 42)
 	replacement := testCodec(t, 43)
 	ctx := context.Background()
-	if _, err := Verify(ctx, filename, codec); !errors.Is(err, ErrLegacyPlaintext) {
-		t.Fatal(err)
-	}
-	report, err := Migrate(ctx, filename, codec)
-	if err != nil || report != (MigrationReport{Migrated: 4, Empty: 1}) {
-		t.Fatalf("%+v %v", report, err)
-	}
-	verified, err := Verify(ctx, filename, codec)
-	if err != nil || verified != (VerificationReport{Verified: 4, Empty: 1}) {
-		t.Fatalf("%+v %v", verified, err)
-	}
-	report, err = Migrate(ctx, filename, codec)
-	if err != nil || report != (MigrationReport{Verified: 4, Empty: 1}) {
-		t.Fatalf("%+v %v", report, err)
-	}
+	assertThreeTableMigrationAndVerification(t, ctx, filename, codec)
 	if count, err := Rotate(ctx, filename, codec, replacement); err != nil || count != 4 {
 		t.Fatalf("%d %v", count, err)
 	}
@@ -75,14 +62,7 @@ func TestThreeTableMigrateVerifyAndRotatePreserveMetadata(t *testing.T) {
 	if _, err := Verify(ctx, filename, replacement); err != nil {
 		t.Fatal(err)
 	}
-	var value string
-	var updated float64
-	if err := database.QueryRow("SELECT value,updated_at FROM runtime_settings WHERE key='unknown_secret_like_field'").Scan(&value, &updated); err != nil || value != "untouched" || updated != 1 {
-		t.Fatalf("%s %v", value, err)
-	}
-	if err := database.QueryRow("SELECT value,updated_at FROM runtime_settings WHERE key='provider_proxy_url'").Scan(&value, &updated); err != nil || !strings.HasPrefix(value, "litradarenc:v1:") || updated != 1 {
-		t.Fatal(err)
-	}
+	assertSecretMaintenanceMetadata(t, database)
 }
 
 func TestEnvelopeRejectsLineBreaksInEncodedFields(t *testing.T) {
@@ -135,26 +115,19 @@ func TestMaintenanceRejectsBlobAndInvalidTextWithoutPartialEncryption(t *testing
 	}
 }
 
+// TestMalformedLaterValueRollsBackEarlierSecretChanges checks late-table failures preserve earlier plaintext and exact ciphertext.
 func TestMalformedLaterValueRollsBackEarlierSecretChanges(t *testing.T) {
 	filename, database := secretDatabase(t)
 	codec := testCodec(t, 42)
 	ctx := context.Background()
-	if _, err := database.Exec("UPDATE cnki_sessions SET session_json='litradarenc:v999:broken'"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Migrate(ctx, filename, codec); err == nil {
-		t.Fatal("unknown envelope was encrypted twice")
-	}
-	var value string
-	if err := database.QueryRow("SELECT ai_api_key FROM notification_settings").Scan(&value); err != nil || value != "ai-key" {
-		t.Fatal("earlier encryption escaped rollback")
-	}
+	assertUnknownSecretEnvelopeMigrationRollsBack(t, ctx, filename, database, codec)
 	if _, err := database.Exec("UPDATE cnki_sessions SET session_json='{}'"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Migrate(ctx, filename, codec); err != nil {
 		t.Fatal(err)
 	}
+	var value string
 	if err := database.QueryRow("SELECT ai_api_key FROM notification_settings").Scan(&value); err != nil {
 		t.Fatal(err)
 	}
@@ -211,5 +184,53 @@ func TestPoolReferencesCannotCrossFieldsOrCiphertextRoles(t *testing.T) {
 	}
 	if plain, err := codec.Decrypt(reference, PoolReferenceContext("openalex_api_key_pool")); err != nil || plain != "synthetic-key" {
 		t.Fatal(err)
+	}
+}
+
+// assertThreeTableMigrationAndVerification checks plaintext rejection, encryption counts and repeated authentication counts.
+func assertThreeTableMigrationAndVerification(t *testing.T, ctx context.Context, filename string, codec *Codec) {
+	t.Helper()
+	if _, err := Verify(ctx, filename, codec); !errors.Is(err, ErrLegacyPlaintext) {
+		t.Fatal(err)
+	}
+	report, err := Migrate(ctx, filename, codec)
+	if err != nil || report != (MigrationReport{Migrated: 4, Empty: 1}) {
+		t.Fatalf("%+v %v", report, err)
+	}
+	verified, err := Verify(ctx, filename, codec)
+	if err != nil || verified != (VerificationReport{Verified: 4, Empty: 1}) {
+		t.Fatalf("%+v %v", verified, err)
+	}
+	report, err = Migrate(ctx, filename, codec)
+	if err != nil || report != (MigrationReport{Verified: 4, Empty: 1}) {
+		t.Fatalf("%+v %v", report, err)
+	}
+}
+
+// assertSecretMaintenanceMetadata checks unknown fields and selected-secret timestamps survive maintenance.
+func assertSecretMaintenanceMetadata(t *testing.T, database *sql.DB) {
+	t.Helper()
+	var value string
+	var updated float64
+	if err := database.QueryRow("SELECT value,updated_at FROM runtime_settings WHERE key='unknown_secret_like_field'").Scan(&value, &updated); err != nil || value != "untouched" || updated != 1 {
+		t.Fatalf("%s %v", value, err)
+	}
+	if err := database.QueryRow("SELECT value,updated_at FROM runtime_settings WHERE key='provider_proxy_url'").Scan(&value, &updated); err != nil || !strings.HasPrefix(value, "litradarenc:v1:") || updated != 1 {
+		t.Fatal(err)
+	}
+}
+
+// assertUnknownSecretEnvelopeMigrationRollsBack checks a later unknown envelope rolls back earlier plaintext encryption.
+func assertUnknownSecretEnvelopeMigrationRollsBack(t *testing.T, ctx context.Context, filename string, database *sql.DB, codec *Codec) {
+	t.Helper()
+	if _, err := database.Exec("UPDATE cnki_sessions SET session_json='litradarenc:v999:broken'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Migrate(ctx, filename, codec); err == nil {
+		t.Fatal("unknown envelope was encrypted twice")
+	}
+	var value string
+	if err := database.QueryRow("SELECT ai_api_key FROM notification_settings").Scan(&value); err != nil || value != "ai-key" {
+		t.Fatal("earlier encryption escaped rollback")
 	}
 }
