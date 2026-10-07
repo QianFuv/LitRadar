@@ -36,6 +36,34 @@ func Generate(bindings []Operation) ([]byte, error) {
 	if err := json.Unmarshal(operations, &declared); err != nil {
 		return nil, err
 	}
+	remaining, err := indexOperationBindings(bindings)
+	if err != nil {
+		return nil, err
+	}
+	paths, err := bindDeclaredPaths(declared, remaining)
+	if err != nil {
+		return nil, err
+	}
+	if len(remaining) != 0 {
+		return nil, fmt.Errorf("undocumented API bindings: %d", len(remaining))
+	}
+	encodedPaths, err := json.Marshal(paths)
+	if err != nil {
+		return nil, err
+	}
+	metadata["paths"] = encodedPaths
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(metadata); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+// indexOperationBindings rejects duplicate live routes before declaration matching.
+func indexOperationBindings(bindings []Operation) (map[string]Operation, error) {
 	remaining := make(map[string]Operation, len(bindings))
 	for _, binding := range bindings {
 		key := binding.Method + " " + binding.Path
@@ -44,6 +72,11 @@ func Generate(bindings []Operation) ([]byte, error) {
 		}
 		remaining[key] = binding
 	}
+	return remaining, nil
+}
+
+// bindDeclaredPaths consumes each route once after its operation identity is validated.
+func bindDeclaredPaths(declared []declaration, remaining map[string]Operation) (map[string]map[string]json.RawMessage, error) {
 	paths := make(map[string]map[string]json.RawMessage)
 	for _, item := range declared {
 		key := item.Method + " " + item.Path
@@ -66,20 +99,5 @@ func Generate(bindings []Operation) ([]byte, error) {
 		}
 		paths[item.Path][strings.ToLower(item.Method)] = item.Operation
 	}
-	if len(remaining) != 0 {
-		return nil, fmt.Errorf("undocumented API bindings: %d", len(remaining))
-	}
-	encodedPaths, err := json.Marshal(paths)
-	if err != nil {
-		return nil, err
-	}
-	metadata["paths"] = encodedPaths
-	var output bytes.Buffer
-	encoder := json.NewEncoder(&output)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(metadata); err != nil {
-		return nil, err
-	}
-	return output.Bytes(), nil
+	return paths, nil
 }

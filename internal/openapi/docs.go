@@ -19,18 +19,15 @@ func ServeDocs(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(http.StatusSeeOther)
 		return
 	}
-	name := strings.TrimPrefix(request.URL.Path, "/docs/")
-	if !utf8.ValidString(name) {
-		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		writer.WriteHeader(http.StatusBadRequest)
-		_, _ = writer.Write([]byte("Invalid URL: Invalid UTF-8 in `rest`"))
-		return
-	}
-	if name == "" || name == "/" {
-		name = "index.html"
-	}
-	if strings.Contains(name, "/") || name == "LICENSE" || name == "NOTICE" || name == "README.md" {
-		writer.WriteHeader(http.StatusNotFound)
+	name, status := docsAssetName(strings.TrimPrefix(request.URL.Path, "/docs/"))
+	if status != http.StatusOK {
+		if status == http.StatusBadRequest {
+			writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			writer.WriteHeader(status)
+			_, _ = writer.Write([]byte("Invalid URL: Invalid UTF-8 in `rest`"))
+			return
+		}
+		writer.WriteHeader(status)
 		return
 	}
 	content, err := swaggerAssets.ReadFile("swagger/" + name)
@@ -48,4 +45,18 @@ func ServeDocs(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Content-Type", contentType)
 	writer.WriteHeader(http.StatusOK)
 	_, _ = writer.Write(content)
+}
+
+// docsAssetName validates the decoded resource name before embedded filesystem access.
+func docsAssetName(name string) (string, int) {
+	if !utf8.ValidString(name) {
+		return "", http.StatusBadRequest
+	}
+	if name == "" || name == "/" {
+		name = "index.html"
+	}
+	if strings.Contains(name, "/") || name == "LICENSE" || name == "NOTICE" || name == "README.md" {
+		return "", http.StatusNotFound
+	}
+	return name, http.StatusOK
 }
