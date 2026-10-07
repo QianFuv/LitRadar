@@ -32,26 +32,14 @@ func TestExistingOnlyModesNeverCreateMissingFile(t *testing.T) {
 	}
 }
 
+// TestConcurrentPhysicalInitialization retains simultaneous physical opens and distinct live connection ownership.
 func TestConcurrentPhysicalInitialization(t *testing.T) {
 	database, err := Open(Config{Filename: filepath.Join(t.TempDir(), "simultaneous.sqlite"), Mode: "rwc", SimpleLibrary: trustedSimple(t), MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	start := make(chan struct{})
-	results := make(chan *sql.Conn, 2)
-	errors := make(chan error, 2)
-	var workers sync.WaitGroup
-	for range 2 {
-		workers.Go(func() {
-			<-start
-			connection, err := database.Conn(context.Background())
-			results <- connection
-			errors <- err
-		})
-	}
-	close(start)
-	workers.Wait()
+	results, errors := startPhysicalConnections(database)
 	connections := []*sql.Conn{}
 	for range 2 {
 		connection := <-results
@@ -66,26 +54,7 @@ func TestConcurrentPhysicalInitialization(t *testing.T) {
 		}
 	}
 	for _, connection := range connections {
-		var timeout, foreignKeys, synchronous int
-		var journal, query string
-		if err := connection.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&timeout); err != nil {
-			t.Fatal(err)
-		}
-		if err := connection.QueryRowContext(context.Background(), "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
-			t.Fatal(err)
-		}
-		if err := connection.QueryRowContext(context.Background(), "PRAGMA synchronous").Scan(&synchronous); err != nil {
-			t.Fatal(err)
-		}
-		if err := connection.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&journal); err != nil {
-			t.Fatal(err)
-		}
-		if err := connection.QueryRowContext(context.Background(), "SELECT simple_query('中文')").Scan(&query); err != nil {
-			t.Fatal(err)
-		}
-		if timeout != 30000 || foreignKeys != 1 || synchronous != 1 || journal != "wal" || query == "" {
-			t.Fatalf("connection policy %d %d %d %s %q", timeout, foreignKeys, synchronous, journal, query)
-		}
+		assertPhysicalConnectionPolicy(t, connection)
 	}
 	if database.Stats().InUse != 2 {
 		t.Fatal("experiment reused one physical connection")
@@ -118,6 +87,7 @@ func checkedConnection(t *testing.T, database *sql.DB) *sql.Conn {
 	return connection
 }
 
+// TestEveryPhysicalConnectionLoadsSimpleAndDisablesExtensionSql checks every open and recreation against native tokenizer policy.
 func TestEveryPhysicalConnectionLoadsSimpleAndDisablesExtensionSql(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "中文 space # % ? &.sqlite")
@@ -136,16 +106,7 @@ func TestEveryPhysicalConnectionLoadsSimpleAndDisablesExtensionSql(t *testing.T)
 		t.Fatal(err)
 	}
 	for _, connection := range []*sql.Conn{first, second} {
-		var count, foreignKeys int
-		if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM search WHERE search MATCH '中文'").Scan(&count); err != nil || count != 1 {
-			t.Fatalf("Per-connection Simple failed: %d %v", count, err)
-		}
-		if err := connection.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil || foreignKeys != 1 {
-			t.Fatalf("Foreign keys disabled: %d %v", foreignKeys, err)
-		}
-		if _, err := connection.ExecContext(ctx, "SELECT load_extension(?)", trustedSimple(t)); err == nil || !strings.Contains(err.Error(), "not authorized") {
-			t.Fatalf("SQL extension loading must be disabled: %v", err)
-		}
+		assertPhysicalTokenizer(t, ctx, connection)
 	}
 	first.Close()
 	second.Close()
@@ -155,28 +116,10 @@ func TestEveryPhysicalConnectionLoadsSimpleAndDisablesExtensionSql(t *testing.T)
 	if err := third.QueryRowContext(ctx, "SELECT count(*) FROM search WHERE search MATCH 'migration'").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("Recycled connection lost tokenizer: %d %v", count, err)
 	}
-	var version string
-	if err := third.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("native SQLite %s; %s/%s; extension %s", version, runtime.GOOS, runtime.GOARCH, trustedSimple(t))
-	rows, err := third.QueryContext(ctx, "PRAGMA compile_options")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var option string
-		if err := rows.Scan(&option); err != nil {
-			t.Fatal(err)
-		}
-		t.Log(option)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
+	logNativeCapabilities(t, ctx, third)
 }
 
+// TestTransactionsAndBackupPreserveCommittedState retains rollback, borrowed backup and destination-state ordering.
 func TestTransactionsAndBackupPreserveCommittedState(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -186,13 +129,7 @@ func TestTransactionsAndBackupPreserveCommittedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if _, err := database.Exec("CREATE TABLE scheduled_task_runs(id INTEGER PRIMARY KEY AUTOINCREMENT); INSERT INTO scheduled_task_runs VALUES(1000); DELETE FROM scheduled_task_runs"); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := database.Exec("CREATE TABLE atomic_test(id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE)"); err != nil {
-		t.Fatal(err)
-	}
+	seedBackupSource(t, database)
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -218,35 +155,14 @@ func TestTransactionsAndBackupPreserveCommittedState(t *testing.T) {
 	defer backup.Close()
 	source := checkedConnection(t, database)
 	destination := checkedConnection(t, backup)
-	err = source.Raw(func(sourceDriver any) error {
-		return destination.Raw(func(destinationDriver any) error {
-			operation, err := destinationDriver.(*sqlite3.SQLiteConn).Backup("main", sourceDriver.(*sqlite3.SQLiteConn), "main")
-			if err != nil {
-				return err
-			}
-			isDone, err := operation.Step(-1)
-			finishError := operation.Finish()
-			if err != nil {
-				return err
-			}
-			if !isDone {
-				t.Error("Backup did not complete")
-			}
-			return finishError
-		})
-	})
+	err = backupPhysicalConnections(t, source, destination)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sequence int64
-	if err := destination.QueryRowContext(ctx, "SELECT seq FROM sqlite_sequence WHERE name='scheduled_task_runs'").Scan(&sequence); err != nil || sequence != 1000 {
-		t.Fatalf("Backup sequence changed: %d %v", sequence, err)
-	}
-	if err := destination.QueryRowContext(ctx, "SELECT count(*) FROM atomic_test").Scan(&count); err != nil || count != 0 {
-		t.Fatalf("Backup transaction contents changed: %d %v", count, err)
-	}
+	assertBackupState(t, ctx, destination)
 }
 
+// TestFileUriPreservesNamesAndReadModes checks escaped names and readonly policy on the same target.
 func TestFileUriPreservesNamesAndReadModes(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "literal#% &中文.sqlite")
@@ -267,6 +183,151 @@ func TestFileUriPreservesNamesAndReadModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer readOnly.Close()
+	assertReadOnlyTarget(t, root, filename, readOnly)
+}
+
+// startPhysicalConnections releases concurrent requests together and waits before result admission.
+func startPhysicalConnections(database *sql.DB) (chan *sql.Conn, chan error) {
+	start := make(chan struct{})
+	results := make(chan *sql.Conn, 2)
+	errors := make(chan error, 2)
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Go(func() {
+			<-start
+			connection, err := database.Conn(context.Background())
+			results <- connection
+			errors <- err
+		})
+	}
+	close(start)
+	workers.Wait()
+	return results, errors
+}
+
+// assertPhysicalConnectionPolicy checks every original physical initialization policy in order.
+func assertPhysicalConnectionPolicy(t *testing.T, connection *sql.Conn) {
+	t.Helper()
+	var timeout, foreignKeys, synchronous int
+	var journal string
+	if err := connection.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.QueryRowContext(context.Background(), "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.QueryRowContext(context.Background(), "PRAGMA synchronous").Scan(&synchronous); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&journal); err != nil {
+		t.Fatal(err)
+	}
+	query := physicalSimpleQuery(t, connection)
+	if timeout != 30000 || foreignKeys != 1 || synchronous != 1 || journal != "wal" || query == "" {
+		t.Fatalf("connection policy %d %d %d %s %q", timeout, foreignKeys, synchronous, journal, query)
+	}
+}
+
+// physicalSimpleQuery checks tokenizer execution after the physical policy queries.
+func physicalSimpleQuery(t *testing.T, connection *sql.Conn) string {
+	t.Helper()
+	var query string
+	if err := connection.QueryRowContext(context.Background(), "SELECT simple_query('中文')").Scan(&query); err != nil {
+		t.Fatal(err)
+	}
+	return query
+}
+
+// assertPhysicalTokenizer checks search, constraints and disabled SQL extension loading on a live owner.
+func assertPhysicalTokenizer(t *testing.T, ctx context.Context, connection *sql.Conn) {
+	t.Helper()
+	var count, foreignKeys int
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM search WHERE search MATCH '中文'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("Per-connection Simple failed: %d %v", count, err)
+	}
+	if err := connection.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil || foreignKeys != 1 {
+		t.Fatalf("Foreign keys disabled: %d %v", foreignKeys, err)
+	}
+	if _, err := connection.ExecContext(ctx, "SELECT load_extension(?)", trustedSimple(t)); err == nil || !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("SQL extension loading must be disabled: %v", err)
+	}
+}
+
+// logNativeCapabilities retains version identity and all compile-option row checks.
+func logNativeCapabilities(t *testing.T, ctx context.Context, third *sql.Conn) {
+	t.Helper()
+	var version string
+	if err := third.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("native SQLite %s; %s/%s; extension %s", version, runtime.GOOS, runtime.GOARCH, trustedSimple(t))
+	rows, err := third.QueryContext(ctx, "PRAGMA compile_options")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var option string
+		if err := rows.Scan(&option); err != nil {
+			t.Fatal(err)
+		}
+		t.Log(option)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedBackupSource retains sequence allocation and table creation before the atomic transaction.
+func seedBackupSource(t *testing.T, database *sql.DB) {
+	t.Helper()
+	if _, err := database.Exec("CREATE TABLE scheduled_task_runs(id INTEGER PRIMARY KEY AUTOINCREMENT); INSERT INTO scheduled_task_runs VALUES(1000); DELETE FROM scheduled_task_runs"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := database.Exec("CREATE TABLE atomic_test(id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE)"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// backupPhysicalConnections keeps native drivers borrowed throughout Step and Finish.
+func backupPhysicalConnections(t *testing.T, source, destination *sql.Conn) error {
+	t.Helper()
+	return source.Raw(func(sourceDriver any) error {
+		return destination.Raw(func(destinationDriver any) error {
+			operation, err := destinationDriver.(*sqlite3.SQLiteConn).Backup("main", sourceDriver.(*sqlite3.SQLiteConn), "main")
+			if err != nil {
+				return err
+			}
+			isDone, err := operation.Step(-1)
+			finishError := operation.Finish()
+			if err != nil {
+				return err
+			}
+			if !isDone {
+				t.Error("Backup did not complete")
+			}
+			return finishError
+		})
+	})
+}
+
+// assertBackupState checks sequence retention and exclusion of the rolled-back transaction.
+func assertBackupState(t *testing.T, ctx context.Context, destination *sql.Conn) {
+	t.Helper()
+	var count int
+	var sequence int64
+	if err := destination.QueryRowContext(ctx, "SELECT seq FROM sqlite_sequence WHERE name='scheduled_task_runs'").Scan(&sequence); err != nil || sequence != 1000 {
+		t.Fatalf("Backup sequence changed: %d %v", sequence, err)
+	}
+	if err := destination.QueryRowContext(ctx, "SELECT count(*) FROM atomic_test").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("Backup transaction contents changed: %d %v", count, err)
+	}
+}
+
+// assertReadOnlyTarget checks write rejection, retained rows and every directory entry on the open reader.
+func assertReadOnlyTarget(t *testing.T, root, filename string, readOnly *sql.DB) {
+	t.Helper()
 	if _, err := readOnly.Exec("INSERT INTO retained VALUES(43)"); err == nil {
 		t.Fatal("Read-only opened writable")
 	}
