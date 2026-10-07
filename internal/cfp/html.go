@@ -213,6 +213,7 @@ func dateClauses(body string) string {
 	return strings.Join(clauses, "\n")
 }
 
+// record projects ordered publisher observations before domain source admission.
 func record(config SourceConfig, document Document, checkedOn, title, body, status string) (domain.Source, error) {
 	typeText := "Special Issue"
 	stage := domain.Paper
@@ -225,28 +226,9 @@ func record(config SourceConfig, document Document, checkedOn, title, body, stat
 	if domain.ParseDates(dateText, stage) == nil {
 		rawDateText, dateText = dateText, ""
 	}
-	requirements := ""
-	for _, block := range blocks(body, 2, 6) {
-		if pattern(`(?i)submission (?:instructions|guidelines)|manuscript requirements|投稿要求|稿件要求`, block.title) {
-			requirements = plain(block.body)
-			break
-		}
-	}
-	scopeLines := []string{}
-	for _, line := range strings.Split(plain(body), "\n") {
-		if pattern(dateLabelPattern, line) || pattern(statusPattern, line) || pattern(`(?i)^guest editors?|^submission (?:instructions|guidelines)|^manuscript requirements|^投稿要求|^稿件要求`, line) {
-			break
-		}
-		if !pattern(`(?i)^(?:[0-3]?\d\s+[a-z]{3,9}\s+20\d{2}|[a-z]{3,9}\s+[0-3]?\d,?\s+20\d{2}|20\d{2}[-/]\d{1,2}[-/]\d{1,2})$`, strings.TrimSpace(line)) {
-			scopeLines = append(scopeLines, line)
-		}
-	}
-	for _, line := range strings.Split(plain(title+"\n"+body), "\n") {
-		if pattern(`(?i)invit(?:ation|e|ed)[ -]*only|invitation required|invited (?:submissions|papers) only|仅限受邀`, line) {
-			status += "\n" + line
-			break
-		}
-	}
+	requirements := recordRequirements(body)
+	scopeLines := recordScopeLines(body)
+	status = recordInvitationStatus(title, body, status)
 	var statusText *string
 	if status != "" {
 		statusText = &status
@@ -258,19 +240,9 @@ func record(config SourceConfig, document Document, checkedOn, title, body, stat
 	return source, nil
 }
 
+// hasJournalIdentity checks ISSNs only in the pre-card prefix and titles in scoped text.
 func hasJournalIdentity(config SourceConfig, document *goquery.Document, text string) bool {
-	firstCard := len(text)
-	level := 3
-	if config.Adapter == SpringerCollections {
-		level = 2
-	}
-	for _, heading := range domain.PatternCaptures(headingPattern, text) {
-		if heading[3]-heading[2] >= level {
-			firstCard = heading[0]
-			break
-		}
-	}
-	prefix := text[:firstCard]
+	prefix := journalIdentityPrefix(config, text)
 	titles := []string{}
 	for _, node := range document.Find("title").Nodes {
 		titles = append(titles, goquery.NewDocumentFromNode(node).Text())
@@ -283,18 +255,79 @@ func hasJournalIdentity(config SourceConfig, document *goquery.Document, text st
 			}
 			continue
 		}
-		segments := strings.Split(identityText, "\n")
-		for _, separator := range []string{" | ", " - ", " — "} {
-			next := []string{}
-			for _, segment := range segments {
-				next = append(next, strings.Split(segment, separator)...)
-			}
-			segments = next
+		if matchesJournalIdentityText(identityText, identity) {
+			return true
 		}
-		for _, line := range segments {
-			if equalAscii(strings.TrimSpace(strings.TrimLeft(line, "#")), identity) {
-				return true
-			}
+	}
+	return false
+}
+
+// recordRequirements retains the first matching submission subheading.
+func recordRequirements(body string) string {
+	requirements := ""
+	for _, block := range blocks(body, 2, 6) {
+		if pattern(`(?i)submission (?:instructions|guidelines)|manuscript requirements|投稿要求|稿件要求`, block.title) {
+			requirements = plain(block.body)
+			break
+		}
+	}
+	return requirements
+}
+
+// recordScopeLines stops at the first date, status, editorial or submission boundary.
+func recordScopeLines(body string) []string {
+	scopeLines := []string{}
+	for _, line := range strings.Split(plain(body), "\n") {
+		if pattern(dateLabelPattern, line) || pattern(statusPattern, line) || pattern(`(?i)^guest editors?|^submission (?:instructions|guidelines)|^manuscript requirements|^投稿要求|^稿件要求`, line) {
+			break
+		}
+		if !pattern(`(?i)^(?:[0-3]?\d\s+[a-z]{3,9}\s+20\d{2}|[a-z]{3,9}\s+[0-3]?\d,?\s+20\d{2}|20\d{2}[-/]\d{1,2}[-/]\d{1,2})$`, strings.TrimSpace(line)) {
+			scopeLines = append(scopeLines, line)
+		}
+	}
+	return scopeLines
+}
+
+// recordInvitationStatus appends only the first invitation-only observation.
+func recordInvitationStatus(title, body, status string) string {
+	for _, line := range strings.Split(plain(title+"\n"+body), "\n") {
+		if pattern(`(?i)invit(?:ation|e|ed)[ -]*only|invitation required|invited (?:submissions|papers) only|仅限受邀`, line) {
+			status += "\n" + line
+			break
+		}
+	}
+	return status
+}
+
+// journalIdentityPrefix excludes the first publisher card and all following content.
+func journalIdentityPrefix(config SourceConfig, text string) string {
+	firstCard := len(text)
+	level := 3
+	if config.Adapter == SpringerCollections {
+		level = 2
+	}
+	for _, heading := range domain.PatternCaptures(headingPattern, text) {
+		if heading[3]-heading[2] >= level {
+			firstCard = heading[0]
+			break
+		}
+	}
+	return text[:firstCard]
+}
+
+// matchesJournalIdentityText compares exact ASCII-insensitive segments after ordered separator splitting.
+func matchesJournalIdentityText(identityText, identity string) bool {
+	segments := strings.Split(identityText, "\n")
+	for _, separator := range []string{" | ", " - ", " — "} {
+		next := []string{}
+		for _, segment := range segments {
+			next = append(next, strings.Split(segment, separator)...)
+		}
+		segments = next
+	}
+	for _, line := range segments {
+		if equalAscii(strings.TrimSpace(strings.TrimLeft(line, "#")), identity) {
+			return true
 		}
 	}
 	return false

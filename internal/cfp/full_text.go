@@ -77,39 +77,16 @@ func (cache *captureCache) capture(ctx context.Context, config SourceConfig, val
 	transport := cache.create(options)
 	defer transport.Close()
 	url := location.Href(false)
-	var document Document
-	if shouldUseBrowser {
-		cache.browserAttempts[url] = true
-		document, err = transport.obscuraDocument(ctx, config, url, deadline)
-	} else {
-		document, err = transport.httpDocument(ctx, config, url, deadline)
-	}
-	if err == nil && IsChallenge(document) {
-		err = ErrChallenge
-	}
-	if !shouldUseBrowser && canRender(err, false) {
-		cache.browserAttempts[url] = true
-		document, err = transport.obscuraDocument(ctx, config, url, deadline)
-	}
+	document, err := cache.captureWithFallback(ctx, transport, config, url, deadline, shouldUseBrowser)
 	if err == nil {
-		if IsChallenge(document) {
-			err = ErrChallenge
-		} else if cache.bytes+len(document.Text) > MaxCaptureBytes {
-			err = ErrTooLarge
-		} else {
-			cache.bytes += len(document.Text)
-		}
+		err = cache.admitDocument(document)
 	}
 	cache.documents[url] = capturedDocument{document: document, err: err}
 	return document, err
 }
 
 func recoverOriginal(ctx context.Context, original domain.Source, config SourceConfig, cache *captureCache, options RefreshOptions, deadline time.Time) (domain.Source, error) {
-	type visit struct {
-		url   string
-		depth int
-	}
-	pending := []visit{{original.SourceUrl, 0}}
+	pending := []originalVisit{{original.SourceUrl, 0}}
 	visited := map[string]bool{}
 	var lastError error = ErrUnrecognized
 	for len(pending) > 0 {
@@ -133,20 +110,11 @@ func recoverOriginal(ctx context.Context, original domain.Source, config SourceC
 		if source, err := ExtractFullText(original, document); err == nil {
 			return source, nil
 		}
-		links := OriginalLinks(original, document)
-		if len(links) == 0 && document.Format == "html" && !cache.browserAttempts[current.url] {
-			if rendered, err := cache.capture(ctx, config, current.url, options, deadline, true); err == nil {
-				if source, err := ExtractFullText(original, rendered); err == nil {
-					return source, nil
-				}
-				links = OriginalLinks(original, rendered)
-			}
+		source, links, recovered := recoverRenderedOriginal(ctx, original, config, cache, options, deadline, current.url, document)
+		if recovered {
+			return source, nil
 		}
-		if current.depth < 2 {
-			for _, link := range links[:min(len(links), 4)] {
-				pending = append(pending, visit{link, current.depth + 1})
-			}
-		}
+		pending = appendOriginalVisits(pending, current, links)
 	}
 	return domain.Source{}, lastError
 }
@@ -160,42 +128,15 @@ func (cache *captureCache) resume(path, sourceKey string) error {
 	if err != nil {
 		return &storage.InvalidError{Message: fmt.Sprintf("Could not read the saved capture: %v", err)}
 	}
-	if !jsonvalue.ValidJson(string(data)) {
-		return &storage.PayloadError{Cause: fmt.Errorf("invalid saved capture JSON")}
-	}
-	var saved map[string]json.RawMessage
-	json.Unmarshal(data, &saved)
-	var result map[string]json.RawMessage
-	json.Unmarshal(saved["result"], &result)
-	var key *string
-	json.Unmarshal(result["sourceKey"], &key)
-	if key == nil || *key != sourceKey {
-		return &storage.InvalidError{Message: "Saved capture journal identity does not match"}
+	saved, err := savedCaptureEnvelope(data, sourceKey)
+	if err != nil {
+		return err
 	}
 	var documents []json.RawMessage
 	json.Unmarshal(saved["documents"], &documents)
 	for _, raw := range documents {
-		var fields map[string]json.RawMessage
-		if json.Unmarshal(raw, &fields) != nil {
-			continue
-		}
-		var requested, url, text, format *string
-		json.Unmarshal(fields["requestedUrl"], &requested)
-		json.Unmarshal(fields["url"], &url)
-		json.Unmarshal(fields["text"], &text)
-		json.Unmarshal(fields["format"], &format)
-		if requested == nil || url == nil || text == nil || format == nil {
-			continue
-		}
-		cache.bytes += len(*text)
-		if cache.bytes > MaxCaptureBytes {
-			return &storage.InvalidError{Message: "Saved capture exceeds the source budget"}
-		}
-		captured := capturedDocument{document: Document{FinalUrl: *url, Text: *text, Format: *format}}
-		cache.documents[*requested] = captured
-		cache.documents[*url] = captured
-		if strings.HasPrefix(*url, "https://link.springer.com/") {
-			cache.browserAttempts[*requested] = true
+		if err := cache.restoreDocument(raw); err != nil {
+			return err
 		}
 	}
 	var attempts []json.RawMessage
@@ -255,73 +196,14 @@ func RefreshFullTextSource(ctx context.Context, repository *storage.Repository, 
 	}
 	result.Notices = uint64(len(originals))
 	cache := newCaptureCache()
-	capturePath := ""
-	if captureDirectory != nil {
-		name := strings.Map(func(character rune) rune {
-			if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' {
-				return character
-			}
-			return '_'
-		}, config.SourceKey)
-		capturePath = filepath.Join(*captureDirectory, name+".json")
-	}
+	capturePath := fullTextCapturePath(captureDirectory, config.SourceKey)
 	if shouldResume && capturePath != "" {
 		if err = cache.resume(capturePath, config.SourceKey); err != nil {
 			return FullTextResult{}, err
 		}
 	}
-	sources := []domain.Source{}
-	for _, original := range originals {
-		source, err := recoverOriginal(ctx, original, config, cache, options, acquisitionDeadline)
-		if err == nil {
-			result.Recovered++
-			sources = append(sources, source)
-		} else {
-			result.Unresolved = append(result.Unresolved, original.Title)
-			message := err.Error()
-			result.Error = &message
-			sources = append(sources, original)
-		}
-	}
-	documents := cache.evidence()
-	capture, err := jsonvalue.EncodeJson(documents)
-	if err != nil {
-		return FullTextResult{}, &storage.PayloadError{Cause: err}
-	}
-	if result.Recovered > 0 && len(capture) <= MaxCaptureBytes && ctx.Err() == nil {
-		publication := storage.Publication{Capture: capture, CaptureFormat: "original_documents_json", SourceUrl: config.DiscoveryUrl, ConfigVersion: config.ConfigVersion, Sources: sources, EmptyJournals: []domain.EmptyJournal{}}
-		err = repository.PublishFullText(databaseCtx, lease, publication, utcNow().Unix(), uint64(len(result.Unresolved)))
-		if err == nil {
-			result.Updated = result.Recovered
-			result.Status = "success"
-			if len(result.Unresolved) > 0 {
-				result.Status = "partial"
-			}
-		} else {
-			result.Status = "failed"
-			message := err.Error()
-			result.Error = &message
-			if err = repository.FailRefresh(databaseCtx, lease, "Full-text publication failed", false); err != nil {
-				return FullTextResult{}, err
-			}
-		}
-	} else {
-		result.Status = "failed"
-		if err = repository.FailRefresh(databaseCtx, lease, "Complete original text could not be verified for every notice", false); err != nil {
-			return FullTextResult{}, err
-		}
-	}
-	if capturePath != "" {
-		evidence, err := jsonvalue.EncodeJson(map[string]any{"result": result, "sources": sources, "documents": documents, "browserAttempts": sortedMapKeys(cache.browserAttempts)})
-		if err != nil {
-			return FullTextResult{}, &storage.PayloadError{Cause: err}
-		}
-		if err = os.WriteFile(capturePath, []byte(evidence), 0600); err != nil {
-			return result, &EvidenceError{Result: result, Cause: &storage.InvalidError{Message: fmt.Sprintf("Could not save full-text capture evidence: %v", err)}}
-		}
-	}
-	slog.InfoContext(ctx, "CFP full-text refresh completed", "event", "cfp.full_text.completed", "catalog_id", result.CatalogId, "status", result.Status, "recovered", result.Recovered, "notices", result.Notices)
-	return result, nil
+	sources := recoverSavedSources(ctx, originals, config, cache, options, acquisitionDeadline, &result)
+	return completeFullTextRecovery(ctx, databaseCtx, repository, lease, config, sources, cache, capturePath, result)
 }
 
 // RefreshFullTexts uses four source workers and preserves input ordering after all workers finish.
@@ -364,4 +246,206 @@ func RefreshFullTexts(ctx context.Context, repository *storage.Repository, confi
 		}
 	}
 	return results, nil
+}
+
+// captureWithFallback records one browser attempt after HTTP acquisition or its renderable failure.
+func (cache *captureCache) captureWithFallback(ctx context.Context, transport captureTransport, config SourceConfig, url string, deadline time.Time, shouldUseBrowser bool) (Document, error) {
+	var err error
+	var document Document
+	if shouldUseBrowser {
+		cache.browserAttempts[url] = true
+		document, err = transport.obscuraDocument(ctx, config, url, deadline)
+	} else {
+		document, err = transport.httpDocument(ctx, config, url, deadline)
+	}
+	if err == nil && IsChallenge(document) {
+		err = ErrChallenge
+	}
+	if !shouldUseBrowser && canRender(err, false) {
+		cache.browserAttempts[url] = true
+		document, err = transport.obscuraDocument(ctx, config, url, deadline)
+	}
+	return document, err
+}
+
+// admitDocument counts complete successful captures, including successful recaptures, against the budget.
+func (cache *captureCache) admitDocument(document Document) error {
+	if IsChallenge(document) {
+		return ErrChallenge
+	} else if cache.bytes+len(document.Text) > MaxCaptureBytes {
+		return ErrTooLarge
+	} else {
+		cache.bytes += len(document.Text)
+	}
+	return nil
+}
+
+// recoverRenderedOriginal retries a linkless HTML page once without changing capture-only error precedence.
+func recoverRenderedOriginal(ctx context.Context, original domain.Source, config SourceConfig, cache *captureCache, options RefreshOptions, deadline time.Time, url string, document Document) (domain.Source, []string, bool) {
+	links := OriginalLinks(original, document)
+	if len(links) == 0 && document.Format == "html" && !cache.browserAttempts[url] {
+		if rendered, err := cache.capture(ctx, config, url, options, deadline, true); err == nil {
+			if source, err := ExtractFullText(original, rendered); err == nil {
+				return source, nil, true
+			}
+			links = OriginalLinks(original, rendered)
+		}
+	}
+	return domain.Source{}, links, false
+}
+
+// restoreDocument skips malformed entries and preserves cumulative bytes and aliases before budget failure.
+func (cache *captureCache) restoreDocument(raw json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return nil
+	}
+	var requested, url, text, format *string
+	json.Unmarshal(fields["requestedUrl"], &requested)
+	json.Unmarshal(fields["url"], &url)
+	json.Unmarshal(fields["text"], &text)
+	json.Unmarshal(fields["format"], &format)
+	if requested == nil || url == nil || text == nil || format == nil {
+		return nil
+	}
+	cache.bytes += len(*text)
+	if cache.bytes > MaxCaptureBytes {
+		return &storage.InvalidError{Message: "Saved capture exceeds the source budget"}
+	}
+	captured := capturedDocument{document: Document{FinalUrl: *url, Text: *text, Format: *format}}
+	cache.documents[*requested] = captured
+	cache.documents[*url] = captured
+	if strings.HasPrefix(*url, "https://link.springer.com/") {
+		cache.browserAttempts[*requested] = true
+	}
+	return nil
+}
+
+// fullTextCapturePath retains the source-key filename mapping and optional evidence destination.
+func fullTextCapturePath(directory *string, sourceKey string) string {
+	capturePath := ""
+	if directory != nil {
+		name := strings.Map(func(character rune) rune {
+			if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' {
+				return character
+			}
+			return '_'
+		}, sourceKey)
+		capturePath = filepath.Join(*directory, name+".json")
+	}
+	return capturePath
+}
+
+// recoverSavedSources preserves unresolved originals while recording the latest recovery failure.
+func recoverSavedSources(ctx context.Context, originals []domain.Source, config SourceConfig, cache *captureCache, options RefreshOptions, deadline time.Time, result *FullTextResult) []domain.Source {
+	sources := []domain.Source{}
+	for _, original := range originals {
+		source, err := recoverOriginal(ctx, original, config, cache, options, deadline)
+		if err == nil {
+			result.Recovered++
+			sources = append(sources, source)
+		} else {
+			result.Unresolved = append(result.Unresolved, original.Title)
+			message := err.Error()
+			result.Error = &message
+			sources = append(sources, original)
+		}
+	}
+	return sources
+}
+
+// publishRecoveredSources publishes partial verified recovery or records the original failure status.
+func publishRecoveredSources(ctx, databaseCtx context.Context, repository *storage.Repository, lease storage.RefreshLease, config SourceConfig, sources []domain.Source, capture string, result *FullTextResult) error {
+	var err error
+	if result.Recovered > 0 && len(capture) <= MaxCaptureBytes && ctx.Err() == nil {
+		publication := storage.Publication{Capture: capture, CaptureFormat: "original_documents_json", SourceUrl: config.DiscoveryUrl, ConfigVersion: config.ConfigVersion, Sources: sources, EmptyJournals: []domain.EmptyJournal{}}
+		err = repository.PublishFullText(databaseCtx, lease, publication, utcNow().Unix(), uint64(len(result.Unresolved)))
+		if err == nil {
+			result.Updated = result.Recovered
+			result.Status = "success"
+			if len(result.Unresolved) > 0 {
+				result.Status = "partial"
+			}
+		} else {
+			result.Status = "failed"
+			message := err.Error()
+			result.Error = &message
+			if err = repository.FailRefresh(databaseCtx, lease, "Full-text publication failed", false); err != nil {
+				return err
+			}
+		}
+	} else {
+		result.Status = "failed"
+		if err = repository.FailRefresh(databaseCtx, lease, "Complete original text could not be verified for every notice", false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// saveFullTextEvidence preserves a completed publication when separate evidence persistence fails.
+func saveFullTextEvidence(capturePath string, result FullTextResult, sources []domain.Source, documents []map[string]string, cache *captureCache) error {
+	evidence, err := jsonvalue.EncodeJson(map[string]any{"result": result, "sources": sources, "documents": documents, "browserAttempts": sortedMapKeys(cache.browserAttempts)})
+	if err != nil {
+		return &storage.PayloadError{Cause: err}
+	}
+	if err = os.WriteFile(capturePath, []byte(evidence), 0600); err != nil {
+		return &EvidenceError{Result: result, Cause: &storage.InvalidError{Message: fmt.Sprintf("Could not save full-text capture evidence: %v", err)}}
+	}
+	return nil
+}
+
+// originalVisit records breadth-first traversal depth without changing supplied URL identity.
+type originalVisit struct {
+	url   string
+	depth int
+}
+
+// appendOriginalVisits preserves encounter order and the depth-two/four-link traversal bounds.
+func appendOriginalVisits(pending []originalVisit, current originalVisit, links []string) []originalVisit {
+	if current.depth < 2 {
+		for _, link := range links[:min(len(links), 4)] {
+			pending = append(pending, originalVisit{link, current.depth + 1})
+		}
+	}
+	return pending
+}
+
+// savedCaptureEnvelope checks strict JSON before enforcing the saved journal identity.
+func savedCaptureEnvelope(data []byte, sourceKey string) (map[string]json.RawMessage, error) {
+	if !jsonvalue.ValidJson(string(data)) {
+		return nil, &storage.PayloadError{Cause: fmt.Errorf("invalid saved capture JSON")}
+	}
+	var saved map[string]json.RawMessage
+	json.Unmarshal(data, &saved)
+	var result map[string]json.RawMessage
+	json.Unmarshal(saved["result"], &result)
+	var key *string
+	json.Unmarshal(result["sourceKey"], &key)
+	if key == nil || *key != sourceKey {
+		return nil, &storage.InvalidError{Message: "Saved capture journal identity does not match"}
+	}
+	return saved, nil
+}
+
+// completeFullTextRecovery serializes, publishes and persists evidence in the original outcome order.
+func completeFullTextRecovery(ctx, databaseCtx context.Context, repository *storage.Repository, lease storage.RefreshLease, config SourceConfig, sources []domain.Source, cache *captureCache, capturePath string, result FullTextResult) (FullTextResult, error) {
+	documents := cache.evidence()
+	capture, err := jsonvalue.EncodeJson(documents)
+	if err != nil {
+		return FullTextResult{}, &storage.PayloadError{Cause: err}
+	}
+	if err := publishRecoveredSources(ctx, databaseCtx, repository, lease, config, sources, capture, &result); err != nil {
+		return FullTextResult{}, err
+	}
+	if capturePath != "" {
+		if err := saveFullTextEvidence(capturePath, result, sources, documents, cache); err != nil {
+			if _, isEvidenceFailure := err.(*EvidenceError); isEvidenceFailure {
+				return result, err
+			}
+			return FullTextResult{}, err
+		}
+	}
+	slog.InfoContext(ctx, "CFP full-text refresh completed", "event", "cfp.full_text.completed", "catalog_id", result.CatalogId, "status", result.Status, "recovered", result.Recovered, "notices", result.Notices)
+	return result, nil
 }

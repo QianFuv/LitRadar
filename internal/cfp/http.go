@@ -48,6 +48,7 @@ func NewHttpTransport() *HttpTransport {
 }
 func (transport *HttpTransport) Close() { transport.client.CloseIdleConnections() }
 
+// resolve preserves bounded lookup ownership and cancellation before public address admission.
 func (transport *HttpTransport) resolve(ctx context.Context, host string) ([]netip.Addr, error) {
 	if address, err := netip.ParseAddr(host); err == nil {
 		if !outbound.IsPublicAddress(address) {
@@ -70,18 +71,7 @@ func (transport *HttpTransport) resolve(ctx context.Context, host string) ([]net
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case result := <-completed:
-		if result.err != nil {
-			return nil, result.err
-		}
-		if len(result.addresses) == 0 {
-			return nil, ErrDisallowedUrl
-		}
-		for _, address := range result.addresses {
-			if !outbound.IsPublicAddress(address) {
-				return nil, ErrDisallowedUrl
-			}
-		}
-		return result.addresses, nil
+		return publicResolvedAddresses(result.addresses, result.err)
 	}
 }
 func (transport *HttpTransport) connect(ctx context.Context, network, address string, isTls bool) (net.Conn, error) {
@@ -134,83 +124,19 @@ func (transport *HttpTransport) FetchBytes(ctx context.Context, config SourceCon
 		if err = validateUrl(config, location); err != nil {
 			return HttpDocument{}, err
 		}
-		var response *http.Response
-		var release context.CancelFunc
-		for attempt := 0; attempt < 2; attempt++ {
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				return HttpDocument{}, ErrDeadline
-			}
-			requestCtx, cancel := context.WithTimeout(ctx, min(remaining, 20*time.Second))
-			dialCtx := context.WithValue(requestCtx, requestContextKey{}, requestCtx)
-			headers := http.Header{"User-Agent": {"LitRadar/CFP (+original publisher announcements)"}, "Accept": {"text/html,application/pdf,text/plain;q=0.8"}}
-			response, err = wire.RedirectSequence(dialCtx, transport.client.Transport, nil, wire.Proxy{}, http.MethodGet, location.Href(false), "", headers, nil)
-			if err == nil {
-				release = cancel
-				break
-			}
-			cancel()
-			if errors.Is(err, ErrDisallowedUrl) {
-				return HttpDocument{}, ErrDisallowedUrl
-			}
-			if !time.Now().Before(deadline) {
-				return HttpDocument{}, ErrDeadline
-			}
-			if attempt == 1 {
-				return HttpDocument{}, ErrRequest
-			}
-		}
-		if response == nil {
-			return HttpDocument{}, ErrRequest
+		response, release, err := transport.fetchResponse(ctx, location, deadline)
+		if err != nil {
+			return HttpDocument{}, err
 		}
 		closeResponse := func() { response.Body.Close(); release() }
-		if response.StatusCode >= 300 && response.StatusCode < 400 {
-			if redirect == 5 {
-				closeResponse()
-				return HttpDocument{}, ErrDisallowedUrl
-			}
-			locations, hasLocation := response.Header["Location"]
-			target := ""
-			if len(locations) > 0 {
-				target = locations[0]
-			}
-			closeResponse()
-			if !hasLocation || len(locations) == 0 || !isHeaderText(target) {
-				return HttpDocument{}, ErrDisallowedUrl
-			}
-			location, err = whatwg.NewParser().ParseRef(location.Href(false), target)
+		if isRedirectStatus(response.StatusCode) {
+			location, err = redirectLocation(response, location, redirect, closeResponse)
 			if err != nil {
-				return HttpDocument{}, ErrDisallowedUrl
+				return HttpDocument{}, err
 			}
 			continue
 		}
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			closeResponse()
-			return HttpDocument{}, SourceError{Kind: "http_status", Status: response.StatusCode}
-		}
-		if response.ContentLength > MaxPageBytes {
-			closeResponse()
-			return HttpDocument{}, ErrTooLarge
-		}
-		contentType := response.Header.Get("Content-Type")
-		if !isHeaderText(contentType) {
-			contentType = ""
-		}
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, MaxPageBytes+1))
-		closeResponse()
-		if readErr != nil {
-			if !time.Now().Before(deadline) {
-				return HttpDocument{}, ErrDeadline
-			}
-			return HttpDocument{}, ErrRequest
-		}
-		if len(body) > MaxPageBytes {
-			return HttpDocument{}, ErrTooLarge
-		}
-		if !time.Now().Before(deadline) {
-			return HttpDocument{}, ErrDeadline
-		}
-		return HttpDocument{FinalUrl: location.Href(false), ContentType: contentType, Bytes: body}, nil
+		return readHttpDocument(response, location, deadline, closeResponse)
 	}
 	return HttpDocument{}, ErrDisallowedUrl
 }
@@ -248,4 +174,111 @@ func (transport *HttpTransport) Fetch(ctx context.Context, config SourceConfig, 
 		return Document{}, err
 	}
 	return Document{FinalUrl: response.FinalUrl, Text: text, Format: "html"}, nil
+}
+
+// publicResolvedAddresses requires a successful nonempty entirely public lookup result.
+func publicResolvedAddresses(addresses []netip.Addr, err error) ([]netip.Addr, error) {
+	if err != nil {
+		return nil, err
+	}
+	if len(addresses) == 0 {
+		return nil, ErrDisallowedUrl
+	}
+	for _, address := range addresses {
+		if !outbound.IsPublicAddress(address) {
+			return nil, ErrDisallowedUrl
+		}
+	}
+	return addresses, nil
+}
+
+// fetchResponse retries only request acquisition and returns cancellation ownership with a response.
+func (transport *HttpTransport) fetchResponse(ctx context.Context, location *whatwg.Url, deadline time.Time) (*http.Response, context.CancelFunc, error) {
+	var err error
+	var response *http.Response
+	var release context.CancelFunc
+	for attempt := 0; attempt < 2; attempt++ {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, nil, ErrDeadline
+		}
+		requestCtx, cancel := context.WithTimeout(ctx, min(remaining, 20*time.Second))
+		dialCtx := context.WithValue(requestCtx, requestContextKey{}, requestCtx)
+		headers := http.Header{"User-Agent": {"LitRadar/CFP (+original publisher announcements)"}, "Accept": {"text/html,application/pdf,text/plain;q=0.8"}}
+		response, err = wire.RedirectSequence(dialCtx, transport.client.Transport, nil, wire.Proxy{}, http.MethodGet, location.Href(false), "", headers, nil)
+		if err == nil {
+			release = cancel
+			break
+		}
+		cancel()
+		if errors.Is(err, ErrDisallowedUrl) {
+			return nil, nil, ErrDisallowedUrl
+		}
+		if !time.Now().Before(deadline) {
+			return nil, nil, ErrDeadline
+		}
+		if attempt == 1 {
+			return nil, nil, ErrRequest
+		}
+	}
+	if response == nil {
+		return nil, nil, ErrRequest
+	}
+	return response, release, nil
+}
+
+// isRedirectStatus recognizes the original entire 3xx range.
+func isRedirectStatus(status int) bool { return status >= 300 && status < 400 }
+
+// redirectLocation closes the response before admitting the first Location header and parsed target.
+func redirectLocation(response *http.Response, location *whatwg.Url, redirect int, closeResponse func()) (*whatwg.Url, error) {
+	if redirect == 5 {
+		closeResponse()
+		return nil, ErrDisallowedUrl
+	}
+	locations, hasLocation := response.Header["Location"]
+	target := ""
+	if len(locations) > 0 {
+		target = locations[0]
+	}
+	closeResponse()
+	if !hasLocation || len(locations) == 0 || !isHeaderText(target) {
+		return nil, ErrDisallowedUrl
+	}
+	location, err := whatwg.NewParser().ParseRef(location.Href(false), target)
+	if err != nil {
+		return nil, ErrDisallowedUrl
+	}
+	return location, nil
+}
+
+// readHttpDocument preserves status, declared length, bounded read, cleanup and deadline error priority.
+func readHttpDocument(response *http.Response, location *whatwg.Url, deadline time.Time, closeResponse func()) (HttpDocument, error) {
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		closeResponse()
+		return HttpDocument{}, SourceError{Kind: "http_status", Status: response.StatusCode}
+	}
+	if response.ContentLength > MaxPageBytes {
+		closeResponse()
+		return HttpDocument{}, ErrTooLarge
+	}
+	contentType := response.Header.Get("Content-Type")
+	if !isHeaderText(contentType) {
+		contentType = ""
+	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, MaxPageBytes+1))
+	closeResponse()
+	if readErr != nil {
+		if !time.Now().Before(deadline) {
+			return HttpDocument{}, ErrDeadline
+		}
+		return HttpDocument{}, ErrRequest
+	}
+	if len(body) > MaxPageBytes {
+		return HttpDocument{}, ErrTooLarge
+	}
+	if !time.Now().Before(deadline) {
+		return HttpDocument{}, ErrDeadline
+	}
+	return HttpDocument{FinalUrl: location.Href(false), ContentType: contentType, Bytes: body}, nil
 }

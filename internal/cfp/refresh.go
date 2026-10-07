@@ -71,36 +71,14 @@ func RefreshSource(ctx context.Context, repository *storage.Repository, config S
 		err = ErrDeadline
 	}
 	if err != nil {
-		if failure := repository.FailRefresh(databaseCtx, lease, err.Error(), err == ErrUnsupported); failure != nil {
-			return RefreshResult{}, failure
-		}
-		return failedResult(config, err), nil
+		return failedAcquisitionResult(databaseCtx, repository, lease, config, err)
 	}
 	if config.RetainsPreviousNotices {
-		originals, err := repository.LoadOriginals(databaseCtx, config.SourceKey)
-		if err != nil {
+		if err := retainOriginalNotices(databaseCtx, repository, config, &acquired); err != nil {
 			return RefreshResult{}, err
 		}
-		for _, original := range originals {
-			hasTitle := false
-			for _, source := range acquired.Sources {
-				if source.Title == original.Title {
-					hasTitle = true
-					break
-				}
-			}
-			if !hasTitle {
-				acquired.Sources = append(acquired.Sources, original)
-			}
-		}
-		if len(acquired.Sources) > 0 {
-			acquired.EmptyJournals = []domain.EmptyJournal{}
-		}
 	}
-	documents := []map[string]string{}
-	for _, document := range acquired.Documents {
-		documents = append(documents, map[string]string{"url": document.FinalUrl, "format": document.Format, "text": document.Text})
-	}
+	documents := acquisitionDocuments(acquired.Documents)
 	capture, err := jsonvalue.EncodeJson(documents)
 	if err != nil {
 		return RefreshResult{}, &storage.PayloadError{Cause: err}
@@ -112,11 +90,16 @@ func RefreshSource(ctx context.Context, repository *storage.Repository, config S
 		return failedResult(config, ErrTooLarge), nil
 	}
 	publication := storage.Publication{Capture: capture, CaptureFormat: "original_documents_json", SourceUrl: config.DiscoveryUrl, ConfigVersion: config.ConfigVersion, Sources: acquired.Sources, EmptyJournals: acquired.EmptyJournals}
-	if err = repository.PublishRefresh(databaseCtx, lease, publication, utcNow().Unix()); err != nil {
+	return publishAcquisition(databaseCtx, repository, lease, config, publication)
+}
+
+// publishAcquisition preserves publication failure even when recording that failure also fails.
+func publishAcquisition(databaseCtx context.Context, repository *storage.Repository, lease storage.RefreshLease, config SourceConfig, publication storage.Publication) (RefreshResult, error) {
+	if err := repository.PublishRefresh(databaseCtx, lease, publication, utcNow().Unix()); err != nil {
 		repository.FailRefresh(databaseCtx, lease, "Source publication failed or was superseded", false)
 		return RefreshResult{}, err
 	}
-	return RefreshResult{SourceKey: config.SourceKey, CatalogId: config.CatalogIds[0], Status: "success", Notices: uint64(len(acquired.Sources))}, nil
+	return RefreshResult{SourceKey: config.SourceKey, CatalogId: config.CatalogIds[0], Status: "success", Notices: uint64(len(publication.Sources))}, nil
 }
 
 func validOptions(options RefreshOptions) bool {
@@ -166,4 +149,45 @@ func RefreshSources(ctx context.Context, repository *storage.Repository, configs
 		}
 	}
 	return results, nil
+}
+
+// retainOriginalNotices appends older exact-title omissions in stored order and clears empty declarations.
+func retainOriginalNotices(databaseCtx context.Context, repository *storage.Repository, config SourceConfig, acquired *Acquisition) error {
+	originals, err := repository.LoadOriginals(databaseCtx, config.SourceKey)
+	if err != nil {
+		return err
+	}
+	for _, original := range originals {
+		hasTitle := false
+		for _, source := range acquired.Sources {
+			if source.Title == original.Title {
+				hasTitle = true
+				break
+			}
+		}
+		if !hasTitle {
+			acquired.Sources = append(acquired.Sources, original)
+		}
+	}
+	if len(acquired.Sources) > 0 {
+		acquired.EmptyJournals = []domain.EmptyJournal{}
+	}
+	return nil
+}
+
+// acquisitionDocuments preserves capture document order and original publisher text.
+func acquisitionDocuments(acquired []Document) []map[string]string {
+	documents := []map[string]string{}
+	for _, document := range acquired {
+		documents = append(documents, map[string]string{"url": document.FinalUrl, "format": document.Format, "text": document.Text})
+	}
+	return documents
+}
+
+// failedAcquisitionResult records acquisition failure before returning its original source status.
+func failedAcquisitionResult(databaseCtx context.Context, repository *storage.Repository, lease storage.RefreshLease, config SourceConfig, err error) (RefreshResult, error) {
+	if failure := repository.FailRefresh(databaseCtx, lease, err.Error(), err == ErrUnsupported); failure != nil {
+		return RefreshResult{}, failure
+	}
+	return failedResult(config, err), nil
 }

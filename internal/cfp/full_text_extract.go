@@ -60,133 +60,16 @@ func ExtractFullText(original domain.Source, document Document) (domain.Source, 
 	}
 	parsed := parseHtml(document.Text)
 	collection := parsed.Find("[data-test='collection-title']").First()
-	location, _ := whatwg.NewParser().Parse(document.FinalUrl)
-	isFamily := func(host, path, id string) bool {
-		return location != nil && location.Hostname() == host && strings.HasPrefix(location.Pathname(), path) && slices.Contains(original.CatalogIds, id)
-	}
-	body := ""
-	var err error
-	switch {
-	case collection.Length() > 0:
-		if !matchingTitle(collection.Text(), original.Title) {
-			return domain.Source{}, ErrUnrecognized
-		}
-		description := parsed.Find("[data-test='collection-description']").First()
-		if description.Length() == 0 {
-			return domain.Source{}, ErrUnrecognized
-		}
-		body = visible(fragment(inner(description)), "")
-	case springerUpdateBody(original, document, parsed) != nil:
-		body = visible(fragment(inner(springerUpdateBody(original, document, parsed))), "h1, .u-visually-hidden")
-		if pattern(`(?i)read the full call for papers`, body) {
-			return domain.Source{}, ErrUnrecognized
-		}
-		body = cutBefore(`(?im)^(?:#{1,6} )?bios of guest editors\s*[:：]?\s*$`, body)
-	case isFamily("www.comsoc.org", "/publications/journals/ieee-jsac/cfp/", "issn-0733-8716") || isFamily("www.comsoc.org", "/publications/journals/ieee-tnsm/cfp/", "issn-1932-4537"):
-		if !hasTitle(parsed.Selection, "h1.h1--page-title", original.Title) {
-			return domain.Source{}, ErrUnrecognized
-		}
-		article := parsed.Find("article.node--type-call-for-papers.node--view-mode-full").First()
-		if article.Length() == 0 {
-			return domain.Source{}, ErrUnrecognized
-		}
-		parts := []string{}
-		for _, node := range article.Find(".paragraph-anchor-wrapper .text-long").Nodes {
-			parts = append(parts, visible(fragment(inner(goquery.NewDocumentFromNode(node).Selection)), ""))
-		}
-		text := plain(strings.Join(parts, "\n"))
-		scopeHeading := firstMatch(`(?im)^(?:scope|call for papers)\s*[:：]?\s*$`, text)
-		scopeStart := 0
-		if scopeHeading != nil {
-			scopeStart = scopeHeading[1]
-		} else if strings.HasPrefix(lower(text), "important dates") {
-			return domain.Source{}, ErrUnrecognized
-		}
-		requirement := firstMatch(`(?im)^submissions? (?:format|guidelines)\s*[:：]?\s*$`, text)
-		if requirement == nil || scopeStart >= requirement[0] {
-			return domain.Source{}, ErrUnrecognized
-		}
-		end := `(?im)^(?:important dates|guest editors|references)\s*[:：]?\s*$`
-		body = cutBefore(end, text[scopeStart:requirement[0]]) + "\n" + cutBefore(end, text[requirement[0]:])
-	case isFamily("journal.psych.ac.cn", "/xlxb/CN/news/", "issn-0439-755x"):
-		body, err = selectedBody(findTitledContainer(parsed, ".content_nr", ".item_biaoti", original.Title), ".J_WenZhang")
-	case isFamily("www.resci.cn", "/CN/news/", "issn-1007-7588"):
-		container := findTitledContainer(parsed, ".content_nr > .news-content", ".newstitle", original.Title)
-		if container == nil {
-			return domain.Source{}, ErrUnrecognized
-		}
-		body = visible(fragment(inner(container)), ".newstitle, .text-right")
-	case isFamily("chinaifs.org.cn", "/html/web/tongzhigonggao/", "issn-1006-1029"):
-		var container *goquery.Selection
-		for _, node := range parsed.Find(".news-wrap").Nodes {
-			candidate := goquery.NewDocumentFromNode(node)
-			titles := []string{}
-			for _, node := range candidate.Find(".news-title > h1, .news-title > h2").Nodes {
-				titles = append(titles, goquery.NewDocumentFromNode(node).Text())
-			}
-			if matchingTitle(strings.Join(titles, "\n"), original.Title) {
-				container = candidate.Selection
-				break
-			}
-		}
-		body, err = selectedBody(container, ".news-content")
-	case isFamily("www.jryj.org.cn", "/CN/news/", "issn-1002-7246"):
-		var table *goquery.Selection
-		for _, node := range parsed.Find("td.news_biaoti").Nodes {
-			title := goquery.NewDocumentFromNode(node)
-			if matchingTitle(title.Text(), original.Title) {
-				table = title.ParentsFiltered("table").First()
-				break
-			}
-		}
-		body, err = selectedBody(table, "span.J_WenZhang")
-	case isFamily("kxxyj.magtechjournal.com", "/kxxyj/CN/news/", "issn-1003-2053"):
-		container := findTitledContainer(parsed, ".content_nr > .item_con > ul", ".item_biaoti", original.Title)
-		if container == nil {
-			return domain.Source{}, ErrUnrecognized
-		}
-		body = visible(fragment(inner(container)), ".item_biaoti")
-	case isFamily("www.poms.org", "/node/", "issn-1059-1478"):
-		body, err = selectedBody(findTitledContainer(parsed, "article.node--type-call-for-papers.node--view-mode-full", "h1.node__title", original.Title), ".field-name-field-submission-guidelines-summ")
-	case isFamily("www.grss-ieee.org", "/publications/author-resources/grsl-special-streams/", "issn-1545-598x"):
-		body, err = grslBody(parsed, original.Title)
-	case document.Format == "pdf_text":
-		body, err = pdfBody(original, document, isFamily)
-	default:
-		if !hasTitle(parsed.Selection, "h1,h2", original.Title) {
-			return domain.Source{}, ErrUnrecognized
-		}
-		article := parsed.Find("article.general-post-content .prose, [itemprop='articleBody'], .entry-content, .article-content, .c-article-body").First()
-		if article.Length() == 0 {
-			return domain.Source{}, ErrUnrecognized
-		}
-		body = visible(fragment(inner(article)), "")
-		body = cutBefore(`(?im)^(?:#{1,6} )?(?:journal navigation|related articles|related content|latest articles|latest news|read next|about springer nature link|footer navigation|navigation|search|references|cookie preferences)\s*$`, body)
-	}
+	body, err := selectFullTextBody(original, document, parsed, collection)
 	if err != nil {
 		return domain.Source{}, err
 	}
-	scope, requirements := fullTextSections(body)
-	if slices.Contains(original.CatalogIds, "issn-1007-7588") {
-		if notes := firstMatch(`(?m)^(?:重点注意事项|注意事项|时间节点)\s*[:：]?\s*$`, scope); notes != nil {
-			requirements = strings.TrimSpace(strings.TrimSpace(scope[notes[0]:]) + "\n" + requirements)
-			scope = strings.TrimSpace(scope[:notes[0]])
-		}
-	}
-	if scope == "" && requirements == "" || original.Requirements != "" && requirements == "" || pattern(`(?m)(?:\.{3}|…)\s*$`, scope) || pattern(`(?m)(?:\.{3}|…)\s*$`, requirements) {
+	scope, requirements := admittedFullTextSections(original, body)
+	if incompleteFullText(original, scope, requirements) {
 		return domain.Source{}, ErrUnrecognized
 	}
-	if collection.Length() == 0 && document.Format != "pdf_text" {
-		for _, node := range parsed.Find("a[href]").Nodes {
-			link := goquery.NewDocumentFromNode(node)
-			if matchingTitle(link.Text(), original.Title) {
-				href, _ := link.Attr("href")
-				joined, err := whatwg.NewParser().ParseRef(document.FinalUrl, href)
-				if err == nil && strings.SplitN(joined.Href(false), "#", 2)[0] != strings.SplitN(document.FinalUrl, "#", 2)[0] {
-					return domain.Source{}, ErrUnrecognized
-				}
-			}
-		}
+	if collection.Length() == 0 && document.Format != "pdf_text" && hasDifferentOriginalLink(original, document, parsed) {
+		return domain.Source{}, ErrUnrecognized
 	}
 	result := original
 	result.Scope = scope
@@ -242,34 +125,248 @@ func pdfBody(original domain.Source, document Document, isFamily func(string, st
 	if pattern(`(?im)^(?:the exchange|table of contents|contents|newsletter|members in the news|aaea members in the news|news and announcements|job announcements|anti.harassment and code of conduct policy)\s*$`, text) {
 		return "", ErrUnrecognized
 	}
-	words := strings.Fields(original.Title)
-	for index, word := range words {
-		words[index] = regexp.QuoteMeta(word)
-	}
-	matched := firstMatch("(?i)"+strings.Join(words, `\s+`), text)
-	if matched == nil && (isFamily("ieee-iotj.org", "/wp-content/uploads/", "issn-2327-4662") || isFamily("www.poms.org", "/sites/default/files/callforpapers/", "issn-1059-1478")) {
-		characters := []string{}
-		for _, character := range strings.ReplaceAll(original.Title, "&", "and") {
-			if unicode.IsLetter(character) || unicode.IsNumber(character) || unicode.Is(unicode.Properties["Other_Alphabetic"], character) {
-				characters = append(characters, regexp.QuoteMeta(string(character)))
-			}
-		}
-		matched = firstMatch("(?i)"+strings.Join(characters, `[\s\p{P}]*`), text)
-	}
+	matched := pdfTitleMatch(original.Title, text, isFamily)
 	if matched == nil || utf8.RuneCountInString(text[:matched[0]]) > 600 {
 		return "", ErrUnrecognized
 	}
 	body := strings.TrimSpace(text[matched[1]:])
 	location, _ := whatwg.NewParser().Parse(document.FinalUrl)
 	if isFamily("www.poms.org", "/sites/default/files/callforpapers/", "issn-1059-1478") && location.Pathname() == "/sites/default/files/callforpapers/FlexMfgEcosystems-Revised_0.pdf" {
-		scope := firstMatch(`(?im)^Background:`, body)
-		dates := firstMatch(`(?im)^Deadlines\s*$`, body)
-		requirements := firstMatch(`(?im)^Authors are encouraged to contact the editorial team`, body)
-		editors := firstMatch(`(?im)^Guest Editors\s*$`, body)
-		if scope == nil || dates == nil || requirements == nil || editors == nil || !(scope[0] < dates[0] && dates[1] <= requirements[0] && requirements[0] < editors[0]) {
-			return "", ErrUnrecognized
-		}
-		return strings.TrimSpace(body[scope[0]:dates[0]]) + "\n" + strings.TrimSpace(body[requirements[0]:editors[0]]), nil
+		return pomsManufacturingBody(body)
 	}
 	return body, nil
+}
+
+// selectFullTextBody retains ordered publisher-family precedence before PDF and generic extraction.
+func selectFullTextBody(original domain.Source, document Document, parsed *goquery.Document, collection *goquery.Selection) (string, error) {
+	location, _ := whatwg.NewParser().Parse(document.FinalUrl)
+	isFamily := func(host, path, id string) bool {
+		return location != nil && location.Hostname() == host && strings.HasPrefix(location.Pathname(), path) && slices.Contains(original.CatalogIds, id)
+	}
+	body := ""
+	var err error
+	switch {
+	case collection.Length() > 0:
+		body, err = collectionBody(parsed, collection, original.Title)
+	case springerUpdateBody(original, document, parsed) != nil:
+		body, err = springerFullTextBody(original, document, parsed)
+	case isFamily("www.comsoc.org", "/publications/journals/ieee-jsac/cfp/", "issn-0733-8716") || isFamily("www.comsoc.org", "/publications/journals/ieee-tnsm/cfp/", "issn-1932-4537"):
+		body, err = comsocBody(parsed, original.Title)
+	default:
+		body, err = publisherFullTextBody(original, document, parsed, isFamily)
+	}
+	return body, err
+}
+
+// collectionBody selects the original publisher body after its title admission checks.
+func collectionBody(parsed *goquery.Document, collection *goquery.Selection, title string) (string, error) {
+	body := ""
+	if !matchingTitle(collection.Text(), title) {
+		return "", ErrUnrecognized
+	}
+	description := parsed.Find("[data-test='collection-description']").First()
+	if description.Length() == 0 {
+		return "", ErrUnrecognized
+	}
+	body = visible(fragment(inner(description)), "")
+	return body, nil
+}
+
+// springerFullTextBody selects the original publisher body after its title admission checks.
+func springerFullTextBody(original domain.Source, document Document, parsed *goquery.Document) (string, error) {
+	body := ""
+	body = visible(fragment(inner(springerUpdateBody(original, document, parsed))), "h1, .u-visually-hidden")
+	if pattern(`(?i)read the full call for papers`, body) {
+		return "", ErrUnrecognized
+	}
+	body = cutBefore(`(?im)^(?:#{1,6} )?bios of guest editors\s*[:：]?\s*$`, body)
+	return body, nil
+}
+
+// comsocBody selects the original publisher body after its title admission checks.
+func comsocBody(parsed *goquery.Document, title string) (string, error) {
+	body := ""
+	if !hasTitle(parsed.Selection, "h1.h1--page-title", title) {
+		return "", ErrUnrecognized
+	}
+	article := parsed.Find("article.node--type-call-for-papers.node--view-mode-full").First()
+	if article.Length() == 0 {
+		return "", ErrUnrecognized
+	}
+	parts := []string{}
+	for _, node := range article.Find(".paragraph-anchor-wrapper .text-long").Nodes {
+		parts = append(parts, visible(fragment(inner(goquery.NewDocumentFromNode(node).Selection)), ""))
+	}
+	text := plain(strings.Join(parts, "\n"))
+	scopeHeading := firstMatch(`(?im)^(?:scope|call for papers)\s*[:：]?\s*$`, text)
+	scopeStart := 0
+	if scopeHeading != nil {
+		scopeStart = scopeHeading[1]
+	} else if strings.HasPrefix(lower(text), "important dates") {
+		return "", ErrUnrecognized
+	}
+	requirement := firstMatch(`(?im)^submissions? (?:format|guidelines)\s*[:：]?\s*$`, text)
+	if requirement == nil || scopeStart >= requirement[0] {
+		return "", ErrUnrecognized
+	}
+	end := `(?im)^(?:important dates|guest editors|references)\s*[:：]?\s*$`
+	body = cutBefore(end, text[scopeStart:requirement[0]]) + "\n" + cutBefore(end, text[requirement[0]:])
+	return body, nil
+}
+
+// resciBody selects the original publisher body after its title admission checks.
+func resciBody(parsed *goquery.Document, title string) (string, error) {
+	body := ""
+	container := findTitledContainer(parsed, ".content_nr > .news-content", ".newstitle", title)
+	if container == nil {
+		return "", ErrUnrecognized
+	}
+	body = visible(fragment(inner(container)), ".newstitle, .text-right")
+	return body, nil
+}
+
+// chinaifsBody selects the original publisher body after its title admission checks.
+func chinaifsBody(parsed *goquery.Document, title string) (string, error) {
+	var container *goquery.Selection
+	for _, node := range parsed.Find(".news-wrap").Nodes {
+		candidate := goquery.NewDocumentFromNode(node)
+		titles := []string{}
+		for _, node := range candidate.Find(".news-title > h1, .news-title > h2").Nodes {
+			titles = append(titles, goquery.NewDocumentFromNode(node).Text())
+		}
+		if matchingTitle(strings.Join(titles, "\n"), title) {
+			container = candidate.Selection
+			break
+		}
+	}
+	return selectedBody(container, ".news-content")
+}
+
+// jryjBody selects the original publisher body after its title admission checks.
+func jryjBody(parsed *goquery.Document, title string) (string, error) {
+	var table *goquery.Selection
+	for _, node := range parsed.Find("td.news_biaoti").Nodes {
+		heading := goquery.NewDocumentFromNode(node)
+		if matchingTitle(heading.Text(), title) {
+			table = heading.ParentsFiltered("table").First()
+			break
+		}
+	}
+	return selectedBody(table, "span.J_WenZhang")
+}
+
+// magtechBody selects the original publisher body after its title admission checks.
+func magtechBody(parsed *goquery.Document, title string) (string, error) {
+	body := ""
+	container := findTitledContainer(parsed, ".content_nr > .item_con > ul", ".item_biaoti", title)
+	if container == nil {
+		return "", ErrUnrecognized
+	}
+	body = visible(fragment(inner(container)), ".item_biaoti")
+	return body, nil
+}
+
+// genericFullTextBody selects the original publisher body after its title admission checks.
+func genericFullTextBody(parsed *goquery.Document, title string) (string, error) {
+	body := ""
+	if !hasTitle(parsed.Selection, "h1,h2", title) {
+		return "", ErrUnrecognized
+	}
+	article := parsed.Find("article.general-post-content .prose, [itemprop='articleBody'], .entry-content, .article-content, .c-article-body").First()
+	if article.Length() == 0 {
+		return "", ErrUnrecognized
+	}
+	body = visible(fragment(inner(article)), "")
+	body = cutBefore(`(?im)^(?:#{1,6} )?(?:journal navigation|related articles|related content|latest articles|latest news|read next|about springer nature link|footer navigation|navigation|search|references|cookie preferences)\s*$`, body)
+	return body, nil
+}
+
+// admittedFullTextSections keeps resource-science notes with submission requirements.
+func admittedFullTextSections(original domain.Source, body string) (string, string) {
+	scope, requirements := fullTextSections(body)
+	if slices.Contains(original.CatalogIds, "issn-1007-7588") {
+		if notes := firstMatch(`(?m)^(?:重点注意事项|注意事项|时间节点)\s*[:：]?\s*$`, scope); notes != nil {
+			requirements = strings.TrimSpace(strings.TrimSpace(scope[notes[0]:]) + "\n" + requirements)
+			scope = strings.TrimSpace(scope[:notes[0]])
+		}
+	}
+	return scope, requirements
+}
+
+// incompleteFullText rejects missing required sections and truncated body text.
+func incompleteFullText(original domain.Source, scope, requirements string) bool {
+	return scope == "" && requirements == "" || original.Requirements != "" && requirements == "" || pattern(`(?m)(?:\.{3}|…)\s*$`, scope) || pattern(`(?m)(?:\.{3}|…)\s*$`, requirements)
+}
+
+// hasDifferentOriginalLink prevents an intermediate page from replacing its linked original.
+func hasDifferentOriginalLink(original domain.Source, document Document, parsed *goquery.Document) bool {
+	for _, node := range parsed.Find("a[href]").Nodes {
+		link := goquery.NewDocumentFromNode(node)
+		if matchingTitle(link.Text(), original.Title) {
+			href, _ := link.Attr("href")
+			joined, err := whatwg.NewParser().ParseRef(document.FinalUrl, href)
+			if err == nil && strings.SplitN(joined.Href(false), "#", 2)[0] != strings.SplitN(document.FinalUrl, "#", 2)[0] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pdfTitleMatch first matches quoted title words, then allows publisher-specific punctuation splitting.
+func pdfTitleMatch(title, text string, isFamily func(string, string, string) bool) []int {
+	words := strings.Fields(title)
+	for index, word := range words {
+		words[index] = regexp.QuoteMeta(word)
+	}
+	matched := firstMatch("(?i)"+strings.Join(words, `\s+`), text)
+	if matched == nil && (isFamily("ieee-iotj.org", "/wp-content/uploads/", "issn-2327-4662") || isFamily("www.poms.org", "/sites/default/files/callforpapers/", "issn-1059-1478")) {
+		characters := []string{}
+		for _, character := range strings.ReplaceAll(title, "&", "and") {
+			if unicode.IsLetter(character) || unicode.IsNumber(character) || unicode.Is(unicode.Properties["Other_Alphabetic"], character) {
+				characters = append(characters, regexp.QuoteMeta(string(character)))
+			}
+		}
+		matched = firstMatch("(?i)"+strings.Join(characters, `[\s\p{P}]*`), text)
+	}
+	return matched
+}
+
+// pomsManufacturingBody requires the original ordered scope, date, requirements and editor headings.
+func pomsManufacturingBody(body string) (string, error) {
+	scope := firstMatch(`(?im)^Background:`, body)
+	dates := firstMatch(`(?im)^Deadlines\s*$`, body)
+	requirements := firstMatch(`(?im)^Authors are encouraged to contact the editorial team`, body)
+	editors := firstMatch(`(?im)^Guest Editors\s*$`, body)
+	if scope == nil || dates == nil || requirements == nil || editors == nil || !(scope[0] < dates[0] && dates[1] <= requirements[0] && requirements[0] < editors[0]) {
+		return "", ErrUnrecognized
+	}
+	return strings.TrimSpace(body[scope[0]:dates[0]]) + "\n" + strings.TrimSpace(body[requirements[0]:editors[0]]), nil
+}
+
+// publisherFullTextBody selects remaining publisher families before PDF and generic body extraction.
+func publisherFullTextBody(original domain.Source, document Document, parsed *goquery.Document, isFamily func(string, string, string) bool) (string, error) {
+	body := ""
+	var err error
+	switch {
+	case isFamily("journal.psych.ac.cn", "/xlxb/CN/news/", "issn-0439-755x"):
+		body, err = selectedBody(findTitledContainer(parsed, ".content_nr", ".item_biaoti", original.Title), ".J_WenZhang")
+	case isFamily("www.resci.cn", "/CN/news/", "issn-1007-7588"):
+		body, err = resciBody(parsed, original.Title)
+	case isFamily("chinaifs.org.cn", "/html/web/tongzhigonggao/", "issn-1006-1029"):
+		body, err = chinaifsBody(parsed, original.Title)
+	case isFamily("www.jryj.org.cn", "/CN/news/", "issn-1002-7246"):
+		body, err = jryjBody(parsed, original.Title)
+	case isFamily("kxxyj.magtechjournal.com", "/kxxyj/CN/news/", "issn-1003-2053"):
+		body, err = magtechBody(parsed, original.Title)
+	case isFamily("www.poms.org", "/node/", "issn-1059-1478"):
+		body, err = selectedBody(findTitledContainer(parsed, "article.node--type-call-for-papers.node--view-mode-full", "h1.node__title", original.Title), ".field-name-field-submission-guidelines-summ")
+	case isFamily("www.grss-ieee.org", "/publications/author-resources/grsl-special-streams/", "issn-1545-598x"):
+		body, err = grslBody(parsed, original.Title)
+	case document.Format == "pdf_text":
+		body, err = pdfBody(original, document, isFamily)
+	default:
+		body, err = genericFullTextBody(parsed, original.Title)
+	}
+	return body, err
 }

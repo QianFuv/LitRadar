@@ -28,79 +28,18 @@ func TestMain(tests *testing.M) {
 
 func runHelperFixture(mode string) {
 	if mode == "descendant" {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			os.Exit(30)
-		}
-		os.WriteFile(os.Getenv("LITRADAR_CFP_MARKER"), []byte(listener.Addr().String()), 0600)
-		for {
-			time.Sleep(time.Second)
-		}
+		runDescendantFixture()
 	}
-	output := os.Args[len(os.Args)-1]
-	if os.Args[1] == "fetch" {
-		position := slices.Index(os.Args, "--output")
-		if position < 0 {
-			os.Exit(31)
-		}
-		output = os.Args[position+1]
-		if os.Getenv("OBSCURA_ALLOW_PRIVATE_NETWORK") != "" || !slices.Contains(os.Args, "--stealth") || !slices.Contains(os.Args, obscuraEval) {
-			os.Exit(32)
-		}
-		if strings.Contains(os.Args[2], "link.springer.com") && !slices.Contains(os.Args, "domcontentloaded") {
-			os.Exit(33)
-		}
-	} else if os.Args[1] == "-enc" {
-		if len(os.Args) != 8 || os.Args[2] != "UTF-8" || os.Args[3] != "-eol" || os.Args[4] != "unix" || os.Args[5] != "-nopgbrk" {
-			os.Exit(34)
-		}
-		data, err := os.ReadFile(os.Args[6])
-		if err != nil || !strings.HasPrefix(string(data), "%PDF-") {
-			os.Exit(35)
-		}
-	}
+	output := helperFixtureOutput()
 	if mode == "nonzero" {
 		os.Exit(9)
 	}
 	if mode == "missing" {
 		return
 	}
-	if mode == "blocked" {
-		for {
-			time.Sleep(time.Second)
-		}
-	}
-	if mode == "overflow" {
-		file, _ := os.Create(output)
-		file.Truncate(MaxPageBytes + 1)
-		file.Close()
-		for {
-			time.Sleep(time.Second)
-		}
-	}
+	runBlockingFixture(mode, output)
 	if mode == "leader-exit" {
-		command := exec.Command(os.Args[0])
-		command.Env = []string{}
-		for _, entry := range os.Environ() {
-			if !strings.HasPrefix(entry, "LITRADAR_CFP_HELPER_FIXTURE=") {
-				command.Env = append(command.Env, entry)
-			}
-		}
-		command.Env = append(command.Env, "LITRADAR_CFP_HELPER_FIXTURE=descendant")
-		command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if command.Start() != nil {
-			os.Exit(36)
-		}
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			if _, err := os.Stat(os.Getenv("LITRADAR_CFP_MARKER")); err == nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				os.Exit(37)
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+		startFixtureDescendant()
 	}
 	if mode == "flood" {
 		for index := 0; index < 128; index++ {
@@ -239,14 +178,112 @@ func TestCaptureResumeSkipsMalformedEntriesAndKeepsIdentity(t *testing.T) {
 	if err := cache.resume(path, "journal:b"); err == nil {
 		t.Fatal("cross-source resume accepted")
 	}
+	assertResumeEnvelopeIdentity(t, path)
+	var envelope map[string]any
+	if json.Unmarshal([]byte(data), &envelope) != nil {
+		t.Fatal("fixture JSON")
+	}
+}
+
+// runDescendantFixture exposes a readiness marker before waiting for parent tree cleanup.
+func runDescendantFixture() {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		os.Exit(30)
+	}
+	os.WriteFile(os.Getenv("LITRADAR_CFP_MARKER"), []byte(listener.Addr().String()), 0600)
+	for {
+		time.Sleep(time.Second)
+	}
+}
+
+// helperFixtureOutput verifies browser and PDF invocation arguments before selecting the output file.
+func helperFixtureOutput() string {
+	output := os.Args[len(os.Args)-1]
+	if os.Args[1] == "fetch" {
+		position := slices.Index(os.Args, "--output")
+		if position < 0 {
+			os.Exit(31)
+		}
+		output = os.Args[position+1]
+		assertBrowserFixtureArguments()
+	} else if os.Args[1] == "-enc" {
+		assertPdfFixtureArguments()
+	}
+	return output
+}
+
+// runBlockingFixture preserves deadline and overflow fixture loops and file ownership.
+func runBlockingFixture(mode, output string) {
+	if mode == "blocked" {
+		for {
+			time.Sleep(time.Second)
+		}
+	}
+	if mode == "overflow" {
+		file, _ := os.Create(output)
+		file.Truncate(MaxPageBytes + 1)
+		file.Close()
+		for {
+			time.Sleep(time.Second)
+		}
+	}
+}
+
+// startFixtureDescendant preserves inherited streams and waits for the descendant readiness marker.
+func startFixtureDescendant() {
+	command := exec.Command(os.Args[0])
+	command.Env = []string{}
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "LITRADAR_CFP_HELPER_FIXTURE=") {
+			command.Env = append(command.Env, entry)
+		}
+	}
+	command.Env = append(command.Env, "LITRADAR_CFP_HELPER_FIXTURE=descendant")
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if command.Start() != nil {
+		os.Exit(36)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(os.Getenv("LITRADAR_CFP_MARKER")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Exit(37)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// assertResumeEnvelopeIdentity rejects valid JSON envelopes without matching source identity.
+func assertResumeEnvelopeIdentity(t *testing.T, path string) {
+	t.Helper()
 	for _, payload := range []string{`[]`, `1`, `null`, `"value"`} {
 		os.WriteFile(path, []byte(payload), 0600)
 		if err := newCaptureCache().resume(path, "journal:a"); err == nil || err.Error() != "Saved capture journal identity does not match" {
 			t.Fatal(payload, err)
 		}
 	}
-	var envelope map[string]any
-	if json.Unmarshal([]byte(data), &envelope) != nil {
-		t.Fatal("fixture JSON")
+}
+
+// assertBrowserFixtureArguments preserves private-network, stealth, evaluation and Springer wait checks.
+func assertBrowserFixtureArguments() {
+	if os.Getenv("OBSCURA_ALLOW_PRIVATE_NETWORK") != "" || !slices.Contains(os.Args, "--stealth") || !slices.Contains(os.Args, obscuraEval) {
+		os.Exit(32)
+	}
+	if strings.Contains(os.Args[2], "link.springer.com") && !slices.Contains(os.Args, "domcontentloaded") {
+		os.Exit(33)
+	}
+}
+
+// assertPdfFixtureArguments preserves exact converter flags and input signature checks.
+func assertPdfFixtureArguments() {
+	if len(os.Args) != 8 || os.Args[2] != "UTF-8" || os.Args[3] != "-eol" || os.Args[4] != "unix" || os.Args[5] != "-nopgbrk" {
+		os.Exit(34)
+	}
+	data, err := os.ReadFile(os.Args[6])
+	if err != nil || !strings.HasPrefix(string(data), "%PDF-") {
+		os.Exit(35)
 	}
 }

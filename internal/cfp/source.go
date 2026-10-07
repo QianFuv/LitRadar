@@ -46,11 +46,11 @@ type SourceConfig struct {
 
 // PermitsUrl enforces exact hosts and path-segment boundaries for every request and redirect.
 func (config SourceConfig) PermitsUrl(location *whatwg.Url) bool {
-	if location == nil || (location.Scheme() != "http" && location.Scheme() != "https") || location.Username() != "" || location.Password() != "" || location.Port() != "" && location.Port() != "80" && location.Port() != "443" {
+	if !permittedUrlAuthority(location) {
 		return false
 	}
 	for _, rule := range config.AllowedUrls {
-		if location.Hostname() == rule.Host && (rule.PathPrefix == "/" || location.Pathname() == rule.PathPrefix || strings.HasPrefix(strings.TrimPrefix(location.Pathname(), strings.TrimRight(rule.PathPrefix, "/")), "/") && strings.HasPrefix(location.Pathname(), strings.TrimRight(rule.PathPrefix, "/"))) {
+		if permittedUrlRule(location, rule) {
 			return true
 		}
 	}
@@ -79,6 +79,7 @@ type SourceError struct {
 	Status int
 }
 
+// Error reports acquisition failures without captured content or credentials.
 func (failure SourceError) Error() string {
 	switch failure.Kind {
 	case "unsupported":
@@ -91,22 +92,10 @@ func (failure SourceError) Error() string {
 		return "Source request failed"
 	case "http_status":
 		return fmt.Sprintf("Source returned HTTP %d", failure.Status)
-	case "challenge":
-		return "Source returned an access challenge"
-	case "too_large":
-		return "Source capture exceeded its size or page bound"
-	case "encoding":
-		return "Source encoding could not be decoded faithfully"
-	case "content_type":
-		return "Unsupported source content type"
-	case "unrecognized":
-		return "Journal identity or complete CFP layout could not be verified"
-	case "helper":
-		return "Optional source helper is unavailable or failed"
 	case "cancelled":
 		return "Source acquisition cancelled"
 	default:
-		return "Source request failed"
+		return captureFailureMessage(failure.Kind)
 	}
 }
 
@@ -142,4 +131,37 @@ type ParsedPage struct {
 	EmptyJournals []domain.EmptyJournal
 	DetailUrls    []string
 	DetailTitles  map[string]string
+}
+
+// permittedUrlAuthority preserves HTTP schemes, absent credentials and permitted explicit ports.
+func permittedUrlAuthority(location *whatwg.Url) bool {
+	if location == nil || (location.Scheme() != "http" && location.Scheme() != "https") || location.Username() != "" || location.Password() != "" || location.Port() != "" && location.Port() != "80" && location.Port() != "443" {
+		return false
+	}
+	return true
+}
+
+// permittedUrlRule matches exact hosts and original path-segment boundaries.
+func permittedUrlRule(location *whatwg.Url, rule UrlRule) bool {
+	return location.Hostname() == rule.Host && (rule.PathPrefix == "/" || location.Pathname() == rule.PathPrefix || strings.HasPrefix(strings.TrimPrefix(location.Pathname(), strings.TrimRight(rule.PathPrefix, "/")), "/") && strings.HasPrefix(location.Pathname(), strings.TrimRight(rule.PathPrefix, "/")))
+}
+
+// captureFailureMessage reports capture and extraction failures without including source content.
+func captureFailureMessage(kind string) string {
+	switch kind {
+	case "challenge":
+		return "Source returned an access challenge"
+	case "too_large":
+		return "Source capture exceeded its size or page bound"
+	case "encoding":
+		return "Source encoding could not be decoded faithfully"
+	case "content_type":
+		return "Unsupported source content type"
+	case "unrecognized":
+		return "Journal identity or complete CFP layout could not be verified"
+	case "helper":
+		return "Optional source helper is unavailable or failed"
+	default:
+		return "Source request failed"
+	}
 }

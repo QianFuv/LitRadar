@@ -22,16 +22,7 @@ func TestRealPackagedHelpers(t *testing.T) {
 	if os.Getenv("LITRADAR_CFP_PACKAGED") != "1" {
 		t.Skip("CFP live runner supplies the pinned hardened helper image")
 	}
-	if os.Getuid() != 10001 {
-		t.Fatal("nonroot identity changed")
-	}
-	status, err := os.ReadFile("/proc/self/status")
-	if err != nil || !strings.Contains(string(status), "CapEff:\t0000000000000000") || !strings.Contains(string(status), "NoNewPrivs:\t1") {
-		t.Fatal("hardening missing", err)
-	}
-	if err := os.WriteFile("/app/cfp-forbidden-write", nil, 0600); err == nil {
-		t.Fatal("root filesystem is writable")
-	}
+	assertPackagedHardening(t)
 	directory := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		fmt.Fprint(writer, `<html><body><main id="result">before</main><script>document.getElementById('result').textContent='original rendered '+(2+2)</script></body></html>`)
@@ -57,14 +48,7 @@ func TestRealPackagedHelpers(t *testing.T) {
 	if _, err = transport.obscuraDocument(context.Background(), config, server.URL+"/", time.Now().Add(10*time.Second)); !errors.Is(err, ErrHelper) {
 		t.Fatal("production adapter enabled private-network fixture override", err)
 	}
-	pdf := syntheticPdf("LitRadar 征稿原文")
-	httpTransport, publicConfig := publicFixture(t, func(writer http.ResponseWriter, request *http.Request) { writer.Write([]byte(pdf)) })
-	transport.http.Close()
-	transport.http = httpTransport
-	document, err := transport.httpDocument(context.Background(), publicConfig, publicConfig.DiscoveryUrl, time.Now().Add(15*time.Second))
-	if err != nil || document.Format != "pdf_text" || strings.Join(strings.Fields(document.Text), " ") != "LitRadar 征稿原文" {
-		t.Fatal("real Poppler UTF-8 extraction failed", document, err)
-	}
+	assertPackagedPdfExtraction(t, transport)
 }
 
 func syntheticPdf(text string) string {
@@ -91,4 +75,32 @@ func syntheticPdf(text string) string {
 	start := len(document)
 	document += fmt.Sprintf("xref\n0 %d\n%strailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets), strings.Join(offsets, ""), len(offsets), start)
 	return document
+}
+
+// assertPackagedHardening requires the pinned nonroot identity, dropped privileges and read-only root.
+func assertPackagedHardening(t *testing.T) {
+	t.Helper()
+	if os.Getuid() != 10001 {
+		t.Fatal("nonroot identity changed")
+	}
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil || !strings.Contains(string(status), "CapEff:\t0000000000000000") || !strings.Contains(string(status), "NoNewPrivs:\t1") {
+		t.Fatal("hardening missing", err)
+	}
+	if err := os.WriteFile("/app/cfp-forbidden-write", nil, 0600); err == nil {
+		t.Fatal("root filesystem is writable")
+	}
+}
+
+// assertPackagedPdfExtraction replaces the fixture HTTP transport and verifies the original Unicode PDF text.
+func assertPackagedPdfExtraction(t *testing.T, transport *LiveTransport) {
+	t.Helper()
+	pdf := syntheticPdf("LitRadar 征稿原文")
+	httpTransport, publicConfig := publicFixture(t, func(writer http.ResponseWriter, request *http.Request) { writer.Write([]byte(pdf)) })
+	transport.http.Close()
+	transport.http = httpTransport
+	document, err := transport.httpDocument(context.Background(), publicConfig, publicConfig.DiscoveryUrl, time.Now().Add(15*time.Second))
+	if err != nil || document.Format != "pdf_text" || strings.Join(strings.Fields(document.Text), " ") != "LitRadar 征稿原文" {
+		t.Fatal("real Poppler UTF-8 extraction failed", document, err)
+	}
 }

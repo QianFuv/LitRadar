@@ -102,6 +102,7 @@ func (transport *LiveTransport) httpDocument(ctx context.Context, config SourceC
 	return Document{FinalUrl: response.FinalUrl, Text: text, Format: "html"}, nil
 }
 
+// obscuraDocument consumes one browser attempt after cancellation and deadline admission.
 func (transport *LiveTransport) obscuraDocument(ctx context.Context, config SourceConfig, url string, deadline time.Time) (Document, error) {
 	if err := check(ctx, deadline); err != nil {
 		return Document{}, err
@@ -121,14 +122,7 @@ func (transport *LiveTransport) obscuraDocument(ctx context.Context, config Sour
 	if err == nil && location.Hostname() == "link.springer.com" {
 		args = append(args, "--wait-until", "domcontentloaded", "--wait", "0")
 	}
-	environment := []string{}
-	for _, entry := range os.Environ() {
-		name, _, _ := strings.Cut(entry, "=")
-		if name == "OBSCURA_ALLOW_PRIVATE_NETWORK" || runtime.GOOS == "windows" && strings.EqualFold(name, "OBSCURA_ALLOW_PRIVATE_NETWORK") {
-			continue
-		}
-		environment = append(environment, entry)
-	}
+	environment := obscuraEnvironment()
 	data, err := runHelper(ctx, process.Config{Path: executable(transport.options.ObscuraPath, "obscura"), Args: args, Environment: environment}, deadline, output)
 	if err != nil {
 		return Document{}, err
@@ -136,6 +130,7 @@ func (transport *LiveTransport) obscuraDocument(ctx context.Context, config Sour
 	return decodeObscura(config, data)
 }
 
+// decodeObscura preserves byte/schema/protocol/final-URL error priority and original URL spelling.
 func decodeObscura(config SourceConfig, data []byte) (Document, error) {
 	if len(data) > MaxPageBytes {
 		return Document{}, ErrTooLarge
@@ -143,52 +138,16 @@ func decodeObscura(config SourceConfig, data []byte) (Document, error) {
 	if !jsonvalue.ValidJson(string(data)) {
 		return Document{}, ErrHelper
 	}
-	var fields []string
 	data = bytes.TrimSpace(data)
+	var fields []string
+	var err error
 	if len(data) > 0 && data[0] == '[' {
-		var values []*string
-		if json.Unmarshal(data, &values) != nil || len(values) != 3 {
-			return Document{}, ErrHelper
-		}
-		for _, value := range values {
-			if value == nil {
-				return Document{}, ErrHelper
-			}
-			fields = append(fields, *value)
-		}
+		fields, err = decodeObscuraSequence(data)
 	} else {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		token, err := decoder.Token()
-		if err != nil || token != json.Delim('{') {
-			return Document{}, ErrHelper
-		}
-		values := map[string]string{}
-		for decoder.More() {
-			key, err := decoder.Token()
-			if err != nil {
-				return Document{}, ErrHelper
-			}
-			name := key.(string)
-			if name != "protocol" && name != "finalUrl" && name != "html" {
-				return Document{}, ErrHelper
-			}
-			if _, has := values[name]; has {
-				return Document{}, ErrHelper
-			}
-			var raw json.RawMessage
-			if decoder.Decode(&raw) != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-				return Document{}, ErrHelper
-			}
-			var text string
-			if json.Unmarshal(raw, &text) != nil {
-				return Document{}, ErrHelper
-			}
-			values[name] = text
-		}
-		if len(values) != 3 {
-			return Document{}, ErrHelper
-		}
-		fields = []string{values["protocol"], values["finalUrl"], values["html"]}
+		fields, err = decodeObscuraObject(data)
+	}
+	if err != nil {
+		return Document{}, err
 	}
 	if fields[0] != obscuraProtocol || strings.TrimSpace(fields[2]) == "" {
 		return Document{}, ErrUnrecognized
@@ -246,28 +205,14 @@ func runHelper(ctx context.Context, config process.Config, deadline time.Time, o
 	}
 	child.Stdin.Close()
 	defer child.Close()
-	for {
-		failure := check(ctx, deadline)
-		if failure == nil {
-			if metadata, err := os.Stat(output); err == nil && metadata.Size() > MaxPageBytes {
-				failure = ErrTooLarge
-			}
-		}
-		if failure != nil {
-			if child.Close() != nil {
-				return nil, ErrHelper
-			}
-			return nil, failure
-		}
-		hasExited, exitError := child.Poll()
-		if hasExited {
-			if child.Close() != nil || exitError != nil {
-				return nil, ErrHelper
-			}
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	if err := waitForHelper(ctx, child, deadline, output); err != nil {
+		return nil, err
 	}
+	return readHelperOutput(output, deadline)
+}
+
+// readHelperOutput bounds file bytes before final deadline admission and closes the file.
+func readHelperOutput(output string, deadline time.Time) ([]byte, error) {
 	file, err := os.Open(output)
 	if err != nil {
 		return nil, ErrHelper
@@ -291,4 +236,112 @@ func utcNow() time.Time {
 		return time.Unix(0, 0).UTC()
 	}
 	return now
+}
+
+// obscuraEnvironment removes the private-network override using platform-specific name matching.
+func obscuraEnvironment() []string {
+	environment := []string{}
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if name == "OBSCURA_ALLOW_PRIVATE_NETWORK" || runtime.GOOS == "windows" && strings.EqualFold(name, "OBSCURA_ALLOW_PRIVATE_NETWORK") {
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	return environment
+}
+
+// decodeObscuraSequence requires three nonnull strings in declared protocol order.
+func decodeObscuraSequence(data []byte) ([]string, error) {
+	var fields []string
+	var values []*string
+	if json.Unmarshal(data, &values) != nil || len(values) != 3 {
+		return nil, ErrHelper
+	}
+	for _, value := range values {
+		if value == nil {
+			return nil, ErrHelper
+		}
+		fields = append(fields, *value)
+	}
+	return fields, nil
+}
+
+// decodeObscuraObject rejects unknown, duplicate and null fields before projection.
+func decodeObscuraObject(data []byte) ([]string, error) {
+	var fields []string
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, ErrHelper
+	}
+	values := map[string]string{}
+	for decoder.More() {
+		if err := decodeObscuraField(decoder, values); err != nil {
+			return nil, err
+		}
+	}
+	if len(values) != 3 {
+		return nil, ErrHelper
+	}
+	fields = []string{values["protocol"], values["finalUrl"], values["html"]}
+	return fields, nil
+}
+
+// waitForHelper retains tree ownership and gives close failure priority over acquisition errors.
+func waitForHelper(ctx context.Context, child *process.Child, deadline time.Time, output string) error {
+	for {
+		failure := helperAdmissionFailure(ctx, deadline, output)
+		if failure != nil {
+			if child.Close() != nil {
+				return ErrHelper
+			}
+			return failure
+		}
+		hasExited, exitError := child.Poll()
+		if hasExited {
+			if child.Close() != nil || exitError != nil {
+				return ErrHelper
+			}
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return nil
+}
+
+// decodeObscuraField admits an exact unique name before a nonnull string value.
+func decodeObscuraField(decoder *json.Decoder, values map[string]string) error {
+	key, err := decoder.Token()
+	if err != nil {
+		return ErrHelper
+	}
+	name := key.(string)
+	if name != "protocol" && name != "finalUrl" && name != "html" {
+		return ErrHelper
+	}
+	if _, has := values[name]; has {
+		return ErrHelper
+	}
+	var raw json.RawMessage
+	if decoder.Decode(&raw) != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return ErrHelper
+	}
+	var text string
+	if json.Unmarshal(raw, &text) != nil {
+		return ErrHelper
+	}
+	values[name] = text
+	return nil
+}
+
+// helperAdmissionFailure checks cancellation and deadline before inspecting output size.
+func helperAdmissionFailure(ctx context.Context, deadline time.Time, output string) error {
+	failure := check(ctx, deadline)
+	if failure == nil {
+		if metadata, err := os.Stat(output); err == nil && metadata.Size() > MaxPageBytes {
+			failure = ErrTooLarge
+		}
+	}
+	return failure
 }
