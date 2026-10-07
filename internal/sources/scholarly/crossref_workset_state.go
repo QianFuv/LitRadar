@@ -183,26 +183,10 @@ func validTimestamp(value int64) bool { return value >= -8334601228800 && value 
 
 // Validate rejects malformed counters and phase bounds before any filesystem inspection.
 func (state CrossrefCheckpoint) Validate() error {
-	if !validWorksetToken(state.Token) || strings.TrimSpace(state.Issn) == "" || state.Generation > 1 || !validTimestamp(state.FrozenAt) || state.CreatedFrom != nil && (*state.CreatedFrom > state.FrozenAt || !validTimestamp(*state.CreatedFrom)) || state.RootTotal != nil && *state.RootTotal > math.MaxInt64 || state.UpdatedFrom != nil && !validSortDate(*state.UpdatedFrom) || state.Candidate != nil && !state.Candidate.IsValid() {
+	if !validCrossrefFrozenIdentity(state) || !validCrossrefCreationBounds(state) || !validCrossrefOptionalMetadata(state) {
 		return invalidWorkset("Crossref checkpoint has invalid frozen bounds or counters")
 	}
-	phase := state.Phase
-	isValid := false
-	switch phase.Kind {
-	case "discover":
-		isValid = state.CreatedFrom == nil && state.RootTotal == nil
-	case "collect":
-		isValid = phase.Partition > 0 && (phase.Partition == 1 || state.RootTotal != nil) && state.CreatedFrom != nil && phase.From >= *state.CreatedFrom && phase.From <= phase.Until && phase.Until <= state.FrozenAt && phase.Retry <= 1 && (phase.Expected == nil || *phase.Expected <= math.MaxInt64 && phase.Received <= *phase.Expected)
-		if phase.Cursor != nil {
-			isValid = isValid && phase.From == phase.Until && *phase.Cursor != "" && phase.Expected != nil && *phase.Expected > 225
-		} else {
-			isValid = isValid && phase.Received == 0
-		}
-	case "ready":
-		isValid = state.RootTotal != nil && (state.CreatedFrom != nil || *state.RootTotal == 0)
-	case "emit":
-		isValid = state.RootTotal != nil && (state.CreatedFrom != nil || *state.RootTotal == 0) && validSortDate(phase.Upper) && (phase.Lower == nil || validSortDate(*phase.Lower) && *phase.Lower <= phase.Upper) && (phase.After == nil || phase.After.Rank > 0 && phase.After.Key != "" && (phase.After.Date == "" || validSortDate(phase.After.Date)))
-	}
+	isValid := validCrossrefPhase(state)
 	if !isValid {
 		return invalidWorkset("Crossref checkpoint phase is inconsistent")
 	}
@@ -242,4 +226,75 @@ func (state *CrossrefCheckpoint) restartCollection() {
 	if state.CreatedFrom != nil {
 		state.Phase = CrossrefPhase{Kind: "collect", Partition: 1, From: *state.CreatedFrom, Until: state.FrozenAt}
 	}
+}
+
+// validCrossrefFrozenIdentity checks the token, journal, generation and frozen clock range.
+func validCrossrefFrozenIdentity(state CrossrefCheckpoint) bool {
+	return validWorksetToken(state.Token) && strings.TrimSpace(state.Issn) != "" && state.Generation <= 1 && validTimestamp(state.FrozenAt)
+}
+
+// validCrossrefCreationBounds checks only an explicitly supplied lower creation bound.
+func validCrossrefCreationBounds(state CrossrefCheckpoint) bool {
+	return state.CreatedFrom == nil || *state.CreatedFrom <= state.FrozenAt && validTimestamp(*state.CreatedFrom)
+}
+
+// validCrossrefOptionalMetadata admits nil counters, filters and candidates independently.
+func validCrossrefOptionalMetadata(state CrossrefCheckpoint) bool {
+	return (state.RootTotal == nil || *state.RootTotal <= math.MaxInt64) && (state.UpdatedFrom == nil || validSortDate(*state.UpdatedFrom)) && (state.Candidate == nil || state.Candidate.IsValid())
+}
+
+// validCrossrefPhase applies only the constraints of the selected durable phase.
+func validCrossrefPhase(state CrossrefCheckpoint) bool {
+	phase := state.Phase
+	switch phase.Kind {
+	case "discover":
+		return state.CreatedFrom == nil && state.RootTotal == nil
+	case "collect":
+		return validCrossrefCollectionBounds(state) && validCrossrefExpectedCount(phase) && validCrossrefCollectionCursor(phase)
+	case "ready":
+		return validCrossrefReadyState(state)
+	case "emit":
+		return validCrossrefEmissionState(state)
+	}
+	return false
+}
+
+// validCrossrefCollectionBounds retains partition authority, inclusive bounds and retry limits.
+func validCrossrefCollectionBounds(state CrossrefCheckpoint) bool {
+	phase := state.Phase
+	return phase.Partition > 0 && (phase.Partition == 1 || state.RootTotal != nil) && state.CreatedFrom != nil && phase.From >= *state.CreatedFrom && phase.From <= phase.Until && phase.Until <= state.FrozenAt && phase.Retry <= 1
+}
+
+// validCrossrefExpectedCount checks supplied totals and cumulative counts before cursor constraints.
+func validCrossrefExpectedCount(phase CrossrefPhase) bool {
+	return phase.Expected == nil || *phase.Expected <= math.MaxInt64 && phase.Received <= *phase.Expected
+}
+
+// validCrossrefCollectionCursor distinguishes a single-second cursor from an untouched probe.
+func validCrossrefCollectionCursor(phase CrossrefPhase) bool {
+	if phase.Cursor != nil {
+		return phase.From == phase.Until && *phase.Cursor != "" && phase.Expected != nil && *phase.Expected > 225
+	}
+	return phase.Received == 0
+}
+
+// validCrossrefReadyState admits a verified total with a lower creation bound or a present zero total.
+func validCrossrefReadyState(state CrossrefCheckpoint) bool {
+	return state.RootTotal != nil && (state.CreatedFrom != nil || *state.RootTotal == 0)
+}
+
+// validCrossrefLowerBound checks an optional inclusive emission lower date.
+func validCrossrefLowerBound(phase CrossrefPhase) bool {
+	return phase.Lower == nil || validSortDate(*phase.Lower) && *phase.Lower <= phase.Upper
+}
+
+// validCrossrefEmissionKey admits only the original positive rank, identity and optional sorting date.
+func validCrossrefEmissionKey(after *EmissionKey) bool {
+	return after == nil || after.Rank > 0 && after.Key != "" && (after.Date == "" || validSortDate(after.Date))
+}
+
+// validCrossrefEmissionState checks a verified root and the selected immutable emission window.
+func validCrossrefEmissionState(state CrossrefCheckpoint) bool {
+	phase := state.Phase
+	return validCrossrefReadyState(state) && validSortDate(phase.Upper) && validCrossrefLowerBound(phase) && validCrossrefEmissionKey(phase.After)
 }

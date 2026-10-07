@@ -27,36 +27,12 @@ func decodeWorksetStruct(body []byte, target any) error {
 	}
 	body = bytes.TrimSpace(body)
 	if body[0] == '[' {
-		var fields []json.RawMessage
-		if json.Unmarshal(body, &fields) != nil || len(fields) != kind.NumField() {
-			return errWorksetJson
-		}
-		for index, raw := range fields {
-			if err := decodeWorksetValue(raw, value.Field(index)); err != nil {
-				return err
-			}
-			seen[index] = true
+		if err := decodeWorksetSequence(body, value, seen); err != nil {
+			return err
 		}
 	} else if body[0] == '{' {
-		decoder := json.NewDecoder(bytes.NewReader(body))
-		decoder.Token()
-		for decoder.More() {
-			name, err := decoder.Token()
-			if err != nil {
-				return errWorksetJson
-			}
-			index, ok := names[name.(string)]
-			if !ok || seen[index] {
-				return errWorksetJson
-			}
-			seen[index] = true
-			var raw json.RawMessage
-			if decoder.Decode(&raw) != nil {
-				return errWorksetJson
-			}
-			if err := decodeWorksetValue(raw, value.Field(index)); err != nil {
-				return err
-			}
+		if err := decodeWorksetObject(body, value, names, seen); err != nil {
+			return err
 		}
 	} else {
 		return errWorksetJson
@@ -117,26 +93,7 @@ func worksetKind(body []byte) (string, error) {
 	if body[0] != '{' {
 		return "", errWorksetJson
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.Token()
-	hasKind := false
-	for decoder.More() {
-		name, _ := decoder.Token()
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil {
-			return "", errWorksetJson
-		}
-		if name == "kind" {
-			if hasKind || json.Unmarshal(raw, &kind) != nil {
-				return "", errWorksetJson
-			}
-			hasKind = true
-		}
-	}
-	if !hasKind {
-		return "", errWorksetJson
-	}
-	return kind, nil
+	return worksetObjectKind(body)
 }
 
 func decodeUnitPhase(body []byte) error {
@@ -201,22 +158,92 @@ func encodeWorksetValue(value reflect.Value) ([]byte, error) {
 	case reflect.Bool:
 		return domain.Json(value.Bool())
 	case reflect.Slice:
-		var output bytes.Buffer
-		output.WriteByte('[')
-		for index := 0; index < value.Len(); index++ {
-			if index > 0 {
-				output.WriteByte(',')
-			}
-			encoded, err := encodeWorksetValue(value.Index(index))
-			if err != nil {
-				return nil, err
-			}
-			output.Write(encoded)
-		}
-		output.WriteByte(']')
-		return output.Bytes(), nil
+		return encodeWorksetSlice(value)
 	case reflect.Struct:
 		return encodeWorksetStruct(value.Interface())
 	}
 	return nil, errWorksetJson
+}
+
+// decodeWorksetSequence decodes complete positional fields in declaration order.
+func decodeWorksetSequence(body []byte, value reflect.Value, seen []bool) error {
+	var fields []json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || len(fields) != value.NumField() {
+		return errWorksetJson
+	}
+	for index, raw := range fields {
+		if err := decodeWorksetValue(raw, value.Field(index)); err != nil {
+			return err
+		}
+		seen[index] = true
+	}
+	return nil
+}
+
+// decodeWorksetObject rejects unknown and duplicate fields before decoding values.
+func decodeWorksetObject(body []byte, value reflect.Value, names map[string]int, seen []bool) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.Token()
+	for decoder.More() {
+		name, err := decoder.Token()
+		if err != nil {
+			return errWorksetJson
+		}
+		index, ok := names[name.(string)]
+		if !ok || seen[index] {
+			return errWorksetJson
+		}
+		seen[index] = true
+		var raw json.RawMessage
+		if decoder.Decode(&raw) != nil {
+			return errWorksetJson
+		}
+		if err := decodeWorksetValue(raw, value.Field(index)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// worksetObjectKind retains duplicate-kind rejection and required discriminator handling.
+func worksetObjectKind(body []byte) (string, error) {
+	var kind string
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.Token()
+	hasKind := false
+	for decoder.More() {
+		name, _ := decoder.Token()
+		var raw json.RawMessage
+		if decoder.Decode(&raw) != nil {
+			return "", errWorksetJson
+		}
+		if name == "kind" {
+			if hasKind || json.Unmarshal(raw, &kind) != nil {
+				return "", errWorksetJson
+			}
+			hasKind = true
+		}
+	}
+	if !hasKind {
+		return "", errWorksetJson
+	}
+	return kind, nil
+}
+
+// encodeWorksetSlice preserves slice order and recursive encoding error propagation.
+func encodeWorksetSlice(value reflect.Value) ([]byte, error) {
+	var output bytes.Buffer
+	output.WriteByte('[')
+	for index := 0; index < value.Len(); index++ {
+		if index > 0 {
+			output.WriteByte(',')
+		}
+		encoded, err := encodeWorksetValue(value.Index(index))
+		if err != nil {
+			return nil, err
+		}
+		output.Write(encoded)
+	}
+	output.WriteByte(']')
+	return output.Bytes(), nil
 }

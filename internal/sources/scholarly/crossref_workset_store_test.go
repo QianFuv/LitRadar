@@ -143,6 +143,7 @@ func countWorksetRows(t *testing.T, workset *CrossrefWorkset, table string) int 
 	return count
 }
 
+// TestCrossrefWorksetSingletonReplayAndCoreEmission checks singleton collection through exact checkpoint replay and emission.
 func TestCrossrefWorksetSingletonReplayAndCoreEmission(t *testing.T) {
 	initial := worksetTestState()
 	workset := createTestWorkset(t, initial)
@@ -159,43 +160,11 @@ func TestCrossrefWorksetSingletonReplayAndCoreEmission(t *testing.T) {
 		t.Fatalf("reopen: %v %v", replay, err)
 	}
 	defer workset.Close()
-	group, err := workset.FirstGroup()
-	if err != nil || group == nil {
-		t.Fatalf("group: %v %v", group, err)
-	}
-	sealed, err := workset.SealSelection("9999-12-31", nil, &group.Anchor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	page, err := workset.Emit("9999-12-31", nil, nil)
-	if err != nil || len(page.Works) != 1 || page.HasMore || page.After == nil {
-		t.Fatalf("emit: %+v %v", page, err)
-	}
-	if !reflect.DeepEqual(sealed, workset.Checkpoint()) {
-		t.Fatal("emit changed durable state")
-	}
+	sealed, page := assertSingletonWorksetEmission(t, workset)
 	if err := workset.Close(); err != nil {
 		t.Fatal(err)
 	}
-	recovered, replay, err := OpenCrossrefWorkset(root, "catalog", complete)
-	if err != nil || !replay || !reflect.DeepEqual(recovered.Checkpoint(), sealed) {
-		t.Fatalf("seal replay: %v %v", replay, err)
-	}
-	recovered.Close()
-	sealed.Sequence++
-	sealed.Phase.After = page.After
-	recovered, replay, err = OpenCrossrefWorkset(root, "catalog", sealed)
-	if err != nil || replay {
-		t.Fatalf("core emission: %v %v", replay, err)
-	}
-	defer recovered.Close()
-	empty, err := recovered.Emit("9999-12-31", nil, page.After)
-	if err != nil || len(empty.Works) != 0 || !reflect.DeepEqual(empty.After, page.After) {
-		t.Fatalf("empty tail: %+v %v", empty, err)
-	}
-	if err := recovered.exec("DELETE FROM works"); err == nil {
-		t.Fatal("restored emission must be query-only")
-	}
+	assertSingletonCoreEmissionReplay(t, root, complete, sealed, page)
 }
 
 func TestCrossrefWorksetDenseCursorRequiresTerminalPage(t *testing.T) {
@@ -491,5 +460,50 @@ func TestCrossrefWorksetRejectsLinkedOwnedFiles(t *testing.T) {
 	}
 	if _, err := prepareWorksetRoot(symlink); err == nil {
 		t.Fatal("linked root accepted")
+	}
+}
+
+// assertSingletonWorksetEmission checks sealed selection and emission leave durable state unchanged.
+func assertSingletonWorksetEmission(t *testing.T, workset *CrossrefWorkset) (CrossrefCheckpoint, EmissionPage) {
+	t.Helper()
+	group, err := workset.FirstGroup()
+	if err != nil || group == nil {
+		t.Fatalf("group: %v %v", group, err)
+	}
+	sealed, err := workset.SealSelection("9999-12-31", nil, &group.Anchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := workset.Emit("9999-12-31", nil, nil)
+	if err != nil || len(page.Works) != 1 || page.HasMore || page.After == nil {
+		t.Fatalf("emit: %+v %v", page, err)
+	}
+	if !reflect.DeepEqual(sealed, workset.Checkpoint()) {
+		t.Fatal("emit changed durable state")
+	}
+	return sealed, page
+}
+
+// assertSingletonCoreEmissionReplay checks exact seal replay, caller cursor continuation and query-only state.
+func assertSingletonCoreEmissionReplay(t *testing.T, root string, complete, sealed CrossrefCheckpoint, page EmissionPage) {
+	t.Helper()
+	recovered, replay, err := OpenCrossrefWorkset(root, "catalog", complete)
+	if err != nil || !replay || !reflect.DeepEqual(recovered.Checkpoint(), sealed) {
+		t.Fatalf("seal replay: %v %v", replay, err)
+	}
+	recovered.Close()
+	sealed.Sequence++
+	sealed.Phase.After = page.After
+	recovered, replay, err = OpenCrossrefWorkset(root, "catalog", sealed)
+	if err != nil || replay {
+		t.Fatalf("core emission: %v %v", replay, err)
+	}
+	defer recovered.Close()
+	empty, err := recovered.Emit("9999-12-31", nil, page.After)
+	if err != nil || len(empty.Works) != 0 || !reflect.DeepEqual(empty.After, page.After) {
+		t.Fatalf("empty tail: %+v %v", empty, err)
+	}
+	if err := recovered.exec("DELETE FROM works"); err == nil {
+		t.Fatal("restored emission must be query-only")
 	}
 }

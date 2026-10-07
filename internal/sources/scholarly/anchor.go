@@ -115,23 +115,20 @@ func (anchor Anchor) IsValid() bool {
 	issue := anchor.Issue
 	switch issue.Kind {
 	case "volume_issue":
-		if issue.PublicationYear == nil || !validYear(*issue.PublicationYear) || issue.Volume == nil && issue.Issue == nil {
-			return false
-		}
-		for _, label := range []*string{issue.Volume, issue.Issue} {
-			if label != nil && (*label == "" || domain.NormalizeBibliographicLabel(*label) != *label) {
-				return false
-			}
-		}
-		return true
+		return validVolumeIssue(issue)
 	case "date":
 		date := domain.NormalizeDate(issue.Date)
 		return date != nil && date.Value == issue.Date
 	case "title":
-		return (issue.PublicationYear == nil || validYear(*issue.PublicationYear)) && issue.Title != "" && domain.NormalizeBibliographicText(issue.Title) == issue.Title
+		return validTitleIssue(issue)
 	default:
 		return false
 	}
+}
+
+// validTitleIssue retains optional-year and exact normalized nonempty title admission.
+func validTitleIssue(issue IssueFingerprint) bool {
+	return (issue.PublicationYear == nil || validYear(*issue.PublicationYear)) && issue.Title != "" && domain.NormalizeBibliographicText(issue.Title) == issue.Title
 }
 func validYear(year int64) bool { return year >= 1 && year <= 9999 }
 func validSortDate(value string) bool {
@@ -181,32 +178,9 @@ func CrossrefDate(work any) *string {
 		if len(dates) == 0 {
 			continue
 		}
-		parts := array(dates[0])
-		if len(parts) == 0 {
-			continue
+		if date, hasYear := crossrefDateCandidate(array(dates[0])); hasYear {
+			return date
 		}
-		year := signedNumber(parts[0])
-		if year == nil {
-			continue
-		}
-		var month, day *int64
-		if len(parts) > 1 {
-			month = signedNumber(parts[1])
-		}
-		if len(parts) > 2 {
-			day = signedNumber(parts[2])
-		}
-		candidate := fmt.Sprintf("%04d", *year)
-		if month != nil {
-			candidate += fmt.Sprintf("-%02d", *month)
-			if day != nil {
-				candidate += fmt.Sprintf("-%02d", *day)
-			}
-		}
-		if date := domain.NormalizeDate(candidate); date != nil {
-			return &date.Value
-		}
-		return nil
 	}
 	return nil
 }
@@ -225,33 +199,10 @@ func CrossrefIssueAnchor(work any) *Anchor {
 
 // IssueAnchorFromFields chooses year/volume/issue, then date, then normalized issue title.
 func IssueAnchorFromFields(year *int64, date, title, volume, issue *string) *Anchor {
-	normalize := func(value *string) *string {
-		if value == nil {
-			return nil
-		}
-		label := domain.NormalizeBibliographicLabel(*value)
-		if label == "" {
-			return nil
-		}
-		return &label
-	}
-	volume = normalize(volume)
-	issue = normalize(issue)
-	fingerprint := IssueFingerprint{}
-	if year != nil && validYear(*year) && (volume != nil || issue != nil) {
-		fingerprint = IssueFingerprint{Kind: "volume_issue", PublicationYear: clonePointer(year), Volume: volume, Issue: issue}
-	} else if date != nil {
-		fingerprint = IssueFingerprint{Kind: "date", Date: *date}
-	} else if title != nil {
-		normalized := domain.NormalizeBibliographicText(*title)
-		if normalized == "" {
-			return nil
-		}
-		fingerprint = IssueFingerprint{Kind: "title", Title: normalized}
-		if year != nil && validYear(*year) {
-			fingerprint.PublicationYear = clonePointer(year)
-		}
-	} else {
+	volume = normalizeIssueLabel(volume)
+	issue = normalizeIssueLabel(issue)
+	fingerprint, ok := issueFingerprintFromFields(year, date, title, volume, issue)
+	if !ok {
 		return nil
 	}
 	syncYear := year
@@ -269,4 +220,85 @@ func IssueAnchorFromFields(year *int64, date, title, volume, issue *string) *Anc
 		anchor.FromSyncDate = &sync
 	}
 	return anchor
+}
+
+// validVolumeIssue checks the original year and optional label identity rules.
+func validVolumeIssue(issue IssueFingerprint) bool {
+	if issue.PublicationYear == nil || !validYear(*issue.PublicationYear) || issue.Volume == nil && issue.Issue == nil {
+		return false
+	}
+	for _, label := range []*string{issue.Volume, issue.Issue} {
+		if !validIssueLabel(label) {
+			return false
+		}
+	}
+	return true
+}
+
+// validIssueLabel accepts absent labels and requires exact nonempty normalization otherwise.
+func validIssueLabel(label *string) bool {
+	return label == nil || *label != "" && domain.NormalizeBibliographicLabel(*label) == *label
+}
+
+// crossrefDateCandidate stops fallback after the first integer year even when its calendar date is invalid.
+func crossrefDateCandidate(parts []any) (*string, bool) {
+	if len(parts) == 0 {
+		return nil, false
+	}
+	year := signedNumber(parts[0])
+	if year == nil {
+		return nil, false
+	}
+	var month, day *int64
+	if len(parts) > 1 {
+		month = signedNumber(parts[1])
+	}
+	if len(parts) > 2 {
+		day = signedNumber(parts[2])
+	}
+	candidate := fmt.Sprintf("%04d", *year)
+	if month != nil {
+		candidate += fmt.Sprintf("-%02d", *month)
+		if day != nil {
+			candidate += fmt.Sprintf("-%02d", *day)
+		}
+	}
+	if date := domain.NormalizeDate(candidate); date != nil {
+		return &date.Value, true
+	}
+	return nil, true
+}
+
+// normalizeIssueLabel owns a normalized nonempty optional issue label.
+func normalizeIssueLabel(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	label := domain.NormalizeBibliographicLabel(*value)
+	if label == "" {
+		return nil
+	}
+	return &label
+}
+
+// issueFingerprintFromFields preserves year-label, date and title precedence.
+func issueFingerprintFromFields(year *int64, date, title, volume, issue *string) (IssueFingerprint, bool) {
+	fingerprint := IssueFingerprint{}
+	if year != nil && validYear(*year) && (volume != nil || issue != nil) {
+		fingerprint = IssueFingerprint{Kind: "volume_issue", PublicationYear: clonePointer(year), Volume: volume, Issue: issue}
+	} else if date != nil {
+		fingerprint = IssueFingerprint{Kind: "date", Date: *date}
+	} else if title != nil {
+		normalized := domain.NormalizeBibliographicText(*title)
+		if normalized == "" {
+			return IssueFingerprint{}, false
+		}
+		fingerprint = IssueFingerprint{Kind: "title", Title: normalized}
+		if year != nil && validYear(*year) {
+			fingerprint.PublicationYear = clonePointer(year)
+		}
+	} else {
+		return IssueFingerprint{}, false
+	}
+	return fingerprint, true
 }

@@ -53,18 +53,8 @@ func prepareWorksetRoot(root string) (string, error) {
 			break
 		}
 	}
-	for index := len(ancestors) - 1; index >= 0; index-- {
-		path := ancestors[index]
-		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-			if err = os.Mkdir(path, 0777); err != nil && !errors.Is(err, os.ErrExist) {
-				return "", worksetStorageError(err)
-			}
-		} else if err != nil {
-			return "", worksetStorageError(err)
-		}
-		if err := validateWorksetPath(path, true); err != nil {
-			return "", err
-		}
+	if err := prepareWorksetAncestors(ancestors); err != nil {
+		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -96,6 +86,48 @@ func validateWorksetFiles(root string, owner worksetOwner) error {
 	if err != nil {
 		return err
 	}
+	if err := validateExistingWorksetPaths(paths); err != nil {
+		return err
+	}
+	return validateWorksetManifest(paths[len(paths)-1], owner)
+}
+
+func removeWorksetFiles(root string, owner worksetOwner) error {
+	if err := validateWorksetFiles(root, owner); err != nil {
+		return err
+	}
+	paths, err := worksetPaths(root, owner.Token)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if err := unlinkWorksetFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return worksetStorageError(err)
+		}
+	}
+	return nil
+}
+
+// prepareWorksetAncestors creates and validates ordinary directories from the outermost ancestor inward.
+func prepareWorksetAncestors(ancestors []string) error {
+	for index := len(ancestors) - 1; index >= 0; index-- {
+		path := ancestors[index]
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			if err = os.Mkdir(path, 0777); err != nil && !errors.Is(err, os.ErrExist) {
+				return worksetStorageError(err)
+			}
+		} else if err != nil {
+			return worksetStorageError(err)
+		}
+		if err := validateWorksetPath(path, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateExistingWorksetPaths validates each existing owned file before manifest admission or removal.
+func validateExistingWorksetPaths(paths []string) error {
 	for _, path := range paths {
 		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 			continue
@@ -106,7 +138,11 @@ func validateWorksetFiles(root string, owner worksetOwner) error {
 			return err
 		}
 	}
-	manifest := paths[len(paths)-1]
+	return nil
+}
+
+// validateWorksetManifest enforces the size and UTF-8 limits before exact ownership comparison.
+func validateWorksetManifest(manifest string, owner worksetOwner) error {
 	metadata, err := os.Stat(manifest)
 	if err != nil {
 		return worksetStorageError(err)
@@ -127,22 +163,6 @@ func validateWorksetFiles(root string, owner worksetOwner) error {
 	}
 	if !reflect.DeepEqual(actual, owner) {
 		return invalidWorkset("Crossref workset ownership or frozen context does not match")
-	}
-	return nil
-}
-
-func removeWorksetFiles(root string, owner worksetOwner) error {
-	if err := validateWorksetFiles(root, owner); err != nil {
-		return err
-	}
-	paths, err := worksetPaths(root, owner.Token)
-	if err != nil {
-		return err
-	}
-	for _, path := range paths {
-		if err := unlinkWorksetFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return worksetStorageError(err)
-		}
 	}
 	return nil
 }

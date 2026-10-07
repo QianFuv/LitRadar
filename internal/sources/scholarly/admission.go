@@ -59,55 +59,30 @@ func (scheduler *sharedOpenAlex) reserve(ctx context.Context, excluded []int, de
 		choice := scheduler.state.reserve(now, excluded)
 		changed := scheduler.changed
 		if choice.Kind == "Unavailable" {
-			hasEnabled := false
-			for _, slot := range scheduler.state.Slots {
-				hasEnabled = hasEnabled || !slot.IsDisabled
-			}
+			hasEnabled := hasEnabledOpenAlexKey(scheduler.state.Slots)
 			scheduler.mutex.Unlock()
-			if hasEnabled {
-				return nil, &Error{Kind: "Request", Service: OpenAlex, Endpoint: "admission", Message: "OpenAlex quota is temporarily unavailable."}
-			}
-			return nil, &Error{Kind: "Configuration", Message: "No eligible OpenAlex API key is available."}
+			return nil, openAlexUnavailableError(hasEnabled)
 		}
 		scheduler.mutex.Unlock()
 		if choice.Kind == "Reserved" {
-			lease := &openAlexLease{owner: scheduler, slot: choice.Reservation}
-			if !waitForStart(ctx, choice.Reservation.Start, deadline) {
-				lease.cancel()
-				return nil, sourceDeadlineError(OpenAlex)
+			lease, err := scheduler.awaitOpenAlexLease(ctx, choice.Reservation, deadline)
+			if lease != nil || err != nil {
+				return lease, err
 			}
-			scheduler.mutex.Lock()
-			isEligible := scheduler.state.eligible(choice.Reservation, unixScheduleTime())
-			scheduler.mutex.Unlock()
-			if !isEligible {
-				lease.cancel()
-				continue
-			}
-			return lease, nil
+			continue
 		}
-		wait := remaining
-		if choice.Kind == "WaitUntil" {
-			wait = choice.Until.subtract(now).timer()
-			if wait <= 0 {
-				continue
-			}
-			if wait >= remaining {
-				return nil, sourceDeadlineError(OpenAlex)
-			}
-			if wait >= time.Second {
-				slog.InfoContext(ctx, "source quota wait", "event", "source.openalex.quota_wait", "component", "source", "provider", OpenAlex, "reason", "quota_or_cooldown", "wait_ms", uint64(wait/time.Millisecond), "key_slot_count", len(scheduler.state.Slots))
-			}
-		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-changed:
-		case <-timer.C:
-		case <-ctx.Done():
-			timer.Stop()
+		if !scheduler.waitAdmissionChange(ctx, choice, now, remaining, changed) {
 			return nil, sourceDeadlineError(OpenAlex)
 		}
-		timer.Stop()
 	}
+}
+
+// openAlexUnavailableError distinguishes temporary quota exhaustion from absent eligible credentials.
+func openAlexUnavailableError(hasEnabled bool) error {
+	if hasEnabled {
+		return &Error{Kind: "Request", Service: OpenAlex, Endpoint: "admission", Message: "OpenAlex quota is temporarily unavailable."}
+	}
+	return &Error{Kind: "Configuration", Message: "No eligible OpenAlex API key is available."}
 }
 func (lease *openAlexLease) cancel() {
 	lease.once.Do(func() {
@@ -199,4 +174,57 @@ func (schedule *crossrefSchedule) wait(ctx context.Context, deadline time.Time) 
 }
 func (schedule *crossrefSchedule) deferFor(delay scheduleTime) {
 	schedule.Cooldown = later(schedule.Cooldown, unixScheduleTime().add(delay))
+}
+
+// hasEnabledOpenAlexKey classifies quota unavailability while the scheduler lock is held.
+func hasEnabledOpenAlexKey(slots []keyState) bool {
+	hasEnabled := false
+	for _, slot := range slots {
+		hasEnabled = hasEnabled || !slot.IsDisabled
+	}
+	return hasEnabled
+}
+
+// awaitOpenAlexLease cancels failed or stale reservations after waiting outside the scheduler mutex.
+func (scheduler *sharedOpenAlex) awaitOpenAlexLease(ctx context.Context, reserved reservation, deadline time.Time) (*openAlexLease, error) {
+	lease := &openAlexLease{owner: scheduler, slot: reserved}
+	if !waitForStart(ctx, reserved.Start, deadline) {
+		lease.cancel()
+		return nil, sourceDeadlineError(OpenAlex)
+	}
+	scheduler.mutex.Lock()
+	isEligible := scheduler.state.eligible(reserved, unixScheduleTime())
+	scheduler.mutex.Unlock()
+	if !isEligible {
+		lease.cancel()
+		return nil, nil
+	}
+	return lease, nil
+}
+
+// waitAdmissionChange retains the captured clock and wakeup channel and always stops its timer.
+func (scheduler *sharedOpenAlex) waitAdmissionChange(ctx context.Context, choice decision, now scheduleTime, remaining time.Duration, changed <-chan struct{}) bool {
+	wait := remaining
+	if choice.Kind == "WaitUntil" {
+		wait = choice.Until.subtract(now).timer()
+		if wait <= 0 {
+			return true
+		}
+		if wait >= remaining {
+			return false
+		}
+		if wait >= time.Second {
+			slog.InfoContext(ctx, "source quota wait", "event", "source.openalex.quota_wait", "component", "source", "provider", OpenAlex, "reason", "quota_or_cooldown", "wait_ms", uint64(wait/time.Millisecond), "key_slot_count", len(scheduler.state.Slots))
+		}
+	}
+	timer := time.NewTimer(wait)
+	select {
+	case <-changed:
+	case <-timer.C:
+	case <-ctx.Done():
+		timer.Stop()
+		return false
+	}
+	timer.Stop()
+	return true
 }

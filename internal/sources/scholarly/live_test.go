@@ -74,6 +74,7 @@ func TestLiveSourceWireQueriesAndCursorTermination(t *testing.T) {
 	}
 }
 
+// TestSemanticAuthenticationIsolationAndRequestBody checks per-key health isolation and the same captured request body.
 func TestSemanticAuthenticationIsolationAndRequestBody(t *testing.T) {
 	var keys []string
 	live, _ := loopbackLive(t, func(response http.ResponseWriter, request *http.Request) {
@@ -101,10 +102,7 @@ func TestSemanticAuthenticationIsolationAndRequestBody(t *testing.T) {
 	if !live.semantic.Slots[0].IsDisabled || live.semantic.Slots[1].IsDisabled {
 		t.Fatal("authentication health crossed key boundary")
 	}
-	attempts := live.Attempts()
-	if len(attempts) != 2 || attempts[0].DidSucceed || !attempts[1].DidRetry || *attempts[0].Error != "http_status" {
-		t.Fatalf("wrong attempts %#v", attempts)
-	}
+	assertSemanticAuthenticationAttempts(t, live)
 }
 
 func TestSemanticInvalidJsonIgnoresRetryAfter(t *testing.T) {
@@ -253,6 +251,7 @@ func TestOpenAlexWorkerPanicIsJoinedAndReleasesAdmission(t *testing.T) {
 	}
 }
 
+// TestOpenAlexPublishesThrottleBeforeBody checks shared admission observes throttling before the blocked body completes.
 func TestOpenAlexPublishesThrottleBeforeBody(t *testing.T) {
 	release := make(chan struct{})
 	var releaseOnce sync.Once
@@ -298,15 +297,7 @@ func TestOpenAlexPublishesThrottleBeforeBody(t *testing.T) {
 		t.Fatalf("shared scheduler admitted throttled key: %v calls=%d", err, calls.Load())
 	}
 	releaseOnce.Do(func() { close(release) })
-	select {
-	case err := <-result:
-		var failure *Error
-		if !errors.As(err, &failure) || failure.StatusCode != 429 {
-			t.Fatalf("last upstream error lost: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("source request did not finish")
-	}
+	assertThrottleRequestJoined(t, result)
 	live.openAlex.mutex.Lock()
 	defer live.openAlex.mutex.Unlock()
 	if live.openAlex.state.Slots[0].InFlight != 0 {
@@ -372,6 +363,7 @@ func TestLiveConfigAndTransportFormattingRedactSecrets(t *testing.T) {
 	}
 }
 
+// TestOpenAlexFailureStopsNewBatchAdmissions checks new admissions stop and already-admitted work is joined.
 func TestOpenAlexFailureStopsNewBatchAdmissions(t *testing.T) {
 	var calls atomic.Int32
 	both := make(chan struct{})
@@ -408,16 +400,7 @@ func TestOpenAlexFailureStopsNewBatchAdmissions(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("requests not admitted")
 	}
-	limit := time.Now().Add(time.Second)
-	for time.Now().Before(limit) {
-		live.openAlex.mutex.Lock()
-		pending := live.openAlex.state.Slots[0].InFlight
-		live.openAlex.mutex.Unlock()
-		if pending == 1 {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitForOneOpenAlexReservation(live)
 	once.Do(func() { close(secondRelease) })
 	select {
 	case err := <-result:
@@ -465,5 +448,42 @@ func TestLiveConfigCanonicalEmptyPools(t *testing.T) {
 		if !ok || len(items) != 0 {
 			t.Fatalf("%s missing empty array: %s", key, encoded)
 		}
+	}
+}
+
+// assertSemanticAuthenticationAttempts checks captured attempt count, retry and safe error classification.
+func assertSemanticAuthenticationAttempts(t *testing.T, live *LiveTransport) {
+	t.Helper()
+	attempts := live.Attempts()
+	if len(attempts) != 2 || attempts[0].DidSucceed || !attempts[1].DidRetry || *attempts[0].Error != "http_status" {
+		t.Fatalf("wrong attempts %#v", attempts)
+	}
+}
+
+// assertThrottleRequestJoined checks the already-released request retains its last upstream error.
+func assertThrottleRequestJoined(t *testing.T, result <-chan error) {
+	t.Helper()
+	select {
+	case err := <-result:
+		var failure *Error
+		if !errors.As(err, &failure) || failure.StatusCode != 429 {
+			t.Fatalf("last upstream error lost: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("source request did not finish")
+	}
+}
+
+// waitForOneOpenAlexReservation preserves the original bounded pending-count observation without adding an assertion.
+func waitForOneOpenAlexReservation(live *LiveTransport) {
+	limit := time.Now().Add(time.Second)
+	for time.Now().Before(limit) {
+		live.openAlex.mutex.Lock()
+		pending := live.openAlex.state.Slots[0].InFlight
+		live.openAlex.mutex.Unlock()
+		if pending == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

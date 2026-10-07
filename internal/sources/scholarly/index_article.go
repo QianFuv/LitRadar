@@ -137,27 +137,7 @@ func retractionDois(value any) []string {
 
 func crossrefArticle(catalog domain.JournalCatalogEntry, work, openAlex, semanticScholar any) *domain.ArticleDraft {
 	doi := textDoi(field(work, "DOI"))
-	title := firstText(field(work, "title"))
-	if title == nil && doi != nil {
-		if observed, ok := field(openAlex, "doi").(string); ok {
-			if normalized := domain.NormalizeDoi(observed); normalized != nil && *normalized == *doi {
-				title = jsonText(field(openAlex, "display_name"))
-				if title == nil {
-					title = jsonText(field(openAlex, "title"))
-				}
-			}
-		}
-	}
-	if title == nil && doi != nil {
-		if observed, ok := field(field(semanticScholar, "externalIds"), "DOI").(string); ok {
-			if normalized := domain.NormalizeDoi(observed); normalized != nil && *normalized == *doi {
-				title = jsonText(field(semanticScholar, "title"))
-			}
-		}
-	}
-	if title == nil {
-		title = new("")
-	}
+	title := crossrefArticleTitle(work, openAlex, semanticScholar, doi)
 	date := CrossrefDate(work)
 	start, end := domain.SplitPages(jsonText(field(work, "page")))
 	var abstract *string
@@ -200,4 +180,36 @@ func openAlexArticle(catalog domain.JournalCatalogEntry, work any) *domain.Artic
 		}
 	}
 	return domain.CanonicalArticle(domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: *title, PublicationYear: year, Date: date, Volume: jsonText(field(biblio, "volume")), IssueNumber: jsonText(field(biblio, "issue")), StartPage: jsonText(field(biblio, "first_page")), EndPage: jsonText(field(biblio, "last_page")), Authors: authors, AbstractText: openAlexAbstract(work), Doi: textDoi(field(work, "doi")), OpenAccess: strictBool(field(field(work, "open_access"), "is_oa")), InPress: new(false), RetractionDois: []string{}})
+}
+
+// crossrefArticleTitle uses enrichment titles only for matching normalized DOI identities.
+func crossrefArticleTitle(work, openAlex, semanticScholar any, doi *string) *string {
+	title := firstText(field(work, "title"))
+	if title == nil && doi != nil {
+		if hasMatchingArticleDoi(field(openAlex, "doi"), *doi) {
+			title = jsonText(field(openAlex, "display_name"))
+			if title == nil {
+				title = jsonText(field(openAlex, "title"))
+			}
+		}
+	}
+	if title == nil && doi != nil {
+		if hasMatchingArticleDoi(field(field(semanticScholar, "externalIds"), "DOI"), *doi) {
+			title = jsonText(field(semanticScholar, "title"))
+		}
+	}
+	if title == nil {
+		title = new("")
+	}
+	return title
+}
+
+// hasMatchingArticleDoi requires a textual DOI matching the primary normalized identity.
+func hasMatchingArticleDoi(value any, doi string) bool {
+	observed, ok := value.(string)
+	if !ok {
+		return false
+	}
+	normalized := domain.NormalizeDoi(observed)
+	return normalized != nil && *normalized == doi
 }

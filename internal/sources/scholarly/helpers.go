@@ -159,28 +159,10 @@ func CrossrefParameters(query CrossrefQuery) ([]QueryPair, error) {
 		filters = append(filters, "until-created-date:"+until)
 		pairs = append(pairs, QueryPair{"rows", "1"}, QueryPair{"sort", "created"}, QueryPair{"order", "asc"})
 	} else {
-		if query.CreatedFrom > query.CreatedUntil || (query.UpdatedFrom == nil) != (query.UpdatedUntil == nil) {
-			return nil, &Error{Kind: "Configuration", Message: "invalid Crossref date bounds"}
-		}
-		from, err := crossrefTimestamp(query.CreatedFrom)
+		var err error
+		pairs, filters, err = collectionCrossrefParameters(query, filters)
 		if err != nil {
 			return nil, err
-		}
-		until, err := crossrefTimestamp(query.CreatedUntil)
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, "from-created-date:"+from, "until-created-date:"+until)
-		if query.UpdatedFrom != nil {
-			updated, err := crossrefTimestamp(*query.UpdatedUntil)
-			if err != nil {
-				return nil, err
-			}
-			filters = append(filters, "from-update-date:"+*query.UpdatedFrom, "until-update-date:"+updated)
-		}
-		pairs = append(pairs, QueryPair{"rows", "225"})
-		if query.Cursor != nil {
-			pairs = append(pairs, QueryPair{"cursor", *query.Cursor})
 		}
 	}
 	return append(pairs, QueryPair{"filter", strings.Join(filters, ",")}), nil
@@ -293,4 +275,33 @@ func isNoValidIds(err error) bool {
 		}
 	}
 	return strings.EqualFold(message, "no valid paper ids given")
+}
+
+// collectionCrossrefParameters preserves bounds-error precedence and collection query order.
+func collectionCrossrefParameters(query CrossrefQuery, filters []string) ([]QueryPair, []string, error) {
+	pairs := []QueryPair{}
+	if query.CreatedFrom > query.CreatedUntil || (query.UpdatedFrom == nil) != (query.UpdatedUntil == nil) {
+		return nil, nil, &Error{Kind: "Configuration", Message: "invalid Crossref date bounds"}
+	}
+	from, err := crossrefTimestamp(query.CreatedFrom)
+	if err != nil {
+		return nil, nil, err
+	}
+	until, err := crossrefTimestamp(query.CreatedUntil)
+	if err != nil {
+		return nil, nil, err
+	}
+	filters = append(filters, "from-created-date:"+from, "until-created-date:"+until)
+	if query.UpdatedFrom != nil {
+		updated, err := crossrefTimestamp(*query.UpdatedUntil)
+		if err != nil {
+			return nil, nil, err
+		}
+		filters = append(filters, "from-update-date:"+*query.UpdatedFrom, "until-update-date:"+updated)
+	}
+	pairs = append(pairs, QueryPair{"rows", "225"})
+	if query.Cursor != nil {
+		pairs = append(pairs, QueryPair{"cursor", *query.Cursor})
+	}
+	return pairs, filters, nil
 }

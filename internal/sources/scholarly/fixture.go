@@ -76,114 +76,17 @@ func (transport *FixtureTransport) Request(ctx context.Context, request Request)
 	defer transport.mutex.Unlock()
 	switch request.Service + "/" + request.Endpoint {
 	case Crossref + "/journal_works":
-		var date any
-		if !request.Query.IsEarliest && request.Query.UpdatedFrom != nil {
-			date = *request.Query.UpdatedFrom
-		}
-		transport.captures.JournalWorkRequests = append(transport.captures.JournalWorkRequests, [2]any{request.Issn, date})
-		if status := fixtureStatus(transport.data.CrossrefStatus); status != 200 {
-			return nil, transport.httpError(request, status, map[string]any{"message": "fixture crossref failure"})
-		}
-		transport.record(request, 200, nil)
-		works := transport.data.CrossrefWorks
-		if len(transport.data.CrossrefWorkPages) > 0 {
-			works = []any{}
-			for _, page := range transport.data.CrossrefWorkPages {
-				works = append(works, page...)
-			}
-		}
-		matching := []any{}
-		for _, work := range works {
-			created := fixtureCreated(work)
-			if created <= request.Query.CreatedUntil && (request.Query.IsEarliest || created >= request.Query.CreatedFrom) {
-				matching = append(matching, work)
-			}
-		}
-		offset, rows := 0, 1
-		if request.Query.IsEarliest {
-			sort.SliceStable(matching, func(first, second int) bool {
-				return fixtureCreated(matching[first]) < fixtureCreated(matching[second])
-			})
-		} else {
-			if request.Query.Cursor == nil || *request.Query.Cursor == "*" {
-				transport.crossrefPageIndex = 0
-			}
-			offset, rows = transport.crossrefPageIndex, 225
-		}
-		items := []any{}
-		for index := offset; index < min(offset+rows, len(matching)); index++ {
-			work := cloneValue(matching[index])
-			if object, ok := work.(map[string]any); ok {
-				if _, hasCreated := object["created"]; !hasCreated {
-					object["created"] = map[string]any{"timestamp": json.Number("0")}
-				}
-			}
-			items = append(items, work)
-		}
-		transport.crossrefPageIndex = offset + len(items)
-		var cursor any
-		if !request.Query.IsEarliest && request.Query.Cursor != nil && len(items) > 0 {
-			cursor = "stateful-crossref-cursor"
-		}
-		return map[string]any{"message": map[string]any{"items": items, "total-results": uint64(len(matching)), "next-cursor": cursor}}, nil
+		return transport.fixtureCrossrefRequest(request)
 	case OpenAlex + "/sources", OpenAlex + "/source_search":
-		value := transport.data.OpenAlexSourceByIssns
-		if request.Endpoint == "sources" {
-			transport.captures.SourceLookupIssns = append(transport.captures.SourceLookupIssns, request.Issn)
-		} else {
-			value = transport.data.OpenAlexSourceByTitle
-			transport.captures.SourceLookupTitles = append(transport.captures.SourceLookupTitles, request.Title)
-		}
-		transport.record(request, 200, nil)
-		items := []any{}
-		if value != nil {
-			items = append(items, cloneValue(value))
-		}
-		return map[string]any{"results": items}, nil
+		return transport.fixtureSourceLookup(request)
 	case OpenAlex + "/source_works":
-		var date any
-		if request.FromSyncDate != nil {
-			date = *request.FromSyncDate
-		}
-		transport.captures.SourceWorkRequests = append(transport.captures.SourceWorkRequests, [2]any{request.SourceId, date})
-		pageIndex := fixturePageIndex(request.Cursor)
-		threshold := transport.data.OpenAlexSourceWorksPlanRestrictedAfterPage
-		if request.FromSyncDate != nil && (transport.data.IsOpenAlexSourceWorksPlanRestricted || threshold != nil && pageIndex >= *threshold) {
-			return nil, transport.httpError(request, 429, map[string]any{"error": "Plan upgrade required", "message": "The from_created_date filter requires a Premium plan."})
-		}
-		if status := fixtureStatus(transport.data.OpenAlexSourceWorksStatus); status != 200 {
-			return nil, transport.httpError(request, status, map[string]any{"error": "fixture OpenAlex source works failure"})
-		}
-		transport.record(request, 200, nil)
-		items := []any{}
-		var cursor any
-		pages := transport.data.OpenAlexSourceWorkPages
-		if len(pages) == 0 {
-			if pageIndex == 0 {
-				items = cloneArray(transport.data.OpenAlexSourceWorks)
-			}
-		} else if pageIndex < uint64(len(pages)) {
-			items = cloneArray(pages[pageIndex])
-			if pageIndex < uint64(len(pages)-1) {
-				cursor = "fixture-page-" + strconv.FormatUint(pageIndex+1, 10)
-			}
-		}
-		return map[string]any{"results": items, "meta": map[string]any{"next_cursor": cursor}}, nil
+		return transport.fixtureSourceWorks(request)
 	case OpenAlex + "/works":
 		transport.captures.OpenAlexDoiBatches = append(transport.captures.OpenAlexDoiBatches, append([]string{}, request.Dois...))
 		transport.record(request, 200, nil)
 		return map[string]any{"results": fixtureDoiItems(transport.data.OpenAlexByDoi, request.Dois)}, nil
 	case SemanticScholar + "/paper_batch":
-		transport.captures.SemanticScholarBatches = append(transport.captures.SemanticScholarBatches, append([]string{}, request.Dois...))
-		if status := fixtureStatus(transport.data.SemanticScholarStatus); status != 200 {
-			message := "fixture semantic scholar failure"
-			if transport.data.SemanticScholarError != nil {
-				message = *transport.data.SemanticScholarError
-			}
-			return nil, transport.httpError(request, status, map[string]any{"error": message})
-		}
-		transport.record(request, 200, nil)
-		return fixtureDoiItems(transport.data.SemanticScholarByDoi, request.Dois), nil
+		return transport.fixtureSemanticBatch(request)
 	default:
 		return nil, &Error{Kind: "InvalidFixture", Message: "unsupported scholarly fixture request"}
 	}
@@ -336,4 +239,138 @@ func cloneAttempts(values []Attempt) []Attempt {
 		result[index].StatusCode = clonePointer(result[index].StatusCode)
 	}
 	return result
+}
+
+// fixtureCrossrefRequest preserves endpoint capture, accounting and response order under the caller lock.
+func (transport *FixtureTransport) fixtureCrossrefRequest(request Request) (any, error) {
+	var date any
+	if !request.Query.IsEarliest && request.Query.UpdatedFrom != nil {
+		date = *request.Query.UpdatedFrom
+	}
+	transport.captures.JournalWorkRequests = append(transport.captures.JournalWorkRequests, [2]any{request.Issn, date})
+	if status := fixtureStatus(transport.data.CrossrefStatus); status != 200 {
+		return nil, transport.httpError(request, status, map[string]any{"message": "fixture crossref failure"})
+	}
+	transport.record(request, 200, nil)
+	matching := transport.fixtureCrossrefMatches(request.Query)
+	offset, rows := 0, 1
+	if request.Query.IsEarliest {
+		sort.SliceStable(matching, func(first, second int) bool {
+			return fixtureCreated(matching[first]) < fixtureCreated(matching[second])
+		})
+	} else {
+		if request.Query.Cursor == nil || *request.Query.Cursor == "*" {
+			transport.crossrefPageIndex = 0
+		}
+		offset, rows = transport.crossrefPageIndex, 225
+	}
+	items := fixtureCrossrefItems(matching, offset, rows)
+	transport.crossrefPageIndex = offset + len(items)
+	var cursor any
+	if !request.Query.IsEarliest && request.Query.Cursor != nil && len(items) > 0 {
+		cursor = "stateful-crossref-cursor"
+	}
+	return map[string]any{"message": map[string]any{"items": items, "total-results": uint64(len(matching)), "next-cursor": cursor}}, nil
+}
+
+// fixtureSourceLookup preserves endpoint capture, accounting and response order under the caller lock.
+func (transport *FixtureTransport) fixtureSourceLookup(request Request) (any, error) {
+	value := transport.data.OpenAlexSourceByIssns
+	if request.Endpoint == "sources" {
+		transport.captures.SourceLookupIssns = append(transport.captures.SourceLookupIssns, request.Issn)
+	} else {
+		value = transport.data.OpenAlexSourceByTitle
+		transport.captures.SourceLookupTitles = append(transport.captures.SourceLookupTitles, request.Title)
+	}
+	transport.record(request, 200, nil)
+	items := []any{}
+	if value != nil {
+		items = append(items, cloneValue(value))
+	}
+	return map[string]any{"results": items}, nil
+}
+
+// fixtureSourceWorks preserves endpoint capture, accounting and response order under the caller lock.
+func (transport *FixtureTransport) fixtureSourceWorks(request Request) (any, error) {
+	var date any
+	if request.FromSyncDate != nil {
+		date = *request.FromSyncDate
+	}
+	transport.captures.SourceWorkRequests = append(transport.captures.SourceWorkRequests, [2]any{request.SourceId, date})
+	pageIndex := fixturePageIndex(request.Cursor)
+	threshold := transport.data.OpenAlexSourceWorksPlanRestrictedAfterPage
+	if isFixtureSourceRestricted(request.FromSyncDate, transport.data.IsOpenAlexSourceWorksPlanRestricted, threshold, pageIndex) {
+		return nil, transport.httpError(request, 429, map[string]any{"error": "Plan upgrade required", "message": "The from_created_date filter requires a Premium plan."})
+	}
+	if status := fixtureStatus(transport.data.OpenAlexSourceWorksStatus); status != 200 {
+		return nil, transport.httpError(request, status, map[string]any{"error": "fixture OpenAlex source works failure"})
+	}
+	transport.record(request, 200, nil)
+	items := []any{}
+	var cursor any
+	pages := transport.data.OpenAlexSourceWorkPages
+	if len(pages) == 0 {
+		if pageIndex == 0 {
+			items = cloneArray(transport.data.OpenAlexSourceWorks)
+		}
+	} else if pageIndex < uint64(len(pages)) {
+		items = cloneArray(pages[pageIndex])
+		if pageIndex < uint64(len(pages)-1) {
+			cursor = "fixture-page-" + strconv.FormatUint(pageIndex+1, 10)
+		}
+	}
+	return map[string]any{"results": items, "meta": map[string]any{"next_cursor": cursor}}, nil
+}
+
+// fixtureSemanticBatch preserves endpoint capture, accounting and response order under the caller lock.
+func (transport *FixtureTransport) fixtureSemanticBatch(request Request) (any, error) {
+	transport.captures.SemanticScholarBatches = append(transport.captures.SemanticScholarBatches, append([]string{}, request.Dois...))
+	if status := fixtureStatus(transport.data.SemanticScholarStatus); status != 200 {
+		message := "fixture semantic scholar failure"
+		if transport.data.SemanticScholarError != nil {
+			message = *transport.data.SemanticScholarError
+		}
+		return nil, transport.httpError(request, status, map[string]any{"error": message})
+	}
+	transport.record(request, 200, nil)
+	return fixtureDoiItems(transport.data.SemanticScholarByDoi, request.Dois), nil
+}
+
+// fixtureCrossrefMatches flattens fixture pages then applies inclusive creation bounds.
+func (transport *FixtureTransport) fixtureCrossrefMatches(query CrossrefQuery) []any {
+	works := transport.data.CrossrefWorks
+	if len(transport.data.CrossrefWorkPages) > 0 {
+		works = []any{}
+		for _, page := range transport.data.CrossrefWorkPages {
+			works = append(works, page...)
+		}
+	}
+	matching := []any{}
+	for _, work := range works {
+		created := fixtureCreated(work)
+		if created <= query.CreatedUntil && (query.IsEarliest || created >= query.CreatedFrom) {
+			matching = append(matching, work)
+		}
+	}
+	return matching
+}
+
+// fixtureCrossrefItems clones the selected page and supplies only missing creation metadata.
+func fixtureCrossrefItems(matching []any, offset, rows int) []any {
+	items := []any{}
+	for index := offset; index < min(offset+rows, len(matching)); index++ {
+		work := cloneValue(matching[index])
+		if object, ok := work.(map[string]any); ok {
+			if _, hasCreated := object["created"]; !hasCreated {
+				object["created"] = map[string]any{"timestamp": json.Number("0")}
+			}
+		}
+		items = append(items, work)
+	}
+	return items
+}
+
+// isFixtureSourceRestricted keeps date-filter and configured threshold admission unchanged.
+func isFixtureSourceRestricted(date *string, isRestricted bool, threshold *uint64, pageIndex uint64) bool {
+	return date != nil && (isRestricted || threshold != nil && pageIndex >= *threshold)
 }

@@ -135,42 +135,16 @@ func CreateCrossrefWorkset(root, scope string, state CrossrefCheckpoint) (*Cross
 			return nil, invalidWorkset("Crossref workset token already exists")
 		}
 	}
-	manifest, err := os.OpenFile(paths[4], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
+	encodedOwner, err := createWorksetManifest(paths[4], owner)
 	if err != nil {
-		return nil, worksetStorageError(err)
-	}
-	encodedOwner, err := encodeWorksetStruct(owner)
-	if err == nil {
-		_, err = manifest.Write(encodedOwner)
-	}
-	if err == nil {
-		err = manifest.Sync()
-	}
-	closeErr := manifest.Close()
-	if err != nil {
-		return nil, worksetStorageError(err)
-	}
-	if closeErr != nil {
-		return nil, worksetStorageError(closeErr)
+		return nil, err
 	}
 	workset, err := connectWorkset(paths[0], "rwc")
 	if err != nil {
 		return nil, err
 	}
 	workset.root, workset.owner, workset.state = root, owner, state.Clone()
-	if err = workset.exec(worksetConfiguration); err == nil {
-		err = workset.exec(worksetSchema)
-	}
-	encodedState, encodeErr := state.MarshalJSON()
-	if err == nil && encodeErr != nil {
-		err = worksetStorageError(encodeErr)
-	}
-	if err == nil {
-		err = workset.exec("INSERT INTO metadata VALUES(1, ?1, ?2, NULL)", string(encodedOwner), string(encodedState))
-	}
-	if err == nil {
-		err = workset.initializeRoot()
-	}
+	err = workset.initializeWorksetDatabase(state, encodedOwner)
 	if err != nil {
 		workset.Close()
 		return nil, err
@@ -219,13 +193,7 @@ func OpenCrossrefWorkset(root, scope string, checkpoint CrossrefCheckpoint) (*Cr
 	}
 	_, manifestErr := os.Lstat(paths[4])
 	hasManifest := manifestErr == nil
-	if !hasManifest {
-		for _, path := range paths {
-			if _, err := os.Lstat(path); err == nil {
-				return nil, false, invalidWorkset("Crossref workset files have no ownership record")
-			}
-		}
-	} else if err := validateWorksetFiles(root, owner); err != nil {
+	if err := admitWorksetOwnership(root, owner, paths, hasManifest); err != nil {
 		return nil, false, err
 	}
 	_, databaseErr := os.Stat(paths[0])
@@ -235,17 +203,7 @@ func OpenCrossrefWorkset(root, scope string, checkpoint CrossrefCheckpoint) (*Cr
 			return workset, replay, err
 		}
 	}
-	if hasManifest {
-		if err := removeWorksetFiles(root, owner); err != nil {
-			return nil, false, err
-		}
-	}
-	state, err := renewedWorksetState(checkpoint)
-	if err != nil {
-		return nil, false, err
-	}
-	workset, err := CreateCrossrefWorkset(root, scope, state)
-	return workset, true, err
+	return rebuildCrossrefWorkset(root, scope, owner, checkpoint, hasManifest)
 }
 
 func openExistingWorkset(root string, owner worksetOwner, checkpoint CrossrefCheckpoint) (result *CrossrefWorkset, didReplay bool, failure error) {
@@ -262,48 +220,19 @@ func openExistingWorkset(root string, owner worksetOwner, checkpoint CrossrefChe
 			workset.Close()
 		}
 	}()
-	var application, version storage.Integer
-	if err := workset.row("PRAGMA application_id").Scan(&application); err != nil {
-		return nil, false, worksetStorageError(err)
+	if err := workset.validateWorksetSchema(); err != nil {
+		return nil, false, err
 	}
-	if err := workset.row("PRAGMA user_version").Scan(&version); err != nil {
-		return nil, false, worksetStorageError(err)
-	}
-	if version < 0 || version > math.MaxUint32 {
-		return nil, false, worksetStorageError(errors.New("integer out of range"))
-	}
-	if application != worksetApplication || version != 1 {
-		return nil, false, invalidWorkset("Crossref workset database is foreign or has an unsupported schema")
-	}
-	var ownerText, stateText storage.Text
-	var previous storage.OptionalText
-	if err := workset.row("SELECT owner,state,previous FROM metadata WHERE id=1").Scan(&ownerText, &stateText, &previous); err != nil {
-		return nil, false, worksetStorageError(err)
-	}
-	var actualOwner worksetOwner
-	if decodeWorksetStruct([]byte(ownerText), &actualOwner) != nil {
-		return nil, false, invalidWorkset("invalid Crossref workset metadata")
-	}
-	if !reflect.DeepEqual(owner, actualOwner) {
-		return nil, false, invalidWorkset("Crossref workset database context does not match")
-	}
-	var stored CrossrefCheckpoint
-	if json.Unmarshal([]byte(stateText), &stored) != nil || stored.Validate() != nil {
-		return nil, false, invalidWorkset("Crossref workset database is damaged")
+	stored, previous, err := workset.readWorksetMetadata(owner)
+	if err != nil {
+		return nil, false, err
 	}
 	if err := workset.exec(worksetConfiguration); err != nil {
 		return nil, false, err
 	}
-	isEmitting := checkpoint.Phase.Kind == "emit" && stored.Phase.Kind == "emit" && stored.Phase.After == nil && checkpoint.Phase.Upper == stored.Phase.Upper && reflect.DeepEqual(checkpoint.Phase.Lower, stored.Phase.Lower) && reflect.DeepEqual(checkpoint.CreatedFrom, stored.CreatedFrom) && reflect.DeepEqual(checkpoint.RootTotal, stored.RootTotal) && checkpoint.Generation == stored.Generation && reflect.DeepEqual(checkpoint.Candidate, stored.Candidate) && checkpoint.Sequence >= stored.Sequence
-	if !reflect.DeepEqual(stored, checkpoint) && !isEmitting {
-		encoded, err := checkpoint.MarshalJSON()
-		if err != nil {
-			return nil, false, worksetStorageError(err)
-		}
-		if previous.Value == nil || *previous.Value != string(encoded) {
-			return nil, false, invalidWorkset("Crossref workset does not match the confirmed core checkpoint")
-		}
-		didReplay = true
+	isEmitting, didReplay, err := reconcileWorksetCheckpoint(checkpoint, stored, previous)
+	if err != nil {
+		return nil, false, err
 	}
 	if stored.Phase.Kind == "emit" {
 		if err := workset.exec("PRAGMA query_only=ON"); err != nil {
@@ -347,4 +276,141 @@ func (workset *CrossrefWorkset) Recollect() (CrossrefCheckpoint, error) {
 		return CrossrefCheckpoint{}, err
 	}
 	return result, nil
+}
+
+// createWorksetManifest exclusively writes, syncs and closes ownership before database opening.
+func createWorksetManifest(path string, owner worksetOwner) ([]byte, error) {
+	manifest, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
+	if err != nil {
+		return nil, worksetStorageError(err)
+	}
+	encodedOwner, err := encodeWorksetStruct(owner)
+	if err == nil {
+		_, err = manifest.Write(encodedOwner)
+	}
+	if err == nil {
+		err = manifest.Sync()
+	}
+	closeErr := manifest.Close()
+	if err != nil {
+		return nil, worksetStorageError(err)
+	}
+	if closeErr != nil {
+		return nil, worksetStorageError(closeErr)
+	}
+	return encodedOwner, nil
+}
+
+// initializeWorksetDatabase preserves configuration, schema, encoding and root-insertion error precedence.
+func (workset *CrossrefWorkset) initializeWorksetDatabase(state CrossrefCheckpoint, encodedOwner []byte) error {
+	var err error
+	if err = workset.exec(worksetConfiguration); err == nil {
+		err = workset.exec(worksetSchema)
+	}
+	encodedState, encodeErr := state.MarshalJSON()
+	if err == nil && encodeErr != nil {
+		err = worksetStorageError(encodeErr)
+	}
+	if err == nil {
+		err = workset.exec("INSERT INTO metadata VALUES(1, ?1, ?2, NULL)", string(encodedOwner), string(encodedState))
+	}
+	if err == nil {
+		err = workset.initializeRoot()
+	}
+	return err
+}
+
+// admitWorksetOwnership rejects orphan files or validates every owned path before recovery.
+func admitWorksetOwnership(root string, owner worksetOwner, paths []string, hasManifest bool) error {
+	if !hasManifest {
+		for _, path := range paths {
+			if _, err := os.Lstat(path); err == nil {
+				return invalidWorkset("Crossref workset files have no ownership record")
+			}
+		}
+	} else if err := validateWorksetFiles(root, owner); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateWorksetSchema reads application and version tags before admitting durable metadata.
+func (workset *CrossrefWorkset) validateWorksetSchema() error {
+	var application, version storage.Integer
+	if err := workset.row("PRAGMA application_id").Scan(&application); err != nil {
+		return worksetStorageError(err)
+	}
+	if err := workset.row("PRAGMA user_version").Scan(&version); err != nil {
+		return worksetStorageError(err)
+	}
+	if version < 0 || version > math.MaxUint32 {
+		return worksetStorageError(errors.New("integer out of range"))
+	}
+	if application != worksetApplication || version != 1 {
+		return invalidWorkset("Crossref workset database is foreign or has an unsupported schema")
+	}
+	return nil
+}
+
+// readWorksetMetadata validates owner identity before decoding the stored checkpoint and previous bytes.
+func (workset *CrossrefWorkset) readWorksetMetadata(owner worksetOwner) (CrossrefCheckpoint, storage.OptionalText, error) {
+	var ownerText, stateText storage.Text
+	var previous storage.OptionalText
+	if err := workset.row("SELECT owner,state,previous FROM metadata WHERE id=1").Scan(&ownerText, &stateText, &previous); err != nil {
+		return CrossrefCheckpoint{}, storage.OptionalText{}, worksetStorageError(err)
+	}
+	var actualOwner worksetOwner
+	if decodeWorksetStruct([]byte(ownerText), &actualOwner) != nil {
+		return CrossrefCheckpoint{}, storage.OptionalText{}, invalidWorkset("invalid Crossref workset metadata")
+	}
+	if !reflect.DeepEqual(owner, actualOwner) {
+		return CrossrefCheckpoint{}, storage.OptionalText{}, invalidWorkset("Crossref workset database context does not match")
+	}
+	var stored CrossrefCheckpoint
+	if json.Unmarshal([]byte(stateText), &stored) != nil || stored.Validate() != nil {
+		return CrossrefCheckpoint{}, storage.OptionalText{}, invalidWorkset("Crossref workset database is damaged")
+	}
+	return stored, previous, nil
+}
+
+// isCompatibleWorksetEmission admits a core-owned cursor extending the immutable sealed selection.
+func isCompatibleWorksetEmission(checkpoint, stored CrossrefCheckpoint) bool {
+	return checkpoint.Phase.Kind == "emit" && stored.Phase.Kind == "emit" && stored.Phase.After == nil && checkpoint.Phase.Upper == stored.Phase.Upper && reflect.DeepEqual(checkpoint.Phase.Lower, stored.Phase.Lower) && hasSameWorksetEmissionContext(checkpoint, stored) && checkpoint.Sequence >= stored.Sequence
+}
+
+// hasSameWorksetEmissionContext checks the frozen creation, count, generation and candidate identity.
+func hasSameWorksetEmissionContext(checkpoint, stored CrossrefCheckpoint) bool {
+	return reflect.DeepEqual(checkpoint.CreatedFrom, stored.CreatedFrom) && reflect.DeepEqual(checkpoint.RootTotal, stored.RootTotal) && checkpoint.Generation == stored.Generation && reflect.DeepEqual(checkpoint.Candidate, stored.Candidate)
+}
+
+// rebuildCrossrefWorkset removes only validated owned files before generating and creating replacement state.
+func rebuildCrossrefWorkset(root, scope string, owner worksetOwner, checkpoint CrossrefCheckpoint, hasManifest bool) (*CrossrefWorkset, bool, error) {
+	if hasManifest {
+		if err := removeWorksetFiles(root, owner); err != nil {
+			return nil, false, err
+		}
+	}
+	state, err := renewedWorksetState(checkpoint)
+	if err != nil {
+		return nil, false, err
+	}
+	workset, err := CreateCrossrefWorkset(root, scope, state)
+	return workset, true, err
+}
+
+// reconcileWorksetCheckpoint accepts sealed core emission or exact previous serialized checkpoint bytes.
+func reconcileWorksetCheckpoint(checkpoint, stored CrossrefCheckpoint, previous storage.OptionalText) (bool, bool, error) {
+	didReplay := false
+	isEmitting := isCompatibleWorksetEmission(checkpoint, stored)
+	if !reflect.DeepEqual(stored, checkpoint) && !isEmitting {
+		encoded, err := checkpoint.MarshalJSON()
+		if err != nil {
+			return false, false, worksetStorageError(err)
+		}
+		if previous.Value == nil || *previous.Value != string(encoded) {
+			return false, false, invalidWorkset("Crossref workset does not match the confirmed core checkpoint")
+		}
+		didReplay = true
+	}
+	return isEmitting, didReplay, nil
 }

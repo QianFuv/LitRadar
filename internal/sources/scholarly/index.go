@@ -53,49 +53,9 @@ func (index *IndexProvider) Fetch(ctx context.Context, catalog domain.JournalCat
 		return domain.ProviderBatch{}, err
 	}
 	if source != nil {
-		switch source.Kind {
-		case "crossref_workset":
-			batch, err := index.fetchWorkset(ctx, catalog, window, *source.State)
-			if err == nil || err.Error() != "Crossref workset database is damaged" {
-				return batch, err
-			}
-			scope, err := indexWorksetScope(catalog, window)
-			if err != nil {
-				return domain.ProviderBatch{}, err
-			}
-			cache, recovered, err := OpenCrossrefWorkset(index.worksetDir, scope, *source.State)
-			if err != nil {
-				return domain.ProviderBatch{}, err
-			}
-			defer cache.Close()
-			next := cache.Checkpoint()
-			if !recovered {
-				next, err = cache.Recollect()
-				if err != nil {
-					return domain.ProviderBatch{}, err
-				}
-			}
-			return replayedCrossrefBatch(catalog, window, next)
-		case "crossref":
-			prepareIndexReplay(&window)
-			frozen, err := index.frozenEpoch()
-			if err != nil {
-				return domain.ProviderBatch{}, err
-			}
-			return index.startWorkset(catalog, window, source.Issn, frozen, nil)
-		case "open_alex":
-			return index.fetchOpenAlex(ctx, catalog, window, source)
-		}
+		return index.fetchIndexContinuation(ctx, catalog, window, source)
 	}
-	issns := domain.CatalogIssns(catalog)
-	if len(issns) > 0 {
-		frozen, err := index.frozenEpoch()
-		if err != nil {
-			return domain.ProviderBatch{}, err
-		}
-		return index.startWorkset(catalog, window, issns[0], frozen, nil)
-	}
-	return index.fetchOpenAlex(ctx, catalog, window, nil)
+	return index.fetchIndexHead(ctx, catalog, window)
 }
 
 func indexCurrentDate(now time.Time) *string {
@@ -162,12 +122,7 @@ func completeIndexBatch(catalog domain.JournalCatalogEntry, window indexWindow, 
 }
 
 func (index *IndexProvider) enrichCrossref(ctx context.Context, catalog domain.JournalCatalogEntry, works []any) ([]domain.ArticleDraft, error) {
-	dois := []string{}
-	for _, work := range works {
-		if doi := textDoi(field(work, "DOI")); doi != nil {
-			dois = append(dois, *doi)
-		}
-	}
+	dois := crossrefWorkDois(works)
 	semantic := map[string]any{}
 	var err error
 	if len(dois) > 0 && index.hasSemanticScholarKey {
@@ -176,22 +131,7 @@ func (index *IndexProvider) enrichCrossref(ctx context.Context, catalog domain.J
 			return nil, mapIndexSourceError(err)
 		}
 	}
-	openAlexDois := []string{}
-	for _, work := range works {
-		doi := textDoi(field(work, "DOI"))
-		if doi == nil {
-			continue
-		}
-		hasTitle := firstText(field(work, "title")) != nil
-		hasAbstract := false
-		if text := jsonText(field(work, "abstract")); text != nil {
-			hasAbstract = stripMarkup(*text) != nil
-		}
-		hasAccess := strictBool(field(semantic[*doi], "isOpenAccess")) != nil
-		if !(hasTitle && hasAbstract && hasAccess) {
-			openAlexDois = append(openAlexDois, *doi)
-		}
-	}
+	openAlexDois := crossrefMissingMetadataDois(works, semantic)
 	openAlex := map[string]any{}
 	if len(openAlexDois) > 0 {
 		openAlex, err = index.client.FetchOpenAlexByDois(ctx, openAlexDois, 100)
@@ -210,4 +150,92 @@ func (index *IndexProvider) enrichCrossref(ctx context.Context, catalog domain.J
 		}
 	}
 	return articles, nil
+}
+
+// fetchIndexContinuation resumes the confirmed source under the caller-owned batch lock.
+func (index *IndexProvider) fetchIndexContinuation(ctx context.Context, catalog domain.JournalCatalogEntry, window indexWindow, source *indexSource) (domain.ProviderBatch, error) {
+	switch source.Kind {
+	case "crossref_workset":
+		batch, err := index.fetchWorkset(ctx, catalog, window, *source.State)
+		if err == nil || err.Error() != "Crossref workset database is damaged" {
+			return batch, err
+		}
+		return index.recoverIndexWorkset(catalog, window, *source.State)
+	case "crossref":
+		prepareIndexReplay(&window)
+		frozen, err := index.frozenEpoch()
+		if err != nil {
+			return domain.ProviderBatch{}, err
+		}
+		return index.startWorkset(catalog, window, source.Issn, frozen, nil)
+	case "open_alex":
+		return index.fetchOpenAlex(ctx, catalog, window, source)
+	}
+	return index.fetchIndexHead(ctx, catalog, window)
+}
+
+// fetchIndexHead prefers the first catalog ISSN before resolving an OpenAlex source.
+func (index *IndexProvider) fetchIndexHead(ctx context.Context, catalog domain.JournalCatalogEntry, window indexWindow) (domain.ProviderBatch, error) {
+	issns := domain.CatalogIssns(catalog)
+	if len(issns) > 0 {
+		frozen, err := index.frozenEpoch()
+		if err != nil {
+			return domain.ProviderBatch{}, err
+		}
+		return index.startWorkset(catalog, window, issns[0], frozen, nil)
+	}
+	return index.fetchOpenAlex(ctx, catalog, window, nil)
+}
+
+// recoverIndexWorkset reopens or recollects only an already-classified damaged continuation.
+func (index *IndexProvider) recoverIndexWorkset(catalog domain.JournalCatalogEntry, window indexWindow, state CrossrefCheckpoint) (domain.ProviderBatch, error) {
+	scope, err := indexWorksetScope(catalog, window)
+	if err != nil {
+		return domain.ProviderBatch{}, err
+	}
+	cache, recovered, err := OpenCrossrefWorkset(index.worksetDir, scope, state)
+	if err != nil {
+		return domain.ProviderBatch{}, err
+	}
+	defer cache.Close()
+	next := cache.Checkpoint()
+	if !recovered {
+		next, err = cache.Recollect()
+		if err != nil {
+			return domain.ProviderBatch{}, err
+		}
+	}
+	return replayedCrossrefBatch(catalog, window, next)
+}
+
+// crossrefMissingMetadataDois keeps DOI order and requests fallback only for missing title, abstract or access.
+func crossrefMissingMetadataDois(works []any, semantic map[string]any) []string {
+	openAlexDois := []string{}
+	for _, work := range works {
+		doi := textDoi(field(work, "DOI"))
+		if doi == nil {
+			continue
+		}
+		hasTitle := firstText(field(work, "title")) != nil
+		hasAbstract := false
+		if text := jsonText(field(work, "abstract")); text != nil {
+			hasAbstract = stripMarkup(*text) != nil
+		}
+		hasAccess := strictBool(field(semantic[*doi], "isOpenAccess")) != nil
+		if !(hasTitle && hasAbstract && hasAccess) {
+			openAlexDois = append(openAlexDois, *doi)
+		}
+	}
+	return openAlexDois
+}
+
+// crossrefWorkDois retains source order for primary DOI enrichment.
+func crossrefWorkDois(works []any) []string {
+	dois := []string{}
+	for _, work := range works {
+		if doi := textDoi(field(work, "DOI")); doi != nil {
+			dois = append(dois, *doi)
+		}
+	}
+	return dois
 }

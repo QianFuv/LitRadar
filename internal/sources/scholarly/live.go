@@ -92,31 +92,7 @@ func (live *LiveTransport) Request(ctx context.Context, request Request) (any, e
 	case OpenAlex + "/source_search":
 		return live.openAlexRequest(ctx, "source_search", live.openAlexBase+"/sources", []QueryPair{{"search", request.Title}, {"per-page", "5"}, {"select", openAlexSourceFields}})
 	case OpenAlex + "/source_works":
-		sourceId := strings.TrimRight(strings.TrimSpace(request.SourceId), "/")
-		if position := strings.LastIndex(sourceId, "/"); position >= 0 {
-			sourceId = sourceId[position+1:]
-		}
-		if sourceId == "" {
-			return map[string]any{"results": []any{}}, nil
-		}
-		filter := "primary_location.source.id:" + sourceId + ",type:article|book-chapter"
-		if request.FromSyncDate != nil && strings.TrimSpace(*request.FromSyncDate) != "" {
-			filter += ",from_created_date:" + *request.FromSyncDate
-		}
-		cursor := "*"
-		if request.Cursor != nil {
-			cursor = *request.Cursor
-		}
-		payload, err := live.openAlexRequest(ctx, "source_works", live.openAlexBase+"/works", []QueryPair{{"filter", filter}, {"per-page", "200"}, {"cursor", cursor}, {"sort", "publication_date:desc"}, {"select", openAlexWorkFields}})
-		if err != nil {
-			return nil, err
-		}
-		if len(array(field(payload, "results"))) < 200 {
-			if meta, ok := field(payload, "meta").(map[string]any); ok {
-				meta["next_cursor"] = nil
-			}
-		}
-		return payload, nil
+		return live.requestOpenAlexSourceWorks(ctx, request)
 	case OpenAlex + "/works":
 		return live.openAlexRequest(ctx, "works", live.openAlexBase+"/works", OpenAlexDoiQuery(request.Dois, nil))
 	case SemanticScholar + "/paper_batch":
@@ -267,4 +243,33 @@ func (live *LiveTransport) openAlexRequest(ctx context.Context, endpoint, url st
 	execution := live.executeOpenAlex(ctx, endpoint, url, query)
 	live.recordExecutions(ctx, execution.attempts)
 	return execution.payload, execution.err
+}
+
+// requestOpenAlexSourceWorks preserves source normalization, explicit cursor and short-page termination under the caller lock.
+func (live *LiveTransport) requestOpenAlexSourceWorks(ctx context.Context, request Request) (any, error) {
+	sourceId := strings.TrimRight(strings.TrimSpace(request.SourceId), "/")
+	if position := strings.LastIndex(sourceId, "/"); position >= 0 {
+		sourceId = sourceId[position+1:]
+	}
+	if sourceId == "" {
+		return map[string]any{"results": []any{}}, nil
+	}
+	filter := "primary_location.source.id:" + sourceId + ",type:article|book-chapter"
+	if request.FromSyncDate != nil && strings.TrimSpace(*request.FromSyncDate) != "" {
+		filter += ",from_created_date:" + *request.FromSyncDate
+	}
+	cursor := "*"
+	if request.Cursor != nil {
+		cursor = *request.Cursor
+	}
+	payload, err := live.openAlexRequest(ctx, "source_works", live.openAlexBase+"/works", []QueryPair{{"filter", filter}, {"per-page", "200"}, {"cursor", cursor}, {"sort", "publication_date:desc"}, {"select", openAlexWorkFields}})
+	if err != nil {
+		return nil, err
+	}
+	if len(array(field(payload, "results"))) < 200 {
+		if meta, ok := field(payload, "meta").(map[string]any); ok {
+			meta["next_cursor"] = nil
+		}
+	}
+	return payload, nil
 }

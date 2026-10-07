@@ -50,20 +50,11 @@ func (unit *indexUnit) UnmarshalJSON(body []byte) error {
 			return errWorksetJson
 		}
 	} else {
-		decoder := json.NewDecoder(bytes.NewReader(body))
-		opening, err := decoder.Token()
-		if err != nil || opening != json.Delim('{') || !decoder.More() {
-			return errWorksetJson
-		}
-		key, err := decoder.Token()
+		var err error
+		name, err = decodeIndexUnitObject(body)
 		if err != nil {
-			return errWorksetJson
+			return err
 		}
-		var value json.RawMessage
-		if decoder.Decode(&value) != nil || !bytes.Equal(bytes.TrimSpace(value), []byte("null")) || decoder.More() {
-			return errWorksetJson
-		}
-		name = key.(string)
 	}
 	*unit = indexUnit(name)
 	return nil
@@ -195,16 +186,8 @@ func decodeIndexCheckpoint(raw string, currentDate *string) (indexCheckpoint, er
 	}
 	normalizeIndexReplay(&checkpoint, currentDate)
 	source, window := checkpoint.Source, checkpoint.Window
-	isSourceValid := false
-	switch source.Kind {
-	case "crossref_workset":
-		isSourceValid = checkpoint.Version == 2 && source.State != nil && source.State.Validate() == nil
-	case "crossref":
-		isSourceValid = checkpoint.Version == 1 && strings.TrimSpace(source.Issn) != "" && (source.Cursor == nil && source.PageIndex == 0 && source.CursorRefreshedAt == nil || source.Cursor != nil && *source.Cursor != "" && source.CursorRefreshedAt != nil)
-	case "open_alex":
-		isSourceValid = strings.TrimSpace(source.SourceId) != "" && (source.Cursor == nil || *source.Cursor != "")
-	}
-	isWindowValid := (window.BaseAnchor == nil || window.BaseAnchor.IsValid()) && (window.CandidateAnchor == nil || window.CandidateAnchor.IsValid()) && (window.Phase != "bounded" || window.BaseAnchor != nil && window.BaseAnchor.FromSyncDate != nil) && (window.CandidateAnchor != nil || !window.HasReachedCandidate && !window.HasSeenBase) && (!window.HasReachedCandidate || window.CandidateAnchor != nil) && (!window.HasSeenBase || window.Phase == "bounded" && window.HasReachedCandidate)
+	isSourceValid := validIndexSource(checkpoint.Version, source)
+	isWindowValid := validIndexWindowAnchors(window) && validIndexWindowProgress(window)
 	if checkpoint.Version != 1 && checkpoint.Version != 2 || !isSourceValid || !isWindowValid {
 		return checkpoint, invalidWorkset("scholarly checkpoint is invalid")
 	}
@@ -213,9 +196,9 @@ func decodeIndexCheckpoint(raw string, currentDate *string) (indexCheckpoint, er
 
 func normalizeIndexReplay(checkpoint *indexCheckpoint, currentDate *string) {
 	source := checkpoint.Source
-	isHead := source.Kind == "crossref" && source.Cursor == nil && source.PageIndex == 0 && source.CursorRefreshedAt == nil || source.Kind == "open_alex" && source.Cursor == nil
+	isHead := isIndexSourceHead(source)
 	window := &checkpoint.Window
-	if (checkpoint.Version == 1 || checkpoint.Version == 2) && window.Phase == "unbounded" && window.BaseAnchor != nil && window.CandidateAnchor == nil && window.HasReachedCandidate && !window.HasSeenBase && isHead {
+	if isLegacyIndexReplay(checkpoint.Version, *window) && isHead {
 		window.HasReachedCandidate = false
 		if currentDate != nil && window.BaseAnchor.FromSyncDate != nil && *window.BaseAnchor.FromSyncDate > *currentDate {
 			window.Phase = "bounded"
@@ -284,4 +267,60 @@ func indexWorksetScope(catalog domain.JournalCatalogEntry, window indexWindow) (
 		}
 	}
 	return "[" + string(encodedCatalog) + "," + string(mode) + "," + string(anchor) + "]", nil
+}
+
+// decodeIndexUnitObject admits exactly one null-valued unit variant.
+func decodeIndexUnitObject(body []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') || !decoder.More() {
+		return "", errWorksetJson
+	}
+	key, err := decoder.Token()
+	if err != nil {
+		return "", errWorksetJson
+	}
+	var value json.RawMessage
+	if decoder.Decode(&value) != nil || !bytes.Equal(bytes.TrimSpace(value), []byte("null")) || decoder.More() {
+		return "", errWorksetJson
+	}
+	return key.(string), nil
+}
+
+// validIndexSource preserves version, cursor and state admission for each source variant.
+func validIndexSource(version uint32, source indexSource) bool {
+	switch source.Kind {
+	case "crossref_workset":
+		return version == 2 && source.State != nil && source.State.Validate() == nil
+	case "crossref":
+		return validLegacyIndexSource(version, source)
+	case "open_alex":
+		return strings.TrimSpace(source.SourceId) != "" && (source.Cursor == nil || *source.Cursor != "")
+	}
+	return false
+}
+
+// validLegacyIndexSource admits either an untouched head or a refreshed nonempty cursor.
+func validLegacyIndexSource(version uint32, source indexSource) bool {
+	return version == 1 && strings.TrimSpace(source.Issn) != "" && (source.Cursor == nil && source.PageIndex == 0 && source.CursorRefreshedAt == nil || source.Cursor != nil && *source.Cursor != "" && source.CursorRefreshedAt != nil)
+}
+
+// validIndexWindowAnchors checks anchor validity and bounded-window authority.
+func validIndexWindowAnchors(window indexWindow) bool {
+	return (window.BaseAnchor == nil || window.BaseAnchor.IsValid()) && (window.CandidateAnchor == nil || window.CandidateAnchor.IsValid()) && (window.Phase != "bounded" || window.BaseAnchor != nil && window.BaseAnchor.FromSyncDate != nil)
+}
+
+// validIndexWindowProgress preserves candidate and base-observation state implications.
+func validIndexWindowProgress(window indexWindow) bool {
+	return (window.CandidateAnchor != nil || !window.HasReachedCandidate && !window.HasSeenBase) && (!window.HasReachedCandidate || window.CandidateAnchor != nil) && (!window.HasSeenBase || window.Phase == "bounded" && window.HasReachedCandidate)
+}
+
+// isIndexSourceHead identifies the original unstarted legacy source shapes.
+func isIndexSourceHead(source indexSource) bool {
+	return source.Kind == "crossref" && source.Cursor == nil && source.PageIndex == 0 && source.CursorRefreshedAt == nil || source.Kind == "open_alex" && source.Cursor == nil
+}
+
+// isLegacyIndexReplay recognizes the historical candidate-free reached marker.
+func isLegacyIndexReplay(version uint32, window indexWindow) bool {
+	return (version == 1 || version == 2) && window.Phase == "unbounded" && window.BaseAnchor != nil && window.CandidateAnchor == nil && window.HasReachedCandidate && !window.HasSeenBase
 }

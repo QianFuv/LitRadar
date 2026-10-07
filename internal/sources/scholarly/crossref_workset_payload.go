@@ -49,25 +49,7 @@ func consumedPayload(work any) map[string]any {
 			payload["created"] = map[string]any{"timestamp": cloneValue(timestamp)}
 		}
 	}
-	for _, projection := range []struct {
-		name string
-		keys []string
-	}{{"author", []string{"given", "family"}}, {"updated-by", []string{"DOI", "type"}}} {
-		if entries, ok := object[projection.name].([]any); ok {
-			retained := make([]any, 0, len(entries))
-			for _, entry := range entries {
-				item, _ := entry.(map[string]any)
-				selected := map[string]any{}
-				for _, key := range projection.keys {
-					if value, exists := item[key]; exists {
-						selected[key] = cloneValue(value)
-					}
-				}
-				retained = append(retained, selected)
-			}
-			payload[projection.name] = retained
-		}
-	}
+	projectConsumedEntries(object, payload)
 	return payload
 }
 func workKey(work any, serialized string) string {
@@ -137,4 +119,27 @@ func crossrefOrder(work any, key string) (workOrder, error) {
 	order.Volume = label("volume")
 	order.Issue = label("issue")
 	return order, nil
+}
+
+// projectConsumedEntries keeps ordered author and update projections, including nulls and non-object empty maps.
+func projectConsumedEntries(object, payload map[string]any) {
+	for _, projection := range []struct {
+		name string
+		keys []string
+	}{{"author", []string{"given", "family"}}, {"updated-by", []string{"DOI", "type"}}} {
+		if entries, ok := object[projection.name].([]any); ok {
+			retained := make([]any, 0, len(entries))
+			for _, entry := range entries {
+				item, _ := entry.(map[string]any)
+				selected := map[string]any{}
+				for _, key := range projection.keys {
+					if value, exists := item[key]; exists {
+						selected[key] = cloneValue(value)
+					}
+				}
+				retained = append(retained, selected)
+			}
+			payload[projection.name] = retained
+		}
+	}
 }

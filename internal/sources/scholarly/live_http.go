@@ -28,19 +28,12 @@ func (live *LiveTransport) buildRequest(ctx context.Context, deadline time.Time,
 		separator = "&"
 	}
 	address := location.Href(true) + separator + EncodeQuery(query)
-	var encoded []byte
-	if body != nil {
-		encoded, err = domain.Json(body)
-		if err != nil {
-			return nil, func() {}, err
-		}
+	encoded, err := encodeSourceRequestBody(body)
+	if err != nil {
+		return nil, func() {}, err
 	}
-	if key != nil {
-		for _, character := range []byte(*key) {
-			if character != '\t' && (character < 32 || character == 127) {
-				return nil, func() {}, errors.New("invalid request header")
-			}
-		}
+	if err := validateSourceHeaderKey(key); err != nil {
+		return nil, func() {}, err
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, min(seconds(max(live.config.TimeoutSeconds, 1)).timer(), remaining))
 	request, err := http.NewRequestWithContext(attemptCtx, method, address, bytes.NewReader(encoded))
@@ -130,11 +123,7 @@ func safeOpenAlexBody(endpoint string, payload any, query []QueryPair) any {
 		safe := map[string]any{}
 		for _, name := range []string{"error", "message"} {
 			if text, ok := field(payload, name).(string); ok {
-				for _, pair := range query {
-					if pair.Value != "" {
-						text = strings.ReplaceAll(text, pair.Value, "[REDACTED]")
-					}
-				}
+				text = redactSourceQueryValues(text, query)
 				safe[name] = text
 			}
 		}
@@ -200,12 +189,10 @@ func (live *LiveTransport) openAlexAttempt(ctx context.Context, lease *openAlexL
 		return result
 	}
 	defer cancel()
-	for _, pair := range baseQuery {
-		if pair.Name == "filter" && strings.HasPrefix(asciiLower(strings.TrimLeftFunc(pair.Value, func(character rune) bool { return strings.TrimSpace(string(character)) == "" })), "doi:") && len(request.URL.String()) > 1900 {
-			lease.finish(rateHeaders{}, healthTerminal, scheduleTime{}, isSearch)
-			result.execution.err = &Error{Kind: "Configuration", Message: "OpenAlex DOI enrichment request exceeds the URL budget."}
-			return result
-		}
+	if exceedsOpenAlexDoiBudget(baseQuery, request.URL.String()) {
+		lease.finish(rateHeaders{}, healthTerminal, scheduleTime{}, isSearch)
+		result.execution.err = &Error{Kind: "Configuration", Message: "OpenAlex DOI enrichment request exceeds the URL budget."}
+		return result
 	}
 	started := time.Now()
 	response, err := live.client.Transport.RoundTrip(request)
@@ -218,40 +205,14 @@ func (live *LiveTransport) openAlexAttempt(ctx context.Context, lease *openAlexL
 	}
 	status := uint16(response.StatusCode)
 	headers := openAlexHeaders(response.Header)
-	if status == 429 {
-		throttle := delay
-		if headers.RetryAfter != nil {
-			throttle = later(throttle, *headers.RetryAfter)
-		}
-		lease.observeThrottle(throttle)
-		headers.RetryAfter = nil
-	}
+	observeOpenAlexResponseThrottle(lease, status, &headers, delay)
 	payload, bodyError := responseJson(response)
 	if errors.Is(bodyError, transport.ErrInvalidJson) {
 		payload = map[string]any{"error": "OpenAlex returned invalid JSON"}
 		bodyError = nil
 	}
 	if bodyError != nil {
-		isTooLarge := errors.Is(bodyError, transport.ErrTooLarge)
-		outcome := healthTransient
-		if status == 429 {
-			outcome = healthRateLimited
-		} else if isTooLarge {
-			outcome = healthTerminal
-		}
-		result.shouldRetry = !isTooLarge && number < maximum
-		lease.finish(headers, outcome, delay, isSearch)
-		errorKind := "response_body"
-		if isTooLarge {
-			errorKind = "response_too_large"
-		}
-		result.execution.attempts = []executionAttempt{newAttempt(OpenAlex, endpoint, "GET", request.URL.String(), number, slot, &status, false, result.shouldRetry, errorKind, started)}
-		if status == 429 {
-			result.execution.err = &Error{Kind: "HttpStatus", Service: OpenAlex, Endpoint: endpoint, StatusCode: status, Body: map[string]any{"error": "OpenAlex request failed"}}
-		} else {
-			result.execution.err = &Error{Kind: "Request", Service: OpenAlex, Endpoint: endpoint, Message: bodyError.Error()}
-		}
-		return result
+		return openAlexBodyFailure(lease, headers, delay, isSearch, endpoint, request.URL.String(), number, maximum, status, started, bodyError)
 	}
 	if status >= 200 && status < 300 {
 		lease.finish(headers, healthSuccess, scheduleTime{}, isSearch)
@@ -259,12 +220,7 @@ func (live *LiveTransport) openAlexAttempt(ctx context.Context, lease *openAlexL
 		result.execution.attempts = []executionAttempt{newAttempt(OpenAlex, endpoint, "GET", request.URL.String(), number, slot, &status, true, false, "none", started)}
 		return result
 	}
-	outcome := openAlexHealth(status, payload)
-	result.shouldRetry = outcome != healthTerminal && number < maximum
-	lease.finish(headers, outcome, delay, isSearch)
-	result.execution.attempts = []executionAttempt{newAttempt(OpenAlex, endpoint, "GET", request.URL.String(), number, slot, &status, false, result.shouldRetry, "http_status", started)}
-	result.execution.err = &Error{Kind: "HttpStatus", Service: OpenAlex, Endpoint: endpoint, StatusCode: status, Body: safeOpenAlexBody(endpoint, payload, query)}
-	return result
+	return openAlexHttpFailure(lease, headers, delay, isSearch, endpoint, request.URL.String(), query, number, maximum, status, started, payload)
 }
 
 func (live *LiveTransport) executeSemantic(ctx context.Context, url string, query []QueryPair, body any) (any, error) {
@@ -332,33 +288,7 @@ func (live *LiveTransport) semanticAttempt(ctx context.Context, reserved reserva
 		bodyError = nil
 	}
 	if bodyError != nil {
-		isTooLarge := errors.Is(bodyError, transport.ErrTooLarge)
-		outcome := httpHealth(status)
-		if isTooLarge {
-			if status == 429 {
-				outcome = healthRateLimited
-			} else {
-				outcome = healthTerminal
-			}
-		} else if isSuccess {
-			outcome = healthTransient
-		}
-		result.shouldRetry = !isTooLarge && outcome != healthTerminal && number < maximum
-		if retry != nil && (outcome == healthTransient || outcome == healthRateLimited) {
-			delay = later(delay, *retry)
-		}
-		live.semantic.finish(reserved, unixScheduleTime(), outcome, delay)
-		errorKind := "response_body"
-		if isTooLarge {
-			errorKind = "response_too_large"
-		}
-		result.execution.attempts = []executionAttempt{newAttempt(SemanticScholar, endpoint, "POST", request.URL.String(), number, slot, &status, false, result.shouldRetry, errorKind, started)}
-		if isSuccess {
-			result.execution.err = &Error{Kind: "Request", Service: SemanticScholar, Endpoint: endpoint, Message: bodyError.Error()}
-		} else {
-			result.execution.err = &Error{Kind: "HttpStatus", Service: SemanticScholar, Endpoint: endpoint, StatusCode: status, Body: safeSemanticBody(status, map[string]any{})}
-		}
-		return result
+		return live.semanticBodyFailure(reserved, delay, retry, request.URL.String(), number, maximum, status, started, bodyError, isSuccess)
 	}
 	if isSuccess {
 		live.semantic.finish(reserved, unixScheduleTime(), healthSuccess, scheduleTime{})
@@ -366,13 +296,151 @@ func (live *LiveTransport) semanticAttempt(ctx context.Context, reserved reserva
 		result.execution.attempts = []executionAttempt{newAttempt(SemanticScholar, endpoint, "POST", request.URL.String(), number, slot, &status, true, false, "none", started)}
 		return result
 	}
+	return live.semanticHttpFailure(reserved, delay, retry, request.URL.String(), number, maximum, status, started, payload)
+}
+
+// validateSourceHeaderKey checks raw header bytes after URL and body validation.
+func validateSourceHeaderKey(key *string) error {
+	if key != nil {
+		for _, character := range []byte(*key) {
+			if character != '\t' && (character < 32 || character == 127) {
+				return errors.New("invalid request header")
+			}
+		}
+	}
+	return nil
+}
+
+// encodeSourceRequestBody encodes only an explicitly supplied body before header admission.
+func encodeSourceRequestBody(body any) ([]byte, error) {
+	if body == nil {
+		return nil, nil
+	}
+	return domain.Json(body)
+}
+
+// redactSourceQueryValues replaces nonempty raw query values in their existing order.
+func redactSourceQueryValues(text string, query []QueryPair) string {
+	for _, pair := range query {
+		if pair.Value != "" {
+			text = strings.ReplaceAll(text, pair.Value, "[REDACTED]")
+		}
+	}
+	return text
+}
+
+// exceedsOpenAlexDoiBudget applies the encoded URL budget only to the original DOI filter grammar.
+func exceedsOpenAlexDoiBudget(query []QueryPair, address string) bool {
+	for _, pair := range query {
+		if pair.Name == "filter" && strings.HasPrefix(asciiLower(strings.TrimLeftFunc(pair.Value, func(character rune) bool { return strings.TrimSpace(string(character)) == "" })), "doi:") && len(address) > 1900 {
+			return true
+		}
+	}
+	return false
+}
+
+// observeOpenAlexResponseThrottle publishes shared cooldown before any body read and consumes Retry-After once.
+func observeOpenAlexResponseThrottle(lease *openAlexLease, status uint16, headers *rateHeaders, delay scheduleTime) {
+	if status == 429 {
+		throttle := delay
+		if headers.RetryAfter != nil {
+			throttle = later(throttle, *headers.RetryAfter)
+		}
+		lease.observeThrottle(throttle)
+		headers.RetryAfter = nil
+	}
+}
+
+// openAlexBodyFailure preserves size, status and retry classification before lease completion.
+func openAlexBodyFailure(lease *openAlexLease, headers rateHeaders, delay scheduleTime, isSearch bool, endpoint, address string, number, maximum int, status uint16, started time.Time, bodyError error) attemptResult {
+	result := attemptResult{}
+	slot := lease.slot.Slot
+	isTooLarge := errors.Is(bodyError, transport.ErrTooLarge)
+	outcome := healthTransient
+	if status == 429 {
+		outcome = healthRateLimited
+	} else if isTooLarge {
+		outcome = healthTerminal
+	}
+	result.shouldRetry = !isTooLarge && number < maximum
+	lease.finish(headers, outcome, delay, isSearch)
+	errorKind := "response_body"
+	if isTooLarge {
+		errorKind = "response_too_large"
+	}
+	result.execution.attempts = []executionAttempt{newAttempt(OpenAlex, endpoint, "GET", address, number, slot, &status, false, result.shouldRetry, errorKind, started)}
+	if status == 429 {
+		result.execution.err = &Error{Kind: "HttpStatus", Service: OpenAlex, Endpoint: endpoint, StatusCode: status, Body: map[string]any{"error": "OpenAlex request failed"}}
+	} else {
+		result.execution.err = &Error{Kind: "Request", Service: OpenAlex, Endpoint: endpoint, Message: bodyError.Error()}
+	}
+	return result
+}
+
+// openAlexHttpFailure maps upstream health to the reserved key and returns a redacted terminal body.
+func openAlexHttpFailure(lease *openAlexLease, headers rateHeaders, delay scheduleTime, isSearch bool, endpoint, address string, query []QueryPair, number, maximum int, status uint16, started time.Time, payload any) attemptResult {
+	result := attemptResult{}
+	slot := lease.slot.Slot
+	outcome := openAlexHealth(status, payload)
+	result.shouldRetry = outcome != healthTerminal && number < maximum
+	lease.finish(headers, outcome, delay, isSearch)
+	result.execution.attempts = []executionAttempt{newAttempt(OpenAlex, endpoint, "GET", address, number, slot, &status, false, result.shouldRetry, "http_status", started)}
+	result.execution.err = &Error{Kind: "HttpStatus", Service: OpenAlex, Endpoint: endpoint, StatusCode: status, Body: safeOpenAlexBody(endpoint, payload, query)}
+	return result
+}
+
+// semanticBodyFailure preserves oversized authentication behavior and outcome-specific retry headers.
+func (live *LiveTransport) semanticBodyFailure(reserved reservation, delay scheduleTime, retry *scheduleTime, address string, number, maximum int, status uint16, started time.Time, bodyError error, isSuccess bool) attemptResult {
+	const endpoint = "paper_batch"
+	result := attemptResult{}
+	slot := reserved.Slot
+	isTooLarge := errors.Is(bodyError, transport.ErrTooLarge)
+	outcome := semanticBodyHealth(status, isTooLarge, isSuccess)
+	result.shouldRetry = !isTooLarge && outcome != healthTerminal && number < maximum
+	if retry != nil && (outcome == healthTransient || outcome == healthRateLimited) {
+		delay = later(delay, *retry)
+	}
+	live.semantic.finish(reserved, unixScheduleTime(), outcome, delay)
+	errorKind := "response_body"
+	if isTooLarge {
+		errorKind = "response_too_large"
+	}
+	result.execution.attempts = []executionAttempt{newAttempt(SemanticScholar, endpoint, "POST", address, number, slot, &status, false, result.shouldRetry, errorKind, started)}
+	if isSuccess {
+		result.execution.err = &Error{Kind: "Request", Service: SemanticScholar, Endpoint: endpoint, Message: bodyError.Error()}
+	} else {
+		result.execution.err = &Error{Kind: "HttpStatus", Service: SemanticScholar, Endpoint: endpoint, StatusCode: status, Body: safeSemanticBody(status, map[string]any{})}
+	}
+	return result
+}
+
+// semanticHttpFailure applies retry-header cooldown only for transient or rate-limited outcomes.
+func (live *LiveTransport) semanticHttpFailure(reserved reservation, delay scheduleTime, retry *scheduleTime, address string, number, maximum int, status uint16, started time.Time, payload any) attemptResult {
+	const endpoint = "paper_batch"
+	result := attemptResult{}
+	slot := reserved.Slot
 	outcome := httpHealth(status)
 	result.shouldRetry = outcome != healthTerminal && number < maximum
 	if retry != nil && (outcome == healthTransient || outcome == healthRateLimited) {
 		delay = later(delay, *retry)
 	}
 	live.semantic.finish(reserved, unixScheduleTime(), outcome, delay)
-	result.execution.attempts = []executionAttempt{newAttempt(SemanticScholar, endpoint, "POST", request.URL.String(), number, slot, &status, false, result.shouldRetry, "http_status", started)}
+	result.execution.attempts = []executionAttempt{newAttempt(SemanticScholar, endpoint, "POST", address, number, slot, &status, false, result.shouldRetry, "http_status", started)}
 	result.execution.err = &Error{Kind: "HttpStatus", Service: SemanticScholar, Endpoint: endpoint, StatusCode: status, Body: safeSemanticBody(status, payload)}
 	return result
+}
+
+// semanticBodyHealth keeps oversized authentication bodies terminal without disabling the reserved key.
+func semanticBodyHealth(status uint16, isTooLarge, isSuccess bool) health {
+	outcome := httpHealth(status)
+	if isTooLarge {
+		if status == 429 {
+			outcome = healthRateLimited
+		} else {
+			outcome = healthTerminal
+		}
+	} else if isSuccess {
+		outcome = healthTransient
+	}
+	return outcome
 }

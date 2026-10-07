@@ -115,16 +115,7 @@ func (state *semanticScheduler) reserve(now scheduleTime, excluded []int) decisi
 	}
 	earliest, start := earliestSlots(state.Slots, preferredSlots(available, excluded), now, state.Period)
 	if len(earliest) == 0 {
-		var until *scheduleTime
-		for _, slot := range state.Slots {
-			if !slot.IsDisabled && slot.Cooldown != nil && (until == nil || slot.Cooldown.compare(*until) < 0) {
-				until = slot.Cooldown
-			}
-		}
-		if until != nil {
-			return decision{Kind: "WaitUntil", Until: *until}
-		}
-		return decision{Kind: "Unavailable"}
+		return semanticCooldownDecision(state.Slots)
 	}
 	selected := earliest[0]
 	for _, index := range earliest[1:] {
@@ -183,14 +174,8 @@ func (state *openAlexScheduler) dailyReserve() uint64 {
 }
 func (state *openAlexScheduler) reserve(now scheduleTime, excluded []int) decision {
 	refreshSlots(state.Slots, now)
-	available := []int{}
 	reserve := state.dailyReserve()
-	for index, slot := range state.Slots {
-		if slot.IsDisabled || slot.Cooldown != nil || slot.Remaining == nil && slot.InFlight > 0 || slot.Remaining != nil && *slot.Remaining <= reserve {
-			continue
-		}
-		available = append(available, index)
-	}
+	available := availableOpenAlexSlots(state.Slots, reserve)
 	earliest, start := earliestSlots(state.Slots, preferredSlots(available, excluded), now, state.Period)
 	if len(earliest) > 0 {
 		selected := state.bestSlot(earliest)
@@ -200,40 +185,7 @@ func (state *openAlexScheduler) reserve(now scheduleTime, excluded []int) decisi
 		state.NextTie = (selected + 1) % len(state.Slots)
 		return decision{Kind: "Reserved", Reservation: reservation{selected, start}}
 	}
-	var until *scheduleTime
-	isWaiting := false
-	for _, slot := range state.Slots {
-		if slot.IsDisabled {
-			continue
-		}
-		hasInsufficientQuota := slot.Remaining != nil && *slot.Remaining <= reserve
-		if slot.InFlight > 0 && (slot.Remaining == nil || hasInsufficientQuota && slot.Reset == nil) {
-			isWaiting = true
-		}
-		if slot.Remaining == nil && slot.InFlight > 0 {
-			continue
-		}
-		ready := now
-		if slot.Cooldown != nil {
-			ready = later(ready, *slot.Cooldown)
-		}
-		if hasInsufficientQuota {
-			if slot.Reset == nil {
-				continue
-			}
-			ready = later(ready, *slot.Reset)
-		}
-		if ready.compare(now) > 0 && (until == nil || ready.compare(*until) < 0) {
-			until = &ready
-		}
-	}
-	if until != nil {
-		return decision{Kind: "WaitUntil", Until: *until}
-	}
-	if isWaiting {
-		return decision{Kind: "WaitForChange"}
-	}
-	return decision{Kind: "Unavailable"}
+	return openAlexWaitDecision(state.Slots, now, reserve)
 }
 
 var maximumCredit = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 127), big.NewInt(1))
@@ -275,13 +227,7 @@ func (state *openAlexScheduler) bestSlot(candidates []int) int {
 func (state *openAlexScheduler) finish(reserved reservation, now scheduleTime, headers rateHeaders, outcome health, delay scheduleTime, isSearch bool) {
 	refreshSlots(state.Slots, now)
 	hasTrustedQuota := outcome == healthSuccess || outcome == healthDailyLimited
-	if hasTrustedQuota && headers.CreditsUsed != nil {
-		if isSearch {
-			state.MaximumSearchCredits = max(state.MaximumSearchCredits, *headers.CreditsUsed)
-		} else {
-			state.MaximumListCredits = max(state.MaximumListCredits, *headers.CreditsUsed)
-		}
-	}
+	state.observeMaximumCredits(headers, hasTrustedQuota, isSearch)
 	if reserved.Slot < 0 || reserved.Slot >= len(state.Slots) {
 		return
 	}
@@ -290,51 +236,9 @@ func (state *openAlexScheduler) finish(reserved reservation, now scheduleTime, h
 		slot.InFlight--
 	}
 	if hasTrustedQuota {
-		if headers.Remaining != nil {
-			remaining := *headers.Remaining
-			if slot.Remaining != nil {
-				remaining = min(remaining, *slot.Remaining)
-			}
-			slot.Remaining = &remaining
-		}
-		if headers.ResetAfter != nil {
-			reset := now.add(*headers.ResetAfter)
-			if slot.Reset == nil || slot.Reset.compare(reset) < 0 {
-				slot.Reset = &reset
-			}
-		}
+		applyTrustedOpenAlexQuota(slot, now, headers)
 	}
-	switch outcome {
-	case healthAuthentication:
-		slot.IsDisabled = true
-		slot.Cooldown = nil
-	case healthRateLimited, healthDailyLimited:
-		cooldown := delay
-		hasDelay := delay != (scheduleTime{})
-		if headers.RetryAfter != nil {
-			cooldown = later(cooldown, *headers.RetryAfter)
-			hasDelay = true
-		}
-		if outcome == healthDailyLimited && headers.ResetAfter != nil {
-			cooldown = later(cooldown, *headers.ResetAfter)
-			hasDelay = true
-		}
-		if !hasDelay {
-			cooldown = seconds(1)
-		}
-		extendCooldown(slot, now.add(cooldown))
-		if outcome == healthDailyLimited && headers.Remaining == nil {
-			remaining := uint64(0)
-			slot.Remaining = &remaining
-		}
-	case healthTransient:
-		if headers.RetryAfter != nil {
-			delay = later(delay, *headers.RetryAfter)
-		}
-		if delay != (scheduleTime{}) {
-			extendCooldown(slot, now.add(delay))
-		}
-	}
+	applyOpenAlexHealth(slot, now, headers, outcome, delay)
 }
 func (state *openAlexScheduler) eligible(reserved reservation, now scheduleTime) bool {
 	refreshSlots(state.Slots, now)
@@ -347,5 +251,154 @@ func (state *openAlexScheduler) eligible(reserved reservation, now scheduleTime)
 func (state *openAlexScheduler) cancel(reserved reservation) {
 	if reserved.Slot >= 0 && reserved.Slot < len(state.Slots) && state.Slots[reserved.Slot].InFlight > 0 {
 		state.Slots[reserved.Slot].InFlight--
+	}
+}
+
+// semanticCooldownDecision chooses the earliest enabled cooldown or reports unavailable.
+func semanticCooldownDecision(slots []keyState) decision {
+	var until *scheduleTime
+	for _, slot := range slots {
+		if !slot.IsDisabled && slot.Cooldown != nil && (until == nil || slot.Cooldown.compare(*until) < 0) {
+			until = slot.Cooldown
+		}
+	}
+	if until != nil {
+		return decision{Kind: "WaitUntil", Until: *until}
+	}
+	return decision{Kind: "Unavailable"}
+}
+
+// availableOpenAlexSlots preserves disabled, cooldown, unknown-quota serialization and reserve admission.
+func availableOpenAlexSlots(slots []keyState, reserve uint64) []int {
+	available := []int{}
+	for index, slot := range slots {
+		if slot.IsDisabled || slot.Cooldown != nil || slot.Remaining == nil && slot.InFlight > 0 || slot.Remaining != nil && *slot.Remaining <= reserve {
+			continue
+		}
+		available = append(available, index)
+	}
+	return available
+}
+
+// openAlexWaitDecision prioritizes the earliest reset or cooldown over in-flight change waiting.
+func openAlexWaitDecision(slots []keyState, now scheduleTime, reserve uint64) decision {
+	var until *scheduleTime
+	isWaiting := false
+	for _, slot := range slots {
+		readyValue, slotIsWaiting := openAlexSlotWait(&slot, now, reserve)
+		isWaiting = isWaiting || slotIsWaiting
+		if readyValue == nil {
+			continue
+		}
+		ready := *readyValue
+		if ready.compare(now) > 0 && (until == nil || ready.compare(*until) < 0) {
+			until = &ready
+		}
+	}
+	if until != nil {
+		return decision{Kind: "WaitUntil", Until: *until}
+	}
+	if isWaiting {
+		return decision{Kind: "WaitForChange"}
+	}
+	return decision{Kind: "Unavailable"}
+}
+
+// openAlexSlotWait derives one enabled slot wait without mutating its quota or schedule.
+func openAlexSlotWait(slot *keyState, now scheduleTime, reserve uint64) (*scheduleTime, bool) {
+	isWaiting := false
+	if slot.IsDisabled {
+		return nil, isWaiting
+	}
+	hasInsufficientQuota := slot.Remaining != nil && *slot.Remaining <= reserve
+	if isOpenAlexSlotWaiting(slot, hasInsufficientQuota) {
+		isWaiting = true
+	}
+	if slot.Remaining == nil && slot.InFlight > 0 {
+		return nil, isWaiting
+	}
+	ready := now
+	if slot.Cooldown != nil {
+		ready = later(ready, *slot.Cooldown)
+	}
+	if hasInsufficientQuota {
+		if slot.Reset == nil {
+			return nil, isWaiting
+		}
+		ready = later(ready, *slot.Reset)
+	}
+	return &ready, isWaiting
+}
+
+// isOpenAlexSlotWaiting identifies unresolved in-flight quota without an available reset.
+func isOpenAlexSlotWaiting(slot *keyState, hasInsufficientQuota bool) bool {
+	return slot.InFlight > 0 && (slot.Remaining == nil || hasInsufficientQuota && slot.Reset == nil)
+}
+
+// observeMaximumCredits updates trusted credit maxima before validating the reservation slot.
+func (state *openAlexScheduler) observeMaximumCredits(headers rateHeaders, hasTrustedQuota, isSearch bool) {
+	if hasTrustedQuota && headers.CreditsUsed != nil {
+		if isSearch {
+			state.MaximumSearchCredits = max(state.MaximumSearchCredits, *headers.CreditsUsed)
+		} else {
+			state.MaximumListCredits = max(state.MaximumListCredits, *headers.CreditsUsed)
+		}
+	}
+}
+
+// applyTrustedOpenAlexQuota retains minimum remaining quota and the latest supplied reset.
+func applyTrustedOpenAlexQuota(slot *keyState, now scheduleTime, headers rateHeaders) {
+	if headers.Remaining != nil {
+		remaining := *headers.Remaining
+		if slot.Remaining != nil {
+			remaining = min(remaining, *slot.Remaining)
+		}
+		slot.Remaining = &remaining
+	}
+	if headers.ResetAfter != nil {
+		reset := now.add(*headers.ResetAfter)
+		if slot.Reset == nil || slot.Reset.compare(reset) < 0 {
+			slot.Reset = &reset
+		}
+	}
+}
+
+// applyOpenAlexHealth updates only the reserved slot after trusted quota observation.
+func applyOpenAlexHealth(slot *keyState, now scheduleTime, headers rateHeaders, outcome health, delay scheduleTime) {
+	switch outcome {
+	case healthAuthentication:
+		slot.IsDisabled = true
+		slot.Cooldown = nil
+	case healthRateLimited, healthDailyLimited:
+		applyOpenAlexQuotaCooldown(slot, now, headers, outcome, delay)
+	case healthTransient:
+		if headers.RetryAfter != nil {
+			delay = later(delay, *headers.RetryAfter)
+		}
+		if delay != (scheduleTime{}) {
+			extendCooldown(slot, now.add(delay))
+		}
+	}
+}
+
+// applyOpenAlexQuotaCooldown treats explicit zero headers as supplied delays and keeps daily zero-quota fallback.
+func applyOpenAlexQuotaCooldown(slot *keyState, now scheduleTime, headers rateHeaders, outcome health, delay scheduleTime) {
+	cooldown := delay
+	hasDelay := delay != (scheduleTime{})
+	if headers.RetryAfter != nil {
+		cooldown = later(cooldown, *headers.RetryAfter)
+		hasDelay = true
+	}
+	if outcome == healthDailyLimited && headers.ResetAfter != nil {
+		cooldown = later(cooldown, *headers.ResetAfter)
+		hasDelay = true
+	}
+	if !hasDelay {
+		cooldown = seconds(1)
+	}
+	extendCooldown(slot, now.add(cooldown))
+	if outcome == healthDailyLimited && headers.Remaining == nil {
+		remaining := uint64(0)
+		slot.Remaining = &remaining
 	}
 }
