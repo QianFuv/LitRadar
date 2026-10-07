@@ -24,6 +24,25 @@ func DefaultNotificationSettingsUpdate() NotificationSettingsUpdate {
 
 // ValidateNotificationSettings preserves original collection, Unicode-length and required-field checks.
 func ValidateNotificationSettings(value NotificationSettingsUpdate) error {
+	if err := validateNotificationCollections(value); err != nil {
+		return err
+	}
+	if count := utf8.RuneCountInString(strings.TrimSpace(value.DeliveryMethod)); count == 0 || count > 32 {
+		return fmt.Errorf("delivery_method must be 1-32 characters")
+	}
+	fields := []struct {
+		name, text string
+		maximum    int
+	}{{"delivery_method", value.DeliveryMethod, 32}, {"pushplus_template", value.PushplusTemplate, 64}, {"pushplus_topic", value.PushplusTopic, 200}, {"pushplus_channel", value.PushplusChannel, 64}, {"ai_base_url", value.AiBaseUrl, 2048}, {"ai_backup_base_url", value.AiBackupBaseUrl, 2048}, {"ai_model", value.AiModel, 200}, {"ai_backup_model", value.AiBackupModel, 200}, {"ai_system_prompt", value.AiSystemPrompt, 10000}, {"ai_backup_system_prompt", value.AiBackupSystemPrompt, 10000}}
+	for _, field := range fields {
+		if err := validateNotificationText(field.name, field.text, field.maximum); err != nil {
+			return err
+		}
+	}
+	return validateNotificationSecrets(value)
+}
+
+func validateNotificationCollections(value NotificationSettingsUpdate) error {
 	collections := []struct {
 		name, label   string
 		values        []string
@@ -34,40 +53,33 @@ func ValidateNotificationSettings(value NotificationSettingsUpdate) error {
 			return fmt.Errorf("%s must contain at most %d items", collection.name, collection.count)
 		}
 	}
-	check := func(label, text string, maximum int) error {
-		if utf8.RuneCountInString(text) > maximum {
-			return fmt.Errorf("%s must be at most %d characters", label, maximum)
-		}
-		return nil
-	}
 	for _, collection := range collections {
 		for _, text := range collection.values {
-			if err := check(collection.label, text, collection.length); err != nil {
+			if err := validateNotificationText(collection.label, text, collection.length); err != nil {
 				return err
 			}
 		}
 	}
-	if count := utf8.RuneCountInString(strings.TrimSpace(value.DeliveryMethod)); count == 0 || count > 32 {
-		return fmt.Errorf("delivery_method must be 1-32 characters")
-	}
-	fields := []struct {
-		name, text string
-		maximum    int
-	}{{"delivery_method", value.DeliveryMethod, 32}, {"pushplus_template", value.PushplusTemplate, 64}, {"pushplus_topic", value.PushplusTopic, 200}, {"pushplus_channel", value.PushplusChannel, 64}, {"ai_base_url", value.AiBaseUrl, 2048}, {"ai_backup_base_url", value.AiBackupBaseUrl, 2048}, {"ai_model", value.AiModel, 200}, {"ai_backup_model", value.AiBackupModel, 200}, {"ai_system_prompt", value.AiSystemPrompt, 10000}, {"ai_backup_system_prompt", value.AiBackupSystemPrompt, 10000}}
-	for _, field := range fields {
-		if err := check(field.name, field.text, field.maximum); err != nil {
-			return err
-		}
-	}
+	return nil
+}
+
+func validateNotificationSecrets(value NotificationSettingsUpdate) error {
 	for _, field := range []struct {
 		name   string
 		secret SecretUpdate
 	}{{"pushplus_token", value.PushplusToken}, {"ai_api_key", value.AiApiKey}, {"ai_backup_api_key", value.AiBackupApiKey}} {
 		if field.secret.IsPresent && field.secret.Value != nil {
-			if err := check(field.name, *field.secret.Value, 4096); err != nil {
+			if err := validateNotificationText(field.name, *field.secret.Value, 4096); err != nil {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validateNotificationText(label, text string, maximum int) error {
+	if utf8.RuneCountInString(text) > maximum {
+		return fmt.Errorf("%s must be at most %d characters", label, maximum)
 	}
 	return nil
 }
