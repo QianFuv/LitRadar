@@ -66,55 +66,28 @@ func prepare(seed domain.Seed) (map[string]*preparedJournal, error) {
 	}
 	journals := map[string]*preparedJournal{}
 	for _, source := range seed.Sources {
-		notice := domain.ParseSource(source)
-		if notice == nil {
-			return nil, invalid(fmt.Sprintf("Invalid CFP source: %s / %s", source.JournalTitle, source.Title))
+		if err := prepareSourceJournal(journals, source); err != nil {
+			return nil, err
 		}
-		key := source.CatalogIds[0]
-		journal := journals[key]
-		if journal == nil {
-			journal = &preparedJournal{title: source.JournalTitle, checkedOn: source.CheckedOn}
-			journals[key] = journal
-		}
-		journal.aliases = append(journal.aliases, source.CatalogIds...)
-		for _, existing := range journal.notices {
-			if existing.notice.Id == notice.Id {
-				return nil, invalid("Duplicate CFP notice within " + key)
-			}
-		}
-		journal.checkedOn = max(journal.checkedOn, source.CheckedOn)
-		journal.notices = append(journal.notices, preparedNotice{source: source, notice: *notice})
 	}
 	for _, empty := range seed.EmptyJournals {
-		isValidDate := validEmptyDate(empty.CheckedOn)
-		if len(empty.CatalogIds) == 0 || slices.ContainsFunc(empty.CatalogIds, func(id string) bool { return strings.TrimSpace(id) == "" }) || strings.TrimSpace(empty.JournalTitle) == "" || strings.TrimSpace(empty.SourceStatement) == "" || len(empty.Notices) != 0 || !domain.IsSourceUrl(empty.SourceUrl) || !isValidDate {
-			return nil, invalid("Invalid verified-empty CFP statement")
+		if err := prepareEmptyJournal(journals, empty); err != nil {
+			return nil, err
 		}
-		key := empty.CatalogIds[0]
-		if journals[key] != nil {
-			return nil, invalid("A CFP journal cannot be both empty and populated in one source snapshot")
-		}
-		copy := empty
-		journals[key] = &preparedJournal{title: empty.JournalTitle, checkedOn: empty.CheckedOn, aliases: append([]string{}, empty.CatalogIds...), empty: &copy}
 	}
-	owners := map[string]string{}
-	count := uint64(0)
-	for _, key := range sortedKeys(journals) {
-		journal := journals[key]
-		slices.Sort(journal.aliases)
-		journal.aliases = slices.Compact(journal.aliases)
-		for _, alias := range journal.aliases {
-			if owner, exists := owners[alias]; exists && owner != key {
-				return nil, invalid("Conflicting CFP alias ownership: " + alias)
-			}
-			owners[alias] = key
-		}
-		count += uint64(len(journal.notices))
+	count, err := prepareAliasOwners(journals)
+	if err != nil {
+		return nil, err
 	}
-	if seed.ExpectedJournals != nil && *seed.ExpectedJournals != uint64(len(journals)) || seed.ExpectedNotices != nil && *seed.ExpectedNotices != count {
+	if mismatchedSeedCounts(seed, uint64(len(journals)), count) {
 		return nil, invalid("CFP seed counts do not match the reviewed export")
 	}
 	return journals, nil
+}
+
+// mismatchedSeedCounts treats present zero expectations as reviewed counts while preserving omitted checks.
+func mismatchedSeedCounts(seed domain.Seed, journals, notices uint64) bool {
+	return seed.ExpectedJournals != nil && *seed.ExpectedJournals != journals || seed.ExpectedNotices != nil && *seed.ExpectedNotices != notices
 }
 
 var emptyDatePattern = regexp.MustCompile(`^[\s\p{Z}\x{85}]*([+-]?[0-9]+)-[\s\p{Z}\x{85}]*([0-9]{1,2})-[\s\p{Z}\x{85}]*([0-9]{1,2})$`)
@@ -125,12 +98,8 @@ func validEmptyDate(value string) bool {
 	if fields == nil {
 		return false
 	}
-	yearText := fields[1]
-	if yearText[0] != '+' && yearText[0] != '-' && len(yearText) > 4 {
-		return false
-	}
-	year, err := strconv.Atoi(yearText)
-	if err != nil || year < -262143 || year > 262142 {
+	year, isValidYear := emptyDateYear(fields[1])
+	if !isValidYear {
 		return false
 	}
 	month, _ := strconv.Atoi(fields[2])
@@ -140,4 +109,74 @@ func validEmptyDate(value string) bool {
 	}
 	date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 	return date.Year() == year && int(date.Month()) == month && date.Day() == day
+}
+
+// prepareSourceJournal validates each populated notice before its first-key grouping and duplicate admission.
+func prepareSourceJournal(journals map[string]*preparedJournal, source domain.Source) error {
+	notice := domain.ParseSource(source)
+	if notice == nil {
+		return invalid(fmt.Sprintf("Invalid CFP source: %s / %s", source.JournalTitle, source.Title))
+	}
+	key := source.CatalogIds[0]
+	journal := journals[key]
+	if journal == nil {
+		journal = &preparedJournal{title: source.JournalTitle, checkedOn: source.CheckedOn}
+		journals[key] = journal
+	}
+	journal.aliases = append(journal.aliases, source.CatalogIds...)
+	for _, existing := range journal.notices {
+		if existing.notice.Id == notice.Id {
+			return invalid("Duplicate CFP notice within " + key)
+		}
+	}
+	journal.checkedOn = max(journal.checkedOn, source.CheckedOn)
+	journal.notices = append(journal.notices, preparedNotice{source: source, notice: *notice})
+	return nil
+}
+
+// prepareEmptyJournal preserves empty-statement validation before checking populated/empty conflicts.
+func prepareEmptyJournal(journals map[string]*preparedJournal, empty domain.EmptyJournal) error {
+	isValidDate := validEmptyDate(empty.CheckedOn)
+	if len(empty.CatalogIds) == 0 || slices.ContainsFunc(empty.CatalogIds, func(id string) bool { return strings.TrimSpace(id) == "" }) || strings.TrimSpace(empty.JournalTitle) == "" || strings.TrimSpace(empty.SourceStatement) == "" || len(empty.Notices) != 0 || !domain.IsSourceUrl(empty.SourceUrl) || !isValidDate {
+		return invalid("Invalid verified-empty CFP statement")
+	}
+	key := empty.CatalogIds[0]
+	if journals[key] != nil {
+		return invalid("A CFP journal cannot be both empty and populated in one source snapshot")
+	}
+	copy := empty
+	journals[key] = &preparedJournal{title: empty.JournalTitle, checkedOn: empty.CheckedOn, aliases: append([]string{}, empty.CatalogIds...), empty: &copy}
+	return nil
+}
+
+// prepareAliasOwners normalizes aliases in sorted journal order before admitting unique ownership.
+func prepareAliasOwners(journals map[string]*preparedJournal) (uint64, error) {
+	owners := map[string]string{}
+	count := uint64(0)
+	for _, key := range sortedKeys(journals) {
+		journal := journals[key]
+		slices.Sort(journal.aliases)
+		journal.aliases = slices.Compact(journal.aliases)
+		for _, alias := range journal.aliases {
+			if owner, exists := owners[alias]; exists && owner != key {
+				return 0, invalid("Conflicting CFP alias ownership: " + alias)
+			}
+			owners[alias] = key
+		}
+		count += uint64(len(journal.notices))
+	}
+	return count, nil
+}
+
+// emptyDateYear preserves signed chrono year bounds and the unsigned four-digit limit.
+func emptyDateYear(value string) (int, bool) {
+	yearText := value
+	if yearText[0] != '+' && yearText[0] != '-' && len(yearText) > 4 {
+		return 0, false
+	}
+	year, err := strconv.Atoi(yearText)
+	if err != nil || year < -262143 || year > 262142 {
+		return 0, false
+	}
+	return year, true
 }

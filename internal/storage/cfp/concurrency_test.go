@@ -20,10 +20,7 @@ func TestConcurrentSeedAndGenerationFencing(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := domain.Source{CatalogIds: []string{"a"}, JournalTitle: "Original Journal", Title: "Original topic", TypeText: "Special Issue", DateText: "Submission deadline: 31 December 2026", SourceUrl: "https://example.org/cfp", CheckedOn: "2026-09-15"}
-	payload, err := json.Marshal(domain.Seed{FormatVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	payload := concurrentSeedPayload(t, source)
 	repositories := []*Repository{}
 	for index := 0; index < 8; index++ {
 		repository, err := Open(path)
@@ -40,47 +37,19 @@ func TestConcurrentSeedAndGenerationFencing(t *testing.T) {
 		workers.Go(func() { results[index], failures[index] = repository.ImportSeed(ctx, "fixture", payload) })
 	}
 	workers.Wait()
-	imports := 0
-	for index, result := range results {
-		if failures[index] != nil {
-			t.Fatal(failures[index])
-		}
-		if result.DidImport {
-			imports++
-		}
-	}
-	if imports != 1 {
-		t.Fatal("seed imported more than once", imports)
-	}
+	assertSingleConcurrentImport(t, results, failures)
 	leases := make([]RefreshLease, len(repositories))
 	for index, repository := range repositories {
 		workers.Go(func() { leases[index], failures[index] = repository.BeginRefresh(ctx, "journal:a", 100, 20) })
 	}
 	workers.Wait()
-	seen := map[int64]bool{}
-	for index, lease := range leases {
-		if failures[index] != nil {
-			t.Fatal(failures[index])
-		}
-		if seen[lease.Generation] {
-			t.Fatal("duplicate generation")
-		}
-		seen[lease.Generation] = true
-	}
+	assertUniqueConcurrentGenerations(t, leases, failures)
 	publication := Publication{Capture: "complete capture", CaptureFormat: "html", SourceUrl: source.SourceUrl, ConfigVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{}}
 	for index, repository := range repositories {
 		workers.Go(func() { failures[index] = repository.PublishRefresh(ctx, leases[index], publication, 105) })
 	}
 	workers.Wait()
-	for index, err := range failures {
-		if leases[index].Generation == 8 {
-			if err != nil {
-				t.Fatal(err)
-			}
-		} else if !errors.Is(err, ErrStaleRefresh) {
-			t.Fatal("old generation published", err)
-		}
-	}
+	assertCurrentGenerationPublished(t, leases, failures)
 	journals, err := repositories[0].LoadJournals(ctx)
 	if err != nil || journals[0].Sources[0].Revision != 2 {
 		t.Fatal(journals, err)
@@ -133,4 +102,60 @@ func TestReadersSeeOnePublicationSnapshot(t *testing.T) {
 	if err := <-finished; err != nil {
 		t.Fatal(err)
 	}
+}
+
+// assertSingleConcurrentImport requires every worker to succeed but only one import marker to be created.
+func assertSingleConcurrentImport(t *testing.T, results []ImportResult, failures []error) {
+	t.Helper()
+	imports := 0
+	for index, result := range results {
+		if failures[index] != nil {
+			t.Fatal(failures[index])
+		}
+		if result.DidImport {
+			imports++
+		}
+	}
+	if imports != 1 {
+		t.Fatal("seed imported more than once", imports)
+	}
+}
+
+// assertUniqueConcurrentGenerations requires every admitted refresh to own a distinct generation.
+func assertUniqueConcurrentGenerations(t *testing.T, leases []RefreshLease, failures []error) {
+	t.Helper()
+	seen := map[int64]bool{}
+	for index, lease := range leases {
+		if failures[index] != nil {
+			t.Fatal(failures[index])
+		}
+		if seen[lease.Generation] {
+			t.Fatal("duplicate generation")
+		}
+		seen[lease.Generation] = true
+	}
+}
+
+// assertCurrentGenerationPublished admits only the eighth generation and requires stale errors for every predecessor.
+func assertCurrentGenerationPublished(t *testing.T, leases []RefreshLease, failures []error) {
+	t.Helper()
+	for index, err := range failures {
+		if leases[index].Generation == 8 {
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else if !errors.Is(err, ErrStaleRefresh) {
+			t.Fatal("old generation published", err)
+		}
+	}
+}
+
+// concurrentSeedPayload preserves the exact original seed fixture for all concurrent repositories.
+func concurrentSeedPayload(t *testing.T, source domain.Source) []byte {
+	t.Helper()
+	payload, err := json.Marshal(domain.Seed{FormatVersion: 1, Sources: []domain.Source{source}, EmptyJournals: []domain.EmptyJournal{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
