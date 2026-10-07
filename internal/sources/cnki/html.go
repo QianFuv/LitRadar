@@ -94,39 +94,13 @@ func startTags(text, name string) []string {
 	}
 	return result
 }
+
+// attrs retains double-quote then single-quote attribute precedence.
 func attrs(tag string) map[string]string {
 	header, _, _ := strings.Cut(tag, ">")
 	result := map[string]string{}
 	for _, quote := range []byte{'"', '\''} {
-		cursor := 0
-		for cursor < len(header) {
-			equals := strings.IndexByte(header[cursor:], '=')
-			if equals < 0 {
-				break
-			}
-			equals += cursor
-			if equals+1 >= len(header) || header[equals+1] != quote {
-				cursor = equals + 1
-				continue
-			}
-			keyStart := 0
-			for index, character := range header[:equals] {
-				if unicode.IsSpace(character) || character == '<' {
-					keyStart = index + len(string(character))
-				}
-			}
-			key := domain.Lowercase(strings.TrimSpace(header[keyStart:equals]))
-			valueStart := equals + 2
-			valueEnd := strings.IndexByte(header[valueStart:], quote)
-			if valueEnd < 0 {
-				break
-			}
-			valueEnd += valueStart
-			if key != "" {
-				result[key] = decodeHtml(header[valueStart:valueEnd])
-			}
-			cursor = valueEnd + 1
-		}
+		scanQuotedAttributes(header, quote, result)
 	}
 	return result
 }
@@ -220,19 +194,11 @@ func summaryText(text string) *string {
 	}
 	return inputValue(text, "abstract_text")
 }
+
+// spanTitle uses DOM author extraction and legacy parsing for other span classes.
 func spanTitle(text, class string) *string {
 	if class == "author" {
-		for _, node := range authorNodes(text) {
-			if node.Data == "span" && htmlHasClass(node, "author") {
-				if title := nonEmpty(htmlAttribute(node, "title")); title != nil {
-					return title
-				}
-				if value := authorElementText(node); value != nil {
-					return value
-				}
-			}
-		}
-		return nil
+		return authorSpanTitle(text)
 	}
 	for _, tag := range tags(text, "span") {
 		values := attrs(tag)
@@ -325,6 +291,59 @@ func authorText(text string) *string {
 		}
 		result := strings.Join(names, "; ")
 		return &result
+	}
+	return nil
+}
+
+// scanQuotedAttributes scans one quote style, preserving duplicate precedence.
+func scanQuotedAttributes(header string, quote byte, result map[string]string) {
+	cursor := 0
+	for cursor < len(header) {
+		equals := strings.IndexByte(header[cursor:], '=')
+		if equals < 0 {
+			break
+		}
+		equals += cursor
+		if equals+1 >= len(header) || header[equals+1] != quote {
+			cursor = equals + 1
+			continue
+		}
+		key := attributeKey(header[:equals])
+		valueStart := equals + 2
+		valueEnd := strings.IndexByte(header[valueStart:], quote)
+		if valueEnd < 0 {
+			break
+		}
+		valueEnd += valueStart
+		if key != "" {
+			result[key] = decodeHtml(header[valueStart:valueEnd])
+		}
+		cursor = valueEnd + 1
+	}
+}
+
+// attributeKey finds the key after the last Unicode whitespace or tag opener.
+func attributeKey(prefix string) string {
+	keyStart := 0
+	for index, character := range prefix {
+		if unicode.IsSpace(character) || character == '<' {
+			keyStart = index + len(string(character))
+		}
+	}
+	return domain.Lowercase(strings.TrimSpace(prefix[keyStart:]))
+}
+
+// authorSpanTitle retains DOM decoding and title-before-descendant-text fallback.
+func authorSpanTitle(text string) *string {
+	for _, node := range authorNodes(text) {
+		if node.Data == "span" && htmlHasClass(node, "author") {
+			if title := nonEmpty(htmlAttribute(node, "title")); title != nil {
+				return title
+			}
+			if value := authorElementText(node); value != nil {
+				return value
+			}
+		}
 	}
 	return nil
 }

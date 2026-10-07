@@ -9,27 +9,17 @@ import (
 	whatwg "github.com/nlnwa/whatwg-url/url"
 )
 
+// parseDomesticUrl admits the original domestic URL grammar after relative resolution.
 func parseDomesticUrl(value string) (*whatwg.Url, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.HasPrefix(value, "//") {
 		return nil, &Error{Kind: "Request", Message: "domestic CNKI URL is invalid"}
 	}
-	parser := whatwg.NewParser()
-	parsed, err := parser.Parse(value)
+	parsed, err := resolveDomesticUrl(value)
 	if err != nil {
-		if !strings.HasPrefix(value, "/") {
-			return nil, &Error{Kind: "Request", Message: "domestic CNKI relative URL is invalid"}
-		}
-		base := NaviBase
-		if strings.HasPrefix(value, "/kcms") || strings.HasPrefix(value, "/starter") || strings.HasPrefix(value, "/verify") {
-			base = KnsBase
-		}
-		parsed, err = parser.ParseRef(base, value)
-		if err != nil {
-			return nil, &Error{Kind: "Request", Message: "domestic CNKI URL is invalid"}
-		}
+		return nil, err
 	}
-	if parsed.Scheme() != "https" || parsed.Hostname() != "navi.cnki.net" && parsed.Hostname() != "kns.cnki.net" || parsed.Username() != "" || parsed.Password() != "" || parsed.Port() != "" && parsed.Port() != "443" {
+	if !isAllowedDomesticUrl(parsed) {
 		return nil, &Error{Kind: "Request", Message: "domestic CNKI URL is not allowed"}
 	}
 	return parsed, nil
@@ -114,4 +104,29 @@ func RedactUrl(value string) string {
 // ContainsOverseasHost identifies forbidden overseas references in URLs or response bodies.
 func ContainsOverseasHost(value string) bool {
 	return strings.Contains(strings.ToLower(value), "oversea.cnki.net")
+}
+
+// resolveDomesticUrl preserves absolute parsing and the three relative KNS prefixes.
+func resolveDomesticUrl(value string) (*whatwg.Url, error) {
+	parser := whatwg.NewParser()
+	parsed, err := parser.Parse(value)
+	if err != nil {
+		if !strings.HasPrefix(value, "/") {
+			return nil, &Error{Kind: "Request", Message: "domestic CNKI relative URL is invalid"}
+		}
+		base := NaviBase
+		if strings.HasPrefix(value, "/kcms") || strings.HasPrefix(value, "/starter") || strings.HasPrefix(value, "/verify") {
+			base = KnsBase
+		}
+		parsed, err = parser.ParseRef(base, value)
+		if err != nil {
+			return nil, &Error{Kind: "Request", Message: "domestic CNKI URL is invalid"}
+		}
+	}
+	return parsed, nil
+}
+
+// isAllowedDomesticUrl admits only credential-free domestic HTTPS endpoints.
+func isAllowedDomesticUrl(parsed *whatwg.Url) bool {
+	return !(parsed.Scheme() != "https" || parsed.Hostname() != "navi.cnki.net" && parsed.Hostname() != "kns.cnki.net" || parsed.Username() != "" || parsed.Password() != "" || parsed.Port() != "" && parsed.Port() != "443")
 }

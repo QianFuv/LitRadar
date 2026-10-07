@@ -13,12 +13,7 @@ import (
 // orderAuthorNodes restores scraper's global node-creation order after HTML foster parenting.
 // Extraction continues to use the original DOM; descendant traversal remains DOM ordered.
 func orderAuthorNodes(text string, roots, nodes []*html.Node) {
-	candidates := []*html.Node{}
-	for _, node := range nodes {
-		if node.Data == "span" && htmlHasClass(node, "author") || node.Data == "h3" && htmlHasClass(node, "author") && htmlAttribute(node, "id") == "authorpart" {
-			candidates = append(candidates, node)
-		}
-	}
+	candidates := authorOrderCandidates(nodes)
 	if len(candidates) < 2 {
 		return
 	}
@@ -28,55 +23,16 @@ func orderAuthorNodes(text string, roots, nodes []*html.Node) {
 		marker += "x"
 	}
 	ranks := map[*html.Node]int{}
-	merge := func(marked string) {
-		shadow, err := html.ParseFragment(strings.NewReader(marked), &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body})
-		if err != nil || len(roots) != len(shadow) {
-			return
-		}
-		found := map[*html.Node]int{}
-		for index, root := range roots {
-			if !alignAuthorTree(root, shadow[index], marker, found) {
-				return
-			}
-		}
-		for node, rank := range found {
-			ranks[node] = rank
-		}
-	}
 	for _, isRawDisabled := range []bool{false, true} {
-		merge(markAuthorTokens(text, marker, isRawDisabled))
+		mergeAuthorRanks(markAuthorTokens(text, marker, isRawDisabled), roots, marker, ranks)
 		if authorRanksComplete(candidates, ranks) {
 			break
 		}
 	}
 	if !authorRanksComplete(candidates, ranks) {
-		for offset := 0; offset < len(text); offset++ {
-			if text[offset] != '<' {
-				continue
-			}
-			length := authorTagNameLength(text[offset:])
-			if length == 0 {
-				continue
-			}
-			insertion := offset + 1 + length
-			merge(text[:insertion] + fmt.Sprintf(` %s="%d"`, marker, offset) + text[insertion:])
-			if authorRanksComplete(candidates, ranks) {
-				break
-			}
-		}
+		completeAuthorRanks(text, roots, candidates, marker, ranks)
 	}
-	positions := []int{}
-	ordered := []*html.Node{}
-	for index, node := range nodes {
-		if _, exists := ranks[node]; exists {
-			positions = append(positions, index)
-			ordered = append(ordered, node)
-		}
-	}
-	slices.SortStableFunc(ordered, func(first, second *html.Node) int { return ranks[first] - ranks[second] })
-	for index, position := range positions {
-		nodes[position] = ordered[index]
-	}
+	applyAuthorRanks(nodes, ranks)
 }
 func authorTreeContains(roots []*html.Node, marker string) bool {
 	var contains func(*html.Node) bool
@@ -153,29 +109,15 @@ func markAuthorTokens(text, marker string, isRawDisabled bool) string {
 	}
 	return output.String()
 }
+
+// alignAuthorTree matches original DOM structure while collecting provisional ranks.
 func alignAuthorTree(original, shadow *html.Node, marker string, ranks map[*html.Node]int) bool {
-	if original.Type != shadow.Type || original.Namespace != shadow.Namespace {
+	if !authorNodeDataMatches(original, shadow, marker) {
 		return false
 	}
-	if original.Type == html.TextNode || original.Type == html.CommentNode {
-		if original.Data != removeOrderMarkers(shadow.Data, marker) {
-			return false
-		}
-	} else if original.Data != shadow.Data {
+	attributes, ok := authorShadowAttributes(original, shadow, marker, ranks)
+	if !ok {
 		return false
-	}
-	attributes := make([]html.Attribute, 0, len(shadow.Attr))
-	for _, attribute := range shadow.Attr {
-		if attribute.Key == marker && attribute.Namespace == "" {
-			rank, err := strconv.Atoi(attribute.Val)
-			if err != nil {
-				return false
-			}
-			ranks[original] = rank
-		} else {
-			attribute.Val = removeOrderMarkers(attribute.Val, marker)
-			attributes = append(attributes, attribute)
-		}
 	}
 	if !slices.Equal(original.Attr, attributes) {
 		return false
@@ -206,4 +148,99 @@ func removeOrderMarkers(text, marker string) string {
 		}
 		text = text[:start] + text[end+1:]
 	}
+}
+
+// authorOrderCandidates selects the author spans and dedicated author heading.
+func authorOrderCandidates(nodes []*html.Node) []*html.Node {
+	candidates := []*html.Node{}
+	for _, node := range nodes {
+		if node.Data == "span" && htmlHasClass(node, "author") || node.Data == "h3" && htmlHasClass(node, "author") && htmlAttribute(node, "id") == "authorpart" {
+			candidates = append(candidates, node)
+		}
+	}
+	return candidates
+}
+
+// mergeAuthorRanks publishes provisional ranks only when every shadow root aligns.
+func mergeAuthorRanks(marked string, roots []*html.Node, marker string, ranks map[*html.Node]int) {
+	shadow, err := html.ParseFragment(strings.NewReader(marked), &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body})
+	if err != nil || len(roots) != len(shadow) {
+		return
+	}
+	found := map[*html.Node]int{}
+	for index, root := range roots {
+		if !alignAuthorTree(root, shadow[index], marker, found) {
+			return
+		}
+	}
+	for node, rank := range found {
+		ranks[node] = rank
+	}
+}
+
+// completeAuthorRanks tries individual raw offsets after both tokenizer modes.
+func completeAuthorRanks(text string, roots, candidates []*html.Node, marker string, ranks map[*html.Node]int) {
+	for offset := 0; offset < len(text); offset++ {
+		if text[offset] != '<' {
+			continue
+		}
+		length := authorTagNameLength(text[offset:])
+		if length == 0 {
+			continue
+		}
+		insertion := offset + 1 + length
+		mergeAuthorRanks(text[:insertion]+fmt.Sprintf(` %s="%d"`, marker, offset)+text[insertion:], roots, marker, ranks)
+		if authorRanksComplete(candidates, ranks) {
+			break
+		}
+	}
+}
+
+// applyAuthorRanks stably reorders only ranked positions in the original node slice.
+func applyAuthorRanks(nodes []*html.Node, ranks map[*html.Node]int) {
+	positions := []int{}
+	ordered := []*html.Node{}
+	for index, node := range nodes {
+		if _, exists := ranks[node]; exists {
+			positions = append(positions, index)
+			ordered = append(ordered, node)
+		}
+	}
+	slices.SortStableFunc(ordered, func(first, second *html.Node) int { return ranks[first] - ranks[second] })
+	for index, position := range positions {
+		nodes[position] = ordered[index]
+	}
+}
+
+// authorNodeDataMatches ignores injected markers only in text and comments.
+func authorNodeDataMatches(original, shadow *html.Node, marker string) bool {
+	if original.Type != shadow.Type || original.Namespace != shadow.Namespace {
+		return false
+	}
+	if original.Type == html.TextNode || original.Type == html.CommentNode {
+		if original.Data != removeOrderMarkers(shadow.Data, marker) {
+			return false
+		}
+	} else if original.Data != shadow.Data {
+		return false
+	}
+	return true
+}
+
+// authorShadowAttributes records provisional ranks before validating remaining attributes.
+func authorShadowAttributes(original, shadow *html.Node, marker string, ranks map[*html.Node]int) ([]html.Attribute, bool) {
+	attributes := make([]html.Attribute, 0, len(shadow.Attr))
+	for _, attribute := range shadow.Attr {
+		if attribute.Key == marker && attribute.Namespace == "" {
+			rank, err := strconv.Atoi(attribute.Val)
+			if err != nil {
+				return nil, false
+			}
+			ranks[original] = rank
+		} else {
+			attribute.Val = removeOrderMarkers(attribute.Val, marker)
+			attributes = append(attributes, attribute)
+		}
+	}
+	return attributes, true
 }

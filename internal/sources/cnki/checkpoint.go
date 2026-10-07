@@ -99,7 +99,7 @@ func IsStableIssueId(value string) bool {
 		return false
 	}
 	for _, character := range []byte(value) {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.') {
+		if !isStableIssueCharacter(character) {
 			return false
 		}
 	}
@@ -108,3 +108,8 @@ func IsStableIssueId(value string) bool {
 
 var _ json.Unmarshaler = (*Anchor)(nil)
 var _ json.Unmarshaler = (*Checkpoint)(nil)
+
+// isStableIssueCharacter admits the original ASCII identifier alphabet.
+func isStableIssueCharacter(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.'
+}

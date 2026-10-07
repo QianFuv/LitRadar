@@ -149,6 +149,7 @@ func TestLiveDomesticRejectsRedirectBeforeTransmission(t *testing.T) {
 	}
 }
 
+// TestLiveDomesticRateLimitBeforeBodyAndSharedCooldown verifies header-first shared throttling.
 func TestLiveDomesticRateLimitBeforeBodyAndSharedCooldown(t *testing.T) {
 	var requests atomic.Int32
 	live := loopbackLive(t, func(writer http.ResponseWriter, request *http.Request) {
@@ -168,22 +169,10 @@ func TestLiveDomesticRateLimitBeforeBodyAndSharedCooldown(t *testing.T) {
 	if time.Since(started) > 500*time.Millisecond {
 		t.Fatal("429 consumed its body")
 	}
-	_, err = clone.ArticleDetail(context.Background(), KnsBase+"/a", nil)
-	if err == nil || err.Error() != "article access deadline expired" {
-		t.Fatal(err)
-	}
-	if requests.Load() != 1 || len(clone.Attempts()) != 0 {
-		t.Fatal("shared cooldown admitted a new request")
-	}
-	if err := live.ResetTransientState(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	_, err = live.ArticleDetail(context.Background(), KnsBase+"/a", nil)
-	if err == nil || requests.Load() != 1 {
-		t.Fatal("reset cleared cooldown")
-	}
+	assertCloneCooldown(t, live, clone, &requests)
 }
 
+// TestLiveDomesticCaptchaReplayKeepsCookieAndRedactsAttempts verifies the replay request contract.
 func TestLiveDomesticCaptchaReplayKeepsCookieAndRedactsAttempts(t *testing.T) {
 	var mutex sync.Mutex
 	paths := []string{}
@@ -210,30 +199,7 @@ func TestLiveDomesticCaptchaReplayKeepsCookieAndRedactsAttempts(t *testing.T) {
 			http.SetCookie(writer, &http.Cookie{Name: "captcha", Value: "ok", Path: "/", Secure: true})
 			io.WriteString(writer, "page body intentionally unread")
 		case "/verify-api/get", "/verify-api/web/check":
-			if request.Header.Get("Origin") != KnsBase || request.Header.Get("X-Requested-With") != "XMLHttpRequest" || request.Header.Get("Content-Type") != "application/json;charset=UTF-8" {
-				t.Error(request.Header)
-			}
-			if request.Header.Get("User-Agent") != "" {
-				t.Errorf("unexpected captcha JSON UA %q", request.Header.Get("User-Agent"))
-			}
-			var body map[string]any
-			if json.NewDecoder(request.Body).Decode(&body) != nil {
-				t.Error("invalid JSON")
-			}
-			if request.URL.Path == "/verify-api/get" {
-				if body["captchaId"] != "solved-private-id" || body["ident"] != "private-ident" {
-					t.Error(body)
-				}
-				json.NewEncoder(writer).Encode(map[string]any{"data": map[string]any{"originalImageBase64": "original", "jigsawImageBase64": "jigsaw", "secretKey": "0123456789abcdef", "token": "private-token"}})
-			} else {
-				if _, exists := body["captchaId"]; exists {
-					t.Error("check leaked captchaId")
-				}
-				if len(body) != 5 || body["token"] != "private-token" {
-					t.Error(body)
-				}
-				io.WriteString(writer, `{"success":true}`)
-			}
+			serveCaptchaJson(t, writer, request)
 		default:
 			t.Error(request.URL)
 		}
@@ -248,15 +214,7 @@ func TestLiveDomesticCaptchaReplayKeepsCookieAndRedactsAttempts(t *testing.T) {
 	if !reflect.DeepEqual(paths, want) || ordinary.Load() != 2 {
 		t.Fatal(paths)
 	}
-	attempts := live.Attempts()
-	if len(attempts) != 2 || attempts[0].DidSucceed || !attempts[1].DidSucceed || !attempts[1].DidRetry {
-		t.Fatal(attempts)
-	}
-	for _, attempt := range attempts {
-		if strings.Contains(attempt.Url, "solved-private-id") || strings.Contains(attempt.Url, "private-ident") {
-			t.Fatal(attempt)
-		}
-	}
+	assertCaptchaAttemptRedaction(t, live)
 }
 
 func TestLiveDomesticRetryThenSuccess(t *testing.T) {
@@ -449,5 +407,73 @@ func TestLiveDomesticBodyCancellationIsBounded(t *testing.T) {
 	}
 	if len(live.Attempts()) != 1 {
 		t.Fatal(live.Attempts())
+	}
+}
+
+// assertCloneCooldown verifies shared throttling survives clone and reset operations.
+func assertCloneCooldown(t *testing.T, live, clone *LiveTransport, requests *atomic.Int32) {
+	t.Helper()
+	_, err := clone.ArticleDetail(context.Background(), KnsBase+"/a", nil)
+	if err == nil || err.Error() != "article access deadline expired" {
+		t.Fatal(err)
+	}
+	if requests.Load() != 1 || len(clone.Attempts()) != 0 {
+		t.Fatal("shared cooldown admitted a new request")
+	}
+	if err := live.ResetTransientState(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = live.ArticleDetail(context.Background(), KnsBase+"/a", nil)
+	if err == nil || requests.Load() != 1 {
+		t.Fatal("reset cleared cooldown")
+	}
+}
+
+// assertCaptchaAttemptRedaction checks retry history without exposing verification secrets.
+func assertCaptchaAttemptRedaction(t *testing.T, live *LiveTransport) {
+	t.Helper()
+	attempts := live.Attempts()
+	if len(attempts) != 2 || attempts[0].DidSucceed || !attempts[1].DidSucceed || !attempts[1].DidRetry {
+		t.Fatal(attempts)
+	}
+	for _, attempt := range attempts {
+		if strings.Contains(attempt.Url, "solved-private-id") || strings.Contains(attempt.Url, "private-ident") {
+			t.Fatal(attempt)
+		}
+	}
+}
+
+// serveCaptchaJson checks the original puzzle and check payload contracts.
+func serveCaptchaJson(t *testing.T, writer http.ResponseWriter, request *http.Request) {
+	t.Helper()
+	assertCaptchaJsonHeaders(t, request)
+	var body map[string]any
+	if json.NewDecoder(request.Body).Decode(&body) != nil {
+		t.Error("invalid JSON")
+	}
+	if request.URL.Path == "/verify-api/get" {
+		if body["captchaId"] != "solved-private-id" || body["ident"] != "private-ident" {
+			t.Error(body)
+		}
+		json.NewEncoder(writer).Encode(map[string]any{"data": map[string]any{"originalImageBase64": "original", "jigsawImageBase64": "jigsaw", "secretKey": "0123456789abcdef", "token": "private-token"}})
+	} else {
+		if _, exists := body["captchaId"]; exists {
+			t.Error("check leaked captchaId")
+		}
+		if len(body) != 5 || body["token"] != "private-token" {
+			t.Error(body)
+		}
+		io.WriteString(writer, `{"success":true}`)
+	}
+}
+
+// assertCaptchaJsonHeaders preserves AJAX headers and the absent recognition user agent.
+func assertCaptchaJsonHeaders(t *testing.T, request *http.Request) {
+	t.Helper()
+	if request.Header.Get("Origin") != KnsBase || request.Header.Get("X-Requested-With") != "XMLHttpRequest" || request.Header.Get("Content-Type") != "application/json;charset=UTF-8" {
+		t.Error(request.Header)
+	}
+	if request.Header.Get("User-Agent") != "" {
+		t.Errorf("unexpected captcha JSON UA %q", request.Header.Get("User-Agent"))
 	}
 }

@@ -16,6 +16,7 @@ func testPuzzle() CaptchaPuzzle {
 	return CaptchaPuzzle{ChallengeUrl: KnsBase + "/verify/home", CaptchaType: "blockPuzzle", CaptchaId: "secret-id", Ident: "private-ident", ReturnUrl: "private-return", SecretKey: "0123456789abcdef", Token: "private-token", OriginalImageBase64: "original", JigsawImageBase64: "jigsaw"}
 }
 
+// TestCaptchaFreshPuzzlePerCandidate preserves fresh challenges and encrypted candidate order.
 func TestCaptchaFreshPuzzlePerCandidate(t *testing.T) {
 	session := NewCaptchaSession(5)
 	solver := jfbym.NewFixture(100.4, 0)
@@ -37,21 +38,8 @@ func TestCaptchaFreshPuzzlePerCandidate(t *testing.T) {
 	if fetches != 3 || session.RemainingBudget() != 2 {
 		t.Fatalf("fetches=%d remaining=%d", fetches, session.RemainingBudget())
 	}
-	for index, x := range []int32{100, 101, 99} {
-		want, err := jfbym.EncryptPointJson(testPuzzle().SecretKey, x, 5)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if submits[index] != want {
-			t.Fatalf("candidate %d ciphertext differs", index)
-		}
-	}
-	for input, want := range map[string]string{KnsBase + "/a?x=%2b+~": KnsBase + "/a?x=%2b+~&captchaId=id-3", KnsBase + "/a?%63aptchaId=old": KnsBase + "/a?%63aptchaId=old", KnsBase + "/a?CAPTCHAID=old": KnsBase + "/a?CAPTCHAID=old&captchaId=id-3", KnsBase + "/a?x=1&": KnsBase + "/a?x=1&&captchaId=id-3"} {
-		got, err := session.AttachCaptchaId(input)
-		if err != nil || got != want {
-			t.Fatalf("attach %q: %q %v want %q", input, got, err, want)
-		}
-	}
+	assertCaptchaCandidates(t, submits)
+	assertCaptchaAttachment(t, session)
 	clone := session.Clone()
 	if err := session.SolveChallenge(context.Background(), "url", solver, fetch, func(context.Context, CaptchaPuzzle, string) (bool, error) { return false, nil }); err == nil || !strings.Contains(err.Error(), "after 5 attempts") {
 		t.Fatal(err)
@@ -127,46 +115,17 @@ func TestCaptchaFormattingAndCancelledSolve(t *testing.T) {
 	workers.Wait()
 }
 
+// TestRequestBudgetSeparatesRetryClasses checks independent retry quotas and replay priority.
 func TestRequestBudgetSeparatesRetryClasses(t *testing.T) {
 	var budget requestBudget
-	for ordinary := 0; ordinary < 5; ordinary++ {
-		isReplay, ok := budget.nextAttempt()
-		if !ok || isReplay {
-			t.Fatal("ordinary attempt missing")
-		}
-		if ordinary == 0 {
-			if !budget.scheduleTransportRetry() {
-				t.Fatal("transport retry missing")
-			}
-			if err := budget.scheduleCaptchaReplay(); err != nil {
-				t.Fatal(err)
-			}
-			for range 2 {
-				replay, ok := budget.nextAttempt()
-				if !replay || !ok {
-					t.Fatal("replay missing")
-				}
-			}
-		}
-	}
+	assertOrdinaryRequestBudget(t, &budget)
 	if _, ok := budget.nextAttempt(); ok {
 		t.Fatal("ordinary budget exceeded")
 	}
 	if _, ok := budget.ordinaryRetryDelay(); ok {
 		t.Fatal("delay after exhaustion")
 	}
-	for range 4 {
-		if err := budget.scheduleCaptchaReplay(); err != nil {
-			t.Fatal(err)
-		}
-		if replay, ok := budget.nextAttempt(); !replay || !ok {
-			t.Fatal("captcha replay used ordinary budget")
-		}
-	}
-	var failure *Error
-	if !errors.As(budget.scheduleCaptchaReplay(), &failure) {
-		t.Fatal("captcha replay budget exceeded")
-	}
+	assertRemainingCaptchaReplays(t, &budget)
 	for range 6 {
 		if !budget.scheduleTransportRetry() {
 			t.Fatal("transport stopped early")
@@ -207,5 +166,78 @@ func TestCaptchaCallbacksCanInspectSession(t *testing.T) {
 func TestCaptchaQueryIsNotChallengePath(t *testing.T) {
 	if LooksLikeCaptchaChallenge("x", "?/verify/home") {
 		t.Fatal("empty URL path became query text")
+	}
+}
+
+// assertCaptchaCandidates verifies encrypted candidates from successive fresh puzzles.
+func assertCaptchaCandidates(t *testing.T, submits []string) {
+	t.Helper()
+	for index, x := range []int32{100, 101, 99} {
+		want, err := jfbym.EncryptPointJson(testPuzzle().SecretKey, x, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if submits[index] != want {
+			t.Fatalf("candidate %d ciphertext differs", index)
+		}
+	}
+}
+
+// assertCaptchaAttachment preserves exact query bytes and case-sensitive captcha keys.
+func assertCaptchaAttachment(t *testing.T, session *CaptchaSession) {
+	t.Helper()
+	for input, want := range map[string]string{KnsBase + "/a?x=%2b+~": KnsBase + "/a?x=%2b+~&captchaId=id-3", KnsBase + "/a?%63aptchaId=old": KnsBase + "/a?%63aptchaId=old", KnsBase + "/a?CAPTCHAID=old": KnsBase + "/a?CAPTCHAID=old&captchaId=id-3", KnsBase + "/a?x=1&": KnsBase + "/a?x=1&&captchaId=id-3"} {
+		got, err := session.AttachCaptchaId(input)
+		if err != nil || got != want {
+			t.Fatalf("attach %q: %q %v want %q", input, got, err, want)
+		}
+	}
+}
+
+// assertOrdinaryRequestBudget exercises ordinary slots independently of two replay classes.
+func assertOrdinaryRequestBudget(t *testing.T, budget *requestBudget) {
+	t.Helper()
+	for ordinary := 0; ordinary < 5; ordinary++ {
+		isReplay, ok := budget.nextAttempt()
+		if !ok || isReplay {
+			t.Fatal("ordinary attempt missing")
+		}
+		if ordinary == 0 {
+			assertInitialReplayBudget(t, budget)
+		}
+	}
+}
+
+// assertInitialReplayBudget verifies captcha priority and transport replay admission.
+func assertInitialReplayBudget(t *testing.T, budget *requestBudget) {
+	t.Helper()
+	if !budget.scheduleTransportRetry() {
+		t.Fatal("transport retry missing")
+	}
+	if err := budget.scheduleCaptchaReplay(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		replay, ok := budget.nextAttempt()
+		if !replay || !ok {
+			t.Fatal("replay missing")
+		}
+	}
+}
+
+// assertRemainingCaptchaReplays verifies captcha quota after ordinary exhaustion.
+func assertRemainingCaptchaReplays(t *testing.T, budget *requestBudget) {
+	t.Helper()
+	for range 4 {
+		if err := budget.scheduleCaptchaReplay(); err != nil {
+			t.Fatal(err)
+		}
+		if replay, ok := budget.nextAttempt(); !replay || !ok {
+			t.Fatal("captcha replay used ordinary budget")
+		}
+	}
+	var failure *Error
+	if !errors.As(budget.scheduleCaptchaReplay(), &failure) {
+		t.Fatal("captcha replay budget exceeded")
 	}
 }

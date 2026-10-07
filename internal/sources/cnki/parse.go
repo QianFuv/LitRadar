@@ -36,6 +36,8 @@ func looksLikeContent(text string) bool {
 func updatePlaceholder(text string) bool {
 	return strings.Contains(stripTags(decodeHtml(text)), "该刊数据正在更新中，请耐心等待")
 }
+
+// validateResponse classifies text and deletion before endpoint structure.
 func validateResponse(endpoint, text string) error {
 	if err := CheckedText(text); err != nil {
 		return err
@@ -43,22 +45,7 @@ func validateResponse(endpoint, text string) error {
 	if endpoint == "article_detail" && containsMarker(domain.Lowercase(text), "记录已删除", "文献不存在", "该文献不存在", "record has been deleted", "record does not exist") {
 		return &Error{Kind: "PermanentArticleMissing"}
 	}
-	hasStructure := false
-	switch endpoint {
-	case "navigation":
-		lowered := asciiLower(text)
-		hasStructure = strings.Contains(lowered, "<html") && strings.Contains(lowered, "</html>")
-	case "journal_search":
-		hasStructure = strings.Contains(text, "/knavi/detail?") || explicitEmpty(text)
-	case "journal_detail":
-		hasStructure = inputValue(text, "pykm") != nil || explicitEmpty(text)
-	case "year_issues":
-		hasStructure = strings.Contains(text, "YearIssueTree")
-	case "issue_articles":
-		hasStructure = strings.Contains(text, "articleCount") || strings.Contains(text, `class="row clearfix`) || updatePlaceholder(text)
-	case "article_detail":
-		hasStructure = inputValue(text, "paramfilename") != nil || inputValue(text, "param-filename") != nil
-	}
+	hasStructure := responseHasStructure(endpoint, text)
 	if !hasStructure {
 		return &Error{Kind: "Parse", Message: fmt.Sprintf("domestic CNKI %s response is structurally incomplete", endpoint)}
 	}
@@ -230,60 +217,25 @@ func issueNumber(key, label string) string {
 
 // ParseIssueArticles validates each page's exact count and ten-row continuation rule.
 func ParseIssueArticles(text string, issue any, pageIndex uint64) (IssueArticlePage, error) {
-	isEmpty := inputValue(text, "articleCount") == nil && !strings.Contains(text, `class="row clearfix`) && (explicitEmpty(text) || pageIndex > 0 && updatePlaceholder(text))
-	if isEmpty {
-		if err := CheckedText(text); err != nil {
-			return IssueArticlePage{}, err
-		}
-	} else if err := validateResponse("issue_articles", text); err != nil {
+	isEmpty := isEmptyIssuePage(text, pageIndex)
+	if err := admitIssuePage(text, isEmpty); err != nil {
 		return IssueArticlePage{}, err
 	}
-	var count uint64
-	if value := inputValue(text, "articleCount"); value != nil {
-		parsed, err := strconv.ParseUint(strings.TrimPrefix(*value, "+"), 10, 64)
-		if err != nil {
-			return IssueArticlePage{}, &Error{Kind: "Parse", Message: "domestic issue article page has invalid articleCount"}
-		}
-		count = parsed
-	} else if !isEmpty {
-		return IssueArticlePage{}, &Error{Kind: "Parse", Message: "domestic issue article page missing articleCount"}
+	count, err := issueArticleCount(text, isEmpty)
+	if err != nil {
+		return IssueArticlePage{}, err
 	}
-	articles := []any{}
-	section := ""
-	cursor := 0
-	for cursor < len(text) {
-		first, second := strings.Index(text[cursor:], "<dt"), strings.Index(text[cursor:], "<dd")
-		if first < 0 && second < 0 {
-			break
-		}
-		name := "dd"
-		start := second
-		if first >= 0 && (second < 0 || first <= second) {
-			name = "dt"
-			start = first
-		}
-		block, end, ok := tagBlockAt(text, name, cursor+start)
-		if !ok {
-			break
-		}
-		cursor = end
-		if name == "dt" {
-			section = stripTags(block)
-			continue
-		}
-		article, err := parseArticleRow(block, issue, section)
-		if err != nil {
-			return IssueArticlePage{}, err
-		}
-		if article != nil {
-			articles = append(articles, article)
-		}
+	articles, err := scanIssueArticles(text, issue)
+	if err != nil {
+		return IssueArticlePage{}, err
 	}
 	if uint64(len(articles)) != count {
 		return IssueArticlePage{}, &Error{Kind: "Parse", Message: "domestic issue article count does not match parsed rows"}
 	}
 	return IssueArticlePage{Articles: articles, PageIndex: pageIndex, ArticleCount: count, HasNextPage: count == 10}, nil
 }
+
+// parseArticleRow selects the first titled article anchor before extracting metadata.
 func parseArticleRow(text string, issue any, section string) (any, error) {
 	for _, tag := range tags(text, "a") {
 		values := attrs(tag)
@@ -302,16 +254,7 @@ func parseArticleRow(text string, issue any, section string) (any, error) {
 		if ContainsOverseasHost(url) {
 			return nil, &Error{Kind: "Parse", Message: "domestic issue article returned overseas host"}
 		}
-		var platformId *string
-		for _, bold := range tags(text, "b") {
-			attributes := attrs(bold)
-			if attributes["name"] == "encrypt" {
-				platformId = nonEmpty(attributes["id"])
-				if platformId != nil {
-					break
-				}
-			}
-		}
+		platformId := articlePlatformId(text)
 		return map[string]any{"title": *title, "article_url": url, "platform_id": optional(platformId), "authors": optional(spanTitle(text, "author")), "pages": optional(spanTitle(text, "company")), "section": optional(nonEmpty(section)), "year": cloneJson(field(issue, "year")), "number": cloneJson(field(issue, "number")), "platform": "NZKPT"}, nil
 	}
 	return nil, nil
@@ -343,4 +286,127 @@ func ParseArticleDetail(text, articleUrl string) (any, error) {
 		}
 	}
 	return map[string]any{"article_url": permalink, "platform_id": optional(firstValue(inputValue(text, "paramfilename"), inputValue(text, "param-filename"))), "dbcode": optional(firstValue(inputValue(text, "paramdbcode"), inputValue(text, "param-dbcode"))), "dbname": optional(firstValue(inputValue(text, "paramdbname"), inputValue(text, "param-dbname"))), "title": optional(firstValue(firstBlockText(text, "h1", "title"), firstBlockText(text, "p", "title-one"), titleText(text))), "authors": optional(firstValue(authorText(text), spanTitle(text, "author"))), "abstract": optional(abstract), "doi": optional(rowValue(text, "DOI")), "online_release_date": optional(online), "pages": optional(labelValue(stripTags(text), "页码", "Pages")), "permalink": permalink, "platform": "NZKPT"}, nil
+}
+
+// responseHasStructure applies the existing endpoint-specific marker rules.
+func responseHasStructure(endpoint, text string) bool {
+	hasStructure := false
+	switch endpoint {
+	case "navigation":
+		hasStructure = hasNavigationDocument(text)
+	case "journal_search":
+		hasStructure = strings.Contains(text, "/knavi/detail?") || explicitEmpty(text)
+	case "journal_detail":
+		hasStructure = inputValue(text, "pykm") != nil || explicitEmpty(text)
+	case "year_issues":
+		hasStructure = strings.Contains(text, "YearIssueTree")
+	case "issue_articles":
+		hasStructure = containsMarker(text, "articleCount", `class="row clearfix`) || updatePlaceholder(text)
+	case "article_detail":
+		hasStructure = hasArticleIdentity(text)
+	}
+	return hasStructure
+}
+
+// issueArticleCount validates the optional empty-page count before scanning rows.
+func issueArticleCount(text string, isEmpty bool) (uint64, error) {
+	var count uint64
+	if value := inputValue(text, "articleCount"); value != nil {
+		parsed, err := strconv.ParseUint(strings.TrimPrefix(*value, "+"), 10, 64)
+		if err != nil {
+			return 0, &Error{Kind: "Parse", Message: "domestic issue article page has invalid articleCount"}
+		}
+		count = parsed
+	} else if !isEmpty {
+		return 0, &Error{Kind: "Parse", Message: "domestic issue article page missing articleCount"}
+	}
+	return count, nil
+}
+
+// scanIssueArticles visits sections and article blocks in their source order.
+func scanIssueArticles(text string, issue any) ([]any, error) {
+	articles := []any{}
+	section := ""
+	cursor := 0
+	for cursor < len(text) {
+		name, start, exists := nextIssueBlock(text[cursor:])
+		if !exists {
+			break
+		}
+		block, end, ok := tagBlockAt(text, name, cursor+start)
+		if !ok {
+			break
+		}
+		cursor = end
+		if name == "dt" {
+			section = stripTags(block)
+			continue
+		}
+		article, err := parseArticleRow(block, issue, section)
+		if err != nil {
+			return nil, err
+		}
+		if article != nil {
+			articles = append(articles, article)
+		}
+	}
+	return articles, nil
+}
+
+// nextIssueBlock chooses the earliest section or row, with section ties first.
+func nextIssueBlock(text string) (string, int, bool) {
+	first, second := strings.Index(text, "<dt"), strings.Index(text, "<dd")
+	if first < 0 && second < 0 {
+		return "", 0, false
+	}
+	name := "dd"
+	start := second
+	if first >= 0 && (second < 0 || first <= second) {
+		name = "dt"
+		start = first
+	}
+	return name, start, true
+}
+
+// articlePlatformId selects the first nonempty encrypted identifier.
+func articlePlatformId(text string) *string {
+	var platformId *string
+	for _, bold := range tags(text, "b") {
+		attributes := attrs(bold)
+		if attributes["name"] == "encrypt" {
+			platformId = nonEmpty(attributes["id"])
+			if platformId != nil {
+				break
+			}
+		}
+	}
+	return platformId
+}
+
+// isEmptyIssuePage recognizes explicit emptiness and later-page update placeholders.
+func isEmptyIssuePage(text string, pageIndex uint64) bool {
+	return inputValue(text, "articleCount") == nil && !strings.Contains(text, `class="row clearfix`) && (explicitEmpty(text) || pageIndex > 0 && updatePlaceholder(text))
+}
+
+// admitIssuePage keeps text classification before count and row parsing.
+func admitIssuePage(text string, isEmpty bool) error {
+	if isEmpty {
+		if err := CheckedText(text); err != nil {
+			return err
+		}
+	} else if err := validateResponse("issue_articles", text); err != nil {
+		return err
+	}
+	return nil
+}
+
+// hasArticleIdentity checks both original article filename spellings in order.
+func hasArticleIdentity(text string) bool {
+	return inputValue(text, "paramfilename") != nil || inputValue(text, "param-filename") != nil
+}
+
+// hasNavigationDocument requires both original HTML document boundary markers.
+func hasNavigationDocument(text string) bool {
+	lowered := asciiLower(text)
+	return strings.Contains(lowered, "<html") && strings.Contains(lowered, "</html>")
 }

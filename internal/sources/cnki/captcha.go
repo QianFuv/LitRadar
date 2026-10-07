@@ -197,6 +197,8 @@ func CaptchaGetRequestBody(challengeUrl string) (map[string]any, error) {
 func CaptchaCheckRequestBody(puzzle CaptchaPuzzle, pointJson string) map[string]any {
 	return map[string]any{"captchaType": puzzle.CaptchaType, "pointJson": pointJson, "token": puzzle.Token, "ident": puzzle.Ident, "returnUrl": puzzle.ReturnUrl}
 }
+
+// successValue accepts only exact boolean, text and supported integer markers.
 func successValue(value any) bool {
 	switch typed := value.(type) {
 	case bool:
@@ -209,16 +211,8 @@ func successValue(value any) bool {
 		return typed == 1
 	case uint64:
 		return typed == 1
-	case json.Number:
-		number, err := domain.ParseNumber(typed)
-		if err != nil {
-			return false
-		}
-		integer, ok := number.AsInt64()
-		return ok && integer == 1
-	case domain.Number:
-		integer, ok := typed.AsInt64()
-		return ok && integer == 1
+	case json.Number, domain.Number:
+		return numericSuccessValue(value)
 	}
 	return false
 }
@@ -325,43 +319,87 @@ func (session *CaptchaSession) SolveChallenge(ctx context.Context, url string, s
 		if err := ctx.Err(); err != nil {
 			return &Error{Kind: "Request", Message: "article access deadline expired"}
 		}
-		session.state.mutex.Lock()
-		if session.state.solveAttempts >= session.state.solveBudget {
-			attempts := session.state.solveAttempts
-			session.state.mutex.Unlock()
-			return &Error{Kind: "Request", Message: fmt.Sprintf("domestic CNKI captcha solve budget exhausted after %d attempts", attempts)}
-		}
-		session.state.solveAttempts++
-		attempt := session.state.solveAttempts
-		session.state.mutex.Unlock()
-		puzzle, err := fetch(ctx, url)
+		attempt, err := session.reserveSolveAttempt()
 		if err != nil {
 			return err
 		}
-		if err = validatePuzzle(puzzle); err != nil {
-			return err
-		}
-		distance, err := solver.SolveDualImage(ctx, puzzle.JigsawImageBase64, puzzle.OriginalImageBase64)
-		if err != nil {
-			return &Error{Kind: "Request", Message: err.Error()}
-		}
-		candidates, err := jfbym.PointXCandidates(distance)
-		if err != nil {
-			return &Error{Kind: "Request", Message: err.Error()}
-		}
-		point, err := jfbym.EncryptPointJson(puzzle.SecretKey, candidates[(attempt-1)%uint64(len(candidates))], 5)
-		if err != nil {
-			return &Error{Kind: "Request", Message: err.Error()}
-		}
-		accepted, err := submit(ctx, puzzle, point)
+		captchaId, accepted, err := solveFreshPuzzle(ctx, url, solver, fetch, submit, attempt)
 		if err != nil {
 			return err
 		}
 		if accepted {
 			session.state.mutex.Lock()
-			session.state.captchaId = puzzle.CaptchaId
+			session.state.captchaId = captchaId
 			session.state.mutex.Unlock()
 			return nil
 		}
 	}
+}
+
+// numericSuccessValue preserves integer classification of JSON success markers.
+func numericSuccessValue(value any) bool {
+	switch typed := value.(type) {
+	case json.Number:
+		number, err := domain.ParseNumber(typed)
+		if err != nil {
+			return false
+		}
+		integer, ok := number.AsInt64()
+		return ok && integer == 1
+	case domain.Number:
+		integer, ok := typed.AsInt64()
+		return ok && integer == 1
+	}
+	return false
+}
+
+// reserveSolveAttempt charges quota before callbacks and releases the state mutex.
+func (session *CaptchaSession) reserveSolveAttempt() (uint64, error) {
+	session.state.mutex.Lock()
+	if session.state.solveAttempts >= session.state.solveBudget {
+		attempts := session.state.solveAttempts
+		session.state.mutex.Unlock()
+		return 0, &Error{Kind: "Request", Message: fmt.Sprintf("domestic CNKI captcha solve budget exhausted after %d attempts", attempts)}
+	}
+	session.state.solveAttempts++
+	attempt := session.state.solveAttempts
+	session.state.mutex.Unlock()
+	return attempt, nil
+}
+
+// solvePuzzlePoint encrypts the candidate selected by the cumulative attempt number.
+func solvePuzzlePoint(ctx context.Context, puzzle CaptchaPuzzle, solver jfbym.Solver, attempt uint64) (string, error) {
+	distance, err := solver.SolveDualImage(ctx, puzzle.JigsawImageBase64, puzzle.OriginalImageBase64)
+	if err != nil {
+		return "", &Error{Kind: "Request", Message: err.Error()}
+	}
+	candidates, err := jfbym.PointXCandidates(distance)
+	if err != nil {
+		return "", &Error{Kind: "Request", Message: err.Error()}
+	}
+	point, err := jfbym.EncryptPointJson(puzzle.SecretKey, candidates[(attempt-1)%uint64(len(candidates))], 5)
+	if err != nil {
+		return "", &Error{Kind: "Request", Message: err.Error()}
+	}
+	return point, nil
+}
+
+// solveFreshPuzzle fetches, validates and submits one newly obtained challenge.
+func solveFreshPuzzle(ctx context.Context, url string, solver jfbym.Solver, fetch func(context.Context, string) (CaptchaPuzzle, error), submit func(context.Context, CaptchaPuzzle, string) (bool, error), attempt uint64) (string, bool, error) {
+	puzzle, err := fetch(ctx, url)
+	if err != nil {
+		return "", false, err
+	}
+	if err = validatePuzzle(puzzle); err != nil {
+		return "", false, err
+	}
+	point, err := solvePuzzlePoint(ctx, puzzle, solver, attempt)
+	if err != nil {
+		return "", false, err
+	}
+	accepted, err := submit(ctx, puzzle, point)
+	if err != nil {
+		return "", false, err
+	}
+	return puzzle.CaptchaId, accepted, nil
 }
