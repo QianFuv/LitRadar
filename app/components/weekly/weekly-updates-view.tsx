@@ -624,7 +624,12 @@ function getWeeklyArticleAnnouncement(state: WeeklyViewState): string {
 }
 
 /** Describe the selected journal with the original search loading and failure precedence. */
-function getWeeklyJournalDescription(state: WeeklyViewState): string {
+function getWeeklyJournalDescription(
+  state: Pick<
+    WeeklyViewState,
+    'selectedJournal' | 'searchQuery' | 'articleState' | 'renderedArticles' | 'hasNextPage'
+  >,
+): string {
   const { selectedJournal, searchQuery, articleState, renderedArticles, hasNextPage } = state;
   if (!selectedJournal) return '从左侧选择期刊后查看本周新收录文章';
   if (!searchQuery) return `本周新增 ${selectedJournal.new_article_count} 篇文章`;
@@ -831,7 +836,10 @@ function renderWeeklyJournalHeader(state: WeeklyViewState) {
 }
 
 /** Render the complete summary animation and unchanged search control. */
-function renderWeeklySummary(state: WeeklyViewState, weeklySummary: WeeklyUpdatesSummaryResponse) {
+function renderWeeklySummary(
+  state: Pick<WeeklyViewState, 'stateTransition' | 'totalDatabases' | 'totalArticles'>,
+  weeklySummary: WeeklyUpdatesSummaryResponse,
+) {
   const { stateTransition, totalDatabases, totalArticles } = state;
   return (
     <section className="flex flex-col gap-3 rounded-lg bg-muted/30 p-3 shadow-vercel-ring sm:flex-row sm:items-center">
