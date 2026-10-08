@@ -632,6 +632,7 @@ async function promotesLatestInOrder() {
       "buildx",
       "imagetools",
       "create",
+      "--prefer-index=false",
       "--tag",
       "ghcr.io/fixture/repository:latest",
       "ghcr.io/fixture/repository:v0.3.0",

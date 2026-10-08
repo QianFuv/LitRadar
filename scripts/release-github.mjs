@@ -40,6 +40,7 @@ async function promoteLatest() {
       "buildx",
       "imagetools",
       "create",
+      "--prefer-index=false",
       "--tag",
       `${image}:latest`,
       `${image}:${release.tag_name}`,

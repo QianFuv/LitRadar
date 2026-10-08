@@ -47,8 +47,8 @@ notes; published release notes remain unchanged.
 - Release and the reusable check workflows are internal workflows only.
 - Test Diagnostics runs weekly or manually for informational coverage artifacts.
 
-Images are published as `ghcr.io/qianfuv/litradar:v<version>`, `:v<version>-amd64`
-and `:latest`. Prefer a version tag for reproducible deployments. The Git tag
+Images are published as `ghcr.io/qianfuv/litradar:v<version>` and `:latest`.
+Prefer a version tag for reproducible deployments. The Git tag
 `v<version>` points to the exact CI source commit. A serialized promotion step
 selects the highest published stable version for both latest pointers.
 
