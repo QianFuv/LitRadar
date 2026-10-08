@@ -143,11 +143,13 @@ func selectFullTextBody(original domain.Source, document Document, parsed *goque
 	isFamily := func(host, path, id string) bool {
 		return location != nil && location.Hostname() == host && strings.HasPrefix(location.Pathname(), path) && slices.Contains(original.CatalogIds, id)
 	}
-	switch {
-	case collection.Length() > 0:
+	if collection.Length() > 0 {
 		return collectionBody(parsed, collection, original.Title)
-	case springerUpdateBody(original, document, parsed) != nil:
-		return springerFullTextBody(original, document, parsed)
+	}
+	if body := springerUpdateBody(original, document, parsed); body != nil {
+		return springerFullTextBody(body)
+	}
+	switch {
 	case isFamily("www.comsoc.org", "/publications/journals/ieee-jsac/cfp/", "issn-0733-8716") || isFamily("www.comsoc.org", "/publications/journals/ieee-tnsm/cfp/", "issn-1932-4537"):
 		return comsocBody(parsed, original.Title)
 	case isFamily("journal.psych.ac.cn", "/xlxb/CN/news/", "issn-0439-755x"):
@@ -185,10 +187,9 @@ func collectionBody(parsed *goquery.Document, collection *goquery.Selection, tit
 	return body, nil
 }
 
-// springerFullTextBody selects the original publisher body after its title admission checks.
-func springerFullTextBody(original domain.Source, document Document, parsed *goquery.Document) (string, error) {
-	body := ""
-	body = visible(fragment(inner(springerUpdateBody(original, document, parsed))), "h1, .u-visually-hidden")
+// springerFullTextBody cleans the selected publisher body after its title admission checks.
+func springerFullTextBody(selection *goquery.Selection) (string, error) {
+	body := visible(fragment(inner(selection)), "h1, .u-visually-hidden")
 	if pattern(`(?i)read the full call for papers`, body) {
 		return "", ErrUnrecognized
 	}
