@@ -183,13 +183,12 @@ function terminateActiveChild() {
 }
 
 /**
- * Run Docker without echoing mount paths or other arguments.
+ * Apply ownership labels while validating the managed run identity.
  *
- * @param {string[]} args - Docker arguments.
- * @param {{allowFailure?: boolean, input?: string, timeoutMs?: number}} [options={}] - Command options.
- * @returns {Promise<{code: number, stdout: string, stderr: string}>} Captured command result.
+ * @param {string[]} args - Original Docker arguments.
+ * @returns {string[]} Arguments with labels on owned resource creation.
  */
-async function runDocker(args, options = {}) {
+function managedDockerArguments(args) {
   const runId = process.env.LITRADAR_SMOKE_RUN_ID;
   if (runId) {
     assertInvariant(
@@ -203,6 +202,56 @@ async function runDocker(args, options = {}) {
       args = ["volume", "create", "--label", label, ...args.slice(2)];
     }
   }
+  return args;
+}
+
+/**
+ * Classify captured command completion after active-process cleanup.
+ *
+ * @param {object} result - Observed process exit.
+ * @param {string} stdout - Captured standard output.
+ * @param {string} stderr - Captured standard error.
+ * @param {boolean} didTimeout - Whether the owned timer expired.
+ * @param {number} timeoutMs - Command deadline.
+ * @param {object} options - Original failure policy.
+ * @returns {object} Successful or explicitly allowed command result.
+ */
+function completedDockerResult(
+  result,
+  stdout,
+  stderr,
+  didTimeout,
+  timeoutMs,
+  options,
+) {
+  const captured = {
+    code: result.code ?? 1,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+  };
+  if (shutdownSignal) {
+    throw new Error(`Docker command interrupted by ${shutdownSignal}`);
+  }
+  if (didTimeout) {
+    throw new Error(`Docker command exceeded ${timeoutMs}ms`);
+  }
+  if (!options.allowFailure && captured.code !== 0) {
+    throw new Error(
+      `Docker command failed with exit code ${captured.code}: ${captured.stderr}`,
+    );
+  }
+  return captured;
+}
+
+/**
+ * Run Docker without echoing mount paths or other arguments.
+ *
+ * @param {string[]} args - Docker arguments.
+ * @param {{allowFailure?: boolean, input?: string, timeoutMs?: number}} [options={}] - Command options.
+ * @returns {Promise<{code: number, stdout: string, stderr: string}>} Captured command result.
+ */
+async function runDocker(args, options = {}) {
+  args = managedDockerArguments(args);
   const timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT_MS;
   const hasInput = typeof options.input === "string";
   activeChild = spawn("docker", args, {
@@ -234,23 +283,14 @@ async function runDocker(args, options = {}) {
     clearTimeout(timeout);
     activeChild = undefined;
   }
-  const captured = {
-    code: result.code ?? 1,
-    stdout: stdout.trim(),
-    stderr: stderr.trim(),
-  };
-  if (shutdownSignal) {
-    throw new Error(`Docker command interrupted by ${shutdownSignal}`);
-  }
-  if (didTimeout) {
-    throw new Error(`Docker command exceeded ${timeoutMs}ms`);
-  }
-  if (!options.allowFailure && captured.code !== 0) {
-    throw new Error(
-      `Docker command failed with exit code ${captured.code}: ${captured.stderr}`,
-    );
-  }
-  return captured;
+  return completedDockerResult(
+    result,
+    stdout,
+    stderr,
+    didTimeout,
+    timeoutMs,
+    options,
+  );
 }
 
 /**
@@ -1030,6 +1070,275 @@ async function verifyCfpHelpers() {
 }
 
 /**
+ * Verify public endpoint status, response security and document markers.
+ *
+ * @param {Response} rootResponse - Root endpoint response.
+ * @param {Response} openApiResponse - OpenAPI response.
+ * @param {Response} authResponse - Anonymous authentication response.
+ * @returns {Promise<void>} Completion of every HTTP assertion.
+ */
+async function verifySmokeHttpResponses(
+  rootResponse,
+  openApiResponse,
+  authResponse,
+) {
+  assertInvariant(
+    rootResponse.ok,
+    `root endpoint returned ${rootResponse.status}`,
+  );
+  assertInvariant(
+    openApiResponse.ok,
+    `OpenAPI endpoint returned ${openApiResponse.status}`,
+  );
+  assertInvariant(
+    authResponse.status === 401,
+    `anonymous auth endpoint returned ${authResponse.status}`,
+  );
+  for (const response of [rootResponse, openApiResponse, authResponse]) {
+    assertSecurityHeaders(response, true);
+  }
+  assertInvariant(
+    rootResponse.headers.get("content-security-policy")?.includes("sha256-"),
+    "root CSP omitted exported inline script hashes",
+  );
+  assertInvariant(
+    authResponse.headers.get("cache-control") === "no-store" &&
+      authResponse.headers.get("pragma") === "no-cache",
+    "auth response was cacheable",
+  );
+  const rootBody = await rootResponse.text();
+  const openApi = await openApiResponse.json();
+  assertInvariant(
+    rootBody.includes("LitRadar"),
+    "root endpoint omitted the application marker",
+  );
+  assertInvariant(
+    openApi.openapi === "3.1.0",
+    "OpenAPI endpoint returned an unexpected document",
+  );
+  assertInvariant(
+    Boolean(openApi.paths?.["/health/ready"]),
+    "OpenAPI omitted readiness",
+  );
+}
+
+/**
+ * Verify exact image identity and process isolation.
+ *
+ * @param {object} inspection - Container inspection.
+ * @param {string} imageId - Inspected content identity.
+ * @returns {void} Completion of the security assertions.
+ */
+function verifySmokeProcessIsolation(inspection, imageId) {
+  assertInvariant(
+    inspection.Image === imageId,
+    "container did not use the inspected image ID",
+  );
+  assertInvariant(
+    inspection.HostConfig.ReadonlyRootfs === true,
+    "root filesystem is writable",
+  );
+  assertInvariant(
+    inspection.HostConfig.CapDrop?.some(
+      (capability) => capability.toUpperCase() === "ALL",
+    ),
+    "Linux capabilities were not dropped",
+  );
+  assertInvariant(
+    inspection.HostConfig.SecurityOpt?.some((option) =>
+      option.startsWith("no-new-privileges"),
+    ),
+    "no-new-privileges is missing",
+  );
+  assertInvariant(
+    !inspection.HostConfig.CapAdd || inspection.HostConfig.CapAdd.length === 0,
+    "container adds Linux capabilities",
+  );
+  assertInvariant(
+    inspection.Config.User === "10001:10001",
+    "container does not declare the fixed unprivileged UID/GID",
+  );
+}
+
+/**
+ * Verify health, secure-cookie admission and temporary filesystem restrictions.
+ *
+ * @param {object} inspection - Container inspection.
+ * @param {Set<string>} temporaryFilesystemOptions - Original tmpfs option inventory.
+ * @returns {void} Completion of the security assertions.
+ */
+function verifySmokeHealthAndTemporaryStorage(
+  inspection,
+  temporaryFilesystemOptions,
+) {
+  assertInvariant(
+    inspection.State.Health?.Status === "healthy",
+    "Docker health state is not healthy",
+  );
+  assertInvariant(
+    inspection.Config.Healthcheck?.Test?.[0] === "CMD-SHELL",
+    "image does not define a Docker health check",
+  );
+  assertInvariant(
+    inspection.Args.includes("--require-secure-cookies"),
+    "hardened smoke did not require secure cookies",
+  );
+  assertInvariant(
+    ["rw", "noexec", "nosuid", "nodev"].every((option) =>
+      temporaryFilesystemOptions.has(option),
+    ),
+    "temporary filesystem omitted a required hardening option",
+  );
+}
+
+/**
+ * Verify exclusive loopback publication and the exact persistent destinations.
+ *
+ * @param {string[]} publishedPorts - Published port names.
+ * @param {object} portBindings - Original host bindings.
+ * @param {string[]} persistentMountDestinations - Sorted persistent destinations.
+ * @returns {void} Completion of the security assertions.
+ */
+function verifySmokePublication(
+  publishedPorts,
+  portBindings,
+  persistentMountDestinations,
+) {
+  assertInvariant(
+    publishedPorts.length === 1 && publishedPorts[0] === "8000/tcp",
+    "container published an unexpected port",
+  );
+  assertInvariant(
+    portBindings["8000/tcp"]?.length === 1 &&
+      portBindings["8000/tcp"][0].HostIp === "127.0.0.1",
+    "application port is not bound exclusively to host loopback",
+  );
+  assertInvariant(
+    persistentMountDestinations.length === 2 &&
+      persistentMountDestinations[0] === "/app/data" &&
+      persistentMountDestinations[1] === "/run/secrets",
+    "container has an unexpected persistent mount",
+  );
+}
+
+/**
+ * Verify managed data and secret volume ownership and write boundaries.
+ *
+ * @param {object} dataMount - Managed data mount.
+ * @param {string[]} writableMountDestinations - Writable persistent destinations.
+ * @param {object} secretMount - Managed secret mount.
+ * @returns {void} Completion of the security assertions.
+ */
+function verifySmokeMountOwnership(
+  dataMount,
+  writableMountDestinations,
+  secretMount,
+) {
+  assertInvariant(
+    dataMount?.Type === "volume" && dataMount?.Name === volumeName,
+    "data mount is not the managed volume",
+  );
+  assertInvariant(
+    writableMountDestinations.length === 1 &&
+      writableMountDestinations[0] === "/app/data",
+    "persistent write access is not limited to application data",
+  );
+  assertInvariant(
+    secretMount?.Type === "volume" && secretMount?.Name === secretVolumeName,
+    "secret mount is not the managed volume",
+  );
+  assertInvariant(secretMount?.RW === false, "secret mount is not read-only");
+}
+
+/**
+ * Derive inspection inventories before applying ordered security assertions.
+ *
+ * @param {object} inspection - Container inspection.
+ * @param {string} imageId - Inspected content identity.
+ * @returns {void} Completion of environment and container security assertions.
+ */
+function verifySmokeInspection(inspection, imageId) {
+  const dataMount = inspection.Mounts.find(
+    (mount) => mount.Destination === "/app/data",
+  );
+  const secretMount = inspection.Mounts.find(
+    (mount) => mount.Destination === "/run/secrets",
+  );
+  const persistentMountDestinations = inspection.Mounts.map(
+    (mount) => mount.Destination,
+  ).sort();
+  const writableMountDestinations = inspection.Mounts.filter(
+    (mount) => mount.RW,
+  ).map((mount) => mount.Destination);
+  const temporaryFilesystemOptions = new Set(
+    (inspection.HostConfig.Tmpfs?.["/tmp"] ?? "").split(","),
+  );
+  const portBindings = inspection.HostConfig.PortBindings ?? {};
+  const publishedPorts = Object.keys(portBindings);
+  const configuredEnvironment = inspection.Config.Env ?? [];
+  assertInvariant(
+    configuredEnvironment.includes(
+      "LITRADAR_OBSCURA_PATH=/usr/local/bin/obscura",
+    ) &&
+      configuredEnvironment.includes(
+        "LITRADAR_PDFTOTEXT_PATH=/usr/bin/pdftotext",
+      ) &&
+      !configuredEnvironment.some((entry) =>
+        entry.startsWith("OBSCURA_ALLOW_PRIVATE_NETWORK="),
+      ),
+    "CFP helper paths or private-network defaults are incorrect",
+  );
+  const removedEnvironmentOverrides = configuredEnvironment.filter((entry) =>
+    REMOVED_APPLICATION_ENVIRONMENT_NAMES.some((name) =>
+      entry.startsWith(`${name}=`),
+    ),
+  );
+  verifySmokeProcessIsolation(inspection, imageId);
+  verifySmokeHealthAndTemporaryStorage(inspection, temporaryFilesystemOptions);
+  verifySmokePublication(
+    publishedPorts,
+    portBindings,
+    persistentMountDestinations,
+  );
+  verifySmokeMountOwnership(dataMount, writableMountDestinations, secretMount);
+  assertInvariant(
+    removedEnvironmentOverrides.length === 0,
+    "container declares removed application environment overrides",
+  );
+}
+
+/**
+ * Verify clean profile shutdown and listener closure before recording cancellation.
+ *
+ * @returns {Promise<void>} Completion of shutdown observations.
+ */
+async function verifySmokeProfileShutdown() {
+  const stopStarted = performance.now();
+  await runDocker(["stop", "--time", "10", containerName]);
+  const stopped = JSON.parse(
+    (await runDocker(["inspect", "--format", "{{json .State}}", containerName]))
+      .stdout,
+  );
+  assertInvariant(
+    stopped.ExitCode === 0 &&
+      !stopped.OOMKilled &&
+      !stopped.Running &&
+      stopped.Pid === 0,
+    "profile service did not exit cleanly after SIGTERM",
+  );
+  assertInvariant(
+    await waitForPortClosure(),
+    "profile service listener survived shutdown",
+  );
+  profile.cancellation = {
+    elapsedMs: performance.now() - stopStarted,
+    exitCode: stopped.ExitCode,
+    processGone: true,
+    listenerClosed: true,
+  };
+}
+
+/**
  * Execute the image security and HTTP probes.
  *
  * @param {string} imageReference - Local image tag.
@@ -1129,192 +1438,10 @@ async function runSmoke(imageReference) {
       fetchRuntime(`${baseUrl}/api/auth/me`),
       runDocker(["inspect", containerName]),
     ]);
-  assertInvariant(
-    rootResponse.ok,
-    `root endpoint returned ${rootResponse.status}`,
-  );
-  assertInvariant(
-    openApiResponse.ok,
-    `OpenAPI endpoint returned ${openApiResponse.status}`,
-  );
-  assertInvariant(
-    authResponse.status === 401,
-    `anonymous auth endpoint returned ${authResponse.status}`,
-  );
-  for (const response of [rootResponse, openApiResponse, authResponse]) {
-    assertSecurityHeaders(response, true);
-  }
-  assertInvariant(
-    rootResponse.headers.get("content-security-policy")?.includes("sha256-"),
-    "root CSP omitted exported inline script hashes",
-  );
-  assertInvariant(
-    authResponse.headers.get("cache-control") === "no-store" &&
-      authResponse.headers.get("pragma") === "no-cache",
-    "auth response was cacheable",
-  );
-  const rootBody = await rootResponse.text();
-  const openApi = await openApiResponse.json();
-  assertInvariant(
-    rootBody.includes("LitRadar"),
-    "root endpoint omitted the application marker",
-  );
-  assertInvariant(
-    openApi.openapi === "3.1.0",
-    "OpenAPI endpoint returned an unexpected document",
-  );
-  assertInvariant(
-    Boolean(openApi.paths?.["/health/ready"]),
-    "OpenAPI omitted readiness",
-  );
-
+  await verifySmokeHttpResponses(rootResponse, openApiResponse, authResponse);
   const [inspection] = JSON.parse(inspectResult.stdout);
-  const dataMount = inspection.Mounts.find(
-    (mount) => mount.Destination === "/app/data",
-  );
-  const secretMount = inspection.Mounts.find(
-    (mount) => mount.Destination === "/run/secrets",
-  );
-  const persistentMountDestinations = inspection.Mounts.map(
-    (mount) => mount.Destination,
-  ).sort();
-  const writableMountDestinations = inspection.Mounts.filter(
-    (mount) => mount.RW,
-  ).map((mount) => mount.Destination);
-  const temporaryFilesystemOptions = new Set(
-    (inspection.HostConfig.Tmpfs?.["/tmp"] ?? "").split(","),
-  );
-  const portBindings = inspection.HostConfig.PortBindings ?? {};
-  const publishedPorts = Object.keys(portBindings);
-  const configuredEnvironment = inspection.Config.Env ?? [];
-  assertInvariant(
-    configuredEnvironment.includes(
-      "LITRADAR_OBSCURA_PATH=/usr/local/bin/obscura",
-    ) &&
-      configuredEnvironment.includes(
-        "LITRADAR_PDFTOTEXT_PATH=/usr/bin/pdftotext",
-      ) &&
-      !configuredEnvironment.some((entry) =>
-        entry.startsWith("OBSCURA_ALLOW_PRIVATE_NETWORK="),
-      ),
-    "CFP helper paths or private-network defaults are incorrect",
-  );
-  const removedEnvironmentOverrides = configuredEnvironment.filter((entry) =>
-    REMOVED_APPLICATION_ENVIRONMENT_NAMES.some((name) =>
-      entry.startsWith(`${name}=`),
-    ),
-  );
-  assertInvariant(
-    inspection.Image === imageId,
-    "container did not use the inspected image ID",
-  );
-  assertInvariant(
-    inspection.HostConfig.ReadonlyRootfs === true,
-    "root filesystem is writable",
-  );
-  assertInvariant(
-    inspection.HostConfig.CapDrop?.some(
-      (capability) => capability.toUpperCase() === "ALL",
-    ),
-    "Linux capabilities were not dropped",
-  );
-  assertInvariant(
-    inspection.HostConfig.SecurityOpt?.some((option) =>
-      option.startsWith("no-new-privileges"),
-    ),
-    "no-new-privileges is missing",
-  );
-  assertInvariant(
-    !inspection.HostConfig.CapAdd || inspection.HostConfig.CapAdd.length === 0,
-    "container adds Linux capabilities",
-  );
-  assertInvariant(
-    inspection.Config.User === "10001:10001",
-    "container does not declare the fixed unprivileged UID/GID",
-  );
-  assertInvariant(
-    inspection.State.Health?.Status === "healthy",
-    "Docker health state is not healthy",
-  );
-  assertInvariant(
-    inspection.Config.Healthcheck?.Test?.[0] === "CMD-SHELL",
-    "image does not define a Docker health check",
-  );
-  assertInvariant(
-    inspection.Args.includes("--require-secure-cookies"),
-    "hardened smoke did not require secure cookies",
-  );
-  assertInvariant(
-    ["rw", "noexec", "nosuid", "nodev"].every((option) =>
-      temporaryFilesystemOptions.has(option),
-    ),
-    "temporary filesystem omitted a required hardening option",
-  );
-  assertInvariant(
-    publishedPorts.length === 1 && publishedPorts[0] === "8000/tcp",
-    "container published an unexpected port",
-  );
-  assertInvariant(
-    portBindings["8000/tcp"]?.length === 1 &&
-      portBindings["8000/tcp"][0].HostIp === "127.0.0.1",
-    "application port is not bound exclusively to host loopback",
-  );
-  assertInvariant(
-    persistentMountDestinations.length === 2 &&
-      persistentMountDestinations[0] === "/app/data" &&
-      persistentMountDestinations[1] === "/run/secrets",
-    "container has an unexpected persistent mount",
-  );
-  assertInvariant(
-    dataMount?.Type === "volume" && dataMount?.Name === volumeName,
-    "data mount is not the managed volume",
-  );
-  assertInvariant(
-    writableMountDestinations.length === 1 &&
-      writableMountDestinations[0] === "/app/data",
-    "persistent write access is not limited to application data",
-  );
-  assertInvariant(
-    secretMount?.Type === "volume" && secretMount?.Name === secretVolumeName,
-    "secret mount is not the managed volume",
-  );
-  assertInvariant(secretMount?.RW === false, "secret mount is not read-only");
-  assertInvariant(
-    removedEnvironmentOverrides.length === 0,
-    "container declares removed application environment overrides",
-  );
-
-  if (profile) {
-    const stopStarted = performance.now();
-    await runDocker(["stop", "--time", "10", containerName]);
-    const stopped = JSON.parse(
-      (
-        await runDocker([
-          "inspect",
-          "--format",
-          "{{json .State}}",
-          containerName,
-        ])
-      ).stdout,
-    );
-    assertInvariant(
-      stopped.ExitCode === 0 &&
-        !stopped.OOMKilled &&
-        !stopped.Running &&
-        stopped.Pid === 0,
-      "profile service did not exit cleanly after SIGTERM",
-    );
-    assertInvariant(
-      await waitForPortClosure(),
-      "profile service listener survived shutdown",
-    );
-    profile.cancellation = {
-      elapsedMs: performance.now() - stopStarted,
-      exitCode: stopped.ExitCode,
-      processGone: true,
-      listenerClosed: true,
-    };
-  }
+  verifySmokeInspection(inspection, imageId);
+  if (profile) await verifySmokeProfileShutdown();
   return {
     status: "passed",
     imageReference,
