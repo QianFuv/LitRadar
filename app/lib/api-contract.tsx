@@ -390,6 +390,45 @@ function isTrackingStatus(value: unknown): value is TrackingStatus {
 }
 
 /**
+ * Validate push identity and the declared state before lifecycle fields.
+ */
+function hasManualPushIdentity(value: Record<string, unknown>): boolean {
+  return (
+    isNullableString(value.job_id) &&
+    isManualPushState(value.status) &&
+    typeof value.message === 'string'
+  );
+}
+
+/**
+ * Validate nullable timestamps and cancellation capabilities.
+ */
+function hasManualPushLifecycle(value: Record<string, unknown>): boolean {
+  return (
+    isNullableNumber(value.started_at) &&
+    isNullableNumber(value.finished_at) &&
+    isNullableNumber(value.deadline_at) &&
+    typeof value.cancellation_requested === 'boolean' &&
+    typeof value.can_cancel === 'boolean' &&
+    typeof value.can_retry === 'boolean'
+  );
+}
+
+/**
+ * Validate push counts, summary and nullable destination metadata.
+ */
+function hasManualPushDelivery(value: Record<string, unknown>): boolean {
+  return (
+    isNumber(value.pushed) &&
+    isNumber(value.selected) &&
+    isNullableNumber(value.total_candidates) &&
+    typeof value.summary === 'string' &&
+    isNullableNumber(value.folder_id) &&
+    isNullableString(value.folder_name)
+  );
+}
+
+/**
  * Return whether a value is a manual background push status.
  *
  * @param value - Value to inspect.
@@ -398,21 +437,9 @@ function isTrackingStatus(value: unknown): value is TrackingStatus {
 function isManualPushStatus(value: unknown): value is ManualPushStatus {
   return (
     isRecord(value) &&
-    isNullableString(value.job_id) &&
-    isManualPushState(value.status) &&
-    typeof value.message === 'string' &&
-    isNullableNumber(value.started_at) &&
-    isNullableNumber(value.finished_at) &&
-    isNullableNumber(value.deadline_at) &&
-    typeof value.cancellation_requested === 'boolean' &&
-    typeof value.can_cancel === 'boolean' &&
-    typeof value.can_retry === 'boolean' &&
-    isNumber(value.pushed) &&
-    isNumber(value.selected) &&
-    isNullableNumber(value.total_candidates) &&
-    typeof value.summary === 'string' &&
-    isNullableNumber(value.folder_id) &&
-    isNullableString(value.folder_name)
+    hasManualPushIdentity(value) &&
+    hasManualPushLifecycle(value) &&
+    hasManualPushDelivery(value)
   );
 }
 
@@ -452,23 +479,35 @@ const NOTIFICATION_STRING_FIELDS = [
 ] as const;
 
 /**
- * Return whether a value is a notification settings response.
- *
- * @param value - Value to inspect.
- * @returns Whether the value matches the generated secret-setting contract.
+ * Validate notification ownership and ordered selection arrays.
  */
-function isNotificationSettings(value: unknown): value is NotificationSettings {
+function hasNotificationSelection(value: Record<string, unknown>): boolean {
   return (
-    isRecord(value) &&
     isNumber(value.id) &&
     isNumber(value.user_id) &&
     isStringArray(value.keywords) &&
     isStringArray(value.directions) &&
-    isStringArray(value.selected_databases) &&
+    isStringArray(value.selected_databases)
+  );
+}
+
+/**
+ * Reject plaintext secret properties and require masked string fields.
+ */
+function hasRedactedNotificationFields(value: Record<string, unknown>): boolean {
+  return (
     !('pushplus_token' in value) &&
     !('ai_api_key' in value) &&
     !('ai_backup_api_key' in value) &&
-    NOTIFICATION_STRING_FIELDS.every((field) => typeof value[field] === 'string') &&
+    NOTIFICATION_STRING_FIELDS.every((field) => typeof value[field] === 'string')
+  );
+}
+
+/**
+ * Validate stored-secret flags, delivery controls and timestamps.
+ */
+function hasNotificationLifecycle(value: Record<string, unknown>): boolean {
+  return (
     typeof value.has_pushplus_token === 'boolean' &&
     typeof value.has_ai_api_key === 'boolean' &&
     typeof value.has_ai_backup_api_key === 'boolean' &&
@@ -477,6 +516,21 @@ function isNotificationSettings(value: unknown): value is NotificationSettings {
     typeof value.enabled === 'boolean' &&
     isNumber(value.created_at) &&
     isNumber(value.updated_at)
+  );
+}
+
+/**
+ * Return whether a value is a notification settings response.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether the value matches the generated secret-setting contract.
+ */
+function isNotificationSettings(value: unknown): value is NotificationSettings {
+  return (
+    isRecord(value) &&
+    hasNotificationSelection(value) &&
+    hasRedactedNotificationFields(value) &&
+    hasNotificationLifecycle(value)
   );
 }
 
@@ -527,6 +581,145 @@ function isRuntimeControlValue(control: string, value: string): boolean {
 }
 
 /**
+ * Recognize controls whose metadata belongs to Provider routing.
+ */
+function isProviderRuntimeControl(control: string): boolean {
+  return (
+    control === 'index_provider_routes' ||
+    control === 'provider_order' ||
+    control === 'provider_proxy_policy'
+  );
+}
+
+/**
+ * Validate reserved field-to-control bindings in their original order.
+ */
+function hasRuntimeControlBinding(field: string, control: string): boolean {
+  return !(
+    (field === 'index_provider_routes' && control !== 'index_provider_routes') ||
+    ((field === 'article_abstract_provider_orders' ||
+      field === 'article_fulltext_provider_orders') &&
+      control !== 'provider_order') ||
+    (field === 'provider_proxy_policy' && control !== 'provider_proxy_policy') ||
+    (control === 'provider_proxy_policy' && field !== 'provider_proxy_policy')
+  );
+}
+
+/**
+ * Require Provider controls to declare the routing metadata group.
+ */
+function hasRuntimeRoutingGroup(
+  value: Record<string, unknown>,
+  isProviderControl: boolean,
+): boolean {
+  return !(isProviderControl && value.group !== 'provider_routing');
+}
+
+/**
+ * Require the scalar proxy URL to remain a restart-applied password secret.
+ */
+function hasRuntimeProxyUrlMetadata(
+  value: Record<string, unknown>,
+  field: string,
+  control: string,
+  inputType: string,
+  isSecret: boolean,
+): boolean {
+  return !(
+    field === 'provider_proxy_url' &&
+    (control !== 'text' ||
+      value.group !== 'source_access' ||
+      value.apply_mode !== 'restart_required' ||
+      inputType !== 'password' ||
+      !isSecret)
+  );
+}
+
+/**
+ * Require proxy policy metadata to be non-secret restart-applied text.
+ */
+function hasRuntimeProxyPolicyMetadata(
+  value: Record<string, unknown>,
+  control: string,
+  inputType: string,
+  isSecret: boolean,
+  allowedValues: string[],
+): boolean {
+  return !(
+    control === 'provider_proxy_policy' &&
+    (value.apply_mode !== 'restart_required' ||
+      inputType !== 'text' ||
+      isSecret ||
+      allowedValues.length !== 0)
+  );
+}
+
+/**
+ * Validate boolean input pairing and ordered boolean or select options.
+ */
+function hasRuntimeControlOptions(
+  control: string,
+  inputType: string,
+  allowedValues: string[],
+): boolean {
+  if ((control === 'boolean') !== (inputType === 'boolean')) {
+    return false;
+  }
+  if (control === 'boolean') {
+    if (allowedValues.length !== 2 || allowedValues[0] !== 'true' || allowedValues[1] !== 'false') {
+      return false;
+    }
+  }
+  if (control === 'select' && allowedValues.length === 0) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Validate secret pool redaction, empty effective value and item presence.
+ */
+function hasSecretPoolRuntimeMetadata(
+  value: Record<string, unknown>,
+  inputType: string,
+  isSecret: boolean,
+  hasValue: boolean,
+  allowedValues: string[],
+  secretItems: RuntimeSecretItemInfo[],
+): boolean {
+  return (
+    isSecret &&
+    inputType === 'password' &&
+    allowedValues.length === 0 &&
+    value.value === '' &&
+    (hasValue
+      ? value.masked_value === '••••' && secretItems.length > 0
+      : value.masked_value === '' && secretItems.length === 0)
+  );
+}
+
+/**
+ * Validate scalar secret redaction without exposing a value or pool items.
+ */
+function hasScalarSecretRuntimeMetadata(
+  value: Record<string, unknown>,
+  inputType: string,
+  hasValue: boolean,
+  allowedValues: string[],
+  secretItems: RuntimeSecretItemInfo[],
+  control: string,
+): boolean {
+  return (
+    control === 'text' &&
+    inputType === 'password' &&
+    allowedValues.length === 0 &&
+    value.value === '' &&
+    secretItems.length === 0 &&
+    value.masked_value === (hasValue ? '••••' : '')
+  );
+}
+
+/**
  * Return whether runtime metadata is internally consistent and secret-safe.
  *
  * @param value - Runtime setting descriptor.
@@ -540,77 +733,89 @@ function isConsistentRuntimeMetadata(value: Record<string, unknown>): boolean {
   const hasValue = value.has_value === true;
   const allowedValues = value.allowed_values as string[];
   const secretItems = value.secret_items as RuntimeSecretItemInfo[];
-  const isProviderControl =
-    control === 'index_provider_routes' ||
-    control === 'provider_order' ||
-    control === 'provider_proxy_policy';
-
+  const isProviderControl = isProviderRuntimeControl(control);
   if (
-    (field === 'index_provider_routes' && control !== 'index_provider_routes') ||
-    ((field === 'article_abstract_provider_orders' ||
-      field === 'article_fulltext_provider_orders') &&
-      control !== 'provider_order') ||
-    (field === 'provider_proxy_policy' && control !== 'provider_proxy_policy') ||
-    (control === 'provider_proxy_policy' && field !== 'provider_proxy_policy')
+    !hasRuntimeControlBinding(field, control) ||
+    !hasRuntimeRoutingGroup(value, isProviderControl) ||
+    !hasRuntimeProxyUrlMetadata(value, field, control, inputType, isSecret) ||
+    !hasRuntimeProxyPolicyMetadata(value, control, inputType, isSecret, allowedValues) ||
+    !hasRuntimeControlOptions(control, inputType, allowedValues)
   ) {
-    return false;
-  }
-
-  if (isProviderControl && value.group !== 'provider_routing') {
-    return false;
-  }
-  if (
-    field === 'provider_proxy_url' &&
-    (control !== 'text' ||
-      value.group !== 'source_access' ||
-      value.apply_mode !== 'restart_required' ||
-      inputType !== 'password' ||
-      !isSecret)
-  ) {
-    return false;
-  }
-  if (
-    control === 'provider_proxy_policy' &&
-    (value.apply_mode !== 'restart_required' ||
-      inputType !== 'text' ||
-      isSecret ||
-      allowedValues.length !== 0)
-  ) {
-    return false;
-  }
-  if ((control === 'boolean') !== (inputType === 'boolean')) {
-    return false;
-  }
-  if (control === 'boolean') {
-    if (allowedValues.length !== 2 || allowedValues[0] !== 'true' || allowedValues[1] !== 'false') {
-      return false;
-    }
-  }
-  if (control === 'select' && allowedValues.length === 0) {
     return false;
   }
   if (control === 'secret_pool') {
-    return (
-      isSecret &&
-      inputType === 'password' &&
-      allowedValues.length === 0 &&
-      value.value === '' &&
-      (hasValue
-        ? value.masked_value === '••••' && secretItems.length > 0
-        : value.masked_value === '' && secretItems.length === 0)
+    return hasSecretPoolRuntimeMetadata(
+      value,
+      inputType,
+      isSecret,
+      hasValue,
+      allowedValues,
+      secretItems,
     );
   }
   if (isSecret) {
-    return (
-      control === 'text' &&
-      inputType === 'password' &&
-      allowedValues.length === 0 &&
-      value.value === '' &&
-      secretItems.length === 0 &&
-      value.masked_value === (hasValue ? '••••' : '')
+    return hasScalarSecretRuntimeMetadata(
+      value,
+      inputType,
+      hasValue,
+      allowedValues,
+      secretItems,
+      control,
     );
   }
   return value.masked_value === '' && secretItems.length === 0;
+}
+
+/**
+ * Validate runtime names and nonempty descriptive metadata.
+ */
+function hasRuntimeSettingIdentity(value: Record<string, unknown>): boolean {
+  return (
+    isSafeRuntimeName(value.field) &&
+    typeof value.label === 'string' &&
+    value.label.length > 0 &&
+    typeof value.description === 'string' &&
+    value.description.length > 0 &&
+    isRuntimeSettingGroup(value.group)
+  );
+}
+
+/**
+ * Validate control metadata, unique options and supported input types.
+ */
+function hasRuntimeSettingControls(value: Record<string, unknown>): boolean {
+  return (
+    isSafeRuntimeName(value.control) &&
+    isRuntimeSettingApplyMode(value.apply_mode) &&
+    isStringArray(value.allowed_values) &&
+    new Set(value.allowed_values).size === value.allowed_values.length &&
+    ['text', 'password', 'email', 'boolean', 'number', 'url'].includes(String(value.input_type))
+  );
+}
+
+/**
+ * Validate values, redaction descriptors and persistence metadata.
+ */
+function hasRuntimeSettingStorage(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.is_secret === 'boolean' &&
+    typeof value.value === 'string' &&
+    typeof value.has_value === 'boolean' &&
+    typeof value.masked_value === 'string' &&
+    isArrayOf(value.secret_items, isRuntimeSecretItemInfo) &&
+    ['database', 'default'].includes(String(value.source)) &&
+    isNullableNumber(value.updated_at)
+  );
+}
+
+/**
+ * Validate specialized values before checking cross-field consistency.
+ */
+function hasValidRuntimeSettingMetadata(value: Record<string, unknown>): boolean {
+  return (
+    isRuntimeControlValue(value.control as string, value.value as string) &&
+    isConsistentRuntimeMetadata(value)
+  );
 }
 
 /**
@@ -622,26 +827,10 @@ function isConsistentRuntimeMetadata(value: Record<string, unknown>): boolean {
 function isRuntimeSettingInfo(value: unknown): value is RuntimeSettingInfo {
   return (
     isRecord(value) &&
-    isSafeRuntimeName(value.field) &&
-    typeof value.label === 'string' &&
-    value.label.length > 0 &&
-    typeof value.description === 'string' &&
-    value.description.length > 0 &&
-    isRuntimeSettingGroup(value.group) &&
-    isSafeRuntimeName(value.control) &&
-    isRuntimeSettingApplyMode(value.apply_mode) &&
-    isStringArray(value.allowed_values) &&
-    new Set(value.allowed_values).size === value.allowed_values.length &&
-    ['text', 'password', 'email', 'boolean', 'number', 'url'].includes(String(value.input_type)) &&
-    typeof value.is_secret === 'boolean' &&
-    typeof value.value === 'string' &&
-    typeof value.has_value === 'boolean' &&
-    typeof value.masked_value === 'string' &&
-    isArrayOf(value.secret_items, isRuntimeSecretItemInfo) &&
-    ['database', 'default'].includes(String(value.source)) &&
-    isNullableNumber(value.updated_at) &&
-    isRuntimeControlValue(value.control, value.value) &&
-    isConsistentRuntimeMetadata(value)
+    hasRuntimeSettingIdentity(value) &&
+    hasRuntimeSettingControls(value) &&
+    hasRuntimeSettingStorage(value) &&
+    hasValidRuntimeSettingMetadata(value)
   );
 }
 
@@ -664,19 +853,25 @@ function isProviderCapabilityInfo(value: unknown): value is ProviderCapabilityIn
 }
 
 /**
+ * Validate exact catalog keys and safe nullable filename fields.
+ */
+function hasProviderCatalogFields(value: Record<string, unknown>): boolean {
+  return !(
+    !hasExactKeys(value, ['stem', 'csv_filename', 'database_filename']) ||
+    !isSafeRuntimeName(value.stem) ||
+    !isNullableString(value.csv_filename) ||
+    !isNullableString(value.database_filename)
+  );
+}
+
+/**
  * Return whether a value is safe catalog filename metadata.
  *
  * @param value - Value to inspect.
  * @returns Whether filenames are basenames matching the canonical catalog stem.
  */
 function isProviderCatalogInfo(value: unknown): value is ProviderCatalogInfo {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ['stem', 'csv_filename', 'database_filename']) ||
-    !isSafeRuntimeName(value.stem) ||
-    !isNullableString(value.csv_filename) ||
-    !isNullableString(value.database_filename)
-  ) {
+  if (!isRecord(value) || !hasProviderCatalogFields(value)) {
     return false;
   }
   return (
@@ -708,6 +903,33 @@ function isProviderCatalogResponse(value: unknown): value is ProviderCatalogResp
 }
 
 /**
+ * Validate cron, timezone and the integer timeout boundaries.
+ */
+function hasScheduledTaskTiming(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.cron === 'string' &&
+    typeof value.timezone === 'string' &&
+    Number.isInteger(value.timeout_seconds) &&
+    Number(value.timeout_seconds) >= 1 &&
+    Number(value.timeout_seconds) <= 86_400
+  );
+}
+
+/**
+ * Validate scheduling flags, latest status and persistence timestamps.
+ */
+function hasScheduledTaskLifecycle(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.coalesce === 'boolean' &&
+    typeof value.enabled === 'boolean' &&
+    isNullableNumber(value.last_run_at) &&
+    isSchedulerRunState(value.last_status) &&
+    isNumber(value.created_at) &&
+    isNumber(value.updated_at)
+  );
+}
+
+/**
  * Return whether a value is one scheduled task response.
  *
  * @param value - Value to inspect.
@@ -723,17 +945,8 @@ function isScheduledTaskInfo(value: unknown): value is ScheduledTaskInfo {
     isNumber(value.id) &&
     typeof value.name === 'string' &&
     (hasTypedJob || hasLegacyCommand) &&
-    typeof value.cron === 'string' &&
-    typeof value.timezone === 'string' &&
-    Number.isInteger(value.timeout_seconds) &&
-    Number(value.timeout_seconds) >= 1 &&
-    Number(value.timeout_seconds) <= 86_400 &&
-    typeof value.coalesce === 'boolean' &&
-    typeof value.enabled === 'boolean' &&
-    isNullableNumber(value.last_run_at) &&
-    isSchedulerRunState(value.last_status) &&
-    isNumber(value.created_at) &&
-    isNumber(value.updated_at)
+    hasScheduledTaskTiming(value) &&
+    hasScheduledTaskLifecycle(value)
   );
 }
 
@@ -811,6 +1024,27 @@ function isSchedulerStatus(value: unknown): value is SchedulerStatus {
 }
 
 /**
+ * Validate present index job options, retaining omission and null rules.
+ */
+function hasIndexJobFields(value: Record<string, unknown>): boolean {
+  return (
+    (!('metadata_file' in value) || isNullableString(value.metadata_file)) &&
+    (!('notify' in value) || typeof value.notify === 'boolean') &&
+    (!('push' in value) || typeof value.push === 'boolean')
+  );
+}
+
+/**
+ * Validate present delivery job database and candidate options.
+ */
+function hasDeliveryJobFields(value: Record<string, unknown>): boolean {
+  return (
+    (!('database' in value) || isNullableString(value.database)) &&
+    (!('max_candidates' in value) || isNullableNumber(value.max_candidates))
+  );
+}
+
+/**
  * Return whether a value is one strictly typed scheduler job.
  *
  * @param value - Value to inspect.
@@ -821,17 +1055,10 @@ function isScheduledJobSpec(value: unknown): value is ScheduledJobSpec {
     return false;
   }
   if (value.kind === 'index') {
-    return (
-      (!('metadata_file' in value) || isNullableString(value.metadata_file)) &&
-      (!('notify' in value) || typeof value.notify === 'boolean') &&
-      (!('push' in value) || typeof value.push === 'boolean')
-    );
+    return hasIndexJobFields(value);
   }
   if (value.kind === 'notify' || value.kind === 'push') {
-    return (
-      (!('database' in value) || isNullableString(value.database)) &&
-      (!('max_candidates' in value) || isNullableNumber(value.max_candidates))
-    );
+    return hasDeliveryJobFields(value);
   }
   return false;
 }
