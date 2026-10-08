@@ -119,7 +119,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
           className="space-y-4"
           variants={{
             ...FADE_UP_VARIANTS,
-            visible: { ...FADE_UP_VARIANTS.visible, pointerEvents: 'auto' },
+            visible: { ...FADE_UP_VARIANTS.visible, pointerEvents: 'inherit' },
           }}
           initial="hidden"
           animate="visible"
