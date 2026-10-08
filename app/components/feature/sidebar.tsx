@@ -299,7 +299,6 @@ function useSidebarViewState({ className }: { className?: string }) {
   const {
     defaultStartMonth,
     defaultEndMonth,
-    selectedMonthRange,
     selectedStartMonth,
     selectedEndMonth,
     yearOptions,
@@ -797,7 +796,6 @@ function getSidebarMonthValues(
   return {
     defaultStartMonth,
     defaultEndMonth,
-    selectedMonthRange,
     selectedStartMonth,
     selectedEndMonth,
     yearOptions,
