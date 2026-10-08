@@ -175,13 +175,31 @@ function extractErrorInfo(payload: unknown, fallback: string): ApiErrorInfo {
       return { code: topLevelCode, message: detail, phase: null, retryable };
     }
     if (isRecord(detail)) {
-      const code = typeof detail.code === 'string' ? detail.code : topLevelCode;
-      const message = typeof detail.message === 'string' ? detail.message : fallback;
-      const phase = typeof detail.phase === 'string' ? detail.phase : null;
-      return { code, message, phase, retryable };
+      return extractDetailedErrorInfo(detail, fallback, topLevelCode, retryable);
     }
   }
   return { code: null, message: fallback, phase: null, retryable: false };
+}
+
+/**
+ * Read a structured detail envelope with nested strings taking precedence.
+ *
+ * @param detail - Admitted object-valued detail, including array records.
+ * @param fallback - Message when the nested message is not a string.
+ * @param topLevelCode - Code retained when the nested code is not a string.
+ * @param retryable - Strict top-level retry decision.
+ * @returns Error fields without trimming or coercing nested values.
+ */
+function extractDetailedErrorInfo(
+  detail: Record<string, unknown>,
+  fallback: string,
+  topLevelCode: string | null,
+  retryable: boolean,
+): ApiErrorInfo {
+  const code = typeof detail.code === 'string' ? detail.code : topLevelCode;
+  const message = typeof detail.message === 'string' ? detail.message : fallback;
+  const phase = typeof detail.phase === 'string' ? detail.phase : null;
+  return { code, message, phase, retryable };
 }
 
 /**
