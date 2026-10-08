@@ -29,7 +29,11 @@ func TestBundledSeedResumesHistoricalLineEndings(t *testing.T) {
 	}{{"unix", canonical, true}, {"windows", bytes.ReplaceAll(canonical, []byte("\n"), []byte("\r\n")), true}, {"different-content", append(append([]byte{}, canonical...), ' '), false}} {
 		t.Run(scenario.name, func(t *testing.T) {
 			repository := workerRepository(t, "")
-			original, err := repository.ImportSeed(context.Background(), assets.SeedId, scenario.payload)
+			seed, err := storage.PrepareSeed(scenario.payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			original, err := repository.ImportPrepared(context.Background(), assets.SeedId, seed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,7 +45,7 @@ func TestBundledSeedResumesHistoricalLineEndings(t *testing.T) {
 			} else if err == nil {
 				t.Fatal("arbitrary changed bytes accepted")
 			}
-			repeated, err := repository.ImportSeed(context.Background(), assets.SeedId, scenario.payload)
+			repeated, err := repository.ImportPrepared(context.Background(), assets.SeedId, seed)
 			if err != nil || repeated.DidImport || repeated.ContentHash != original.ContentHash {
 				t.Fatal("historical marker rewritten", repeated, err)
 			}
