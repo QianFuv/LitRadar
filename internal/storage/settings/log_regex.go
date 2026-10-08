@@ -664,7 +664,7 @@ func (parser *logRegexParser) posixClass(flags logRegexFlags) (logRegexAtom, boo
 	return result, true
 }
 
-// posixByteMatches separates character categories from formatting/control byte classes.
+// posixByteMatches defines the byte membership of each supported POSIX class.
 func posixByteMatches(name string, index int) bool {
 	switch name {
 	case "alnum":
@@ -681,14 +681,6 @@ func posixByteMatches(name string, index int) bool {
 		return isAsciiAlphanumeric(rune(index)) || index == '_'
 	case "xdigit":
 		return isAsciiHexDigit(rune(index))
-	default:
-		return posixLayoutByteMatches(name, index)
-	}
-}
-
-// posixLayoutByteMatches retains ASCII whitespace, controls and printable character ranges.
-func posixLayoutByteMatches(name string, index int) bool {
-	switch name {
 	case "ascii":
 		return index < 128
 	case "blank":
@@ -697,14 +689,6 @@ func posixLayoutByteMatches(name string, index int) bool {
 		return index < 32 || index == 127
 	case "space":
 		return strings.ContainsRune(" \t\n\r\v\f", rune(index))
-	default:
-		return posixPrintableByteMatches(name, index)
-	}
-}
-
-// posixPrintableByteMatches distinguishes space-inclusive printing from graphic punctuation.
-func posixPrintableByteMatches(name string, index int) bool {
-	switch name {
 	case "graph":
 		return index >= 33 && index <= 126
 	case "print":
