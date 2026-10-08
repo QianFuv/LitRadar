@@ -93,6 +93,82 @@ export async function github(resource) {
   assert(response.ok, `GitHub metadata request failed: ${response.status}`);
   return response.json();
 }
+/** Read release and tag metadata together, then validate the exact commit identity. */
+async function readReleaseContext(tag, commit) {
+  const [release, reference] = await Promise.all([
+    findRelease(tag),
+    github(`git/ref/tags/${tag}`),
+  ]);
+  const tagged = reference ? await github(`commits/${tag}`) : null;
+  const published = validateReleaseIdentity(release, tagged?.sha, commit);
+  return { release, published };
+}
+
+/** Append verified Windows assets while preserving every existing published asset. */
+async function appendWindowsRelease(
+  release,
+  tag,
+  version,
+  commit,
+  published,
+  gh,
+) {
+  assert(published, "Windows supplement requires a published release");
+  const directory = "release-results/windows/assets";
+  const summary = JSON.parse(
+    fs.readFileSync("release-results/windows/smoke/summary.json", "utf8"),
+  );
+  assert.equal(summary.status, "passed");
+  assert.equal(summary.sourceCommit, commit);
+  assert.equal(summary.version, version);
+  const assets = validateAssets(directory, version, true);
+  for (const asset of pendingWindowsAssets(release, assets))
+    gh("release", "upload", tag, path.join(directory, asset.name));
+  const updated = await findRelease(tag);
+  assert.equal(
+    updated.id,
+    release.id,
+    "Release identity changed during supplement",
+  );
+  assert.deepEqual(pendingWindowsAssets(updated, assets), []);
+  for (const original of release.assets) {
+    const current = updated.assets.find((asset) => asset.id === original.id);
+    assert(
+      current &&
+        current.name === original.name &&
+        current.digest === original.digest &&
+        current.size === original.size,
+      "Existing release asset changed",
+    );
+  }
+  return;
+}
+
+/** Validate all release assets before creating or refreshing the matching draft. */
+function prepareRelease(release, tag, version, commit, gh) {
+  const directory = "release-results/assets";
+  const files = validateAssets(directory, version).map((asset) => asset.name);
+  if (!release) {
+    gh(
+      "release",
+      "create",
+      tag,
+      "--target",
+      commit,
+      "--title",
+      `LitRadar ${tag}`,
+      "--draft",
+      "--generate-notes",
+    );
+  }
+  gh(
+    "release",
+    "upload",
+    tag,
+    ...files.map((file) => path.join(directory, file)),
+    "--clobber",
+  );
+}
 
 /** Run release commands only for this version and immutable commit identity. */
 async function main() {
@@ -107,12 +183,7 @@ async function main() {
   const commit = process.env.RELEASE_SOURCE_SHA || process.env.GITHUB_SHA;
   assert.match(commit, /^[a-f0-9]{40}$/);
   assert(process.env.GH_TOKEN && process.env.GITHUB_REPOSITORY);
-  const [release, reference] = await Promise.all([
-    findRelease(tag),
-    github(`git/ref/tags/${tag}`),
-  ]);
-  const tagged = reference ? await github(`commits/${tag}`) : null;
-  const published = validateReleaseIdentity(release, tagged?.sha, commit);
+  const { release, published } = await readReleaseContext(tag, commit);
   if (mode === "check") {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `published=${published}\n`);
     return;
@@ -120,60 +191,11 @@ async function main() {
   const gh = (...args) =>
     execFileSync("gh", args, { stdio: "inherit", timeout: 300000 });
   if (mode === "append-windows") {
-    assert(published, "Windows supplement requires a published release");
-    const directory = "release-results/windows/assets";
-    const summary = JSON.parse(
-      fs.readFileSync("release-results/windows/smoke/summary.json", "utf8"),
-    );
-    assert.equal(summary.status, "passed");
-    assert.equal(summary.sourceCommit, commit);
-    assert.equal(summary.version, version);
-    const assets = validateAssets(directory, version, true);
-    for (const asset of pendingWindowsAssets(release, assets))
-      gh("release", "upload", tag, path.join(directory, asset.name));
-    const updated = await findRelease(tag);
-    assert.equal(
-      updated.id,
-      release.id,
-      "Release identity changed during supplement",
-    );
-    assert.deepEqual(pendingWindowsAssets(updated, assets), []);
-    for (const original of release.assets) {
-      const current = updated.assets.find((asset) => asset.id === original.id);
-      assert(
-        current &&
-          current.name === original.name &&
-          current.digest === original.digest &&
-          current.size === original.size,
-        "Existing release asset changed",
-      );
-    }
-    return;
+    return appendWindowsRelease(release, tag, version, commit, published, gh);
   }
   if (published) return;
   if (mode === "prepare") {
-    const directory = "release-results/assets";
-    const files = validateAssets(directory, version).map((asset) => asset.name);
-    if (!release) {
-      gh(
-        "release",
-        "create",
-        tag,
-        "--target",
-        commit,
-        "--title",
-        `LitRadar ${tag}`,
-        "--draft",
-        "--generate-notes",
-      );
-    }
-    gh(
-      "release",
-      "upload",
-      tag,
-      ...files.map((file) => path.join(directory, file)),
-      "--clobber",
-    );
+    prepareRelease(release, tag, version, commit, gh);
   } else {
     assert(release?.draft, "Prepare the release before publishing");
     gh("release", "edit", tag, "--draft=false", "--latest=false");

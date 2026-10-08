@@ -17,12 +17,481 @@ import {
   detectRelease,
   parseVersion,
   versionChange,
+  compareVersions,
 } from "../scripts/release-version.mjs";
 import {
   findRelease,
   latestRelease,
   validateReleaseIdentity,
 } from "../scripts/release-github.mjs";
+
+const RELEASE_COMMIT = "a".repeat(40);
+const WINDOWS_ASSETS = [
+  {
+    name: "litradar_0.2.0_windows_amd64.zip",
+    digest: `sha256:${"b".repeat(64)}`,
+    size: 100,
+  },
+  {
+    name: "litradar_0.2.0_windows_amd64.zip.sha256",
+    digest: `sha256:${"c".repeat(64)}`,
+    size: 80,
+  },
+];
+
+/** Return controlled HTTP metadata without permitting any real network operation. */
+function releaseMetadataResponse(reply, events) {
+  const status = reply?.httpStatus ?? (reply === null ? 404 : 200);
+  /** Observe decoding so absent and failed HTTP responses cannot silently read bodies. */
+  async function decodeMetadata() {
+    events.push(["decode", status]);
+    if (reply?.jsonError) throw new SyntaxError(reply.jsonError);
+    return reply;
+  }
+  return { status, ok: status >= 200 && status < 300, json: decodeMetadata };
+}
+
+/** Execute the real CLI functions with every external boundary replaced by a local mock. */
+function createReleaseHarness(
+  mode,
+  replies,
+  {
+    summary = {
+      status: "passed",
+      sourceCommit: RELEASE_COMMIT,
+      version: "0.2.0",
+    },
+    assets = WINDOWS_ASSETS,
+    failCommand = null,
+    envOverrides = {},
+  } = {},
+) {
+  const events = [];
+  const environment = {
+    GH_TOKEN: "fixture-token",
+    GITHUB_REPOSITORY: "Fixture/Repository",
+    GITHUB_API_URL: "https://api.example",
+    RELEASE_VERSION: "0.2.0",
+    RELEASE_SOURCE_SHA: RELEASE_COMMIT,
+    GITHUB_OUTPUT: "fixture-output",
+    ...envOverrides,
+  };
+  /** Consume only explicitly supplied metadata responses and inspect authorization. */
+  async function fetchMetadata(url, options) {
+    const prefix = "https://api.example/repos/Fixture/Repository/";
+    assert(url.startsWith(prefix));
+    assert.deepEqual(options.headers, {
+      Authorization: "Bearer fixture-token",
+      Accept: "application/vnd.github+json",
+    });
+    assert(options.signal instanceof AbortSignal);
+    const resource = url.slice(prefix.length);
+    events.push(["request", resource]);
+    const queue = replies[resource];
+    assert(queue?.length, `Unexpected metadata request: ${resource}`);
+    return releaseMetadataResponse(queue.shift(), events);
+  }
+  /** Record commands without spawning a process or publishing release state. */
+  function executeCommand(command, args, options) {
+    assert.deepEqual(options, { stdio: "inherit", timeout: 300000 });
+    events.push(["command", command, ...args]);
+    if (failCommand && failCommand(command, args))
+      throw new Error("Fixture command failed");
+  }
+  /** Admit only the supplement summary read at its exact relative path. */
+  function readSummary(filename, encoding) {
+    assert.equal(filename, "release-results/windows/smoke/summary.json");
+    assert.equal(encoding, "utf8");
+    events.push(["summary"]);
+    return JSON.stringify(summary);
+  }
+  /** Record exact check output instead of writing a workflow output file. */
+  function appendOutput(filename, value) {
+    assert.equal(filename, "fixture-output");
+    events.push(["output", value]);
+  }
+  /** Observe validation before release commands while supplying fixture-verified asset metadata. */
+  function validateFixtureAssets(directory, version, windowsOnly = false) {
+    assert.equal(version, "0.2.0");
+    events.push(["validate", directory, windowsOnly]);
+    return assets;
+  }
+  const source = fs
+    .readFileSync(
+      new URL("../scripts/release-github.mjs", import.meta.url),
+      "utf8",
+    )
+    .replace(/^import .+;\r?$/gm, "")
+    .replace(/^export /gm, "");
+  const entry = source.lastIndexOf("\nif (process.argv[1]");
+  assert(
+    entry > 0,
+    "CLI entry must be isolated before executing mocked functions",
+  );
+  const load = new Function(
+    "assert",
+    "execFileSync",
+    "fs",
+    "path",
+    "parseVersion",
+    "pendingWindowsAssets",
+    "validateAssets",
+    "compareVersions",
+    "process",
+    "fetch",
+    source.slice(0, entry) + "\nreturn {main, github};",
+  );
+  const functions = load(
+    assert,
+    executeCommand,
+    { readFileSync: readSummary, appendFileSync: appendOutput },
+    path,
+    parseVersion,
+    pendingWindowsAssets,
+    validateFixtureAssets,
+    compareVersions,
+    { argv: ["node", "fixture", mode], env: environment },
+    fetchMetadata,
+  );
+  return { ...functions, events };
+}
+
+/** Supply the ordinary release and tag-reference lookup responses independently. */
+function releaseReplies(release, updated = release) {
+  return {
+    "releases/tags/v0.2.0": [release, updated],
+    "git/ref/tags/v0.2.0": [{ ref: "refs/tags/v0.2.0" }],
+    "commits/v0.2.0": [{ sha: RELEASE_COMMIT }],
+  };
+}
+
+/** Select command events without using production dispatch decisions as expectations. */
+function releaseCommands(harness) {
+  return harness.events.filter((event) => event[0] === "command");
+}
+
+/** Verify immutable identity lookup precedes check output and published-release skipping. */
+async function checksAndSkipsPublishedReleases() {
+  const release = {
+    id: 7,
+    draft: false,
+    target_commitish: RELEASE_COMMIT,
+    assets: [],
+  };
+  for (const mode of ["check", "prepare", "publish"]) {
+    const harness = createReleaseHarness(mode, releaseReplies(release));
+    await harness.main();
+    assert.deepEqual(
+      harness.events
+        .filter((event) => event[0] === "request")
+        .map((event) => event[1]),
+      ["releases/tags/v0.2.0", "git/ref/tags/v0.2.0", "commits/v0.2.0"],
+    );
+    assert.deepEqual(harness.events.slice(0, 2), [
+      ["request", "releases/tags/v0.2.0"],
+      ["request", "git/ref/tags/v0.2.0"],
+    ]);
+    assert.deepEqual(releaseCommands(harness), []);
+    assert.deepEqual(
+      harness.events.filter((event) => event[0] === "output"),
+      mode === "check" ? [["output", "published=true\n"]] : [],
+    );
+  }
+}
+
+/** Verify draft creation follows asset validation and preserves exact upload arguments. */
+async function preparesAbsentRelease() {
+  const harness = createReleaseHarness("prepare", {
+    "releases/tags/v0.2.0": [null],
+    "git/ref/tags/v0.2.0": [null],
+    "releases?per_page=100&page=1": [[]],
+  });
+  await harness.main();
+  assert.deepEqual(releaseCommands(harness), [
+    [
+      "command",
+      "gh",
+      "release",
+      "create",
+      "v0.2.0",
+      "--target",
+      RELEASE_COMMIT,
+      "--title",
+      "LitRadar v0.2.0",
+      "--draft",
+      "--generate-notes",
+    ],
+    [
+      "command",
+      "gh",
+      "release",
+      "upload",
+      "v0.2.0",
+      ...WINDOWS_ASSETS.map((asset) =>
+        path.join("release-results/assets", asset.name),
+      ),
+      "--clobber",
+    ],
+  ]);
+  const validation = harness.events.findIndex(
+    (event) => event[0] === "validate",
+  );
+  const command = harness.events.findIndex((event) => event[0] === "command");
+  assert(validation >= 0 && validation < command);
+  assert(!harness.events.some((event) => event[1] === "commits/v0.2.0"));
+}
+
+/** Verify publication requires a draft and does not change the latest pointer. */
+async function publishesOnlyPreparedDraft() {
+  const harness = createReleaseHarness(
+    "publish",
+    releaseReplies({ id: 7, draft: true, target_commitish: RELEASE_COMMIT }),
+  );
+  await harness.main();
+  assert.deepEqual(releaseCommands(harness), [
+    [
+      "command",
+      "gh",
+      "release",
+      "edit",
+      "v0.2.0",
+      "--draft=false",
+      "--latest=false",
+    ],
+  ]);
+  const absent = createReleaseHarness("publish", {
+    "releases/tags/v0.2.0": [null],
+    "git/ref/tags/v0.2.0": [null],
+    "releases?per_page=100&page=1": [[]],
+  });
+  await assert.rejects(absent.main(), /Prepare the release before publishing/);
+  assert.deepEqual(releaseCommands(absent), []);
+}
+
+/** Preserve original asset identity while resuming partial or already completed supplements. */
+async function resumesWindowsSupplement() {
+  const linux = { id: 8, name: "linux.tar.gz", digest: "unchanged", size: 12 };
+  const windows = WINDOWS_ASSETS.map((asset, index) => ({
+    ...asset,
+    id: 20 + index,
+  }));
+  for (const completed of [0, 1, 2]) {
+    const release = {
+      id: 7,
+      draft: false,
+      prerelease: false,
+      target_commitish: RELEASE_COMMIT,
+      assets: [linux, ...windows.slice(0, completed)],
+    };
+    const updated = { ...release, assets: [linux, ...windows] };
+    const harness = createReleaseHarness(
+      "append-windows",
+      releaseReplies(release, updated),
+    );
+    await harness.main();
+    assert.deepEqual(
+      releaseCommands(harness),
+      WINDOWS_ASSETS.slice(completed).map((asset) => [
+        "command",
+        "gh",
+        "release",
+        "upload",
+        "v0.2.0",
+        path.join("release-results/windows/assets", asset.name),
+      ]),
+    );
+    assert.equal(
+      harness.events.filter(
+        (event) =>
+          event[0] === "request" && event[1] === "releases/tags/v0.2.0",
+      ).length,
+      2,
+    );
+    assert(
+      !releaseCommands(harness).some((event) => event.includes("--clobber")),
+    );
+  }
+}
+
+/** Reject invalid supplement provenance before validating or uploading assets. */
+async function rejectsSupplementProvenance() {
+  const release = {
+    id: 7,
+    draft: false,
+    prerelease: false,
+    target_commitish: RELEASE_COMMIT,
+    assets: [],
+  };
+  for (const summary of [
+    { status: "failed", sourceCommit: RELEASE_COMMIT, version: "0.2.0" },
+    { status: "passed", sourceCommit: "b".repeat(40), version: "0.2.0" },
+    { status: "passed", sourceCommit: RELEASE_COMMIT, version: "0.1.0" },
+  ]) {
+    const harness = createReleaseHarness(
+      "append-windows",
+      releaseReplies(release),
+      { summary },
+    );
+    await assert.rejects(harness.main(), { name: "AssertionError" });
+    assert.deepEqual(releaseCommands(harness), []);
+    assert(!harness.events.some((event) => event[0] === "validate"));
+  }
+}
+
+/** Reject changed release identity, missing supplements and altered original published bytes. */
+async function rejectsSupplementMutation() {
+  const linux = { id: 8, name: "linux.tar.gz", digest: "unchanged", size: 12 };
+  const release = {
+    id: 7,
+    draft: false,
+    prerelease: false,
+    target_commitish: RELEASE_COMMIT,
+    assets: [linux],
+  };
+  const windows = WINDOWS_ASSETS.map((asset, index) => ({
+    ...asset,
+    id: 20 + index,
+  }));
+  const updated = { ...release, assets: [linux, ...windows] };
+  const cases = [
+    [{ ...updated, id: 9 }, /Release identity changed during supplement/],
+    [
+      { ...updated, assets: [linux, windows[0]] },
+      /Expected values to be strictly deep-equal/,
+    ],
+    [
+      { ...updated, assets: [{ ...linux, digest: "changed" }, ...windows] },
+      /Existing release asset changed/,
+    ],
+    [
+      { ...updated, assets: [{ ...linux, name: "changed" }, ...windows] },
+      /Existing release asset changed/,
+    ],
+    [
+      { ...updated, assets: [{ ...linux, size: 13 }, ...windows] },
+      /Existing release asset changed/,
+    ],
+  ];
+  for (const [metadata, expected] of cases) {
+    const harness = createReleaseHarness(
+      "append-windows",
+      releaseReplies(release, metadata),
+    );
+    await assert.rejects(harness.main(), expected);
+  }
+}
+
+/** Stop release actions immediately when a mocked upload or draft command fails. */
+async function stopsAfterReleaseCommandFailure() {
+  const harness = createReleaseHarness(
+    "prepare",
+    {
+      "releases/tags/v0.2.0": [null],
+      "git/ref/tags/v0.2.0": [null],
+      "releases?per_page=100&page=1": [[]],
+    },
+    { failCommand: () => true },
+  );
+  await assert.rejects(harness.main(), /Fixture command failed/);
+  assert.equal(releaseCommands(harness).length, 1);
+  assert.equal(releaseCommands(harness)[0][3], "create");
+}
+
+/** Distinguish absent, failed and invalid-JSON metadata without decoding HTTP errors. */
+async function preservesMetadataFailures() {
+  for (const status of [404, 403, 500]) {
+    const harness = createReleaseHarness("check", {
+      fixture: [{ httpStatus: status }],
+    });
+    if (status === 404) assert.equal(await harness.github("fixture"), null);
+    else
+      await assert.rejects(
+        harness.github("fixture"),
+        new RegExp(`GitHub metadata request failed: ${status}`),
+      );
+    assert(!harness.events.some((event) => event[0] === "decode"));
+  }
+  const invalid = createReleaseHarness("check", {
+    fixture: [{ jsonError: "invalid fixture JSON" }],
+  });
+  await assert.rejects(invalid.github("fixture"), /invalid fixture JSON/);
+}
+
+/** Promote the highest stable version without requiring source-version inputs. */
+async function promotesLatestInOrder() {
+  const releases = [
+    { tag_name: "v0.2.0", draft: false, prerelease: false },
+    { tag_name: "v0.3.0", draft: false, prerelease: false },
+  ];
+  const envOverrides = {
+    RELEASE_VERSION: undefined,
+    RELEASE_SOURCE_SHA: undefined,
+    GITHUB_SHA: undefined,
+  };
+  const harness = createReleaseHarness(
+    "promote",
+    { "releases?per_page=100&page=1": [releases] },
+    { envOverrides },
+  );
+  await harness.main();
+  assert.deepEqual(releaseCommands(harness), [
+    [
+      "command",
+      "docker",
+      "buildx",
+      "imagetools",
+      "create",
+      "--tag",
+      "ghcr.io/fixture/repository:latest",
+      "ghcr.io/fixture/repository:v0.3.0",
+    ],
+    ["command", "gh", "release", "edit", "v0.3.0", "--latest"],
+  ]);
+  const failed = createReleaseHarness(
+    "promote",
+    { "releases?per_page=100&page=1": [releases] },
+    { envOverrides, failCommand: () => true },
+  );
+  await assert.rejects(failed.main(), /Fixture command failed/);
+  assert.equal(releaseCommands(failed).length, 1);
+}
+
+test(
+  "check and published-release skip preserve identity lookup order",
+  checksAndSkipsPublishedReleases,
+);
+test(
+  "prepare validates assets before exact draft commands",
+  preparesAbsentRelease,
+);
+test(
+  "publish requires an existing draft and preserves latest",
+  publishesOnlyPreparedDraft,
+);
+test(
+  "Windows supplement resumes without clobbering existing assets",
+  resumesWindowsSupplement,
+);
+test(
+  "Windows supplement rejects invalid source provenance before upload",
+  rejectsSupplementProvenance,
+);
+test(
+  "Windows supplement rejects changed published identity and bytes",
+  rejectsSupplementMutation,
+);
+test(
+  "release command failure stops subsequent actions",
+  stopsAfterReleaseCommandFailure,
+);
+test(
+  "metadata failures preserve HTTP and JSON distinctions",
+  preservesMetadataFailures,
+);
+test(
+  "promotion updates Docker before GitHub without source-version inputs",
+  promotesLatestInOrder,
+);
 
 test("draft lookup survives a missing tag endpoint and preserves ownership", async () => {
   const commit = "a".repeat(40);
