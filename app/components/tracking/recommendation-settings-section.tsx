@@ -101,7 +101,9 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
 }
 
 /** Retain the keyed keyword chips and original add/remove/input handlers. */
-function renderRecommendationKeywords(state: RecommendationViewState) {
+function renderRecommendationKeywords(
+  state: Pick<RecommendationViewState, 'model' | 'keywords' | 'chipTransition'>,
+) {
   const { model, keywords, chipTransition } = state;
 
   return (
@@ -173,7 +175,9 @@ function renderRecommendationKeywords(state: RecommendationViewState) {
 }
 
 /** Retain the keyed direction chips and original add/remove/input handlers. */
-function renderRecommendationDirections(state: RecommendationViewState) {
+function renderRecommendationDirections(
+  state: Pick<RecommendationViewState, 'model' | 'directions' | 'chipTransition'>,
+) {
   const { model, directions, chipTransition } = state;
 
   return (
@@ -245,7 +249,7 @@ function renderRecommendationDirections(state: RecommendationViewState) {
 }
 
 /** Retain primary credential display and functional null/undefined clear toggles. */
-function renderPrimaryAiSecret(state: RecommendationViewState) {
+function renderPrimaryAiSecret(state: Pick<RecommendationViewState, 'model' | 'primary'>) {
   const { model, primary } = state;
 
   return (
@@ -295,7 +299,7 @@ function renderPrimaryAiSecret(state: RecommendationViewState) {
 }
 
 /** Retain backup credential display and functional null/undefined clear toggles. */
-function renderBackupAiSecret(state: RecommendationViewState) {
+function renderBackupAiSecret(state: Pick<RecommendationViewState, 'model' | 'backup'>) {
   const { model, backup } = state;
 
   return (
@@ -345,7 +349,9 @@ function renderBackupAiSecret(state: RecommendationViewState) {
 }
 
 /** Retain approved endpoint fallback, pending/error guards and feedback. */
-function renderPrimaryAiEndpoint(state: RecommendationViewState) {
+function renderPrimaryAiEndpoint(
+  state: Pick<RecommendationViewState, 'model' | 'endpoints' | 'primary'>,
+) {
   const { model, endpoints, primary } = state;
 
   return (
@@ -395,7 +401,9 @@ function renderPrimaryAiEndpoint(state: RecommendationViewState) {
 }
 
 /** Retain the backup configuration fields and their distinct payload names. */
-function renderBackupAiSettings(state: RecommendationViewState) {
+function renderBackupAiSettings(
+  state: Pick<RecommendationViewState, 'model' | 'backup' | 'endpoints'>,
+) {
   const { model, backup, endpoints } = state;
 
   return (
@@ -480,7 +488,12 @@ function renderBackupAiSettings(state: RecommendationViewState) {
 }
 
 /** Retain primary, retry and backup configuration order. */
-function renderPrimaryAiSettings(state: RecommendationViewState) {
+function renderPrimaryAiSettings(
+  state: Pick<
+    RecommendationViewState,
+    'model' | 'primary' | 'retryAttempts' | 'endpoints' | 'backup'
+  >,
+) {
   const { model, primary, retryAttempts } = state;
 
   return (
@@ -560,7 +573,7 @@ function renderPrimaryAiSettings(state: RecommendationViewState) {
 }
 
 /** Retain database pending, error, empty and available selection priority. */
-function renderDatabaseSelectionState(state: RecommendationViewState) {
+function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'databaseSelection'>) {
   const { databaseSelection } = state;
   if (databaseSelection.query.isPending)
     return (
@@ -639,7 +652,7 @@ function renderDatabaseSelectionState(state: RecommendationViewState) {
 }
 
 /** Retain available and unavailable database choices and notice siblings. */
-function renderRecommendationDatabases(state: RecommendationViewState) {
+function renderRecommendationDatabases(state: Pick<RecommendationViewState, 'databaseSelection'>) {
   const { databaseSelection } = state;
 
   return (

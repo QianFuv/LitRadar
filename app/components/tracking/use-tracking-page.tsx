@@ -339,7 +339,7 @@ export function useTrackingPage(userId: number) {
     });
   }
 
-  const trackingFolder = getTrackingFolder(status);
+  const trackingFolder = status?.tracking_folder ?? null;
 
   return {
     folder: {
@@ -438,65 +438,30 @@ export function useTrackingPage(userId: number) {
 /** Tracking page view model grouped by rendered section. */
 export type TrackingPageViewModel = ReturnType<typeof useTrackingPage>;
 
-/** Retain preferences arrays and the original delivery-method default. */
-function normalizeTrackingPreferences(settings: NotificationSettings | null | undefined) {
+/** Normalize saved tracking fields while keeping stored credentials out of the draft. */
+function normalizeTrackingSettings(
+  settings: NotificationSettings | null | undefined,
+): NotificationSettingsUpdate {
   return {
     keywords: settings?.keywords || [],
     directions: settings?.directions || [],
     selected_databases: settings?.selected_databases || [],
     delivery_method: settings?.delivery_method || 'folder',
-  };
-}
-
-/** Retain omitted PushPlus secret and each original transport fallback. */
-function normalizeTrackingDelivery(settings: NotificationSettings | null | undefined) {
-  return {
     pushplus_token: undefined,
     pushplus_template: settings?.pushplus_template || 'markdown',
     pushplus_topic: settings?.pushplus_topic || '',
     pushplus_channel: settings?.pushplus_channel || 'wechat',
     sync_to_tracking_folder: settings?.sync_to_tracking_folder ?? false,
-  };
-}
-
-/** Retain primary AI defaults without exposing the stored credential. */
-function normalizePrimaryAiSettings(settings: NotificationSettings | null | undefined) {
-  return {
     ai_base_url: settings?.ai_base_url || '',
     ai_api_key: undefined,
     ai_model: settings?.ai_model || '',
     ai_system_prompt: settings?.ai_system_prompt || '',
-  };
-}
-
-/** Retain backup AI defaults without exposing the stored credential. */
-function normalizeBackupAiSettings(settings: NotificationSettings | null | undefined) {
-  return {
     ai_backup_base_url: settings?.ai_backup_base_url || '',
     ai_backup_api_key: undefined,
     ai_backup_model: settings?.ai_backup_model || '',
     ai_backup_system_prompt: settings?.ai_backup_system_prompt || '',
-  };
-}
-
-/** Retain nullish retry and enablement defaults. */
-function normalizeTrackingEnablement(settings: NotificationSettings | null | undefined) {
-  return {
     ai_retry_attempts: settings?.ai_retry_attempts ?? 3,
     enabled: settings?.enabled ?? true,
-  };
-}
-
-/** Normalize saved tracking fields in their original key and evaluation order. */
-function normalizeTrackingSettings(
-  settings: NotificationSettings | null | undefined,
-): NotificationSettingsUpdate {
-  return {
-    ...normalizeTrackingPreferences(settings),
-    ...normalizeTrackingDelivery(settings),
-    ...normalizePrimaryAiSettings(settings),
-    ...normalizeBackupAiSettings(settings),
-    ...normalizeTrackingEnablement(settings),
   };
 }
 
@@ -544,8 +509,4 @@ function getManualPushResult(
   if (error) return error instanceof Error ? error.message : '推送任务操作失败';
   if (status && status.status !== 'idle') return format(status);
   return null;
-}
-/** Retain the server tracking-folder fallback without changing query ownership. */
-function getTrackingFolder(status: Awaited<ReturnType<typeof getTrackingStatus>> | undefined) {
-  return status?.tracking_folder ?? null;
 }
