@@ -110,6 +110,14 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: source/app/pnpm-lock.yaml
+      - name: Restore release web build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: source/app/.next/cache
+          key: ${{ runner.os }}-next-release-node24-${{ hashFiles('source/app/pnpm-lock.yaml', 'source/app/tsconfig*.json', 'source/app/next.config.ts') }}-${{ env.SOURCE_SHA }}
+          restore-keys: |
+            ${{ runner.os }}-next-release-node24-${{ hashFiles('source/app/pnpm-lock.yaml', 'source/app/tsconfig*.json', 'source/app/next.config.ts') }}-
+
       - name: Build web assets from release source
         working-directory: source/app
         run: |
