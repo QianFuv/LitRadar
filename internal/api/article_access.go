@@ -328,7 +328,8 @@ type articleProviderResult struct {
 }
 
 // resolveProvider admits one provider and discards results that arrive after the shared deadline.
-func (handlers *articleHandlers) resolveProvider(ctx context.Context, name string, registration *provider.Registration, article domain.ArticleLocator, request domain.ArticleAccessContext, action string, failures *articleFailures) (domain.ArticleFullTextResolution, bool, bool) {
+// An unresolved result either permits fallback or stops it; a resolved result never requests a stop.
+func (handlers *articleHandlers) resolveProvider(ctx context.Context, name string, registration *provider.Registration, article domain.ArticleLocator, request domain.ArticleAccessContext, action string, failures *articleFailures) (resolution domain.ArticleFullTextResolution, isResolved, shouldStop bool) {
 	empty := domain.ArticleFullTextResolution{}
 	remaining := time.Until(request.Deadline)
 	if remaining <= 0 {
