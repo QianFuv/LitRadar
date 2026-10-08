@@ -122,6 +122,7 @@ func (client *AiClient) complete(ctx context.Context, config AiRuntimeConfig, na
 	if err != nil {
 		return nil, &AiError{Kind: "transport", message: string(outbound.RequestFailed)}
 	}
+	request := completionRequest{config: config, location: location.Href(false), name: name, schema: schema, system: system, encoded: encoded, kind: kind}
 	formats := []string{"json_schema", "json_object", "plain_json"}
 	if location.Hostname() == "api.deepseek.com" {
 		formats = formats[1:]
@@ -130,7 +131,7 @@ func (client *AiClient) complete(ctx context.Context, config AiRuntimeConfig, na
 		if formatIndex > 0 {
 			logger.WarnContext(ctx, "ai.response_format.fallback", "event", "ai.response_format.fallback", "outcome", "fallback", "from_format", formats[formatIndex-1], "to_format", format)
 		}
-		result, err, shouldFallback := client.completeFormat(ctx, config, location.Href(false), format, formatIndex, len(formats), name, schema, system, encoded, kind, logger)
+		result, err, shouldFallback := client.completeFormat(ctx, request, format, formatIndex+1 < len(formats), logger)
 		if !shouldFallback {
 			return result, err
 		}
@@ -177,17 +178,41 @@ func aiErrorKind(err error) string {
 	return "transport"
 }
 
-func (client *AiClient) completeFormat(ctx context.Context, config AiRuntimeConfig, location, format string, formatIndex, formatCount int, name string, schema any, system string, encoded []byte, kind PayloadKind, logger *slog.Logger) (map[string]any, error, bool) {
+// completionRequest holds the fixed inputs shared by response formats and their retries.
+type completionRequest struct {
+	config                 AiRuntimeConfig
+	location, name, system string
+	schema                 any
+	encoded                []byte
+	kind                   PayloadKind
+}
+
+// completeFormat admits and retries one response format before allowing a format fallback.
+func (client *AiClient) completeFormat(ctx context.Context, request completionRequest, format string, hasFallback bool, logger *slog.Logger) (payload map[string]any, failure error, shouldFallback bool) {
 	for attempt := 0; attempt <= client.retryAttempts; attempt++ {
-		response, result, requestError, attemptStarted := client.completionAttempt(ctx, config, location, format, name, schema, system, encoded, kind)
-		if attemptStarted.IsZero() {
-			return nil, requestError, false
+		var err error
+		var result map[string]any
+		timeout := client.timeout
+		if client.control != nil {
+			timeout, err = client.control.BeginAiRequest(timeout)
+			if err != nil {
+				return nil, controlAiError(err), false
+			}
+		}
+		body := completionRequestBody(request.config, client.temperature, request.system, request.encoded, format, request.name, request.schema)
+		attemptStarted := time.Now()
+		response, requestError := client.send(ctx, request.location, request.config.ApiKey, body, timeout)
+		if requestError == nil {
+			result, err = ExtractResponsePayload(response.Body, request.kind)
+			if err != nil {
+				requestError = &AiError{Kind: "invalid_response", message: err.Error()}
+			}
 		}
 		if requestError == nil {
 			logger.InfoContext(ctx, "ai.request.completed", "event", "ai.request.completed", "outcome", "success", "response_format", format, "attempt", attempt+1, "http_status", response.StatusCode, "duration_ms", time.Since(attemptStarted).Milliseconds())
 			return result, nil, false
 		}
-		willRetry, willFallback := client.logCompletionFailure(ctx, logger, requestError, format, formatIndex, formatCount, attempt, attemptStarted)
+		willRetry, willFallback := client.logCompletionFailure(ctx, logger, requestError, format, hasFallback, attempt, attemptStarted)
 		if willRetry {
 			delay := outbound.RetryDelay(attempt, requestError.RetryAfterSeconds)
 			err := client.waitForAiRetry(ctx, delay)
@@ -204,28 +229,6 @@ func (client *AiClient) completeFormat(ctx context.Context, config AiRuntimeConf
 	return nil, nil, true
 }
 
-func (client *AiClient) completionAttempt(ctx context.Context, config AiRuntimeConfig, location string, format, name string, schema any, system string, encoded []byte, kind PayloadKind) (outbound.Response, map[string]any, *AiError, time.Time) {
-	var err error
-	var result map[string]any
-	timeout := client.timeout
-	if client.control != nil {
-		timeout, err = client.control.BeginAiRequest(timeout)
-		if err != nil {
-			return outbound.Response{}, nil, controlAiError(err), time.Time{}
-		}
-	}
-	body := completionRequestBody(config, client.temperature, system, encoded, format, name, schema)
-	attemptStarted := time.Now()
-	response, requestError := client.send(ctx, location, config.ApiKey, body, timeout)
-	if requestError == nil {
-		result, err = ExtractResponsePayload(response.Body, kind)
-		if err != nil {
-			requestError = &AiError{Kind: "invalid_response", message: err.Error()}
-		}
-	}
-	return response, result, requestError, attemptStarted
-}
-
 func completionRequestBody(config AiRuntimeConfig, temperature float64, system string, encoded []byte, format, name string, schema any) map[string]any {
 	body := map[string]any{"model": config.Model, "temperature": temperature, "messages": []any{map[string]any{"role": "system", "content": system}, map[string]any{"role": "user", "content": string(encoded)}}}
 	switch format {
@@ -237,10 +240,11 @@ func completionRequestBody(config AiRuntimeConfig, temperature float64, system s
 	return body
 }
 
-func (client *AiClient) logCompletionFailure(ctx context.Context, logger *slog.Logger, requestError *AiError, format string, formatIndex, formatCount, attempt int, attemptStarted time.Time) (bool, bool) {
+// logCompletionFailure records retry and format-fallback decisions for a failed request.
+func (client *AiClient) logCompletionFailure(ctx context.Context, logger *slog.Logger, requestError *AiError, format string, hasFallback bool, attempt int, attemptStarted time.Time) (bool, bool) {
 	isRetryable := isRetryableAiFailure(requestError)
 	willRetry := attempt < client.retryAttempts && isRetryable
-	willFallback := !willRetry && requestError.Kind == "invalid_response" && formatIndex+1 < formatCount
+	willFallback := !willRetry && requestError.Kind == "invalid_response" && hasFallback
 	attributes := []any{"event", "ai.request.failed", "outcome", "failure", "response_format", format, "attempt", attempt + 1, "error_kind", requestError.Kind, "will_retry", willRetry, "will_fallback", willFallback, "duration_ms", time.Since(attemptStarted).Milliseconds()}
 	if requestError.Kind == "http_status" {
 		attributes = append(attributes, "http_status", requestError.StatusCode)
