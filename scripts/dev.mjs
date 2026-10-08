@@ -151,43 +151,86 @@ async function waitForReady(url) {
  */
 async function stopChild({ child, exited }) {
   if (!child.pid) return;
-  const hasExited = () => child.exitCode !== null || child.signalCode !== null;
   if (process.platform === "win32") {
-    if (receivedSignal === "SIGINT") {
-      await Promise.race([
-        exited,
-        delay(SHUTDOWN_TIMEOUT_MS, undefined, { ref: false }),
-      ]);
-    }
-    if (hasExited()) return;
-    const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
-      stdio: "ignore",
-      shell: false,
-      windowsHide: true,
-    });
-    await new Promise((resolve, reject) => {
-      killer.once("error", reject);
-      killer.once("exit", (code) => {
-        if (code === 0 || hasExited()) resolve();
-        else reject(new Error(`Could not stop process tree ${child.pid}.`));
-      });
-    });
+    if (!(await stopWindowsChildTree(child, exited))) return;
   } else {
-    try {
-      process.kill(-child.pid, "SIGTERM");
-    } catch (error) {
-      if (error.code !== "ESRCH") throw error;
-    }
+    await stopPosixChildTree(child, exited);
+  }
+  await waitForStoppedChild(child, exited);
+}
+
+/**
+ * Check whether an owned child has published its exit state.
+ *
+ * @param {import('node:child_process').ChildProcess} child - Owned child.
+ * @returns {boolean} Whether exit or signal termination is recorded.
+ */
+function hasChildExited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+/**
+ * Allow console interruption before terminating an owned Windows process tree.
+ *
+ * @param {import('node:child_process').ChildProcess} child - Owned child.
+ * @param {Promise<object>} exited - Child exit observation.
+ * @returns {Promise<boolean>} Whether termination requires a final exit wait.
+ */
+async function stopWindowsChildTree(child, exited) {
+  if (receivedSignal === "SIGINT") {
     await Promise.race([
       exited,
       delay(SHUTDOWN_TIMEOUT_MS, undefined, { ref: false }),
     ]);
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch (error) {
-      if (error.code !== "ESRCH") throw error;
-    }
   }
+  if (hasChildExited(child)) return false;
+  const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+    stdio: "ignore",
+    shell: false,
+    windowsHide: true,
+  });
+  await new Promise((resolve, reject) => {
+    killer.once("error", reject);
+    killer.once("exit", (code) => {
+      if (code === 0 || hasChildExited(child)) resolve();
+      else reject(new Error(`Could not stop process tree ${child.pid}.`));
+    });
+  });
+  return true;
+}
+
+/**
+ * Send the ordered termination signals to an owned POSIX process group.
+ *
+ * @param {import('node:child_process').ChildProcess} child - Owned child.
+ * @param {Promise<object>} exited - Child exit observation.
+ * @returns {Promise<void>} Resolves after the final group signal.
+ */
+async function stopPosixChildTree(child, exited) {
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+  await Promise.race([
+    exited,
+    delay(SHUTDOWN_TIMEOUT_MS, undefined, { ref: false }),
+  ]);
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+}
+
+/**
+ * Bound the final exit observation after terminating an owned child.
+ *
+ * @param {import('node:child_process').ChildProcess} child - Owned child.
+ * @param {Promise<object>} exited - Child exit observation.
+ * @returns {Promise<void>} Resolves on exit or rejects at the deadline.
+ */
+async function waitForStoppedChild(child, exited) {
   await Promise.race([
     exited,
     delay(SHUTDOWN_TIMEOUT_MS, undefined, { ref: false }).then(() => {
@@ -197,11 +240,11 @@ async function stopChild({ child, exited }) {
 }
 
 /**
- * Prepare the requested data root and supervise both local development services.
+ * Resolve the requested data root after admitting the exact command arguments.
  *
- * @returns {Promise<void>} Resolves when the user stops the command.
+ * @returns {string | undefined} Resolved data root, or undefined after help.
  */
-async function main() {
+function resolveDevProjectRoot() {
   const args = process.argv.slice(2);
   const usage = "Usage: node scripts/dev.mjs [--project-root PATH]";
   if (args.length === 1 && ["--help", "-h"].includes(args[0])) {
@@ -214,8 +257,17 @@ async function main() {
   ) {
     throw new Error(usage);
   }
-  const projectRoot =
-    args.length === 2 ? path.resolve(args[1]) : WORKSPACE_ROOT;
+  return args.length === 2 ? path.resolve(args[1]) : WORKSPACE_ROOT;
+}
+
+/**
+ * Prepare the requested data root and supervise both local development services.
+ *
+ * @returns {Promise<void>} Resolves when the user stops the command.
+ */
+async function main() {
+  const projectRoot = resolveDevProjectRoot();
+  if (!projectRoot) return;
   const secretKeyFile = path.join(projectRoot, "secrets", "litradar.key");
   await access(NEXT_CLI).catch(() => {
     throw new Error(
@@ -253,6 +305,17 @@ async function main() {
     [NEXT_CLI, "dev", "--hostname", "127.0.0.1", "--port", "8000"],
     APP_ROOT,
   );
+  await superviseDevServices(backend, frontend);
+}
+
+/**
+ * Observe readiness and exits without relinquishing either owned service.
+ *
+ * @param {ReturnType<typeof startChild>} backend - Backend lifecycle.
+ * @param {ReturnType<typeof startChild>} frontend - Frontend lifecycle.
+ * @returns {Promise<void>} Resolves on interruption or rejects on service failure.
+ */
+async function superviseDevServices(backend, frontend) {
   const stopped = Promise.race([INTERRUPTED, backend.exited, frontend.exited]);
   const ready = Promise.all([
     waitForReady("http://127.0.0.1:8001/health/ready"),
