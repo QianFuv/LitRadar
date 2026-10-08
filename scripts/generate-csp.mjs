@@ -71,30 +71,51 @@ function hasSrcAttribute(openingTag) {
     if (name.toLowerCase() === "src") {
       return true;
     }
-    while (/\s/u.test(openingTag[index] ?? "")) {
-      index += 1;
-    }
-    if (openingTag[index] !== "=") {
-      continue;
-    }
-    index += 1;
-    while (/\s/u.test(openingTag[index] ?? "")) {
-      index += 1;
-    }
-    const quote = openingTag[index];
-    if (quote === '"' || quote === "'") {
-      index += 1;
-      while (index < openingTag.length && openingTag[index] !== quote) {
-        index += 1;
-      }
-      index += 1;
-    } else {
-      while (!/[\s>]/u.test(openingTag[index] ?? ">")) {
-        index += 1;
-      }
-    }
+    index = scriptAttributeValueEnd(openingTag, index);
   }
   return false;
+}
+
+/**
+ * Advance through Unicode whitespace around an attribute assignment.
+ *
+ * @param {string} openingTag - Exact script opening tag.
+ * @param {number} index - Current attribute offset.
+ * @returns {number} First offset after whitespace.
+ */
+function scriptAttributeWhitespaceEnd(openingTag, index) {
+  while (/\s/u.test(openingTag[index] ?? "")) {
+    index += 1;
+  }
+  return index;
+}
+
+/**
+ * Skip an assigned attribute value without interpreting its contents as names.
+ *
+ * @param {string} openingTag - Exact script opening tag.
+ * @param {number} index - Offset immediately after an attribute name.
+ * @returns {number} Offset after its optional quoted or unquoted value.
+ */
+function scriptAttributeValueEnd(openingTag, index) {
+  index = scriptAttributeWhitespaceEnd(openingTag, index);
+  if (openingTag[index] !== "=") {
+    return index;
+  }
+  index = scriptAttributeWhitespaceEnd(openingTag, index + 1);
+  const quote = openingTag[index];
+  if (quote === '"' || quote === "'") {
+    index += 1;
+    while (index < openingTag.length && openingTag[index] !== quote) {
+      index += 1;
+    }
+    index += 1;
+  } else {
+    while (!/[\s>]/u.test(openingTag[index] ?? ">")) {
+      index += 1;
+    }
+  }
+  return index;
 }
 
 /**
