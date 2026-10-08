@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/QianFuv/LitRadar/internal/storage/scheduler"
 	"github.com/QianFuv/LitRadar/internal/storage/secrets"
 	"github.com/QianFuv/LitRadar/internal/storage/settings"
+	"github.com/QianFuv/LitRadar/internal/webassets"
 )
 
 // Prepared owns the listener, API resources and deployment key until all service work drains.
@@ -218,13 +218,19 @@ func (prepared *Prepared) runtimePolicy(ctx context.Context, configuration Confi
 	}
 	configuration.ApiOptions.ContentSecurityPolicy = developmentCsp
 	if !configuration.IsDevelopment {
-		webRoot := filepath.Join(configuration.Storage.ProjectRoot, "web")
-		configuration.ApiOptions.ContentSecurityPolicy, err = loadSecurityPolicy(webRoot)
+		assets, assetError := webassets.Files()
+		if assetError != nil {
+			return configuration, assetError
+		}
+		configuration.ApiOptions.ContentSecurityPolicy, err = loadSecurityPolicyFiles(assets)
 		if err != nil {
 			return configuration, err
 		}
 		configuration.ApiOptions.IsHstsEnabled = configuration.AreSecureCookiesRequired
-		configuration.ApiOptions.Frontend = frontend{webRoot}
+		configuration.ApiOptions.Frontend, err = newEmbeddedFrontend(assets)
+		if err != nil {
+			return configuration, err
+		}
 	}
 	return configuration, nil
 }

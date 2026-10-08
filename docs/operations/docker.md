@@ -54,7 +54,7 @@ The Dockerfile frontend and Ubuntu bases use readable tags with immutable digest
 3. Ubuntu 26.04 中的 Go 1.27.2 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat` 构建唯一 Go 应用；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
 4. 下载 Obscura 官方 v0.2.4 对应 amd64/arm64 的 render + stealth 二进制归档，固定版本和 SHA-256，并一起安装 `obscura` 与 `obscura-worker`。辅助程序无需本地编译。
 5. 分词器阶段从固定上游源码构建目标架构的 `simple` 扩展，关闭 Jieba 和示例构建。
-6. `ubuntu:26.04` 接收应用、Obscura、`/usr/lib/litradar/libsimple.so`、`/usr/share/litradar/meta` 中来自 `assets/meta/` 的不可变期刊目录，以及 `/app/web` 静态站点。Ubuntu 26.04 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。
+6. `ubuntu:26.04` 接收带内嵌网页和 CSP 的应用、Obscura、`/usr/lib/litradar/libsimple.so` 和 `/usr/share/litradar/meta` 中来自 `assets/meta/` 的不可变期刊目录。Ubuntu 26.04 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。
 
 镜像把 `LITRADAR_OBSCURA_PATH` 和 `LITRADAR_PDFTOTEXT_PATH` 指向打包的辅助程序。征稿刷新可在服务器直接采集 HTML 和 PDF，无需安装 Chromium 或在运行时下载浏览器。发布冒烟测试在非特权、只读服务容器中验证原始 HTML 的 JavaScript 协议、真实 PDF 提取和默认私网拒绝；loopback 例外仅限该次临时测试。
 
@@ -246,7 +246,7 @@ docker compose ps
 - 带 `noexec,nosuid,nodev` 的 `/tmp` tmpfs
 - 唯一持久可写的数据挂载、只读密钥挂载和镜像内 readiness 健康检查
 
-除 `/app/data` 外没有持久写路径。`/app/web` 随镜像只读提供，运行时不生成 Next.js cache。不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
+除 `/app/data` 外没有持久写路径。网页随二进制提供，运行时不释放前端文件或生成 Next.js cache。不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
 
 Compose 默认不设置 cgroup 内存上限。需要限定部署预算时，可在 Compose 覆盖文件中设置 `mem_limit`，或向 `docker run` 传入 `--memory`。服务与调度子进程共享容器 cgroup；画像默认只报告用量，只有显式启用的预算才参与门禁。
 

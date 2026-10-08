@@ -89,7 +89,7 @@ go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar serve \
 - OpenAPI：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
-`--development` 显式选择不托管静态前端的本地模式：Go 保留 API、认证、健康检查、接口文档、MCP、内嵌任务和基础安全响应头，但不读取 `web/` 或 `csp-hashes.json`；直接访问后端的页面路径返回 404。该模式只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合。省略 `--development` 时仍按静态托管模式运行，并严格校验 HTML 和 CSP 清单；缺失构建不会自动降级为开发模式。
+`--development` 显式选择不托管静态前端的本地模式：Go 保留 API、认证、健康检查、接口文档、MCP、内嵌任务和基础安全响应头；直接访问后端的页面路径返回 404。该模式只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合。省略 `--development` 时使用编入二进制的前端，并严格校验同一内嵌来源的 HTML 和 CSP 清单；没有内嵌前端的源码构建会明确报错，不自动降级。
 
 服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查和静态流量被抑制。日志格式和 filter 是管理员“运行配置”中的持久设置，不接受进程环境覆盖：首次按默认 JSON 启动，登录管理页把 `log_format` 改为 `compact`，按需把 `log_filter` 改为例如 `warn,litradar=debug,litradar_api=debug`，再重启进程。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
 
@@ -124,7 +124,14 @@ pnpm dev
 
 默认地址为 `http://localhost:8000`。`next.config.ts` 只在开发 phase 把同源 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` rewrite 到固定 `http://127.0.0.1:8001`。浏览器始终使用当前 Origin，不存在构建时 API 地址或开发代理环境覆盖。
 
-发布构建执行静态导出，rewrite 不会进入产物；Go 直接从 `/app/web` 提供页面和压缩资源，并在同一 8000 监听器处理后端命名空间。
+发布构建执行静态导出，rewrite 不会进入产物；Go 从内嵌资源提供页面和压缩资源，并在同一 8000 监听器处理后端命名空间。
+
+To build the production executable locally, run `pnpm --dir app build` followed by
+`node scripts/build-go.mjs`. The latter validates the exact generated CSP manifest,
+stages the complete export under ignored `internal/webassets/export/`, and compiles
+with `litradar_web`. Source-only tests and backend development omit that tag and
+do not require a frontend export. Embedded responses use content ETags per identity
+or gzip representation and omit `Last-Modified`; HTTP date conditions are ignored.
 
 ### 索引和投递
 
@@ -255,7 +262,7 @@ docker build --tag litradar:test .
 node tests/container-smoke.mjs litradar:test
 ```
 
-根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Ubuntu 26.04 层。应用入口只有 release `litradar`；镜像还提供征稿抓取使用的 Obscura、`pdftotext` 和原生分词库，不包含 Node.js 或 Next.js standalone 运行时。根 Compose 只声明一个 `litradar` 服务，使用非 root 账号、只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略。
+根 Dockerfile 必须成功导出前端并把 `out/` 复制到 Go 编译阶段，最终 Ubuntu 26.04 层通过二进制提供内嵌网页。应用入口只有 release `litradar`；镜像还提供征稿抓取使用的 Obscura、`pdftotext` 和原生分词库，不包含 Node.js 或 Next.js standalone 运行时。根 Compose 只声明一个 `litradar` 服务，使用非 root 账号、只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略。
 
 日志或请求路径变更还应使用隔离 fixture 运行 off/on 门禁：
 

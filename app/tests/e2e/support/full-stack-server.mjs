@@ -356,7 +356,6 @@ async function runPlaywright(baseUrl, playwrightArguments) {
  */
 async function main(playwrightArguments) {
   await Promise.all([
-    fs.access(path.join(APP_ROOT, 'out'), fsConstants.R_OK),
     fs.access(SERVICE_BINARY, fsConstants.X_OK),
     fs.access(SEEDER_BINARY, fsConstants.X_OK),
   ]);
@@ -367,7 +366,6 @@ async function main(playwrightArguments) {
   await Promise.all([
     fs.writeFile(path.join(fixtureRoot, MARKER_FILE), MARKER_CONTENT, { flag: 'wx' }),
     fs.writeFile(secretKeyPath, Buffer.alloc(32, 41), { flag: 'wx', mode: 0o600 }),
-    fs.cp(path.join(APP_ROOT, 'out'), path.join(fixtureRoot, 'web'), { recursive: true }),
   ]);
   assertNotShuttingDown();
 

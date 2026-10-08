@@ -31,7 +31,7 @@ litradar serve  (one long-running process)
                                                                -> *.changes.json -> litradar notify / litradar push
 ```
 
-系统没有 Python 运行时路径。Node.js 只在镜像构建阶段把 `app/` 导出为静态资源；运行镜像不包含 Node.js。Go 应用只发布 `litradar` 一个可执行文件，所有能力都通过它的公共子命令进入。
+系统没有 Python 运行时路径。Node.js 只在构建阶段把 `app/` 导出为静态资源；网页、压缩资源和 CSP 清单通过 Go embed 编入 `litradar`，运行时从内存提供，不读取或释放外部 `web/`。运行镜像不包含 Node.js。Go 应用只发布 `litradar` 一个可执行文件，所有能力都通过它的公共子命令进入。
 
 ## 运行进程
 

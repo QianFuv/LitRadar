@@ -11,7 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -22,6 +22,114 @@ import (
 	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
 	"github.com/QianFuv/LitRadar/internal/testkit/fullstack"
 )
+
+// TestEmbeddedWebProduction proves the tagged executable serves its real export from an empty project root.
+func TestEmbeddedWebProduction(t *testing.T) {
+	if os.Getenv("LITRADAR_TEST_WEB_ROOT") == "" {
+		t.Skip("requires the independently built production export")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	binary := filepath.Join(t.TempDir(), "litradar")
+	compiler := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+		compiler += ".exe"
+	}
+	build := exec.CommandContext(ctx, compiler, "build", "-mod=readonly", "-trimpath", "-tags", "sqlite_fts5,sqlite_dbstat,litradar_web", "-o", binary, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatal(err, string(output))
+	}
+	library, err := sqlite.SimpleLibrary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	native, err := os.ReadFile(library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(binary), filepath.Base(library)), native, 0600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	key := filepath.Join(root, "secret.key")
+	if err := os.WriteFile(key, bytes.Repeat([]byte{42}, 32), 0600); err != nil {
+		t.Fatal(err)
+	}
+	logfile, err := os.CreateTemp(t.TempDir(), "embedded-service-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logfile.Close()
+	command := exec.CommandContext(ctx, binary, "serve", "--host", "127.0.0.1", "--port", "0", "--secret-key-file", key, "--project-root", root)
+	command.Dir, command.Stdout, command.Stderr = root, logfile, logfile
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { command.Process.Kill(); command.Wait() }()
+	deadline := time.Now().Add(60 * time.Second)
+	port := readServiceListenerPort(logfile, deadline)
+	if port == 0 {
+		data, _ := os.ReadFile(logfile.Name())
+		t.Fatal("embedded production listener unavailable", string(data))
+	}
+	awaitServiceReadiness(t, logfile, port, deadline)
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Get(base + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || response.StatusCode != 200 || !strings.Contains(response.Header.Get("Content-Security-Policy"), "sha256-") || response.Header.Get("Last-Modified") != "" || response.Header.Get("ETag") == "" || response.Header.Get("Cache-Control") != "no-cache" {
+		t.Fatal("embedded HTML/security validators unavailable", response.StatusCode, response.Header, err)
+	}
+	asset := regexp.MustCompile(`src="(/_next/static/[^" ]+\.js)"`).FindSubmatch(html)
+	stylesheet := regexp.MustCompile(`href="(/_next/static/[^" ]+\.css)"`).FindSubmatch(html)
+	if len(asset) != 2 || len(stylesheet) != 2 {
+		t.Fatal("real _next script or stylesheet missing")
+	}
+	for _, endpoint := range []string{string(asset[1]), string(stylesheet[1]), "/login", "/openapi.json"} {
+		response, err := client.Get(base + endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 200 {
+			t.Fatal(endpoint, response.StatusCode)
+		}
+		if strings.HasPrefix(endpoint, "/_next/") && !strings.Contains(response.Header.Get("Cache-Control"), "immutable") {
+			t.Fatal("hashed asset cache contract", endpoint, response.Header)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "web")); !os.IsNotExist(err) {
+		t.Fatal("frontend assets were extracted", err)
+	}
+	missing, err := client.Get(base + "/missing-embedded-page")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing.Body.Close()
+	if missing.StatusCode != 404 {
+		t.Fatal("missing page", missing.StatusCode)
+	}
+	if err := os.Mkdir(filepath.Join(root, "web"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "web", "index.html"), []byte("external override"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	override, err := client.Get(base + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := io.ReadAll(override.Body)
+	override.Body.Close()
+	if err != nil || !bytes.Equal(actual, html) {
+		t.Fatal("external web tree changed embedded response", err)
+	}
+}
 
 // TestExecutableOwnsPublicCommandsAndLogging proves public command behavior in the built executable.
 func TestExecutableOwnsPublicCommandsAndLogging(t *testing.T) {

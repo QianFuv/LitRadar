@@ -1,9 +1,11 @@
 package runtime
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,8 +18,53 @@ import (
 	"unicode/utf8"
 )
 
-type frontend struct{ root string }
+// frontend serves trusted assets with the application's characterized HTTP behavior.
+type frontend struct {
+	source     fs.FS
+	validators map[string]string
+}
 
+// frontendFile supports independent ranged reads from disk and embedded files.
+type frontendFile interface {
+	fs.File
+	io.ReaderAt
+}
+
+// newEmbeddedFrontend computes representation validators once for an immutable export.
+func newEmbeddedFrontend(source fs.FS) (frontend, error) {
+	files := frontend{source: source, validators: map[string]string{}}
+	err := fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(source, name)
+		if err != nil {
+			return err
+		}
+		files.validators[name] = fmt.Sprintf("\"%x\"", sha256.Sum256(data))
+		return nil
+	})
+	return files, err
+}
+
+// open acquires an asset that supports the existing section-reader response path.
+func (files frontend) open(name string) (frontendFile, error) {
+	file, err := files.source.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	selected, ok := file.(frontendFile)
+	if !ok {
+		file.Close()
+		return nil, errors.New("frontend asset does not support ranged reads")
+	}
+	return selected, nil
+}
+
+// ServeHTTP preserves method, path, representation and fallback admission.
 func (files frontend) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != "GET" && request.Method != "HEAD" {
 		writer.Header().Set("Allow", "GET,HEAD")
@@ -39,7 +86,11 @@ func (files frontend) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 		writer.WriteHeader(http.StatusNotFound)
 		return
 	}
-	serveFrontendFile(writer, request, file, metadata, name, isCompressed, isFallback)
+	validatorName := name
+	if isCompressed {
+		validatorName += ".gz"
+	}
+	serveFrontendFile(writer, request, file, metadata, name, isCompressed, isFallback, files.validators[validatorName])
 }
 
 func frontendPath(escaped string) (string, bool) {
@@ -62,11 +113,15 @@ func frontendPath(escaped string) (string, bool) {
 	return name, true
 }
 
-func serveFrontendFile(writer http.ResponseWriter, request *http.Request, file *os.File, metadata os.FileInfo, name string, isCompressed, isFallback bool) {
+// serveFrontendFile writes a selected representation with stable validators and ranged bodies.
+func serveFrontendFile(writer http.ResponseWriter, request *http.Request, file frontendFile, metadata fs.FileInfo, name string, isCompressed, isFallback bool, contentEtag string) {
 	size, modified := metadata.Size(), metadata.ModTime().UTC()
 	etag := ""
 	if modified.Unix() >= 0 {
 		etag = fmt.Sprintf("\"%x.%08x-%x\"", modified.Unix(), modified.Nanosecond(), size)
+	}
+	if contentEtag != "" {
+		etag, modified = contentEtag, time.Time{}
 	}
 	status := frontendPrecondition(request.Header, etag, modified)
 	if writeFrontendPrecondition(writer, request, status, etag, modified, isFallback) {
@@ -111,14 +166,14 @@ func writeFrontendStatus(writer http.ResponseWriter, status int, isFallback bool
 
 // frontendOpenedFile carries acquisition decisions back to the request's file owner.
 type frontendOpenedFile struct {
-	file                                *os.File
+	file                                frontendFile
 	name                                string
 	isCompressed, isFallback, isHandled bool
 }
 
 // openFrontendRequest retains path-error admission and fallback acquisition before caller-owned close.
 func (files frontend) openFrontendRequest(writer http.ResponseWriter, request *http.Request, name string, isValid bool) frontendOpenedFile {
-	var file *os.File
+	var file frontendFile
 	var err error
 	isCompressed, isFallback := false, !isValid
 	if isValid {
@@ -139,7 +194,7 @@ func (files frontend) openFrontendRequest(writer http.ResponseWriter, request *h
 	}
 	if isFallback {
 		name, isCompressed = "404.html", false
-		file, err = os.Open(filepath.Join(files.root, name))
+		file, err = files.open(name)
 		if err != nil {
 			writer.Header().Set("Content-Length", "0")
 			writer.WriteHeader(http.StatusNotFound)
@@ -151,19 +206,18 @@ func (files frontend) openFrontendRequest(writer http.ResponseWriter, request *h
 
 // openFrontendPath preserves directory redirect, gzip selection and identity-open retry precedence.
 func (files frontend) openFrontendPath(writer http.ResponseWriter, request *http.Request, name string) frontendOpenedFile {
-	var file *os.File
+	var file frontendFile
 	var err error
 	isCompressed, isFallback := false, false
-	filename := filepath.Join(files.root, filepath.FromSlash(name))
-	if redirectFrontendDirectory(writer, request, filename) {
+	if redirectFrontendDirectory(writer, request, files.source, name) {
 		return frontendOpenedFile{isHandled: true}
 	}
 	if prefersGzip(request.Header) {
-		file, err = os.Open(filename + ".gz")
+		file, err = files.open(name + ".gz")
 		isCompressed = err == nil
 	}
 	if file == nil && (err == nil || os.IsNotExist(err)) {
-		file, err = os.Open(filename)
+		file, err = files.open(name)
 	}
 	if err != nil {
 		isFallback = isFrontendFallbackError(err)
@@ -177,8 +231,8 @@ func (files frontend) openFrontendPath(writer http.ResponseWriter, request *http
 }
 
 // redirectFrontendDirectory retains escaped-path and raw-query spelling for directory redirects.
-func redirectFrontendDirectory(writer http.ResponseWriter, request *http.Request, filename string) bool {
-	if info, metadataError := os.Stat(filename); metadataError == nil && info.IsDir() {
+func redirectFrontendDirectory(writer http.ResponseWriter, request *http.Request, source fs.FS, filename string) bool {
+	if info, metadataError := fs.Stat(source, filename); metadataError == nil && info.IsDir() {
 		location := request.URL.EscapedPath() + "/"
 		if request.URL.RawQuery != "" || request.URL.ForceQuery {
 			location += "?" + request.URL.RawQuery
@@ -216,7 +270,9 @@ func writeFrontendPrecondition(writer http.ResponseWriter, request *http.Request
 	if etag != "" {
 		writer.Header().Set("ETag", etag)
 	}
-	writer.Header().Set("Last-Modified", modified.Format(http.TimeFormat))
+	if !modified.IsZero() {
+		writer.Header().Set("Last-Modified", modified.Format(http.TimeFormat))
+	}
 	if status == http.StatusNotModified {
 		if isFallback {
 			writeFrontendStatus(writer, status, true, 0)

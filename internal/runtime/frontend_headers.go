@@ -56,6 +56,7 @@ func encodingQuality(value string) int {
 	return quality
 }
 
+// frontendPrecondition evaluates date validators only when the asset has a known modification time.
 func frontendPrecondition(headers http.Header, etag string, modified time.Time) int {
 	modified = modified.Truncate(time.Second)
 	if failsFrontendMatch(headers, etag, modified) {
@@ -65,7 +66,7 @@ func frontendPrecondition(headers http.Header, etag string, modified time.Time) 
 		if etag != "" && matchesEtag(match, etag, true) {
 			return http.StatusNotModified
 		}
-	} else if date, isValid := frontendDate(headers.Get("If-Modified-Since")); isValid && !date.Before(modified) {
+	} else if date, isValid := frontendDate(headers.Get("If-Modified-Since")); !modified.IsZero() && isValid && !date.Before(modified) {
 		return http.StatusNotModified
 	}
 	return http.StatusOK
@@ -169,7 +170,7 @@ func failsFrontendMatch(headers http.Header, etag string, modified time.Time) bo
 		if etag == "" || !matchesEtag(match, etag, false) {
 			return true
 		}
-	} else if date, isValid := frontendDate(headers.Get("If-Unmodified-Since")); isValid && date.Before(modified) {
+	} else if date, isValid := frontendDate(headers.Get("If-Unmodified-Since")); !modified.IsZero() && isValid && date.Before(modified) {
 		return true
 	}
 	return false

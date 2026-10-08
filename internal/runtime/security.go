@@ -8,8 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
-	"path/filepath"
+	"path"
 	"reflect"
 	"slices"
 	"strings"
@@ -33,13 +34,19 @@ type cspFile struct {
 	InlineScriptHashes []string `json:"inline_script_hashes"`
 }
 
+// loadSecurityPolicy validates filesystem fixtures with the same policy as embedded assets.
 func loadSecurityPolicy(root string) (string, error) {
-	expected, err := buildCspManifest(root)
+	return loadSecurityPolicyFiles(os.DirFS(root))
+}
+
+// loadSecurityPolicyFiles validates the manifest against the exact trusted source served to clients.
+func loadSecurityPolicyFiles(source fs.FS) (string, error) {
+	expected, err := buildCspManifestFiles(source)
 	if err != nil {
 		return "", err
 	}
-	filename := filepath.Join(root, "csp-hashes.json")
-	metadata, err := os.Lstat(filename)
+	filename := "csp-hashes.json"
+	metadata, err := fs.Stat(source, filename)
 	if err != nil {
 		return "", fmt.Errorf("Unable to read CSP manifest metadata at %s: %w", filename, err)
 	}
@@ -49,7 +56,7 @@ func loadSecurityPolicy(root string) (string, error) {
 	if metadata.Size() > cspManifestLimit {
 		return "", fmt.Errorf("CSP manifest exceeds the %d byte limit", cspManifestLimit)
 	}
-	data, err := os.ReadFile(filename)
+	data, err := fs.ReadFile(source, filename)
 	if err != nil {
 		return "", fmt.Errorf("Unable to read CSP manifest at %s: %w", filename, err)
 	}
@@ -67,18 +74,24 @@ func loadSecurityPolicy(root string) (string, error) {
 	return policy + "; style-src 'self' 'unsafe-inline'", nil
 }
 
+// buildCspManifest retains the disk fixture entrypoint for independently generated exports.
 func buildCspManifest(root string) (cspManifest, error) {
+	return buildCspManifestFiles(os.DirFS(root))
+}
+
+// buildCspManifestFiles recomputes every HTML and inline-script hash from a trusted filesystem.
+func buildCspManifestFiles(source fs.FS) (cspManifest, error) {
 	manifest := cspManifest{Version: 1, Algorithm: "sha256", Files: []cspFile{}, ScriptHashes: []string{}}
-	paths, err := collectHtmlPaths(root, root)
+	paths, err := collectHtmlPaths(source, ".")
 	if err != nil {
 		return manifest, err
 	}
 	slices.Sort(paths)
 	if len(paths) == 0 {
-		return manifest, fmt.Errorf("Static export contains no HTML files: %s", root)
+		return manifest, errors.New("Static export contains no HTML files")
 	}
 	for _, filename := range paths {
-		if err := appendCspFile(&manifest, root, filename); err != nil {
+		if err := appendCspFile(&manifest, source, filename); err != nil {
 			return manifest, err
 		}
 	}
@@ -87,24 +100,25 @@ func buildCspManifest(root string) (cspManifest, error) {
 	return manifest, nil
 }
 
-func collectHtmlPaths(root, directory string) ([]string, error) {
-	entries, err := os.ReadDir(directory)
+// collectHtmlPaths rejects linked assets before selecting sorted HTML paths.
+func collectHtmlPaths(source fs.FS, directory string) ([]string, error) {
+	entries, err := fs.ReadDir(source, directory)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to traverse static export at %s: %w", directory, err)
 	}
 	paths := []string{}
 	for _, entry := range entries {
-		filename := filepath.Join(directory, entry.Name())
+		filename := path.Join(directory, entry.Name())
 		if entry.Type()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("Static export must not contain symbolic links: %s", filename)
 		}
 		if entry.IsDir() {
-			nested, err := collectHtmlPaths(root, filename)
+			nested, err := collectHtmlPaths(source, filename)
 			if err != nil {
 				return nil, err
 			}
 			paths = append(paths, nested...)
-		} else if entry.Type().IsRegular() && strings.EqualFold(filepath.Ext(filename), ".html") {
+		} else if entry.Type().IsRegular() && strings.EqualFold(path.Ext(filename), ".html") {
 			paths = append(paths, filename)
 		}
 	}
@@ -280,9 +294,9 @@ func (file *cspFile) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// appendCspFile retains aggregate hash mutation before relative-path validation and file append.
-func appendCspFile(manifest *cspManifest, root, filename string) error {
-	data, err := os.ReadFile(filename)
+// appendCspFile preserves exact HTML/script bytes and validates export-relative paths.
+func appendCspFile(manifest *cspManifest, source fs.FS, filename string) error {
+	data, err := fs.ReadFile(source, filename)
 	if err != nil {
 		return fmt.Errorf("Unable to read static HTML at %s: %w", filename, err)
 	}
@@ -298,14 +312,13 @@ func appendCspFile(manifest *cspManifest, root, filename string) error {
 			manifest.ScriptHashes = append(manifest.ScriptHashes, hash)
 		}
 	}
-	relative, err := filepath.Rel(root, filename)
-	if err != nil {
+	if !fs.ValidPath(filename) {
 		return errors.New("Static HTML escaped the export root")
 	}
-	if !utf8.ValidString(relative) {
+	if !utf8.ValidString(filename) {
 		return errors.New("Static HTML path must be valid UTF-8")
 	}
-	manifest.Files = append(manifest.Files, cspFile{strings.ReplaceAll(relative, "\\", "/"), cspDigest(data), hashes})
+	manifest.Files = append(manifest.Files, cspFile{filename, cspDigest(data), hashes})
 	return nil
 }
 

@@ -9,10 +9,14 @@ import { DatabaseSync } from "node:sqlite";
 import { inflateSync } from "node:zlib";
 import { setTimeout } from "node:timers/promises";
 
-const [archiveArgument, version, commit] = process.argv.slice(2);
+const [archiveArgument, version, commit, mode] = process.argv.slice(2);
+assert(mode === undefined || mode === "--local-smoke");
 assert.equal(process.platform, "win32");
 const archive = path.resolve(archiveArgument);
-const report = path.resolve("release-results/windows/smoke");
+const report =
+  mode === "--local-smoke"
+    ? path.join(path.dirname(archive), "smoke")
+    : path.resolve("release-results/windows/smoke");
 fs.mkdirSync(report, { recursive: true });
 const extracted = fs.mkdtempSync(path.join(report, "extracted space-"));
 execFileSync("tar", ["-xf", archive, "-C", extracted], { windowsHide: true });
@@ -22,6 +26,10 @@ const provenance = JSON.parse(
 );
 assert.equal(provenance.sourceCommit, commit);
 assert.equal(provenance.version, version);
+assert.equal(
+  Boolean(provenance.localVerificationOnly),
+  mode === "--local-smoke",
+);
 const popplerBin = path.join(
   root,
   "native",
@@ -244,6 +252,26 @@ try {
   }
   for (const endpoint of ["/", "/openapi.json"])
     assert((await fetch(baseUrl + endpoint)).ok, endpoint);
+  assert(
+    !fs.existsSync(path.join(root, "web")),
+    "Release must not contain external web assets",
+  );
+  const home = await fetch(baseUrl + "/");
+  assert(home.headers.get("content-security-policy")?.includes("sha256-"));
+  assert.equal(home.headers.get("last-modified"), null);
+  assert(home.headers.get("etag"));
+  const html = await home.text();
+  const script = html.match(/src="(\/_next\/static\/[^" ]+\.js)"/);
+  assert(script, "Embedded _next script is missing");
+  assert(
+    (await fetch(baseUrl + script[1])).ok,
+    "Embedded script request failed",
+  );
+  const stylesheet = html.match(/href="(\/_next\/static\/[^" ]+\.css)"/);
+  assert(stylesheet, "Embedded _next stylesheet is missing");
+  assert((await fetch(baseUrl + stylesheet[1])).ok);
+  assert((await fetch(baseUrl + "/login")).ok);
+  assert.equal((await fetch(baseUrl + "/missing-embedded-page")).status, 404);
   assert.equal((await fetch(baseUrl + "/api/auth/me")).status, 401);
   assert(fs.existsSync(path.join(root, "data/meta/chinese_journals.csv")));
   const captured = path.join(extracted, "page.json");
@@ -290,7 +318,7 @@ fs.writeFileSync(
         "relocated-launcher",
         "restricted-path",
         "ready",
-        "web",
+        "embedded-web-csp",
         "openapi",
         "anonymous-auth",
         "metadata",

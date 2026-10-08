@@ -6,9 +6,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseVersion } from "./release-version.mjs";
+import { stageWebAssets } from "./stage-web-assets.mjs";
 
 const toolsRoot = fileURLToPath(new URL("..", import.meta.url));
-const [sourceArgument, inputVersion, commit] = process.argv.slice(2);
+const [sourceArgument, inputVersion, commit, mode] = process.argv.slice(2);
+assert(
+  mode === undefined || mode === "--local-smoke",
+  "Unknown packaging mode",
+);
+const isLocalSmoke = mode === "--local-smoke";
 assert.equal(
   process.platform,
   "win32",
@@ -17,7 +23,10 @@ assert.equal(
 assert.match(commit, /^[a-f0-9]{40}$/);
 const source = path.resolve(sourceArgument);
 const version = parseVersion(inputVersion);
-const output = path.resolve("release-results/windows");
+if (isLocalSmoke) fs.mkdirSync("test-results", { recursive: true });
+const output = isLocalSmoke
+  ? fs.mkdtempSync(path.resolve("test-results/windows-package-"))
+  : path.resolve("release-results/windows");
 const name = `litradar_${version}_windows_amd64`;
 const directory = path.join(output, "packages", name);
 const assets = path.join(output, "assets");
@@ -38,12 +47,38 @@ function run(command, args, options = {}) {
     ...options,
   });
 }
+
+/** Fingerprint tracked and new source bytes without identifying a dirty candidate as a release commit. */
+function sourceInventoryFingerprint() {
+  const filenames = run("git", [
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+  ])
+    .split("\0")
+    .filter(Boolean)
+    .sort();
+  const inventory = filenames.map((filename) => {
+    const candidate = path.join(source, filename);
+    return [
+      filename,
+      fs.existsSync(candidate)
+        ? createHash("sha256").update(fs.readFileSync(candidate)).digest("hex")
+        : null,
+    ];
+  });
+  return createHash("sha256").update(JSON.stringify(inventory)).digest("hex");
+}
 assert.equal(run("git", ["rev-parse", "HEAD"]).trim(), commit);
-assert.equal(
-  run("git", ["status", "--porcelain", "--untracked-files=no"]).trim(),
-  "",
-  "Source checkout must be clean",
-);
+const sourceChanges = run("git", [
+  "status",
+  "--porcelain",
+  isLocalSmoke ? "--untracked-files=normal" : "--untracked-files=no",
+]);
+if (!isLocalSmoke)
+  assert.equal(sourceChanges.trim(), "", "Source checkout must be clean");
 assert.equal(
   parseVersion(fs.readFileSync(path.join(source, "VERSION"), "utf8")),
   version,
@@ -82,6 +117,7 @@ const environment = {
   GOOS: "windows",
   GOARCH: "amd64",
 };
+await stageWebAssets(source);
 run(
   "go",
   [
@@ -89,7 +125,7 @@ run(
     "-mod=readonly",
     "-trimpath",
     "-tags",
-    "sqlite_fts5,sqlite_dbstat",
+    "sqlite_fts5,sqlite_dbstat,litradar_web",
     "-ldflags",
     "-linkmode external -extldflags -static",
     "-o",
@@ -99,7 +135,6 @@ run(
   { env: environment, stdio: "inherit" },
 );
 for (const [from, to] of [
-  ["app/out", "web"],
   ["assets/meta", "assets/meta"],
   ["libs/simple/windows/simple.dll", "simple.dll"],
   ["docs/third-party", "licenses"],
@@ -194,6 +229,16 @@ const provenance = {
   sourceCommit: commit,
   toolingCommit: run("git", ["rev-parse", "HEAD"], { cwd: toolsRoot }).trim(),
   dependencies,
+  ...(isLocalSmoke
+    ? {
+        localVerificationOnly: true,
+        sourceChanges,
+        sourceDiffSha256: createHash("sha256")
+          .update(run("git", ["diff", "HEAD", "--binary"]))
+          .digest("hex"),
+        sourceInventorySha256: sourceInventoryFingerprint(),
+      }
+    : {}),
 };
 fs.writeFileSync(
   path.join(directory, "build.json"),
@@ -228,7 +273,13 @@ const archive = path.join(assets, `${name}.zip`);
 run("tar", ["-a", "-cf", archive, "-C", path.dirname(directory), name]);
 run(
   process.execPath,
-  [path.join(toolsRoot, "scripts/smoke-windows.mjs"), archive, version, commit],
+  [
+    path.join(toolsRoot, "scripts/smoke-windows.mjs"),
+    archive,
+    version,
+    commit,
+    ...(isLocalSmoke ? ["--local-smoke"] : []),
+  ],
   { cwd: toolsRoot, stdio: "inherit" },
 );
 const checksum = `${createHash("sha256").update(fs.readFileSync(archive)).digest("hex")}  ${name}.zip\n`;

@@ -94,6 +94,8 @@ COPY third_party third_party
 RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod go mod download && go mod verify
 COPY cmd cmd
 COPY internal internal
+RUN rm -rf /app/internal/webassets/export
+COPY --from=frontend-build /app/out internal/webassets/export
 COPY assets assets
 COPY scripts/go-build-inventory.sh /usr/local/bin/go-build-inventory
 
@@ -104,7 +106,7 @@ RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod \
     elif [ "$TARGETARCH" = amd64 ]; then export CC=x86_64-linux-gnu-gcc; \
     else exit 1; fi \
     && mkdir -p /out \
-    && go build -mod=readonly -trimpath -tags sqlite_fts5,sqlite_dbstat -o /out/litradar ./cmd/litradar \
+    && go build -mod=readonly -trimpath -tags sqlite_fts5,sqlite_dbstat,litradar_web -o /out/litradar ./cmd/litradar \
     && sh /usr/local/bin/go-build-inventory
 
 
@@ -179,7 +181,6 @@ FROM runtime-base
 COPY --from=go-build /out/litradar /usr/local/bin/litradar
 
 COPY assets/meta /usr/share/litradar/meta
-COPY --chown=litradar:litradar --from=frontend-build /app/out web
 
 EXPOSE 8000
 

@@ -76,7 +76,7 @@ original workflow resumes publication and updates latest only after publication.
 ## Run a binary archive
 
 The Linux package targets Ubuntu 26.04 on amd64. They contain the native Go
-binary, web assets, catalog bundle, SQLite tokenizer, Obscura and its worker, and
+binary with embedded web assets and CSP, catalog bundle, SQLite tokenizer, Obscura and its worker, and
 third-party notices. They are dynamically linked distributions, not standalone
 static binaries. Install the system dependencies first:
 
@@ -95,8 +95,9 @@ test -e secrets/litradar.key || (umask 077; openssl rand -out secrets/litradar.k
 `run.sh` selects the archive directory as the working directory and the bundled
 Obscura helper. `pdftotext` is provided by the installed Poppler packages. To run
 `litradar` directly, set `LITRADAR_OBSCURA_PATH` to the bundled Obscura and run
-from the archive directory, or specify `--project-root` pointing to a directory
-containing `web/`. Native metadata discovery uses the system bundle first and
+from the archive directory, or specify `--project-root` pointing to the writable
+data root. No external `web/` is required or consulted. Embedded assets use content
+ETags, omit `Last-Modified`, and ignore date-based HTTP conditions. Native metadata discovery uses the system bundle first and
 then `assets/meta/` beside the executable; it preserves customized catalogs.
 
 Keep deployment keys and existing `data/` across upgrades. Stop the old service

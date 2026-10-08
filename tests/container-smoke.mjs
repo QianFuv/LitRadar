@@ -1107,6 +1107,36 @@ async function verifySmokeHttpResponses(
     "auth response was cacheable",
   );
   const rootBody = await rootResponse.text();
+  const baseUrl = new URL(rootResponse.url).origin;
+  assertInvariant(
+    rootResponse.headers.get("last-modified") === null,
+    "embedded HTML declared filesystem modification time",
+  );
+  assertInvariant(
+    Boolean(rootResponse.headers.get("etag")),
+    "embedded HTML omitted content validator",
+  );
+  for (const expression of [
+    /src="(\/_next\/static\/[^" ]+\.js)"/,
+    /href="(\/_next\/static\/[^" ]+\.css)"/,
+  ]) {
+    const asset = rootBody.match(expression);
+    assertInvariant(
+      Boolean(asset),
+      "embedded HTML omitted a real JS/CSS asset",
+    );
+    const response = await fetchRuntime(`${baseUrl}${asset[1]}`);
+    assertInvariant(
+      response.ok &&
+        response.headers.get("cache-control")?.includes("immutable"),
+      "embedded hashed asset unavailable or cacheable incorrectly",
+    );
+  }
+  assertInvariant(
+    (await fetchRuntime(`${baseUrl}/missing-embedded-page`)).status === 404,
+    "missing embedded route did not return 404",
+  );
+  await runDocker(["exec", containerName, "test", "!", "-e", "/app/web"]);
   const openApi = await openApiResponse.json();
   assertInvariant(
     rootBody.includes("LitRadar"),

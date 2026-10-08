@@ -26,7 +26,6 @@ try {
     ["/usr/local/bin/obscura", "obscura"],
     ["/usr/local/bin/obscura-worker", "obscura-worker"],
     ["/usr/lib/litradar/libsimple.so", "libsimple.so"],
-    ["/app/web", "web"],
     ["/usr/share/litradar/meta", "assets/meta"],
     ["/usr/share/doc/litradar/third-party", "licenses"],
   ]) {

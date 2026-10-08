@@ -33,7 +33,7 @@ func frontendResponseFixture(t *testing.T) frontend {
 			t.Fatal(err)
 		}
 	}
-	return frontend{root}
+	return frontend{source: os.DirFS(root)}
 }
 
 // TestFrontendResponsePreservesFallbackHeadAndRangeOrder checks status and headers at decision boundaries.

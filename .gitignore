@@ -16,6 +16,7 @@
 /docs/report/
 /output/
 /app/out/
+/internal/webassets/export/
 /secrets/
 /.playwright-cli/
 /.antigravitycli/
