@@ -173,17 +173,16 @@ async function serveBootstrapApi(route: Route): Promise<void> {
 }
 
 /**
- * Serve authenticated tracking-page API fixtures.
+ * Serve identity, tracking status and metadata fixtures
  *
  * @param route - Intercepted API route.
+ * @param requestUrl - Parsed original URL.
  */
-async function serveTrackingApi(route: Route): Promise<void> {
-  const request = route.request();
-  const requestUrl = new URL(request.url());
+async function serveTrackingMetadata(route: Route, requestUrl: URL): Promise<boolean> {
   const pathname = requestUrl.pathname;
   if (pathname === '/api/auth/me') {
     await fulfillJson(route, { id: 41, username: 'browser_user', is_admin: false });
-    return;
+    return true;
   }
   if (pathname === '/api/tracking/status') {
     await fulfillJson(route, {
@@ -192,24 +191,40 @@ async function serveTrackingApi(route: Route): Promise<void> {
       weekly_articles_available: 2,
       notification_configured: false,
     });
-    return;
+    return true;
   }
   if (pathname === '/api/meta/databases') {
     await fulfillJson(route, ['fixture.sqlite']);
-    return;
+    return true;
   }
   if (pathname === '/api/meta/areas' || pathname === '/api/meta/journals') {
     await fulfillJson(route, []);
-    return;
+    return true;
   }
   if (pathname === '/api/meta/ratings') {
     await fulfillJson(route, { utd_rating: [], abs_rating: [], fms_rating: [], fmscn_rating: [] });
-    return;
+    return true;
   }
   if (pathname === '/api/years') {
     await fulfillJson(route, []);
-    return;
+    return true;
   }
+  return false;
+}
+
+/**
+ * Serve weekly, search and favorite fixtures
+ *
+ * @param route - Intercepted API route.
+ * @param request - Original request.
+ * @param requestUrl - Parsed original URL.
+ */
+async function serveTrackingArticles(
+  route: Route,
+  request: ReturnType<Route['request']>,
+  requestUrl: URL,
+): Promise<boolean> {
+  const pathname = requestUrl.pathname;
   if (pathname === '/api/weekly-updates/summary') {
     await fulfillJson(route, {
       generated_at: '2026-07-17T09:00:00Z',
@@ -231,7 +246,7 @@ async function serveTrackingApi(route: Route): Promise<void> {
         },
       ],
     });
-    return;
+    return true;
   }
   if (pathname === '/api/weekly-updates/articles') {
     await fulfillJson(route, {
@@ -265,7 +280,7 @@ async function serveTrackingApi(route: Route): Promise<void> {
         has_more: false,
       },
     });
-    return;
+    return true;
   }
   if (pathname === '/api/articles') {
     const items = requestUrl.searchParams.has('q')
@@ -289,13 +304,13 @@ async function serveTrackingApi(route: Route): Promise<void> {
         has_more: false,
       },
     });
-    return;
+    return true;
   }
   if (pathname === '/api/favorites/folders') {
     await fulfillJson(route, [
       { id: 4, name: 'Tracking', is_tracking: true, article_count: 1, created_at: 1 },
     ]);
-    return;
+    return true;
   }
   if (pathname === '/api/favorites/folders/4/articles/page') {
     await fulfillJson(route, {
@@ -318,26 +333,42 @@ async function serveTrackingApi(route: Route): Promise<void> {
       ],
       page: { total: null, limit: 50, offset: 0, next_cursor: null, has_more: false },
     });
-    return;
+    return true;
   }
   if (pathname === '/api/favorites/check/batch' && request.method() === 'POST') {
     await fulfillJson(route, [
       { article_id: 'weekly-fixture-1', folders: [{ folder_id: 4, folder_name: 'Tracking' }] },
       { article_id: 'weekly-fixture-2', folders: [] },
     ]);
-    return;
+    return true;
   }
+  return false;
+}
+
+/**
+ * Serve invitation, notification and manual-push fixtures
+ *
+ * @param route - Intercepted API route.
+ * @param request - Original request.
+ * @param requestUrl - Parsed original URL.
+ */
+async function serveTrackingNotifications(
+  route: Route,
+  request: ReturnType<Route['request']>,
+  requestUrl: URL,
+): Promise<boolean> {
+  const pathname = requestUrl.pathname;
   if (pathname === '/api/auth/invite-code') {
     await fulfillJson(route, null);
-    return;
+    return true;
   }
   if (pathname === '/api/tracking/notification-settings') {
     await fulfillJson(route, null);
-    return;
+    return true;
   }
   if (pathname === '/api/tracking/ai-endpoints') {
     await fulfillJson(route, []);
-    return;
+    return true;
   }
   if (pathname === '/api/tracking/push-weekly/status' && request.method() === 'GET') {
     await fulfillJson(route, {
@@ -357,7 +388,7 @@ async function serveTrackingApi(route: Route): Promise<void> {
       folder_id: null,
       folder_name: null,
     });
-    return;
+    return true;
   }
   if (pathname === '/api/tracking/push-weekly' && request.method() === 'POST') {
     await fulfillJson(route, {
@@ -377,8 +408,23 @@ async function serveTrackingApi(route: Route): Promise<void> {
       folder_id: 4,
       folder_name: 'Tracking',
     });
-    return;
+    return true;
   }
+  return false;
+}
+
+/**
+ * Serve authenticated tracking-page API fixtures.
+ *
+ * @param route - Intercepted API route.
+ */
+async function serveTrackingApi(route: Route): Promise<void> {
+  const request = route.request();
+  const requestUrl = new URL(request.url());
+  const pathname = requestUrl.pathname;
+  if (await serveTrackingMetadata(route, requestUrl)) return;
+  if (await serveTrackingArticles(route, request, requestUrl)) return;
+  if (await serveTrackingNotifications(route, request, requestUrl)) return;
   await fulfillJson(route, { detail: `Unhandled fixture route: ${pathname}` }, 404);
 }
 
@@ -939,33 +985,13 @@ async function verifiesUnifiedRootWorkspaces(page: Page): Promise<void> {
 }
 
 /**
- * Verify compact navigation, account actions, theme persistence, focus, and safe-area spacing.
+ * Verify desktop navigation and dark chrome
  *
  * @param page - Playwright browser page.
  */
-async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
-  const hydrationDiagnostics: string[] = [];
-
-  page.on('console', (message) => {
-    const text = message.text();
-    if (message.type() === 'error' && /hydration|did not match|server rendered html/i.test(text)) {
-      hydrationDiagnostics.push(text);
-    }
-  });
-  page.on('pageerror', (error) => {
-    if (/hydration|did not match|server rendered html/i.test(error.message)) {
-      hydrationDiagnostics.push(error.message);
-    }
-  });
-
-  await page.route('**/api/**', serveTrackingApi);
-  await page.emulateMedia({ colorScheme: 'dark' });
-  await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.goto('/?q=graph');
-  await hideDevelopmentIndicator(page);
-  await expect(page.locator('html')).toHaveClass(/dark/);
-  await expectActiveFilterSummaryToStick(page);
-
+async function verifiesDesktopNavigation(
+  page: Page,
+): Promise<{ currentNavigationLink: Locator; trigger: Locator }> {
   const pageNavigation = page.getByRole('navigation', { name: '页面导航' });
   const currentNavigationLink = pageNavigation.getByRole('link', { name: '文献检索' });
   await expect(pageNavigation.getByRole('link')).toHaveCount(4);
@@ -992,7 +1018,16 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
   await expectThemeFocusTokensToUseIndigo(page);
   await page.screenshot({ path: '../output/ui/default-chrome-dark.png', fullPage: true });
+  return { currentNavigationLink, trigger };
+}
 
+/**
+ * Verify account actions and persistent theme controls
+ *
+ * @param page - Playwright browser page.
+ * @param trigger - trigger retained from the preceding assertion phase.
+ */
+async function verifiesAccountThemeControls(page: Page, trigger: Locator): Promise<void> {
   await trigger.click();
   await expect(page.getByRole('menuitem', { name: '打开设置中心' })).toHaveAttribute(
     'href',
@@ -1025,7 +1060,15 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   );
   await page.getByRole('menuitemradio', { name: '跟随系统' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('system');
+}
 
+/**
+ * Verify settings closure, outside click and Escape restore menu focus
+ *
+ * @param page - Playwright browser page.
+ * @param trigger - trigger retained from the preceding assertion phase.
+ */
+async function verifiesSettingsMenuFocus(page: Page, trigger: Locator): Promise<void> {
   await trigger.click();
   await page.getByRole('menuitem', { name: '打开设置中心' }).click();
   await expect(page).toHaveURL('/?q=graph&settings=general');
@@ -1050,7 +1093,20 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.keyboard.press('Escape');
   await expect(page.getByRole('menu')).toHaveCount(0);
   await expect(trigger).toBeFocused();
+}
 
+/**
+ * Verify light chrome and restoration of the system theme
+ *
+ * @param page - Playwright browser page.
+ * @param trigger - trigger retained from the preceding assertion phase.
+ * @param currentNavigationLink - currentNavigationLink retained from the preceding assertion phase.
+ */
+async function verifiesLightAndSystemTheme(
+  page: Page,
+  trigger: Locator,
+  currentNavigationLink: Locator,
+): Promise<void> {
   await trigger.click();
   await page.getByRole('menuitemradio', { name: '浅色' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('light');
@@ -1068,7 +1124,14 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.getByRole('menuitemradio', { name: '跟随系统' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('system');
   await expect(page.locator('html')).toHaveClass(/dark/);
+}
 
+/**
+ * Verify compact filter navigation and safe-area setup
+ *
+ * @param page - Playwright browser page.
+ */
+async function verifiesMobileNavigation(page: Page): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?q=graph');
   await hideDevelopmentIndicator(page);
@@ -1088,7 +1151,17 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.screenshot({ path: '../output/ui/navigation-mobile.png', fullPage: true });
   await page.mouse.click(382, 400);
   await expect(filterDialog).toHaveCount(0);
+}
 
+/**
+ * Verify the entire mobile card remains the article action target
+ *
+ * @param page - Playwright browser page.
+ */
+async function verifiesMobileArticleTargets(page: Page): Promise<{
+  articleCardBox: Awaited<ReturnType<Locator['boundingBox']>>;
+  articleTitleBox: Awaited<ReturnType<Locator['boundingBox']>>;
+}> {
   const firstArticleAction = page.getByRole('button', { name: /^查看文章详情：/ }).first();
   const firstArticleCard = firstArticleAction.locator('[data-slot="card"]');
   const firstArticleTitle = firstArticleCard.locator('[data-slot="card-title"]');
@@ -1104,13 +1177,50 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await expect(firstArticleCard.locator('[data-slot="card-footer"]')).toHaveCount(0);
   expect(articleActionBox?.width).toBe(articleCardBox?.width);
   expect(articleActionBox?.height).toBe(articleCardBox?.height);
+  return { articleCardBox, articleTitleBox };
+}
+
+/**
+ * Verify mobile card and title geometry within the viewport
+ *
+ * @param page - Playwright browser page.
+ * @param articleCardBox - articleCardBox retained from the preceding assertion phase.
+ * @param articleTitleBox - articleTitleBox retained from the preceding assertion phase.
+ */
+async function verifiesMobileArticleBounds(
+  page: Page,
+  articleCardBox: Awaited<ReturnType<Locator['boundingBox']>>,
+  articleTitleBox: Awaited<ReturnType<Locator['boundingBox']>>,
+): Promise<void> {
+  expectMobileArticleCardBounds(articleCardBox);
+  expectMobileArticleTitleBounds(articleCardBox, articleTitleBox);
+  await page.screenshot({ path: '../output/ui/search-results-mobile.png', fullPage: true });
+}
+
+/** Assert the original card bounds against the mobile viewport. */
+function expectMobileArticleCardBounds(
+  articleCardBox: Awaited<ReturnType<Locator['boundingBox']>>,
+): void {
   expect(articleCardBox?.x ?? -1).toBeGreaterThanOrEqual(0);
   expect((articleCardBox?.x ?? 390) + (articleCardBox?.width ?? 1)).toBeLessThanOrEqual(390);
+}
+
+/** Assert the original title bounds against the containing card. */
+function expectMobileArticleTitleBounds(
+  articleCardBox: Awaited<ReturnType<Locator['boundingBox']>>,
+  articleTitleBox: Awaited<ReturnType<Locator['boundingBox']>>,
+): void {
   expect((articleTitleBox?.y ?? 844) + (articleTitleBox?.height ?? 1)).toBeLessThanOrEqual(
     (articleCardBox?.y ?? 0) + (articleCardBox?.height ?? 0),
   );
-  await page.screenshot({ path: '../output/ui/search-results-mobile.png', fullPage: true });
+}
 
+/**
+ * Verify the mobile account trigger respects safe-area spacing
+ *
+ * @param page - Playwright browser page.
+ */
+async function verifiesMobileSafeArea(page: Page): Promise<Locator> {
   const mobileTrigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
   const resultsPaddingBottom = await page
     .locator('#results-scroll-container')
@@ -1119,7 +1229,68 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   expect(resultsPaddingBottom).toBeGreaterThanOrEqual(128);
   expect(triggerBox).not.toBeNull();
   expect((triggerBox?.y ?? 844) + (triggerBox?.height ?? 0)).toBeLessThanOrEqual(796);
+  return mobileTrigger;
+}
 
+/**
+ * Compare the original horizontal extents of the two fixture boxes
+ *
+ * @param lastInteractiveBox - Last article action box.
+ * @param updatedTriggerBox - Account trigger box.
+ */
+function hasHorizontalFixtureOverlap(
+  lastInteractiveBox: Awaited<ReturnType<Locator['boundingBox']>>,
+  updatedTriggerBox: Awaited<ReturnType<Locator['boundingBox']>>,
+): boolean {
+  return (
+    fixtureHorizontalStart(lastInteractiveBox) < fixtureHorizontalEnd(updatedTriggerBox) &&
+    fixtureHorizontalEnd(lastInteractiveBox) > fixtureHorizontalStart(updatedTriggerBox)
+  );
+}
+
+/**
+ * Compare the original vertical extents of the two fixture boxes
+ *
+ * @param lastInteractiveBox - Last article action box.
+ * @param updatedTriggerBox - Account trigger box.
+ */
+function hasVerticalFixtureOverlap(
+  lastInteractiveBox: Awaited<ReturnType<Locator['boundingBox']>>,
+  updatedTriggerBox: Awaited<ReturnType<Locator['boundingBox']>>,
+): boolean {
+  return (
+    fixtureVerticalStart(lastInteractiveBox) < fixtureVerticalEnd(updatedTriggerBox) &&
+    fixtureVerticalEnd(lastInteractiveBox) > fixtureVerticalStart(updatedTriggerBox)
+  );
+}
+
+/** Read the original horizontal start, retaining the missing-box fallback. */
+function fixtureHorizontalStart(box: Awaited<ReturnType<Locator['boundingBox']>>): number {
+  return box?.x ?? 0;
+}
+
+/** Read the original horizontal end, retaining separate coordinate and size fallbacks. */
+function fixtureHorizontalEnd(box: Awaited<ReturnType<Locator['boundingBox']>>): number {
+  return (box?.x ?? 0) + (box?.width ?? 0);
+}
+
+/** Read the original vertical start, retaining the missing-box fallback. */
+function fixtureVerticalStart(box: Awaited<ReturnType<Locator['boundingBox']>>): number {
+  return box?.y ?? 0;
+}
+
+/** Read the original vertical end, retaining separate coordinate and size fallbacks. */
+function fixtureVerticalEnd(box: Awaited<ReturnType<Locator['boundingBox']>>): number {
+  return (box?.y ?? 0) + (box?.height ?? 0);
+}
+
+/**
+ * Verify the last article action does not overlap account controls
+ *
+ * @param page - Playwright browser page.
+ * @param mobileTrigger - mobileTrigger retained from the preceding assertion phase.
+ */
+async function verifiesMobileActionSeparation(page: Page, mobileTrigger: Locator): Promise<void> {
   const lastInteractive = page
     .locator('#main-content :is(button:not([disabled]), [role="button"])')
     .last();
@@ -1129,12 +1300,18 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   expect(lastInteractiveBox).not.toBeNull();
   expect(updatedTriggerBox).not.toBeNull();
   const doesOverlap =
-    (lastInteractiveBox?.x ?? 0) < (updatedTriggerBox?.x ?? 0) + (updatedTriggerBox?.width ?? 0) &&
-    (lastInteractiveBox?.x ?? 0) + (lastInteractiveBox?.width ?? 0) > (updatedTriggerBox?.x ?? 0) &&
-    (lastInteractiveBox?.y ?? 0) < (updatedTriggerBox?.y ?? 0) + (updatedTriggerBox?.height ?? 0) &&
-    (lastInteractiveBox?.y ?? 0) + (lastInteractiveBox?.height ?? 0) > (updatedTriggerBox?.y ?? 0);
+    hasHorizontalFixtureOverlap(lastInteractiveBox, updatedTriggerBox) &&
+    hasVerticalFixtureOverlap(lastInteractiveBox, updatedTriggerBox);
   expect(doesOverlap).toBe(false);
+}
 
+/**
+ * Verify narrow theme controls fit and close after selection
+ *
+ * @param page - Playwright browser page.
+ * @param mobileTrigger - mobileTrigger retained from the preceding assertion phase.
+ */
+async function verifiesNarrowThemeMenu(page: Page, mobileTrigger: Locator): Promise<void> {
   await page.setViewportSize({ width: 320, height: 740 });
   await mobileTrigger.click();
   const mobileMenu = page.getByRole('menu', { name: '账号菜单' });
@@ -1149,7 +1326,45 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await mobileMenu.getByRole('menuitemradio', { name: '深色' }).click();
   await expect(mobileMenu).toHaveCount(0);
   await expect(page.locator('html')).toHaveClass(/dark/);
+}
 
+/**
+ * Verify compact navigation, account actions, theme persistence, focus, and safe-area spacing.
+ *
+ * @param page - Playwright browser page.
+ */
+async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
+  const hydrationDiagnostics: string[] = [];
+
+  page.on('console', (message) => {
+    const text = message.text();
+    if (message.type() === 'error' && /hydration|did not match|server rendered html/i.test(text)) {
+      hydrationDiagnostics.push(text);
+    }
+  });
+  page.on('pageerror', (error) => {
+    if (/hydration|did not match|server rendered html/i.test(error.message)) {
+      hydrationDiagnostics.push(error.message);
+    }
+  });
+
+  await page.route('**/api/**', serveTrackingApi);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/?q=graph');
+  await hideDevelopmentIndicator(page);
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await expectActiveFilterSummaryToStick(page);
+  const { currentNavigationLink, trigger } = await verifiesDesktopNavigation(page);
+  await verifiesAccountThemeControls(page, trigger);
+  await verifiesSettingsMenuFocus(page, trigger);
+  await verifiesLightAndSystemTheme(page, trigger, currentNavigationLink);
+  await verifiesMobileNavigation(page);
+  const { articleCardBox, articleTitleBox } = await verifiesMobileArticleTargets(page);
+  await verifiesMobileArticleBounds(page, articleCardBox, articleTitleBox);
+  const mobileTrigger = await verifiesMobileSafeArea(page);
+  await verifiesMobileActionSeparation(page, mobileTrigger);
+  await verifiesNarrowThemeMenu(page, mobileTrigger);
   expect(hydrationDiagnostics).toEqual([]);
 }
 
@@ -2516,6 +2731,35 @@ function cfpFixtureCatalog(items: CfpJournalSummary[], database: string) {
   };
 }
 
+/**
+ * Serve the selected journal notice page with the original closed-notice filter
+ *
+ * @param route - Intercepted API route.
+ * @param url - Parsed original URL.
+ * @param noticeMatch - Matched journal notice path.
+ */
+async function serveCfpNoticePage(
+  route: Route,
+  url: URL,
+  noticeMatch: RegExpExecArray,
+): Promise<void> {
+  const catalogId = decodeURIComponent(noticeMatch[1]);
+  const base = CFP_FIXTURE_PAGES[catalogId];
+  const selected = base?.journal ?? cfpFixtureJournal(catalogId, 'Ad Hoc Networks');
+  const items = (base?.items ?? []).filter(
+    (notice) =>
+      url.searchParams.get('include_closed') === 'true' ||
+      !['closed', 'historical'].includes(notice.state),
+  );
+  await fulfillJson(route, {
+    journal: selected,
+    evaluatedAt: 1789473600,
+    items,
+    page: { total: items.length, limit: 50, offset: 0, next_cursor: null, has_more: false },
+  });
+  return;
+}
+
 /** Serve the three real catalog names with representative maintained journal identities. */
 async function serveCfpApi(route: Route): Promise<void> {
   const url = new URL(route.request().url());
@@ -2540,20 +2784,7 @@ async function serveCfpApi(route: Route): Promise<void> {
   }
   const noticeMatch = /^\/api\/cfp\/journals\/([^/]+)\/notices$/.exec(url.pathname);
   if (noticeMatch) {
-    const catalogId = decodeURIComponent(noticeMatch[1]);
-    const base = CFP_FIXTURE_PAGES[catalogId];
-    const selected = base?.journal ?? cfpFixtureJournal(catalogId, 'Ad Hoc Networks');
-    const items = (base?.items ?? []).filter(
-      (notice) =>
-        url.searchParams.get('include_closed') === 'true' ||
-        !['closed', 'historical'].includes(notice.state),
-    );
-    await fulfillJson(route, {
-      journal: selected,
-      evaluatedAt: 1789473600,
-      items,
-      page: { total: items.length, limit: 50, offset: 0, next_cursor: null, has_more: false },
-    });
+    await serveCfpNoticePage(route, url, noticeMatch);
     return;
   }
   await serveTrackingApi(route);
