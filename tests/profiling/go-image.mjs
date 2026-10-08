@@ -39,45 +39,7 @@ export async function profileImage() {
     for (let round = 1; round <= 3; round += 1) {
       interruption.signal.throwIfAborted();
       const runId = randomUUID();
-      const result = await runSmoke(report.image, runId, interruption.signal);
-      let cleanupErrors;
-      try {
-        await fs.writeFile(
-          `${directory}/round-${round}.log`,
-          result.stdout + "\n" + result.stderr,
-        );
-      } finally {
-        cleanupErrors = cleanupRun(runId);
-      }
-      report.lastExecution = {
-        round,
-        runId,
-        exitCode: result.status,
-        error: result.error?.message,
-        cleanupErrors,
-      };
-      assert.equal(
-        cleanupErrors.length,
-        0,
-        `Profile cleanup failed: ${cleanupErrors.join("; ")}; child: ${result.error?.message ?? result.status}`,
-      );
-      assert.ifError(result.error);
-      assert.equal(result.status, 0, `Profile round ${round} failed`);
-      const observation = JSON.parse(
-        await fs.readFile("test-results/container-smoke/summary.json", "utf8"),
-      );
-      assert.equal(observation.architecture, "amd64");
-      assert.equal(observation.status, "passed");
-      assert.equal(
-        observation.profile.requests.reduce(
-          (sum, entry) => sum + entry.completed,
-          0,
-        ),
-        200,
-      );
-      if (report.rounds.length)
-        assert.equal(observation.imageId, report.rounds[0].imageId);
-      report.rounds.push(observation);
+      await profileRound(report, directory, round, runId, interruption.signal);
     }
     interruption.signal.throwIfAborted();
     report.status = "Passed";
@@ -101,44 +63,127 @@ export async function profileImage() {
   }
 }
 
+/** Execute one measurement, clean its ownership scope and retain failure precedence.
+ *
+ * @param {object} report - Accumulated measurement report.
+ * @param {string} directory - Raw log destination.
+ * @param {number} round - Current measurement number.
+ * @param {string} runId - Unpredictable resource ownership identity.
+ * @param {AbortSignal} signal - Original interruption signal.
+ * @returns {Promise<void>} Completion of one validated observation.
+ */
+async function profileRound(report, directory, round, runId, signal) {
+  const result = await runSmoke(report.image, runId, signal);
+  let cleanupErrors;
+  try {
+    await fs.writeFile(
+      `${directory}/round-${round}.log`,
+      result.stdout + "\n" + result.stderr,
+    );
+  } finally {
+    cleanupErrors = cleanupRun(runId);
+  }
+  report.lastExecution = {
+    round,
+    runId,
+    exitCode: result.status,
+    error: result.error?.message,
+    cleanupErrors,
+  };
+  assert.equal(
+    cleanupErrors.length,
+    0,
+    `Profile cleanup failed: ${cleanupErrors.join("; ")}; child: ${result.error?.message ?? result.status}`,
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, `Profile round ${round} failed`);
+  const observation = JSON.parse(
+    await fs.readFile("test-results/container-smoke/summary.json", "utf8"),
+  );
+  appendProfileObservation(report, observation);
+}
+
+/** Validate and append the original smoke observation after successful cleanup.
+ *
+ * @param {object} report - Accumulated measurement report.
+ * @param {object} observation - Parsed smoke report.
+ * @returns {void} Completion of the observation invariants.
+ */
+function appendProfileObservation(report, observation) {
+  assert.equal(observation.architecture, "amd64");
+  assert.equal(observation.status, "passed");
+  assert.equal(
+    observation.profile.requests.reduce(
+      (sum, entry) => sum + entry.completed,
+      0,
+    ),
+    200,
+  );
+  if (report.rounds.length)
+    assert.equal(observation.imageId, report.rounds[0].imageId);
+  report.rounds.push(observation);
+}
+
 /** Remove only resources labeled with this measurement's unpredictable ownership ID. */
 function cleanupRun(runId) {
   const errors = [];
   for (const kind of ["container", "volume"]) {
-    const inventory = spawnSync(
-      "docker",
-      [
-        kind,
-        "ls",
-        ...(kind === "container" ? ["--all"] : []),
-        "--quiet",
-        "--filter",
-        `label=org.litradar.smoke-run=${runId}`,
-      ],
-      { encoding: "utf8", timeout: 30000, windowsHide: true },
-    );
-    if (inventory.error || inventory.status !== 0) {
-      errors.push(
-        `Unable to inventory ${kind}: ${inventory.error?.message ?? inventory.stderr}`,
-      );
-      continue;
-    }
-    for (const identity of inventory.stdout
-      .trim()
-      .split(/\r?\n/)
-      .filter(Boolean)) {
-      const removal = spawnSync("docker", [kind, "rm", "--force", identity], {
-        encoding: "utf8",
-        timeout: 30000,
-        windowsHide: true,
-      });
-      if (removal.error || removal.status !== 0)
-        errors.push(
-          `Unable to remove ${kind} ${identity}: ${removal.error?.message ?? removal.stderr}`,
-        );
-    }
+    cleanupProfileKind(kind, runId, errors);
   }
   return errors;
+}
+
+/** Inventory and remove one resource kind without abandoning later kinds.
+ *
+ * @param {string} kind - Original Docker resource kind.
+ * @param {string} runId - Measurement ownership identity.
+ * @param {string[]} errors - Caller-owned ordered cleanup errors.
+ * @returns {void} Completion of this resource inventory.
+ */
+function cleanupProfileKind(kind, runId, errors) {
+  const inventory = spawnSync(
+    "docker",
+    [
+      kind,
+      "ls",
+      ...(kind === "container" ? ["--all"] : []),
+      "--quiet",
+      "--filter",
+      `label=org.litradar.smoke-run=${runId}`,
+    ],
+    { encoding: "utf8", timeout: 30000, windowsHide: true },
+  );
+  if (inventory.error || inventory.status !== 0) {
+    errors.push(
+      `Unable to inventory ${kind}: ${inventory.error?.message ?? inventory.stderr}`,
+    );
+    return;
+  }
+  for (const identity of inventory.stdout
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)) {
+    removeProfileResource(kind, identity, errors);
+  }
+}
+
+/** Retain a failed owned-resource removal while allowing remaining cleanup.
+ *
+ * @param {string} kind - Docker resource kind.
+ * @param {string} identity - Exact identity returned by owned inventory.
+ * @param {string[]} errors - Caller-owned ordered cleanup errors.
+ * @returns {void} Completion of this removal attempt.
+ */
+function removeProfileResource(kind, identity, errors) {
+  const removal = spawnSync("docker", [kind, "rm", "--force", identity], {
+    encoding: "utf8",
+    timeout: 30000,
+    windowsHide: true,
+  });
+  if (removal.error || removal.status !== 0)
+    errors.push(
+      `Unable to remove ${kind} ${identity}: ${removal.error?.message ?? removal.stderr}`,
+    );
 }
 
 /** Force the owned smoke process tree to exit at its deadline before resource cleanup. */
