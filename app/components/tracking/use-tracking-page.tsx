@@ -114,13 +114,7 @@ export function useTrackingPage(userId: number) {
     },
   });
 
-  const normalizeSettings = useCallback(
-    (settings: NotificationSettings | null | undefined): NotificationSettingsUpdate =>
-      normalizeTrackingSettings(settings),
-    [],
-  );
-
-  const formSettings = draftSettings || normalizeSettings(notifySettings);
+  const formSettings = draftSettings || normalizeTrackingSettings(notifySettings);
   const hasUnsavedSettings = draftSettings !== null;
   const {
     keywords,
@@ -146,10 +140,10 @@ export function useTrackingPage(userId: number) {
 
   const updateDraftSettings = useCallback(
     (updater: (current: NotificationSettingsUpdate) => NotificationSettingsUpdate) => {
-      setDraftSettings((current) => updater(current || normalizeSettings(notifySettings)));
+      setDraftSettings((current) => updater(current || normalizeTrackingSettings(notifySettings)));
       setSettingsSaved(false);
     },
-    [normalizeSettings, notifySettings],
+    [notifySettings],
   );
 
   useEffect(() => {
