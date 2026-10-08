@@ -304,13 +304,23 @@ func (live *LiveTransport) requestText(parent context.Context, method, url strin
 		if shouldRetry {
 			continue
 		}
-		requestUrl, generation, shouldRetry, err = live.finishTextAttempt(ctx, deadline, method, requestUrl, base, endpoint, text, finalUrl, generation, status, &budget)
+		didRetry := budget.didRetry()
+		if LooksLikeCaptchaChallenge(text, finalUrl) {
+			live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("captcha challenge"))
+			requestUrl, generation, err = live.replayTextCaptcha(ctx, text, finalUrl, base, generation, deadline, &budget)
+			if err != nil {
+				return "", err
+			}
+			continue
+		}
+		shouldRetry, err = live.validateTextAttempt(ctx, deadline, method, requestUrl, endpoint, text, status, &budget)
 		if err != nil {
 			return "", err
 		}
 		if shouldRetry {
 			continue
 		}
+		live.record(endpoint, method, requestUrl, &status, true, didRetry, nil)
 		return text, nil
 	}
 	return "", &Error{Kind: "Request", Message: "domestic CNKI request retries exhausted"}
@@ -725,26 +735,4 @@ func (live *LiveTransport) replayTextCaptcha(ctx context.Context, text, finalUrl
 		return "", 0, err
 	}
 	return requestUrl, generation, nil
-}
-
-// finishTextAttempt solves verification before terminal classification and success recording.
-func (live *LiveTransport) finishTextAttempt(ctx context.Context, deadline time.Time, method, requestUrl, base, endpoint, text, finalUrl string, generation uint64, status uint16, budget *requestBudget) (string, uint64, bool, error) {
-	didRetry := budget.didRetry()
-	if LooksLikeCaptchaChallenge(text, finalUrl) {
-		live.record(endpoint, method, requestUrl, &status, false, didRetry, textPointer("captcha challenge"))
-		requestUrl, generation, err := live.replayTextCaptcha(ctx, text, finalUrl, base, generation, deadline, budget)
-		if err != nil {
-			return "", 0, false, err
-		}
-		return requestUrl, generation, true, nil
-	}
-	shouldRetry, err := live.validateTextAttempt(ctx, deadline, method, requestUrl, endpoint, text, status, budget)
-	if err != nil {
-		return "", 0, false, err
-	}
-	if shouldRetry {
-		return requestUrl, generation, true, nil
-	}
-	live.record(endpoint, method, requestUrl, &status, true, didRetry, nil)
-	return requestUrl, generation, false, nil
 }
