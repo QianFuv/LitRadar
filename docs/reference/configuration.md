@@ -330,6 +330,6 @@ warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litra
 | `data/push_state`        | `.changes.json` 候选和只读旧状态导入源  |
 | `data/folder_push_state` | 只读旧 push 状态导入源                  |
 
-`simple` 扩展从固定打包位置、可执行文件旁以及编译工作区的构建或平台目录发现；`--project-root` 和数据目录不能选择任意扩展，也没有环境变量覆盖。平台路径、来源与构建要求见[分词器说明](../../libs/simple/README.md)。
+Simple is statically linked and registered directly per admitted SQLite connection. No runtime path or environment override selects a tokenizer library; see [build inputs and compatibility](../../libs/simple/README.md).
 
 `/usr/share/litradar/meta` 不在 `project-root` 下，只是发布镜像中的固定官方只读 bundle；`data/meta` 才是需要备份和恢复的运行时目录。

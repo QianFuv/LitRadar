@@ -1,37 +1,35 @@
 package index
 
 import (
-	"crypto/sha256"
-	"os"
-	"path/filepath"
-	"runtime"
-	"testing"
-
+	"context"
 	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
+	"path/filepath"
+	"testing"
 )
 
-func TestIndexRuntimeTokenizerIdentity(t *testing.T) {
-	actual, err := sqlite.SimpleLibrary()
+// TestIndexStaticTokenizer works without discovering a shared library in the project or working directory.
+func TestIndexStaticTokenizer(t *testing.T) {
+	t.Chdir(t.TempDir())
+	database, err := sqlite.Open(filepath.Join(t.TempDir(), "static.sqlite"), false, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := "libsimple.so"
-	if runtime.GOOS == "windows" {
-		name = "simple.dll"
-	}
-	expected, err := filepath.Abs(filepath.Join("../../libs/simple", runtime.GOOS, name))
+	defer database.Close()
+	connection, err := database.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Clean(actual) != filepath.Clean(expected) {
-		built, err := filepath.Abs(filepath.Join("../../target/simple-tokenizer", name))
-		if err != nil || runtime.GOOS != "linux" || filepath.Clean(actual) != filepath.Clean(built) {
-			t.Fatalf("runtime tokenizer must be a controlled repository build or bundled library: %s", actual)
+	defer connection.Close()
+	if err := sqlite.LoadSimple(connection); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.ExecContext(context.Background(), "CREATE VIRTUAL TABLE search USING fts5(text,tokenize='simple 0'); INSERT INTO search VALUES('中文期刊 alpha')"); err != nil {
+		t.Fatal(err)
+	}
+	for query, expected := range map[string]int{"中文": 1, "alpha": 1, "zhongwen": 0} {
+		var count int
+		if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM search WHERE search MATCH ?", query).Scan(&count); err != nil || count != expected {
+			t.Fatalf("static MATCH %q: %d %v", query, count, err)
 		}
 	}
-	body, err := os.ReadFile(actual)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("tokenizer_identity path=%s sha256=%x", actual, sha256.Sum256(body))
 }

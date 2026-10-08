@@ -52,8 +52,7 @@ jobs:
         run: gcc --version
 
       - name: Build pinned search tokenizer
-        if: runner.os == 'Linux'
-        run: node scripts/build-simple-tokenizer.mjs
+        run: node scripts/build-simple-tokenizer.mjs --compatibility-oracle
 
       - name: Run Go static, regular and race checks
         run: node scripts/check-go.mjs

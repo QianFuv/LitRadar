@@ -7,6 +7,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseVersion } from "./release-version.mjs";
 import { stageWebAssets } from "./stage-web-assets.mjs";
+import {
+  buildSimple,
+  simpleBuildEnvironment,
+} from "./build-simple-tokenizer.mjs";
 
 const toolsRoot = fileURLToPath(new URL("..", import.meta.url));
 const [sourceArgument, inputVersion, commit, mode] = process.argv.slice(2);
@@ -107,8 +111,9 @@ async function dependencyArchive(key, definition) {
   return archive;
 }
 
+await buildSimple(source);
 const environment = {
-  ...process.env,
+  ...simpleBuildEnvironment(source),
   CGO_ENABLED: "1",
   GOWORK: "off",
   GOENV: "off",
@@ -136,7 +141,6 @@ run(
 );
 for (const [from, to] of [
   ["assets/meta", "assets/meta"],
-  ["libs/simple/windows/simple.dll", "simple.dll"],
   ["docs/third-party", "licenses"],
   ["LICENSE", "LICENSE"],
 ]) {
@@ -154,6 +158,10 @@ fs.copyFileSync(
 );
 const inventory = path.join(directory, "licenses/go-inventory");
 fs.mkdirSync(inventory, { recursive: true });
+fs.copyFileSync(
+  path.join(source, "target/simple-tokenizer/inputs.json"),
+  path.join(inventory, "simple-inputs.json"),
+);
 fs.writeFileSync(
   path.join(inventory, "binary-modules.txt"),
   run("go", ["version", "-m", path.join(directory, "litradar.exe")], {

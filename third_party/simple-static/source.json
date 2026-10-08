@@ -1,0 +1,9 @@
+{
+  "revision": "45db071ba8043ffe8a2e5dfe41f9d68fb477576c",
+  "url": "https://codeload.github.com/wangfenjin/simple/tar.gz/45db071ba8043ffe8a2e5dfe41f9d68fb477576c",
+  "sha256": "d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61",
+  "license": "MIT",
+  "jieba": false,
+  "sqliteCore": true,
+  "resource": "contrib/pinyin.txt"
+}

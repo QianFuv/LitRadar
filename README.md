@@ -13,7 +13,7 @@ LitRadar 是面向学术期刊的自托管检索与订阅平台。它从 Crossre
 
 ## 运行组成
 
-应用入口是唯一的 `litradar` 可执行文件。`litradar serve` 同时承载静态 Web、REST、Swagger/OpenAPI、MCP 和持久化调度；任务需要隔离时，由它启动短生命周期的同名子命令。Next.js 前端和 CSP 清单在发布构建时编入 Go 二进制，部署时不需要外部 `web/` 或 Node.js 服务。模块边界和数据流见[系统架构](docs/architecture.md)。
+应用入口是唯一的 `litradar` 可执行文件。`litradar serve` 同时承载静态 Web、REST、Swagger/OpenAPI、MCP 和持久化调度；任务需要隔离时，由它启动短生命周期的同名子命令。Next.js 前端和 CSP 清单在发布构建时编入 Go 二进制，部署时不需要外部 `web/` 或 Node.js 服务。Simple is also statically linked, so indexing/search does not require a Simple DLL/SO. Obscura, Poppler and metadata catalogs remain separate deployment inputs. 模块边界和数据流见[系统架构](docs/architecture.md)。
 
 ## Docker 快速开始
 

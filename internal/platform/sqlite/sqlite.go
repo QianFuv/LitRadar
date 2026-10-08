@@ -16,13 +16,13 @@ import (
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
-// Config describes a database role and a trusted composition-supplied extension, never a data-derived library.
+// Config describes a database role with explicit per-connection static tokenizer admission.
 type Config struct {
-	Filename       string
-	Mode           string
-	NoFollow       bool
-	SimpleLibrary  string
-	MaxConnections int
+	Filename           string
+	Mode               string
+	NoFollow           bool
+	HasSimpleTokenizer bool
+	MaxConnections     int
 }
 
 type connector struct {
@@ -90,17 +90,14 @@ func Open(config Config) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if config.SimpleLibrary != "" && !filepath.IsAbs(config.SimpleLibrary) {
-		return nil, fmt.Errorf("Simple library must be an absolute trusted path")
-	}
 	if config.MaxConnections < 1 {
 		return nil, fmt.Errorf("SQLite pool capacity must be positive")
 	}
 	instance := &sqlite3.SQLiteDriver{NoFollow: config.NoFollow}
 	instance.ConnectHook = func(connection *sqlite3.SQLiteConn) error {
-		if config.SimpleLibrary != "" {
-			if err := connection.LoadExtension(config.SimpleLibrary, "sqlite3_simple_init"); err != nil {
-				return fmt.Errorf("load trusted Simple tokenizer: %w", err)
+		if config.HasSimpleTokenizer {
+			if err := connection.RegisterSimple(); err != nil {
+				return fmt.Errorf("register static Simple tokenizer: %w", err)
 			}
 		}
 		return nil

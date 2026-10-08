@@ -145,7 +145,7 @@ function createDevHarness(settings = {}) {
   const source = fs
     .readFileSync(moduleUrl, "utf8")
     .replaceAll("\r\n", "\n")
-    .replace(/^import .+;$/gm, "")
+    .replace(/^import[\s\S]*?;$/gm, "")
     .replaceAll("import.meta.url", JSON.stringify(moduleUrl.href));
   const entry = source.lastIndexOf("\ntry {\n  await main();");
   assert(
@@ -153,6 +153,8 @@ function createDevHarness(settings = {}) {
     "CLI entry must be isolated before executing mocked functions",
   );
   const load = new Function(
+    "buildSimple",
+    "simpleBuildEnvironment",
     "spawn",
     "access",
     "mkdir",
@@ -169,6 +171,13 @@ function createDevHarness(settings = {}) {
       "}\nreturn {main, stopChild, startChild, buildBackend, runEntry, children: CHILDREN};",
   );
   const functions = load(
+    async () => {
+      events.push(["native-build"]);
+    },
+    () => ({
+      ...mockProcess.env,
+      CGO_CFLAGS: "-DLITRADAR_SIMPLE_INPUT_test=1",
+    }),
     spawnMock,
     accessMock,
     mkdirMock,
@@ -497,6 +506,11 @@ async function supervisesOwnedServices() {
   assert.deepEqual(
     starts.map((event) => event[1]),
     ["go", executable, "fixture-node"],
+  );
+  assert.equal(starts[0][3].env.CGO_CFLAGS, "-DLITRADAR_SIMPLE_INPUT_test=1");
+  assert(
+    harness.events.findIndex((event) => event[0] === "native-build") <
+      harness.events.indexOf(starts[0]),
   );
   assert.deepEqual(starts[0][2], [
     "build",

@@ -1463,7 +1463,7 @@ async function runSmoke(imageReference) {
     containerName,
     "sh",
     "-c",
-    "test -f /app/data/meta/ccf_computer_journals.csv && test -f /app/data/meta/chinese_journals.csv && test -f /app/data/meta/english_journals.csv",
+    "test ! -e /usr/lib/litradar/libsimple.so && test ! -e /usr/local/bin/libsimple.so && test ! -e /app/libsimple.so && test -f /app/data/meta/ccf_computer_journals.csv && test -f /app/data/meta/chinese_journals.csv && test -f /app/data/meta/english_journals.csv",
   ]);
   await runDocker([
     "exec",

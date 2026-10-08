@@ -172,32 +172,77 @@ assert(
   "Rendered pixels did not respond to JavaScript",
 );
 
-const previousPath = process.env.PATH;
-process.env.PATH = environment.PATH;
+assert(
+  !fs.existsSync(path.join(root, "simple.dll")),
+  "Package must not depend on a Simple DLL",
+);
+
+const isolated = fs.mkdtempSync(path.join(report, "executable-only-"));
+const executable = path.join(isolated, "litradar.exe");
+fs.copyFileSync(path.join(root, "litradar.exe"), executable);
+fs.cpSync(path.join(root, "assets/meta"), path.join(isolated, "assets/meta"), {
+  recursive: true,
+});
+fs.mkdirSync(path.join(isolated, "data/index"), { recursive: true });
+const schema = /const ContentTables = `([\s\S]*?)`/.exec(
+  fs.readFileSync("internal/storage/indexschema/schema.go", "utf8"),
+)[1];
+const fixture = new DatabaseSync(
+  path.join(isolated, "data/index/smoke.sqlite"),
+);
 try {
-  const database = new DatabaseSync(":memory:", { allowExtension: true });
-  try {
-    database.loadExtension(
-      path.join(root, "simple.dll"),
-      "sqlite3_simple_init",
-    );
-    database.exec(
-      "CREATE VIRTUAL TABLE articles USING fts5(title, tokenize='simple 0'); INSERT INTO articles VALUES ('科技金融如何赋能企业');",
-    );
-    assert.equal(
-      database
-        .prepare(
-          "SELECT count(*) AS count FROM articles WHERE articles MATCH simple_query(?)",
-        )
-        .get("科技金融").count,
-      1,
-    );
-  } finally {
-    database.close();
-  }
+  fixture.exec(
+    schema.replace(
+      "tokenize = 'simple 0'",
+      "tokenize = 'unicode61 remove_diacritics 2'",
+    ),
+  );
+  fixture.exec(
+    "PRAGMA user_version=8; INSERT INTO journals(journal_id,catalog_id,title,title_aliases_json,issns_json) VALUES(1,'smoke','Smoke Journal','[]','[]'); INSERT INTO journal_identity_keys VALUES('catalog_id','smoke','smoke');",
+  );
+  fixture
+    .prepare(
+      "INSERT INTO articles(article_id,journal_id,title,abstract_text,authors_json,date) VALUES(1,1,?,?,'[]','2026-09-16')",
+    )
+    .run("科技金融如何赋能企业", "Café résumé");
+  fixture.exec(
+    "INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journal_id,date FROM articles; INSERT INTO article_search(rowid,article_id,title,abstract_text,journal_title) SELECT article_id,article_id,title,abstract_text,'Smoke Journal' FROM articles;",
+  );
 } finally {
-  process.env.PATH = previousPath;
+  fixture.close();
 }
+const isolatedEnvironment = {
+  ...environment,
+  PATH: [system, process.env.SystemRoot].join(";"),
+};
+run(
+  executable,
+  [
+    "admin",
+    "index",
+    "optimize-storage",
+    "--confirm-index-maintenance",
+    "--project-root",
+    isolated,
+  ],
+  { env: isolatedEnvironment },
+);
+const password = randomBytes(24).toString("base64url") + "Aa1!";
+run(
+  executable,
+  [
+    "admin",
+    "bootstrap",
+    "--username",
+    "static_smoke",
+    "--password-stdin",
+    "--project-root",
+    isolated,
+  ],
+  { env: isolatedEnvironment, input: password + "\n" },
+);
+assert(!fs.existsSync(path.join(isolated, "web")));
+assert(!fs.existsSync(path.join(isolated, "simple.dll")));
 
 const reservation = net.createServer();
 await new Promise((resolve, reject) => {
@@ -206,13 +251,12 @@ await new Promise((resolve, reject) => {
 });
 const port = reservation.address().port;
 await new Promise((resolve) => reservation.close(resolve));
-const secret = path.join(extracted, "secret.key");
+const secret = path.join(isolated, "secret.key");
 fs.writeFileSync(secret, randomBytes(32));
 const descriptor = fs.openSync(path.join(report, "service.log"), "w");
 const service = spawn(
-  powershell,
+  executable,
   [
-    ...launcher,
     "serve",
     "--host",
     "127.0.0.1",
@@ -220,10 +264,12 @@ const service = spawn(
     String(port),
     "--secret-key-file",
     secret,
+    "--project-root",
+    isolated,
   ],
   {
-    cwd: extracted,
-    env: environment,
+    cwd: isolated,
+    env: isolatedEnvironment,
     windowsHide: true,
     stdio: ["ignore", descriptor, descriptor],
   },
@@ -273,7 +319,33 @@ try {
   assert((await fetch(baseUrl + "/login")).ok);
   assert.equal((await fetch(baseUrl + "/missing-embedded-page")).status, 404);
   assert.equal((await fetch(baseUrl + "/api/auth/me")).status, 401);
-  assert(fs.existsSync(path.join(root, "data/meta/chinese_journals.csv")));
+  assert(fs.existsSync(path.join(isolated, "data/meta/chinese_journals.csv")));
+  const login = await fetch(baseUrl + "/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "static_smoke", password }),
+  });
+  assert(login.ok, "isolated administrator login failed");
+  const cookie = login.headers.get("set-cookie")?.split(";", 1)[0];
+  assert(cookie);
+  for (const [query, count] of [
+    ["科技金融", 1],
+    ["cafe", 1],
+    ["résumé", 1],
+    ["kejijinrong", 0],
+    ["ke", 0],
+  ]) {
+    const response = await fetch(
+      baseUrl +
+        "/api/articles?" +
+        new URLSearchParams({ db: "smoke.sqlite", q: query }),
+      { headers: { cookie } },
+    );
+    assert(response.ok);
+    const page = await response.json();
+    assert.equal(page.items.length, count, `static executable query ${query}`);
+    if (count) assert.equal(page.items[0].title, "科技金融如何赋能企业");
+  }
   const captured = path.join(extracted, "page.json");
   run(
     obscura,
@@ -322,7 +394,8 @@ fs.writeFileSync(
         "openapi",
         "anonymous-auth",
         "metadata",
-        "native-tokenizer",
+        "static-tokenizer-authenticated-search",
+        "executable-only-no-web-or-simple",
         "helper-javascript",
         "private-network-denied",
         "helper-renderer",

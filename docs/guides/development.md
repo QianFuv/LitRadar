@@ -6,16 +6,16 @@
 
 CI 和容器使用以下主版本：
 
-| 工具    | 版本/来源                                      |
-| ------- | ---------------------------------------------- |
-| Go      | 1.27.2，CGO_ENABLED=1，需 C 编译器             |
-| Node.js | 26.11.1                                        |
-| pnpm    | 12.10.1                                        |
-| Docker  | 当前 Docker Engine / Docker Desktop 与 Compose |
+| 工具    | 版本/来源                                        |
+| ------- | ------------------------------------------------ |
+| Go      | 1.27.2，CGO_ENABLED=1，需 C/C++14 编译器及 CMake |
+| Node.js | 26.11.1                                          |
+| pnpm    | 12.10.1                                          |
+| Docker  | 当前 Docker Engine / Docker Desktop 与 Compose   |
 
 Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
 
-Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.2`。Windows 原生开发需把 GCC 放入 PATH；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
+Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.2`。Windows native builds require matching MinGW GCC/G++ and Ninja on PATH；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
 
 pnpm forwards the existing `NODE_OPTIONS` and disables Node.js experimental Web Storage for its child processes. This keeps jsdom browser storage isolated from Node.js host storage during tests.
 
@@ -39,13 +39,16 @@ wc -c secrets/litradar.key
 
 ### 原生分词器
 
-新建 v9 内容库需要 `simple` 扩展。Linux 先安装 curl、tar、CMake 和支持 C++14 的编译器，再在仓库根运行：
+Windows and Linux builds statically link Simple; install curl, tar, CMake and a C++14 compiler compatible with Go's `CC`/`CXX`. Windows uses MinGW and Ninja. The development, build and test scripts prepare the archive automatically.
+
+For direct Go commands, prepare native inputs and export their cache identity in the same shell:
 
 ```bash
-node scripts/build-simple-tokenizer.mjs
+node scripts/build-simple-tokenizer.mjs --compatibility-oracle
+export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment} from "./scripts/build-simple-tokenizer.mjs"; process.stdout.write(simpleBuildEnvironment().CGO_CFLAGS)')"
 ```
 
-脚本输出 `target/simple-tokenizer/libsimple.so`，不适用于非 Linux 系统。Windows x64 使用仓库提供的 DLL；其他原生部署的打包与发现规则见 [simple 分词器](../../libs/simple/README.md#原生构建与发现路径)。开发启动脚本只构建 Go 应用，不代为准备扩展。
+The archive is `target/simple-tokenizer/libsimple.a`; runtime DLL/SO discovery is no longer used. The oracle switch prepares the previous tokenizer only for compatibility tests. See [Simple build inputs](../../third_party/simple-static/README.md).
 
 ### 前端依赖
 

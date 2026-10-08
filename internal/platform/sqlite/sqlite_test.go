@@ -34,7 +34,7 @@ func TestExistingOnlyModesNeverCreateMissingFile(t *testing.T) {
 
 // TestConcurrentPhysicalInitialization retains simultaneous physical opens and distinct live connection ownership.
 func TestConcurrentPhysicalInitialization(t *testing.T) {
-	database, err := Open(Config{Filename: filepath.Join(t.TempDir(), "simultaneous.sqlite"), Mode: "rwc", SimpleLibrary: trustedSimple(t), MaxConnections: 2})
+	database, err := Open(Config{Filename: filepath.Join(t.TempDir(), "simultaneous.sqlite"), Mode: "rwc", HasSimpleTokenizer: true, MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,22 +61,6 @@ func TestConcurrentPhysicalInitialization(t *testing.T) {
 	}
 }
 
-func trustedSimple(t *testing.T) string {
-	t.Helper()
-	name := "linux/libsimple.so"
-	if runtime.GOOS == "windows" {
-		name = "windows/simple.dll"
-	}
-	filename, err := filepath.Abs("../../../libs/simple/" + name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filename); err != nil {
-		t.Fatal(err)
-	}
-	return filename
-}
-
 func checkedConnection(t *testing.T, database *sql.DB) *sql.Conn {
 	t.Helper()
 	connection, err := database.Conn(context.Background())
@@ -94,7 +78,7 @@ func TestEveryPhysicalConnectionLoadsSimpleAndDisablesExtensionSql(t *testing.T)
 	if runtime.GOOS == "windows" {
 		filename = filepath.Join(root, "中文 space # % &.sqlite")
 	}
-	database, err := Open(Config{Filename: filename, Mode: "rwc", NoFollow: true, SimpleLibrary: trustedSimple(t), MaxConnections: 2})
+	database, err := Open(Config{Filename: filename, Mode: "rwc", NoFollow: true, HasSimpleTokenizer: true, MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +232,7 @@ func assertPhysicalTokenizer(t *testing.T, ctx context.Context, connection *sql.
 	if err := connection.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil || foreignKeys != 1 {
 		t.Fatalf("Foreign keys disabled: %d %v", foreignKeys, err)
 	}
-	if _, err := connection.ExecContext(ctx, "SELECT load_extension(?)", trustedSimple(t)); err == nil || !strings.Contains(err.Error(), "not authorized") {
+	if _, err := connection.ExecContext(ctx, "SELECT load_extension(?)", "untrusted-extension"); err == nil || !strings.Contains(err.Error(), "not authorized") {
 		t.Fatalf("SQL extension loading must be disabled: %v", err)
 	}
 }
@@ -260,7 +244,7 @@ func logNativeCapabilities(t *testing.T, ctx context.Context, third *sql.Conn) {
 	if err := third.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("native SQLite %s; %s/%s; extension %s", version, runtime.GOOS, runtime.GOARCH, trustedSimple(t))
+	t.Logf("native SQLite %s; %s/%s; statically registered Simple", version, runtime.GOOS, runtime.GOARCH)
 	rows, err := third.QueryContext(ctx, "PRAGMA compile_options")
 	if err != nil {
 		t.Fatal(err)

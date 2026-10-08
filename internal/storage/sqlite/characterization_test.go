@@ -2,39 +2,32 @@ package sqlite
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 )
 
-// TestSimpleLibraryRetainsSourceAnchorAcrossWorkingDirectories checks compiled-source discovery independence.
-func TestSimpleLibraryRetainsSourceAnchorAcrossWorkingDirectories(t *testing.T) {
-	original, err := os.Getwd()
+// TestStaticSimpleWorksAcrossWorkingDirectories requires registration from an empty data root.
+func TestStaticSimpleWorksAcrossWorkingDirectories(t *testing.T) {
+	t.Chdir(t.TempDir())
+	database, err := OpenPlain(filepath.Join(t.TempDir(), "static.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	library, err := SimpleLibrary()
+	defer database.Close()
+	connection, err := database.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !filepath.IsAbs(library) {
-		t.Fatalf("library is not absolute: %s", library)
-	}
-	info, err := os.Stat(library)
-	if err != nil || !info.Mode().IsRegular() {
-		t.Fatalf("library is not regular: %s %v", library, err)
-	}
-	if err := os.Chdir(t.TempDir()); err != nil {
+	defer connection.Close()
+	if err := LoadSimple(connection); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		if err := os.Chdir(original); err != nil {
-			t.Fatal(err)
-		}
-	}()
-	discovered, err := SimpleLibrary()
-	if err != nil || discovered != library {
-		t.Fatalf("working directory changed library: %s %v", discovered, err)
+	if _, err := connection.ExecContext(context.Background(), "CREATE VIRTUAL TABLE search USING fts5(text,tokenize='simple 0'); INSERT INTO search VALUES('中文期刊');"); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM search WHERE search MATCH '中文'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("static search failed: %d %v", count, err)
 	}
 }
 

@@ -134,3 +134,5 @@ The execution-policy option applies only to this launcher process. The launcher
 selects its own directory and packaged helpers while preserving explicit helper
 overrides. All CLI commands remain available. Keep `data/` and `secrets/` across
 upgrades; do not unpack over a running service.
+
+Production executables embed the frontend/CSP and statically link Simple. Release archives contain no external `web/`, `simple.dll` or `libsimple.so`. Windows packaging statically links the GCC/C++ runtime; Linux retains system C/C++ runtime dependencies. Obscura, Poppler, CA certificates and metadata catalogs retain their documented separate deployment requirements. Go inventory includes the static archive/source/compiler/header identity. Smoke tests relocate the executable into a fresh root and verify authenticated v9 migration/search without tokenizer libraries.

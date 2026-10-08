@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,17 +38,6 @@ func TestEmbeddedWebProduction(t *testing.T) {
 	build := exec.CommandContext(ctx, compiler, "build", "-mod=readonly", "-trimpath", "-tags", "sqlite_fts5,sqlite_dbstat,litradar_web", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatal(err, string(output))
-	}
-	library, err := sqlite.SimpleLibrary()
-	if err != nil {
-		t.Fatal(err)
-	}
-	native, err := os.ReadFile(library)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(filepath.Dir(binary), filepath.Base(library)), native, 0600); err != nil {
-		t.Fatal(err)
 	}
 	root := t.TempDir()
 	key := filepath.Join(root, "secret.key")
@@ -133,23 +121,6 @@ func TestEmbeddedWebProduction(t *testing.T) {
 
 // TestExecutableOwnsPublicCommandsAndLogging proves public command behavior in the built executable.
 func TestExecutableOwnsPublicCommandsAndLogging(t *testing.T) {
-	library, err := sqlite.SimpleLibrary()
-	if err != nil {
-		t.Fatal(err)
-	}
-	native, err := os.ReadFile(library)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nativeHash := fmt.Sprintf("%x", sha256.Sum256(native))
-	identity, _ := json.Marshal(map[string]string{"path": library, "sha256": nativeHash})
-	t.Logf("NATIVE_SIMPLE %s", identity)
-	defer func() {
-		after, err := os.ReadFile(library)
-		if err != nil || fmt.Sprintf("%x", sha256.Sum256(after)) != nativeHash {
-			t.Error("loaded native library changed during process proof", err)
-		}
-	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
 	binary := buildProcessExecutable(t, ctx)

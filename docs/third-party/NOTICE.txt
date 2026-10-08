@@ -26,14 +26,15 @@ https://github.com/oschwartz10612/poppler-windows, not an official Poppler Windo
 release. windows-release.json records the exact archive and SHA-256. The archive's
 original directory layout and included poppler-data notices are retained under
 native/poppler-26.09.0. Microsoft VC runtime DLLs from that distribution are also
-copied beside Obscura and Simple for app-local loading. The upstream archive does
+copied beside Obscura for app-local loading. The upstream archive does
 not provide a complete transitive license inventory. Poppler source and license:
 https://poppler.freedesktop.org/ ; packaging recipes and dependency sources:
 https://github.com/conda-forge/poppler-feedstock .
 
 SQLite simple tokenizer
 -----------------------
-Bundled Windows x64 and Linux ubuntu-latest libraries: Simple v0.7.1.
+Historical test-only Windows x64 and Linux libraries: Simple v0.7.1.
+Production Windows/Linux executables statically link the pinned source below.
 Release: https://github.com/wangfenjin/simple/releases/tag/v0.7.1
 Library SHA256 (Windows DLL): 27c700ca34cd5935ff934459f1f9c107cdefef7e54250de5a1c6646e05f21a4f
 Library SHA256 (Linux SO): 5493821c973a0dfee1afeb270ff5efbef49b4002c117433a3a2203393874a991
@@ -41,4 +42,4 @@ Source: https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d6
 Source archive SHA256: d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61
 License: MIT (selected from the upstream MIT OR GPL-3.0-or-later options).
 Copyright and permission text: Simple-LICENSE.txt.
-Linux builds disable Jieba. LitRadar uses simple 0, with no pinyin aliases or query expansion.
+All static builds exclude Jieba. LitRadar uses simple 0, with no pinyin aliases or query expansion.

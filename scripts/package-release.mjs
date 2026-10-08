@@ -25,7 +25,6 @@ try {
     ["/usr/local/bin/litradar", "litradar"],
     ["/usr/local/bin/obscura", "obscura"],
     ["/usr/local/bin/obscura-worker", "obscura-worker"],
-    ["/usr/lib/litradar/libsimple.so", "libsimple.so"],
     ["/usr/share/litradar/meta", "assets/meta"],
     ["/usr/share/doc/litradar/third-party", "licenses"],
   ]) {
@@ -72,6 +71,8 @@ run("docker", [
   `type=bind,source=${assets},target=/release-assets,readonly`,
   "--mount",
   `type=bind,source=${path.resolve("scripts/smoke-release.sh")},target=/smoke-release.sh,readonly`,
+  "--mount",
+  `type=bind,source=${path.resolve("test-results/container-smoke/search-fixture.sqlite")},target=/smoke-fixture.sqlite,readonly`,
   "--env",
   "LITRADAR_OBSCURA_PATH=",
   "--entrypoint",

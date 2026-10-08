@@ -9,6 +9,7 @@ go list -mod=readonly -m -json all > /out/inventory/modules.json
 go version -m /out/litradar > /out/inventory/binary-modules.txt
 cp go.mod go.sum /out/inventory/
 sha256sum /out/litradar > /out/inventory/binary.sha256
+cp target/simple-tokenizer/inputs.json /out/inventory/simple-inputs.json
 go list -mod=readonly -m -f '{{if .Replace}}{{.Replace.Dir}}{{else}}{{.Dir}}{{end}}' all |
 while IFS= read -r module_directory; do
     test -n "$module_directory" || continue

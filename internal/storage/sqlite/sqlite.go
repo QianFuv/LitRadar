@@ -8,9 +8,6 @@ import (
 	"errors"
 	"io"
 	"net/url"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"unicode"
 
@@ -73,54 +70,7 @@ func usesSimple(connection *native.SQLiteConn) (bool, error) {
 	return strings.Contains(CompactSchema(declaration), "tokenize='simple0'"), nil
 }
 
-// SimpleLibrary discovers only package and compiled-source locations, never a selected data directory.
-func SimpleLibrary() (string, error) {
-	name := simpleLibraryName()
-	candidates := []string{}
-	if runtime.GOOS == "linux" {
-		candidates = append(candidates, "/usr/lib/litradar/libsimple.so")
-	}
-	if executable, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(executable), name))
-	}
-	if _, filename, _, ok := runtime.Caller(0); ok && filepath.IsAbs(filename) {
-		candidates = append(candidates, sourceSimpleLibraries(filename, name)...)
-	}
-	return firstRegularSimpleLibrary(candidates)
-}
-
-// simpleLibraryName preserves the host-native tokenizer filename.
-func simpleLibraryName() string {
-	name := "libsimple.so"
-	if runtime.GOOS == "windows" {
-		name = "simple.dll"
-	} else if runtime.GOOS == "darwin" {
-		name = "libsimple.dylib"
-	}
-	return name
-}
-
-// sourceSimpleLibraries derives build and bundle candidates from the original caller file anchor.
-func sourceSimpleLibraries(filename, name string) []string {
-	candidates := []string{}
-	root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filename))))
-	candidates = append(candidates, filepath.Join(root, "target", "simple-tokenizer", name))
-	if runtime.GOARCH == "amd64" && (runtime.GOOS == "windows" || runtime.GOOS == "linux") {
-		candidates = append(candidates, filepath.Join(root, "libs", "simple", runtime.GOOS, name))
-	}
-	return candidates
-}
-
-// firstRegularSimpleLibrary skips stat failures and nonregular candidates without canonicalization.
-func firstRegularSimpleLibrary(candidates []string) (string, error) {
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
-			return candidate, nil
-		}
-	}
-	return "", errors.New("required simple tokenizer is unavailable; build or package the native library")
-}
-
+// loadSimple registers static code only when this physical connection needs it.
 func loadSimple(connection *native.SQLiteConn) error {
 	rows, err := connection.Query("SELECT EXISTS(SELECT 1 FROM pragma_function_list WHERE name='simple_highlight')", nil)
 	if err != nil {
@@ -135,11 +85,7 @@ func loadSimple(connection *native.SQLiteConn) error {
 	if values[0] == int64(1) {
 		return nil
 	}
-	library, err := SimpleLibrary()
-	if err != nil {
-		return err
-	}
-	return connection.LoadExtension(library, "sqlite3_simple_init")
+	return connection.RegisterSimple()
 }
 
 // LoadSimple enables the fixed native tokenizer for an imminent schema creation on this connection.

@@ -9,11 +9,16 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
+import {
+  buildSimple,
+  simpleBuildEnvironment,
+} from "./build-simple-tokenizer.mjs";
 
+await buildSimple(process.cwd(), true);
 const directory = path.resolve("test-results/go");
 fs.mkdirSync(directory, { recursive: true });
 const environment = {
-  ...process.env,
+  ...simpleBuildEnvironment(),
   CGO_ENABLED: "1",
   GOWORK: "off",
   GOENV: "off",
@@ -58,26 +63,28 @@ const checks = [
     ],
   ],
 ];
-/** Identify native extension bytes before and after every release check. */
+/** Identify static archive, compiler metadata and SQLite headers for every release check. */
 function nativeInputs() {
-  const candidates =
-    process.platform === "win32"
-      ? ["libs/simple/windows/simple.dll"]
-      : [
-          "target/simple-tokenizer/libsimple.so",
-          "libs/simple/linux/libsimple.so",
-        ];
-  return candidates
-    .filter((filename) => fs.existsSync(filename))
-    .map((filename) => ({
-      filename,
-      sha256: createHash("sha256")
-        .update(fs.readFileSync(filename))
-        .digest("hex"),
-    }));
+  const candidates = [
+    "target/simple-tokenizer/libsimple.a",
+    "target/simple-tokenizer/inputs.json",
+    "third_party/go-sqlite3/sqlite3-binding.h",
+    "third_party/go-sqlite3/sqlite3ext.h",
+    "third_party/simple-static/CMakeLists.txt",
+  ];
+  return candidates.map((filename) => ({
+    filename,
+    sha256: createHash("sha256")
+      .update(fs.readFileSync(filename))
+      .digest("hex"),
+  }));
 }
 const originalNativeInputs = nativeInputs();
-assert(originalNativeInputs.length > 0, "Native tokenizer is required");
+assert.equal(
+  originalNativeInputs.length,
+  5,
+  "Static tokenizer inputs are required",
+);
 fs.writeFileSync(
   path.join(directory, "native-inputs.json"),
   JSON.stringify(originalNativeInputs, null, 2) + "\n",

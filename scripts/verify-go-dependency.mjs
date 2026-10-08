@@ -26,7 +26,11 @@ const policies = {
     commit: "b0be46fa28d17ee0b65c79774ac0dad84b6db068",
     archive: "1cbfe55076c554a634bb4901a858a08091703c1e2219354414c041f9db39eed8",
     changed: ["sqlite3.go"],
-    added: ["sqlite3_litradar_nofollow_test.go"],
+    added: [
+      "sqlite3_litradar_nofollow_test.go",
+      "sqlite3_litradar_simple.go",
+      "sqlite3_litradar_simple_test.go",
+    ],
   },
 };
 

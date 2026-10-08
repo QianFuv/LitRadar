@@ -65,7 +65,7 @@ ENV CGO_ENABLED=1 GOTOOLCHAIN=local GOWORK=off GOENV=off GOFLAGS="" GOOS=linux G
 ENV PATH=/usr/local/go/bin:$PATH GOPATH=/go
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl gcc g++ git make \
+    && apt-get install --yes --no-install-recommends ca-certificates curl gcc g++ git make cmake libatomic1 libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
     && case "$BUILDARCH" in \
         amd64) archive_sha256=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5 ;; \
@@ -98,14 +98,18 @@ RUN rm -rf /app/internal/webassets/export
 COPY --from=frontend-build /app/out internal/webassets/export
 COPY assets assets
 COPY scripts/go-build-inventory.sh /usr/local/bin/go-build-inventory
+COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
+COPY scripts/build-simple-tokenizer.mjs scripts/build-simple-tokenizer.mjs
 
 RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=litradar-go-build-${TARGETARCH},target=/root/.cache/go-build \
-    if [ "$TARGETARCH" = "$BUILDARCH" ]; then export CC=gcc; \
-    elif [ "$TARGETARCH" = arm64 ]; then export CC=aarch64-linux-gnu-gcc; \
-    elif [ "$TARGETARCH" = amd64 ]; then export CC=x86_64-linux-gnu-gcc; \
+    if [ "$TARGETARCH" = "$BUILDARCH" ]; then export CC=gcc CXX=g++; \
+    elif [ "$TARGETARCH" = arm64 ]; then export CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++; \
+    elif [ "$TARGETARCH" = amd64 ]; then export CC=x86_64-linux-gnu-gcc CXX=x86_64-linux-gnu-g++; \
     else exit 1; fi \
     && mkdir -p /out \
+    && node scripts/build-simple-tokenizer.mjs \
+    && export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment} from "./scripts/build-simple-tokenizer.mjs"; process.stdout.write(simpleBuildEnvironment().CGO_CFLAGS)')" \
     && go build -mod=readonly -trimpath -tags sqlite_fts5,sqlite_dbstat,litradar_web -o /out/litradar ./cmd/litradar \
     && sh /usr/local/bin/go-build-inventory
 
@@ -130,23 +134,6 @@ RUN case "$TARGETARCH" in \
     && chmod 755 /out/obscura /out/obscura-worker
 
 
-FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS simple-tokenizer-build
-
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends cmake gcc g++ make \
-    && rm -rf /var/lib/apt/lists/*
-
-ADD --checksum=sha256:d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61 \
-    https://codeload.github.com/wangfenjin/simple/tar.gz/45db071ba8043ffe8a2e5dfe41f9d68fb477576c /tmp/simple.tar.gz
-
-RUN mkdir /simple \
-    && tar -xzf /tmp/simple.tar.gz -C /simple --strip-components=1 \
-    && cmake -S /simple -B /simple/build -DCMAKE_BUILD_TYPE=Release \
-        -DSIMPLE_WITH_JIEBA=OFF -DBUILD_SQLITE3=OFF -DBUILD_TEST_EXAMPLE=OFF \
-        -DBUILD_STATIC=OFF -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/simple/output \
-    && cmake --build /simple/build --target simple --parallel 2
-
-
 FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS runtime-base
 
 WORKDIR /app
@@ -160,12 +147,11 @@ RUN apt-get update \
     && chown -R litradar:litradar /app
 
 COPY --from=obscura-release /out/obscura /out/obscura-worker /usr/local/bin/
-COPY --from=simple-tokenizer-build /simple/output/libsimple.so /usr/lib/litradar/libsimple.so
 
 COPY docs/third-party /usr/share/doc/litradar/third-party
 COPY --from=go-build /out/inventory /usr/share/doc/litradar/third-party/go-inventory
 
-RUN sha256sum /usr/lib/litradar/libsimple.so /usr/bin/pdftotext /etc/ssl/certs/ca-certificates.crt \
+RUN sha256sum /usr/bin/pdftotext /etc/ssl/certs/ca-certificates.crt \
     > /usr/share/doc/litradar/third-party/native.sha256 \
     && dpkg-query -W > /usr/share/doc/litradar/third-party/ubuntu-packages.txt
 
