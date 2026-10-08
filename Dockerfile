@@ -1,18 +1,38 @@
 # syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 
-FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend-deps
+FROM --platform=$BUILDPLATFORM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS node-toolchain
+
+ARG BUILDARCH
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates curl gzip libatomic1 libstdc++6 xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && case "$BUILDARCH" in \
+        amd64) node_arch=x64; archive_sha256=3883bfc73f9a680ca4eab04b196068aaaab1373ffa77d8fc1a4408222495b651 ;; \
+        arm64) node_arch=arm64; archive_sha256=0945e2cde6aa0f54d980f03874dfe5cf3a549ce714c7fb9019e591ce0accf282 ;; \
+        *) exit 1 ;; \
+    esac \
+    && curl --fail --location --retry 3 --max-time 300 \
+        "https://nodejs.org/dist/v26.11.1/node-v26.11.1-linux-$node_arch.tar.xz" --output /tmp/node.tar.xz \
+    && printf '%s  /tmp/node.tar.xz\n' "$archive_sha256" | sha256sum --check --strict \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm /tmp/node.tar.xz \
+    && npm install --global pnpm@12.10.1 --ignore-scripts --no-audit --no-fund \
+    && node /usr/local/lib/node_modules/pnpm/install.js \
+    && test "$(node --version)" = v26.11.1 \
+    && test "$(pnpm --version)" = 12.10.1
+
+
+FROM node-toolchain AS frontend-deps
 
 WORKDIR /app
 
-COPY app/package.json app/pnpm-lock.yaml ./
+COPY app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml ./
 
 RUN --mount=type=cache,id=litradar-pnpm,target=/pnpm/store \
-    corepack enable pnpm \
-    && pnpm config set store-dir /pnpm/store \
-    && pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile --store-dir /pnpm/store
 
 
-FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend-build
+FROM node-toolchain AS frontend-build
 
 WORKDIR /app
 
@@ -21,9 +41,8 @@ COPY app/ ./
 COPY scripts/generate-csp.mjs /scripts/generate-csp.mjs
 
 RUN --mount=type=cache,id=litradar-next-build,target=/app/.next/cache \
-    corepack enable pnpm && pnpm build
-RUN apk add --no-cache gzip \
-    && find out -type f \( \
+    pnpm build
+RUN find out -type f \( \
         -name '*.css' \
         -o -name '*.html' \
         -o -name '*.js' \
@@ -35,7 +54,7 @@ RUN apk add --no-cache gzip \
     \) -exec gzip --best --keep --no-name {} +
 
 
-FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS go-build
+FROM --platform=$BUILDPLATFORM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS go-build
 
 WORKDIR /app
 
@@ -43,13 +62,30 @@ ARG TARGETARCH
 ARG BUILDARCH
 ENV CGO_ENABLED=1 GOTOOLCHAIN=local GOWORK=off GOENV=off GOFLAGS="" GOOS=linux GOARCH=$TARGETARCH
 
+ENV PATH=/usr/local/go/bin:$PATH GOPATH=/go
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates curl gcc g++ git make \
+    && rm -rf /var/lib/apt/lists/* \
+    && case "$BUILDARCH" in \
+        amd64) archive_sha256=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5 ;; \
+        arm64) archive_sha256=94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8 ;; \
+        *) exit 1 ;; \
+    esac \
+    && curl --fail --location --retry 3 --max-time 300 \
+        "https://go.dev/dl/go1.27.2.linux-$BUILDARCH.tar.gz" --output /tmp/go.tar.gz \
+    && printf '%s  /tmp/go.tar.gz\n' "$archive_sha256" | sha256sum --check --strict \
+    && tar -xzf /tmp/go.tar.gz -C /usr/local \
+    && rm /tmp/go.tar.gz \
+    && test "$(go version | cut -d ' ' -f 3)" = go1.27.2
+
 RUN if [ "$TARGETARCH" != "$BUILDARCH" ]; then \
         case "$TARGETARCH" in \
-            arm64) compiler=gcc-aarch64-linux-gnu; headers=libc6-dev-arm64-cross ;; \
-            amd64) compiler=gcc-x86-64-linux-gnu; headers=libc6-dev-amd64-cross ;; \
+            arm64) compiler="gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"; headers=libc6-dev-arm64-cross ;; \
+            amd64) compiler="gcc-x86-64-linux-gnu g++-x86-64-linux-gnu"; headers=libc6-dev-amd64-cross ;; \
             *) exit 1 ;; \
         esac; \
-        apt-get update && apt-get install --yes --no-install-recommends "$compiler" "$headers" \
+        apt-get update && apt-get install --yes --no-install-recommends $compiler "$headers" \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 
@@ -72,7 +108,7 @@ RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod \
     && sh /usr/local/bin/go-build-inventory
 
 
-FROM --platform=$BUILDPLATFORM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd AS obscura-release
+FROM --platform=$BUILDPLATFORM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS obscura-release
 
 ARG TARGETARCH
 RUN apt-get update \
@@ -92,10 +128,10 @@ RUN case "$TARGETARCH" in \
     && chmod 755 /out/obscura /out/obscura-worker
 
 
-FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS simple-tokenizer-build
+FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS simple-tokenizer-build
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends cmake g++ \
+    && apt-get install --yes --no-install-recommends cmake gcc g++ make \
     && rm -rf /var/lib/apt/lists/*
 
 ADD --checksum=sha256:d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61 \
@@ -109,7 +145,7 @@ RUN mkdir /simple \
     && cmake --build /simple/build --target simple --parallel 2
 
 
-FROM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd AS runtime-base
+FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS runtime-base
 
 WORKDIR /app
 
@@ -129,7 +165,7 @@ COPY --from=go-build /out/inventory /usr/share/doc/litradar/third-party/go-inven
 
 RUN sha256sum /usr/lib/litradar/libsimple.so /usr/bin/pdftotext /etc/ssl/certs/ca-certificates.crt \
     > /usr/share/doc/litradar/third-party/native.sha256 \
-    && dpkg-query -W > /usr/share/doc/litradar/third-party/debian-packages.txt
+    && dpkg-query -W > /usr/share/doc/litradar/third-party/ubuntu-packages.txt
 
 ENV HOME=/tmp \
     LITRADAR_OBSCURA_PATH=/usr/local/bin/obscura \

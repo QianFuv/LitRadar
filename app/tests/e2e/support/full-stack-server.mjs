@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -310,23 +311,18 @@ async function removeFixtureRoot() {
 }
 
 /**
- * Run Playwright through the package manager executable used for this script.
+ * Run the locked Playwright CLI with the current Node.js executable.
  *
  * @param {string} baseUrl - Go service base URL.
  * @param {string[]} playwrightArguments - Explicit Playwright CLI arguments.
  * @returns {Promise<number>} Playwright exit code.
  */
 async function runPlaywright(baseUrl, playwrightArguments) {
-  const packageManagerScript = process.env.npm_execpath;
-  if (!packageManagerScript) {
-    throw new Error('npm_execpath is required to launch Playwright');
-  }
+  const playwrightScript = createRequire(import.meta.url).resolve('@playwright/test/cli');
   testProcess = spawn(
     process.execPath,
     [
-      packageManagerScript,
-      'exec',
-      'playwright',
+      playwrightScript,
       'test',
       '--config',
       'playwright.full-stack.config.tsx',

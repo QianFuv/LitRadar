@@ -426,7 +426,7 @@ try {
     GOWORK: "off",
     GOENV: "off",
     GOFLAGS: "",
-    GOTOOLCHAIN: "go1.27.1",
+    GOTOOLCHAIN: "go1.27.2",
     ...(isCi ? { CI: "true", LITRADAR_TEST_CI: "true" } : {}),
   };
   for (const definition of stepsForMode(mode, isCi)) {

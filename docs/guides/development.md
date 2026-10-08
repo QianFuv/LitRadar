@@ -8,14 +8,16 @@ CI 和容器使用以下主版本：
 
 | 工具    | 版本/来源                                      |
 | ------- | ---------------------------------------------- |
-| Go      | 1.27.1，CGO_ENABLED=1，需 C 编译器             |
-| Node.js | 24                                             |
-| pnpm    | 10.32.0                                        |
+| Go      | 1.27.2，CGO_ENABLED=1，需 C 编译器             |
+| Node.js | 26.11.1                                        |
+| pnpm    | 12.10.1                                        |
 | Docker  | 当前 Docker Engine / Docker Desktop 与 Compose |
 
 Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
 
-Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.1`。Windows 原生开发需把 GCC 放入 PATH；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
+Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.2`。Windows 原生开发需把 GCC 放入 PATH；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
+
+pnpm forwards the existing `NODE_OPTIONS` and disables Node.js experimental Web Storage for its child processes. This keeps jsdom browser storage isolated from Node.js host storage during tests.
 
 ## 初始准备
 
@@ -49,7 +51,7 @@ node scripts/build-simple-tokenizer.mjs
 
 ```bash
 cd app
-corepack enable pnpm
+npm install --global pnpm@12.10.1
 pnpm install --frozen-lockfile
 ```
 
@@ -214,7 +216,7 @@ node tests/test.mjs integration
 node tests/test.mjs all
 ```
 
-Backend CI 在 Windows 和 Linux 执行 `node scripts/check-go.mjs`，固定 Go 1.27.1、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。每条命令最多 15 分钟，失败即停止；不会自动重试。
+Backend CI 在 Windows 和 Linux 执行 `node scripts/check-go.mjs`，固定 Go 1.27.2、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。每条命令最多 15 分钟，失败即停止；不会自动重试。
 
 覆盖率只在每周/手动诊断中分别生成 Go 和前端报告，不设阈值：
 
@@ -253,7 +255,7 @@ docker build --tag litradar:test .
 node tests/container-smoke.mjs litradar:test
 ```
 
-根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Debian 层。应用入口只有 release `litradar`；镜像还提供征稿抓取使用的 Obscura、`pdftotext` 和原生分词库，不包含 Node.js 或 Next.js standalone 运行时。根 Compose 只声明一个 `litradar` 服务，使用非 root 账号、只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略。
+根 Dockerfile 必须成功导出前端并把 `out/` 复制到最终 Ubuntu 26.04 层。应用入口只有 release `litradar`；镜像还提供征稿抓取使用的 Obscura、`pdftotext` 和原生分词库，不包含 Node.js 或 Next.js standalone 运行时。根 Compose 只声明一个 `litradar` 服务，使用非 root 账号、只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略。
 
 日志或请求路径变更还应使用隔离 fixture 运行 off/on 门禁：
 

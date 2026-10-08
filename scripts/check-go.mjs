@@ -18,7 +18,7 @@ const environment = {
   GOWORK: "off",
   GOENV: "off",
   GOFLAGS: "",
-  GOTOOLCHAIN: "go1.27.1",
+  GOTOOLCHAIN: "go1.27.2",
 };
 const tags = "sqlite_fts5,sqlite_dbstat";
 const checks = [
@@ -146,7 +146,7 @@ for (const [id, executable, argumentsList] of checks) {
   if (id === "environment") {
     const actual = JSON.parse(fs.readFileSync(log, "utf8"));
     for (const [name, expected] of Object.entries({
-      GOVERSION: "go1.27.1",
+      GOVERSION: "go1.27.2",
       CGO_ENABLED: "1",
       GOWORK: "off",
       GOFLAGS: "",

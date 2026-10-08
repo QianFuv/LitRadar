@@ -17,20 +17,20 @@ permissions:
 jobs:
   context:
     name: Validate version and source
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       source: ${{ steps.context.outputs.source }}
       version: ${{ steps.context.outputs.version }}
       published: ${{ steps.context.outputs.published }}
       build: ${{ steps.context.outputs.build }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: "26.11.1"
       - name: Resolve release source
         id: context
         env:
@@ -49,29 +49,29 @@ jobs:
       RELEASE_VERSION: ${{ needs.context.outputs.version }}
     steps:
       - name: Checkout exact product source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ needs.context.outputs.source }}
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.1"
+          go-version: "1.27.2"
           cache-dependency-path: go.sum
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
-          version: 10.32.0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+          version: 12.10.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: "26.11.1"
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
       - name: Restore release web build cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: app/.next/cache
-          key: ${{ runner.os }}-next-release-node24-${{ hashFiles('app/pnpm-lock.yaml', 'app/tsconfig*.json', 'app/next.config.ts') }}-${{ env.SOURCE_SHA }}
+          key: ${{ runner.os }}-next-release-node26-${{ hashFiles('app/pnpm-lock.yaml', 'app/tsconfig*.json', 'app/next.config.ts') }}-${{ env.SOURCE_SHA }}
           restore-keys: |
-            ${{ runner.os }}-next-release-node24-${{ hashFiles('app/pnpm-lock.yaml', 'app/tsconfig*.json', 'app/next.config.ts') }}-
+            ${{ runner.os }}-next-release-node26-${{ hashFiles('app/pnpm-lock.yaml', 'app/tsconfig*.json', 'app/next.config.ts') }}-
 
       - name: Build web assets from release source
         working-directory: app
@@ -82,7 +82,7 @@ jobs:
       - name: Package and smoke Windows distribution
         run: node scripts/package-windows.mjs . $env:RELEASE_VERSION $env:SOURCE_SHA
       - name: Upload tested Windows archive
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-release
           path: |
@@ -92,7 +92,7 @@ jobs:
           retention-days: 14
       - name: Upload Windows failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-release-diagnostics
           path: release-results/windows/smoke/*.log
@@ -103,20 +103,20 @@ jobs:
     name: Linux amd64 image, archive and smoke
     needs: context
     if: needs.context.outputs.build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.1"
+          go-version: "1.27.2"
           cache: true
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+          node-version: "26.11.1"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Resolve image identity
         id: image
         env:
@@ -152,7 +152,7 @@ jobs:
             release-results/compose.json >/dev/null
 
       - name: Build Linux image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           DOCKER_BUILD_SUMMARY: "false"
         with:
@@ -184,7 +184,7 @@ jobs:
           docker image inspect "$IMAGE_TAG" > release-results/image-amd64.json
           docker save --output release-results/image-amd64.tar "$IMAGE_TAG"
       - name: Upload tested Linux bytes
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-release
           path: |
@@ -197,7 +197,7 @@ jobs:
           retention-days: 14
       - name: Upload Linux failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-release-diagnostics
           path: test-results/container-smoke/
@@ -210,7 +210,7 @@ jobs:
     if: >-
       !cancelled() && needs.context.result == 'success' &&
       needs.windows.result == 'success' && needs.linux.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: write
@@ -219,21 +219,21 @@ jobs:
       RELEASE_VERSION: ${{ needs.context.outputs.version }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+          node-version: "26.11.1"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Download tested Linux bytes
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-release
           path: release-results
       - name: Download tested Windows archive
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-release
           path: release-results/windows
@@ -246,7 +246,7 @@ jobs:
           node scripts/release-evidence.mjs
       - name: Combine and verify both platform archives
         run: node scripts/release-assets.mjs "$RELEASE_VERSION"
-      - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -264,7 +264,7 @@ jobs:
         run: node scripts/release-github.mjs publish
       - name: Upload publication evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-publication
           path: |
@@ -284,20 +284,20 @@ jobs:
     concurrency:
       group: release-latest
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
-      - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7
+          node-version: "26.11.1"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -311,15 +311,15 @@ jobs:
     name: Confirm complete release
     needs: [context, windows, linux, publish, promote]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: "26.11.1"
       - name: Reject incomplete or skipped publication
         env:
           RELEASE_JOB_RESULTS: ${{ toJSON(needs) }}

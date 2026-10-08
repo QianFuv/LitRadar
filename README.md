@@ -94,7 +94,7 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 本地开发
 
-项目使用 Go 1.27.1（启用 CGO，并安装 C 编译器）、Node.js 24 和 pnpm 10.32.0。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
+项目使用 Go 1.27.2（启用 CGO，并安装 C 编译器）、Node.js 26.11.1 和 pnpm 12.10.1。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
 
 ## 版本发布
 

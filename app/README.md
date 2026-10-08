@@ -15,14 +15,14 @@ CI 与前端构建阶段使用：
 
 | 工具              | 版本                                  |
 | ----------------- | ------------------------------------- |
-| Node.js           | 24                                    |
-| pnpm              | 10.32.0                               |
+| Node.js           | 26.11.1                               |
+| pnpm              | 12.10.1                               |
 | Next.js           | 16.3.6                                |
 | React / React DOM | 19.2.3                                |
 | Motion for React  | 13.1.1                                |
 | TypeScript        | 5.x                                   |
 | Tailwind CSS      | 4.x                                   |
-| Go                | 1.27.1；生成 OpenAPI 和启动后端时需要 |
+| Go                | 1.27.2；生成 OpenAPI 和启动后端时需要 |
 
 依赖由 `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Query、nuqs、next-themes、Radix UI、Motion、class-variance-authority 和 lucide-react。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡仍由共享 CSS motion token 驱动。
 
@@ -45,7 +45,7 @@ go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar serve \
 再在 `app/` 中运行：
 
 ```bash
-corepack enable pnpm
+npm install --global pnpm@12.10.1
 pnpm install --frozen-lockfile
 pnpm dev
 ```

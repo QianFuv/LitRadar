@@ -88,10 +88,10 @@ Playwright 有两个独立角色：
 
 ## 统一命令
 
-先安装 Go 1.27.1、CGO 所需的 C 编译器、Node.js 24 和前端锁定依赖。Linux 先运行 `node scripts/build-simple-tokenizer.mjs`；Windows 使用仓库提供的 DLL。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.1`。
+先安装 Go 1.27.2、CGO 所需的 C 编译器、Node.js 26.11.1 和前端锁定依赖。Linux 先运行 `node scripts/build-simple-tokenizer.mjs`；Windows 使用仓库提供的 DLL。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.2`。
 
 ```bash
-corepack enable pnpm
+npm install --global pnpm@12.10.1
 pnpm --dir app install --frozen-lockfile
 node tests/test.mjs all
 node scripts/check-go.mjs

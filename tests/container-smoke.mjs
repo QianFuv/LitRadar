@@ -1397,6 +1397,17 @@ async function runSmoke(imageReference) {
   hostPort = await resolvePublishedPort();
   const baseUrl = `http://127.0.0.1:${hostPort}`;
   await waitForReadiness(baseUrl);
+  const distribution = await runDocker([
+    "exec",
+    containerName,
+    "cat",
+    "/etc/os-release",
+  ]);
+  assertInvariant(
+    /^ID=ubuntu$/m.test(distribution.stdout) &&
+      /^VERSION_ID="26\.04"$/m.test(distribution.stdout),
+    "runtime image must use Ubuntu 26.04",
+  );
   if (profile) {
     profile.startupMs = performance.now() - started;
     profile.ready = await resourceSnapshot();

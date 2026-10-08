@@ -38,3 +38,5 @@ docs/
 .idea/
 .vscode/
 .env
+internal/webassets/export/
+release-results/

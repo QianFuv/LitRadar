@@ -18,7 +18,7 @@ The user waived Obscura supply-chain verification for this migration (A13).
 The image SBOM records Obscura as an opaque upstream binary distribution; it
 does not certify its transitive dependencies or license/source completeness.
 
-Poppler's pdftotext and its libraries are installed from Debian packages. Their
+Poppler's pdftotext and its libraries are installed from Ubuntu packages. Their
 copyright and license notices remain under /usr/share/doc in the image.
 
 Windows distributions use the versioned conda-forge binary repackaging from

@@ -47,14 +47,14 @@ SIGINT/SIGTERM 会协调关闭 HTTP 与调度组件。若任务子进程正在�
 
 ## 镜像内容
 
-根 Dockerfile 包含以下构建阶段；Dockerfile frontend、Node、Go 和 Debian 引用都同时保留可读 tag 与不可变 digest：
+The Dockerfile frontend and Ubuntu bases use readable tags with immutable digests. Node.js and Go archives use exact versions and SHA-256 checksums.
 
-1. Node.js 24 Alpine 只复制 `app/package.json` 和 lockfile，使用缓存安装依赖。
+1. Ubuntu 26.04 installs Node.js 26.11.1 and pnpm 12.10.1, then copies `app/package.json`, the lockfile and `app/pnpm-workspace.yaml` for cached frozen dependency installation.
 2. 独立前端构建阶段复制 `app/` 源码，生成 `out/`，并为 HTML、CSS、JavaScript、JSON、SVG、TXT、XML 和 source map 保留原文件及确定性 gzip 兄弟文件。
-3. `golang:1.27.1-bookworm` 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat` 构建唯一 Go 应用；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
+3. Ubuntu 26.04 中的 Go 1.27.2 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat` 构建唯一 Go 应用；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
 4. 下载 Obscura 官方 v0.2.4 对应 amd64/arm64 的 render + stealth 二进制归档，固定版本和 SHA-256，并一起安装 `obscura` 与 `obscura-worker`。辅助程序无需本地编译。
 5. 分词器阶段从固定上游源码构建目标架构的 `simple` 扩展，关闭 Jieba 和示例构建。
-6. `debian:trixie-slim` 接收应用、Obscura、`/usr/lib/litradar/libsimple.so`、`/usr/share/litradar/meta` 中来自 `assets/meta/` 的不可变期刊目录，以及 `/app/web` 静态站点。Debian 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。
+6. `ubuntu:26.04` 接收应用、Obscura、`/usr/lib/litradar/libsimple.so`、`/usr/share/litradar/meta` 中来自 `assets/meta/` 的不可变期刊目录，以及 `/app/web` 静态站点。Ubuntu 26.04 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。
 
 镜像把 `LITRADAR_OBSCURA_PATH` 和 `LITRADAR_PDFTOTEXT_PATH` 指向打包的辅助程序。征稿刷新可在服务器直接采集 HTML 和 PDF，无需安装 Chromium 或在运行时下载浏览器。发布冒烟测试在非特权、只读服务容器中验证原始 HTML 的 JavaScript 协议、真实 PDF 提取和默认私网拒绝；loopback 例外仅限该次临时测试。
 

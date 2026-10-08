@@ -75,7 +75,7 @@ original workflow resumes publication and updates latest only after publication.
 
 ## Run a binary archive
 
-The Linux package targets Debian 13 on amd64. They contain the native Go
+The Linux package targets Ubuntu 26.04 on amd64. They contain the native Go
 binary, web assets, catalog bundle, SQLite tokenizer, Obscura and its worker, and
 third-party notices. They are dynamically linked distributions, not standalone
 static binaries. Install the system dependencies first:
