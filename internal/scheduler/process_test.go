@@ -17,8 +17,11 @@ import (
 	"time"
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/scheduler"
+	"github.com/QianFuv/LitRadar/internal/platform/process"
 	store "github.com/QianFuv/LitRadar/internal/storage/scheduler"
 )
+
+const processFixtureStartupTimeout = 15 * time.Second
 
 func TestMain(tests *testing.M) {
 	role := os.Getenv("LITRADAR_SCHEDULER_TEST_ROLE")
@@ -122,9 +125,11 @@ func TestSchedulerSpawnFailureIsSingleAndRedacted(t *testing.T) {
 
 func waitDescendant(t *testing.T, directory string) string {
 	t.Helper()
-	for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); {
+	for deadline := time.Now().Add(processFixtureStartupTimeout); time.Now().Before(deadline); {
 		if data, err := os.ReadFile(filepath.Join(directory, "ready")); err == nil {
-			return string(data)
+			if _, _, err := net.SplitHostPort(string(data)); err == nil {
+				return string(data)
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -150,15 +155,35 @@ func TestSchedulerTreeTermination(t *testing.T) {
 			command, directory := processFixture(t, role)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			deadline := time.Now().Add(5 * time.Second)
-			if reason == "timeout" {
-				deadline = time.Now().Add(1200 * time.Millisecond)
-			}
 			resultChannel := make(chan processResult, 1)
-			go func() {
-				resultChannel <- executeProcess(ctx, command, testClaim(), 1, deadline, 1200*time.Millisecond, func() bool { return reason != "heartbeat" })
-			}()
-			address := waitDescendant(t, directory)
+			var address string
+			if reason == "timeout" || reason == "heartbeat" {
+				child, err := process.Start(ctx, process.Config{Path: command.path})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer child.Close()
+				address = waitDescendant(t, directory)
+				deadline := time.Now().Add(5 * time.Second)
+				if reason == "timeout" {
+					deadline = time.Now().Add(1200 * time.Millisecond)
+				}
+				go func() {
+					var result processResult
+					var errorKind string
+					var exitCode *int
+					waitScheduledProcess(ctx, child, command.command, deadline, 1200*time.Millisecond, func() bool { return reason != "heartbeat" }, &result, &errorKind, &exitCode)
+					if err := child.Close(); err != nil {
+						result = processResult{domain.Error, err.Error()}
+					}
+					resultChannel <- result
+				}()
+			} else {
+				go func() {
+					resultChannel <- executeProcess(ctx, command, testClaim(), 1, time.Now().Add(20*time.Second), 1200*time.Millisecond, func() bool { return true })
+				}()
+				address = waitDescendant(t, directory)
+			}
 			if reason == "cancel" {
 				cancel()
 			}
@@ -297,7 +322,7 @@ func runProcessTreeFixture(directory, role string) {
 	if command.Start() != nil {
 		os.Exit(31)
 	}
-	for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); {
+	for deadline := time.Now().Add(processFixtureStartupTimeout); time.Now().Before(deadline); {
 		if _, err := os.Stat(filepath.Join(directory, "ready")); err == nil {
 			if role == "leader-exit" {
 				os.Exit(0)
@@ -315,7 +340,13 @@ func runProcessDescendantFixture(directory string) {
 	if err != nil {
 		os.Exit(33)
 	}
-	os.WriteFile(filepath.Join(directory, "ready"), []byte(listener.Addr().String()), 0600)
+	readyPath := filepath.Join(directory, "ready")
+	if err := os.WriteFile(readyPath+".tmp", []byte(listener.Addr().String()), 0600); err != nil {
+		os.Exit(33)
+	}
+	if err := os.Rename(readyPath+".tmp", readyPath); err != nil {
+		os.Exit(33)
+	}
 	for {
 		connection, err := listener.Accept()
 		if err != nil {
