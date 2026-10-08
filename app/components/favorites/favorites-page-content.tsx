@@ -422,7 +422,10 @@ function renderFavoriteArticles(state: FavoritesViewState) {
 
 /** Retain the export controls and selected-folder snapshot. */
 function renderFavoriteExport(
-  state: FavoritesViewState,
+  state: Pick<
+    FavoritesViewState,
+    'exportFeedback' | 'exportFormat' | 'exportMut' | 'setExportFormat'
+  >,
   selectedFolder: NonNullable<FavoritesViewState['selectedFolder']>,
 ) {
   const { exportFeedback, exportFormat, exportMut, setExportFormat } = state;
@@ -574,7 +577,9 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
 }
 
 /** Retain the existing captured target and pending dismissal guard. */
-function renderDeleteFavoriteFolderDialog(state: FavoritesViewState) {
+function renderDeleteFavoriteFolderDialog(
+  state: Pick<FavoritesViewState, 'deleteMut' | 'folderToDelete' | 'setFolderToDelete'>,
+) {
   const { deleteMut, folderToDelete, setFolderToDelete } = state;
 
   return (
@@ -605,7 +610,9 @@ function renderDeleteFavoriteFolderDialog(state: FavoritesViewState) {
 }
 
 /** Retain the existing captured target and pending dismissal guard. */
-function renderRemoveFavoriteDialog(state: FavoritesViewState) {
+function renderRemoveFavoriteDialog(
+  state: Pick<FavoritesViewState, 'removeMut' | 'favoriteToRemove' | 'setFavoriteToRemove'>,
+) {
   const { removeMut, favoriteToRemove, setFavoriteToRemove } = state;
 
   return (
@@ -642,7 +649,12 @@ function renderRemoveFavoriteDialog(state: FavoritesViewState) {
 }
 
 /** Retain the existing captured target and pending dismissal guard. */
-function renderBulkRemoveFavoriteDialog(state: FavoritesViewState) {
+function renderBulkRemoveFavoriteDialog(
+  state: Pick<
+    FavoritesViewState,
+    'bulkRemoveTarget' | 'bulkRemoveMut' | 'confirmBulkRemove' | 'setBulkRemoveTarget'
+  >,
+) {
   const { bulkRemoveTarget, bulkRemoveMut, confirmBulkRemove, setBulkRemoveTarget } = state;
 
   return (
@@ -665,7 +677,12 @@ function renderBulkRemoveFavoriteDialog(state: FavoritesViewState) {
 }
 
 /** Retain folder creation and its original form submission. */
-function renderCreateFavoriteFolderDialog(state: FavoritesViewState) {
+function renderCreateFavoriteFolderDialog(
+  state: Pick<
+    FavoritesViewState,
+    'createMut' | 'dialogOpen' | 'newFolderName' | 'setDialogOpen' | 'setNewFolderName'
+  >,
+) {
   const { createMut, dialogOpen, newFolderName, setDialogOpen, setNewFolderName } = state;
 
   return (

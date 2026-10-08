@@ -145,8 +145,6 @@ function useFavoriteButtonState({
   return {
     user,
     queryClient,
-    db,
-    articleId,
     open,
     setOpen,
     triggerRef,
