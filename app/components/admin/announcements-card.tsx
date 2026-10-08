@@ -193,11 +193,9 @@ function useAnnouncementsViewState() {
   };
 
   return {
-    queryClient,
     dialogOpen,
     setDialogOpen,
     editingAnnouncement,
-    setEditingAnnouncement,
     announcementToDelete,
     setAnnouncementToDelete,
     form,
@@ -436,7 +434,12 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
 }
 
 /** Retain captured target confirmation and pending dismissal safeguards. */
-function renderAnnouncementDeletion(state: AnnouncementsViewState) {
+function renderAnnouncementDeletion(
+  state: Pick<
+    AnnouncementsViewState,
+    'announcementToDelete' | 'setAnnouncementToDelete' | 'deleteMutation'
+  >,
+) {
   const { announcementToDelete, setAnnouncementToDelete, deleteMutation } = state;
 
   return (

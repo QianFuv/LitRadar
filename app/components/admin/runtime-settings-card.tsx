@@ -682,29 +682,18 @@ function useRuntimeViewState() {
   };
 
   return {
-    queryClient,
-    formOverrides,
-    setFormOverrides,
     clearedSecrets,
-    setClearedSecrets,
     secretPoolAdditions,
-    setSecretPoolAdditions,
     secretPoolRemovals,
-    setSecretPoolRemovals,
     saveFeedback,
-    setSaveFeedback,
     feedbackTransition,
-    settings,
-    error,
     isLoading,
     providerSettings,
     genericSettingGroups,
     providerCatalog,
     providerCatalogError,
     isProviderCatalogLoading,
-    baseForm,
     form,
-    hasPendingChanges,
     saveMutation,
     mutationError,
     updateFormValue,
@@ -801,7 +790,10 @@ function renderRuntimeSettingControl(
 }
 
 /** Retain masked-secret metadata and clear/removal status precedence. */
-function renderRuntimeSettingDescription(state: RuntimeViewState, setting: RuntimeSettingInfo) {
+function renderRuntimeSettingDescription(
+  state: Pick<RuntimeViewState, 'clearedSecrets' | 'toggleSecretClear' | 'secretPoolRemovals'>,
+  setting: RuntimeSettingInfo,
+) {
   const { clearedSecrets, toggleSecretClear } = state;
 
   return (
@@ -865,7 +857,12 @@ function renderRuntimeSettingGroups(state: RuntimeViewState) {
 }
 
 /** Retain provider loading admission and the original editor identity. */
-function renderRuntimeProviderSettings(state: RuntimeViewState) {
+function renderRuntimeProviderSettings(
+  state: Pick<
+    RuntimeViewState,
+    'providerSettings' | 'providerCatalog' | 'isProviderCatalogLoading' | 'form' | 'updateFormValue'
+  >,
+) {
   const { providerSettings, providerCatalog, isProviderCatalogLoading, form, updateFormValue } =
     state;
 
@@ -887,7 +884,9 @@ function renderRuntimeProviderSettings(state: RuntimeViewState) {
 }
 
 /** Retain failure priority over save feedback and exact presence key. */
-function renderRuntimeFeedback(state: RuntimeViewState) {
+function renderRuntimeFeedback(
+  state: Pick<RuntimeViewState, 'saveFeedback' | 'feedbackTransition' | 'mutationError'>,
+) {
   const { saveFeedback, feedbackTransition, mutationError } = state;
 
   return (
@@ -941,7 +940,10 @@ function renderRuntimeSaveAction(state: RuntimeViewState) {
 }
 
 /** Retain clear-before-removal-before-saved secret feedback. */
-function getRuntimeSecretDescription(state: RuntimeViewState, setting: RuntimeSettingInfo) {
+function getRuntimeSecretDescription(
+  state: Pick<RuntimeViewState, 'clearedSecrets' | 'secretPoolRemovals'>,
+  setting: RuntimeSettingInfo,
+) {
   const { clearedSecrets, secretPoolRemovals } = state;
 
   return setting.is_secret && setting.has_value

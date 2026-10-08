@@ -80,12 +80,12 @@ function useOverviewViewState({ isEnabled }: { isEnabled: boolean }) {
   const indexStats = stats?.index;
   const pushStats = stats?.push;
 
-  return { isEnabled, stats, statsLoading, authStats, indexStats, pushStats };
+  return { statsLoading, authStats, indexStats, pushStats };
 }
 type OverviewViewState = ReturnType<typeof useOverviewViewState>;
 
 /** Retain every authentication statistic and exact nullish zero fallback. */
-function renderAuthStatistics(state: OverviewViewState) {
+function renderAuthStatistics(state: Pick<OverviewViewState, 'authStats'>) {
   const { authStats } = state;
 
   return (
@@ -125,7 +125,7 @@ function renderAuthStatistics(state: OverviewViewState) {
 }
 
 /** Retain conditional index totals, database order and localized values. */
-function renderIndexStatistics(state: OverviewViewState) {
+function renderIndexStatistics(state: Pick<OverviewViewState, 'indexStats'>) {
   const { indexStats } = state;
 
   return (
@@ -158,7 +158,7 @@ function renderIndexStatistics(state: OverviewViewState) {
 }
 
 /** Retain delivered zero counts and server-ordered completion metadata. */
-function renderPushStatistics(state: OverviewViewState) {
+function renderPushStatistics(state: Pick<OverviewViewState, 'pushStats'>) {
   const { pushStats } = state;
 
   return (

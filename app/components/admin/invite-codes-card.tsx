@@ -204,17 +204,12 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
   };
 
   return {
-    isEnabled,
-    queryClient,
     validDays,
     setValidDays,
     maxUses,
     setMaxUses,
-    validDaysValue,
-    maxUsesValue,
     isPolicyValid,
     copyFeedback,
-    setCopyFeedback,
     inviteCodeToRevoke,
     setInviteCodeToRevoke,
     feedbackTransition,
@@ -230,7 +225,9 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
 type AdminInviteViewState = ReturnType<typeof useAdminInviteViewState>;
 
 /** Retain accessible clipboard outcomes and unchanged feedback timer ownership. */
-function renderAdminInviteCopyFeedback(state: AdminInviteViewState) {
+function renderAdminInviteCopyFeedback(
+  state: Pick<AdminInviteViewState, 'copyFeedback' | 'feedbackTransition'>,
+) {
   const { copyFeedback, feedbackTransition } = state;
 
   return (
@@ -362,7 +359,12 @@ function renderAdminInviteCards(state: AdminInviteViewState) {
 }
 
 /** Retain the always-mounted desktop table and exact displayed-versus-copied code. */
-function renderAdminInviteTable(state: AdminInviteViewState) {
+function renderAdminInviteTable(
+  state: Pick<
+    AdminInviteViewState,
+    'setInviteCodeToRevoke' | 'inviteCodes' | 'revokeCodeMut' | 'handleCopyInviteCode'
+  >,
+) {
   const { setInviteCodeToRevoke, inviteCodes, revokeCodeMut, handleCopyInviteCode } = state;
 
   return (
@@ -467,7 +469,12 @@ function renderAdminInviteTable(state: AdminInviteViewState) {
 }
 
 /** Retain target identity, pending guard and permanent-revocation feedback. */
-function renderAdminInviteRevocation(state: AdminInviteViewState) {
+function renderAdminInviteRevocation(
+  state: Pick<
+    AdminInviteViewState,
+    'inviteCodeToRevoke' | 'setInviteCodeToRevoke' | 'revokeCodeMut'
+  >,
+) {
   const { inviteCodeToRevoke, setInviteCodeToRevoke, revokeCodeMut } = state;
 
   return (

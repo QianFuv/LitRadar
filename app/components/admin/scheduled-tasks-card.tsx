@@ -454,11 +454,9 @@ function useSchedulerViewState() {
   );
 
   return {
-    queryClient,
     dialogOpen,
     setDialogOpen,
     editingTask,
-    setEditingTask,
     taskToDelete,
     setTaskToDelete,
     form,
@@ -488,7 +486,9 @@ function useSchedulerViewState() {
 type SchedulerViewState = ReturnType<typeof useSchedulerViewState>;
 
 /** Keep hidden index arguments mounted with identical inert and motion guards. */
-function renderSchedulerIndexFields(state: SchedulerViewState) {
+function renderSchedulerIndexFields(
+  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'panelTransition' | 'isIndexJobPreset'>,
+) {
   const { form, setForm, panelTransition, isIndexJobPreset } = state;
 
   return (
@@ -527,7 +527,9 @@ function renderSchedulerIndexFields(state: SchedulerViewState) {
 }
 
 /** Keep hidden delivery arguments mounted with identical inert and validation guards. */
-function renderSchedulerDeliveryFields(state: SchedulerViewState) {
+function renderSchedulerDeliveryFields(
+  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'panelTransition' | 'isIndexJobPreset'>,
+) {
   const { form, setForm, panelTransition, isIndexJobPreset } = state;
 
   return (
@@ -934,7 +936,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
 }
 
 /** Retain the first five server-ordered runs and empty-record feedback. */
-function renderRecentSchedulerRuns(state: SchedulerViewState) {
+function renderRecentSchedulerRuns(state: Pick<SchedulerViewState, 'schedulerStatus'>) {
   const { schedulerStatus } = state;
 
   return (
@@ -964,7 +966,9 @@ function renderRecentSchedulerRuns(state: SchedulerViewState) {
 }
 
 /** Retain confirmation target identity and pending-dismissal safeguards. */
-function renderScheduledTaskDeletion(state: SchedulerViewState) {
+function renderScheduledTaskDeletion(
+  state: Pick<SchedulerViewState, 'taskToDelete' | 'setTaskToDelete' | 'deleteMutation'>,
+) {
   const { taskToDelete, setTaskToDelete, deleteMutation } = state;
 
   return (
