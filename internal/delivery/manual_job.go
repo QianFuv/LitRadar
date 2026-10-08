@@ -31,7 +31,7 @@ func runManualDeliveryJob(ctx context.Context, repository *store.Repository, con
 		}
 		return record, err
 	}
-	claim, err := claimManualJob(ctx, repository, runId, owner, load)
+	claim, err := claimManualJob(ctx, repository, owner, load)
 	if err != nil || !claim.shouldExecute {
 		return claim.record, err
 	}
@@ -112,7 +112,7 @@ type manualJobClaim struct {
 	shouldExecute bool
 }
 
-func claimManualJob(ctx context.Context, repository *store.Repository, runId int64, owner string, load func(context.Context) (*store.RunRecord, error)) (manualJobClaim, error) {
+func claimManualJob(ctx context.Context, repository *store.Repository, owner string, load func(context.Context) (*store.RunRecord, error)) (manualJobClaim, error) {
 	candidate, err := load(ctx)
 	if err != nil {
 		return manualJobClaim{}, err
