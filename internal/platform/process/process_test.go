@@ -27,6 +27,8 @@ type fixtureInfo struct {
 	Address string
 }
 
+const fixtureStartupTimeout = 15 * time.Second
+
 func fixtureConfig(mode, directory string) Config {
 	executable, err := os.Executable()
 	if err != nil {
@@ -34,11 +36,11 @@ func fixtureConfig(mode, directory string) Config {
 	}
 	environment := []string{}
 	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "LITRADAR_PROCESS_FIXTURE=") && !strings.HasPrefix(entry, "LITRADAR_PROCESS_DIRECTORY=") && !strings.HasPrefix(entry, ParentEnvironment+"=") {
+		if !strings.HasPrefix(entry, "LITRADAR_PROCESS_FIXTURE=") && !strings.HasPrefix(entry, "LITRADAR_PROCESS_DIRECTORY=") && !strings.HasPrefix(entry, ParentEnvironment+"=") && !strings.HasPrefix(entry, "GORACE=") {
 			environment = append(environment, entry)
 		}
 	}
-	environment = append(environment, "LITRADAR_PROCESS_FIXTURE="+mode, "LITRADAR_PROCESS_DIRECTORY="+directory)
+	environment = append(environment, "LITRADAR_PROCESS_FIXTURE="+mode, "LITRADAR_PROCESS_DIRECTORY="+directory, "GORACE="+os.Getenv("GORACE")+" atexit_sleep_ms=0")
 	return Config{Path: executable, Args: []string{"-test.run=^TestProcessFixture$"}, Environment: environment, OutputLimit: 1024}
 }
 
@@ -115,11 +117,16 @@ func TestCancellationAfterLeaderExitStillOwnsDescendants(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireReachable(t, grandchild)
+	cleanupCtx, stopCleanup := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopCleanup()
 	cancel()
 	select {
 	case <-child.closed:
-	case <-waitCtx.Done():
+	case <-cleanupCtx.Done():
 		t.Fatal("cancel did not close tree ownership")
+	}
+	if err := child.Close(); err != nil {
+		t.Fatal(err)
 	}
 	connection, err := net.DialTimeout("tcp", grandchild.Address, time.Second)
 	if err == nil {
@@ -217,17 +224,31 @@ func TestPartialStartupFailureReapsOwnedTree(t *testing.T) {
 			directory := t.TempDir()
 			var grandchild fixtureInfo
 			var pid int
+			var fixtureError error
 			child, err := startWithHook(context.Background(), fixtureConfig("parent", directory), func(current string, command *exec.Cmd) error {
 				if current != stage {
 					return nil
 				}
 				pid = command.Process.Pid
 				if stage == "after_resume" {
-					grandchild = awaitFixture(t, directory, "grandchild")
-					requireReachable(t, grandchild)
+					ctx, cancel := context.WithTimeout(context.Background(), fixtureStartupTimeout)
+					defer cancel()
+					grandchild, fixtureError = waitFixture(ctx, directory, "grandchild")
+					if fixtureError != nil {
+						return fixtureError
+					}
+					connection, err := net.DialTimeout("tcp", grandchild.Address, time.Second)
+					if err != nil {
+						fixtureError = err
+						return err
+					}
+					connection.Close()
 				}
 				return errors.New("injected startup failure")
 			})
+			if fixtureError != nil {
+				t.Fatal(fixtureError)
+			}
 			if child != nil || err == nil || err.Error() != "spawn_or_assign_failed" || pid == 0 {
 				t.Fatalf("fault not exercised: %v %v %d", child, err, pid)
 			}
@@ -239,6 +260,29 @@ func TestPartialStartupFailureReapsOwnedTree(t *testing.T) {
 				requireStopped(t, grandchild)
 			}
 		})
+	}
+}
+
+func TestStartupReadinessFailureReapsChild(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	directory := t.TempDir()
+	var started *exec.Cmd
+	var fixtureError error
+	child, err := startWithHook(context.Background(), fixtureConfig("parent", directory), func(stage string, command *exec.Cmd) error {
+		if stage != "after_resume" {
+			return nil
+		}
+		started = command
+		_, fixtureError = waitFixture(ctx, directory, "grandchild")
+		return fixtureError
+	})
+	if child != nil {
+		child.Close()
+		t.Fatal("readiness failure returned a live child")
+	}
+	if err == nil || !errors.Is(fixtureError, context.Canceled) || started == nil || started.ProcessState == nil {
+		t.Fatalf("readiness failure did not join the child: %v %v %v", err, fixtureError, started)
 	}
 }
 
@@ -273,17 +317,40 @@ func TestGracefulAndForcedTreeTermination(t *testing.T) {
 
 func awaitFixture(t *testing.T, directory, mode string) fixtureInfo {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	ctx, cancel := context.WithTimeout(context.Background(), fixtureStartupTimeout)
+	defer cancel()
+	info, err := waitFixture(ctx, directory, mode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
+// waitFixture lets startup hooks return readiness failures through owned process cleanup.
+func waitFixture(ctx context.Context, directory, mode string) (fixtureInfo, error) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var lastError error
+	for ctx.Err() == nil {
 		data, err := os.ReadFile(filepath.Join(directory, mode+".json"))
 		var info fixtureInfo
-		if err == nil && json.Unmarshal(data, &info) == nil {
-			return info
+		if err == nil {
+			err = json.Unmarshal(data, &info)
 		}
-		time.Sleep(10 * time.Millisecond)
+		if err == nil {
+			_, _, err = net.SplitHostPort(info.Address)
+			if err == nil && info.Pid > 0 {
+				return info, nil
+			}
+			err = fmt.Errorf("incomplete fixture identity: %+v", info)
+		}
+		lastError = err
+		select {
+		case <-ctx.Done():
+		case <-ticker.C:
+		}
 	}
-	t.Fatalf("fixture %s not published", mode)
-	return fixtureInfo{}
+	return fixtureInfo{}, fmt.Errorf("fixture %s not published: %w", mode, errors.Join(ctx.Err(), lastError))
 }
 
 func requireReachable(t *testing.T, info fixtureInfo) {

@@ -14,17 +14,20 @@ func TestFailedSuspendedStartActuallyExits(t *testing.T) {
 	for _, stage := range []string{"before_assignment", "before_resume"} {
 		t.Run(stage, func(t *testing.T) {
 			var handle windows.Handle
+			var probeError error
 			_, err := startWithHook(context.Background(), fixtureConfig("parent", t.TempDir()), func(current string, command *exec.Cmd) error {
 				if current != stage {
 					return nil
 				}
-				var err error
-				handle, err = windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(command.Process.Pid))
-				if err != nil {
-					t.Fatal(err)
+				handle, probeError = windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(command.Process.Pid))
+				if probeError != nil {
+					return probeError
 				}
 				return errors.New("injected failure")
 			})
+			if probeError != nil {
+				t.Fatal(probeError)
+			}
 			if err == nil || handle == 0 {
 				t.Fatal("failure not injected")
 			}
