@@ -181,6 +181,86 @@ function markNearDistanceSeparator(frames: ParenthesisFrame[]): void {
     }
   }
 }
+/**
+ * Apply braces, parentheses and nearest NEAR separators before operand admission.
+ */
+function updateFtsHighlightSyntax(
+  token: FtsQueryToken,
+  tokens: readonly FtsQueryToken[],
+  index: number,
+  parenthesisFrames: ParenthesisFrame[],
+  braceDepth: number,
+): number {
+  if (token.value === '{') {
+    braceDepth += 1;
+  } else if (token.value === '}') {
+    braceDepth = Math.max(0, braceDepth - 1);
+  } else if (token.value === '(') {
+    const previousToken = tokens[index - 1];
+    parenthesisFrames.push({
+      isNear: previousToken?.kind === 'word' && previousToken.value.toUpperCase() === 'NEAR',
+      isAfterComma: false,
+    });
+  } else if (token.value === ')') {
+    parenthesisFrames.pop();
+  } else if (token.value === ',') {
+    markNearDistanceSeparator(parenthesisFrames);
+  }
+  return braceDepth;
+}
+
+/**
+ * Identify a following column selector without admitting its preceding operand.
+ */
+function isFtsColumnSelector(token: FtsQueryToken | undefined): boolean {
+  return token?.kind === 'symbol' && token?.value === ':';
+}
+
+/**
+ * Admit searchable operands outside column lists, operators and NEAR distances.
+ */
+function isFtsHighlightOperand(
+  token: FtsQueryToken,
+  nextToken: FtsQueryToken | undefined,
+  parenthesisFrames: readonly ParenthesisFrame[],
+  braceDepth: number,
+): boolean {
+  if (braceDepth > 0) {
+    return false;
+  }
+  if (token.kind === 'word' && FTS_OPERATORS.has(token.value.toUpperCase())) {
+    return false;
+  }
+  if (isFtsColumnSelector(nextToken)) {
+    return false;
+  }
+  if (isNearDistance(token, parenthesisFrames)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Publish long-enough operands once per matching mode while retaining first spelling.
+ */
+function appendFtsHighlightTerm(
+  token: FtsQueryToken,
+  nextToken: FtsQueryToken | undefined,
+  terms: FtsHighlightTerm[],
+  seenTerms: Set<string>,
+): void {
+  const value = normalizeHighlightValue(token.value);
+  if (!meetsHighlightLength(value)) {
+    return;
+  }
+  const matchMode = nextToken?.kind === 'symbol' && nextToken?.value === '*' ? 'prefix' : 'exact';
+  const deduplicationKey = `${matchMode}:${value.toLowerCase()}`;
+  if (seenTerms.has(deduplicationKey)) {
+    return;
+  }
+  seenTerms.add(deduplicationKey);
+  terms.push({ value, matchMode });
+}
 
 /**
  * Extract operands that may be highlighted from an FTS query.
@@ -203,56 +283,14 @@ export function parseFtsHighlightTerms(query: string | null | undefined): FtsHig
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-
     if (token.kind === 'symbol') {
-      if (token.value === '{') {
-        braceDepth += 1;
-      } else if (token.value === '}') {
-        braceDepth = Math.max(0, braceDepth - 1);
-      } else if (token.value === '(') {
-        const previousToken = tokens[index - 1];
-        parenthesisFrames.push({
-          isNear: previousToken?.kind === 'word' && previousToken.value.toUpperCase() === 'NEAR',
-          isAfterComma: false,
-        });
-      } else if (token.value === ')') {
-        parenthesisFrames.pop();
-      } else if (token.value === ',') {
-        markNearDistanceSeparator(parenthesisFrames);
-      }
+      braceDepth = updateFtsHighlightSyntax(token, tokens, index, parenthesisFrames, braceDepth);
       continue;
     }
-
-    if (braceDepth > 0) {
-      continue;
+    const nextToken = tokens[index + 1];
+    if (isFtsHighlightOperand(token, nextToken, parenthesisFrames, braceDepth)) {
+      appendFtsHighlightTerm(token, nextToken, terms, seenTerms);
     }
-
-    if (token.kind === 'word' && FTS_OPERATORS.has(token.value.toUpperCase())) {
-      continue;
-    }
-
-    if (tokens[index + 1]?.kind === 'symbol' && tokens[index + 1]?.value === ':') {
-      continue;
-    }
-
-    if (isNearDistance(token, parenthesisFrames)) {
-      continue;
-    }
-
-    const value = normalizeHighlightValue(token.value);
-    if (!meetsHighlightLength(value)) {
-      continue;
-    }
-
-    const matchMode =
-      tokens[index + 1]?.kind === 'symbol' && tokens[index + 1]?.value === '*' ? 'prefix' : 'exact';
-    const deduplicationKey = `${matchMode}:${value.toLowerCase()}`;
-    if (seenTerms.has(deduplicationKey)) {
-      continue;
-    }
-
-    seenTerms.add(deduplicationKey);
-    terms.push({ value, matchMode });
   }
 
   return terms;
