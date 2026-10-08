@@ -157,16 +157,9 @@ function useLoginViewState() {
   };
 
   return {
-    router,
-    searchParams,
     loading,
-    login,
     logoutWarning,
-    recoverLogout,
-    register,
     user,
-    nextParam,
-    nextPath,
     isLogoutRecovery,
     username,
     setUsername,
@@ -177,17 +170,13 @@ function useLoginViewState() {
     error,
     setError,
     isSubmitting,
-    setIsSubmitting,
     isPasswordVisible,
     setIsPasswordVisible,
     mode,
     setMode,
     inviteRequired,
-    setInviteRequired,
     bootstrapRequired,
-    setBootstrapRequired,
     isRecoveryComplete,
-    setIsRecoveryComplete,
     panelTransition,
     fastTransition,
     authModeKey,
@@ -325,7 +314,12 @@ function renderLoginInvite(state: LoginViewState) {
 }
 
 /** Retain the registration bootstrap guard and exact command spacing. */
-function renderLoginBootstrap(state: LoginViewState) {
+function renderLoginBootstrap(
+  state: Pick<
+    LoginViewState,
+    'isLogoutRecovery' | 'mode' | 'bootstrapRequired' | 'panelTransition'
+  >,
+) {
   const { isLogoutRecovery, mode, bootstrapRequired, panelTransition } = state;
 
   return (
@@ -351,7 +345,7 @@ function renderLoginBootstrap(state: LoginViewState) {
 }
 
 /** Retain the immediate keyed authentication error and its semantic ID. */
-function renderLoginError(state: LoginViewState) {
+function renderLoginError(state: Pick<LoginViewState, 'error' | 'panelTransition'>) {
   const { error, panelTransition } = state;
 
   return (
@@ -374,7 +368,12 @@ function renderLoginError(state: LoginViewState) {
 }
 
 /** Retain warning identity, recovery link and request metadata. */
-function renderLoginLogoutWarning(state: LoginViewState) {
+function renderLoginLogoutWarning(
+  state: Pick<
+    LoginViewState,
+    'logoutWarning' | 'isLogoutRecovery' | 'isRecoveryComplete' | 'panelTransition'
+  >,
+) {
   const { logoutWarning, isLogoutRecovery, isRecoveryComplete, panelTransition } = state;
 
   return (
@@ -489,7 +488,12 @@ function renderLoginForm(state: LoginViewState) {
 }
 
 /** Retain the mode-keyed visual header and immediate accessible title. */
-function renderLoginHeader(state: LoginViewState) {
+function renderLoginHeader(
+  state: Pick<
+    LoginViewState,
+    'isLogoutRecovery' | 'fastTransition' | 'authModeKey' | 'title' | 'description'
+  >,
+) {
   const { isLogoutRecovery, fastTransition, authModeKey, title, description } = state;
 
   return (
