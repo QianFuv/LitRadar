@@ -677,49 +677,6 @@ function hasRuntimeControlOptions(
 }
 
 /**
- * Validate secret pool redaction, empty effective value and item presence.
- */
-function hasSecretPoolRuntimeMetadata(
-  value: Record<string, unknown>,
-  inputType: string,
-  isSecret: boolean,
-  hasValue: boolean,
-  allowedValues: string[],
-  secretItems: RuntimeSecretItemInfo[],
-): boolean {
-  return (
-    isSecret &&
-    inputType === 'password' &&
-    allowedValues.length === 0 &&
-    value.value === '' &&
-    (hasValue
-      ? value.masked_value === '••••' && secretItems.length > 0
-      : value.masked_value === '' && secretItems.length === 0)
-  );
-}
-
-/**
- * Validate scalar secret redaction without exposing a value or pool items.
- */
-function hasScalarSecretRuntimeMetadata(
-  value: Record<string, unknown>,
-  inputType: string,
-  hasValue: boolean,
-  allowedValues: string[],
-  secretItems: RuntimeSecretItemInfo[],
-  control: string,
-): boolean {
-  return (
-    control === 'text' &&
-    inputType === 'password' &&
-    allowedValues.length === 0 &&
-    value.value === '' &&
-    secretItems.length === 0 &&
-    value.masked_value === (hasValue ? '••••' : '')
-  );
-}
-
-/**
  * Return whether runtime metadata is internally consistent and secret-safe.
  *
  * @param value - Runtime setting descriptor.
@@ -744,23 +701,24 @@ function isConsistentRuntimeMetadata(value: Record<string, unknown>): boolean {
     return false;
   }
   if (control === 'secret_pool') {
-    return hasSecretPoolRuntimeMetadata(
-      value,
-      inputType,
-      isSecret,
-      hasValue,
-      allowedValues,
-      secretItems,
+    return (
+      isSecret &&
+      inputType === 'password' &&
+      allowedValues.length === 0 &&
+      value.value === '' &&
+      (hasValue
+        ? value.masked_value === '••••' && secretItems.length > 0
+        : value.masked_value === '' && secretItems.length === 0)
     );
   }
   if (isSecret) {
-    return hasScalarSecretRuntimeMetadata(
-      value,
-      inputType,
-      hasValue,
-      allowedValues,
-      secretItems,
-      control,
+    return (
+      control === 'text' &&
+      inputType === 'password' &&
+      allowedValues.length === 0 &&
+      value.value === '' &&
+      secretItems.length === 0 &&
+      value.masked_value === (hasValue ? '••••' : '')
     );
   }
   return value.masked_value === '' && secretItems.length === 0;
