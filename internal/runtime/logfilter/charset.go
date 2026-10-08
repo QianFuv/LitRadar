@@ -124,7 +124,7 @@ func asciiFoldSet(set runeSet) runeSet {
 	return result
 }
 
-// asciiClass builds the inclusive ASCII letter and digit ranges for a POSIX class.
+// asciiClass defines the inclusive ASCII ranges of each supported POSIX class.
 func asciiClass(name string) runeSet {
 	switch name {
 	case "alnum":
@@ -141,14 +141,6 @@ func asciiClass(name string) runeSet {
 		return runeSet{'0', '9', 'A', 'Z', '_', '_', 'a', 'z'}
 	case "xdigit":
 		return runeSet{'0', '9', 'A', 'F', 'a', 'f'}
-	default:
-		return asciiSpacingClass(name)
-	}
-}
-
-// asciiSpacingClass builds ASCII spacing, control, visible and punctuation ranges.
-func asciiSpacingClass(name string) runeSet {
-	switch name {
 	case "ascii":
 		return runeSet{0, 127}
 	case "blank":
