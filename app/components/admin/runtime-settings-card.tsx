@@ -486,6 +486,40 @@ function RuntimeSecretPoolEditor({
  * @returns Runtime settings card.
  */
 export function RuntimeSettingsCard() {
+  const state = useRuntimeViewState();
+  const { isLoading, saveMutation } = state;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <DatabaseZap className="h-5 w-5" />
+          运行配置
+        </CardTitle>
+        <CardDescription>管理后端共享运行配置</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div role="status" className="text-sm text-muted-foreground">
+            加载中…
+          </div>
+        ) : (
+          <fieldset
+            className="m-0 min-w-0 space-y-6 border-0 p-0"
+            disabled={saveMutation.isPending}
+          >
+            {renderRuntimeSettingGroups(state)}
+
+            {renderRuntimeProviderSettings(state)}
+          </fieldset>
+        )}
+        {renderRuntimeFeedback(state)}
+        {renderRuntimeSaveAction(state)}
+      </CardContent>
+    </Card>
+  );
+}
+/** Own the original hooks, draft stores and exact completion/cache order. */
+function useRuntimeViewState() {
   const queryClient = useQueryClient();
   const [formOverrides, setFormOverrides] = useState<RuntimeSettingsForm>({});
   const [clearedSecrets, setClearedSecrets] = useState<Set<string>>(new Set());
@@ -647,200 +681,274 @@ export function RuntimeSettingsCard() {
     });
   };
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <DatabaseZap className="h-5 w-5" />
-          运行配置
-        </CardTitle>
-        <CardDescription>管理后端共享运行配置</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {isLoading ? (
-          <div role="status" className="text-sm text-muted-foreground">
-            加载中…
-          </div>
-        ) : (
-          <fieldset
-            className="m-0 min-w-0 space-y-6 border-0 p-0"
-            disabled={saveMutation.isPending}
-          >
-            {genericSettingGroups.map(([group, groupSettings]) => (
-              <section key={group} className="space-y-3" aria-labelledby={`runtime-group-${group}`}>
-                <h3 id={`runtime-group-${group}`} className="text-base font-semibold">
-                  {RUNTIME_GROUP_LABELS[group]}
-                </h3>
-                <div className="grid gap-3 lg:grid-cols-2">
-                  {groupSettings.map((setting) => {
-                    const value = form[setting.field] ?? '';
-                    return (
-                      <div
-                        key={setting.field}
-                        data-runtime-setting-field={setting.field}
-                        className="grid gap-2 rounded-md border p-3"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <Label htmlFor={`runtime-${setting.field}`}>{setting.label}</Label>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {isSecretPoolSetting(setting) && (
-                              <Badge variant="outline">{setting.secret_items.length} 个密钥</Badge>
-                            )}
-                            <Badge variant="outline">{getApplyModeLabel(setting.apply_mode)}</Badge>
-                            <Badge variant="secondary">{getSourceLabel(setting.source)}</Badge>
-                          </div>
-                        </div>
-                        {setting.control === 'boolean' ? (
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-sm text-muted-foreground">
-                              {setting.description}
-                            </span>
-                            <Switch
-                              id={`runtime-${setting.field}`}
-                              name={`runtime_${setting.field}`}
-                              checked={value !== 'false'}
-                              onCheckedChange={(checked: boolean) =>
-                                updateFormValue(setting.field, checked ? 'true' : 'false')
-                              }
-                            />
-                          </div>
-                        ) : isSecretPoolSetting(setting) ? (
-                          <RuntimeSecretPoolEditor
-                            setting={setting}
-                            value={secretPoolAdditions[setting.field] ?? ''}
-                            removedReferences={
-                              secretPoolRemovals[setting.field] ?? EMPTY_SECRET_REFERENCES
-                            }
-                            isCleared={clearedSecrets.has(setting.field)}
-                            onChange={(nextValue) =>
-                              updateSecretPoolAddition(setting.field, nextValue)
-                            }
-                            onToggleRemoval={(reference) =>
-                              toggleSecretItemRemoval(setting.field, reference)
-                            }
-                          />
-                        ) : isPoolSetting(setting) ? (
-                          <RuntimePoolEditor
-                            field={setting.field}
-                            id={`runtime-${setting.field}`}
-                            inputType={setting.input_type}
-                            label={setting.label}
-                            value={value}
-                            onChange={(nextValue) => updateFormValue(setting.field, nextValue)}
-                          />
-                        ) : setting.control === 'select' ? (
-                          <Select
-                            value={value}
-                            onValueChange={(nextValue) => updateFormValue(setting.field, nextValue)}
-                          >
-                            <SelectTrigger id={`runtime-${setting.field}`} className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {setting.allowed_values.map((allowedValue) => (
-                                <SelectItem key={allowedValue} value={allowedValue}>
-                                  {allowedValue}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <Input
-                            id={`runtime-${setting.field}`}
-                            name={`runtime_${setting.field}`}
-                            type={setting.input_type}
-                            autoComplete="off"
-                            inputMode={isUrlSetting(setting.field) ? 'url' : undefined}
-                            spellCheck={
-                              shouldDisableRuntimeSpellCheck(setting.field, setting.input_type)
-                                ? false
-                                : undefined
-                            }
-                            value={value}
-                            onChange={(event) => updateFormValue(setting.field, event.target.value)}
-                            placeholder={setting.description}
-                          />
-                        )}
-                        {setting.control !== 'boolean' && (
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                            <span>
-                              {setting.description}
-                              {setting.is_secret && setting.has_value
-                                ? clearedSecrets.has(setting.field)
-                                  ? '（保存后清除全部）'
-                                  : (secretPoolRemovals[setting.field]?.size ?? 0) > 0
-                                    ? `（${secretPoolRemovals[setting.field]?.size} 个保存后删除）`
-                                    : '（已安全保存）'
-                                : ''}
-                            </span>
-                            {setting.is_secret && setting.has_value && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => toggleSecretClear(setting.field)}
-                              >
-                                {clearedSecrets.has(setting.field)
-                                  ? '保留全部密钥'
-                                  : '清除全部密钥'}
-                              </Button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
+  return {
+    queryClient,
+    formOverrides,
+    setFormOverrides,
+    clearedSecrets,
+    setClearedSecrets,
+    secretPoolAdditions,
+    setSecretPoolAdditions,
+    secretPoolRemovals,
+    setSecretPoolRemovals,
+    saveFeedback,
+    setSaveFeedback,
+    feedbackTransition,
+    settings,
+    error,
+    isLoading,
+    providerSettings,
+    genericSettingGroups,
+    providerCatalog,
+    providerCatalogError,
+    isProviderCatalogLoading,
+    baseForm,
+    form,
+    hasPendingChanges,
+    saveMutation,
+    mutationError,
+    updateFormValue,
+    updateSecretPoolAddition,
+    toggleSecretItemRemoval,
+    toggleSecretClear,
+  };
+}
+type RuntimeViewState = ReturnType<typeof useRuntimeViewState>;
 
-            {providerSettings.length > 0 &&
-              (isProviderCatalogLoading ? (
-                <div role="status" className="text-sm text-muted-foreground">
-                  正在加载 Provider 能力目录…
-                </div>
-              ) : providerCatalog ? (
-                <ProviderConfigurationEditor
-                  settings={providerSettings}
-                  values={form}
-                  catalog={providerCatalog}
-                  onChange={updateFormValue}
-                />
-              ) : null)}
-          </fieldset>
-        )}
-        <MotionPresence>
-          {(mutationError || saveFeedback) && (
-            <MotionParagraph
-              key="runtime-feedback"
-              data-motion-feedback="runtime-settings"
-              role={mutationError ? 'alert' : 'status'}
-              className={mutationError ? 'text-sm text-destructive' : 'text-sm text-foreground'}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              variants={FADE_UP_VARIANTS}
-              transition={feedbackTransition}
-            >
-              {mutationError || saveFeedback}
-            </MotionParagraph>
-          )}
-        </MotionPresence>
-        <div className="flex justify-end">
-          <Button
-            disabled={
-              isLoading ||
-              saveMutation.isPending ||
-              (providerSettings.length > 0 &&
-                (isProviderCatalogLoading || !providerCatalog || Boolean(providerCatalogError)))
-            }
-            onClick={() => saveMutation.mutate()}
-          >
-            <Save className="mr-2 h-4 w-4" />
-            保存配置
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+/** Retain boolean, secret pool, pool, select and input precedence. */
+function renderRuntimeSettingControl(
+  state: RuntimeViewState,
+  setting: RuntimeSettingInfo,
+  value: string,
+) {
+  const {
+    clearedSecrets,
+    secretPoolAdditions,
+    secretPoolRemovals,
+    updateFormValue,
+    updateSecretPoolAddition,
+    toggleSecretItemRemoval,
+  } = state;
+  if (setting.control === 'boolean')
+    return (
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-muted-foreground">{setting.description}</span>
+        <Switch
+          id={`runtime-${setting.field}`}
+          name={`runtime_${setting.field}`}
+          checked={value !== 'false'}
+          onCheckedChange={(checked: boolean) =>
+            updateFormValue(setting.field, checked ? 'true' : 'false')
+          }
+        />
+      </div>
+    );
+  if (isSecretPoolSetting(setting))
+    return (
+      <RuntimeSecretPoolEditor
+        setting={setting}
+        value={secretPoolAdditions[setting.field] ?? ''}
+        removedReferences={secretPoolRemovals[setting.field] ?? EMPTY_SECRET_REFERENCES}
+        isCleared={clearedSecrets.has(setting.field)}
+        onChange={(nextValue) => updateSecretPoolAddition(setting.field, nextValue)}
+        onToggleRemoval={(reference) => toggleSecretItemRemoval(setting.field, reference)}
+      />
+    );
+  if (isPoolSetting(setting))
+    return (
+      <RuntimePoolEditor
+        field={setting.field}
+        id={`runtime-${setting.field}`}
+        inputType={setting.input_type}
+        label={setting.label}
+        value={value}
+        onChange={(nextValue) => updateFormValue(setting.field, nextValue)}
+      />
+    );
+  if (setting.control === 'select')
+    return (
+      <Select
+        value={value}
+        onValueChange={(nextValue) => updateFormValue(setting.field, nextValue)}
+      >
+        <SelectTrigger id={`runtime-${setting.field}`} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {setting.allowed_values.map((allowedValue) => (
+            <SelectItem key={allowedValue} value={allowedValue}>
+              {allowedValue}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  return (
+    <Input
+      id={`runtime-${setting.field}`}
+      name={`runtime_${setting.field}`}
+      type={setting.input_type}
+      autoComplete="off"
+      inputMode={isUrlSetting(setting.field) ? 'url' : undefined}
+      spellCheck={
+        shouldDisableRuntimeSpellCheck(setting.field, setting.input_type) ? false : undefined
+      }
+      value={value}
+      onChange={(event) => updateFormValue(setting.field, event.target.value)}
+      placeholder={setting.description}
+    />
   );
+}
+
+/** Retain masked-secret metadata and clear/removal status precedence. */
+function renderRuntimeSettingDescription(state: RuntimeViewState, setting: RuntimeSettingInfo) {
+  const { clearedSecrets, toggleSecretClear } = state;
+
+  return (
+    setting.control !== 'boolean' && (
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          {setting.description}
+          {getRuntimeSecretDescription(state, setting)}
+        </span>
+        {setting.is_secret && setting.has_value && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => toggleSecretClear(setting.field)}
+          >
+            {clearedSecrets.has(setting.field) ? '保留全部密钥' : '清除全部密钥'}
+          </Button>
+        )}
+      </div>
+    )
+  );
+}
+
+/** Retain first-seen generic groups and directly keyed descriptor rows. */
+function renderRuntimeSettingGroups(state: RuntimeViewState) {
+  const { genericSettingGroups, form } = state;
+
+  return genericSettingGroups.map(([group, groupSettings]) => (
+    <section key={group} className="space-y-3" aria-labelledby={`runtime-group-${group}`}>
+      <h3 id={`runtime-group-${group}`} className="text-base font-semibold">
+        {RUNTIME_GROUP_LABELS[group]}
+      </h3>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {groupSettings.map((setting) => {
+          const value = form[setting.field] ?? '';
+          return (
+            <div
+              key={setting.field}
+              data-runtime-setting-field={setting.field}
+              className="grid gap-2 rounded-md border p-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor={`runtime-${setting.field}`}>{setting.label}</Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {isSecretPoolSetting(setting) && (
+                    <Badge variant="outline">{setting.secret_items.length} 个密钥</Badge>
+                  )}
+                  <Badge variant="outline">{getApplyModeLabel(setting.apply_mode)}</Badge>
+                  <Badge variant="secondary">{getSourceLabel(setting.source)}</Badge>
+                </div>
+              </div>
+              {renderRuntimeSettingControl(state, setting, value)}
+              {renderRuntimeSettingDescription(state, setting)}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  ));
+}
+
+/** Retain provider loading admission and the original editor identity. */
+function renderRuntimeProviderSettings(state: RuntimeViewState) {
+  const { providerSettings, providerCatalog, isProviderCatalogLoading, form, updateFormValue } =
+    state;
+
+  return (
+    providerSettings.length > 0 &&
+    (isProviderCatalogLoading ? (
+      <div role="status" className="text-sm text-muted-foreground">
+        正在加载 Provider 能力目录…
+      </div>
+    ) : providerCatalog ? (
+      <ProviderConfigurationEditor
+        settings={providerSettings}
+        values={form}
+        catalog={providerCatalog}
+        onChange={updateFormValue}
+      />
+    ) : null)
+  );
+}
+
+/** Retain failure priority over save feedback and exact presence key. */
+function renderRuntimeFeedback(state: RuntimeViewState) {
+  const { saveFeedback, feedbackTransition, mutationError } = state;
+
+  return (
+    <MotionPresence>
+      {(mutationError || saveFeedback) && (
+        <MotionParagraph
+          key="runtime-feedback"
+          data-motion-feedback="runtime-settings"
+          role={mutationError ? 'alert' : 'status'}
+          className={mutationError ? 'text-sm text-destructive' : 'text-sm text-foreground'}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          variants={FADE_UP_VARIANTS}
+          transition={feedbackTransition}
+        >
+          {mutationError || saveFeedback}
+        </MotionParagraph>
+      )}
+    </MotionPresence>
+  );
+}
+
+/** Retain loading, mutation and provider-catalog save guards. */
+function renderRuntimeSaveAction(state: RuntimeViewState) {
+  const {
+    isLoading,
+    providerSettings,
+    providerCatalog,
+    providerCatalogError,
+    isProviderCatalogLoading,
+    saveMutation,
+  } = state;
+
+  return (
+    <div className="flex justify-end">
+      <Button
+        disabled={
+          isLoading ||
+          saveMutation.isPending ||
+          (providerSettings.length > 0 &&
+            (isProviderCatalogLoading || !providerCatalog || Boolean(providerCatalogError)))
+        }
+        onClick={() => saveMutation.mutate()}
+      >
+        <Save className="mr-2 h-4 w-4" />
+        保存配置
+      </Button>
+    </div>
+  );
+}
+
+/** Retain clear-before-removal-before-saved secret feedback. */
+function getRuntimeSecretDescription(state: RuntimeViewState, setting: RuntimeSettingInfo) {
+  const { clearedSecrets, secretPoolRemovals } = state;
+
+  return setting.is_secret && setting.has_value
+    ? clearedSecrets.has(setting.field)
+      ? '（保存后清除全部）'
+      : (secretPoolRemovals[setting.field]?.size ?? 0) > 0
+        ? `（${secretPoolRemovals[setting.field]?.size} 个保存后删除）`
+        : '（已安全保存）'
+    : '';
 }

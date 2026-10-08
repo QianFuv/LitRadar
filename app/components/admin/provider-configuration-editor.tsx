@@ -191,10 +191,7 @@ function parseProviderConfiguration(
     !indexSetting ||
     !abstractSetting ||
     !fulltextSetting ||
-    proxySetting.control !== 'provider_proxy_policy' ||
-    indexSetting.control !== 'index_provider_routes' ||
-    abstractSetting.control !== 'provider_order' ||
-    fulltextSetting.control !== 'provider_order'
+    !hasProviderSettingControls(proxySetting, indexSetting, abstractSetting, fulltextSetting)
   ) {
     return null;
   }
@@ -214,10 +211,13 @@ function parseProviderConfiguration(
       (name) => providers.get(name)?.index_content === true,
     );
     if (
-      !hasKnownProxyProviders ||
-      !hasCapableIndexRoutes ||
-      !hasCapableProviderOrders(providers, abstractOrders, 'article_abstract') ||
-      !hasCapableProviderOrders(providers, fulltextOrders, 'article_full_text')
+      !hasProviderConfigurationCapabilities(
+        hasKnownProxyProviders,
+        hasCapableIndexRoutes,
+        providers,
+        abstractOrders,
+        fulltextOrders,
+      )
     ) {
       return null;
     }
@@ -771,5 +771,36 @@ export function ProviderConfigurationEditor({
         })}
       </div>
     </section>
+  );
+}
+
+/** Preserve ordered capability admission after all grouped JSON has been parsed. */
+function hasProviderConfigurationCapabilities(
+  hasKnownProxyProviders: boolean,
+  hasCapableIndexRoutes: boolean,
+  providers: Map<string, ProviderCapabilityInfo>,
+  abstractOrders: ProviderOrderConfiguration,
+  fulltextOrders: ProviderOrderConfiguration,
+): boolean {
+  return !(
+    !hasKnownProxyProviders ||
+    !hasCapableIndexRoutes ||
+    !hasCapableProviderOrders(providers, abstractOrders, 'article_abstract') ||
+    !hasCapableProviderOrders(providers, fulltextOrders, 'article_full_text')
+  );
+}
+
+/** Match each grouped descriptor to its required control before parsing any values. */
+function hasProviderSettingControls(
+  proxySetting: RuntimeSettingInfo,
+  indexSetting: RuntimeSettingInfo,
+  abstractSetting: RuntimeSettingInfo,
+  fulltextSetting: RuntimeSettingInfo,
+): boolean {
+  return !(
+    proxySetting.control !== 'provider_proxy_policy' ||
+    indexSetting.control !== 'index_provider_routes' ||
+    abstractSetting.control !== 'provider_order' ||
+    fulltextSetting.control !== 'provider_order'
   );
 }

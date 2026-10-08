@@ -50,66 +50,19 @@ function formatDate(timestamp: number): string {
  * @param props - Whether administrator queries may run.
  * @returns Invite-code management card.
  */
-export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
-  const queryClient = useQueryClient();
-  const [validDays, setValidDays] = useState('7');
-  const [maxUses, setMaxUses] = useState('1');
-  const validDaysValue = Number(validDays);
-  const maxUsesValue = Number(maxUses);
-  const isPolicyValid =
-    Number.isInteger(validDaysValue) &&
-    validDaysValue >= 1 &&
-    validDaysValue <= 365 &&
-    Number.isInteger(maxUsesValue) &&
-    maxUsesValue >= 1 &&
-    maxUsesValue <= 1000;
-  const [copyFeedback, setCopyFeedback] = useState<{
-    message: string;
-    tone: 'error' | 'success';
-  } | null>(null);
-  const [inviteCodeToRevoke, setInviteCodeToRevoke] = useState<AdminInviteCode | null>(null);
-  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
-  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
+export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
+  const state = useAdminInviteViewState(props);
   const {
-    data: inviteCodes = [],
-    error: inviteCodesError,
+    validDays,
+    setValidDays,
+    maxUses,
+    setMaxUses,
+    isPolicyValid,
+    feedbackTransition,
+    inviteCodesError,
     isLoading,
-  } = useQuery({
-    queryKey: ['admin-invite-codes'],
-    queryFn: () => adminGetInviteCodes(),
-    enabled: isEnabled,
-  });
-  const createCodeMut = useMutation({
-    mutationFn: () =>
-      adminCreateInviteCode({
-        expires_at: Date.now() / 1000 + validDaysValue * 24 * 60 * 60,
-        max_uses: maxUsesValue,
-      }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-invite-codes'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-    },
-  });
-  const revokeCodeMut = useMutation({
-    mutationFn: (codeId: number) => adminRevokeInviteCode(codeId),
-    onSuccess: (_data, codeId) => {
-      void queryClient.invalidateQueries({ queryKey: ['admin-invite-codes'] });
-      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      setInviteCodeToRevoke((current) => (current?.id === codeId ? null : current));
-    },
-  });
-
-  /** Copy an invite code and surface deterministic feedback. */
-  const handleCopyInviteCode = async (code: string) => {
-    try {
-      await copyTextToClipboard(code);
-      setCopyFeedback({ message: '邀请码已复制。', tone: 'success' });
-    } catch {
-      setCopyFeedback({ message: '复制失败，请手动选择文本复制。', tone: 'error' });
-    }
-    setTimeout(() => setCopyFeedback(null), 3000);
-  };
-
+    createCodeMut,
+  } = state;
   return (
     <Card>
       <CardHeader>
@@ -181,237 +134,361 @@ export function AdminInviteCodesCard({ isEnabled }: { isEnabled: boolean }) {
             </MotionParagraph>
           )}
         </MotionPresence>
-        <MotionPresence>
-          {copyFeedback && (
-            <MotionParagraph
-              key="invite-copy-feedback"
-              data-motion-feedback="invite-copy"
-              role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-              className={
-                copyFeedback.tone === 'error'
-                  ? 'text-sm text-destructive'
-                  : 'text-sm text-muted-foreground'
-              }
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              variants={FADE_UP_VARIANTS}
-              transition={feedbackTransition}
-            >
-              {copyFeedback.message}
-            </MotionParagraph>
-          )}
-        </MotionPresence>
-        <div className="space-y-3 md:hidden">
-          <MotionPresence>
-            {inviteCodes.length === 0 ? (
-              <MotionDiv
-                key="empty-invite-codes"
-                className="rounded-lg border p-4 text-sm text-muted-foreground"
-                initial="hidden"
-                animate="visible"
-                exit="exit"
-                variants={FADE_UP_VARIANTS}
-                transition={feedbackTransition}
-              >
-                暂无邀请码
-              </MotionDiv>
-            ) : (
-              inviteCodes.map((inviteCode) => (
-                <MotionDiv
-                  key={inviteCode.id}
-                  data-motion-invite-key={inviteCode.id}
-                  className="content-visibility-card overflow-hidden rounded-lg border p-4"
-                  initial="hidden"
-                  animate="visible"
-                  exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-                  variants={COLLAPSE_VARIANTS}
-                  transition={rowTransition}
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 space-y-1">
-                        <div className="text-xs text-muted-foreground">邀请码</div>
-                        <code className="block break-all rounded bg-muted px-2 py-1 text-xs">
-                          {inviteCode.code}
-                        </code>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="shrink-0"
-                        disabled={inviteCode.status !== 'active'}
-                        onClick={() => void handleCopyInviteCode(inviteCode.code)}
-                      >
-                        <Copy className="h-4 w-4" />
-                        复制
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={inviteCode.status === 'active' ? 'default' : 'secondary'}>
-                        {INVITE_STATUS_LABELS[inviteCode.status]}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        已使用 {inviteCode.use_count}/{inviteCode.max_uses} 次
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 text-sm">
-                      <div className="rounded-md bg-muted/40 px-3 py-2">
-                        <div className="text-xs text-muted-foreground">创建者</div>
-                        <div className="mt-1 break-all">{inviteCode.created_by_name ?? '系统'}</div>
-                      </div>
-                      <div className="rounded-md bg-muted/40 px-3 py-2">
-                        <div className="text-xs text-muted-foreground">首位使用者</div>
-                        <div className="mt-1 break-all">{inviteCode.used_by_name ?? '—'}</div>
-                      </div>
-                      <div className="rounded-md bg-muted/40 px-3 py-2">
-                        <div className="text-xs text-muted-foreground">有效期</div>
-                        <div className="mt-1">{formatDate(inviteCode.expires_at)}</div>
-                      </div>
-                    </div>
-                    {inviteCode.revoked_at === null && (
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="w-full"
-                        disabled={revokeCodeMut.isPending}
-                        onClick={() => {
-                          revokeCodeMut.reset();
-                          setInviteCodeToRevoke(inviteCode);
-                        }}
-                      >
-                        <Ban className="h-4 w-4" />
-                        撤销邀请码
-                      </Button>
-                    )}
-                  </div>
-                </MotionDiv>
-              ))
-            )}
-          </MotionPresence>
-        </div>
-        <div className="hidden overflow-x-auto rounded-md border md:block">
-          <table className="min-w-[64rem] w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  邀请码
-                </th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  创建者
-                </th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  状态
-                </th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  用量
-                </th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  首位使用者
-                </th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  有效期
-                </th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  创建时间
-                </th>
-                <th scope="col" className="px-3 py-2 text-left font-medium">
-                  操作
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {inviteCodes.map((inviteCode) => (
-                <tr
-                  key={inviteCode.id}
-                  className="content-visibility-table-row border-b last:border-0"
-                >
-                  <td className="px-3 py-2 font-mono text-xs">
-                    <span className="flex items-center gap-1">
-                      {inviteCode.code.slice(0, 8)}…
-                      <button
-                        type="button"
-                        onClick={() => void handleCopyInviteCode(inviteCode.code)}
-                        className="motion-control p-0.5 rounded transition-colors hover:bg-accent active:bg-accent-pressed focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
-                        title="复制"
-                        aria-label="复制邀请码"
-                        disabled={inviteCode.status !== 'active'}
-                      >
-                        <Copy className="h-3 w-3" />
-                      </button>
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    {inviteCode.created_by_name ?? (
-                      <span className="text-muted-foreground">系统</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <Badge variant={inviteCode.status === 'active' ? 'default' : 'secondary'}>
-                      {INVITE_STATUS_LABELS[inviteCode.status]}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-2">
-                    {inviteCode.use_count}/{inviteCode.max_uses}
-                  </td>
-                  <td className="px-3 py-2">
-                    {inviteCode.used_by_name ?? <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {formatDate(inviteCode.expires_at)}
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {formatDate(inviteCode.created_at)}
-                  </td>
-                  <td className="px-3 py-2">
-                    {inviteCode.revoked_at === null && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        aria-label={`撤销邀请码 ${inviteCode.code}`}
-                        disabled={revokeCodeMut.isPending}
-                        onClick={() => {
-                          revokeCodeMut.reset();
-                          setInviteCodeToRevoke(inviteCode);
-                        }}
-                      >
-                        <Ban className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {inviteCodes.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-3 py-4 text-center text-muted-foreground">
-                    暂无邀请码
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <ConfirmDialog
-          open={inviteCodeToRevoke !== null}
-          onOpenChange={(nextOpen) => {
-            if (!nextOpen && !revokeCodeMut.isPending) {
-              setInviteCodeToRevoke(null);
-            }
-          }}
-          title="撤销邀请码？"
-          description={`确认永久撤销邀请码 ${inviteCodeToRevoke?.code ?? ''}？历史记录会保留。`}
-          actionLabel="确认撤销"
-          pendingLabel="撤销中…"
-          isPending={revokeCodeMut.isPending}
-          error={revokeCodeMut.error instanceof Error ? revokeCodeMut.error.message : null}
-          onConfirm={() => {
-            if (inviteCodeToRevoke) {
-              revokeCodeMut.mutate(inviteCodeToRevoke.id);
-            }
-          }}
-        />
+        {renderAdminInviteCopyFeedback(state)}
+        {renderAdminInviteCards(state)}
+        {renderAdminInviteTable(state)}
+        {renderAdminInviteRevocation(state)}
       </CardContent>
     </Card>
+  );
+}
+/** Own the original hooks, draft stores and exact completion/cache order. */
+function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
+  const queryClient = useQueryClient();
+  const [validDays, setValidDays] = useState('7');
+  const [maxUses, setMaxUses] = useState('1');
+  const validDaysValue = Number(validDays);
+  const maxUsesValue = Number(maxUses);
+  const isPolicyValid =
+    Number.isInteger(validDaysValue) &&
+    validDaysValue >= 1 &&
+    validDaysValue <= 365 &&
+    Number.isInteger(maxUsesValue) &&
+    maxUsesValue >= 1 &&
+    maxUsesValue <= 1000;
+  const [copyFeedback, setCopyFeedback] = useState<{
+    message: string;
+    tone: 'error' | 'success';
+  } | null>(null);
+  const [inviteCodeToRevoke, setInviteCodeToRevoke] = useState<AdminInviteCode | null>(null);
+  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
+  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
+  const {
+    data: inviteCodes = [],
+    error: inviteCodesError,
+    isLoading,
+  } = useQuery({
+    queryKey: ['admin-invite-codes'],
+    queryFn: () => adminGetInviteCodes(),
+    enabled: isEnabled,
+  });
+  const createCodeMut = useMutation({
+    mutationFn: () =>
+      adminCreateInviteCode({
+        expires_at: Date.now() / 1000 + validDaysValue * 24 * 60 * 60,
+        max_uses: maxUsesValue,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-invite-codes'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+    },
+  });
+  const revokeCodeMut = useMutation({
+    mutationFn: (codeId: number) => adminRevokeInviteCode(codeId),
+    onSuccess: (_data, codeId) => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-invite-codes'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      setInviteCodeToRevoke((current) => (current?.id === codeId ? null : current));
+    },
+  });
+
+  /** Copy an invite code and surface deterministic feedback. */
+  const handleCopyInviteCode = async (code: string) => {
+    try {
+      await copyTextToClipboard(code);
+      setCopyFeedback({ message: '邀请码已复制。', tone: 'success' });
+    } catch {
+      setCopyFeedback({ message: '复制失败，请手动选择文本复制。', tone: 'error' });
+    }
+    setTimeout(() => setCopyFeedback(null), 3000);
+  };
+
+  return {
+    isEnabled,
+    queryClient,
+    validDays,
+    setValidDays,
+    maxUses,
+    setMaxUses,
+    validDaysValue,
+    maxUsesValue,
+    isPolicyValid,
+    copyFeedback,
+    setCopyFeedback,
+    inviteCodeToRevoke,
+    setInviteCodeToRevoke,
+    feedbackTransition,
+    rowTransition,
+    inviteCodes,
+    inviteCodesError,
+    isLoading,
+    createCodeMut,
+    revokeCodeMut,
+    handleCopyInviteCode,
+  };
+}
+type AdminInviteViewState = ReturnType<typeof useAdminInviteViewState>;
+
+/** Retain accessible clipboard outcomes and unchanged feedback timer ownership. */
+function renderAdminInviteCopyFeedback(state: AdminInviteViewState) {
+  const { copyFeedback, feedbackTransition } = state;
+
+  return (
+    <MotionPresence>
+      {copyFeedback && (
+        <MotionParagraph
+          key="invite-copy-feedback"
+          data-motion-feedback="invite-copy"
+          role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
+          className={
+            copyFeedback.tone === 'error'
+              ? 'text-sm text-destructive'
+              : 'text-sm text-muted-foreground'
+          }
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          variants={FADE_UP_VARIANTS}
+          transition={feedbackTransition}
+        >
+          {copyFeedback.message}
+        </MotionParagraph>
+      )}
+    </MotionPresence>
+  );
+}
+
+/** Retain all mobile invite metadata, full-code copying and revoke admission. */
+function renderAdminInviteCards(state: AdminInviteViewState) {
+  const {
+    setInviteCodeToRevoke,
+    feedbackTransition,
+    rowTransition,
+    inviteCodes,
+    revokeCodeMut,
+    handleCopyInviteCode,
+  } = state;
+
+  return (
+    <div className="space-y-3 md:hidden">
+      <MotionPresence>
+        {inviteCodes.length === 0 ? (
+          <MotionDiv
+            key="empty-invite-codes"
+            className="rounded-lg border p-4 text-sm text-muted-foreground"
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={FADE_UP_VARIANTS}
+            transition={feedbackTransition}
+          >
+            暂无邀请码
+          </MotionDiv>
+        ) : (
+          inviteCodes.map((inviteCode) => (
+            <MotionDiv
+              key={inviteCode.id}
+              data-motion-invite-key={inviteCode.id}
+              className="content-visibility-card overflow-hidden rounded-lg border p-4"
+              initial="hidden"
+              animate="visible"
+              exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+              variants={COLLAPSE_VARIANTS}
+              transition={rowTransition}
+            >
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="text-xs text-muted-foreground">邀请码</div>
+                    <code className="block break-all rounded bg-muted px-2 py-1 text-xs">
+                      {inviteCode.code}
+                    </code>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={inviteCode.status !== 'active'}
+                    onClick={() => void handleCopyInviteCode(inviteCode.code)}
+                  >
+                    <Copy className="h-4 w-4" />
+                    复制
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={inviteCode.status === 'active' ? 'default' : 'secondary'}>
+                    {INVITE_STATUS_LABELS[inviteCode.status]}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    已使用 {inviteCode.use_count}/{inviteCode.max_uses} 次
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 gap-2 text-sm">
+                  <div className="rounded-md bg-muted/40 px-3 py-2">
+                    <div className="text-xs text-muted-foreground">创建者</div>
+                    <div className="mt-1 break-all">{inviteCode.created_by_name ?? '系统'}</div>
+                  </div>
+                  <div className="rounded-md bg-muted/40 px-3 py-2">
+                    <div className="text-xs text-muted-foreground">首位使用者</div>
+                    <div className="mt-1 break-all">{inviteCode.used_by_name ?? '—'}</div>
+                  </div>
+                  <div className="rounded-md bg-muted/40 px-3 py-2">
+                    <div className="text-xs text-muted-foreground">有效期</div>
+                    <div className="mt-1">{formatDate(inviteCode.expires_at)}</div>
+                  </div>
+                </div>
+                {inviteCode.revoked_at === null && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="w-full"
+                    disabled={revokeCodeMut.isPending}
+                    onClick={() => {
+                      revokeCodeMut.reset();
+                      setInviteCodeToRevoke(inviteCode);
+                    }}
+                  >
+                    <Ban className="h-4 w-4" />
+                    撤销邀请码
+                  </Button>
+                )}
+              </div>
+            </MotionDiv>
+          ))
+        )}
+      </MotionPresence>
+    </div>
+  );
+}
+
+/** Retain the always-mounted desktop table and exact displayed-versus-copied code. */
+function renderAdminInviteTable(state: AdminInviteViewState) {
+  const { setInviteCodeToRevoke, inviteCodes, revokeCodeMut, handleCopyInviteCode } = state;
+
+  return (
+    <div className="hidden overflow-x-auto rounded-md border md:block">
+      <table className="min-w-[64rem] w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/50">
+            <th scope="col" className="px-3 py-2 text-left font-medium">
+              邀请码
+            </th>
+            <th scope="col" className="px-3 py-2 text-left font-medium">
+              创建者
+            </th>
+            <th scope="col" className="px-3 py-2 text-left font-medium">
+              状态
+            </th>
+            <th scope="col" className="px-3 py-2 text-left font-medium">
+              用量
+            </th>
+            <th scope="col" className="px-3 py-2 text-left font-medium">
+              首位使用者
+            </th>
+            <th scope="col" className="px-3 py-2 text-left font-medium">
+              有效期
+            </th>
+            <th scope="col" className="px-3 py-2 text-left font-medium">
+              创建时间
+            </th>
+            <th scope="col" className="px-3 py-2 text-left font-medium">
+              操作
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {inviteCodes.map((inviteCode) => (
+            <tr key={inviteCode.id} className="content-visibility-table-row border-b last:border-0">
+              <td className="px-3 py-2 font-mono text-xs">
+                <span className="flex items-center gap-1">
+                  {inviteCode.code.slice(0, 8)}…
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyInviteCode(inviteCode.code)}
+                    className="motion-control p-0.5 rounded transition-colors hover:bg-accent active:bg-accent-pressed focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
+                    title="复制"
+                    aria-label="复制邀请码"
+                    disabled={inviteCode.status !== 'active'}
+                  >
+                    <Copy className="h-3 w-3" />
+                  </button>
+                </span>
+              </td>
+              <td className="px-3 py-2">
+                {inviteCode.created_by_name ?? <span className="text-muted-foreground">系统</span>}
+              </td>
+              <td className="px-3 py-2">
+                <Badge variant={inviteCode.status === 'active' ? 'default' : 'secondary'}>
+                  {INVITE_STATUS_LABELS[inviteCode.status]}
+                </Badge>
+              </td>
+              <td className="px-3 py-2">
+                {inviteCode.use_count}/{inviteCode.max_uses}
+              </td>
+              <td className="px-3 py-2">
+                {inviteCode.used_by_name ?? <span className="text-muted-foreground">—</span>}
+              </td>
+              <td className="px-3 py-2 text-muted-foreground">
+                {formatDate(inviteCode.expires_at)}
+              </td>
+              <td className="px-3 py-2 text-muted-foreground">
+                {formatDate(inviteCode.created_at)}
+              </td>
+              <td className="px-3 py-2">
+                {inviteCode.revoked_at === null && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    aria-label={`撤销邀请码 ${inviteCode.code}`}
+                    disabled={revokeCodeMut.isPending}
+                    onClick={() => {
+                      revokeCodeMut.reset();
+                      setInviteCodeToRevoke(inviteCode);
+                    }}
+                  >
+                    <Ban className="h-4 w-4" />
+                  </Button>
+                )}
+              </td>
+            </tr>
+          ))}
+          {inviteCodes.length === 0 && (
+            <tr>
+              <td colSpan={8} className="px-3 py-4 text-center text-muted-foreground">
+                暂无邀请码
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Retain target identity, pending guard and permanent-revocation feedback. */
+function renderAdminInviteRevocation(state: AdminInviteViewState) {
+  const { inviteCodeToRevoke, setInviteCodeToRevoke, revokeCodeMut } = state;
+
+  return (
+    <ConfirmDialog
+      open={inviteCodeToRevoke !== null}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !revokeCodeMut.isPending) {
+          setInviteCodeToRevoke(null);
+        }
+      }}
+      title="撤销邀请码？"
+      description={`确认永久撤销邀请码 ${inviteCodeToRevoke?.code ?? ''}？历史记录会保留。`}
+      actionLabel="确认撤销"
+      pendingLabel="撤销中…"
+      isPending={revokeCodeMut.isPending}
+      error={revokeCodeMut.error instanceof Error ? revokeCodeMut.error.message : null}
+      onConfirm={() => {
+        if (inviteCodeToRevoke) {
+          revokeCodeMut.mutate(inviteCodeToRevoke.id);
+        }
+      }}
+    />
   );
 }

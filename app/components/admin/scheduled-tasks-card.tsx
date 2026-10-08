@@ -288,32 +288,7 @@ function formatDateTime(value: number | null): string {
  * @returns Stable localized state label.
  */
 function formatSchedulerState(status: SchedulerRunState): string {
-  switch (status) {
-    case 'idle':
-      return '未运行';
-    case 'pending':
-      return '等待中';
-    case 'claimed':
-      return '已领取';
-    case 'running':
-      return '运行中';
-    case 'success':
-      return '成功';
-    case 'failed':
-      return '失败';
-    case 'timed_out':
-      return '超时';
-    case 'error':
-      return '执行错误';
-    case 'unknown':
-      return '结果未知';
-    case 'cancelled':
-      return '已取消';
-    default: {
-      const unreachable: never = status;
-      return unreachable;
-    }
-  }
+  return SCHEDULER_STATE_LABELS.get(status) ?? status;
 }
 
 /**
@@ -322,6 +297,44 @@ function formatSchedulerState(status: SchedulerRunState): string {
  * @returns Scheduled task management UI.
  */
 export function ScheduledTasksCard() {
+  const state = useSchedulerViewState();
+  const { error, isLoading } = state;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock3 className="h-5 w-5" />
+          定时任务
+        </CardTitle>
+        <CardDescription>管理后台自动执行的类型化任务</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {renderScheduledTaskEditor(state)}
+
+        {renderSchedulerStatus(state)}
+
+        {error instanceof Error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error.message}
+          </p>
+        )}
+
+        {isLoading ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            加载中…
+          </p>
+        ) : (
+          <div className="space-y-3">{renderScheduledTaskList(state)}</div>
+        )}
+
+        {renderRecentSchedulerRuns(state)}
+        {renderScheduledTaskDeletion(state)}
+      </CardContent>
+    </Card>
+  );
+}
+/** Own the original hooks, draft stores and exact completion/cache order. */
+function useSchedulerViewState() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTaskInfo | null>(null);
@@ -419,21 +432,7 @@ export function ScheduledTasksCard() {
   const openEditDialog = (task: ScheduledTaskInfo) => {
     const preset = getPresetForJob(task.job);
     setEditingTask(task);
-    setForm({
-      coalesce: task.coalesce,
-      cron: task.cron,
-      database:
-        task.job?.kind === 'notify' || task.job?.kind === 'push' ? (task.job.database ?? '') : '',
-      enabled: task.enabled,
-      maxCandidates:
-        task.job?.kind === 'notify' || task.job?.kind === 'push'
-          ? (task.job.max_candidates?.toString() ?? '')
-          : '',
-      metadataFile: task.job?.kind === 'index' ? (task.job.metadata_file ?? '') : '',
-      name: task.name,
-      timeoutSeconds: task.timeout_seconds.toString(),
-      timezone: task.timezone,
-    });
+    setForm(getScheduledTaskForm(task));
     setJobPreset(preset);
     setDialogOpen(true);
   };
@@ -447,469 +446,602 @@ export function ScheduledTasksCard() {
   const healthyWorkerCount =
     schedulerStatus?.workers.filter((worker) => worker.is_healthy).length ?? 0;
   const isIndexJobPreset = isIndexPreset(jobPreset);
-  const schedulerStatusKey = isSchedulerStatusLoading
+  const schedulerStatusKey = getSchedulerStatusKey(
+    isSchedulerStatusLoading,
+    schedulerStatusError,
+    healthyWorkerCount,
+    schedulerStatus,
+  );
+
+  return {
+    queryClient,
+    dialogOpen,
+    setDialogOpen,
+    editingTask,
+    setEditingTask,
+    taskToDelete,
+    setTaskToDelete,
+    form,
+    setForm,
+    jobPreset,
+    setJobPreset,
+    feedbackTransition,
+    panelTransition,
+    tasks,
+    error,
+    isLoading,
+    schedulerStatus,
+    schedulerStatusError,
+    isSchedulerStatusLoading,
+    saveMutation,
+    toggleMutation,
+    deleteMutation,
+    mutationError,
+    openCreateDialog,
+    openEditDialog,
+    isFormValid,
+    healthyWorkerCount,
+    isIndexJobPreset,
+    schedulerStatusKey,
+  };
+}
+type SchedulerViewState = ReturnType<typeof useSchedulerViewState>;
+
+/** Keep hidden index arguments mounted with identical inert and motion guards. */
+function renderSchedulerIndexFields(state: SchedulerViewState) {
+  const { form, setForm, panelTransition, isIndexJobPreset } = state;
+
+  return (
+    <MotionDiv
+      data-motion-scheduled-fields="index"
+      aria-hidden={!isIndexJobPreset}
+      inert={!isIndexJobPreset ? true : undefined}
+      initial={false}
+      animate={isIndexJobPreset ? 'visible' : 'hidden'}
+      variants={COLLAPSE_VARIANTS}
+      transition={panelTransition}
+      className="overflow-hidden"
+      style={{ pointerEvents: isIndexJobPreset ? 'auto' : 'none' }}
+    >
+      <div className="space-y-2">
+        <Label htmlFor="scheduled-task-metadata">元数据 CSV 文件名（可选）</Label>
+        <Input
+          id="scheduled-task-metadata"
+          name="scheduled_task_metadata_file"
+          autoComplete="off"
+          spellCheck={false}
+          value={form.metadataFile}
+          onChange={(event) =>
+            setForm((current) => ({ ...current, metadataFile: event.target.value }))
+          }
+          placeholder="journals.csv"
+        />
+        {!isSafeBasename(form.metadataFile, '.csv') && (
+          <p role="alert" className="text-sm text-destructive">
+            请输入不含路径或特殊符号的 .csv 文件名。
+          </p>
+        )}
+      </div>
+    </MotionDiv>
+  );
+}
+
+/** Keep hidden delivery arguments mounted with identical inert and validation guards. */
+function renderSchedulerDeliveryFields(state: SchedulerViewState) {
+  const { form, setForm, panelTransition, isIndexJobPreset } = state;
+
+  return (
+    <MotionDiv
+      data-motion-scheduled-fields="delivery"
+      aria-hidden={isIndexJobPreset}
+      inert={isIndexJobPreset ? true : undefined}
+      initial={false}
+      animate={isIndexJobPreset ? 'hidden' : 'visible'}
+      variants={COLLAPSE_VARIANTS}
+      transition={panelTransition}
+      className="overflow-hidden"
+      style={{ pointerEvents: isIndexJobPreset ? 'none' : 'auto' }}
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="scheduled-task-database">索引数据库（可选）</Label>
+          <Input
+            id="scheduled-task-database"
+            name="scheduled_task_database"
+            autoComplete="off"
+            spellCheck={false}
+            value={form.database}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, database: event.target.value }))
+            }
+            placeholder="journals.sqlite"
+          />
+          {!isSafeBasename(form.database, '.sqlite') && (
+            <p role="alert" className="text-sm text-destructive">
+              请输入不含路径或特殊符号的 .sqlite 文件名。
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="scheduled-task-candidates">候选上限（可选）</Label>
+          <Input
+            id="scheduled-task-candidates"
+            name="scheduled_task_max_candidates"
+            type="number"
+            min={1}
+            max={1000}
+            step={1}
+            value={form.maxCandidates}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, maxCandidates: event.target.value }))
+            }
+            placeholder="100"
+          />
+        </div>
+      </div>
+    </MotionDiv>
+  );
+}
+
+/** Retain typed task fields, legacy warning and exact create/save admission. */
+function renderScheduledTaskEditor(state: SchedulerViewState) {
+  const {
+    dialogOpen,
+    setDialogOpen,
+    editingTask,
+    form,
+    setForm,
+    jobPreset,
+    setJobPreset,
+    feedbackTransition,
+    saveMutation,
+    mutationError,
+    openCreateDialog,
+    isFormValid,
+  } = state;
+
+  return (
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={openCreateDialog}>
+          <Plus className="mr-2 h-4 w-4" />
+          新建任务
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{editingTask ? '编辑定时任务' : '新建定时任务'}</DialogTitle>
+          <DialogDescription>
+            使用五段 crontab 表达式和明确的 IANA 时区，例如 `0 8 * * *` 与 `Asia/Shanghai`。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          {editingTask?.job === null && (
+            <div role="alert" className="space-y-2 rounded-md border border-warning-border p-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <AlertTriangle className="h-4 w-4 text-warning-foreground" />
+                旧任务已自动停用
+              </div>
+              <p className="text-sm text-muted-foreground">
+                保存后会用当前类型化配置替换旧命令，旧命令不会被执行。
+              </p>
+              <div className="rounded bg-muted px-2 py-1 font-mono text-xs break-all">
+                {editingTask.legacy_command}
+              </div>
+            </div>
+          )}
+          <div className="space-y-2">
+            <Label htmlFor="scheduled-task-name">任务名称</Label>
+            <Input
+              id="scheduled-task-name"
+              name="scheduled_task_name"
+              autoComplete="off"
+              value={form.name}
+              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              placeholder="任务名称"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="scheduled-task-cron">Cron 表达式</Label>
+            <Input
+              id="scheduled-task-cron"
+              name="scheduled_task_cron"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.cron}
+              onChange={(event) => setForm((current) => ({ ...current, cron: event.target.value }))}
+              placeholder="Cron 表达式"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="scheduled-task-timezone">IANA 时区</Label>
+              <Input
+                id="scheduled-task-timezone"
+                name="scheduled_task_timezone"
+                autoComplete="off"
+                spellCheck={false}
+                value={form.timezone}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, timezone: event.target.value }))
+                }
+                placeholder="Asia/Shanghai"
+              />
+              {!isValidTimeZone(form.timezone) && (
+                <p role="alert" className="text-sm text-destructive">
+                  请输入有效的 IANA 时区，例如 Asia/Shanghai。
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="scheduled-task-timeout">超时秒数</Label>
+              <Input
+                id="scheduled-task-timeout"
+                name="scheduled_task_timeout_seconds"
+                type="number"
+                min={1}
+                max={86_400}
+                step={1}
+                value={form.timeoutSeconds}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, timeoutSeconds: event.target.value }))
+                }
+              />
+              {!isValidTimeout(form.timeoutSeconds) && (
+                <p role="alert" className="text-sm text-destructive">
+                  超时必须为 1 到 86400 秒的整数。
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="scheduled-task-preset">任务预设</Label>
+            <Select value={jobPreset} onValueChange={(value: JobPresetId) => setJobPreset(value)}>
+              <SelectTrigger id="scheduled-task-preset" className="w-full">
+                <SelectValue placeholder="选择任务预设" />
+              </SelectTrigger>
+              <SelectContent>
+                {JOB_PRESETS.map((preset) => (
+                  <SelectItem key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            {renderSchedulerIndexFields(state)}
+            {renderSchedulerDeliveryFields(state)}
+          </div>
+          <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            将执行：{describeJob(buildScheduledJob(form, jobPreset))}
+          </div>
+          <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
+            <Label htmlFor="scheduled-task-enabled" className="text-sm">
+              启用任务
+            </Label>
+            <Switch
+              id="scheduled-task-enabled"
+              checked={form.enabled}
+              onCheckedChange={(checked: boolean) =>
+                setForm((current) => ({ ...current, enabled: checked }))
+              }
+            />
+          </div>
+          <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
+            <div className="space-y-1">
+              <Label htmlFor="scheduled-task-coalesce" className="text-sm">
+                合并补跑
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                worker 离线后仅补跑最近一次错过的执行。
+              </p>
+            </div>
+            <Switch
+              id="scheduled-task-coalesce"
+              checked={form.coalesce}
+              onCheckedChange={(checked: boolean) =>
+                setForm((current) => ({ ...current, coalesce: checked }))
+              }
+            />
+          </div>
+          <MotionPresence>
+            {mutationError && (
+              <MotionParagraph
+                key="scheduled-task-error"
+                data-motion-feedback="scheduled-task"
+                role="alert"
+                className="text-sm text-destructive"
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                variants={FADE_UP_VARIANTS}
+                transition={feedbackTransition}
+              >
+                {mutationError}
+              </MotionParagraph>
+            )}
+          </MotionPresence>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setDialogOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              className="w-full sm:w-auto"
+              disabled={!isFormValid || saveMutation.isPending}
+              onClick={() => saveMutation.mutate()}
+            >
+              {editingTask ? '保存' : '创建'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Retain loading-before-error state and direct keyed worker-status presence. */
+function renderSchedulerStatus(state: SchedulerViewState) {
+  const {
+    feedbackTransition,
+    schedulerStatus,
+    schedulerStatusError,
+    isSchedulerStatusLoading,
+    healthyWorkerCount,
+    schedulerStatusKey,
+  } = state;
+
+  return (
+    <div aria-label="调度器状态" className="rounded-lg border bg-muted/30 p-3 text-sm">
+      <MotionPresence mode="wait">
+        <MotionDiv
+          key={schedulerStatusKey}
+          data-motion-scheduler-state={schedulerStatusKey}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          variants={FADE_VARIANTS}
+          transition={feedbackTransition}
+        >
+          {isSchedulerStatusLoading ? (
+            <span className="text-muted-foreground">正在读取调度器状态…</span>
+          ) : schedulerStatusError instanceof Error ? (
+            <span role="alert" className="text-destructive">
+              {schedulerStatusError.message}
+            </span>
+          ) : (
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
+              </span>
+            </div>
+          )}
+        </MotionDiv>
+      </MotionPresence>
+    </div>
+  );
+}
+
+/** Retain directly keyed tasks, disabled legacy toggles and captured deletion targets. */
+function renderScheduledTaskList(state: SchedulerViewState) {
+  const {
+    setTaskToDelete,
+    feedbackTransition,
+    panelTransition,
+    tasks,
+    toggleMutation,
+    deleteMutation,
+    openEditDialog,
+  } = state;
+
+  return (
+    <MotionPresence>
+      {tasks.length === 0 ? (
+        <MotionParagraph
+          key="empty-scheduled-tasks"
+          className="text-sm text-muted-foreground"
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          variants={FADE_UP_VARIANTS}
+          transition={feedbackTransition}
+        >
+          暂无定时任务
+        </MotionParagraph>
+      ) : (
+        tasks.map((task) => (
+          <MotionDiv
+            key={task.id}
+            data-motion-scheduled-task-key={task.id}
+            className="overflow-hidden rounded-lg border p-4"
+            initial="hidden"
+            animate="visible"
+            exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+            variants={COLLAPSE_VARIANTS}
+            transition={panelTransition}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="font-medium">{task.name}</div>
+                <div className="font-mono text-xs text-muted-foreground">{task.cron}</div>
+                <div className="text-xs text-muted-foreground">
+                  {task.timezone} · 超时 {task.timeout_seconds} 秒 ·
+                  {task.coalesce ? ' 合并补跑' : ' 逐次补跑'}
+                </div>
+                <div className="text-sm text-muted-foreground break-all">
+                  {describeJob(task.job)}
+                </div>
+                {task.legacy_command && (
+                  <div className="rounded border border-warning-border px-2 py-1 text-xs text-muted-foreground break-all">
+                    旧命令（只读）：{task.legacy_command}
+                  </div>
+                )}
+                <div className="text-xs text-muted-foreground">
+                  最近执行: {formatDateTime(task.last_run_at)}
+                  {` · ${formatSchedulerState(task.last_status)}`}
+                </div>
+              </div>
+              <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
+                <Switch
+                  checked={task.enabled}
+                  disabled={task.job === null}
+                  aria-label={
+                    task.job
+                      ? `${task.enabled ? '停用' : '启用'}定时任务 ${task.name}`
+                      : `旧定时任务 ${task.name} 需替换`
+                  }
+                  onCheckedChange={(checked: boolean) => {
+                    if (task.job) {
+                      toggleMutation.mutate({ enabled: checked, taskId: task.id });
+                    }
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`编辑定时任务 ${task.name}`}
+                  onClick={() => openEditDialog(task)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-destructive hover:text-destructive"
+                  aria-label={`删除定时任务 ${task.name}`}
+                  disabled={deleteMutation.isPending}
+                  onClick={() => {
+                    deleteMutation.reset();
+                    setTaskToDelete(task);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </MotionDiv>
+        ))
+      )}
+    </MotionPresence>
+  );
+}
+
+/** Retain the first five server-ordered runs and empty-record feedback. */
+function renderRecentSchedulerRuns(state: SchedulerViewState) {
+  const { schedulerStatus } = state;
+
+  return (
+    schedulerStatus && (
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">最近调度运行</h3>
+        {schedulerStatus.recent_runs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">暂无调度运行记录</p>
+        ) : (
+          <div className="divide-y rounded-lg border">
+            {schedulerStatus.recent_runs.slice(0, 5).map((run) => (
+              <div
+                key={run.id}
+                className="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
+              >
+                <span className="min-w-0 truncate">{run.task_name}</span>
+                <span className="text-xs text-muted-foreground">
+                  {formatSchedulerState(run.status)} · {formatDateTime(run.scheduled_for)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  );
+}
+
+/** Retain confirmation target identity and pending-dismissal safeguards. */
+function renderScheduledTaskDeletion(state: SchedulerViewState) {
+  const { taskToDelete, setTaskToDelete, deleteMutation } = state;
+
+  return (
+    <ConfirmDialog
+      open={taskToDelete !== null}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !deleteMutation.isPending) {
+          setTaskToDelete(null);
+        }
+      }}
+      title="删除定时任务？"
+      description={`确认删除定时任务“${taskToDelete?.name ?? ''}”？`}
+      actionLabel="确认删除"
+      pendingLabel="删除中…"
+      isPending={deleteMutation.isPending}
+      error={deleteMutation.error instanceof Error ? deleteMutation.error.message : null}
+      onConfirm={() => {
+        if (taskToDelete) {
+          deleteMutation.mutate(taskToDelete.id);
+        }
+      }}
+    />
+  );
+}
+
+const SCHEDULER_STATE_LABELS = new Map<SchedulerRunState, string>(
+  Object.entries({
+    idle: '未运行',
+    pending: '等待中',
+    claimed: '已领取',
+    running: '运行中',
+    success: '成功',
+    failed: '失败',
+    timed_out: '超时',
+    error: '执行错误',
+    unknown: '结果未知',
+    cancelled: '已取消',
+  } satisfies Record<SchedulerRunState, string>) as [SchedulerRunState, string][],
+);
+
+/** Retain loading-before-error identity and server worker-count fallback. */
+function getSchedulerStatusKey(
+  isSchedulerStatusLoading: boolean,
+  schedulerStatusError: unknown,
+  healthyWorkerCount: number,
+  schedulerStatus: Awaited<ReturnType<typeof adminGetSchedulerStatus>> | undefined,
+): string {
+  return isSchedulerStatusLoading
     ? 'loading'
     : schedulerStatusError instanceof Error
       ? 'error'
       : `workers-${healthyWorkerCount}-${schedulerStatus?.workers.length ?? 0}`;
+}
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Clock3 className="h-5 w-5" />
-          定时任务
-        </CardTitle>
-        <CardDescription>管理后台自动执行的类型化任务</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full sm:w-auto"
-              onClick={openCreateDialog}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              新建任务
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>{editingTask ? '编辑定时任务' : '新建定时任务'}</DialogTitle>
-              <DialogDescription>
-                使用五段 crontab 表达式和明确的 IANA 时区，例如 `0 8 * * *` 与 `Asia/Shanghai`。
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-2">
-              {editingTask?.job === null && (
-                <div role="alert" className="space-y-2 rounded-md border border-warning-border p-3">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <AlertTriangle className="h-4 w-4 text-warning-foreground" />
-                    旧任务已自动停用
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    保存后会用当前类型化配置替换旧命令，旧命令不会被执行。
-                  </p>
-                  <div className="rounded bg-muted px-2 py-1 font-mono text-xs break-all">
-                    {editingTask.legacy_command}
-                  </div>
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="scheduled-task-name">任务名称</Label>
-                <Input
-                  id="scheduled-task-name"
-                  name="scheduled_task_name"
-                  autoComplete="off"
-                  value={form.name}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, name: event.target.value }))
-                  }
-                  placeholder="任务名称"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="scheduled-task-cron">Cron 表达式</Label>
-                <Input
-                  id="scheduled-task-cron"
-                  name="scheduled_task_cron"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={form.cron}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, cron: event.target.value }))
-                  }
-                  placeholder="Cron 表达式"
-                />
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="scheduled-task-timezone">IANA 时区</Label>
-                  <Input
-                    id="scheduled-task-timezone"
-                    name="scheduled_task_timezone"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={form.timezone}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, timezone: event.target.value }))
-                    }
-                    placeholder="Asia/Shanghai"
-                  />
-                  {!isValidTimeZone(form.timezone) && (
-                    <p role="alert" className="text-sm text-destructive">
-                      请输入有效的 IANA 时区，例如 Asia/Shanghai。
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="scheduled-task-timeout">超时秒数</Label>
-                  <Input
-                    id="scheduled-task-timeout"
-                    name="scheduled_task_timeout_seconds"
-                    type="number"
-                    min={1}
-                    max={86_400}
-                    step={1}
-                    value={form.timeoutSeconds}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, timeoutSeconds: event.target.value }))
-                    }
-                  />
-                  {!isValidTimeout(form.timeoutSeconds) && (
-                    <p role="alert" className="text-sm text-destructive">
-                      超时必须为 1 到 86400 秒的整数。
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="scheduled-task-preset">任务预设</Label>
-                <Select
-                  value={jobPreset}
-                  onValueChange={(value: JobPresetId) => setJobPreset(value)}
-                >
-                  <SelectTrigger id="scheduled-task-preset" className="w-full">
-                    <SelectValue placeholder="选择任务预设" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {JOB_PRESETS.map((preset) => (
-                      <SelectItem key={preset.value} value={preset.value}>
-                        {preset.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <MotionDiv
-                  data-motion-scheduled-fields="index"
-                  aria-hidden={!isIndexJobPreset}
-                  inert={!isIndexJobPreset ? true : undefined}
-                  initial={false}
-                  animate={isIndexJobPreset ? 'visible' : 'hidden'}
-                  variants={COLLAPSE_VARIANTS}
-                  transition={panelTransition}
-                  className="overflow-hidden"
-                  style={{ pointerEvents: isIndexJobPreset ? 'auto' : 'none' }}
-                >
-                  <div className="space-y-2">
-                    <Label htmlFor="scheduled-task-metadata">元数据 CSV 文件名（可选）</Label>
-                    <Input
-                      id="scheduled-task-metadata"
-                      name="scheduled_task_metadata_file"
-                      autoComplete="off"
-                      spellCheck={false}
-                      value={form.metadataFile}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, metadataFile: event.target.value }))
-                      }
-                      placeholder="journals.csv"
-                    />
-                    {!isSafeBasename(form.metadataFile, '.csv') && (
-                      <p role="alert" className="text-sm text-destructive">
-                        请输入不含路径或特殊符号的 .csv 文件名。
-                      </p>
-                    )}
-                  </div>
-                </MotionDiv>
-                <MotionDiv
-                  data-motion-scheduled-fields="delivery"
-                  aria-hidden={isIndexJobPreset}
-                  inert={isIndexJobPreset ? true : undefined}
-                  initial={false}
-                  animate={isIndexJobPreset ? 'hidden' : 'visible'}
-                  variants={COLLAPSE_VARIANTS}
-                  transition={panelTransition}
-                  className="overflow-hidden"
-                  style={{ pointerEvents: isIndexJobPreset ? 'none' : 'auto' }}
-                >
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="scheduled-task-database">索引数据库（可选）</Label>
-                      <Input
-                        id="scheduled-task-database"
-                        name="scheduled_task_database"
-                        autoComplete="off"
-                        spellCheck={false}
-                        value={form.database}
-                        onChange={(event) =>
-                          setForm((current) => ({ ...current, database: event.target.value }))
-                        }
-                        placeholder="journals.sqlite"
-                      />
-                      {!isSafeBasename(form.database, '.sqlite') && (
-                        <p role="alert" className="text-sm text-destructive">
-                          请输入不含路径或特殊符号的 .sqlite 文件名。
-                        </p>
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="scheduled-task-candidates">候选上限（可选）</Label>
-                      <Input
-                        id="scheduled-task-candidates"
-                        name="scheduled_task_max_candidates"
-                        type="number"
-                        min={1}
-                        max={1000}
-                        step={1}
-                        value={form.maxCandidates}
-                        onChange={(event) =>
-                          setForm((current) => ({ ...current, maxCandidates: event.target.value }))
-                        }
-                        placeholder="100"
-                      />
-                    </div>
-                  </div>
-                </MotionDiv>
-              </div>
-              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                将执行：{describeJob(buildScheduledJob(form, jobPreset))}
-              </div>
-              <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
-                <Label htmlFor="scheduled-task-enabled" className="text-sm">
-                  启用任务
-                </Label>
-                <Switch
-                  id="scheduled-task-enabled"
-                  checked={form.enabled}
-                  onCheckedChange={(checked: boolean) =>
-                    setForm((current) => ({ ...current, enabled: checked }))
-                  }
-                />
-              </div>
-              <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
-                <div className="space-y-1">
-                  <Label htmlFor="scheduled-task-coalesce" className="text-sm">
-                    合并补跑
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    worker 离线后仅补跑最近一次错过的执行。
-                  </p>
-                </div>
-                <Switch
-                  id="scheduled-task-coalesce"
-                  checked={form.coalesce}
-                  onCheckedChange={(checked: boolean) =>
-                    setForm((current) => ({ ...current, coalesce: checked }))
-                  }
-                />
-              </div>
-              <MotionPresence>
-                {mutationError && (
-                  <MotionParagraph
-                    key="scheduled-task-error"
-                    data-motion-feedback="scheduled-task"
-                    role="alert"
-                    className="text-sm text-destructive"
-                    initial="hidden"
-                    animate="visible"
-                    exit="exit"
-                    variants={FADE_UP_VARIANTS}
-                    transition={feedbackTransition}
-                  >
-                    {mutationError}
-                  </MotionParagraph>
-                )}
-              </MotionPresence>
-              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <Button
-                  variant="outline"
-                  className="w-full sm:w-auto"
-                  onClick={() => setDialogOpen(false)}
-                >
-                  取消
-                </Button>
-                <Button
-                  className="w-full sm:w-auto"
-                  disabled={!isFormValid || saveMutation.isPending}
-                  onClick={() => saveMutation.mutate()}
-                >
-                  {editingTask ? '保存' : '创建'}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+/** Restore the original database field only for delivery jobs. */
+function getScheduledTaskDatabase(task: ScheduledTaskInfo): string {
+  return task.job?.kind === 'notify' || task.job?.kind === 'push' ? (task.job.database ?? '') : '';
+}
 
-        <div aria-label="调度器状态" className="rounded-lg border bg-muted/30 p-3 text-sm">
-          <MotionPresence mode="wait">
-            <MotionDiv
-              key={schedulerStatusKey}
-              data-motion-scheduler-state={schedulerStatusKey}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              variants={FADE_VARIANTS}
-              transition={feedbackTransition}
-            >
-              {isSchedulerStatusLoading ? (
-                <span className="text-muted-foreground">正在读取调度器状态…</span>
-              ) : schedulerStatusError instanceof Error ? (
-                <span role="alert" className="text-destructive">
-                  {schedulerStatusError.message}
-                </span>
-              ) : (
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <span>
-                    健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
-                  </span>
-                </div>
-              )}
-            </MotionDiv>
-          </MotionPresence>
-        </div>
+/** Restore the original maxCandidates field only for delivery jobs. */
+function getScheduledTaskCandidates(task: ScheduledTaskInfo): string {
+  return task.job?.kind === 'notify' || task.job?.kind === 'push'
+    ? (task.job.max_candidates?.toString() ?? '')
+    : '';
+}
 
-        {error instanceof Error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error.message}
-          </p>
-        )}
-
-        {isLoading ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            加载中…
-          </p>
-        ) : (
-          <div className="space-y-3">
-            <MotionPresence>
-              {tasks.length === 0 ? (
-                <MotionParagraph
-                  key="empty-scheduled-tasks"
-                  className="text-sm text-muted-foreground"
-                  initial="hidden"
-                  animate="visible"
-                  exit="exit"
-                  variants={FADE_UP_VARIANTS}
-                  transition={feedbackTransition}
-                >
-                  暂无定时任务
-                </MotionParagraph>
-              ) : (
-                tasks.map((task) => (
-                  <MotionDiv
-                    key={task.id}
-                    data-motion-scheduled-task-key={task.id}
-                    className="overflow-hidden rounded-lg border p-4"
-                    initial="hidden"
-                    animate="visible"
-                    exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-                    variants={COLLAPSE_VARIANTS}
-                    transition={panelTransition}
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="font-medium">{task.name}</div>
-                        <div className="font-mono text-xs text-muted-foreground">{task.cron}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {task.timezone} · 超时 {task.timeout_seconds} 秒 ·
-                          {task.coalesce ? ' 合并补跑' : ' 逐次补跑'}
-                        </div>
-                        <div className="text-sm text-muted-foreground break-all">
-                          {describeJob(task.job)}
-                        </div>
-                        {task.legacy_command && (
-                          <div className="rounded border border-warning-border px-2 py-1 text-xs text-muted-foreground break-all">
-                            旧命令（只读）：{task.legacy_command}
-                          </div>
-                        )}
-                        <div className="text-xs text-muted-foreground">
-                          最近执行: {formatDateTime(task.last_run_at)}
-                          {` · ${formatSchedulerState(task.last_status)}`}
-                        </div>
-                      </div>
-                      <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
-                        <Switch
-                          checked={task.enabled}
-                          disabled={task.job === null}
-                          aria-label={
-                            task.job
-                              ? `${task.enabled ? '停用' : '启用'}定时任务 ${task.name}`
-                              : `旧定时任务 ${task.name} 需替换`
-                          }
-                          onCheckedChange={(checked: boolean) => {
-                            if (task.job) {
-                              toggleMutation.mutate({ enabled: checked, taskId: task.id });
-                            }
-                          }}
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`编辑定时任务 ${task.name}`}
-                          onClick={() => openEditDialog(task)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive hover:text-destructive"
-                          aria-label={`删除定时任务 ${task.name}`}
-                          disabled={deleteMutation.isPending}
-                          onClick={() => {
-                            deleteMutation.reset();
-                            setTaskToDelete(task);
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </MotionDiv>
-                ))
-              )}
-            </MotionPresence>
-          </div>
-        )}
-
-        {schedulerStatus && (
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium">最近调度运行</h3>
-            {schedulerStatus.recent_runs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无调度运行记录</p>
-            ) : (
-              <div className="divide-y rounded-lg border">
-                {schedulerStatus.recent_runs.slice(0, 5).map((run) => (
-                  <div
-                    key={run.id}
-                    className="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <span className="min-w-0 truncate">{run.task_name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatSchedulerState(run.status)} · {formatDateTime(run.scheduled_for)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        <ConfirmDialog
-          open={taskToDelete !== null}
-          onOpenChange={(nextOpen) => {
-            if (!nextOpen && !deleteMutation.isPending) {
-              setTaskToDelete(null);
-            }
-          }}
-          title="删除定时任务？"
-          description={`确认删除定时任务“${taskToDelete?.name ?? ''}”？`}
-          actionLabel="确认删除"
-          pendingLabel="删除中…"
-          isPending={deleteMutation.isPending}
-          error={deleteMutation.error instanceof Error ? deleteMutation.error.message : null}
-          onConfirm={() => {
-            if (taskToDelete) {
-              deleteMutation.mutate(taskToDelete.id);
-            }
-          }}
-        />
-      </CardContent>
-    </Card>
-  );
+/** Restore edit fields in their original order without executing legacy commands. */
+function getScheduledTaskForm(task: ScheduledTaskInfo): TaskFormState {
+  return {
+    coalesce: task.coalesce,
+    cron: task.cron,
+    database: getScheduledTaskDatabase(task),
+    enabled: task.enabled,
+    maxCandidates: getScheduledTaskCandidates(task),
+    metadataFile: task.job?.kind === 'index' ? (task.job.metadata_file ?? '') : '',
+    name: task.name,
+    timeoutSeconds: task.timeout_seconds.toString(),
+    timezone: task.timezone,
+  };
 }

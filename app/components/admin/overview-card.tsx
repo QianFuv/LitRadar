@@ -40,16 +40,9 @@ function StatCard({
  * @param props - Whether administrator queries may run.
  * @returns System overview card.
  */
-export function AdminOverviewCard({ isEnabled }: { isEnabled: boolean }) {
-  const { data: stats, isLoading: statsLoading } = useQuery({
-    queryKey: ['admin-stats'],
-    queryFn: () => adminGetStats(),
-    enabled: isEnabled,
-  });
-  const authStats = stats?.auth;
-  const indexStats = stats?.index;
-  const pushStats = stats?.push;
-
+export function AdminOverviewCard(props: { isEnabled: boolean }) {
+  const state = useOverviewViewState(props);
+  const { statsLoading } = state;
   return (
     <Card>
       <CardHeader>
@@ -63,84 +56,134 @@ export function AdminOverviewCard({ isEnabled }: { isEnabled: boolean }) {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              <StatCard
-                label="用户总数"
-                value={authStats?.total_users ?? 0}
-                icon={<Users className="h-4 w-4" />}
-              />
-              <StatCard
-                label="管理员"
-                value={authStats?.admin_count ?? 0}
-                icon={<Shield className="h-4 w-4" />}
-              />
-              <StatCard label="收藏夹" value={authStats?.total_folders ?? 0} />
-              <StatCard label="收藏文章" value={authStats?.total_favorites ?? 0} />
-              <StatCard
-                label="活跃令牌"
-                value={authStats?.active_tokens ?? 0}
-                icon={<Key className="h-4 w-4" />}
-              />
-              <StatCard label="推送订阅" value={authStats?.notification_subscribers ?? 0} />
-              <StatCard
-                label="邀请码 (未使用)"
-                value={authStats?.unused_invite_codes ?? 0}
-                icon={<Ticket className="h-4 w-4" />}
-              />
-              <StatCard label="邀请码 (已使用)" value={authStats?.used_invite_codes ?? 0} />
-            </div>
+            {renderAuthStatistics(state)}
 
             {/* Index stats */}
-            {indexStats && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">
-                  索引数据库
-                  <span className="ml-2 text-muted-foreground font-normal">
-                    共 {NUMBER_FORMATTER.format(indexStats.total_articles)} 篇文章，
-                    {NUMBER_FORMATTER.format(indexStats.total_journals)} 本期刊
-                  </span>
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {indexStats.databases.map((db) => (
-                    <div key={db.db_name} className="rounded-md border px-3 py-2 text-sm">
-                      <div className="flex items-center gap-1.5 font-medium">
-                        <Database className="h-3.5 w-3.5" />
-                        {db.db_name}
-                      </div>
-                      <div className="text-muted-foreground mt-0.5">
-                        {NUMBER_FORMATTER.format(db.articles)} 文章 ·{' '}
-                        {NUMBER_FORMATTER.format(db.journals)} 期刊 ·{' '}
-                        {NUMBER_FORMATTER.format(db.issues)} 期
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {renderIndexStatistics(state)}
 
             {/* Push stats */}
-            {pushStats && pushStats.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">推送状态</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {pushStats.map((ps) => (
-                    <div key={ps.db_name} className="rounded-md border px-3 py-2 text-sm">
-                      <div className="font-medium">{ps.db_name}</div>
-                      <div className="text-muted-foreground">
-                        状态: {ps.status}
-                        {ps.delivered_count != null && ` · 已推送 ${ps.delivered_count} 篇`}
-                        {ps.last_completed && (
-                          <span className="block">最近完成: {ps.last_completed}</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {renderPushStatistics(state)}
           </div>
         )}
       </CardContent>
     </Card>
   );
+}
+/** Own the administrator statistics query and conditional metadata. */
+function useOverviewViewState({ isEnabled }: { isEnabled: boolean }) {
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ['admin-stats'],
+    queryFn: () => adminGetStats(),
+    enabled: isEnabled,
+  });
+  const authStats = stats?.auth;
+  const indexStats = stats?.index;
+  const pushStats = stats?.push;
+
+  return { isEnabled, stats, statsLoading, authStats, indexStats, pushStats };
+}
+type OverviewViewState = ReturnType<typeof useOverviewViewState>;
+
+/** Retain every authentication statistic and exact nullish zero fallback. */
+function renderAuthStatistics(state: OverviewViewState) {
+  const { authStats } = state;
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      <StatCard
+        label="用户总数"
+        value={getAuthStatisticValue(authStats?.total_users)}
+        icon={<Users className="h-4 w-4" />}
+      />
+      <StatCard
+        label="管理员"
+        value={getAuthStatisticValue(authStats?.admin_count)}
+        icon={<Shield className="h-4 w-4" />}
+      />
+      <StatCard label="收藏夹" value={getAuthStatisticValue(authStats?.total_folders)} />
+      <StatCard label="收藏文章" value={getAuthStatisticValue(authStats?.total_favorites)} />
+      <StatCard
+        label="活跃令牌"
+        value={getAuthStatisticValue(authStats?.active_tokens)}
+        icon={<Key className="h-4 w-4" />}
+      />
+      <StatCard
+        label="推送订阅"
+        value={getAuthStatisticValue(authStats?.notification_subscribers)}
+      />
+      <StatCard
+        label="邀请码 (未使用)"
+        value={getAuthStatisticValue(authStats?.unused_invite_codes)}
+        icon={<Ticket className="h-4 w-4" />}
+      />
+      <StatCard
+        label="邀请码 (已使用)"
+        value={getAuthStatisticValue(authStats?.used_invite_codes)}
+      />
+    </div>
+  );
+}
+
+/** Retain conditional index totals, database order and localized values. */
+function renderIndexStatistics(state: OverviewViewState) {
+  const { indexStats } = state;
+
+  return (
+    indexStats && (
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">
+          索引数据库
+          <span className="ml-2 text-muted-foreground font-normal">
+            共 {NUMBER_FORMATTER.format(indexStats.total_articles)} 篇文章，
+            {NUMBER_FORMATTER.format(indexStats.total_journals)} 本期刊
+          </span>
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {indexStats.databases.map((db) => (
+            <div key={db.db_name} className="rounded-md border px-3 py-2 text-sm">
+              <div className="flex items-center gap-1.5 font-medium">
+                <Database className="h-3.5 w-3.5" />
+                {db.db_name}
+              </div>
+              <div className="text-muted-foreground mt-0.5">
+                {NUMBER_FORMATTER.format(db.articles)} 文章 · {NUMBER_FORMATTER.format(db.journals)}{' '}
+                期刊 · {NUMBER_FORMATTER.format(db.issues)} 期
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  );
+}
+
+/** Retain delivered zero counts and server-ordered completion metadata. */
+function renderPushStatistics(state: OverviewViewState) {
+  const { pushStats } = state;
+
+  return (
+    pushStats &&
+    pushStats.length > 0 && (
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">推送状态</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {pushStats.map((ps) => (
+            <div key={ps.db_name} className="rounded-md border px-3 py-2 text-sm">
+              <div className="font-medium">{ps.db_name}</div>
+              <div className="text-muted-foreground">
+                状态: {ps.status}
+                {ps.delivered_count != null && ` · 已推送 ${ps.delivered_count} 篇`}
+                {ps.last_completed && <span className="block">最近完成: {ps.last_completed}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  );
+}
+
+/** Default an absent authentication count to zero without changing valid counts. */
+function getAuthStatisticValue(value: number | null | undefined): number {
+  return value ?? 0;
 }
