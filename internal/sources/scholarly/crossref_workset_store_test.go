@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/QianFuv/LitRadar/internal/provider"
-	"github.com/QianFuv/LitRadar/internal/transport"
 )
 
 func worksetTestState() CrossrefCheckpoint {
@@ -99,12 +99,17 @@ func TestCrossrefWorksetNegativeVersionAndFileOnlyUnlink(t *testing.T) {
 	}
 }
 
+// worksetTestWork creates independent records with the same number types as decoded provider JSON.
 func worksetTestWork(index int, second int64) any {
-	work, err := transport.ParseJson([]byte(fmt.Sprintf(`{"DOI":"10.1234/%d","title":["Work %d"],"created":{"timestamp":%d},"published":{"date-parts":[[2026,1,1]]},"volume":"1","issue":"1"}`, index, index, second*1000)))
-	if err != nil {
-		panic(err)
+	identifier := strconv.Itoa(index)
+	return map[string]any{
+		"DOI":       "10.1234/" + identifier,
+		"title":     []any{"Work " + identifier},
+		"created":   map[string]any{"timestamp": json.Number(strconv.FormatInt(second*1000, 10))},
+		"published": map[string]any{"date-parts": []any{[]any{json.Number("2026"), json.Number("1"), json.Number("1")}}},
+		"volume":    "1",
+		"issue":     "1",
 	}
-	return work
 }
 
 func worksetTestPage(start, count int, second int64, total uint64) CrossrefPage {
