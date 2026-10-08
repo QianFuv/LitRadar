@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { compareVersions, parseVersion } from "./release-version.mjs";
-import { pendingWindowsAssets, validateAssets } from "./release-assets.mjs";
+import { releaseAssetNames, validateAssets } from "./release-assets.mjs";
 import { generateReleaseNotes } from "./release-notes.mjs";
 
 /** Select the highest published stable version, independent of completion order. */
@@ -102,47 +102,7 @@ async function readReleaseContext(tag, commit) {
   ]);
   const tagged = reference ? await github(`commits/${tag}`) : null;
   const published = validateReleaseIdentity(release, tagged?.sha, commit);
-  return { release, published };
-}
-
-/** Append verified Windows assets while preserving every existing published asset. */
-async function appendWindowsRelease(
-  release,
-  tag,
-  version,
-  commit,
-  published,
-  gh,
-) {
-  assert(published, "Windows supplement requires a published release");
-  const directory = "release-results/windows/assets";
-  const summary = JSON.parse(
-    fs.readFileSync("release-results/windows/smoke/summary.json", "utf8"),
-  );
-  assert.equal(summary.status, "passed");
-  assert.equal(summary.sourceCommit, commit);
-  assert.equal(summary.version, version);
-  const assets = validateAssets(directory, version, true);
-  for (const asset of pendingWindowsAssets(release, assets))
-    gh("release", "upload", tag, path.join(directory, asset.name));
-  const updated = await findRelease(tag);
-  assert.equal(
-    updated.id,
-    release.id,
-    "Release identity changed during supplement",
-  );
-  assert.deepEqual(pendingWindowsAssets(updated, assets), []);
-  for (const original of release.assets) {
-    const current = updated.assets.find((asset) => asset.id === original.id);
-    assert(
-      current &&
-        current.name === original.name &&
-        current.digest === original.digest &&
-        current.size === original.size,
-      "Existing release asset changed",
-    );
-  }
-  return;
+  return { release, published, taggedCommit: tagged?.sha };
 }
 
 /** Validate all release assets before creating or refreshing the matching draft. */
@@ -188,9 +148,7 @@ async function prepareRelease(release, tag, version, commit, gh) {
 /** Run release commands only for this version and immutable commit identity. */
 async function main() {
   const mode = process.argv[2];
-  assert(
-    ["check", "prepare", "publish", "promote", "append-windows"].includes(mode),
-  );
+  assert(["check", "prepare", "publish", "promote", "verify"].includes(mode));
   assert(process.env.GH_TOKEN && process.env.GITHUB_REPOSITORY);
   if (mode === "promote") return promoteLatest();
   const version = parseVersion(process.env.RELEASE_VERSION);
@@ -198,15 +156,40 @@ async function main() {
   const commit = process.env.RELEASE_SOURCE_SHA || process.env.GITHUB_SHA;
   assert.match(commit, /^[a-f0-9]{40}$/);
   assert(process.env.GH_TOKEN && process.env.GITHUB_REPOSITORY);
-  const { release, published } = await readReleaseContext(tag, commit);
+  const { release, published, taggedCommit } = await readReleaseContext(
+    tag,
+    commit,
+  );
   if (mode === "check") {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `published=${published}\n`);
     return;
   }
   const gh = (...args) =>
     execFileSync("gh", args, { stdio: "inherit", timeout: 300000 });
-  if (mode === "append-windows") {
-    return appendWindowsRelease(release, tag, version, commit, published, gh);
+  if (mode === "verify") {
+    assert(
+      published && !release.prerelease,
+      "Release must be public and stable",
+    );
+    assert.equal(
+      taggedCommit,
+      commit,
+      "Published tag must match the release source",
+    );
+    assert.deepEqual(
+      release.assets.map((asset) => asset.name).sort(),
+      releaseAssetNames(version).sort(),
+      "Published release must contain both archives and one checksum manifest",
+    );
+    for (const asset of release.assets) {
+      assert(asset.size > 0, `Published asset is empty: ${asset.name}`);
+      assert.match(
+        asset.digest,
+        /^sha256:[a-f0-9]{64}$/,
+        `Missing asset digest: ${asset.name}`,
+      );
+    }
+    return;
   }
   if (published) return;
   if (mode === "prepare") {

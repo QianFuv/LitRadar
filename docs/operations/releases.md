@@ -17,17 +17,19 @@ initial `VERSION=0.1.0` establishes the existing version without publishing it.
 Version downgrades and malformed versions fail CI. Tags pushed separately do not
 trigger releases. No manual tag or release creation is needed.
 
-After Windows archive smoke and both Linux architectures pass container and
-archive smoke tests, Release prepares a draft with all tested binaries, publishes
-the multi-platform Linux image, then publishes the draft. The release contains:
+After the backend and frontend checks pass, Windows x64 and Linux amd64 build
+and smoke jobs run in parallel. Publication waits for both, verifies the transferred
+image against its smoke-tested identity, and prepares a draft with all tested
+binaries. It publishes the Linux image, publishes the draft, updates the latest
+pointers, and verifies the public release. Required skipped jobs fail the final
+completion check. The release contains:
 
 - `litradar_<version>_linux_amd64.tar.gz`
-- `litradar_<version>_linux_arm64.tar.gz`
 - `litradar_<version>_windows_amd64.zip`
 - `SHA256SUMS`
 
-`SHA256SUMS` covers all three archives. Normal releases do not publish a separate
-Windows checksum file; that sidecar is only used by the legacy Windows supplement.
+`SHA256SUMS` covers both archives. Releases do not publish a separate Windows
+checksum file. ARM64 builds and partial platform supplementation are not supported.
 
 Release notes list every commit since the highest older published stable version
 reachable from the release commit. Conventional Commit prefixes group entries by
@@ -38,87 +40,42 @@ notes; published release notes remain unchanged.
 
 ## Actions entrypoints
 
-| Workflow                                      | Trigger                          | Responsibility                                                                                               |
-| --------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| CI                                            | Push to main or pull request     | Release rule tests, Linux/Windows Go checks, frontend checks; calls Release only when main VERSION increases |
-| Release                                       | Called by CI or manually on main | Build, smoke, publish; explicit recovery operations below                                                    |
-| Reusable Go Checks / Reusable Frontend Checks | Internal calls only              | One implementation of each quality suite; no separate push triggers                                          |
-| Test Diagnostics                              | Weekly or manual                 | Informational coverage artifacts                                                                             |
+- CI runs on main pushes and pull requests. It checks release rules, Linux/Windows
+  Go code and the frontend, then calls Release when VERSION increases.
+- CI also accepts a manual version retry on main. It runs the same checks and
+  complete release flow, with no separate supplement or promotion entrypoints.
+- Release and the reusable check workflows are internal workflows only.
+- Test Diagnostics runs weekly or manually for informational coverage artifacts.
 
-Normal CI never builds release archives or images for an unchanged version.
-Manual release operations rerun both quality suites at the selected source commit.
-The Windows supplement builds the original tag's product code using packaging
-tools from the selected main commit; `build.json` records both identities.
+Images are published as `ghcr.io/qianfuv/litradar:v<version>`, `:v<version>-amd64`
+and `:latest`. Prefer a version tag for reproducible deployments. The Git tag
+`v<version>` points to the exact CI source commit. A serialized promotion step
+selects the highest published stable version for both latest pointers.
 
-Images are published as `ghcr.io/qianfuv/litradar:v<version>` and `:latest`, with
-architecture-specific version tags. Prefer the version tag for reproducible
-deployments. The Git tag `v<version>` points to the exact push-tip commit, even
-when the version change is an earlier commit within the same push.
-
-Version builds can run independently. A short serialized step selects the highest
-published stable version for both `latest` pointers, so retrying an older release
-cannot roll them back. Ordinary pushes cannot cancel a release's quality checks.
-
-If a code or workflow repair is needed before a version has acquired a tag or
-draft release, push the repair without changing `VERSION`, then explicitly retry
-the current version on `main`:
+To retry the current version, select **Run workflow** on CI or run:
 
 ```sh
-gh workflow run release.yaml --ref main -f operation=release -f version=0.2.0
+gh workflow run ci.yaml --ref main -f version=0.2.1
 ```
 
-The requested version must match `VERSION` at that workflow's commit. Both
-quality suites and all build and smoke gates run again. Existing tags and drafts
-must belong to the same commit; this command cannot move release ownership to a
-different commit. Ordinary pushes still do not build or publish unchanged versions.
+The requested version must match VERSION at the selected main commit. Both
+quality suites and all required build and smoke gates run. Existing tags and
+drafts must belong to that same commit; published assets are never rebuilt or
+replaced. A same-commit retry of a published release only updates latest pointers
+and verifies the release after the quality checks.
 
-For a transient publication failure, rerun that original workflow on the same commit. The same
-draft may be completed; an already published release is skipped. A version tag
-owned by a different commit is rejected. A later ordinary commit does not retry
-a release implicitly. Image and GitHub publication are separate services, so a
-failure between them can leave the image published while the release remains a
-draft. Never move a published version tag to repair a release; bump the version.
+If a workflow repair is needed before any tag or draft exists, push the repair
+without changing VERSION and retry on the repaired main commit. Otherwise retry
+the original run on its original commit. Never move a published tag to repair a
+release; bump the version when a new source commit is required.
 
-If a deterministic publication-script defect occurs after a draft or versioned
-image exists, repair and verify the script without changing the release identity.
-Before recovery, verify the original run's quality, architecture smoke results,
-archive checksums, draft target commit and image revisions. With authenticated
-GitHub access, run only the corrected `release-github.mjs publish` command with
-`RELEASE_VERSION` and `GITHUB_SHA` set to that original version and full commit.
-Do not run `prepare`, re-upload assets, or dispatch the version from the repair
-commit. After publication, dispatch the promotion-only recovery workflow:
-
-```sh
-gh workflow run release.yaml --ref main -f operation=promote
-```
-
-It uses the normal `release-latest` concurrency lock and GitHub token, selects the
-highest public stable release, and never builds or replaces versioned assets.
-Record the release source
-commit and recovery-script commit separately. Preserve the failed CI run and
-record manual publication/promotion evidence instead of reporting it as green.
-
-To add the missing Windows package to an already public version:
-
-```sh
-gh workflow run release.yaml --ref main -f operation=windows -f version=0.2.0
-```
-
-This requires a public stable tag reachable from main and matching the source
-VERSION. It adds only the Windows ZIP and `<zip-name>.sha256`. Existing Linux
-archives, `SHA256SUMS`, tag and images remain unchanged. If either Windows asset
-already exists, its size and digest must match; the workflow never overwrites it.
-The separate checksum is intentional for supplemented releases. Future normal
-releases list all three archives in their original `SHA256SUMS`.
-
-If upload stops after adding only one Windows asset, use **Re-run failed jobs**
-to reuse the already tested `windows-release` artifact. A full rebuild can change
-ZIP timestamps or build bytes and is deliberately rejected when it conflicts with
-an existing asset. Never delete the published file to work around this check.
+Image and GitHub publication are separate services. A transient failure may leave
+a versioned image published while the release is still a draft; retrying the
+original workflow resumes publication and updates latest only after publication.
 
 ## Run a binary archive
 
-The Linux packages target Debian 13 on amd64 or arm64. They contain the native Go
+The Linux package targets Debian 13 on amd64. They contain the native Go
 binary, web assets, catalog bundle, SQLite tokenizer, Obscura and its worker, and
 third-party notices. They are dynamically linked distributions, not standalone
 static binaries. Install the system dependencies first:
@@ -155,8 +112,7 @@ required. The distribution contains Obscura render/stealth, the search tokenizer
 Poppler PDF extraction and their native runtime libraries. Normal Windows system
 fonts are used for rendering.
 
-In PowerShell, verify the ZIP against `SHA256SUMS` (or its `.zip.sha256` sidecar
-for a supplemented release), then extract it:
+In PowerShell, verify the ZIP against `SHA256SUMS`, then extract it:
 
 ```powershell
 Get-FileHash .\litradar_0.2.0_windows_amd64.zip -Algorithm SHA256

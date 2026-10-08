@@ -7,12 +7,13 @@ import path from "node:path";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import {
-  pendingWindowsAssets,
   releaseAssetNames,
   validateAssets,
 } from "../scripts/release-assets.mjs";
 import { resolveReleaseContext } from "../scripts/release-context.mjs";
 import { generateReleaseNotes } from "../scripts/release-notes.mjs";
+import { verifyReleaseJobs } from "../scripts/release-status.mjs";
+import { verifyReleaseEvidence } from "../scripts/release-evidence.mjs";
 import {
   detectVersion,
   detectRelease,
@@ -27,18 +28,192 @@ import {
 } from "../scripts/release-github.mjs";
 
 const RELEASE_COMMIT = "a".repeat(40);
-const WINDOWS_ASSETS = [
-  {
-    name: "litradar_0.2.0_windows_amd64.zip",
-    digest: `sha256:${"b".repeat(64)}`,
-    size: 100,
-  },
-  {
-    name: "litradar_0.2.0_windows_amd64.zip.sha256",
-    digest: `sha256:${"c".repeat(64)}`,
-    size: 80,
-  },
-];
+const RELEASE_ASSETS = [
+  "litradar_0.2.0_linux_amd64.tar.gz",
+  "litradar_0.2.0_windows_amd64.zip",
+  "SHA256SUMS",
+].map((name) => ({ name, digest: `sha256:${"b".repeat(64)}`, size: 100 }));
+
+test("complete releases require exactly Linux amd64, Windows x64 and one checksum manifest", () => {
+  assert.deepEqual(releaseAssetNames("0.2.1"), [
+    "litradar_0.2.1_linux_amd64.tar.gz",
+    "litradar_0.2.1_windows_amd64.zip",
+    "SHA256SUMS",
+  ]);
+});
+
+test("release completion rejects skipped publication even when earlier jobs succeeded", () => {
+  const jobs = {
+    context: { result: "success", outputs: { published: "false" } },
+    windows: { result: "success" },
+    linux: { result: "success" },
+    publish: { result: "success" },
+    promote: { result: "success" },
+  };
+  verifyReleaseJobs(jobs);
+  for (const name of Object.keys(jobs)) {
+    for (const result of ["skipped", "failure", "cancelled"]) {
+      assert.throws(() =>
+        verifyReleaseJobs({ ...jobs, [name]: { ...jobs[name], result } }),
+      );
+    }
+  }
+  const retry = {
+    ...jobs,
+    context: { result: "success", outputs: { published: "true" } },
+    windows: { result: "skipped" },
+    linux: { result: "skipped" },
+    publish: { result: "skipped" },
+  };
+  verifyReleaseJobs(retry);
+  assert.throws(() =>
+    verifyReleaseJobs({ ...retry, promote: { result: "skipped" } }),
+  );
+  assert.throws(() =>
+    verifyReleaseJobs({ ...retry, windows: { result: "success" } }),
+  );
+  assert.throws(() =>
+    verifyReleaseJobs({ ...jobs, context: { result: "success", outputs: {} } }),
+  );
+});
+
+test("publication accepts only the image bytes and source verified by platform smoke tests", () => {
+  const image = {
+    Id: `sha256:${"b".repeat(64)}`,
+    Os: "linux",
+    Architecture: "amd64",
+    Config: {
+      Labels: {
+        "org.opencontainers.image.revision": RELEASE_COMMIT,
+        "org.opencontainers.image.version": "0.2.1",
+      },
+    },
+  };
+  const evidence = {
+    image,
+    loaded: structuredClone(image),
+    linux: { status: "passed", imageId: image.Id },
+    windows: {
+      status: "passed",
+      sourceCommit: RELEASE_COMMIT,
+      version: "0.2.1",
+    },
+    commit: RELEASE_COMMIT,
+    version: "0.2.1",
+  };
+  verifyReleaseEvidence(evidence);
+  for (const modified of [
+    { loaded: { ...image, Id: `sha256:${"c".repeat(64)}` } },
+    { loaded: { ...image, Architecture: "arm64" } },
+    { linux: { ...evidence.linux, status: "failed" } },
+    { windows: { ...evidence.windows, status: "failed" } },
+    { windows: { ...evidence.windows, sourceCommit: "c".repeat(40) } },
+    { windows: { ...evidence.windows, version: "0.2.0" } },
+    {
+      image: {
+        ...image,
+        Config: {
+          Labels: {
+            ...image.Config.Labels,
+            "org.opencontainers.image.revision": "c".repeat(40),
+          },
+        },
+      },
+    },
+  ])
+    assert.throws(() => verifyReleaseEvidence({ ...evidence, ...modified }));
+  for (const key of ["image", "loaded"]) {
+    const modified = structuredClone(evidence);
+    modified[key].Config.Labels["org.opencontainers.image.version"] = "0.2.0";
+    assert.throws(
+      () => verifyReleaseEvidence(modified),
+      /Linux version differs/,
+    );
+  }
+});
+
+test("release context permits only the current main version and immutable same-commit retries", async () => {
+  const options = {
+    ref: "refs/heads/main",
+    head: RELEASE_COMMIT,
+    version: "0.2.1",
+  };
+  const readGit = (...args) => {
+    assert.deepEqual(args, ["show", `${RELEASE_COMMIT}:VERSION`]);
+    return "0.2.1\n";
+  };
+  const absent = async (resource) =>
+    resource.startsWith("releases?") ? [] : null;
+  assert.deepEqual(await resolveReleaseContext(options, absent, readGit), {
+    source: RELEASE_COMMIT,
+    version: "0.2.1",
+    published: false,
+    build: true,
+  });
+  const published = async (resource) => {
+    if (resource.startsWith("releases/tags/")) return { draft: false };
+    if (resource.startsWith("git/ref/")) return { ref: "refs/tags/v0.2.1" };
+    if (resource.startsWith("commits/")) return { sha: RELEASE_COMMIT };
+    throw new Error(`Unexpected resource ${resource}`);
+  };
+  assert.equal(
+    (await resolveReleaseContext(options, published, readGit)).build,
+    false,
+  );
+  await assert.rejects(
+    resolveReleaseContext(
+      { ...options, ref: "refs/heads/topic" },
+      absent,
+      readGit,
+    ),
+    /require main/,
+  );
+  await assert.rejects(
+    resolveReleaseContext(options, absent, () => "0.2.0"),
+    /match source VERSION/,
+  );
+  await assert.rejects(
+    resolveReleaseContext(
+      options,
+      async (resource) =>
+        resource.startsWith("commits/")
+          ? { sha: "c".repeat(40) }
+          : published(resource),
+      readGit,
+    ),
+    /another commit/,
+  );
+});
+
+test("final release verification rejects absent assets, prereleases and missing tags", async () => {
+  const release = {
+    draft: false,
+    prerelease: false,
+    assets: RELEASE_ASSETS,
+    target_commitish: RELEASE_COMMIT,
+  };
+  await createReleaseHarness("verify", releaseReplies(release)).main();
+  for (const invalid of [
+    { ...release, draft: true },
+    { ...release, prerelease: true },
+    { ...release, assets: RELEASE_ASSETS.slice(0, 1) },
+    { ...release, assets: [...RELEASE_ASSETS, { name: "extra.sha256" }] },
+    {
+      ...release,
+      assets: RELEASE_ASSETS.map((asset) => ({ ...asset, size: 0 })),
+    },
+  ])
+    await assert.rejects(
+      createReleaseHarness("verify", releaseReplies(invalid)).main(),
+    );
+  await assert.rejects(
+    createReleaseHarness("verify", {
+      "releases/tags/v0.2.0": [release],
+      "git/ref/tags/v0.2.0": [null],
+    }).main(),
+    /tag must match/,
+  );
+});
 
 /** Return controlled HTTP metadata without permitting any real network operation. */
 function releaseMetadataResponse(reply, events) {
@@ -57,12 +232,7 @@ function createReleaseHarness(
   mode,
   replies,
   {
-    summary = {
-      status: "passed",
-      sourceCommit: RELEASE_COMMIT,
-      version: "0.2.0",
-    },
-    assets = WINDOWS_ASSETS,
+    assets = RELEASE_ASSETS,
     failCommand = null,
     notesError = null,
     envOverrides = {},
@@ -99,13 +269,6 @@ function createReleaseHarness(
     events.push(["command", command, ...args]);
     if (failCommand && failCommand(command, args))
       throw new Error("Fixture command failed");
-  }
-  /** Admit only the supplement summary read at its exact relative path. */
-  function readSummary(filename, encoding) {
-    assert.equal(filename, "release-results/windows/smoke/summary.json");
-    assert.equal(encoding, "utf8");
-    events.push(["summary"]);
-    return JSON.stringify(summary);
   }
   /** Record exact check output instead of writing a workflow output file. */
   function appendOutput(filename, value) {
@@ -151,7 +314,7 @@ function createReleaseHarness(
     "fs",
     "path",
     "parseVersion",
-    "pendingWindowsAssets",
+    "releaseAssetNames",
     "validateAssets",
     "compareVersions",
     "generateReleaseNotes",
@@ -163,13 +326,12 @@ function createReleaseHarness(
     assert,
     executeCommand,
     {
-      readFileSync: readSummary,
       appendFileSync: appendOutput,
       writeFileSync: writeNotes,
     },
     path,
     parseVersion,
-    pendingWindowsAssets,
+    releaseAssetNames,
     validateFixtureAssets,
     compareVersions,
     generateFixtureNotes,
@@ -251,7 +413,7 @@ async function preparesAbsentRelease() {
       "release",
       "upload",
       "v0.2.0",
-      ...WINDOWS_ASSETS.map((asset) =>
+      ...RELEASE_ASSETS.map((asset) =>
         path.join("release-results/assets", asset.name),
       ),
       "--clobber",
@@ -410,119 +572,6 @@ async function publishesOnlyPreparedDraft() {
   assert.deepEqual(releaseCommands(absent), []);
 }
 
-/** Preserve original asset identity while resuming partial or already completed supplements. */
-async function resumesWindowsSupplement() {
-  const linux = { id: 8, name: "linux.tar.gz", digest: "unchanged", size: 12 };
-  const windows = WINDOWS_ASSETS.map((asset, index) => ({
-    ...asset,
-    id: 20 + index,
-  }));
-  for (const completed of [0, 1, 2]) {
-    const release = {
-      id: 7,
-      draft: false,
-      prerelease: false,
-      target_commitish: RELEASE_COMMIT,
-      assets: [linux, ...windows.slice(0, completed)],
-    };
-    const updated = { ...release, assets: [linux, ...windows] };
-    const harness = createReleaseHarness(
-      "append-windows",
-      releaseReplies(release, updated),
-    );
-    await harness.main();
-    assert.deepEqual(
-      releaseCommands(harness),
-      WINDOWS_ASSETS.slice(completed).map((asset) => [
-        "command",
-        "gh",
-        "release",
-        "upload",
-        "v0.2.0",
-        path.join("release-results/windows/assets", asset.name),
-      ]),
-    );
-    assert.equal(
-      harness.events.filter(
-        (event) =>
-          event[0] === "request" && event[1] === "releases/tags/v0.2.0",
-      ).length,
-      2,
-    );
-    assert(
-      !releaseCommands(harness).some((event) => event.includes("--clobber")),
-    );
-  }
-}
-
-/** Reject invalid supplement provenance before validating or uploading assets. */
-async function rejectsSupplementProvenance() {
-  const release = {
-    id: 7,
-    draft: false,
-    prerelease: false,
-    target_commitish: RELEASE_COMMIT,
-    assets: [],
-  };
-  for (const summary of [
-    { status: "failed", sourceCommit: RELEASE_COMMIT, version: "0.2.0" },
-    { status: "passed", sourceCommit: "b".repeat(40), version: "0.2.0" },
-    { status: "passed", sourceCommit: RELEASE_COMMIT, version: "0.1.0" },
-  ]) {
-    const harness = createReleaseHarness(
-      "append-windows",
-      releaseReplies(release),
-      { summary },
-    );
-    await assert.rejects(harness.main(), { name: "AssertionError" });
-    assert.deepEqual(releaseCommands(harness), []);
-    assert(!harness.events.some((event) => event[0] === "validate"));
-  }
-}
-
-/** Reject changed release identity, missing supplements and altered original published bytes. */
-async function rejectsSupplementMutation() {
-  const linux = { id: 8, name: "linux.tar.gz", digest: "unchanged", size: 12 };
-  const release = {
-    id: 7,
-    draft: false,
-    prerelease: false,
-    target_commitish: RELEASE_COMMIT,
-    assets: [linux],
-  };
-  const windows = WINDOWS_ASSETS.map((asset, index) => ({
-    ...asset,
-    id: 20 + index,
-  }));
-  const updated = { ...release, assets: [linux, ...windows] };
-  const cases = [
-    [{ ...updated, id: 9 }, /Release identity changed during supplement/],
-    [
-      { ...updated, assets: [linux, windows[0]] },
-      /Expected values to be strictly deep-equal/,
-    ],
-    [
-      { ...updated, assets: [{ ...linux, digest: "changed" }, ...windows] },
-      /Existing release asset changed/,
-    ],
-    [
-      { ...updated, assets: [{ ...linux, name: "changed" }, ...windows] },
-      /Existing release asset changed/,
-    ],
-    [
-      { ...updated, assets: [{ ...linux, size: 13 }, ...windows] },
-      /Existing release asset changed/,
-    ],
-  ];
-  for (const [metadata, expected] of cases) {
-    const harness = createReleaseHarness(
-      "append-windows",
-      releaseReplies(release, metadata),
-    );
-    await assert.rejects(harness.main(), expected);
-  }
-}
-
 /** Stop release actions immediately when a mocked upload or draft command fails. */
 async function stopsAfterReleaseCommandFailure() {
   const harness = createReleaseHarness(
@@ -611,18 +660,6 @@ test(
   publishesOnlyPreparedDraft,
 );
 test(
-  "Windows supplement resumes without clobbering existing assets",
-  resumesWindowsSupplement,
-);
-test(
-  "Windows supplement rejects invalid source provenance before upload",
-  rejectsSupplementProvenance,
-);
-test(
-  "Windows supplement rejects changed published identity and bytes",
-  rejectsSupplementMutation,
-);
-test(
   "release command failure stops subsequent actions",
   stopsAfterReleaseCommandFailure,
 );
@@ -704,111 +741,15 @@ test("a release requires verified Linux and Windows archives before publication"
     return `${createHash("sha256").update(bytes).digest("hex")}  ${name}\n`;
   });
   const checksum = path.join(directory, "SHA256SUMS");
-  fs.writeFileSync(checksum, lines.slice(0, 2).join(""));
+  fs.writeFileSync(checksum, lines.slice(0, 1).join(""));
   assert.throws(() => validateAssets(directory, "0.2.0"), /expected platforms/);
   fs.writeFileSync(checksum, lines.join(""));
-  assert.equal(validateAssets(directory, "0.2.0").length, 4);
+  assert.equal(validateAssets(directory, "0.2.0").length, 3);
   fs.appendFileSync(checksum, lines[0]);
   assert.throws(() => validateAssets(directory, "0.2.0"), /Duplicate/);
   fs.writeFileSync(checksum, lines.join(""));
-  fs.appendFileSync(path.join(directory, archives[2]), "changed bytes");
+  fs.appendFileSync(path.join(directory, archives[1]), "changed bytes");
   assert.throws(() => validateAssets(directory, "0.2.0"), /Checksum differs/);
-});
-
-test("Windows supplementation resumes without overwriting published bytes", () => {
-  const assets = releaseAssetNames("0.2.0", true).map((name) => ({
-    name,
-    digest: "sha256:" + "a".repeat(64),
-    size: 42,
-  }));
-  const release = {
-    draft: false,
-    prerelease: false,
-    assets: [{ name: "SHA256SUMS", digest: "unchanged" }],
-  };
-  assert.deepEqual(pendingWindowsAssets(release, assets), assets);
-  release.assets.push({ ...assets[0] });
-  assert.deepEqual(pendingWindowsAssets(release, assets), [assets[1]]);
-  release.assets.push({ ...assets[1] });
-  assert.deepEqual(pendingWindowsAssets(release, assets), []);
-  assert.throws(
-    () => pendingWindowsAssets({ ...release, draft: true }, assets),
-    /public stable/,
-  );
-  assert.throws(
-    () => pendingWindowsAssets({ ...release, prerelease: true }, assets),
-    /public stable/,
-  );
-  release.assets[1].digest = "sha256:" + "b".repeat(64);
-  assert.throws(
-    () => pendingWindowsAssets(release, assets),
-    /Published asset differs/,
-  );
-});
-
-test("Windows recovery uses original tagged source and rejects unsafe release operations", async () => {
-  const source = "a".repeat(40);
-  const tooling = "b".repeat(40);
-  const options = {
-    ref: "refs/heads/main",
-    operation: "windows",
-    head: tooling,
-    version: "0.2.0",
-  };
-  const release = { draft: false, prerelease: false, tag_name: "v0.2.0" };
-  const request = async (resource) => {
-    if (resource.startsWith("releases/tags/")) return release;
-    if (resource.startsWith("git/ref/")) return { object: { sha: source } };
-    if (resource.startsWith("commits/")) return { sha: source };
-    throw new Error(`Unexpected resource ${resource}`);
-  };
-  const calls = [];
-  const readGit = (...args) => {
-    calls.push(args);
-    return args[0] === "show" ? "0.2.0\n" : "";
-  };
-  assert.deepEqual(await resolveReleaseContext(options, request, readGit), {
-    operation: "windows",
-    source,
-    published: true,
-    build: true,
-    version: "0.2.0",
-  });
-  assert.deepEqual(calls, [
-    ["merge-base", "--is-ancestor", source, tooling],
-    ["show", `${source}:VERSION`],
-  ]);
-  await assert.rejects(
-    resolveReleaseContext(
-      { ...options, operation: "release" },
-      request,
-      readGit,
-    ),
-    /another commit/,
-  );
-  await assert.rejects(
-    resolveReleaseContext(
-      { ...options, ref: "refs/heads/feature" },
-      request,
-      readGit,
-    ),
-    /require main/,
-  );
-  await assert.rejects(
-    resolveReleaseContext({ ...options, version: "0.3.0" }, request, readGit),
-    /match source VERSION/,
-  );
-  await assert.rejects(
-    resolveReleaseContext(options, request, () => {
-      throw new Error("Not an ancestor");
-    }),
-    /Not an ancestor/,
-  );
-  release.draft = true;
-  await assert.rejects(
-    resolveReleaseContext(options, request, readGit),
-    /existing public tag/,
-  );
 });
 
 test("an older release finishing later cannot move latest backwards", () => {

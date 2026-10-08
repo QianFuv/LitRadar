@@ -7,7 +7,7 @@ import path from "node:path";
 import { parseVersion } from "./release-version.mjs";
 
 const [image, architecture, inputVersion] = process.argv.slice(2);
-assert(image && ["amd64", "arm64"].includes(architecture));
+assert(image && architecture === "amd64");
 const version = parseVersion(inputVersion);
 const name = `litradar_${version}_linux_${architecture}`;
 const parent = path.resolve("release-results/packages");

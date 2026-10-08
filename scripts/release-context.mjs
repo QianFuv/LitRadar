@@ -1,4 +1,4 @@
-/** Resolve release operation and source identity independently of the packaging tool commit. */
+/** Resolve the immutable source for a complete release or same-commit retry. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -15,7 +15,7 @@ function git(...args) {
   return execFileSync("git", args, { encoding: "utf8" });
 }
 
-/** Resolve an explicit main operation without letting new tooling retarget a public version. */
+/** Resolve the main commit without allowing an existing version to change ownership. */
 export async function resolveReleaseContext(
   options,
   request = github,
@@ -26,30 +26,17 @@ export async function resolveReleaseContext(
     "refs/heads/main",
     "Release operations require main",
   );
-  const operation = options.operation || "release";
-  assert(["release", "windows", "promote"].includes(operation));
   const outputs = {
-    operation,
     source: options.head,
     published: false,
     build: false,
   };
   assert.match(outputs.source, /^[a-f0-9]{40}$/);
-  if (operation === "promote") return outputs;
   const version = parseVersion(options.version);
   const tag = `v${version}`;
   const release = await findRelease(tag, request);
   const reference = await request(`git/ref/tags/${tag}`);
   const tagged = reference ? await request(`commits/${tag}`) : null;
-  if (operation === "windows") {
-    assert(
-      release && !release.draft && !release.prerelease && tagged,
-      "Windows supplement requires an existing public tag",
-    );
-    outputs.source = tagged.sha;
-    assert.match(outputs.source, /^[a-f0-9]{40}$/);
-    readGit("merge-base", "--is-ancestor", outputs.source, options.head);
-  }
   const checkedVersion = readGit("show", `${outputs.source}:VERSION`);
   assert.equal(
     parseVersion(checkedVersion),
@@ -61,7 +48,7 @@ export async function resolveReleaseContext(
     tagged?.sha,
     outputs.source,
   );
-  outputs.build = operation === "windows" || !outputs.published;
+  outputs.build = !outputs.published;
   outputs.version = version;
   return outputs;
 }
@@ -72,7 +59,6 @@ if (
 ) {
   const outputs = await resolveReleaseContext({
     ref: process.env.GITHUB_REF,
-    operation: process.env.RELEASE_OPERATION,
     head: process.env.GITHUB_SHA,
     version: process.env.RELEASE_VERSION,
   });

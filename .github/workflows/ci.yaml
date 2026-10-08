@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Retry the current VERSION on main
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -25,11 +31,12 @@ jobs:
           node-version: 24
       - name: Verify release contracts
         run: node --test tests/release.test.mjs
-      - name: Detect version increase on main
+      - name: Resolve version increase or explicit retry
         id: version
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         env:
           BEFORE_SHA: ${{ github.event.before }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: node scripts/release-version.mjs
 
   backend:

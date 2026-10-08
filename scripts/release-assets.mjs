@@ -12,12 +12,7 @@ export function releaseAssetNames(inputVersion, windowsOnly = false) {
   const windows = `litradar_${version}_windows_amd64.zip`;
   return windowsOnly
     ? [windows, `${windows}.sha256`]
-    : [
-        `litradar_${version}_linux_amd64.tar.gz`,
-        `litradar_${version}_linux_arm64.tar.gz`,
-        windows,
-        "SHA256SUMS",
-      ];
+    : [`litradar_${version}_linux_amd64.tar.gz`, windows, "SHA256SUMS"];
 }
 
 /** Require exact checksum membership and verify every archive before any external write. */
@@ -55,32 +50,7 @@ export function validateAssets(directory, version, windowsOnly = false) {
   });
 }
 
-/** Preserve published bytes while allowing a partially completed Windows supplement to resume. */
-export function pendingWindowsAssets(release, assets) {
-  assert(
-    release && !release.draft && !release.prerelease,
-    "Windows supplement requires a public stable release",
-  );
-  return assets.filter((asset) => {
-    const existing = release.assets.find(
-      (candidate) => candidate.name === asset.name,
-    );
-    if (!existing) return true;
-    assert.equal(
-      existing.digest,
-      asset.digest,
-      `Published asset differs: ${asset.name}`,
-    );
-    assert.equal(
-      existing.size,
-      asset.size,
-      `Published asset size differs: ${asset.name}`,
-    );
-    return false;
-  });
-}
-
-/** Merge a verified Windows artifact into the two locally tested Linux archives. */
+/** Merge a verified Windows artifact into the tested Linux archive. */
 function mergeAssets(version) {
   const windowsDirectory = "release-results/windows/assets";
   const assets = validateAssets(windowsDirectory, version, true);
