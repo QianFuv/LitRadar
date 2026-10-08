@@ -143,19 +143,32 @@ func selectFullTextBody(original domain.Source, document Document, parsed *goque
 	isFamily := func(host, path, id string) bool {
 		return location != nil && location.Hostname() == host && strings.HasPrefix(location.Pathname(), path) && slices.Contains(original.CatalogIds, id)
 	}
-	body := ""
-	var err error
 	switch {
 	case collection.Length() > 0:
-		body, err = collectionBody(parsed, collection, original.Title)
+		return collectionBody(parsed, collection, original.Title)
 	case springerUpdateBody(original, document, parsed) != nil:
-		body, err = springerFullTextBody(original, document, parsed)
+		return springerFullTextBody(original, document, parsed)
 	case isFamily("www.comsoc.org", "/publications/journals/ieee-jsac/cfp/", "issn-0733-8716") || isFamily("www.comsoc.org", "/publications/journals/ieee-tnsm/cfp/", "issn-1932-4537"):
-		body, err = comsocBody(parsed, original.Title)
+		return comsocBody(parsed, original.Title)
+	case isFamily("journal.psych.ac.cn", "/xlxb/CN/news/", "issn-0439-755x"):
+		return selectedBody(findTitledContainer(parsed, ".content_nr", ".item_biaoti", original.Title), ".J_WenZhang")
+	case isFamily("www.resci.cn", "/CN/news/", "issn-1007-7588"):
+		return resciBody(parsed, original.Title)
+	case isFamily("chinaifs.org.cn", "/html/web/tongzhigonggao/", "issn-1006-1029"):
+		return chinaifsBody(parsed, original.Title)
+	case isFamily("www.jryj.org.cn", "/CN/news/", "issn-1002-7246"):
+		return jryjBody(parsed, original.Title)
+	case isFamily("kxxyj.magtechjournal.com", "/kxxyj/CN/news/", "issn-1003-2053"):
+		return magtechBody(parsed, original.Title)
+	case isFamily("www.poms.org", "/node/", "issn-1059-1478"):
+		return selectedBody(findTitledContainer(parsed, "article.node--type-call-for-papers.node--view-mode-full", "h1.node__title", original.Title), ".field-name-field-submission-guidelines-summ")
+	case isFamily("www.grss-ieee.org", "/publications/author-resources/grsl-special-streams/", "issn-1545-598x"):
+		return grslBody(parsed, original.Title)
+	case document.Format == "pdf_text":
+		return pdfBody(original, document, isFamily)
 	default:
-		body, err = publisherFullTextBody(original, document, parsed, isFamily)
+		return genericFullTextBody(parsed, original.Title)
 	}
-	return body, err
 }
 
 // collectionBody selects the original publisher body after its title admission checks.
@@ -342,31 +355,4 @@ func pomsManufacturingBody(body string) (string, error) {
 		return "", ErrUnrecognized
 	}
 	return strings.TrimSpace(body[scope[0]:dates[0]]) + "\n" + strings.TrimSpace(body[requirements[0]:editors[0]]), nil
-}
-
-// publisherFullTextBody selects remaining publisher families before PDF and generic body extraction.
-func publisherFullTextBody(original domain.Source, document Document, parsed *goquery.Document, isFamily func(string, string, string) bool) (string, error) {
-	body := ""
-	var err error
-	switch {
-	case isFamily("journal.psych.ac.cn", "/xlxb/CN/news/", "issn-0439-755x"):
-		body, err = selectedBody(findTitledContainer(parsed, ".content_nr", ".item_biaoti", original.Title), ".J_WenZhang")
-	case isFamily("www.resci.cn", "/CN/news/", "issn-1007-7588"):
-		body, err = resciBody(parsed, original.Title)
-	case isFamily("chinaifs.org.cn", "/html/web/tongzhigonggao/", "issn-1006-1029"):
-		body, err = chinaifsBody(parsed, original.Title)
-	case isFamily("www.jryj.org.cn", "/CN/news/", "issn-1002-7246"):
-		body, err = jryjBody(parsed, original.Title)
-	case isFamily("kxxyj.magtechjournal.com", "/kxxyj/CN/news/", "issn-1003-2053"):
-		body, err = magtechBody(parsed, original.Title)
-	case isFamily("www.poms.org", "/node/", "issn-1059-1478"):
-		body, err = selectedBody(findTitledContainer(parsed, "article.node--type-call-for-papers.node--view-mode-full", "h1.node__title", original.Title), ".field-name-field-submission-guidelines-summ")
-	case isFamily("www.grss-ieee.org", "/publications/author-resources/grsl-special-streams/", "issn-1545-598x"):
-		body, err = grslBody(parsed, original.Title)
-	case document.Format == "pdf_text":
-		body, err = pdfBody(original, document, isFamily)
-	default:
-		body, err = genericFullTextBody(parsed, original.Title)
-	}
-	return body, err
 }
