@@ -19,9 +19,9 @@ WORKDIR /app
 COPY --from=frontend-deps /app/node_modules node_modules/
 COPY app/ ./
 COPY scripts/generate-csp.mjs /scripts/generate-csp.mjs
-COPY tests/data /tests/data
 
-RUN corepack enable pnpm && pnpm build
+RUN --mount=type=cache,id=litradar-next-build,target=/app/.next/cache \
+    corepack enable pnpm && pnpm build
 RUN apk add --no-cache gzip \
     && find out -type f \( \
         -name '*.css' \

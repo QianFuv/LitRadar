@@ -54,7 +54,10 @@ export default function buildNextConfig(phase: string): NextConfig {
           rewrites: DEVELOPMENT_REWRITES,
           skipTrailingSlashRedirect: true,
         }
-      : { output: 'export' }),
+      : {
+          output: 'export',
+          typescript: { tsconfigPath: 'tsconfig.build.json' },
+        }),
     allowedDevOrigins: ['127.0.0.1'],
     images: {
       unoptimized: true,

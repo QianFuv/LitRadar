@@ -12,6 +12,10 @@ app/coverage/
 app/test-results/
 app/playwright-report/
 app/*.tsbuildinfo
+app/tests/
+app/playwright.config.tsx
+app/playwright.full-stack.config.tsx
+app/vitest.config.tsx
 target/
 output/
 data/

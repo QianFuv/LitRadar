@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": ".next/cache/tsconfig.build.tsbuildinfo"
+  },
+  "exclude": [
+    "node_modules",
+    "tests",
+    ".next/dev",
+    "playwright.config.tsx",
+    "playwright.full-stack.config.tsx",
+    "vitest.config.tsx"
+  ]
+}
