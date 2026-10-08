@@ -399,26 +399,15 @@ function useSidebarViewState({ className }: { className?: string }) {
   return {
     className,
     user,
-    router,
-    pathname,
-    selectedDb,
-    setQ,
     areas,
-    setAreas,
     journalIds,
-    setJournalIds,
-    monthRange,
-    setMonthRange,
     ratings,
-    setRatings,
     databases,
     loadingDatabases,
     activeDb,
     areaOptions,
     loadingAreas,
-    journalOptions,
     loadingJournals,
-    yearData,
     loadingYears,
     ratingOptions,
     isLoadingRatings,
@@ -429,9 +418,6 @@ function useSidebarViewState({ className }: { className?: string }) {
     handleRatingChange,
     handleClearTimeFilters,
     yearBounds,
-    defaultStartMonth,
-    defaultEndMonth,
-    selectedMonthRange,
     selectedStartMonth,
     selectedEndMonth,
     yearOptions,
@@ -446,8 +432,6 @@ function useSidebarViewState({ className }: { className?: string }) {
     journalSearch,
     setJournalSearch,
     filteredJournalOptions,
-    journalLabelMap,
-    selectedJournalLabels,
     journalSummary,
   };
 }
@@ -520,7 +504,9 @@ function renderSidebarRatings(state: SidebarViewState) {
 }
 
 /** Retain the original area controls, row identities and event coercion. */
-function renderSidebarAreas(state: SidebarViewState) {
+function renderSidebarAreas(
+  state: Pick<SidebarViewState, 'areas' | 'areaOptions' | 'loadingAreas' | 'handleAreaChange'>,
+) {
   const { areas, areaOptions, loadingAreas, handleAreaChange } = state;
 
   return (
@@ -755,7 +741,12 @@ function renderSidebarTime(state: SidebarViewState) {
 }
 
 /** Retain database selection and metadata loading presentation. */
-function renderSidebarDatabase(state: SidebarViewState) {
+function renderSidebarDatabase(
+  state: Pick<
+    SidebarViewState,
+    'databases' | 'loadingDatabases' | 'activeDb' | 'handleDatabaseChange'
+  >,
+) {
   const { databases, loadingDatabases, activeDb, handleDatabaseChange } = state;
 
   return (
