@@ -167,7 +167,6 @@ function useAccessTokenViewState({
   return {
     copyFeedback,
     handleCopy,
-    queryClient,
     tokenName,
     setTokenName,
     tokenTtl,
@@ -191,7 +190,10 @@ function useAccessTokenViewState({
 type AccessTokenViewState = ReturnType<typeof useAccessTokenViewState>;
 
 /** Retain the one-time plaintext token and scoped copy feedback. */
-function renderCreatedAccessToken(state: AccessTokenViewState, newTokenValue: string) {
+function renderCreatedAccessToken(
+  state: Pick<AccessTokenViewState, 'copyFeedback' | 'handleCopy' | 'feedbackTransition'>,
+  newTokenValue: string,
+) {
   const { copyFeedback, handleCopy, feedbackTransition } = state;
 
   return (
@@ -330,7 +332,12 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
 }
 
 /** Retain empty/list branches and directly keyed revocation rows. */
-function renderAccessTokenList(state: AccessTokenViewState) {
+function renderAccessTokenList(
+  state: Pick<
+    AccessTokenViewState,
+    'setTokenToRevoke' | 'feedbackTransition' | 'rowTransition' | 'tokens' | 'revokeMut'
+  >,
+) {
   const { setTokenToRevoke, feedbackTransition, rowTransition, tokens, revokeMut } = state;
 
   return (
@@ -387,7 +394,9 @@ function renderAccessTokenList(state: AccessTokenViewState) {
 }
 
 /** Retain confirmation target identity and pending-dismissal safeguards. */
-function renderAccessTokenRevocation(state: AccessTokenViewState) {
+function renderAccessTokenRevocation(
+  state: Pick<AccessTokenViewState, 'tokenToRevoke' | 'setTokenToRevoke' | 'revokeMut'>,
+) {
   const { tokenToRevoke, setTokenToRevoke, revokeMut } = state;
 
   return (

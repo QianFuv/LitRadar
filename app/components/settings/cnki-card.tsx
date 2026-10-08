@@ -313,20 +313,15 @@ function useCnkiViewState({
   });
 
   return {
-    userId,
     copyFeedback,
     handleCopy,
-    queryClient,
     cnkiLogin,
-    setCnkiLogin,
     cnkiMessage,
     setCnkiMessage,
     isClearConfirmOpen,
     setIsClearConfirmOpen,
     feedbackTransition,
     panelTransition,
-    cnkiSessionQueryKey,
-    currentCnkiSessionQueryKey,
     cnkiSession,
     isCnkiSessionLoading,
     isCnkiSessionError,
@@ -340,7 +335,9 @@ function useCnkiViewState({
 type CnkiViewState = ReturnType<typeof useCnkiViewState>;
 
 /** Retain the loading label and direct keyed status transition. */
-function renderCnkiStatus(state: CnkiViewState) {
+function renderCnkiStatus(
+  state: Pick<CnkiViewState, 'feedbackTransition' | 'cnkiSession' | 'isCnkiSessionLoading'>,
+) {
   const { feedbackTransition, cnkiSession, isCnkiSessionLoading } = state;
 
   return (
@@ -366,7 +363,7 @@ function renderCnkiStatus(state: CnkiViewState) {
 }
 
 /** Retain safe cookie-name metadata and optional timestamps. */
-function renderCnkiSessionMetadata(state: CnkiViewState) {
+function renderCnkiSessionMetadata(state: Pick<CnkiViewState, 'cnkiSession'>) {
   const { cnkiSession } = state;
 
   return (
@@ -543,7 +540,12 @@ function renderCnkiSessionActions(state: CnkiViewState) {
 }
 
 /** Retain pending clear ownership and operation-specific feedback. */
-function renderCnkiClearConfirmation(state: CnkiViewState) {
+function renderCnkiClearConfirmation(
+  state: Pick<
+    CnkiViewState,
+    'cnkiMessage' | 'isClearConfirmOpen' | 'setIsClearConfirmOpen' | 'clearCnkiSessionMut'
+  >,
+) {
   const { cnkiMessage, isClearConfirmOpen, setIsClearConfirmOpen, clearCnkiSessionMut } = state;
 
   return (

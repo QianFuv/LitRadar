@@ -141,7 +141,6 @@ function useInviteViewState({
     isRevokeOpen,
     setIsRevokeOpen,
     inviteCodeData,
-    refetchInviteCode,
     generateInviteMut,
     rotateInviteMut,
     revokeInviteMut,
@@ -152,7 +151,7 @@ function useInviteViewState({
 type InviteViewState = ReturnType<typeof useInviteViewState>;
 
 /** Retain invite-only copy feedback and accessible tone. */
-function renderInviteCopyFeedback(state: InviteViewState) {
+function renderInviteCopyFeedback(state: Pick<InviteViewState, 'copyFeedback'>) {
   const { copyFeedback } = state;
 
   return (
@@ -248,7 +247,9 @@ function renderCurrentInviteCode(
 }
 
 /** Retain the explicit revoke confirmation and pending dismissal guard. */
-function renderInviteRevokeConfirmation(state: InviteViewState) {
+function renderInviteRevokeConfirmation(
+  state: Pick<InviteViewState, 'isRevokeOpen' | 'setIsRevokeOpen' | 'revokeInviteMut'>,
+) {
   const { isRevokeOpen, setIsRevokeOpen, revokeInviteMut } = state;
 
   return (
