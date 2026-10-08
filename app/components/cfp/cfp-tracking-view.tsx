@@ -165,10 +165,6 @@ function useCfpViewState() {
   }
 
   return {
-    user,
-    selectedDatabase,
-    setSelectedDatabase,
-    selectedCatalogId,
     setSelectedCatalogId,
     journalSearch,
     setJournalSearch,
@@ -177,16 +173,9 @@ function useCfpViewState() {
     databasesQuery,
     databases,
     database,
-    queryClient,
-    cursorRecovery,
-    journalsQuery,
     journals,
-    journalGroups,
     filteredGroups,
-    selectedCatalog,
-    noticeQueryKey,
     noticesQuery,
-    cursorRecoveryKey,
     selected,
     visibleNotices,
     currentCount,
@@ -200,7 +189,7 @@ type CfpViewState = ReturnType<typeof useCfpViewState>;
 
 /** Retain notice loading, records, verified source and empty presentation priority. */
 function renderCfpNoticeContent(
-  state: CfpViewState,
+  state: Pick<CfpViewState, 'noticesQuery' | 'visibleNotices'>,
   selected: NonNullable<CfpViewState['selected']>,
 ) {
   const { noticesQuery, visibleNotices } = state;
@@ -238,7 +227,13 @@ function renderCfpNoticeContent(
 }
 
 /** Retain historical filtering, pagination and refresh-warning placement. */
-function renderCfpNotices(state: CfpViewState, selected: NonNullable<CfpViewState['selected']>) {
+function renderCfpNotices(
+  state: Pick<
+    CfpViewState,
+    'shouldShowClosed' | 'setShouldShowClosed' | 'noticesQuery' | 'visibleNotices'
+  >,
+  selected: NonNullable<CfpViewState['selected']>,
+) {
   const { shouldShowClosed, setShouldShowClosed, noticesQuery } = state;
 
   return (
@@ -278,7 +273,10 @@ function renderCfpNotices(state: CfpViewState, selected: NonNullable<CfpViewStat
 
 /** Retain notice-error precedence over unadapted and adapted journals. */
 function renderCfpNoticeState(
-  state: CfpViewState,
+  state: Pick<
+    CfpViewState,
+    'shouldShowClosed' | 'setShouldShowClosed' | 'noticesQuery' | 'visibleNotices'
+  >,
   selected: NonNullable<CfpViewState['selected']>,
 ) {
   const { noticesQuery } = state;
@@ -301,7 +299,7 @@ function renderCfpNoticeState(
 
 /** Retain selected server metadata and its total count. */
 function renderCfpJournalHeader(
-  state: CfpViewState,
+  state: Pick<CfpViewState, 'database' | 'currentCount'>,
   selected: NonNullable<CfpViewState['selected']>,
 ) {
   const { database, currentCount } = state;
