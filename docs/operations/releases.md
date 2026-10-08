@@ -26,6 +26,16 @@ the multi-platform Linux image, then publishes the draft. The release contains:
 - `litradar_<version>_windows_amd64.zip`
 - `SHA256SUMS`
 
+`SHA256SUMS` covers all three archives. Normal releases do not publish a separate
+Windows checksum file; that sidecar is only used by the legacy Windows supplement.
+
+Release notes list every commit since the highest older published stable version
+reachable from the release commit. Conventional Commit prefixes group entries by
+type, with unrecognized subjects and merge commits retained under Other commits.
+Each entry links to its full commit, and the notes include a full comparison link.
+The first stable release lists the entire history. Draft retries regenerate the
+notes; published release notes remain unchanged.
+
 ## Actions entrypoints
 
 | Workflow                                      | Trigger                          | Responsibility                                                                                               |

@@ -12,6 +12,7 @@ import {
   validateAssets,
 } from "../scripts/release-assets.mjs";
 import { resolveReleaseContext } from "../scripts/release-context.mjs";
+import { generateReleaseNotes } from "../scripts/release-notes.mjs";
 import {
   detectVersion,
   detectRelease,
@@ -63,6 +64,7 @@ function createReleaseHarness(
     },
     assets = WINDOWS_ASSETS,
     failCommand = null,
+    notesError = null,
     envOverrides = {},
   } = {},
 ) {
@@ -110,6 +112,21 @@ function createReleaseHarness(
     assert.equal(filename, "fixture-output");
     events.push(["output", value]);
   }
+  /** Capture the generated body before any draft creation or update. */
+  function writeNotes(filename, value) {
+    assert.equal(filename, "release-results/notes.md");
+    assert.equal(value, "fixture release notes\n");
+    events.push(["notes", value]);
+  }
+  /** Isolate history generation while checking immutable source inputs. */
+  async function generateFixtureNotes(options, request) {
+    assert.equal(options.version, "0.2.0");
+    assert.equal(options.commit, RELEASE_COMMIT);
+    assert.equal(options.repository, "Fixture/Repository");
+    assert.equal(typeof request, "function");
+    if (notesError) throw new Error(notesError);
+    return "fixture release notes\n";
+  }
   /** Observe validation before release commands while supplying fixture-verified asset metadata. */
   function validateFixtureAssets(directory, version, windowsOnly = false) {
     assert.equal(version, "0.2.0");
@@ -137,6 +154,7 @@ function createReleaseHarness(
     "pendingWindowsAssets",
     "validateAssets",
     "compareVersions",
+    "generateReleaseNotes",
     "process",
     "fetch",
     source.slice(0, entry) + "\nreturn {main, github};",
@@ -144,12 +162,17 @@ function createReleaseHarness(
   const functions = load(
     assert,
     executeCommand,
-    { readFileSync: readSummary, appendFileSync: appendOutput },
+    {
+      readFileSync: readSummary,
+      appendFileSync: appendOutput,
+      writeFileSync: writeNotes,
+    },
     path,
     parseVersion,
     pendingWindowsAssets,
     validateFixtureAssets,
     compareVersions,
+    generateFixtureNotes,
     { argv: ["node", "fixture", mode], env: environment },
     fetchMetadata,
   );
@@ -219,7 +242,8 @@ async function preparesAbsentRelease() {
       "--title",
       "LitRadar v0.2.0",
       "--draft",
-      "--generate-notes",
+      "--notes-file",
+      "release-results/notes.md",
     ],
     [
       "command",
@@ -238,8 +262,126 @@ async function preparesAbsentRelease() {
   );
   const command = harness.events.findIndex((event) => event[0] === "command");
   assert(validation >= 0 && validation < command);
+  assert(harness.events.findIndex((event) => event[0] === "notes") < command);
   assert(!harness.events.some((event) => event[1] === "commits/v0.2.0"));
 }
+
+test("draft retries refresh categorized notes and note failures prevent publication writes", async () => {
+  const draft = { id: 7, draft: true, target_commitish: RELEASE_COMMIT };
+  const harness = createReleaseHarness("prepare", releaseReplies(draft));
+  await harness.main();
+  assert.deepEqual(releaseCommands(harness)[0], [
+    "command",
+    "gh",
+    "release",
+    "edit",
+    "v0.2.0",
+    "--notes-file",
+    "release-results/notes.md",
+  ]);
+  const failure = createReleaseHarness("prepare", releaseReplies(draft), {
+    notesError: "History unavailable",
+  });
+  await assert.rejects(failure.main(), /History unavailable/);
+  assert.deepEqual(releaseCommands(failure), []);
+});
+
+test("release notes include every commit once, classify types and exclude unpublished baselines", async (context) => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "litradar-notes-test-"),
+  );
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const git = (...args) =>
+    execFileSync("git", args, {
+      cwd: directory,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  git("init");
+  /** Create an isolated history fixture without changing workspace Git state. */
+  function commit(subject) {
+    git(
+      "-c",
+      "user.name=Release Test",
+      "-c",
+      "user.email=release-test@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-m",
+      subject,
+    );
+    return git("rev-parse", "HEAD");
+  }
+  const baseline = commit("chore: initial version");
+  git("tag", "v0.1.0");
+  git("tag", "v0.1.1");
+  const entries = [
+    ["feat(api)!: change endpoint", "Features"],
+    ["fix: escape <script>, [link](url), and ~~literal~~", "Bug fixes"],
+    ["perf(search): reduce allocations", "Performance"],
+    ["refactor(api): simplify dispatch", "Refactoring"],
+    ["test: cover retries", "Tests"],
+    ["build: reuse cache", "Build"],
+    ["ci: publish artifacts", "CI"],
+    ["docs: explain releases", "Documentation"],
+    ["style: format scripts", "Style"],
+    ["chore: bump version", "Maintenance"],
+    ["revert: undo change", "Reverts"],
+    ["Merge branch 'topic'", "Other commits"],
+    ["custom(scope): keep unrecognized commits", "Other commits"],
+  ];
+  const hashes = entries.map(([subject]) => commit(subject));
+  git("tag", "v0.1.2");
+  git("tag", "v0.1.3");
+  git("tag", "v0.2.0");
+  const options = {
+    version: "0.2.0",
+    commit: hashes.at(-1),
+    repository: "Fixture/Repository",
+    cwd: directory,
+  };
+  const requests = [];
+  const notes = await generateReleaseNotes(options, async (resource) => {
+    requests.push(resource);
+    if (resource.endsWith("page=1"))
+      return Array.from({ length: 100 }, () => ({
+        tag_name: "v0.1.2",
+        draft: true,
+      }));
+    return [
+      { tag_name: "v0.1.0" },
+      { tag_name: "v0.1.1" },
+      { tag_name: "v0.1.3", prerelease: true },
+      { tag_name: "v0.2.0" },
+      { tag_name: "v0.1.9" },
+    ];
+  });
+  assert.equal(requests.length, 2);
+  assert(notes.includes("Changes since v0.1.1."));
+  assert(notes.includes(`## Commits (${entries.length})`));
+  assert(!notes.includes(baseline));
+  for (let index = 0; index < entries.length; index++) {
+    const section = notes
+      .split(`### ${entries[index][1]} (`)[1]
+      ?.split("\n### ")[0];
+    assert(section?.includes(`/commit/${hashes[index]})`));
+    assert.equal(notes.split(`/commit/${hashes[index]})`).length, 2);
+  }
+  assert(notes.includes("&lt;script&gt;"));
+  assert(notes.includes("\\[link\\]\\(url\\)"));
+  assert(notes.includes("\\~\\~literal\\~\\~"));
+  assert(notes.includes("/compare/v0.1.1...v0.2.0"));
+  const initial = await generateReleaseNotes(options, async () => []);
+  assert(initial.includes(`## Commits (${entries.length + 1})`));
+  assert(initial.includes(`/commit/${baseline})`));
+  assert(initial.includes("/commits/v0.2.0"));
+  await assert.rejects(
+    generateReleaseNotes(options, async () => null),
+    /Cannot list releases/,
+  );
+});
 
 /** Verify publication requires a draft and does not change the latest pointer. */
 async function publishesOnlyPreparedDraft() {

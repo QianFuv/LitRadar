@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { compareVersions, parseVersion } from "./release-version.mjs";
 import { pendingWindowsAssets, validateAssets } from "./release-assets.mjs";
+import { generateReleaseNotes } from "./release-notes.mjs";
 
 /** Select the highest published stable version, independent of completion order. */
 export function latestRelease(releases) {
@@ -145,9 +146,20 @@ async function appendWindowsRelease(
 }
 
 /** Validate all release assets before creating or refreshing the matching draft. */
-function prepareRelease(release, tag, version, commit, gh) {
+async function prepareRelease(release, tag, version, commit, gh) {
   const directory = "release-results/assets";
   const files = validateAssets(directory, version).map((asset) => asset.name);
+  const notesFile = "release-results/notes.md";
+  const notes = await generateReleaseNotes(
+    {
+      version,
+      commit,
+      repository: process.env.GITHUB_REPOSITORY,
+      serverUrl: process.env.GITHUB_SERVER_URL,
+    },
+    github,
+  );
+  fs.writeFileSync(notesFile, notes);
   if (!release) {
     gh(
       "release",
@@ -158,8 +170,11 @@ function prepareRelease(release, tag, version, commit, gh) {
       "--title",
       `LitRadar ${tag}`,
       "--draft",
-      "--generate-notes",
+      "--notes-file",
+      notesFile,
     );
+  } else {
+    gh("release", "edit", tag, "--notes-file", notesFile);
   }
   gh(
     "release",
@@ -195,7 +210,7 @@ async function main() {
   }
   if (published) return;
   if (mode === "prepare") {
-    prepareRelease(release, tag, version, commit, gh);
+    await prepareRelease(release, tag, version, commit, gh);
   } else {
     assert(release?.draft, "Prepare the release before publishing");
     gh("release", "edit", tag, "--draft=false", "--latest=false");
