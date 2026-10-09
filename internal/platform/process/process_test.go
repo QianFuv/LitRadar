@@ -101,6 +101,7 @@ func TestInheritedStdoutReachesParentAndIsNotRetained(t *testing.T) {
 	}
 }
 
+// TestCancellationAfterLeaderExitStillOwnsDescendants checks cancellation retains tree ownership after leader exit.
 func TestCancellationAfterLeaderExitStillOwnsDescendants(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -126,12 +127,76 @@ func TestCancellationAfterLeaderExitStillOwnsDescendants(t *testing.T) {
 		t.Fatal("cancel did not close tree ownership")
 	}
 	if err := child.Close(); err != nil {
+		var failure *SupervisorError
+		if errors.As(err, &failure) {
+			t.Fatalf("cleanup failed: %v (cause: %v)", err, failure.cause)
+		}
 		t.Fatal(err)
 	}
 	connection, err := net.DialTimeout("tcp", grandchild.Address, time.Second)
 	if err == nil {
 		connection.Close()
 		t.Fatal("Close returned before descendant stopped")
+	}
+}
+
+// TestCompletedDrainWinsExpiredDeadline prevents completed cleanup from failing a deadline tie.
+func TestCompletedDrainWinsExpiredDeadline(t *testing.T) {
+	child := &Child{drained: make(chan struct{})}
+	close(child.drained)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	for range 100 {
+		if err := child.waitForDrain(ctx); err != nil {
+			t.Fatalf("completed output drain reported a timeout: %v", err)
+		}
+	}
+}
+
+// TestPendingDrainClosesReadersAtDeadline preserves bounded cleanup when output is still open.
+func TestPendingDrainClosesReadersAtDeadline(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { reader.Close(); writer.Close() })
+	child := &Child{readers: []*os.File{reader}, drained: make(chan struct{})}
+	t.Cleanup(func() {
+		select {
+		case <-child.drained:
+		default:
+			close(child.drained)
+		}
+	})
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- child.waitForDrain(ctx) }()
+	cleanupCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	for {
+		if _, err := reader.Write(nil); errors.Is(err, os.ErrClosed) {
+			break
+		}
+		select {
+		case <-cleanupCtx.Done():
+			t.Fatal("cleanup did not close the pending output reader")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	select {
+	case <-result:
+		t.Fatal("cleanup returned before joining output readers")
+	default:
+	}
+	close(child.drained)
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("pending output drain did not report the deadline: %v", err)
+		}
+	case <-cleanupCtx.Done():
+		t.Fatal("cleanup did not finish after output readers joined")
 	}
 }
 

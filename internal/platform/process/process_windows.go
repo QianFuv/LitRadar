@@ -119,26 +119,37 @@ type jobAccountingInformation struct {
 	TotalTerminatedProcesses  uint32
 }
 
+// isEmpty requires both Job accounting and retained process handles to report completion.
+func (tree *nativeTree) isEmpty() (bool, error) {
+	information := jobAccountingInformation{}
+	if err := windows.QueryInformationJobObject(tree.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&information)), uint32(unsafe.Sizeof(information)), nil); err != nil {
+		return false, err
+	}
+	if information.ActiveProcesses != 0 {
+		return false, nil
+	}
+	hasPending, err := tree.hasPendingProcesses()
+	return !hasPending, err
+}
+
 // waitEmpty observes Job and retained handle completion before cancellation.
 func (tree *nativeTree) waitEmpty(ctx context.Context) error {
+	return waitForTreeEmpty(ctx, tree.isEmpty)
+}
+
+// waitForTreeEmpty rechecks native completion when cancellation follows an earlier pending sample.
+func waitForTreeEmpty(ctx context.Context, isEmpty func() (bool, error)) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		information := jobAccountingInformation{}
-		if err := windows.QueryInformationJobObject(tree.job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&information)), uint32(unsafe.Sizeof(information)), nil); err != nil {
+		if hasCompleted, err := isEmpty(); err != nil || hasCompleted {
 			return err
-		}
-		if information.ActiveProcesses == 0 {
-			hasPending, err := tree.hasPendingProcesses()
-			if err != nil {
-				return err
-			}
-			if !hasPending {
-				return nil
-			}
 		}
 		select {
 		case <-ctx.Done():
+			if hasCompleted, err := isEmpty(); err != nil || hasCompleted {
+				return err
+			}
 			return ctx.Err()
 		case <-ticker.C:
 		}

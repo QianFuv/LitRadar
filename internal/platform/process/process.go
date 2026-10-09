@@ -193,21 +193,33 @@ func (child *Child) Terminate(grace time.Duration) (Termination, error) {
 			waitError = nil
 		}
 		treeError := child.tree.waitEmpty(ctx)
-		select {
-		case <-child.drained:
-		case <-ctx.Done():
-			waitError = errors.Join(waitError, ctx.Err())
-			for _, reader := range child.readers {
-				reader.Close()
-			}
-			<-child.drained
-		}
+		waitError = errors.Join(waitError, child.waitForDrain(ctx))
 		child.closeError = errors.Join(killError, classifiedError("wait_failed", errors.Join(waitError, treeError)), classifiedError("kill_failed", child.tree.close()))
 		if child.Stdout != nil {
 			child.Stdout.Close()
 		}
 	})
 	return child.termination, child.closeError
+}
+
+// waitForDrain preserves completed cleanup when the deadline ties with output completion.
+// Pending readers are closed and joined after the deadline expires.
+func (child *Child) waitForDrain(ctx context.Context) error {
+	select {
+	case <-child.drained:
+		return nil
+	case <-ctx.Done():
+		select {
+		case <-child.drained:
+			return nil
+		default:
+		}
+		for _, reader := range child.readers {
+			reader.Close()
+		}
+		<-child.drained
+		return ctx.Err()
+	}
 }
 
 // childPipes keeps both endpoints owned until their corresponding startup phase completes.

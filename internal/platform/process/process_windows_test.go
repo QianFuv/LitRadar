@@ -10,6 +10,37 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// TestTreeCompletionAtCancellationRechecksNativeState preserves completion and native errors at the deadline.
+func TestTreeCompletionAtCancellationRechecksNativeState(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		isComplete  bool
+		nativeError error
+		wantError   error
+	}{
+		{name: "completed", isComplete: true},
+		{name: "still-pending", wantError: context.Canceled},
+		{name: "native-error", nativeError: windows.ERROR_INVALID_HANDLE, wantError: windows.ERROR_INVALID_HANDLE},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			hasSampled := false
+			err := waitForTreeEmpty(ctx, func() (bool, error) {
+				if !hasSampled {
+					hasSampled = true
+					cancel()
+					return false, nil
+				}
+				return scenario.isComplete, scenario.nativeError
+			})
+			if !errors.Is(err, scenario.wantError) {
+				t.Fatalf("native completion at cancellation: got %v, want %v", err, scenario.wantError)
+			}
+		})
+	}
+}
+
 func TestFailedSuspendedStartActuallyExits(t *testing.T) {
 	for _, stage := range []string{"before_assignment", "before_resume"} {
 		t.Run(stage, func(t *testing.T) {
