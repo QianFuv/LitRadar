@@ -17,6 +17,7 @@ import (
 	"github.com/QianFuv/LitRadar/internal/transport"
 )
 
+// loopbackLive gives fixture keys the same initial phase so authentication order is deterministic.
 func loopbackLive(t *testing.T, handler http.HandlerFunc, keys int, workers int) (*LiveTransport, *httptest.Server) {
 	t.Helper()
 	server := httptest.NewServer(handler)
@@ -34,8 +35,9 @@ func loopbackLive(t *testing.T, handler http.HandlerFunc, keys int, workers int)
 	live.crossrefBase = server.URL + "/v1"
 	live.openAlexBase = server.URL
 	live.semanticBase = server.URL + "/graph/v1"
+	start := unixScheduleTime()
 	for index := range live.semantic.Slots {
-		live.semantic.Slots[index].Next = unixScheduleTime()
+		live.semantic.Slots[index].Next = start
 	}
 	return live, server
 }
@@ -139,8 +141,9 @@ func TestLiveOversizedBodyDoesNotSwitchKeys(t *testing.T) {
 					response.WriteHeader(status)
 				}, 2, 1)
 				if service == SemanticScholar {
+					start := unixScheduleTime().subtract(milliseconds(1))
 					for index := range live.semantic.Slots {
-						live.semantic.Slots[index].Next = unixScheduleTime().subtract(milliseconds(1))
+						live.semantic.Slots[index].Next = start
 					}
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
