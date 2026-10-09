@@ -1374,6 +1374,47 @@ index e1f8c0f..449ce16 100644
  	server.ResourceUpdated(ctx, &ResourceUpdatedNotificationParams{URI: "file:///r1"})
  	ev1 := <-events
  	server.ResourceUpdated(ctx, &ResourceUpdatedNotificationParams{URI: "file:///r2"})
+diff --git a/mcp/server_example_test.go b/mcp/server_example_test.go
+index ae4318f..174ebb8 100644
+--- a/mcp/server_example_test.go
++++ b/mcp/server_example_test.go
+@@ -359,6 +359,7 @@ func Example_listChanged() {
+ 
+ // !+subscribe
+ 
++// Example_resourceSubscription waits for protocol readiness before publishing a resource update.
+ func Example_resourceSubscription() {
+ 	ctx := context.Background()
+ 
+@@ -373,6 +374,20 @@ func Example_resourceSubscription() {
+ 		},
+ 	})
+ 
++	acknowledged := make(chan struct{}, 1)
++	c.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
++		return func(ctx context.Context, method string, request mcp.Request) (mcp.Result, error) {
++			if notification, ok := request.(*mcp.ClientRequest[*mcp.SubscriptionsAcknowledgedParams]); ok && notification.Params != nil {
++				for _, uri := range notification.Params.Notifications.ResourceSubscriptions {
++					if uri == "config://app" {
++						acknowledged <- struct{}{}
++					}
++				}
++			}
++			return next(ctx, method, request)
++		}
++	})
++
+ 	subscribed := make(chan string, 2)
+ 	s := mcp.NewServer(&mcp.Implementation{Name: "server", Version: "v0.0.1"}, &mcp.ServerOptions{
+ 		SubscribeHandler: func(_ context.Context, req *mcp.SubscribeRequest) error {
+@@ -405,6 +420,7 @@ func Example_resourceSubscription() {
+ 		log.Fatal(err)
+ 	}
+ 	fmt.Println(<-subscribed)
++	<-acknowledged
+ 
+ 	config = "theme=dark\n"
+ 	if err := s.ResourceUpdated(ctx, &mcp.ResourceUpdatedNotificationParams{URI: "config://app"}); err != nil {
 diff --git a/mcp/streamable.go b/mcp/streamable.go
 index f24badb..115f256 100644
 --- a/mcp/streamable.go

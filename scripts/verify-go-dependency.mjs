@@ -19,7 +19,11 @@ const policies = {
   "go-sdk": {
     commit: "3f3b699b2b67e1ed033a63d6651671dab53c2d32",
     archive: "b2d9bd11290bbf59552b6493d6db01b182c751828e6bdd5afa507cef0c852f20",
-    changed: ["mcp/streamable.go", "mcp/mcp_test.go"],
+    changed: [
+      "mcp/streamable.go",
+      "mcp/mcp_test.go",
+      "mcp/server_example_test.go",
+    ],
     added: ["mcp/litradar_compat.go", "mcp/litradar_compat_test.go"],
   },
   "go-sqlite3": {

@@ -359,6 +359,7 @@ func Example_listChanged() {
 
 // !+subscribe
 
+// Example_resourceSubscription waits for protocol readiness before publishing a resource update.
 func Example_resourceSubscription() {
 	ctx := context.Background()
 
@@ -371,6 +372,20 @@ func Example_resourceSubscription() {
 		ResourceUpdatedHandler: func(context.Context, *mcp.ResourceUpdatedNotificationRequest) {
 			updated <- "config://app"
 		},
+	})
+
+	acknowledged := make(chan struct{}, 1)
+	c.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, request mcp.Request) (mcp.Result, error) {
+			if notification, ok := request.(*mcp.ClientRequest[*mcp.SubscriptionsAcknowledgedParams]); ok && notification.Params != nil {
+				for _, uri := range notification.Params.Notifications.ResourceSubscriptions {
+					if uri == "config://app" {
+						acknowledged <- struct{}{}
+					}
+				}
+			}
+			return next(ctx, method, request)
+		}
 	})
 
 	subscribed := make(chan string, 2)
@@ -405,6 +420,7 @@ func Example_resourceSubscription() {
 		log.Fatal(err)
 	}
 	fmt.Println(<-subscribed)
+	<-acknowledged
 
 	config = "theme=dark\n"
 	if err := s.ResourceUpdated(ctx, &mcp.ResourceUpdatedNotificationParams{URI: "config://app"}); err != nil {

@@ -10,7 +10,7 @@ The application rejects a concurrent duplicate request ID within one session wit
 
 ## Verification and updates
 
-Resource subscription tests wait for the protocol acknowledgement before emitting
+Resource subscription tests and the runnable example wait for the protocol acknowledgement before emitting
 updates. The upstream handler callback runs before the subscription is registered,
 so observing that callback alone can lose updates under concurrent scheduling.
 This test-only change preserves update, subscription identity and unsubscribe
