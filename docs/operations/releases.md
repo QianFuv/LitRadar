@@ -55,7 +55,7 @@ selects the highest published stable version for both latest pointers.
 To retry the current version, select **Run workflow** on CI or run:
 
 ```sh
-gh workflow run ci.yaml --ref main -f version=0.2.1
+gh workflow run ci.yaml --ref main -f version=0.2.2
 ```
 
 The requested version must match VERSION at the selected main commit. Both
@@ -84,8 +84,8 @@ dynamically linked distribution, not a standalone static binary. Install the sys
 sudo apt-get update
 sudo apt-get install ca-certificates libgcc-s1 libstdc++6 poppler-utils poppler-data openssl
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf litradar_0.2.1_linux_amd64.tar.gz
-cd litradar_0.2.1_linux_amd64
+tar -xzf litradar_0.2.2_linux_amd64.tar.gz
+cd litradar_0.2.2_linux_amd64
 mkdir -p secrets
 test -e secrets/litradar.key || (umask 077; openssl rand -out secrets/litradar.key 32)
 ./run.sh --version
@@ -116,9 +116,9 @@ fonts are used for rendering.
 In PowerShell, verify the ZIP against `SHA256SUMS`, then extract it:
 
 ```powershell
-Get-FileHash .\litradar_0.2.1_windows_amd64.zip -Algorithm SHA256
-Expand-Archive .\litradar_0.2.1_windows_amd64.zip -DestinationPath .
-Set-Location .\litradar_0.2.1_windows_amd64
+Get-FileHash .\litradar_0.2.2_windows_amd64.zip -Algorithm SHA256
+Expand-Archive .\litradar_0.2.2_windows_amd64.zip -DestinationPath .
+Set-Location .\litradar_0.2.2_windows_amd64
 New-Item -ItemType Directory -Force secrets | Out-Null
 if (-not (Test-Path secrets/litradar.key)) {
     $keyBytes = New-Object byte[] 32
