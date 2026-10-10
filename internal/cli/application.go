@@ -22,6 +22,18 @@ import (
 const applicationUsage = "Usage: litradar <COMMAND> [OPTIONS]\n\nCommands:\n  serve      Run HTTP and scheduling as one service\n  admin      Manage administrators, secrets, and backups\n  index      Build or update searchable article indexes\n  cfp        Import or refresh original journal calls for papers\n  notify     Deliver recommendation notifications\n  push       Push tracking updates\n  scheduler  Validate or run scheduled tasks manually\n  openapi    Emit the generated OpenAPI document"
 const openapiUsage = "Usage: litradar openapi [--output PATH]"
 
+// diagnosticError retains the original cause with a fixed, public-safe usage diagnostic.
+type diagnosticError struct {
+	cause      error
+	diagnostic string
+}
+
+// Error preserves the original error returned to command callers.
+func (failure *diagnosticError) Error() string { return failure.cause.Error() }
+
+// Unwrap preserves error identity without making its text safe for logging.
+func (failure *diagnosticError) Unwrap() error { return failure.cause }
+
 // IsServiceCommand identifies the service after validating internal correlation arguments.
 func IsServiceCommand(values []string) bool {
 	args := arguments(slices.Clone(values))
@@ -50,7 +62,12 @@ func Run(ctx context.Context, values []string, executable string, input io.Reade
 		}
 		duration := logfilter.DebugValue(strconv.FormatInt(time.Since(started).Milliseconds(), 10))
 		if result != nil {
-			slog.ErrorContext(ctx, "process.failed", "event", "process.failed", "component", "runtime", "outcome", "failure", "error_kind", "command_failed", "duration_ms", duration)
+			attributes := []any{"event", "process.failed", "component", "runtime", "outcome", "failure", "error_kind", "command_failed", "duration_ms", duration}
+			var failure *diagnosticError
+			if errors.As(result, &failure) {
+				attributes = append(attributes, "diagnostic", failure.diagnostic)
+			}
+			slog.ErrorContext(ctx, "process.failed", attributes...)
 		} else {
 			slog.InfoContext(ctx, "process.completed", "event", "process.completed", "component", "runtime", "outcome", "success", "duration_ms", duration)
 		}
@@ -134,7 +151,10 @@ func dispatchApplicationCommand(ctx context.Context, args arguments, parent, exe
 			return dispatchNamedCommand(ctx, args[0], tail, executable, input, output)
 		})
 	}
-	return fmt.Errorf("unknown LitRadar subcommand: %s\n%s", args[0], applicationUsage)
+	return &diagnosticError{
+		cause:      fmt.Errorf("unknown LitRadar subcommand: %s\n%s", args[0], applicationUsage),
+		diagnostic: "unknown LitRadar subcommand; run litradar --help",
+	}
 }
 
 // dispatchNamedCommand invokes exactly one named CLI operation within its original command span.

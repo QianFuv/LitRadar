@@ -166,10 +166,13 @@ func parseDeliveryBudgets(args *arguments, options *delivery.RunConfig) error {
 	}
 	retries, err := args.unsigned("--retries", 3)
 	if err != nil {
-		return err
+		return &diagnosticError{cause: err, diagnostic: "--retries must be an integer between 1 and 10"}
 	}
 	if retries < 1 || retries > 10 {
-		return errors.New("--retries must be between 1 and 10")
+		return &diagnosticError{
+			cause:      errors.New("--retries must be between 1 and 10"),
+			diagnostic: "--retries must be between 1 and 10",
+		}
 	}
 	options.RetryAttempts = int(retries)
 	options.DedupeRetentionDays, err = args.signed("--dedupe-retention-days", 60)

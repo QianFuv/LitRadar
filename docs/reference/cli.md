@@ -33,7 +33,7 @@ docker compose run --rm litradar <subcommand> <arguments>
 - `scheduler`
 - `openapi`
 
-顶层另接受 `litradar --version`，输出 `litradar <version>` 后以 0 退出。每个子命令都接受 `--help` 或 `-h`。未知子命令会写入 stderr 并以非零状态退出。
+顶层另接受 `litradar --version`，输出 `litradar <version>` 后以 0 退出。每个子命令都接受 `--help` 或 `-h`。未知子命令以非零状态退出，并在 stderr 的 `process.failed` 事件中给出固定的 `diagnostic` 用法提示；无效或缺失的 `--retries` 值也会给出具体参数要求。诊断不回显用户输入或底层错误文本，stdout 仍只承载业务结果。
 
 ## 公共路径参数
 
