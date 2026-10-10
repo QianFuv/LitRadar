@@ -69,6 +69,7 @@ ThemeProvider 使用 `attribute="class"`、`defaultTheme="system"` 和 `enableSy
 | `--success` / `--success-foreground`         | `#e6f6eb` / `#193b2d` | `#132d21` / `#3dd68c` | 成功                     |
 | `--warning` / `--warning-foreground`         | `#fff7c2` / `#4f3422` | `#302008` / `#ffca16` | 收藏与警告               |
 | `--destructive` / `--destructive-foreground` | `#ce2c31` / `#ffffff` | `#ff9592` / `#3b1219` | 错误文字与危险按钮       |
+| `--destructive-hover`                        | `#641723`             | `#ffd1d9`             | 危险按钮与徽标悬停       |
 
 `success-border` 和 `warning-border` 提供配套状态边框。侧栏保留独立语义 token；导航选中态使用中性 secondary，侧栏 primary 只用于选中复选框等主交互。滚动条保持中性灰。状态始终配合文字、图标或 ARIA 语义；Logo、账号头像和 CNKI 二维码属于内容资产，保持原色与必要的白底。
 

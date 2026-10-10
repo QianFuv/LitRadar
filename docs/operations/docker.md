@@ -47,13 +47,13 @@ SIGINT/SIGTERM 会协调关闭 HTTP 与调度组件。若任务子进程正在�
 
 ## 镜像内容
 
-The Dockerfile frontend and Ubuntu bases use readable tags with immutable digests. Node.js and Go archives use exact versions and SHA-256 checksums.
+Dockerfile 的前端阶段和 Ubuntu 基础镜像使用可读 tag 加不可变 digest；Node.js 与 Go 归档使用精确版本和 SHA-256 校验。
 
-1. Ubuntu 26.04 installs Node.js 26.11.1 and pnpm 12.10.1, then copies `app/package.json`, the lockfile and `app/pnpm-workspace.yaml` for cached frozen dependency installation.
+1. Ubuntu 26.04 安装 Node.js 26.11.1 和 pnpm 12.10.1，复制 `app/package.json`、lockfile 和 `app/pnpm-workspace.yaml`，用缓存执行 frozen 依赖安装。
 2. 独立前端构建阶段复制 `app/` 源码，生成 `out/`，并为 HTML、CSS、JavaScript、JSON、SVG、TXT、XML 和 source map 保留原文件及确定性 gzip 兄弟文件。
-3. Ubuntu 26.04 中的 Go 1.27.2 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat` 构建唯一 Go 应用；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
+3. Ubuntu 26.04 中的 Go 1.27.2 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，先把前端 `out/` 复制到 `internal/webassets/export`，再用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat,litradar_web` 构建唯一 Go 应用并嵌入网页；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
 4. 下载 Obscura 官方 v0.2.4 对应 amd64/arm64 的 render + stealth 二进制归档，固定版本和 SHA-256，并一起安装 `obscura` 与 `obscura-worker`。辅助程序无需本地编译。
-5. 分词器阶段从固定上游源码构建目标架构的 `simple` 扩展，关闭 Jieba 和示例构建。
+5. Go 构建阶段在编译应用前运行 `scripts/build-simple-tokenizer.mjs`，从固定上游源码为目标架构构建静态 `libsimple.a`（不含 Jieba 和示例），并通过 `CGO_CFLAGS` 静态链接进应用，不产生 `libsimple.so`。
 6. `ubuntu:26.04` 接收带内嵌网页和 CSP 的应用（包括静态 Simple）、Obscura 和 `/usr/share/litradar/meta` 中来自 `assets/meta/` 的不可变期刊目录。Ubuntu 26.04 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。
 
 镜像把 `LITRADAR_OBSCURA_PATH` 和 `LITRADAR_PDFTOTEXT_PATH` 指向打包的辅助程序。征稿刷新可在服务器直接采集 HTML 和 PDF，无需安装 Chromium 或在运行时下载浏览器。发布冒烟测试在非特权、只读服务容器中验证原始 HTML 的 JavaScript 协议、真实 PDF 提取和默认私网拒绝；loopback 例外仅限该次临时测试。
@@ -175,7 +175,7 @@ Scholarly 增量使用成功期次 anchor 年份的 1 月 1 日作为日期下�
 
 CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
 
-旧 v6/v7/v8 备份与恢复验证不依赖平台原生 tokenizer；v9 验证会按固定打包路径注册 simple，以读取其 FTS 表。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前内容库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向运行镜像临时复制 DLL/SO 绕过版本边界。
+旧 v6/v7/v8 备份与恢复验证不依赖平台原生 tokenizer；v9 验证使用二进制内静态注册的 simple 读取其 FTS 表。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前内容库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向运行镜像临时复制 DLL/SO 绕过版本边界。
 
 ## 数据和秘密
 
@@ -191,7 +191,7 @@ Crossref 的可丢弃工作集固定在 `/app/data/index-work/scholarly/`，随�
 
 ### Meta bundle 与持久卷
 
-Docker bind mount 和 Kubernetes PVC 会遮蔽挂载点中的镜像层内容，不会执行目录合并。LitRadar 因此把官方源与持久副本分开：Dockerfile 固定把 bundle 复制到 `/usr/share/litradar/meta`，应用仅在精确的 `/usr/share/litradar/meta/bundle-manifest.json` 存在时，于数据库迁移后把清单允许的更新同步到 `/app/data/meta`。该位置不是环境变量、CLI 或管理员可覆盖项，也不能改指向可写的持久目录。
+Docker bind mount 和 Kubernetes PVC 会遮蔽挂载点中的镜像层内容，不会执行目录合并。LitRadar 因此把官方源与持久副本分开：Dockerfile 固定把 bundle 复制到 `/usr/share/litradar/meta`，应用依次查找 `/usr/share/litradar/meta/bundle-manifest.json` 和可执行文件旁的 `assets/meta/bundle-manifest.json`，使用第一个存在的 bundle，于数据库迁移后把清单允许的更新同步到 `/app/data/meta`。镜像中只有前者存在。这些位置不是环境变量、CLI 或管理员可覆盖项，也不能改指向可写的持久目录。
 
 `serve` 和普通 `index` 都会在读取期刊目录前执行一次准备。调度器启动的普通索引子进程也经过这个入口；多进程索引的内部 worker 不重复执行。准备结果产生 `event=storage.managed_meta.prepared component=storage` 的聚合事件，索引 stdout JSON 保持不变。
 
@@ -206,7 +206,7 @@ Docker bind mount 和 Kubernetes PVC 会遮蔽挂载点中的镜像层内容，�
 
 受管状态存储在 `data/auth.sqlite` 的 `managed_meta_catalogs`。若卷中记录的 bundle 版本高于当前镜像，旧镜像会在写入前以 downgrade 错误退出；镜像回滚必须使用兼容版本或经过验证的整套备份恢复，不能用强制复制绕过。替换或状态提交失败会回滚本轮文件变更。
 
-除征稿辅助程序路径外，应用的监听、数据路径和秘密边界由 CLI 参数与只读密钥文件提供。浏览器同源 API、开发代理、Meta bundle、日志和父子进程关联分别由固定代码路径、数据库运行设置或隐藏内部参数负责，不接受任意环境变量覆盖；完整配置来源见[运行配置](../reference/configuration.md)。
+除征稿辅助程序路径和 `litradar index` 的 `LITRADAR_CNKI_CAPTCHA_TOKEN` 单次探测回退外，应用的监听、数据路径和秘密边界由 CLI 参数与只读密钥文件提供。浏览器同源 API、开发代理、Meta bundle、日志和父子进程关联分别由固定代码路径、数据库运行设置或隐藏内部参数负责，不接受任意环境变量覆盖；完整配置来源见[运行配置](../reference/configuration.md)。
 
 新清单不再列出的退役或改名文件不会自动删除。先用当前二进制创建并验证 v2 备份，确认没有保存的任务或手工命令引用旧 CSV，再逐个手工删除明确识别的文件。不要批量删除未知文件，也不要用 `cp -f` 覆盖自定义目录。
 
@@ -265,7 +265,7 @@ docker compose logs --no-log-prefix litradar | jq -c 'select(.level == "ERROR")'
 
 ## Go 容器画像
 
-先构建 `litradar:go-test-amd64`，再运行 `node tests/profiling/go-image.mjs`。它在原生 amd64 主机上执行三轮隔离工作负载，使用 160 MiB 容器上限和 64 MiB tmpfs，验证合成文章的认证检索、真实 helper 与退出清理，分别报告应用 RSS 和整个 cgroup 的当前/峰值用量；不把两者相加，也不声称单独测得 helper RSS。结果保存在 `output/profiling/`。
+先用 `docker buildx build --platform linux/amd64 --load --provenance=false -t litradar:go-test-amd64 .` 构建镜像，再运行 `node tests/profiling/go-image.mjs`。它在原生 amd64 主机上执行三轮隔离工作负载，使用 160 MiB 容器上限和 64 MiB tmpfs，验证合成文章的认证检索、真实 helper 与退出清理，分别报告应用 RSS 和整个 cgroup 的当前/峰值用量；不把两者相加，也不声称单独测得 helper RSS。结果保存在 `output/profiling/`。
 
 ## 内存画像与门禁
 
@@ -408,7 +408,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 
 ### 1. 确认镜像发布
 
-`Build and Push Docker Image` 工作流通过 backend 和 frontend 检查后，为同一次构建添加 `ghcr.io/qianfuv/litradar:latest` 和 `ghcr.io/qianfuv/litradar:sha-<提交 SHA 前 6 位>` 两个 tag。amd64 与 arm64 镜像分别通过容器冒烟测试后，先推送两个架构 tag，再发布指向它们的双架构 manifest。部署前确认工作流成功及其源码 commit 符合预期；`latest` 是可变 tag，后续发布会更新它。
+`VERSION` 递增且 backend、frontend 检查通过后，`CI` 调用 `Release` 工作流：只构建 `linux/amd64` 镜像，容器冒烟通过后推送 `ghcr.io/qianfuv/litradar:v<version>`，再由串行的 latest 更新步骤把 `ghcr.io/qianfuv/litradar:latest` 指向已发布的最高稳定版本。不提供 arm64 镜像或 `sha-*` tag。部署前确认对应 GitHub Release 已发布；可复现部署优先使用 `v<version>`，`latest` 是可变 tag。流程见[版本发布](releases.md)。
 
 ### 2. 配置 HTTPS 访问
 
@@ -529,6 +529,6 @@ curl --fail http://localhost:8000/openapi.json
 
 ### 中文检索原生运行库
 
-The image statically links pinned Simple for the target architecture against the driver's SQLite headers. It distributes no `libsimple.so`. System `libstdc++6` and the MIT notice remain; Obscura and Poppler are separate helpers. The runtime does not enable Jieba or pinyin aliases. Fresh v9 indexes use `simple 0`; legacy unicode61 indexes retain explicit offline migration. Container smoke tests exercise packaged migration and authenticated Chinese/Latin/no-pinyin queries. See [Simple](../../libs/simple/README.md).
+镜像为目标架构把固定版本的 Simple 按驱动自带的 SQLite 头文件静态链接进应用，不分发 `libsimple.so`；仍保留系统 `libstdc++6` 和 MIT 许可声明，Obscura 与 Poppler 是独立辅助程序。运行时不启用 Jieba 或拼音别名。新建 v9 索引使用 `simple 0`；旧 unicode61 索引仍需显式离线迁移。容器冒烟测试覆盖打包迁移，以及认证后的中文、拉丁文和无拼音查询。详见 [Simple](../../libs/simple/README.md)。
 
-v9 缺少匹配的原生库时会明确失败，不回退到 unicode61。先核对镜像版本、目标架构和打包路径；不要从未知来源补装扩展。
+v9 的 simple 静态注册失败时会明确报错，不回退到 unicode61。先核对镜像版本和目标架构；不存在可补装的外部扩展，也不要从未知来源复制 DLL/SO。

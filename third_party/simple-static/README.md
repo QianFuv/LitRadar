@@ -7,7 +7,8 @@ Jieba is disabled. Both CMRC resource objects are included in `libsimple.a`, wit
 the upstream `contrib/pinyin.txt` key preserved.
 
 Run `node scripts/build-simple-tokenizer.mjs` before native Go builds. Windows
-requires MinGW GCC/G++, CMake and Ninja; Linux requires GCC/G++, CMake and Make.
+requires curl, tar, MinGW GCC/G++, CMake and Ninja; Linux requires curl, tar,
+GCC/G++, CMake and Make.
 The compiler must match Go's cgo toolchain. Generated source, archive and input
 identities remain under ignored `target/`. Go entrypoints include the verified
 native input digest in their cgo flags to invalidate cached compilation when

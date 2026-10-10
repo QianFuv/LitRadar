@@ -172,7 +172,7 @@ tokenize = 'unicode61 remove_diacritics 2'
 
 v7/v8 不创建 `article_search_content`，详情和列表字段继续以 `articles`、`journals` 和 `article_listing` 为权威来源；全文查询只依赖 FTS `rowid`/`MATCH` 结果，因此短语、布尔、否定、前缀和列限定语义不变。这三种旧版本不依赖外部 `simple` tokenizer。v9 保留 contentless 布局，但使用 `tokenize = 'simple 0'`，明确禁用拼音别名。检索投影和查询操作数使用一致的重音、大小写及标点边界规范化；规范标题、摘要和身份不变。
 
-内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7 的只读 preflight 保留原文件和历史索引；显式迁移或离线优化才升级到当前 v9。当前 DDL、版本和公共结构验证统一由 `litradar-storage::index_schema` 提供。
+内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7 的只读 preflight 保留原文件和历史索引；显式迁移或离线优化才升级到当前 v9。当前 DDL、版本和公共结构验证统一由 `internal/storage/indexschema` 提供。
 
 当前二进制读写精确 v6/v7/v8/v9。旧二进制未必支持 v9；需要降级时，必须停机并恢复优化前已验证、且受目标二进制支持的旧索引备份。不得降低 `user_version`、直接把新版索引交给不支持它的旧二进制，或手工拼接影子表。
 
@@ -338,11 +338,11 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 - `scheduled_tasks` 保存类型化 `job_spec`；旧 `legacy_command` 只读且不能启用。
 - `scheduled_task_runs` 保存认领、运行、取消、超时和终态。
-
-Auth v20 preserves run history and IDs while adding internal `trigger_kind` (`scheduled` or `manual`). Only scheduled runs have a unique `(task_id, scheduled_for)` slot; sequential manual requests may share a timestamp without consuming a cron slot. The migration preserves the autoincrement high-water mark, including IDs of deleted runs.
 - `scheduler_state` 保存单调调度游标。
 - `scheduler_workers` 保存内嵌调度心跳。
 - `service_heartbeats` 保存统一进程 HTTP 组件的活动记录。
+
+认证库 v20 保留运行历史与 ID，并新增内部字段 `trigger_kind`（`scheduled` 或 `manual`）。只有调度运行占用唯一的 `(task_id, scheduled_for)` 时段；连续的手动请求可以共享时间戳，且不消耗 cron 时段。迁移保留自增高水位，包括已删除运行的 ID。
 
 `litradar admin backup restore` 在替换前后检查最近 90 秒的心跳，目标仍活动时拒绝恢复。
 

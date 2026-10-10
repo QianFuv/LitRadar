@@ -6,17 +6,17 @@
 
 <a id="native-builds-and-locations"></a>
 
-## Static builds and compatibility oracles
+## 静态构建与兼容性 oracle
 
-Windows and Linux use the same pinned Simple source, compiled against the unchanged SQLite driver's headers with `SQLITE_CORE`. The executable directly initializes each admitted connection; it does not discover or load `simple.dll` or `libsimple.so`.
+Windows 和 Linux 使用同一份固定版本的 Simple 源码，以 `SQLITE_CORE` 按未修改的 SQLite 驱动头文件编译。可执行文件在每个准入的连接上直接初始化分词器，不查找或加载 `simple.dll`、`libsimple.so`。
 
-Run `node scripts/build-simple-tokenizer.mjs` from the repository root. It requires curl, tar, CMake and a Go-compatible C++14 compiler; Windows additionally requires MinGW and Ninja. The result is `target/simple-tokenizer/libsimple.a`. Build scripts include archive, header, source and compiler identities in Go's cache flags. Direct Go commands must also use `simpleBuildEnvironment`, as shown in the [development guide](../../docs/guides/development.md).
+在仓库根目录运行 `node scripts/build-simple-tokenizer.mjs`。它需要 curl、tar、CMake 和与 Go 匹配的 C++14 编译器；Linux 使用 Make，Windows 另需 MinGW 和 Ninja。产物为 `target/simple-tokenizer/libsimple.a`。构建脚本把静态库、头文件、源码和编译器标识写入 Go 的缓存参数；直接运行 Go 命令时也必须使用 `simpleBuildEnvironment`，见[开发指南](../../docs/guides/development.md#原生分词器)。
 
-Source revision: `45db071ba8043ffe8a2e5dfe41f9d68fb477576c`; archive SHA-256: `d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61`. The adapter excludes Jieba, SQLite and example targets and includes both CMRC resource objects. The embedded pinyin resource does not enable aliases with `simple 0`.
+源码提交：`45db071ba8043ffe8a2e5dfe41f9d68fb477576c`；源码归档 SHA-256：`d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61`。适配构建排除 Jieba、SQLite 和示例目标，并包含两个 CMRC 资源对象。内嵌的拼音资源在 `simple 0` 下不会启用别名。
 
-The existing v0.7.1 Windows DLL and Linux SO remain unchanged as historical inputs, excluded from packages. Their SHA-256 values are `27c700ca34cd5935ff934459f1f9c107cdefef7e54250de5a1c6646e05f21a4f` and `5493821c973a0dfee1afeb270ff5efbef49b4002c117433a3a2203393874a991`. `--compatibility-oracle` copies the verified Windows DLL or builds the previous Linux source-pinned shared library separately. Tests compare actual token positions, MATCH/highlight and existing v9 append/update/delete behavior; they never rebuild the old index to hide a source transition.
+仓库中原有的 v0.7.1 Windows DLL 和 Linux SO 保持不变，不进入任何发行包，SHA-256 分别为 `27c700ca34cd5935ff934459f1f9c107cdefef7e54250de5a1c6646e05f21a4f` 和 `5493821c973a0dfee1afeb270ff5efbef49b4002c117433a3a2203393874a991`。`--compatibility-oracle` 在 Windows 上复制校验过的 DLL，在 Linux 上则用同一固定源码另行构建共享库形式的对照扩展；仓库内的 Linux SO 只作为历史记录保留，不再被脚本使用。测试比较实际 token 位置、MATCH/highlight 以及现有 v9 的追加、更新和删除行为，不通过重建旧索引掩盖源码变化。
 
-Static Simple removes its runtime library requirement. Linux still needs the documented system C/C++ libraries; Obscura, Poppler and metadata catalogs remain separate deployment inputs.
+静态链接后不再需要 Simple 运行库。Linux 仍需文档列出的系统 C/C++ 运行库；Obscura、Poppler 和期刊元数据目录仍是独立的部署输入。
 
 <a id="existing-databases"></a>
 
@@ -24,10 +24,10 @@ Static Simple removes its runtime library requirement. Linux still needs the doc
 
 精确 v6/v7/v8 内容库保留 unicode61，无需原生扩展即可读取；启动不会静默重建。要为旧库启用中文短语匹配，必须先停止写入者并准备已验证备份，再执行[离线索引优化](../../docs/reference/cli.md#索引存储优化)。命令把规范记录流式重建到 v9 候选库，并在替换前验证身份。回滚时，旧二进制必须配合它支持的旧版索引备份。
 
-Static registration failures are explicit; v9 does not fall back to unicode61. Registration is opt-in per physical connection, leaves plain/auth roles unchanged and never enables SQL extension loading.
+静态注册失败会明确报错，v9 不回退到 unicode61。注册按物理连接显式启用，不改变普通/认证连接角色，也不会开启 SQL 扩展加载。
 
 <a id="license"></a>
 
 ## 许可证与来源
 
-Historical precompiled oracles originate from [Simple v0.7.1](https://github.com/wangfenjin/simple/releases/tag/v0.7.1)；Docker 和本地 Linux 源码构建使用 [simple 固定上游提交](https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c)。LitRadar 在上游的 MIT OR GPL-3.0-or-later 双许可证中选择 MIT；版权与授权原文随项目分发于 [Simple-LICENSE.txt](../../docs/third-party/Simple-LICENSE.txt)。
+历史预编译 oracle 来自 [Simple v0.7.1](https://github.com/wangfenjin/simple/releases/tag/v0.7.1)；所有生产构建（Docker、Linux 与 Windows 发行包）都使用 [simple 固定上游提交](https://github.com/wangfenjin/simple/tree/45db071ba8043ffe8a2e5dfe41f9d68fb477576c)。LitRadar 在上游的 MIT OR GPL-3.0-or-later 双许可证中选择 MIT；版权与授权原文随项目分发于 [Simple-LICENSE.txt](../../docs/third-party/Simple-LICENSE.txt)。

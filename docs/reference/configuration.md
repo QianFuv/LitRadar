@@ -31,11 +31,11 @@ LitRadar 不使用单一 `.env` 作为配置中心。不同配置来源服务于
 
 ## 官方 Meta 打包路径
 
-发布 Docker 镜像固定把官方 CSV 和 `bundle-manifest.json` 复制到 `/usr/share/litradar/meta`；持久副本始终位于 `<project-root>/data/meta`。应用只检查精确的 `/usr/share/litradar/meta/bundle-manifest.json`，该路径不是 `runtime_settings`、秘密、普通运维覆盖项、环境变量或 CLI 参数。
+发布 Docker 镜像固定把官方 CSV 和 `bundle-manifest.json` 复制到 `/usr/share/litradar/meta`；二进制发行包则把它们放在可执行文件旁的 `assets/meta`。持久副本始终位于 `<project-root>/data/meta`。应用依次检查 `/usr/share/litradar/meta/bundle-manifest.json` 和可执行文件所在目录的 `assets/meta/bundle-manifest.json`，使用第一个存在的 bundle；这两个路径都不是 `runtime_settings`、秘密、普通运维覆盖项、环境变量或 CLI 参数。
 
 manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整个 bundle，再按 manifest hash 创建、接管或升级官方文件。自定义的同名文件和 manifest 外文件保持不变；结果产生 `storage.managed_meta.prepared` 事件。bundle 格式/hash 非法、持久目标不是普通目录/文件或检测到版本降级时，命令在后续工作前失败。
 
-本地构建通常没有固定路径或 manifest，发现结果因此为 no-op，不要求 `/usr/share/litradar/meta` 存在。此时运维人员必须自行创建 `<project-root>/data/meta`；目录缺失时索引明确失败，目录存在但没有选中的 CSV 时返回 `skipped`。
+本地构建的可执行文件旁通常没有 `assets/meta`，两处都没有 manifest 时发现结果为 no-op，不要求 `/usr/share/litradar/meta` 存在。此时运维人员必须自行创建 `<project-root>/data/meta`；目录缺失时索引明确失败，目录存在但没有选中的 CSV 时返回 `skipped`。
 
 ## 全局运行设置
 
@@ -117,7 +117,7 @@ URL 与策略在同一个 `PUT /api/admin/runtime-settings` 中按更新后的�
 - `cnki`：国内 CNKI 索引和在线摘要的全部 HTTP，以及其 JFBYM captcha 请求；JFBYM 没有独立开关。
 - `zjlib`：扫码开始/轮询、会话预热、BFF/Share SSO、搜索和全文下载的全部 HTTP，包括重定向与非重定向客户端。
 
-这两个设置不影响 AI、通知、PushPlus、MCP、浏览器访问返回的 redirect，也不替代 `trusted_proxy_cidrs` 的入站反向代理信任策略。旧 `proxy_pool` 不是兼容别名，提交时仍按未知字段拒绝。代理 URL、userinfo 和 worker bootstrap 都是秘密数据，不得放入参数、环境变量、请求文件、日志、Debug、API 响应或运维工单。
+这两个设置不影响 AI、通知、PushPlus、MCP、浏览器访问返回的 redirect，也不替代 `trusted_proxy_cidrs` 的入站反向代理信任策略。旧 `proxy_pool` 不是兼容别名，提交时仍按未知字段拒绝。代理 URL、userinfo 和 worker bootstrap 都是秘密数据，不得放入参数、环境变量、请求文件、日志、格式化输出、API 响应或运维工单。
 
 ### Scholarly 请求预算
 
@@ -220,7 +220,7 @@ Scholarly 默认每个期刊执行器使用 6 个来源工作线程，同时运�
 
 所有 capacity/refill/key limit 必须为正并处于固定上限内；全局熔断器的容量必须大于每个前置桶，补充速率不得低于前置桶，防止管理员配置重新引入单一来源耗尽全局额度的问题。该字段规范化为紧凑 JSON；未知、缺失、零值、越界或不满足层级关系时返回 `400`，同一更新整体回滚。
 
-`audit_retention_days` 只接受 `1..=3650` 的十进制整数，默认 `180`。统一服务启动后立即执行一次保留检查，之后每 24 小时检查一次；数据库中的持久 maintenance 标记让共享认证库的多个实例在任意 24 小时窗口内最多有一个实例执行删除。每次事务最多删除 10,000 条过期记录，下一次检查继续处理剩余记录。设置更新在下一次检查读取，不需要重启。
+`audit_retention_days` 只接受 `1..=3650` 的十进制整数，默认 `180`。统一服务启动后立即执行一次保留检查，之后每 24 小时检查一次；数据库中的持久 maintenance 标记让共享认证库的多个实例在任意 24 小时窗口内最多有一个实例执行删除。每次事务最多删除 10,000 条过期记录；仍有积压时每 60 秒继续下一批，清空后恢复每 24 小时检查。设置更新在下一次检查读取，不需要重启。
 
 `ai_allowed_base_urls` 只接受准确 HTTPS base URL；拒绝 HTTP、凭据、query、fragment 和端口 0，并统一补全 path 尾随 `/`、按首次出现顺序去重。默认空列表会禁用所有 AI 出站请求。普通用户从 `GET /api/tracking/ai-endpoints` 返回的目录中选择，保存时 API 和 storage 事务都会再次做准确成员校验；worker 在每次实际 AI 请求前重新读取当前目录，因此删除目录项会阻止后续尝试继续使用旧配置。
 
@@ -263,17 +263,17 @@ Scholarly 默认每个期刊执行器使用 6 个来源工作线程，同时运�
 
 1. CLI 解析 `host`、`port`、`project-root`、调度间隔、密钥文件和 Secure Cookie 启动门。
 2. 迁移 `auth.sqlite`，并处理现有内容索引库：新建或空库创建精确 v9，精确 v4/v5 原子迁移到 v9，精确 v6/v7/v8/v9 直接验证；非空 v0 及 v1-v3 要求显式重建。
-3. 若固定打包路径存在精确 manifest，准备持久 Meta 目录。
+3. 若打包的 Meta bundle 存在 manifest，准备持久 Meta 目录。
 4. 用密钥验证数据库秘密。
 5. 加载全局运行设置并构造受管 Provider 代理选择。
 6. 应用 Provider 代理、CORS、MCP、Cookie、可信代理和认证限流策略。
 7. 若启用 `--require-secure-cookies` 但设置仍为 `false`，拒绝启动。
-8. 默认重新散列 `web/` 下全部 HTML，并要求 `web/csp-hashes.json` 与静态导出完全一致后构造 CSP。显式 `--development` 模式不托管静态前端，使用无构建脚本哈希的基础安全策略，不读取静态构建。
+8. 默认重新散列二进制内嵌前端导出中的全部 HTML，并要求内嵌的 `csp-hashes.json` 完全一致后构造 CSP；未以 `litradar_web` 构建 tag 嵌入前端的二进制拒绝启动。显式 `--development` 模式不托管静态前端，使用无构建脚本哈希的基础安全策略，不读取静态构建。
 9. 绑定监听端口并并发启动 HTTP 与立即执行的调度 tick。
 
 默认调度间隔为 30 秒，可用 `--scheduler-interval-seconds N` 覆盖；N 必须大于 0。任一组件意外失败都会使整个 `serve` 调用失败。
 
-`--development` 是显式启动参数，不是数据库运行设置或环境覆盖，只允许 `--host 127.0.0.1`，且与 `--require-secure-cookies` 互斥。检查在存储准备前完成；省略参数时，静态构建缺失或 CSP 清单不匹配仍会导致启动失败。本地可通过 `node scripts/dev.mjs` 同时启动 Go 开发模式和 Next.js，并在同一终端统一停止。
+`--development` 是显式启动参数，不是数据库运行设置或环境覆盖，只允许 `--host 127.0.0.1`，且与 `--require-secure-cookies` 互斥。检查在存储准备前完成；省略参数时，二进制未嵌入前端或 CSP 清单不匹配仍会导致启动失败。本地可通过 `node scripts/dev.mjs` 同时启动 Go 开发模式和 Next.js，并在同一终端统一停止。
 
 `--require-secure-cookies` 同时选择 hardened HTTPS 响应模式：在 Secure Cookie 启动门通过后，应用为所有响应增加 `Strict-Transport-Security: max-age=31536000`。未传该参数的 loopback HTTP 模式不发送 HSTS。CSP 清单由 `pnpm --dir app build` 自动生成；打包或部署不得绕过该构建步骤，也不得把不同构建的 HTML 与清单混用。
 
@@ -283,7 +283,7 @@ Scholarly 默认每个期刊执行器使用 6 个来源工作线程，同时运�
 
 普通索引先迁移认证库并验证现有内容库，再执行固定 manifest 发现和可选的官方 Meta 准备，然后验证部署密钥、读取运行设置、校验规范目录，并按 `index_provider_routes` 构造 Provider。内部索引 worker 不重复准备。准备只管理 manifest 声明的持久文件，不替代目录契约校验。
 
-直接模式把当前逻辑 Provider 的受管代理选择只在内存中交给注册构造。多进程索引把调度数据写入可丢弃 worker request JSON，但该 JSON 不含 `cnki_captcha_token` 或 `provider_proxy_url`。父进程启动 child 后，从 child 环境删除探测变量，并通过现有 stdin 管道发送一次带协议版本和 worker ID 的 bootstrap；只有 `provider_name=cnki` 的 bootstrap 可以携带 captcha token，只有策略中已启用的当前 `provider_name` 可以携带共用代理 URL。worker 在 Provider 构造前验证并消费 bootstrap，随后同一 stdin 流只接收 durable commit ACK。bootstrap/协议失败使用固定错误分类并清理 request 文件和 child 进程；命令行、环境、request JSON、日志和 Debug 都不暴露代理秘密。
+直接模式把当前逻辑 Provider 的受管代理选择只在内存中交给注册构造。多进程索引把调度数据写入可丢弃 worker request JSON，但该 JSON 不含 `cnki_captcha_token` 或 `provider_proxy_url`。父进程启动 child 后，从 child 环境删除探测变量，并通过现有 stdin 管道发送一次带协议版本和 worker ID 的 bootstrap；只有 `provider_name=cnki` 的 bootstrap 可以携带 captcha token，只有策略中已启用的当前 `provider_name` 可以携带共用代理 URL。worker 在 Provider 构造前验证并消费 bootstrap，随后同一 stdin 流只接收 durable commit ACK。bootstrap/协议失败使用固定错误分类并清理 request 文件和 child 进程；命令行、环境、request JSON、日志和格式化输出都不暴露代理秘密。
 
 - OpenAlex key：请求 `/sources` 和 `/works`
 - Semantic Scholar key：`x-api-key` 请求头
@@ -315,7 +315,7 @@ AI 凭据和 PushPlus 是用户级设置。每个用户在 `notification_setting
 warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litradar_sources=info,litradar_storage=info,litradar_worker=info
 ```
 
-`off` 完全关闭服务端事件。API 保存时和每个进程启动时都会严格验证；无效 filter、其他 format 值或认证库不可读会让进程在业务工作前失败。日志 bootstrap 只读这两个非秘密字段，不迁移数据库、不解密 key 池，也不读取RUST_LOG 等通用日志环境变量。完整事件、级别、关联和丢失语义见[日志运维](../operations/logging.md)。
+`off` 完全关闭服务端事件。API 保存时和每个进程启动时都会严格验证；无效 filter、其他 format 值或认证库不可读会让进程在业务工作前失败。日志 bootstrap 只读这两个非秘密字段，不迁移数据库、不解密 key 池，也不读取 `RUST_LOG` 等通用日志环境变量。完整事件、级别、关联和丢失语义见[日志运维](../operations/logging.md)。
 
 ## 路径默认值
 
@@ -326,10 +326,11 @@ warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litra
 | `data/meta`              | 期刊 CSV                                |
 | `data/index`             | 索引 SQLite                             |
 | `data/index-control`     | 可丢弃 Provider checkpoint/lease SQLite |
+| `data/index-work`        | 可丢弃 Crossref 工作集，不进入备份      |
 | `data/auth.sqlite`       | 认证和业务库                            |
 | `data/push_state`        | `.changes.json` 候选和只读旧状态导入源  |
 | `data/folder_push_state` | 只读旧 push 状态导入源                  |
 
-Simple is statically linked and registered directly per admitted SQLite connection. No runtime path or environment override selects a tokenizer library; see [build inputs and compatibility](../../libs/simple/README.md).
+Simple 静态链接进应用，并在每个准入的 SQLite 连接上直接注册；不存在选择分词库的运行时路径或环境变量，见[构建输入与兼容性](../../libs/simple/README.md)。
 
 `/usr/share/litradar/meta` 不在 `project-root` 下，只是发布镜像中的固定官方只读 bundle；`data/meta` 才是需要备份和恢复的运行时目录。

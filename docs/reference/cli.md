@@ -33,7 +33,7 @@ docker compose run --rm litradar <subcommand> <arguments>
 - `scheduler`
 - `openapi`
 
-每个子命令都接受 `--help` 或 `-h`。未知子命令会写入 stderr 并以非零状态退出。
+顶层另接受 `litradar --version`，输出 `litradar <version>` 后以 0 退出。每个子命令都接受 `--help` 或 `-h`。未知子命令会写入 stderr 并以非零状态退出。
 
 ## 公共路径参数
 
@@ -63,14 +63,14 @@ litradar serve --secret-key-file PATH
 | `--secret-key-file PATH`         | 必填         | 32 字节部署密钥                                      |
 | `--host HOST`                    | `127.0.0.1`  | HTTP 监听地址                                        |
 | `--port PORT`                    | `8000`       | HTTP TCP 端口                                        |
-| `--project-root PATH`            | 当前工作目录 | 数据与静态 Web 根目录                                |
+| `--project-root PATH`            | 当前工作目录 | 数据根目录（前端已编入二进制）                       |
 | `--scheduler-interval-seconds N` | `30`         | 立即执行首个 tick 后的调度间隔；必须大于 0           |
 | `--require-secure-cookies`       | 关闭         | 要求数据库 `secure_cookies=true`，否则绑定端口前失败 |
 | `--development`                  | 关闭         | 本地开发只提供后端接口，不依赖或托管前端静态构建     |
 
 `serve` 是唯一常驻入口。它先准备和迁移存储，再在一个进程中并发运行 HTTP 与内嵌调度。计划任务使用当前 `litradar` 可执行文件启动类型化子命令进程，并把每次运行隔离到 Unix process group 或 Windows Job Object。SIGINT/SIGTERM 会先终止完整进程树、等待直接子进程，再保存 `cancelled`；任一运行组件意外失败会关闭另一组件并使进程非零退出。
 
-`--development` 只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合；无效组合在准备存储前拒绝。该模式保留 API、认证、MCP、文档、健康检查、内嵌任务和基础安全响应头，页面路径返回 404，页面由 Next.js 开发服务器提供。省略此参数时仍必须提供经过 CSP 清单验证的 `web/`；不会根据目录是否存在自动选择模式。本地一键启停命令见[开发指南](../guides/development.md#一条命令启动前后端)。
+`--development` 只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合；无效组合在准备存储前拒绝。该模式保留 API、认证、MCP、文档、健康检查、内嵌任务和基础安全响应头，页面路径返回 404，页面由 Next.js 开发服务器提供。省略此参数时使用编入二进制的前端，并校验内嵌 HTML 与 CSP 清单；未以 `litradar_web` tag 嵌入前端的源码构建会明确失败，不会自动降级为开发模式。本地一键启停命令见[开发指南](../guides/development.md#一条命令启动前后端)。
 
 ## `admin`
 
@@ -221,9 +221,9 @@ litradar index --secret-key-file PATH
 
 索引多进程也通过当前可执行路径启动 `litradar index` 的内部工作请求；不依赖另一个程序名。每个 worker 都在独立的 Unix process group 或 Windows Job Object 中启动，父进程错误、协议失败和清理路径会终止并等待整个进程树。调度父进程同样通过当前二进制启动类型化子命令，并用经过校验的隐藏内部参数关联 `parent_run_id`。手动投递 dispatcher 还会启动私有 `delivery-run --run-id ... --owner-id ...`，child 只从认证 SQLite 和部署密钥加载权威配置。私有命令必须同时携带内部 parent marker，不出现在 `--help`，也不是用户可配置的 CLI。所有命令使用 Go 运行时；服务端存储、上游和密码派生任务由独立的有界执行器限制容量。
 
-命令结果保留 `status`、`message`、`csvs` 和数值 `effective_concurrency`。每个 CSV 的 `concurrency` 包含解析后的 `configured_workers/processes/capacity`、`aggregate_limit`、`effective_workers`、`executor_count`、`child_process_count`、`inline_executor_count` 和 `effective_aggregate_capacity`。单个内联执行器计为 1 个执行器、0 个子进程；只有非空待处理分区计入工作组，已完成、跳过或仅恢复清单的目录活动容量为 0。顶层配置与实际摘要分别选择容量最大的目录元组，不会把不同目录的最大值相乘。空选择容量为 0，未指定的 `requested_workers/processes` 保留为 `null`。这些字段表示任务容量，不是实测 HTTP 重叠数。`source_attempt_count` 统计已提交的规范 Provider 页面，包括恢复时保存的计数，不是 HTTP 请求或重试次数；`written_article_count` 仍是固定大小计数。
+命令结果保留 `status`、`message`、`csvs` 和对象 `effective_concurrency`。每个 CSV 的 `concurrency` 包含解析后的 `configured_workers/processes/capacity`、`aggregate_limit`、`effective_workers`、`executor_count`、`child_process_count`、`inline_executor_count` 和 `effective_aggregate_capacity`。单个内联执行器计为 1 个执行器、0 个子进程；只有非空待处理分区计入工作组，已完成、跳过或仅恢复清单的目录活动容量为 0。顶层配置与实际摘要分别选择容量最大的目录元组，不会把不同目录的最大值相乘。空选择容量为 0，未指定的 `requested_workers/processes` 保留为 `null`。这些字段表示任务容量，不是实测 HTTP 重叠数。`source_attempt_count` 统计已提交的规范 Provider 页面，包括恢复时保存的计数，不是 HTTP 请求或重试次数；`written_article_count` 仍是固定大小计数。
 
-发布镜像把 bundle 固定放在 `/usr/share/litradar/meta`。普通 `index` 仅在精确的 `bundle-manifest.json` 存在时，于认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。该路径不接受环境变量或 CLI 覆盖；本地构建通常发现不到 manifest，因此执行 no-op。运行目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
+发布镜像把 bundle 固定放在 `/usr/share/litradar/meta`，二进制发行包放在可执行文件旁的 `assets/meta`。普通 `index` 依次查找这两处的 `bundle-manifest.json`，存在时于认证库迁移后、读取密钥和运行设置前准备持久的 `<project-root>/data/meta`，再进入下述规范目录校验；内部多进程 worker 请求不会重复准备。准备结果产生 `storage.managed_meta.prepared` 聚合事件，不改变上述 stdout JSON。这些路径不接受环境变量或 CLI 覆盖；本地构建通常发现不到 manifest，因此执行 no-op。运行目录缺失会明确失败，存在但没有选中 CSV 时返回 `skipped`。
 
 ### 规范目录和 Provider 路由
 
@@ -235,9 +235,9 @@ data/index/<stem>.sqlite
 data/index-control/<stem>.sqlite
 ```
 
-CSV 使用 LitRadar 维护的 `catalog_id,title,issn,eissn,all_issns,title_aliases,area,...rankings` 契约，没有 `source` 或上游 ID。解析器在网络请求前拒绝未知列、非法/重复 `catalog_id`、非法 ISSN、重复别名和不规范文本。
+CSV 使用 LitRadar 维护的 `catalog_id,catalog_aliases,title,issn,eissn,all_issns,title_aliases,area,...rankings` 契约，没有 `source` 或上游 ID。解析器在网络请求前拒绝未知列、非法/重复 `catalog_id`、非法 ISSN、重复别名和不规范文本。
 
-`index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册 `IndexContentProvider`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线摘要页和全文使用各自的 default + per-catalog 顺序，和索引 Provider 单选相互独立。
+`index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册的 `provider.IndexContent`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线摘要页和全文使用各自的 default + per-catalog 顺序，和索引 Provider 单选相互独立。
 
 内容库的新建、预检和迁移要求统一见[数据库版本](database.md#连接和版本)。新建库使用 v9；精确 v6/v7/v8/v9 在普通启动时保留原结构，精确 v4/v5 可事务迁移到 v9。非空 v0 及 v1 至 v3 返回包含确切路径的重建错误，命令不会自动删除、改名或降低 `user_version`。
 
@@ -361,7 +361,7 @@ litradar cfp refresh (--db NAME | --catalog-id ID | --all)
 | `--obscura-path`    | 优先于 `LITRADAR_OBSCURA_PATH`，再回退到 `PATH`                                             |
 | `--pdftotext-path`  | 优先于 `LITRADAR_PDFTOTEXT_PATH`，再回退到 `PATH`                                           |
 
-普通刷新固定并发 2 个来源，全文刷新固定并发 4 个期刊尝试，没有公开并发参数。响应会区分成功、失败、未尝试和不支持的来源；`failed` 或 `notAttempted` 非零时命令退出非零，全文的 `partial` 也计入失败。普通刷新中的 `unsupported` 本身不导致失败。失败时保留上次有效数据，不能把部分刷新解释为全部完成。采集边界与原文规则见[征稿追踪架构](../architecture/cfp-tracking.md)。
+普通刷新固定并发 2 个来源，全文刷新固定并发 4 个来源，没有公开并发参数。响应会区分成功、失败、未尝试和不支持的来源；`failed` 或 `notAttempted` 非零时命令退出非零，全文的 `partial` 也计入失败。普通刷新中的 `unsupported` 本身不导致失败。失败时保留上次有效数据，不能把部分刷新解释为全部完成。采集边界与原文规则见[征稿追踪架构](../architecture/cfp-tracking.md)。
 
 ## `notify` 和 `push`
 
@@ -404,7 +404,7 @@ parser 还接受 `--index-db PATH` 直接指定索引文件；普通使用优先
 | `--ai-model MODEL`           | 用户设置或代码默认     | 覆盖模型名，不提供 API key        |
 | `--max-candidates N`         | `120`                  | 进入模型前的候选上限              |
 | `--timeout N`                | `60`                   | AI/PushPlus HTTP 超时秒数         |
-| `--retries N`                | `3`                    | 适用请求的重试次数，范围 `0..=10` |
+| `--retries N`                | `3`                    | 适用请求的重试次数，范围 `1..=10` |
 | `--dedupe-retention-days N`  | `60`                   | 已确认去重记录保留天数            |
 | `--dry-run` / `--no-dry-run` | 执行模式               | 是否禁止外部发送和收藏/去重写入   |
 
@@ -412,7 +412,7 @@ checkpoint、run、item、dedupe 和 workflow lease 统一写入 `--auth-db` 指
 
 `--db` 省略时按名称排序处理全部 `data/index/*.sqlite`。`utd24` 和 `utd24.sqlite` 等价；路径部分会被去掉。
 
-`--retries 0` 表示只执行首次请求、不再重试；默认值为 3。大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用请求或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。AI 可对连接失败、timeout 和受限瞬态状态重试；PushPlus 仅在连接建立明确失败、请求尚未发送时重试。一旦 PushPlus 请求可能到达上游，timeout、HTTP 响应或连接后错误会直接产生 `unknown`，不会自动重放。`--dedupe-retention-days <= 0` 禁用确认记录清理，而不是立即删除全部记录。
+`--retries N` 表示首次请求后最多再重试 N 次，默认值为 3。0 或大于 10 的值会在密钥、数据库、目标和传输初始化前被拒绝。该参数是每个适用请求或 AI 响应格式的重试次数，不是作业总时限或全局请求总数。AI 可对连接失败、timeout 和受限瞬态状态重试；PushPlus 仅在连接建立明确失败、请求尚未发送时重试。一旦 PushPlus 请求可能到达上游，timeout、HTTP 响应或连接后错误会直接产生 `unknown`，不会自动重放。`--dedupe-retention-days <= 0` 禁用确认记录清理，而不是立即删除全部记录。
 
 `notify`/`push` 在投递运行已形成聚合结果时总会先向 stdout 输出一行完整 JSON。聚合状态为 `completed`、`skipped` 或 `idle` 时退出 0；`running`、`cancelled`、`timed_out`、`failed` 或 `unknown` 时退出非零。这样普通调用方仍能解析每个数据库和订阅者的精确结果，scheduler 不会把业务失败误记为成功。`index --notify` 使用上述私有 compact handoff 契约并同时核对 typed status 与退出类别；隐藏参数不属于公开 CLI，也不会出现在 help 中。
 
@@ -435,17 +435,17 @@ litradar scheduler dry-run-once TASK_ID
     [--auth-db PATH]
 ```
 
-| 子命令         | 行为                               |
-| -------------- | ---------------------------------- |
-| `validate`     | 加载并校验保存的类型化任务，不执行 |
-| `run-once`     | 立即执行一个任务                   |
-| `dry-run-once` | 立即按 dry-run 模式执行一个任务    |
+| 子命令         | 行为                                     |
+| -------------- | ---------------------------------------- |
+| `validate`     | 加载并校验保存的类型化任务，不执行       |
+| `run-once`     | 立即执行一个任务                         |
+| `dry-run-once` | 只确认任务存在，不校验、不执行、不写历史 |
 
 保存的任务只能展开为同一 `litradar` 可执行文件的 `index`、`notify` 或 `push` argv，不执行 shell 文本。
 
-Every scheduled subprocess inherits the explicit project root, including follow-up notification and push stages. A custom `--auth-db` path does not change that root; the launching working directory may differ from the project directory.
+每个调度子进程（包括后续的通知和推送阶段）都继承显式的项目根目录。自定义 `--auth-db` 路径不会改变该根目录；启动时的工作目录可以与项目目录不同。
 
-`run-once` uses the same durable task claim, heartbeat and history as automatic execution. If a manual or scheduled run is already active, it returns `found=true`, `did_execute=false`, `status=null` and a busy message without queuing work. Valid disabled tasks may still be run explicitly. Manual requests do not consume scheduled slots; pending cron work remains eligible after the manual run completes. `dry-run-once` does not execute or create history. An expired unstarted manual claim is cancelled, while an expired running claim becomes unknown; neither is automatically replayed.
+`run-once` 与自动执行使用相同的持久任务认领、心跳和历史。若已有手动或调度运行处于活动状态，它返回 `found=true`、`did_execute=false`、`status=null` 和 busy 消息，不排队。有效但已停用的任务仍可显式运行。手动请求不占用调度时段；手动运行结束后，待处理的 cron 工作仍可执行。`dry-run-once` 只确认任务存在，不执行也不写历史。过期且未启动的手动认领会被取消，过期的运行中认领变为 unknown；二者都不会自动重放。
 
 ## `openapi`
 

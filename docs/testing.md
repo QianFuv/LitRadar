@@ -84,11 +84,11 @@ Playwright 有两个独立角色：
 | 调度与 worker          | worker scheduler/delivery/AI/PushPlus fixture 测试；runtime 协调测试                                             | 租约、时区、超时、取消、去重、持久状态和安全日志                               | scheduler run-once 启动实际类型化子命令并等待结果                         |
 | 容器运行时             | Dockerfile/Compose 静态检查                                                                                      | `tests/container-smoke.mjs` 的 HTTP 与 inspect 断言                            | CI 对将要推送的同一镜像 ID 执行硬化启动和完整清理                         |
 
-征稿领域的最低充分测试分别位于[领域规则](../internal/domain/cfp/oracle_test.go)、[来源解析](../internal/cfp/oracle_test.go)、[持久化](../internal/storage/cfp/oracle_test.go)、[API](../internal/api/cfp_test.go)和[前端状态](../app/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
+征稿领域的最低充分测试分别位于[领域规则](../internal/domain/cfp/characterization_test.go)、[来源解析](../internal/cfp/characterization_test.go)、[持久化](../internal/storage/cfp/characterization_test.go)、[API](../internal/api/cfp_test.go)和[前端状态](../app/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
 
 ## 统一命令
 
-先安装 Go 1.27.2、CGO 所需的 C 编译器、Node.js 26.11.1 和前端锁定依赖。Linux 先运行 `node scripts/build-simple-tokenizer.mjs`；Windows 使用仓库提供的 DLL。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.2`。
+先安装 Go 1.27.2、Node.js 26.11.1 和前端锁定依赖，以及构建静态 Simple 所需的 curl、tar、CMake 和与 Go 目标匹配的 C/C++14 编译器（Linux 使用 Make，Windows 另需 MinGW 和 Ninja）。`tests/test.mjs` 与 `scripts/check-go.mjs` 会自动构建静态 Simple 及兼容性 oracle；Windows 仓库内的旧 DLL 只作为兼容性 oracle。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.2`。
 
 ```bash
 npm install --global pnpm@12.10.1
@@ -108,7 +108,7 @@ node scripts/check-go.mjs
 | `node tests/test.mjs diagnostics` | Go 与前端分别生成无阈值覆盖率报告                                                                                                                 |
 | `node scripts/check-go.mjs`       | Windows/Linux 后端发布检查：工具链、native 输入、格式、模块/补丁完整性、vet、无缓存 regular/race，以及 SDK/SQLite 自身模块和根模块的 regular/race |
 
-`all` 不包含 race 或替换依赖包测试；后两者由 `check-go.mjs` 提供。`--ci` 设置 CI 环境与前端 JUnit 路径，不生成 Go JUnit，也不切换 nextest。安装浏览器依赖使用 `pnpm --dir app exec playwright install --with-deps chromium`。
+`all` 不包含 race 或替换依赖包测试；后两者由 `check-go.mjs` 提供。`--ci` 设置 CI 环境与前端 JUnit 路径，不生成 Go JUnit。安装浏览器依赖使用 `pnpm --dir app exec playwright install --with-deps chromium`。
 
 聚焦 Go 检查使用 `go test -count=1 -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./相关包`；涉及并发时增加 `-race`。前端可在 `app/` 单独运行 `pnpm generate:api:check`、`pnpm test:unit`、`pnpm test:browser-components`、`pnpm test:e2e:fixtures` 或 `pnpm test:e2e:full-stack`。
 
@@ -131,35 +131,35 @@ docker compose \
 
 ## 发布检查
 
-发布工作流等待后端和前端检查，并对 amd64 与 arm64 实际镜像分别运行容器冒烟测试，通过后发布双架构 manifest。arm64 执行需要原生主机或已配置的模拟器。仓库不再提供安全扫描工作流或本地扫描入口。
+发布工作流等待后端和前端检查，对 `linux/amd64` 实际镜像运行容器冒烟测试并打包 Linux 二进制，同时在 Windows 上构建并冒烟 x64 压缩包；全部通过后推送单架构镜像并发布 Release。仓库不再提供安全扫描工作流或本地扫描入口。
 
 ## 报告与失败诊断
 
 `--ci` 使用以下固定路径：
 
-| 报告                                               | 路径                                                                     |
-| -------------------------------------------------- | ------------------------------------------------------------------------ |
-| Go 发布检查                                        | `test-results/go/results.json`、各项 `.log` 与 `native-inputs.json`      |
-| Vitest jsdom JUnit                                 | `app/test-results/vitest/junit.xml`                                      |
-| Vitest Browser Mode JUnit                          | `app/test-results/vitest-browser/junit.xml`                              |
-| Browser Mode 截图                                  | `app/test-results/browser-components/screenshots/`                       |
-| fixture Playwright JUnit/trace/screenshot/video    | `app/test-results/playwright-fixtures/`                                  |
-| fixture Playwright HTML                            | `app/playwright-report/fixtures/`                                        |
-| full-stack Playwright JUnit/trace/screenshot/video | `app/test-results/playwright-full-stack/`                                |
-| full-stack Playwright HTML                         | `app/playwright-report/full-stack/`                                      |
-| Go coverage                                        | `target/go-coverage/coverage.out`、`target/go-coverage/index.html`       |
-| Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                                |
-| Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`     |
-| Container release                                  | workflow artifact `container-release`，含 Compose 解析结果与容器冒烟报告 |
+| 报告                                               | 路径                                                                                                                                               |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Go 发布检查                                        | `test-results/go/results.json`、各项 `.log` 与 `native-inputs.json`                                                                                |
+| Vitest jsdom JUnit                                 | `app/test-results/vitest/junit.xml`                                                                                                                |
+| Vitest Browser Mode JUnit                          | `app/test-results/vitest-browser/junit.xml`                                                                                                        |
+| Browser Mode 截图                                  | `app/test-results/browser-components/screenshots/`                                                                                                 |
+| fixture Playwright JUnit/trace/screenshot/video    | `app/test-results/playwright-fixtures/`                                                                                                            |
+| fixture Playwright HTML                            | `app/playwright-report/fixtures/`                                                                                                                  |
+| full-stack Playwright JUnit/trace/screenshot/video | `app/test-results/playwright-full-stack/`                                                                                                          |
+| full-stack Playwright HTML                         | `app/playwright-report/full-stack/`                                                                                                                |
+| Go coverage                                        | `target/go-coverage/coverage.out`、`target/go-coverage/index.html`                                                                                 |
+| Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                                                                                                          |
+| Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`                                                                               |
+| Release                                            | workflow artifact `linux-release`、`windows-release`、`release-publication`，失败诊断为 `linux-release-diagnostics`、`windows-release-diagnostics` |
 
 CI 的 artifact upload 使用 `if: always()`。失败时先看 workflow summary 的层级状态和时长，再看 JUnit 的失败 owner；浏览器问题打开对应 HTML，并使用失败截图、第一次重试的 trace/video。容器问题先看安全清理摘要，再看已脱敏的尾部日志。报告目录均为生成物，不应提交。
 
 ## 重试、flaky 与时长
 
-- Go 本地和 CI 不自动重试，`-count=1` 禁用结果缓存；后端发布脚本每条命令上限 15 分钟，失败即停止。
+- Go 本地和 CI 不自动重试，`-count=1` 禁用结果缓存；`check-go.mjs` 的全模块常规与 race 测试每条上限 25 分钟，其他命令 15 分钟，失败即停止。
 - Playwright 本地零重试；CI 最多一次重试，只用于取得 trace/video。`failOnFlakyTests` 已启用，因此 retry-pass 仍使 CI 失败，不能作为稳定完成证据。
 - Vitest 和统一脚本不自动重试。不要通过重复运行直到通过来关闭缺陷。
-- backend、frontend 和 container workflow summary 记录各层状态与时长；Go JSON 日志记录测试时长。只有持续数据证明某层成为瓶颈后，才讨论 shard/partition。
+- frontend 和 test-diagnostics workflow summary 记录各层状态与时长，backend 结果见 `backend-<os>` artifact 中的 `test-results/go/`；Go JSON 日志记录测试时长。只有持续数据证明某层成为瓶颈后，才讨论 shard/partition。
 
 ## 覆盖率策略
 

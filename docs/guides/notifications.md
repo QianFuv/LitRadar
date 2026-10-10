@@ -24,13 +24,13 @@
 
 `litradar index --update` 在 `data/push_state/<db>.changes.json` 写入本次增量变化。分发链路读取的顶层字段包括：
 
+- `db_name`
+- `run_id`
 - `changed_issue_keys`
 - `changed_inpress_journal_ids`
 - `notifiable_article_ids`
-- `backfill_article_ids`
-- `summary`：仅用于计数和诊断
 
-`summary` 中的明细不是运行输入。没有可用变更清单或状态快照差异时，每周更新、CLI 投递和手动推送可能返回空或 `idle`。
+每周更新另读取 `generated_at`。`backfill_*` 字段当前恒为空数组，`summary` 仅用于计数和诊断，二者都不是运行输入。没有可用变更清单或状态快照差异时，每周更新、CLI 投递和手动推送可能返回空或 `idle`。
 
 ## 用户设置
 
@@ -72,7 +72,7 @@
 - API key 没有可用的全局 fallback，用户必须配置
 - 只有用户填写了任一备用字段时才构建备用 endpoint
 
-CLI `--retries` 的范围是 `0..=10`、默认值是 3；用户 `ai_retry_attempts` 的范围是 `1..=10`。AI 请求只对连接失败、单次请求超时以及 `429/502/503/504` 重试；`400/401/403`、配置错误和响应结构错误不会网络重试。AI 退避使用 `1/2/4/8/8...` 秒上限内的 full jitter；数值 `Retry-After` 优先使用并封顶 60 秒。只有成功的 2xx 响应明确表现出输出格式不兼容时，才从 `json_schema` 降级到 `json_object` 或普通 JSON。PushPlus 的独立 no-replay 规则见下方“副作用顺序”。
+CLI `--retries` 的范围是 `1..=10`、默认值是 3（首次请求外最多再重试 N 次）；用户 `ai_retry_attempts` 的范围是 `1..=10`。AI 请求只对连接失败、单次请求超时以及 `429/502/503/504` 重试；`400/401/403`、配置错误和响应结构错误不会网络重试。AI 退避使用 `1/2/4/8/8...` 秒上限内的 full jitter；数值 `Retry-After` 优先使用并封顶 60 秒。只有成功的 2xx 响应明确表现出输出格式不兼容时，才从 `json_schema` 降级到 `json_object` 或普通 JSON。PushPlus 的独立 no-replay 规则见下方“副作用顺序”。
 
 手动任务另有跨主备 Endpoint、格式和摘要请求共享的 8 次 AI HTTP 总预算，以及持久化的 10 分钟绝对 deadline。每次请求 timeout 同时受 120 秒默认值和任务剩余时间限制；这些边界不改变独立 CLI `notify`/`push` 的参数语义。
 
@@ -149,7 +149,7 @@ PushPlus 传输只在连接建立明确失败、请求尚未发送时使用受�
 - 可通过 `GET /api/tracking/push-weekly/runs/{run_id}` 恢复指定任务，通过 `POST .../{run_id}/cancel` 请求取消；owner 和管理员可访问
 - `unknown` 时普通启动仍返回 `409`；只有 owner 检查投递记录后，才可通过 `POST /api/tracking/push-weekly/runs/{run_id}/acknowledge` 显式确认并排入一个新任务
 
-runtime dispatcher 从 SQLite 认领任务，通过隐藏的类型化 `delivery-run` 子命令和完整进程树监管执行。服务重启后 queued 或 lease 过期的任务仍可恢复；取消与 deadline 会先给 cooperative polling 一个短暂窗口，再终止完整进程树。强制终止时若外部副作用可能已经开始，顶层任务固定为 `unknown`，UI 不提供无提示重试。公开状态为 `pending/running/completed/failed/cancelled/timed_out/unknown`。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
+runtime dispatcher 从 SQLite 认领任务，通过隐藏的类型化 `delivery-run` 子命令和完整进程树监管执行。服务重启后 queued 或 lease 过期的任务仍可恢复；取消与 deadline 会先给 cooperative polling 一个短暂窗口，再终止完整进程树。强制终止时若外部副作用可能已经开始，顶层任务固定为 `unknown`，UI 不提供无提示重试。公开状态为 `idle/pending/running/completed/failed/cancelled/timed_out/unknown`，其中 `idle` 表示没有任务。API 契约见 [API 参考](../reference/api.md)和运行时 OpenAPI。
 
 Unknown 确认在一个 `BEGIN IMMEDIATE` 中复核目标属于当前用户、仍是最新手动任务且状态仍为 `unknown`，随后创建一个 queued replacement 并写入固定 schema 的 `manual_push_unknown_acknowledge` 安全审计。并发重复、过期或非 Unknown 确认不会创建第二个任务；管理员也不能代替 owner 确认。确认不会修改旧外层/内层 run、item 或 `unknown`/`confirmed` dedupe，因此不确定文章不会重发，而后续 manifest 中未出现过的新文章仍可正常投递。
 
@@ -193,7 +193,7 @@ Unknown 确认在一个 `BEGIN IMMEDIATE` 中复核目标属于当前用户、�
 - 一个任务失败不阻止同轮其他任务
 - `timeout_seconds` 覆盖完整 job 链
 - SIGINT/SIGTERM 会终止并等待当前子进程、保存 `cancelled`，且不启动剩余步骤
-- dry-run 单次执行使用 `litradar scheduler dry-run-once TASK_ID`
+- `litradar scheduler dry-run-once TASK_ID` 只确认任务存在，不执行任何步骤；需要预演投递时直接对 `notify`/`push` 使用 `--dry-run`
 
 ## 排障
 

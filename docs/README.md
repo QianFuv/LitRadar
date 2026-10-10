@@ -11,7 +11,7 @@
 | 选择测试层、命令和诊断报告   | [测试系统](testing.md)                                       |
 | 使用 Docker Compose 部署     | [Docker 部署](operations/docker.md)                          |
 | 查询和排查结构化日志         | [日志运维](operations/logging.md)                            |
-| 查找 Go 命令和参数         | [CLI 参考](reference/cli.md)                                 |
+| 查找 `litradar` 命令和参数 | [CLI 参考](reference/cli.md)                                 |
 | 查找 REST API 或 MCP 行为    | [API 参考](reference/api.md)                                 |
 | 理解数据库和状态文件         | [数据库参考](reference/database.md)                          |
 | 接入或更换索引 Provider      | [索引与 Provider 契约](reference/index-provider-contract.md) |
@@ -32,6 +32,8 @@
 - [日志运维](operations/logging.md)：事件契约、级别、关联、保留、查询、隐私和事故处理
 - [安全说明](operations/security.md)：部署密钥、凭据加密、管理员初始化、密码、限流和网络暴露
 - [备份与恢复](operations/backup.md)：创建、验证、离线恢复、回滚和失败处理
+- [版本发布](operations/releases.md)：版本规则、发布流水线、二进制包安装和失败重试（英文，随发行包分发）
+- [Go 优化第 1 轮](operations/go-optimization-round-1.md)：2026-10 优化轮次的历史记录与基线数据（英文）
 
 运维文档面向部署和维护人员。安全敏感操作以相应运维文档为准，其他文档只给出入口链接。
 
@@ -55,9 +57,11 @@
 ## 包级文档
 
 - [前端包说明](../app/README.md)：`app/` 的启动、目录、API 契约和测试
-- [simple 分词器](../libs/simple/README.md)：仓库内置扩展、发现规则和上游许可证
+- [simple 分词器](../libs/simple/README.md)：静态构建、兼容性 oracle、旧库升级和上游许可证
+- [Simple 静态构建输入](../third_party/simple-static/README.md)：固定上游源码与 CMake 构建
+- [go-sdk 补丁](../third_party/go-sdk-patches/README.md)、[go-sqlite3 补丁](../third_party/go-sqlite3-patches/README.md)：vendored 依赖的本地补丁说明
 
-`libs/simple/{linux,windows}/dict/README.md` 是第三方词典说明，不属于 LitRadar 的项目文档，保持上游内容。
+`libs/simple/{linux,windows}/dict/README.md` 是第三方词典说明，不属于 LitRadar 的项目文档，保持上游内容。`docs/third-party/` 保存随镜像和发行包分发的第三方许可证与固定发行记录，不是阅读文档。
 
 ## 事实来源
 
@@ -73,11 +77,11 @@
 | 事实               | 实现来源                                                                                                                           | 文档所有者                                                   |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | 进程与服务生命周期 | `internal/runtime/`                                                                                                             | [系统架构](architecture.md)                                  |
-| CLI 参数和默认值   | `internal/cli/arguments.go`、`internal/cli/`、`internal/cli/`                                          | [CLI 参考](reference/cli.md)                                 |
+| CLI 参数和默认值   | `internal/cli/arguments.go`、`internal/cli/`                                          | [CLI 参考](reference/cli.md)                                 |
 | 全局运行配置       | `internal/storage/settings/`                                                                         | [运行配置](reference/configuration.md)                       |
 | REST schema        | `app/lib/generated/openapi.json`                                                                                                   | OpenAPI；[API 参考](reference/api.md)补充语义                |
 | SQLite schema      | `internal/storage/migrations/`、`internal/storage/indexschema/`、`internal/storage/index/control.go` | [数据库参考](reference/database.md)                          |
-| Provider 内容契约  | `internal/domain/index/`、`internal/provider/`                                                    | [索引与 Provider 契约](reference/index-provider-contract.md) |
+| Provider 内容契约  | `internal/domain/sources/`、`internal/provider/`                                                    | [索引与 Provider 契约](reference/index-provider-contract.md) |
 | Docker 行为        | `Dockerfile`、`docker-compose.yml`                                                                                                 | [Docker 部署](operations/docker.md)                          |
 | 结构化日志         | `internal/runtime/observability/`、各组件结构化事件、`app/lib/client-logger.tsx`                                           | [日志运维](operations/logging.md)                            |
 | 前端结构           | `app/package.json`、`app/app/`、`app/lib/`、`app/components/`                                                                      | [前端包说明](../app/README.md)                               |

@@ -13,11 +13,11 @@ CNKI 元数据只使用国内 NZKPT 实现：
 
 ## 能力声明
 
-| 注册/实现                                              | 能力                      | 进程与凭据                                                                              |
-| ------------------------------------------------------ | ------------------------- | --------------------------------------------------------------------------------------- |
-| `cnki_index_registration` / live domestic transport    | `IndexContentProvider`    | `index` 父进程加载 `cnki_captcha_token`；多进程时只通过 stdin bootstrap 交给国内 worker |
-| `cnki_access_registration` / API live domestic adapter | `ArticleAbstractProvider` | `serve` API 每次在线精确定位；读取同一加密 runtime secret                               |
-| `zjlib` API registration                               | `ArticleFullTextProvider` | `serve` API 只读取当前用户已有的 active ZJLib CNKI 会话                                 |
+| 注册/实现                                                        | 能力                       | 进程与凭据                                                                              |
+| ---------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------- |
+| `sources.NewCnkiIndexRegistration` / live domestic transport     | `provider.IndexContent`    | `index` 父进程加载 `cnki_captcha_token`；多进程时只通过 stdin bootstrap 交给国内 worker |
+| `sources.LiveCnkiAccessRegistration` / API live domestic adapter | `provider.ArticleAbstract` | `serve` API 每次在线精确定位；读取同一加密 runtime secret                               |
+| `sources.ZjlibFullTextRegistration`（API）                       | `provider.ArticleFullText` | `serve` API 只读取当前用户已有的 active ZJLib CNKI 会话                                 |
 
 `cnki` 注册国内索引与摘要页访问，管理能力目录报告 `index_content + article_abstract`。 国内 `cnki` **没有** fulltext。`zjlib` 是唯一内置全文 Provider。默认 `chinese_journals` 路由到 `cnki`；摘要默认 `scholarly → cnki`；全文默认 `zjlib`。
 
@@ -28,7 +28,7 @@ CNKI 元数据只使用国内 NZKPT 实现：
 - `cnki`：国内索引、在线摘要定位、challenge/verify 流程，以及 JFBYM 双图识别请求。JFBYM 是国内 CNKI 的 captcha 子流程，没有独立 policy key。
 - `zjlib`：扫码开始、扫码状态轮询、会话预热、BFF/Share SSO、搜索、候选验证和 PDF 下载；重定向与禁止重定向的两个 client 使用同一个决定。
 
-每个开关缺省为关闭。关闭时客户端明确忽略系统代理变量并直连；打开时对应流程只走显式代理，代理不可达不会静默直连。保存代理设置不会热加载：`serve` 必须重启，索引由下一条新命令读取。代理 URL 和凭据不会进入 API 响应、CNKI session、内容/控制库、worker request JSON、日志或 Debug。
+每个开关缺省为关闭。关闭时客户端明确忽略系统代理变量并直连；打开时对应流程只走显式代理，代理不可达不会静默直连。保存代理设置不会热加载：`serve` 必须重启，索引由下一条新命令读取。代理 URL 和凭据不会进入 API 响应、CNKI session、内容/控制库、worker request JSON、日志或格式化输出。
 
 ## 国内 NZKPT 索引流程
 
@@ -58,11 +58,11 @@ Incremental 从远端当前最新 `year_issue_id` 向旧扫描到 committed anch
 
 1. 检测 `-403` / `/verify/home` / 安全验证正文；
 2. `verify-api/get` 取背景与滑块图、`secretKey`；
-3. 固定 HTTPS、禁止重定向的 jfbym dual-image 请求识别 gap x；只接受成功响应的 `data.data` 数字/纯数字字符串和 `0..=10_000` 的有限坐标；
+3. 固定 HTTPS、禁止重定向的 jfbym dual-image 请求识别 gap x；只接受成功响应的 `data.data` 数字/纯数字字符串和 `0..=10000` 的有限坐标；
 4. AES-128-ECB PKCS7 加密 `pointJson` 后 `verify-api/web/check`；
 5. 内存保留 `captchaId`，重试原请求；即使 challenge 出现在最后一次普通尝试，也会执行一次受预算限制的已认证重放。
 
-密钥通过加密 runtime secret `cnki_captcha_token` 配置；数据库值为空时，单次索引探测可用 `LITRADAR_CNKI_CAPTCHA_TOKEN`。父进程解析该值后会从 child 环境移除变量；worker request JSON 不含 token 或代理 URL，只有 `provider_name=cnki` 的 worker 在构造 Provider 前通过版本化 stdin bootstrap 收到 captcha token，只有当前 Provider 开关启用的 worker 才在同一 bootstrap 收到代理 URL。后续同一管道继续传输 durable ACK。token、代理 URL、secretKey、captchaId 与图片不得进入 request 文件、参数、环境、日志、Debug、内容库或控制库。
+密钥通过加密 runtime secret `cnki_captcha_token` 配置；数据库值为空时，单次索引探测可用 `LITRADAR_CNKI_CAPTCHA_TOKEN`。父进程解析该值后会从 child 环境移除变量；worker request JSON 不含 token 或代理 URL，只有 `provider_name=cnki` 的 worker 在构造 Provider 前通过版本化 stdin bootstrap 收到 captcha token，只有当前 Provider 开关启用的 worker 才在同一 bootstrap 收到代理 URL。后续同一管道继续传输 durable ACK。token、代理 URL、secretKey、captchaId 与图片不得进入 request 文件、参数、环境、日志、格式化输出、内容库或控制库。
 
 <a id="retired-overseas-provider"></a>
 

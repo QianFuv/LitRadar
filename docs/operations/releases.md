@@ -75,17 +75,17 @@ original workflow resumes publication and updates latest only after publication.
 
 ## Run a binary archive
 
-The Linux package targets Ubuntu 26.04 on amd64. They contain the native Go
-binary with embedded web assets and CSP, catalog bundle, SQLite tokenizer, Obscura and its worker, and
-third-party notices. They are dynamically linked distributions, not standalone
-static binaries. Install the system dependencies first:
+The Linux package targets Ubuntu 26.04 on amd64. It contains the native Go
+binary (with embedded web assets, CSP and the statically linked Simple tokenizer),
+the catalog bundle, Obscura and its worker, and third-party notices. It is a
+dynamically linked distribution, not a standalone static binary. Install the system dependencies first:
 
 ```sh
 sudo apt-get update
 sudo apt-get install ca-certificates libgcc-s1 libstdc++6 poppler-utils poppler-data openssl
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf litradar_0.1.1_linux_amd64.tar.gz
-cd litradar_0.1.1_linux_amd64
+tar -xzf litradar_0.2.1_linux_amd64.tar.gz
+cd litradar_0.2.1_linux_amd64
 mkdir -p secrets
 test -e secrets/litradar.key || (umask 077; openssl rand -out secrets/litradar.key 32)
 ./run.sh --version
@@ -109,16 +109,16 @@ CFP and scheduling commands remain available through `run.sh`.
 
 Extract the ZIP into a writable directory. Windows 10/11 or Windows Server with
 PowerShell 5.1 is required; Go, Node.js, Docker and development tools are not
-required. The distribution contains Obscura render/stealth, the search tokenizer,
-Poppler PDF extraction and their native runtime libraries. Normal Windows system
+required. The distribution contains Obscura render/stealth, Poppler PDF extraction and
+their native runtime libraries; the search tokenizer is linked into the executable. Normal Windows system
 fonts are used for rendering.
 
 In PowerShell, verify the ZIP against `SHA256SUMS`, then extract it:
 
 ```powershell
-Get-FileHash .\litradar_0.2.0_windows_amd64.zip -Algorithm SHA256
-Expand-Archive .\litradar_0.2.0_windows_amd64.zip -DestinationPath .
-Set-Location .\litradar_0.2.0_windows_amd64
+Get-FileHash .\litradar_0.2.1_windows_amd64.zip -Algorithm SHA256
+Expand-Archive .\litradar_0.2.1_windows_amd64.zip -DestinationPath .
+Set-Location .\litradar_0.2.1_windows_amd64
 New-Item -ItemType Directory -Force secrets | Out-Null
 if (-not (Test-Path secrets/litradar.key)) {
     $keyBytes = New-Object byte[] 32

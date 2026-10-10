@@ -15,9 +15,9 @@ CI 和容器使用以下主版本：
 
 Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
 
-Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.2`。Windows native builds require matching MinGW GCC/G++ and Ninja on PATH；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
+Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.2`。Windows 原生构建要求 PATH 中有匹配的 MinGW GCC/G++ 和 Ninja；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
 
-pnpm forwards the existing `NODE_OPTIONS` and disables Node.js experimental Web Storage for its child processes. This keeps jsdom browser storage isolated from Node.js host storage during tests.
+pnpm 会转发已有的 `NODE_OPTIONS`，并为子进程关闭 Node.js 实验性 Web Storage，使测试中的 jsdom 浏览器存储与 Node.js 宿主存储隔离。
 
 ## 初始准备
 
@@ -39,16 +39,16 @@ wc -c secrets/litradar.key
 
 ### 原生分词器
 
-Windows and Linux builds statically link Simple; install curl, tar, CMake and a C++14 compiler compatible with Go's `CC`/`CXX`. Windows uses MinGW and Ninja. The development, build and test scripts prepare the archive automatically.
+Windows 和 Linux 构建都静态链接 Simple，需要安装 curl、tar、CMake，以及与 Go `CC`/`CXX` 匹配的 C++14 编译器；Linux 使用 Make，Windows 使用 MinGW 和 Ninja。开发、构建和测试脚本会自动准备静态库。
 
-For direct Go commands, prepare native inputs and export their cache identity in the same shell:
+直接运行 Go 命令（包括 `go run`、`go test` 和 `pnpm generate:api`）前，先在同一 shell 中准备原生输入并导出其缓存标识：
 
 ```bash
 node scripts/build-simple-tokenizer.mjs --compatibility-oracle
 export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment} from "./scripts/build-simple-tokenizer.mjs"; process.stdout.write(simpleBuildEnvironment().CGO_CFLAGS)')"
 ```
 
-The archive is `target/simple-tokenizer/libsimple.a`; runtime DLL/SO discovery is no longer used. The oracle switch prepares the previous tokenizer only for compatibility tests. See [Simple build inputs](../../third_party/simple-static/README.md).
+静态库位于 `target/simple-tokenizer/libsimple.a`，运行时不再查找 DLL/SO。`--compatibility-oracle` 只为兼容性测试额外准备旧版分词器。构建输入见 [Simple 静态构建](../../third_party/simple-static/README.md)。
 
 ### 前端依赖
 
@@ -129,12 +129,7 @@ pnpm dev
 
 发布构建执行静态导出，rewrite 不会进入产物；Go 从内嵌资源提供页面和压缩资源，并在同一 8000 监听器处理后端命名空间。
 
-To build the production executable locally, run `pnpm --dir app build` followed by
-`node scripts/build-go.mjs`. The latter validates the exact generated CSP manifest,
-stages the complete export under ignored `internal/webassets/export/`, and compiles
-with `litradar_web`. Source-only tests and backend development omit that tag and
-do not require a frontend export. Embedded responses use content ETags per identity
-or gzip representation and omit `Last-Modified`; HTTP date conditions are ignored.
+本地构建生产可执行文件时，先运行 `pnpm --dir app build`，再运行 `node scripts/build-go.mjs`。后者校验生成的 CSP 清单与导出完全一致，把完整导出暂存到已忽略的 `internal/webassets/export/`，并以 `litradar_web` tag 编译。纯源码测试和后端开发不使用该 tag，也不需要前端导出。内嵌响应按原始或 gzip 表示分别使用内容 ETag，不返回 `Last-Modified`，并忽略基于日期的 HTTP 条件请求。
 
 ### 索引和投递
 
@@ -173,7 +168,7 @@ Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 
 
 ## OpenAPI 与前端类型
 
-`internal/openapi/` 中的声明及 `internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，在 `app/` 运行：
+`internal/openapi/` 中的声明及 `internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，先确保已按[原生分词器](#原生分词器)准备 `target/simple-tokenizer/libsimple.a`，再在 `app/` 运行：
 
 ```bash
 pnpm generate:api
@@ -226,7 +221,7 @@ node tests/test.mjs integration
 node tests/test.mjs all
 ```
 
-Backend CI 在 Windows 和 Linux 执行 `node scripts/check-go.mjs`，固定 Go 1.27.2、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。每条命令最多 15 分钟，失败即停止；不会自动重试。
+Backend CI 在 Windows 和 Linux 执行 `node scripts/check-go.mjs`，固定 Go 1.27.2、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。脚本会自行构建静态 Simple 及兼容性 oracle。
 
 覆盖率只在每周/手动诊断中分别生成 Go 和前端报告，不设阈值：
 
@@ -265,7 +260,7 @@ docker build --tag litradar:test .
 node tests/container-smoke.mjs litradar:test
 ```
 
-根 Dockerfile 必须成功导出前端并把 `out/` 复制到 Go 编译阶段，最终 Ubuntu 26.04 层通过二进制提供内嵌网页。应用入口只有 release `litradar`；镜像还提供征稿抓取使用的 Obscura、`pdftotext` 和原生分词库，不包含 Node.js 或 Next.js standalone 运行时。根 Compose 只声明一个 `litradar` 服务，使用非 root 账号、只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略。
+根 Dockerfile 必须成功导出前端并把 `out/` 复制到 Go 编译阶段，最终 Ubuntu 26.04 层通过二进制提供内嵌网页。应用入口只有 release `litradar`；镜像还提供征稿抓取使用的 Obscura 和 `pdftotext`，Simple 分词器已静态链接进 `litradar`；不包含 Node.js 或 Next.js standalone 运行时。根 Compose 只声明一个 `litradar` 服务，使用非 root 账号、只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略。
 
 日志或请求路径变更还应使用隔离 fixture 运行 off/on 门禁：
 

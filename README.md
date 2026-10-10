@@ -13,7 +13,7 @@ LitRadar 是面向学术期刊的自托管检索与订阅平台。它从 Crossre
 
 ## 运行组成
 
-应用入口是唯一的 `litradar` 可执行文件。`litradar serve` 同时承载静态 Web、REST、Swagger/OpenAPI、MCP 和持久化调度；任务需要隔离时，由它启动短生命周期的同名子命令。Next.js 前端和 CSP 清单在发布构建时编入 Go 二进制，部署时不需要外部 `web/` 或 Node.js 服务。Simple is also statically linked, so indexing/search does not require a Simple DLL/SO. Obscura, Poppler and metadata catalogs remain separate deployment inputs. 模块边界和数据流见[系统架构](docs/architecture.md)。
+应用入口是唯一的 `litradar` 可执行文件。`litradar serve` 同时承载静态 Web、REST、Swagger/OpenAPI、MCP 和持久化调度；任务需要隔离时，由它启动短生命周期的同名子命令。Next.js 前端和 CSP 清单在发布构建时编入 Go 二进制，部署时不需要外部 `web/` 或 Node.js 服务。Simple 分词器同样静态链接，索引和检索不需要 Simple DLL/SO；Obscura、Poppler 和期刊元数据目录仍是独立的部署输入。模块边界和数据流见[系统架构](docs/architecture.md)。
 
 ## Docker 快速开始
 
@@ -94,11 +94,11 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 本地开发
 
-项目使用 Go 1.27.2（启用 CGO，并安装 C 编译器）、Node.js 26.11.1 和 pnpm 12.10.1。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
+项目使用 Go 1.27.2（启用 CGO）、Node.js 26.11.1 和 pnpm 12.10.1；构建静态 Simple 还需要与 Go 目标匹配的 C/C++14 编译器、CMake、curl 和 tar，Windows 另需 MinGW 和 Ninja。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
 
 ## 版本发布
 
-普通推送只运行质量检查；发布时修改根目录 `VERSION`（例如 `0.1.0` → `0.1.1`），提交并推送到 `main`。检查通过后自动发布 GitHub Release 二进制包及 `ghcr.io/qianfuv/litradar:v0.1.1`、`latest` 镜像，无需手动打标签。二进制包支持 Linux amd64/arm64 和 Windows x64，包含 Web 资源和原生辅助程序。Actions 的 `CI` 负责检查，`Release` 负责版本发布及手动恢复；版本规则、安装依赖和失败重试见[版本发布说明](docs/operations/releases.md)。
+普通推送只运行质量检查；发布时修改根目录 `VERSION`（例如 `0.1.0` → `0.1.1`），提交并推送到 `main`。检查通过后自动发布 GitHub Release 二进制包及 `ghcr.io/qianfuv/litradar:v0.1.1`、`latest` 镜像，无需手动打标签。二进制包支持 Linux amd64 和 Windows x64，内嵌 Web 资源并附带原生辅助程序；容器镜像只提供 `linux/amd64`。Actions 的 `CI` 负责检查，也可手动运行并填写当前 `VERSION` 重试发布；`Release` 是由 `CI` 调用的可复用发布流程。版本规则、安装依赖和失败重试见[版本发布说明](docs/operations/releases.md)。
 
 ## 文档
 

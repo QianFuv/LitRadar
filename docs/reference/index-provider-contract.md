@@ -1,6 +1,6 @@
 # 索引与 Provider 契约
 
-本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `3`，实现来源是 `litradar-domain::index_contract`、`litradar-provider` 和 `litradar-index`；私有多进程 worker wire protocol 当前为 `8`。
+本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `3`，实现来源是 `internal/domain/sources`、`internal/provider`、`internal/index` 和 `internal/storage/index`；私有多进程 worker wire protocol 当前为 `8`。
 
 核心边界只有三条：
 
@@ -12,15 +12,15 @@
 
 一个只负责索引的 Provider 需要：
 
-- 实现 `IndexContentProvider`；
+- 实现 `provider.IndexContent`；
 - 把上游响应转换为 `ProviderBatch`；
-- 在注册时只声明 `index_content=true`；
+- 在注册时只声明 `Capabilities{IndexContent: true}`；
 - 通过共享 conformance 测试。
 
 在线能力均可省略。需要在线动作时，再分别实现：
 
-- `ArticleAbstractProvider`：摘要页；
-- `ArticleFullTextProvider`：全文跳转或有界文档。
+- `provider.ArticleAbstract`：摘要页；
+- `provider.ArticleFullText`：全文跳转或有界文档。
 
 索引能力不隐含任何在线能力，在线能力也不要求该 Provider 曾经索引这篇文章。
 
@@ -89,19 +89,19 @@ Provider 对所请求期刊的观察：
 
 ### `ProviderBatch`
 
-每次 `fetch` 返回一页：
+每次 `Fetch` 返回一页：
 
 - `catalog_id` 和 `journal.catalog_id` 必须回显请求值；
 - `issues`、`articles` 必须全部属于该目录项；
-- `ProviderProgress::Continue { checkpoint }` 必须携带非空且不超过 65,536 字节的 traversal checkpoint；
-- `ProviderProgress::Complete { next_anchor }` 不再携带 traversal checkpoint，`next_anchor` 可为空；非空 anchor 同样最多 65,536 字节；
+- `ProviderProgress{State: Continue, Checkpoint}` 必须携带非空且不超过 65,536 字节的 traversal checkpoint；
+- `ProviderProgress{State: Complete, NextAnchor}` 不再携带 traversal checkpoint，`NextAnchor` 可为空；非空 anchor 同样最多 65,536 字节；
 - Provider 不得假定 anchor 或 checkpoint 会永久存在。
 
 Continue 可以不含文章。例如 Crossref 在完整创建日期分片通过计数校验前，只返回收集进度；空的 Continue 不能被 core 当作 journal 完成或跳过其 checkpoint 提交。
 
 ### `IndexFetchContext` 与同步模式
 
-核心每次调用 `IndexContentProvider::fetch(catalog, context)` 时传入：
+核心每次调用 `IndexContent.Fetch(ctx, catalog, fetchContext)` 时传入：
 
 - `mode`：`Bootstrap`、`Incremental` 或 `FullRescan`；
 - `committed_anchor`：上一次整本期刊完整成功时提交的边界；
@@ -147,7 +147,7 @@ Crossref 私有工作集不是 core ACK 的替代品：缓存超前时先重放�
 - PMID：只允许数字并移除前导零。
 - ISSN：统一为校验位正确的 `NNNN-NNNX`。
 
-ID 由 `litradar-index` 独占生成：
+ID 由索引核心（`internal/storage/index`）独占生成：
 
 - `journal_id` 来自不可变 `catalog_id` 和命名空间 `journal:v1`；
 - 当前 catalog ID、全部 catalog alias 和全部 ISSN 通过 `journal_identity_keys` 归属于同一个规范 catalog ID；
@@ -162,11 +162,12 @@ bibliographic fingerprint 包含目录、规范题名、由 `publication_year` �
 
 ## Provider 注册
 
-`ProviderDescriptor` 包含：
+`provider.Descriptor` 包含：
 
 - 2 至 64 个字符的小写 ASCII 运行时名称；允许数字及非首位的 `_`、`-`；
-- 三个显式 capability 布尔值：`index_content`、`article_abstract`、`article_full_text`；
-- 只用于运行时响应校验的 `allowed_redirect_hosts`。
+- `Name`：上述运行时名称；
+- `Capabilities`：三个显式 capability 布尔值 `IndexContent`、`ArticleAbstract`、`ArticleFullText`，在管理能力目录中显示为 `index_content`、`article_abstract`、`article_full_text`；
+- `AllowedRedirectHosts`：只用于运行时响应校验。
 
 声明必须与实际提供的 trait object 完全一致；空能力、虚假声明、重复名称会拒绝注册。跳转域名必须是去重的小写规范主机名，且只能由声明了在线能力的 Provider 配置。域名列表不序列化到文章或数据库。
 
@@ -188,7 +189,7 @@ bibliographic fingerprint 包含目录、规范题名、由 `publication_year` �
 2. 可丢弃 worker request JSON、进程参数和 child 环境都不含代理 URL。
 3. 父进程启动 child 后，通过 stdin 发送一次带 protocol version、worker ID 和可选 `provider_proxy_url` 的 bootstrap；URL 只会发给自身逻辑 Provider 已启用的 worker。
 4. child 在构造 Provider 前验证 protocol version 与 worker ID，并消费该值；后续同一 stdin 流只传 durable commit ACK。
-5. bootstrap、Provider proxy selection、错误和 Debug 只暴露 direct/explicit 或固定脱敏状态，不暴露 authority、userinfo 或完整 URL。
+5. bootstrap、Provider proxy selection、错误和格式化输出只暴露 direct/explicit 或固定脱敏状态，不暴露 authority、userinfo 或完整 URL。
 
 该 stdin 字段是内部秘密传输，不是公共配置、可日志化诊断字段或向第三方 Provider 开放的扩展点。AI、通知/PushPlus、MCP 和 API 返回给浏览器的 HTTPS redirect 不进入这条代理链路。
 
@@ -245,15 +246,15 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 新增 Provider 至少应执行：
 
 1. 用规范 `JournalCatalogEntry` fixture 调用每个声明能力。
-2. 对索引结果运行 `validate_index_provider_fixture`。
-3. 对在线能力分别运行 `validate_abstract_provider_fixture`、`validate_full_text_provider_fixture`。
+2. 对索引结果运行 `provider.ValidateIndexProviderFixture`。
+3. 对在线能力分别运行 `provider.ValidateAbstractProviderFixture`、`provider.ValidateFullTextProviderFixture`。
 4. 覆盖上游字段变体，证明它们产生相同的规范 `ArticleDraft`。
 5. 覆盖错误分类、分页结束、重复 traversal checkpoint、无效重定向、超大文档和秘密脱敏。
 6. 运行 Provider 注册矩阵，证明未实现能力不被声明。
 7. 运行 Provider switch fixture，证明共享 alias 复用同一 ID，且新 Provider 使用独立 anchor/run namespace。
 8. 对发出 HTTP 的实现覆盖受管直连、显式代理失败不直连回退，以及多进程 request/参数/环境/日志不含代理秘密。
 
-修改内置实现后，在仓库根目录运行以下检查；应通过相关测试且无 Clippy 警告：
+修改内置实现后，先按[开发指南](../guides/development.md#原生分词器)准备静态 Simple 与 `CGO_CFLAGS`，再在仓库根目录运行以下检查；应通过相关测试且 `go vet` 无告警：
 
 ```bash
 go test -count=1 -tags sqlite_fts5,sqlite_dbstat ./internal/domain/... ./internal/provider/... ./internal/sources/... ./internal/index/...

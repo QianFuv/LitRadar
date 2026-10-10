@@ -45,9 +45,9 @@ wc -c secrets/litradar.key
 
 ## 子进程树隔离
 
-调度任务和索引 worker 保留 `Command::new` 的类型化参数边界，不经过 shell。每个直接子进程在启动时同时成为独立 Unix process group 的 leader，或先以 suspended 状态创建、分配到启用 `KILL_ON_JOB_CLOSE` 的 Windows Job Object 后再恢复。这样后续 worker 再派生的抓取进程仍属于同一监管边界。
+调度任务和索引 worker 保留 `exec.Command` 的类型化参数边界，不经过 shell。每个直接子进程在启动时同时成为独立 Unix process group 的 leader，或先以 suspended 状态创建、分配到启用 `KILL_ON_JOB_CLOSE` 的 Windows Job Object 后再恢复。这样后续 worker 再派生的抓取进程仍属于同一监管边界。
 
-Unix 取消和超时先向整个 group 发送 SIGTERM，等待 250 ms grace period，再对仍存活的 group 发送 SIGKILL；Windows 原子终止整个 Job Object。所有路径都等待直接子进程完成，Drop/shutdown 也执行强制兜底。spawn/assignment、TERM、force-kill 和 wait 失败只进入固定分类，不把可执行路径或操作系统自由文本写入调度状态与普通日志。Linux 和 Windows CI 都运行真实“子进程派生孙进程”夹具，并以两级监听端口或心跳停止作为回收证据。
+Unix 取消和超时先向整个 group 发送 SIGTERM，等待 250 ms grace period，再对仍存活的 group 发送 SIGKILL；Windows 原子终止整个 Job Object。所有路径都等待直接子进程完成，关闭和清理路径也执行强制兜底。spawn/assignment、TERM、force-kill 和 wait 失败只进入固定分类，不把可执行路径或操作系统自由文本写入调度状态与普通日志。Linux 和 Windows CI 都运行真实“子进程派生孙进程”夹具，并以两级监听端口或心跳停止作为回收证据。
 
 手动投递使用相同监管器和私有类型化 `delivery-run` child。SQLite 保存每用户唯一 active run、owner/revision lease、10 分钟绝对 deadline 与取消标志；实例池默认并发 2。child 每个业务边界轮询取消，所有 HTTP timeout 受剩余 deadline 限制。dispatcher 在取消 grace 后回收完整树；deadline 到达时直接强制回收。若强制回收时不能证明外部副作用未发生，任务固定为 `unknown` 且不允许自动重试。
 
@@ -150,7 +150,7 @@ unset ADMIN_PASSWORD
 - 用户创建的长期令牌只通过 Bearer 请求头用于外部客户端。
 - 令牌不得放入 URL 查询参数。
 - `expires_at <= now` 统一视为已过期；验证路径会拒绝并清理边界时刻的令牌。
-- 含密码、salt、原始 token、邀请码或邀请码关联用户名的认证与管理类型使用脱敏 Debug，避免后续诊断误打印秘密。
+- 含密码、salt、原始 token、邀请码或邀请码关联用户名的认证与管理类型使用脱敏的 `String`/`GoString` 输出，避免后续诊断误打印秘密。
 
 注销对 SQLite busy/locked 使用 250 ms busy timeout、25 ms 间隔和最多一次重试。携带浏览器 Cookie 的 `/api/auth/logout` 与 `/api/auth/logout-all` 在所有响应中都清除 Cookie；`logout` 的 `401` 只表示该令牌在请求前已经无效，浏览器可把它视为幂等成功。若数据库删除或必需审计仍无法提交，则返回 `503 session_revocation_unconfirmed` 和 request ID。前端只清理非秘密本地快照，并把未确认标记保存在固定 shape 的 localStorage 元数据中；刷新不能把它改写为成功。恢复操作要求重新认证，再调用 `/api/auth/logout-all` 原子撤销该用户的全部登录令牌和 Personal Access Token。旧 Cookie 已被清除，不存在安全的“重试原注销请求”路径。
 
@@ -198,7 +198,7 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 ### 响应安全策略
 
-前端发布构建在 `next build` 后生成 `web/csp-hashes.json`，记录每个导出 HTML 的完整 SHA-256 和所有内联脚本的 CSP SHA-256。服务启动时会递归重新读取全部 HTML，并要求文件集合、文件摘要、脚本顺序和全局哈希集合与清单完全一致；清单缺失、损坏、过大、过期，静态目录缺少 HTML 或包含符号链接都会在绑定端口前失败。部署时必须把同一次构建产生的 `web/` 作为整体复制，不能单独替换 HTML。
+前端发布构建在 `next build` 后生成 `app/out/csp-hashes.json`，记录每个导出 HTML 的完整 SHA-256 和所有内联脚本的 CSP SHA-256。`scripts/stage-web-assets.mjs` 校验清单与导出一致、拒绝符号链接并生成 gzip 兄弟文件后，把导出复制到 `internal/webassets/export`，由 `litradar_web` 构建 tag 嵌入二进制。服务启动时会重新读取全部内嵌 HTML，并要求文件集合、文件摘要、脚本顺序和全局哈希集合与清单完全一致；清单缺失、损坏、过大或不一致都会在绑定端口前失败。未嵌入前端的构建在非 `--development` 模式下拒绝启动。部署不存在外部 `web/` 目录，网页随二进制整体替换。
 
 所有静态与后端响应统一包含：
 
@@ -220,7 +220,7 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 - 页面、导航 payload 和导出的 404 使用 `no-cache`，以便浏览器重新验证版本。
 - 受保护 API、携带 Bearer/Cookie 的非静态响应和 `401` 继续使用 `private, no-store`。
 - 所有认证路径使用更严格且状态无关的 `no-store` 与 `Pragma: no-cache`。
-- 支持 gzip 的客户端读取镜像内预压缩兄弟文件；不支持的客户端读取原文件。
+- 支持 gzip 的客户端读取二进制内嵌的预压缩兄弟文件；不支持的客户端读取原文件。
 
 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 始终由后端路由优先处理，未知路径不会借静态 fallback 读取项目数据或密钥。
 
@@ -235,7 +235,7 @@ AI 与 PushPlus 共用以下出站边界：
 - 禁用环境代理和自动重定向，不会跟随公网 URL 跳转到内网
 - 只接受未压缩 JSON 成功响应，响应体硬上限为 2 MiB
 - 非 2xx 响应不读取 body；错误只保留固定分类、HTTP 状态和可选上游 request ID
-- 请求对象的 Debug 输出不包含 API key、prompt、文章、通知正文或 URL query
+- 请求对象的 `String`/`GoString` 输出不包含 API key、prompt、文章、通知正文或 URL query
 
 AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 上限 60 秒，其他情况使用指数 full jitter。PushPlus 只重试能证明请求尚未发送的连接建立失败；timeout、所有 HTTP 响应和其他连接后错误均只尝试一次并作为不确定投递结果处理。手动任务跨主备 Endpoint、格式和摘要请求共享 8 次 AI HTTP 预算；输出格式降级只发生在成功响应的明确兼容性失败之后。
 
@@ -243,7 +243,7 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 ## 构建与发布验证
 
-发布工作流运行后端、前端检查及 amd64/arm64 容器冒烟测试，通过后发布双架构镜像。仓库不再提供漏洞、密钥或 CodeQL 扫描工作流和本地扫描入口。GitHub 仓库级保护设置独立于这些文件管理。
+发布前运行 Linux 与 Windows 后端检查和前端检查；`Release` 工作流对 Linux amd64 镜像、Linux 归档和 Windows x64 归档分别执行冒烟测试，全部通过后只发布 amd64 镜像和两个平台归档。仓库不再提供漏洞、密钥或 CodeQL 扫描工作流和本地扫描入口。GitHub 仓库级保护设置独立于这些文件管理。
 
 构建继续使用固定依赖、基础镜像摘要和发行包校验和。Obscura 使用官方 v0.2.4 render + stealth 二进制；下载校验用于可复现构建，功能、渲染和容器隔离仍由冒烟测试验证。Dependabot 继续提出常规依赖更新。
 
@@ -259,10 +259,10 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 唯一的 `litradar` 常驻容器使用无后缀镜像：
 
-- 使用 UID/GID `10001:10001`；应用入口为 `/usr/local/bin/litradar`，并打包 Obscura、`pdftotext` 和原生分词库，没有 Node.js 运行时
+- 使用 UID/GID `10001:10001`；应用入口为 `/usr/local/bin/litradar`，并打包 Obscura 和 `pdftotext`；Simple 分词器静态链接进应用，没有 Node.js 运行时
 - 根文件系统只读
 - `/tmp` 使用 `noexec,nosuid,nodev` tmpfs
-- 只允许 `/app/data` 持久写入；`/app/web` 保持只读
+- 只允许 `/app/data` 持久写入；网页资源嵌入在二进制中
 - 丢弃全部 Linux capabilities
 - 启用 `no-new-privileges:true`
 - 镜像定义 `/health/ready` Docker health check；发布 smoke 另行探测根 Web、OpenAPI 和 auth cache/Header 边界

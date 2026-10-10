@@ -4,10 +4,10 @@ Scholarly 是内置数据源适配器（Provider），负责连接上游与规�
 
 ## 能力声明
 
-| 注册                            | 能力                      | 进程边界与不提供项            |
-| ------------------------------- | ------------------------- | ----------------------------- |
-| `scholarly_index_registration`  | `IndexContentProvider`    | `index` 进程；不提供在线动作  |
-| `scholarly_access_registration` | `ArticleAbstractProvider` | `serve` API；不提供索引或全文 |
+| 注册                                  | 能力                       | 进程边界与不提供项            |
+| ------------------------------------- | -------------------------- | ----------------------------- |
+| `scholarly.NewIndexRegistration`      | `provider.IndexContent`    | `index` 进程；不提供在线动作  |
+| `sources.ScholarlyAccessRegistration` | `provider.ArticleAbstract` | `serve` API；不提供索引或全文 |
 
 索引进程和 API 进程分别构造所需注册，管理端按相同逻辑名称把两者聚合为 `index_content + article_abstract`。这就是“分进程注册”：同一二进制内的命令边界不同，不是两个常驻服务，也不是自动 fallback。索引能力不会让文章记录携带 `scholarly` provenance；在线能力也不要求文章曾由 Scholarly 索引。
 
@@ -15,7 +15,7 @@ Scholarly 是内置数据源适配器（Provider），负责连接上游与规�
 
 [运行配置](../configuration.md)中的 `scholarly` 代理开关只覆盖索引 adapter 发出的 Crossref、OpenAlex 和 Semantic Scholar HTTP，包括 source 查找、分页、DOI/batch 增强、重试和 Provider-local fallback。关闭时这些 client 明确忽略系统代理变量并受管直连；打开时只使用共用 `provider_proxy_url`，代理失败不会改成直连。
 
-在线摘要 adapter 不发出 HTTP：它只根据已有 DOI 或 PMID 在本地生成受 host allowlist 约束的 HTTPS redirect，再由浏览器访问目的地。因此 `scholarly` 开关不代理该 redirect，也不影响 AI、通知/PushPlus 或其他非 Provider client。多进程索引通过 protocol-v8 stdin bootstrap 把代理 URL、OpenAlex/Semantic Scholar key pool 和 Crossref mailto pool 一次性传给对应 worker；持久 request JSON、参数、环境、日志和 Debug 均不包含这些值。Scholarly worker 还从 bootstrap 接收 core 构造的工作集根路径，其他 Provider 不接收该字段。启动新 worker 前只会清理文件名与 JSON 元数据一致、早于索引 lease 且协议版本低于 8 的普通遗留 request 文件；新文件、无效文件和链接不会被删除。
+在线摘要 adapter 不发出 HTTP：它只根据已有 DOI 或 PMID 在本地生成受 host allowlist 约束的 HTTPS redirect，再由浏览器访问目的地。因此 `scholarly` 开关不代理该 redirect，也不影响 AI、通知/PushPlus 或其他非 Provider client。多进程索引通过 protocol-v8 stdin bootstrap 把代理 URL、OpenAlex/Semantic Scholar key pool 和 Crossref mailto pool 一次性传给对应 worker；持久 request JSON、参数、环境、日志和格式化输出均不包含这些值。Scholarly worker 还从 bootstrap 接收 core 构造的工作集根路径，其他 Provider 不接收该字段。启动新 worker 前只会清理文件名与 JSON 元数据一致、早于索引 lease 且协议版本低于 8 的普通遗留 request 文件；新文件、无效文件和链接不会被删除。
 
 ## 索引上游职责
 
@@ -101,7 +101,7 @@ created 不变只能稳定分片归属，不能冻结文章字段或 update 条�
 
 收集页和分片状态在同一 SQLite 事务内保存，验证完成后结果固定。相同期次先聚合为连续组：按组内最大出版日期降序，再按可用年份、数值卷期降序和 fingerprint 字节序排序；组内按日期降序、记录 key 升序。缺失月/日只在排序键中补 01，不改变内容日期精度，无日期记录排后。这个顺序由本地规则确定，不声称复刻上游旧排序的隐含平局规则。
 
-查询通过持续维护的索引和 keyset 分页，每个输出页最多 225 条、16 MiB payload，不构造整刊 Vec，也不依赖 `/tmp` 大排序文件。工作集使用 4 MiB SQLite page cache、关闭 mmap，主文件上限 4 GiB；page cache 不是进程 RSS 上限，事务日志还需要额外磁盘空间。HTTP 响应仍限 16 MiB，225 条探测也受此限制；单条元数据大小不固定，较少条数不保证永不超限。磁盘满、容量或响应超限都会失败并保留正式内容和旧成功 anchor，不截断结果凑数。
+查询通过持续维护的索引和 keyset 分页，每个输出页最多 225 条、16 MiB payload，不在内存中构造整刊切片，也不依赖 `/tmp` 大排序文件。工作集使用 4 MiB SQLite page cache、关闭 mmap，主文件上限 4 GiB；page cache 不是进程 RSS 上限，事务日志还需要额外磁盘空间。HTTP 响应仍限 16 MiB，225 条探测也受此限制；单条元数据大小不固定，较少条数不保证永不超限。磁盘满、容量或响应超限都会失败并保留正式内容和旧成功 anchor，不截断结果凑数。
 
 core checkpoint 是确认进度的权威。缓存超前一页时先重放该已暂存步骤；内容已提交而控制事务失败时依靠既有 identity/upsert 重放。工作集缺失或可识别的自有文件损坏时，从同一 `C/T`、update 条件和 candidate 重建，不继续缺少前缀的旧 cursor。Provider 准备返回 Complete 时可清理缓存；若随后 core 提交失败，恢复仍按缺失缓存规则重取。路径或身份不匹配直接失败。
 
@@ -169,7 +169,7 @@ Scholarly 在线 adapter 不请求或读取索引时保存的 URL：
 
 ## 重试、日志与秘密
 
-Crossref 的 HTTP 状态重试最多尝试 3 次，适用的无响应传输失败最多尝试 6 次。可重试状态采用 `Retry-After`（整数秒或 HTTP 日期）与本地退避的较大值。每个逻辑 Crossref、OpenAlex 或 Semantic Scholar 请求都有 180 秒单调时钟上限，覆盖接纳、相位或冷却等待、HTTP 尝试和退避；调用方更早的截止时间优先。无法容纳服务端等待时间时立即返回可恢复失败，不提前重试。OpenAlex 和 Semantic Scholar 最多尝试 `key_count + 2` 次，每次重试或故障切换都必须取得新的未来相位；认证失败只禁用所选密钥。
+Crossref 的 HTTP 状态重试最多尝试 3 次，适用的无响应传输失败最多尝试 3–6 次：按 `--timeout` 选择总包络不超过 180 秒的最大次数，默认 20 秒时为 6 次。可重试状态采用 `Retry-After`（整数秒或 HTTP 日期）与本地退避的较大值。每个逻辑 Crossref、OpenAlex 或 Semantic Scholar 请求都有 180 秒单调时钟上限，覆盖接纳、相位或冷却等待、HTTP 尝试和退避；调用方更早的截止时间优先。无法容纳服务端等待时间时立即返回可恢复失败，不提前重试。OpenAlex 和 Semantic Scholar 最多尝试 `key_count + 2` 次，每次重试或故障切换都必须取得新的未来相位；认证失败只禁用所选密钥。
 
 Crossref 在逻辑请求之间保留已观察到的服务端冷却，即使本次重试被截止时间拒绝也不丢失。HTTP 日期接受首选 IMF 格式及 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#name-date-time-formats) 要求的两种旧格式。
 
@@ -181,7 +181,7 @@ Crossref、OpenAlex 和 Semantic Scholar 共用的 HTTP client 禁止自动重�
 
 所有 Scholarly JSON 响应的解压后上限为 16 MiB。读取先检查可用的 Content-Length，再对透明解压后流最多保留 `limit + 1` 字节，所以 chunked 响应或小 gzip/大解压正文也会明确失败。超限不参与 transport retry 或 key failover，也不保留响应正文。
 
-每次逻辑请求的成功、失败和 retry 会汇总到 `index.provider.attempts` 结构化终态事件。OpenAlex/Semantic Scholar 尝试事件只增加安全的 key-slot 编号、状态分类、retry 标志和耗时，不记录 key 值或请求体。内容库没有 API call/statistics 表。Crossref 无响应传输失败在尝试记录和返回错误中都固定为 `transport failure`，不保留可能携带 URL 或查询参数的 Reqwest 原始错误。API key、完整查询秘密、DOI 请求体、响应正文和上游 URL 不进入安全错误或持久状态；Semantic Scholar 非白名单错误正文会折叠为固定消息。
+每次逻辑请求的成功、失败和 retry 会汇总到 `index.provider.attempts` 结构化终态事件。OpenAlex/Semantic Scholar 尝试事件只增加安全的 key-slot 编号、状态分类、retry 标志和耗时，不记录 key 值或请求体。内容库没有 API call/statistics 表。Crossref 无响应传输失败在尝试记录和返回错误中都固定为 `transport failure`，不保留可能携带 URL 或查询参数的 Go `net/http` 原始错误。API key、完整查询秘密、DOI 请求体、响应正文和上游 URL 不进入安全错误或持久状态；Semantic Scholar 非白名单错误正文会折叠为固定消息。
 
 调度器暴露的是有安全余量的可用容量，不是吞吐保证。实际吞吐近似受 `min(Provider 预算, 在途容量 / 响应延迟, 产生工作速率)` 限制；低 worker、慢响应或工作不足不能被标记为限流器利用率不足，也不承诺精确 100% 使用或任何外部状态下都零 429。
 

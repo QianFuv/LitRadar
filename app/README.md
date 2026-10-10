@@ -1,6 +1,6 @@
 # LitRadar 前端包
 
-`app/` 是 LitRadar 的 Next.js Web 客户端源码，负责登录、检索、收藏、每周更新、征稿追踪、聚合设置中心和管理后台。发布构建输出静态 `out/`，由唯一的 `litradar serve` 应用进程直接提供；运行镜像没有独立 Next.js 进程或 Node.js 运行时。本页只说明前端包的开发边界：
+`app/` 是 LitRadar 的 Next.js Web 客户端源码，负责登录、检索、收藏、每周更新、征稿追踪、聚合设置中心和管理后台。发布构建输出静态 `out/`，构建时以 `litradar_web` tag 编入 `litradar` 二进制，由 `litradar serve` 直接提供；运行镜像没有独立 Next.js 进程或 Node.js 运行时。本页只说明前端包的开发边界：
 
 - 系统进程与数据流见[系统架构](../docs/architecture.md)。
 - REST 契约与认证方式见[API 参考](../docs/reference/api.md)。
@@ -13,16 +13,16 @@
 
 CI 与前端构建阶段使用：
 
-| 工具              | 版本                                  |
-| ----------------- | ------------------------------------- |
-| Node.js           | 26.11.1                               |
-| pnpm              | 12.10.1                               |
-| Next.js           | 16.3.6                                |
-| React / React DOM | 19.2.3                                |
-| Motion for React  | 13.1.1                                |
-| TypeScript        | 5.x                                   |
-| Tailwind CSS      | 4.x                                   |
-| Go                | 1.27.2；生成 OpenAPI 和启动后端时需要 |
+| 工具              | 版本                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| Node.js           | 26.11.1                                                                                                |
+| pnpm              | 12.10.1                                                                                                |
+| Next.js           | 16.3.6                                                                                                 |
+| React / React DOM | 19.2.3                                                                                                 |
+| Motion for React  | 13.1.1                                                                                                 |
+| TypeScript        | 5.x                                                                                                    |
+| Tailwind CSS      | 4.x                                                                                                    |
+| Go                | 1.27.2；生成 OpenAPI、启动后端和 full-stack e2e 时需要，另需构建静态 Simple 的 CMake 与 C/C++14 编译器 |
 
 依赖由 `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Query、nuqs、next-themes、Radix UI、Motion、class-variance-authority 和 lucide-react。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡仍由共享 CSS motion token 驱动。
 
@@ -32,7 +32,7 @@ CI 与前端构建阶段使用：
 
 需要分开启动时，使用以下命令。
 
-先在仓库根目录启动只监听 loopback 8001 的统一 Go 应用；HTTP 和内嵌调度共享该进程：
+先在仓库根目录按[开发指南](../docs/guides/development.md#原生分词器)构建静态 Simple 并导出 `CGO_CFLAGS`，再启动只监听 loopback 8001 的统一 Go 应用；HTTP 和内嵌调度共享该进程：
 
 ```bash
 go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar serve \
@@ -58,7 +58,7 @@ pnpm dev
 - OpenAPI JSON：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
-发布构建执行 `pnpm build` 并写入 `out/`。导出的静态文件和后端路由由同一个 Go 监听器提供，不使用 Next.js rewrite，也没有 `pnpm start`/`next start` 路径。
+发布构建执行 `pnpm build` 并写入 `out/`，再由 `node scripts/build-go.mjs` 暂存并编入 Go 二进制。内嵌的静态文件和后端路由由同一个 Go 监听器提供，不使用 Next.js rewrite，也没有 `pnpm start`/`next start` 路径。
 
 ## 前端网络配置
 
@@ -137,18 +137,19 @@ app/
 
 ## 客户端状态
 
-| 状态                   | 所有者                                        |
-| ---------------------- | --------------------------------------------- |
-| 后端查询与 mutation    | TanStack Query                                |
-| 工作区、搜索和筛选选择 | nuqs URL query state                          |
-| 登录用户               | `AuthProvider` + `GET /api/auth/me`           |
-| 当前数据库             | `localStorage: litradar:v1:selected_database` |
-| 搜索历史               | `localStorage: litradar:v1:search_history`    |
-| 主题                   | next-themes 的 `class` 属性与系统偏好         |
+| 状态                   | 所有者                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------ |
+| 后端查询与 mutation    | TanStack Query                                                                       |
+| 工作区、搜索和筛选选择 | nuqs URL query state                                                                 |
+| 登录用户               | `AuthProvider` + `GET /api/auth/me`；非秘密用户缓存 `localStorage: litradar:v1:user` |
+| 退出撤销未确认提示     | `localStorage: litradar:v1:logout_revocation_unconfirmed`                            |
+| 当前数据库             | `localStorage: litradar:v1:selected_database`                                        |
+| 搜索历史               | `localStorage: litradar:v1:search_history`                                           |
+| 主题                   | next-themes 的 `class` 属性与系统偏好                                                |
 
 浏览器 API 请求默认 `credentials: include`，登录令牌只存在后端设置的 `litradar_session` HttpOnly Cookie 中。设置中心创建的 Bearer 访问令牌用于外部客户端，不作为前端登录态存入 Web Storage。
 
-升级前的浏览器命名空间不会被读取、复制或清理。升级后用户需要重新登录，数据库选择和搜索历史会在新命名空间中重新建立。
+旧版搜索历史键 `search_history` 会一次性迁移到新命名空间并删除；其他升级前的浏览器键不会被读取或复制。升级后用户需要重新登录，数据库选择会在新命名空间中重新建立。
 
 Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。
 

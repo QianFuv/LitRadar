@@ -1,5 +1,10 @@
 # Go optimization round 1
 
+> Historical record of the 2026-10-05/06 optimization round. Toolchain versions,
+> commands and measurements describe that snapshot. Simple is now statically
+> linked, so direct Go commands must first prepare the archive and `CGO_CFLAGS`
+> as described in the [development guide](../guides/development.md#原生分词器).
+
 This round addresses delivery failure handling, query cancellation, MCP resource
 budgets, candidate selection, rate-limit eviction, shared package ownership and
 route matching. It does not change the database schema or introduce dependencies.
@@ -29,8 +34,8 @@ remains separate. These package moves are maintainability changes, not speedups.
 
 ## Reproducible performance baseline
 
-Run from the repository root with the configured Go 1.27.1 CGO toolchain and
-existing native Simple library:
+Run from the repository root with the configured CGO toolchain (Go 1.27.1 at the
+time of this round) after preparing the Simple archive and `CGO_CFLAGS`:
 
 ```text
 go test -run '^$' -bench 'Benchmark(Candidates|ArticleLookup|RateLimit|Route)' -benchmem -benchtime=1s -count=5 -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./internal/storage/query ./internal/api

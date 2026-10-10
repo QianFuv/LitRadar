@@ -116,7 +116,7 @@
 
 | 方法  | 路径                                  | 作用                             |
 | ----- | ------------------------------------- | -------------------------------- |
-| `GET` | `/health/live`                        | 应用事件循环存活状态             |
+| `GET` | `/health/live`                        | 进程 HTTP 存活状态               |
 | `GET` | `/health/ready`                       | 最近 90 秒内是否存在内嵌调度心跳 |
 | `GET` | `/api/announcements`                  | 当前启用的公告                   |
 | `GET` | `/api/meta/databases`                 | 可用索引库                       |
@@ -240,7 +240,7 @@ CNKI 会话按 LitRadar 用户隔离；状态接口只返回安全元数据，�
 
 服务端在认证后先校验格式，再以固定的 `created_at DESC, id DESC` 顺序读取最多 10,000 条收藏，并按每批 250 条只加载标题、作者、期刊、日期和 DOI。最终 UTF-8 内容最多 8 MiB；第 10,001 条收藏或下一个会超过限制的字节都会使整个请求返回 `413`，且不会返回 attachment header 或部分文件。缺失的数据库或文章保留一条空元数据引文；文件系统、SQLite 或作者 JSON 等操作错误返回完整失败，不会伪装成成功导出。
 
-手动周报是 SQLite 持久化异步任务。启动接口返回 `202`；`pending/running` 状态应继续轮询，服务重启后仍可通过 latest 或 run-id 接口恢复。公开终态为 `completed`、`failed`、`cancelled`、`timed_out` 或 `unknown`，并返回 `deadline_at`、`cancellation_requested`、`can_cancel` 和 `can_retry`。完整通知链路见[通知指南](../guides/notifications.md)。
+手动周报是 SQLite 持久化异步任务。启动接口返回 `202`；没有任务时状态为 `idle`，`pending/running` 状态应继续轮询，服务重启后仍可通过 latest 或 run-id 接口恢复。公开终态为 `completed`、`failed`、`cancelled`、`timed_out` 或 `unknown`，并返回 `deadline_at`、`cancellation_requested`、`can_cancel` 和 `can_retry`。完整通知链路见[通知指南](../guides/notifications.md)。
 
 SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户重复启动返回现有 job，不同用户可以同时排队或在实例有界池中并行。普通用户只能查询和取消自己的 run；管理员可按不可猜测的 job id 管理任意用户 run。`unknown` 表示外部结果可能已发生，`can_retry=false`，客户端不得把它当普通失败自动重放。普通启动在最新任务为 Unknown 时固定返回 `409`，不创建新行。owner 检查外部投递记录后，可对该最新任务调用 `POST /api/tracking/push-weekly/runs/{run_id}/acknowledge`；服务在一个 immediate transaction 中复核 ownership/latest/Unknown，写入 `manual_push_unknown_acknowledge` 安全审计并返回一个新 queued job。非 owner 或畸形 ID 返回 `404`，过期、重复或非 Unknown 确认返回 `409`。管理员不能代替 owner 确认。旧 run、item 和 Unknown/confirmed dedupe 保持不变，所以旧的不确定文章不会重发，后续 manifest 的新文章仍可处理。
 
@@ -310,7 +310,7 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 
 ## 缓存与 CORS
 
-所有 HTML、REST、健康检查、Swagger/OpenAPI 和 MCP 响应都带有同一基线安全 Header：严格 CSP、`nosniff`、`Referrer-Policy: same-origin`、禁用敏感浏览器能力以及双重 frame denial。CSP 的 `script-src` 只包含 `'self'` 与启动时从部署 HTML 复算并核对构建清单的 SHA-256，不允许任意内联脚本；当前静态样式保留最小的 `style-src 'self' 'unsafe-inline'`。hardened HTTPS 启动模式额外返回一年 HSTS，普通 loopback HTTP 不返回 HSTS。
+所有 HTML、REST、健康检查、Swagger/OpenAPI 和 MCP 响应都带有同一基线安全 Header：严格 CSP、`nosniff`、`Referrer-Policy: same-origin`、禁用敏感浏览器能力以及双重 frame denial。CSP 的 `script-src` 只包含 `'self'` 与启动时从内嵌 HTML 复算并核对构建清单的 SHA-256，不允许任意内联脚本；当前静态样式保留最小的 `style-src 'self' 'unsafe-inline'`。hardened HTTPS 启动模式额外返回一年 HSTS，普通 loopback HTTP 不返回 HSTS。
 
 `/api/articles*`、`/api/meta*` 及其他受保护路由需要普通用户或管理员身份，不能作为匿名共享缓存内容。请求带有 `Authorization` 或 `litradar_session` 时，以及任何返回 `401 Unauthorized` 的响应，后端都会设置：
 
@@ -327,9 +327,9 @@ Pragma: no-cache
 
 前文列出的免认证端点在成功响应时保持现有缓存头行为；本策略不会为它们新增共享缓存 TTL。
 
-部署后的 Web 由 Go 从 `/app/web` 直接提供，浏览器同源访问 `/api/*`，不依赖 Next.js 运行时或 rewrite。只有本地开发的 Next.js 8000 入口会把后端命名空间代理到内部 Go 8001。第一方前端始终同源。确需跨源访问的其他浏览器客户端必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie 凭据。
+部署后的 Web 由编入 Go 二进制的静态资源直接提供，浏览器同源访问 `/api/*`，不依赖 Next.js 运行时或 rewrite。只有本地开发的 Next.js 8000 入口会把后端命名空间代理到内部 Go 8001。第一方前端始终同源。确需跨源访问的其他浏览器客户端必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie 凭据。
 
-成功的 `/_next/static/*` 哈希文件使用 `public, max-age=31536000, immutable`；页面、导航 payload 和导出的 404 使用 `no-cache`。客户端声明支持 gzip 时，Go 优先返回镜像内预压缩文件并保留正确 MIME；原文件仍供不支持 gzip 的客户端和 Range 请求使用。后端保留 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 的路由优先级。
+成功的 `/_next/static/*` 哈希文件使用 `public, max-age=31536000, immutable`；页面、导航 payload 和导出的 404 使用 `no-cache`。客户端声明支持 gzip 时，Go 优先返回二进制内嵌的预压缩文件并保留正确 MIME，响应使用内容 ETag、不返回 `Last-Modified`；原文件仍供不支持 gzip 的客户端和 Range 请求使用。后端保留 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 的路由优先级。
 
 ## Streamable HTTP MCP
 
