@@ -202,7 +202,7 @@ func (writer *contentWriter) writeArticle(catalog domain.JournalCatalogEntry, jo
 			return err
 		}
 	}
-	return writer.claimArticleAliases(incoming, merged, resolution.ArticleId, outcome)
+	return writer.claimArticleAliases(incoming, aliases, merged, resolution.ArticleId, outcome)
 }
 
 func (writer *contentWriter) upsertArticle(id, journal int64, issue *int64, article domain.ArticleDraft) error {
@@ -280,14 +280,28 @@ func (writer *contentWriter) lookupIdentityAliases(incoming []ArticleIdentityKey
 	return aliases, nil
 }
 
-func (writer *contentWriter) claimArticleAliases(incoming []ArticleIdentityKey, merged domain.ArticleDraft, id int64, outcome *ContentWriteOutcome) error {
+// claimArticleAliases rechecks every owner while reusing existence known within the immediate transaction.
+func (writer *contentWriter) claimArticleAliases(incoming []ArticleIdentityKey, knownAliases map[ArticleIdentityKey]int64, merged domain.ArticleDraft, id int64, outcome *ContentWriteOutcome) error {
 	keys := append(incoming, ArticleIdentityKeys(merged)...)
 	sortIdentityKeys(keys)
 	keys = slices.Compact(keys)
 	for _, key := range keys {
 		var owner, wasInserted sqlite.Integer
-		if err := writer.queryRow(identityClaimSql, key.Kind, key.Value, id).Scan(&owner, &wasInserted); err != nil {
-			return err
+		if _, hasKnownOwner := knownAliases[key]; hasKnownOwner {
+			if writer.statements[existingIdentityClaimSql] == nil {
+				prepared, err := writer.connection.PrepareContext(writer.ctx, existingIdentityClaimSql)
+				if err != nil {
+					return err
+				}
+				writer.statements[existingIdentityClaimSql] = prepared
+			}
+			if err := writer.queryRow(existingIdentityClaimSql, key.Kind, key.Value, id).Scan(&owner); err != nil {
+				return err
+			}
+		} else {
+			if err := writer.queryRow(identityClaimSql, key.Kind, key.Value, id).Scan(&owner, &wasInserted); err != nil {
+				return err
+			}
 		}
 		if wasInserted != 0 {
 			outcome.IdentityAliasesAdded++

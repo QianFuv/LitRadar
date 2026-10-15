@@ -128,6 +128,12 @@ const identityClaimSql = `WITH prior(owner) AS MATERIALIZED (
                      article_id = article_identity_keys.article_id
                  RETURNING article_id, (SELECT owner IS NULL FROM prior)`
 
+const existingIdentityClaimSql = `INSERT INTO article_identity_keys (identity_kind, identity_value, article_id)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(identity_kind, identity_value) DO UPDATE SET
+                     article_id = article_identity_keys.article_id
+                 RETURNING article_id`
+
 const changeEventInsertSql = `INSERT OR IGNORE INTO article_change_events (
                      content_revision, article_id, change_kind, journal_id, issue_id, in_press,
                      created_at
