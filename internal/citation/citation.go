@@ -48,7 +48,16 @@ func isLineBreak(character rune) bool {
 	return unicode.IsControl(character) || unicode.IsSpace(character) && character != ' '
 }
 
+// reserve avoids repeated builder growth without allocating beyond the remaining export limit.
+func (output *boundedText) reserve(length int) {
+	if output.err == nil {
+		output.text.Grow(min(length, max(0, output.maximum-output.text.Len())))
+	}
+}
+
+// bibtex reserves field space before preserving structural escaping rune by rune.
 func (output *boundedText) bibtex(value string) {
+	output.reserve(len(value))
 	for _, character := range value {
 		if output.err != nil {
 			return
@@ -112,8 +121,10 @@ func Bibtex(articles []domain.FavoriteCitation, maximumBytes int) (string, error
 	return output.finish()
 }
 
+// risField reserves field space before enforcing the single-line RIS contract.
 func (output *boundedText) risField(tag, value string) {
 	output.write(tag + "  - ")
+	output.reserve(len(value))
 	for _, character := range value {
 		if output.err != nil {
 			return
@@ -156,7 +167,9 @@ func Ris(articles []domain.FavoriteCitation, maximumBytes int) (string, error) {
 	return output.finish()
 }
 
+// xml reserves field space before escaping entities and forbidden XML characters.
 func (output *boundedText) xml(value string) {
+	output.reserve(len(value))
 	for _, character := range value {
 		if output.err != nil {
 			return
