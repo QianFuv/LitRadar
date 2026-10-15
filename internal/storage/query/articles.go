@@ -318,8 +318,11 @@ func fetchArticles(ctx context.Context, database rowQuerier, ids []int64) ([]dom
 	return orderRequestedArticles(byId, ids), nil
 }
 
-// normalizeArticleParams closes the schema-inspection owner before rebinding only the local query.
+// normalizeArticleParams inspects search storage only when a query operand needs normalization.
 func normalizeArticleParams(ctx context.Context, database *sql.DB, params ArticleListParams) (ArticleListParams, error) {
+	if params.Query == nil {
+		return params, nil
+	}
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		return params, err
@@ -329,10 +332,8 @@ func normalizeArticleParams(ctx context.Context, database *sql.DB, params Articl
 	if err != nil {
 		return params, err
 	}
-	if params.Query != nil {
-		normalized := search.PrepareQuery(*params.Query, usesSimple, params.SearchMode)
-		params.Query = &normalized
-	}
+	normalized := search.PrepareQuery(*params.Query, usesSimple, params.SearchMode)
+	params.Query = &normalized
 	return params, nil
 }
 
