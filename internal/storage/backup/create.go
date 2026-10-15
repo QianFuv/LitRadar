@@ -37,6 +37,8 @@ func backupDatabase(ctx context.Context, source, destination string) error {
 	_, err = databaseVersion(ctx, destination)
 	return err
 }
+
+// copyDatabase creates a standalone native snapshot and registers its stored tokenizer before finalization.
 func copyDatabase(ctx context.Context, source, destination string) error {
 	input, err := storage.Open(source, true, 1)
 	if err != nil {
@@ -64,32 +66,7 @@ func copyDatabase(ctx context.Context, source, destination string) error {
 			if err != nil {
 				return err
 			}
-			var stepError error
-			for {
-				if stepError = ctx.Err(); stepError != nil {
-					break
-				}
-				var done bool
-				done, stepError = backup.Step(128)
-				if stepError != nil || done {
-					break
-				}
-				timer := time.NewTimer(25 * time.Millisecond)
-				select {
-				case <-timer.C:
-				case <-ctx.Done():
-					timer.Stop()
-					stepError = ctx.Err()
-				}
-				if stepError != nil {
-					break
-				}
-			}
-			finishError := backup.Finish()
-			if stepError != nil {
-				return stepError
-			}
-			return finishError
+			return completeDatabaseBackup(ctx, backup)
 		})
 	})
 	if err != nil {
@@ -107,6 +84,43 @@ func copyDatabase(ctx context.Context, source, destination string) error {
 	_, err = destinationConnection.ExecContext(ctx, "PRAGMA journal_mode=DELETE")
 	return err
 }
+
+// completeDatabaseBackup waits on stalled steps, finishes every snapshot, and preserves the primary failure.
+func completeDatabaseBackup(ctx context.Context, backup *native.SQLiteBackup) error {
+	copiedPages := 0
+	var stepError error
+	for {
+		if stepError = ctx.Err(); stepError != nil {
+			break
+		}
+		var done bool
+		done, stepError = backup.Step(128)
+		if stepError != nil || done {
+			break
+		}
+		previousCopiedPages := copiedPages
+		copiedPages = backup.PageCount() - backup.Remaining()
+		if copiedPages > previousCopiedPages {
+			continue
+		}
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			stepError = ctx.Err()
+		}
+		if stepError != nil {
+			break
+		}
+	}
+	finishError := backup.Finish()
+	if stepError != nil {
+		return stepError
+	}
+	return finishError
+}
+
 func databaseComponent(ctx context.Context, kind, relative, filename string) (Component, error) {
 	info, err := os.Stat(filename)
 	if err != nil {
