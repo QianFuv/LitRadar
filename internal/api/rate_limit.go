@@ -188,10 +188,16 @@ func saturatingIncrement(value uint64) uint64 {
 	return value
 }
 
+// normalizeUsername retains the first 32 trimmed runes without allocating storage for the unused suffix.
 func normalizeUsername(value string) string {
-	characters := []rune(strings.TrimSpace(value))
-	if len(characters) > 32 {
-		characters = characters[:32]
+	var characters [32]rune
+	count := 0
+	for _, character := range strings.TrimSpace(value) {
+		characters[count] = character
+		count++
+		if count == len(characters) {
+			break
+		}
 	}
-	return asciiLower(string(characters))
+	return asciiLower(string(characters[:count]))
 }
