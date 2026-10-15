@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -108,7 +109,7 @@ func (handlers *favoriteHandlers) handle(writer http.ResponseWriter, request *ht
 		writer.Header().Set("Content-Type", export.media)
 		writer.Header().Set("Content-Disposition", "attachment; filename=\""+export.filename+"\"")
 		writer.WriteHeader(200)
-		_, _ = writer.Write([]byte(export.content))
+		_, _ = io.WriteString(writer, export.content)
 		return
 	}
 	writeResponse(writer, value.payload)

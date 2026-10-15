@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -80,11 +81,12 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 
 type policyResponse struct {
 	http.ResponseWriter
-	prepare        func(int)
-	status         int
-	isHead         bool
-	hasMatchedHead bool
-	length         int64
+	prepare           func(int)
+	status            int
+	isHead            bool
+	hasMatchedHead    bool
+	hasDeclaredLength bool
+	length            int64
 }
 
 func (writer *policyResponse) Unwrap() http.ResponseWriter { return writer.ResponseWriter }
@@ -95,6 +97,7 @@ func (writer *policyResponse) WriteHeader(status int) {
 	writer.status = status
 	if !writer.isHead {
 		writer.prepare(status)
+		writer.hasDeclaredLength = writer.Header().Get("Content-Length") != ""
 		writer.ResponseWriter.WriteHeader(status)
 	}
 }
@@ -108,6 +111,26 @@ func (writer *policyResponse) Write(data []byte) (int, error) {
 	}
 	return writer.ResponseWriter.Write(data)
 }
+
+// WriteString avoids HEAD body copies and uses bounded server copy buffers for large responses.
+func (writer *policyResponse) WriteString(data string) (int, error) {
+	if writer.status == 0 {
+		writer.WriteHeader(http.StatusOK)
+	}
+	if writer.isHead {
+		writer.length += int64(len(data))
+		return len(data), nil
+	}
+	if destination, ok := writer.ResponseWriter.(io.ReaderFrom); ok {
+		if len(data) >= 1<<20 && !writer.hasDeclaredLength && writer.Header().Get("Content-Length") == "" {
+			count, err := destination.ReadFrom(struct{ io.Reader }{strings.NewReader(data)})
+			return int(count), err
+		}
+		return writer.ResponseWriter.Write([]byte(data))
+	}
+	return io.WriteString(writer.ResponseWriter, data)
+}
+
 func (writer *policyResponse) Flush() { _ = writer.FlushError() }
 func (writer *policyResponse) FlushError() error {
 	if writer.status == 0 {
