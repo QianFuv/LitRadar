@@ -10,7 +10,18 @@ import (
 	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
+// insertNotices preserves source order while reusing the insert statement for multi-notice publications.
 func insertNotices(ctx context.Context, connection *sql.Conn, key, sourceKey string, notices []preparedNotice) error {
+	const insertNotice = `INSERT INTO cfp_notices(journal_key,notice_key,source_key,source_json,normalized_json,display_order) VALUES(?,?,?,?,?,?)`
+	var statement *sql.Stmt
+	if len(notices) > 1 {
+		var err error
+		statement, err = connection.PrepareContext(ctx, insertNotice)
+		if err != nil {
+			return err
+		}
+		defer statement.Close()
+	}
 	for order, pair := range notices {
 		source, err := jsonvalue.EncodeJson(pair.source)
 		if err != nil {
@@ -20,7 +31,12 @@ func insertNotices(ctx context.Context, connection *sql.Conn, key, sourceKey str
 		if err != nil {
 			return err
 		}
-		if _, err = connection.ExecContext(ctx, `INSERT INTO cfp_notices(journal_key,notice_key,source_key,source_json,normalized_json,display_order) VALUES(?,?,?,?,?,?)`, key, pair.notice.Id, sourceKey, source, notice, order); err != nil {
+		if statement == nil {
+			_, err = connection.ExecContext(ctx, insertNotice, key, pair.notice.Id, sourceKey, source, notice, order)
+		} else {
+			_, err = statement.ExecContext(ctx, key, pair.notice.Id, sourceKey, source, notice, order)
+		}
+		if err != nil {
 			return err
 		}
 	}

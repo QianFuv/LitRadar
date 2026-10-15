@@ -61,7 +61,7 @@ func assertWinningPreparationSnapshot(t *testing.T, repository *Repository) {
 }
 
 // preparationRepository owns a migrated temporary database for publication characterization.
-func preparationRepository(t *testing.T) *Repository {
+func preparationRepository(t testing.TB) *Repository {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "state.sqlite")
 	if _, err := migration.Migrate(context.Background(), path); err != nil {
@@ -76,7 +76,7 @@ func preparationRepository(t *testing.T) *Repository {
 }
 
 // importPreparationSource seeds one original before exercising generation-fenced publication.
-func importPreparationSource(t *testing.T, repository *Repository, source domain.Source) {
+func importPreparationSource(t testing.TB, repository *Repository, source domain.Source) {
 	t.Helper()
 	encoded, err := json.Marshal(domain.Seed{FormatVersion: 1, Sources: []domain.Source{source}})
 	if err != nil {
