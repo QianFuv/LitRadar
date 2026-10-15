@@ -11,7 +11,8 @@ import (
 	migration "github.com/QianFuv/LitRadar/internal/storage/migrations/auth"
 )
 
-func testRepository(t *testing.T) *Repository {
+// testRepository creates an isolated migrated database with one existing subscriber.
+func testRepository(t testing.TB) *Repository {
 	t.Helper()
 	filename := filepath.Join(t.TempDir(), "auth.sqlite")
 	if _, err := migration.Migrate(context.Background(), filename); err != nil {

@@ -39,6 +39,7 @@ func (repository *Repository) EnsureRunItems(ctx context.Context, runId int64, i
 	return repository.insertItems(ctx, runId, items, now, true)
 }
 
+// insertItems preserves per-item admission and readback while reusing statements within bulk transactions.
 func (repository *Repository) insertItems(ctx context.Context, runId int64, items []RunItemCreate, now float64, shouldEnsure bool) ([]RunItemRecord, error) {
 	if err := validatePositiveId(runId, "Delivery run id is invalid"); err != nil {
 		return nil, err
@@ -79,11 +80,36 @@ func (repository *Repository) insertItems(ctx context.Context, runId int64, item
 		if shouldEnsure {
 			query += " ON CONFLICT(delivery_run_id,item_kind,item_key) DO NOTHING"
 		}
-		for _, item := range items {
-			if _, err := connection.ExecContext(ctx, query, runId, item.ItemKind, item.ItemKey, item.UserId, item.ArticleId, now, now); err != nil {
+		const selectItem = "SELECT " + itemColumns + " FROM delivery_run_items WHERE delivery_run_id=? AND item_kind=? AND item_key=?"
+		var insertStatement, selectStatement *sql.Stmt
+		if len(items) > 1 {
+			insertStatement, err = connection.PrepareContext(ctx, query)
+			if err != nil {
 				return err
 			}
-			record, err := scanRunItemRecord(connection.QueryRowContext(ctx, "SELECT "+itemColumns+" FROM delivery_run_items WHERE delivery_run_id=? AND item_kind=? AND item_key=?", runId, item.ItemKind, item.ItemKey))
+			defer insertStatement.Close()
+			selectStatement, err = connection.PrepareContext(ctx, selectItem)
+			if err != nil {
+				return err
+			}
+			defer selectStatement.Close()
+		}
+		for _, item := range items {
+			if insertStatement == nil {
+				_, err = connection.ExecContext(ctx, query, runId, item.ItemKind, item.ItemKey, item.UserId, item.ArticleId, now, now)
+			} else {
+				_, err = insertStatement.ExecContext(ctx, runId, item.ItemKind, item.ItemKey, item.UserId, item.ArticleId, now, now)
+			}
+			if err != nil {
+				return err
+			}
+			var row *sql.Row
+			if selectStatement == nil {
+				row = connection.QueryRowContext(ctx, selectItem, runId, item.ItemKind, item.ItemKey)
+			} else {
+				row = selectStatement.QueryRowContext(ctx, runId, item.ItemKind, item.ItemKey)
+			}
+			record, err := scanRunItemRecord(row)
 			if err != nil {
 				return err
 			}
