@@ -224,7 +224,7 @@ func (writer *contentWriter) upsertArticle(id, journal int64, issue *int64, arti
 	return nil
 }
 
-// projectArticle publishes changed article fields while reusing the batch's normalized journal title.
+// projectArticle publishes changed fields with bounded SQL arguments and a shared journal-title projection.
 func (writer *contentWriter) projectArticle(id, journal int64, issue *int64, catalog domain.JournalCatalogEntry, article domain.ArticleDraft) error {
 	if _, err := writer.exec(listingUpsertSql, id, journal, issue, article.PublicationYear, article.Date, article.OpenAccess, article.InPress, article.Doi, article.Pmid, catalog.Area); err != nil {
 		return err
@@ -236,7 +236,8 @@ func (writer *contentWriter) projectArticle(id, journal int64, issue *int64, cat
 	for position, author := range article.Authors {
 		authors[position] = author.DisplayName
 	}
-	values := []any{id}
+	values := make([]any, 1, 7)
+	values[0] = id
 	for _, value := range []string{article.Title, optionalString(article.AbstractText), optionalString(article.Doi), optionalString(article.Pmid), strings.Join(authors, "; ")} {
 		values = append(values, search.PrepareText(value, writer.isSimple))
 	}
