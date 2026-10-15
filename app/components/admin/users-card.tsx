@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Shield, ShieldOff, Trash2, Users } from 'lucide-react';
 
@@ -53,7 +53,7 @@ export function AdminUsersCard({
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const {
-    data: users = [],
+    data: users,
     error: usersError,
     isLoading: isUsersLoading,
   } = useQuery({
@@ -61,6 +61,10 @@ export function AdminUsersCard({
     queryFn: () => adminGetUsers(),
     enabled: isEnabled,
   });
+  const userRows = useMemo(
+    () => (users ?? []).map((user) => ({ user, registrationDate: formatDate(user.created_at) })),
+    [users],
+  );
   const toggleAdminMut = useMutation({
     mutationFn: ({ userId, isAdmin }: { userId: number; isAdmin: boolean }) =>
       adminSetAdmin(userId, isAdmin),
@@ -116,7 +120,7 @@ export function AdminUsersCard({
             </p>
           )}
           <div className="space-y-3 md:hidden">
-            {users.map((u) => (
+            {userRows.map(({ user: u, registrationDate }) => (
               <div key={u.id} className="content-visibility-card rounded-lg border p-4">
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">
@@ -149,9 +153,7 @@ export function AdminUsersCard({
                       <div className="mt-1 font-medium">{u.favorite_count}</div>
                     </div>
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    注册时间: {formatDate(u.created_at)}
-                  </div>
+                  <div className="text-xs text-muted-foreground">注册时间: {registrationDate}</div>
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       variant="outline"
@@ -234,7 +236,7 @@ export function AdminUsersCard({
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => (
+                {userRows.map(({ user: u, registrationDate }) => (
                   <tr key={u.id} className="content-visibility-table-row border-b last:border-0">
                     <td className="px-3 py-2">{u.id}</td>
                     <td className="px-3 py-2 font-medium">{u.username}</td>
@@ -252,7 +254,7 @@ export function AdminUsersCard({
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground">{formatDate(u.created_at)}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{registrationDate}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1">
                         <Button

@@ -2,10 +2,10 @@
  * Administrator user role, self-guard, password-reset, deletion, and failure coverage.
  */
 
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { AdminUsersCard } from '@/components/admin/users-card';
 import type { AdminUserInfo } from '@/lib/api';
@@ -159,12 +159,51 @@ async function retriesUserDeletion(): Promise<void> {
   expect(userListRequestCount).toBeGreaterThanOrEqual(2);
 }
 
+/** Verify password entry reuses registration labels and refreshed user data updates both layouts. */
+async function reusesRegistrationDatesDuringPasswordEntry(): Promise<void> {
+  users.push(
+    ...Array.from({ length: 24 }, (_, index) =>
+      createAdminUser(index + 3, `user${index + 3}`, false),
+    ),
+  );
+  installUserListHandler();
+  const view = renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
+  const resetButton = await screen.findByRole('button', { name: '重置 member 的密码' });
+  const updatedTimestamp = 1_600_000_000;
+  const updatedLabel = new Date(updatedTimestamp * 1000).toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const formatDate = vi.spyOn(Date.prototype, 'toLocaleDateString');
+  const user = userEvent.setup();
+  await user.click(resetButton);
+  const dialog = screen.getByRole('dialog', { name: '重置密码' });
+  await user.type(within(dialog).getByLabelText('新密码'), 'replacement-password');
+  expect(formatDate.mock.calls.length).toBe(0);
+  await act(async () => {
+    view.queryClient.setQueryData<AdminUserInfo[]>(['admin-users'], (current) =>
+      current?.map((entry) =>
+        entry.id === 2 ? { ...entry, created_at: updatedTimestamp } : entry,
+      ),
+    );
+  });
+  expect(await screen.findByText(updatedLabel)).toBeInTheDocument();
+  expect(screen.getByText(`注册时间: ${updatedLabel}`)).toBeInTheDocument();
+}
+
 beforeEach(() => {
   users = [createAdminUser(1, 'admin', true), createAdminUser(2, 'member', false)];
   userListRequestCount = 0;
 });
 
 describe('administrator users', () => {
+  test(
+    'reuses registration dates while entering a password',
+    reusesRegistrationDatesDuringPasswordEntry,
+  );
   test('changes roles and protects the current administrator', changesRolesAndProtectsSelf);
   test('retries a failed password reset', retriesPasswordReset);
   test('retries a failed user deletion', retriesUserDeletion);
