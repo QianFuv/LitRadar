@@ -140,17 +140,16 @@ func candidateRows(ctx context.Context, database rowQuerier, membership, prefix 
 	return collect(ctx, database, `SELECT a.article_id,a.journal_id,a.issue_id,a.title,a.abstract_text,a.date,a.open_access,a.in_press,a.doi,j.title FROM articles a JOIN journals j ON j.journal_id=a.journal_id WHERE `+prefix+membership+" ORDER BY a.date DESC,a.article_id DESC", values, candidateFromRow)
 }
 
+// candidateFromRow retains strict storage classes without allocating pointers for flattened nullable fields.
 func candidateFromRow(row scanner) (domain.ArticleCandidate, error) {
 	var id, journal storage.Integer
-	var issue, openAccess, inPress storage.OptionalInteger
+	var openAccess, inPress sql.Null[storage.Integer]
+	var issue storage.OptionalInteger
 	var title, journalTitle storage.Text
-	var abstract, date, doi storage.OptionalText
+	var abstract sql.Null[storage.Text]
+	var date, doi storage.OptionalText
 	if err := row.Scan(&id, &journal, &issue, &title, &abstract, &date, &openAccess, &inPress, &doi, &journalTitle); err != nil {
 		return domain.ArticleCandidate{}, err
 	}
-	text := ""
-	if abstract.Value != nil {
-		text = *abstract.Value
-	}
-	return domain.ArticleCandidate{ArticleId: int64(id), JournalId: int64(journal), IssueId: issue.Value, Title: string(title), Abstract: text, Date: date.Value, JournalTitle: string(journalTitle), Doi: doi.Value, OpenAccess: openAccess.Value != nil && *openAccess.Value != 0, InPress: inPress.Value != nil && *inPress.Value != 0}, nil
+	return domain.ArticleCandidate{ArticleId: int64(id), JournalId: int64(journal), IssueId: issue.Value, Title: string(title), Abstract: string(abstract.V), Date: date.Value, JournalTitle: string(journalTitle), Doi: doi.Value, OpenAccess: openAccess.V != 0, InPress: inPress.V != 0}, nil
 }
