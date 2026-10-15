@@ -211,6 +211,7 @@ func upsertJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jou
 	return refresh, err
 }
 
+// refreshJournal republishes canonical metadata with one prepared statement pair and journal title per refresh.
 func refreshJournal(ctx context.Context, connection *sql.Conn, catalog domain.JournalCatalogEntry, refresh projectionRefresh) error {
 	journal := JournalId(catalog.CatalogId)
 	if refresh.shouldRefreshArea {
@@ -229,11 +230,25 @@ func refreshJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jo
 	if err != nil {
 		return err
 	}
+	if len(projections) == 0 {
+		return nil
+	}
+	deleteProjection, err := connection.PrepareContext(ctx, searchDeleteSql)
+	if err != nil {
+		return err
+	}
+	defer deleteProjection.Close()
+	insertProjection, err := connection.PrepareContext(ctx, searchInsertSql)
+	if err != nil {
+		return err
+	}
+	defer insertProjection.Close()
+	journalTitle := search.PrepareText(catalog.Title, isSimple)
 	for _, value := range projections {
-		if _, err := connection.ExecContext(ctx, searchDeleteSql, value.id); err != nil {
+		if _, err := deleteProjection.ExecContext(ctx, value.id); err != nil {
 			return err
 		}
-		if _, err := connection.ExecContext(ctx, searchInsertSql, value.id, search.PrepareText(string(value.title), isSimple), search.PrepareText(optionalString(value.abstract.Value), isSimple), search.PrepareText(optionalString(value.doi.Value), isSimple), search.PrepareText(optionalString(value.pmid.Value), isSimple), search.PrepareText(string(value.authors), isSimple), search.PrepareText(catalog.Title, isSimple)); err != nil {
+		if _, err := insertProjection.ExecContext(ctx, value.id, search.PrepareText(string(value.title), isSimple), search.PrepareText(optionalString(value.abstract.Value), isSimple), search.PrepareText(optionalString(value.doi.Value), isSimple), search.PrepareText(optionalString(value.pmid.Value), isSimple), search.PrepareText(string(value.authors), isSimple), journalTitle); err != nil {
 			return err
 		}
 	}
