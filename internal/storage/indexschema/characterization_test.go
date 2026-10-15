@@ -34,6 +34,9 @@ func schemaFixture(t *testing.T, version int) *sql.Conn {
 
 func schemaFixtureSql(version int) string {
 	statement := ContentTables
+	if version < 10 {
+		statement = strings.ReplaceAll(statement, IdentifierIndexes, "")
+	}
 	if version < 9 {
 		statement = strings.ReplaceAll(statement, "tokenize = 'simple 0'", "tokenize = 'unicode61 remove_diacritics 2'")
 	}
@@ -53,7 +56,7 @@ func schemaFixtureSql(version int) string {
 }
 
 func TestStructureAdmissionRetainsAllSupportedVersions(t *testing.T) {
-	for version := 4; version <= 9; version++ {
+	for version := 4; version <= Version; version++ {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			connection := schemaFixture(t, version)
 			if err := ValidateStructure(context.Background(), connection, version); err != nil {

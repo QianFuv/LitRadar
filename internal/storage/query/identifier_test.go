@@ -54,4 +54,20 @@ UPDATE article_listing SET doi='lookup-doi',pmid='lookup-pmid';`); err != nil {
 	if err != nil || len(page.Items) != 0 {
 		t.Fatalf("identifier filters did not intersect: %+v, %v", page, err)
 	}
+	issue := int64(999999)
+	pmid = "lookup-pmid"
+	params.IssueId = &issue
+	page, err = ListArticles(context.Background(), configuration, nil, params)
+	if err != nil || len(page.Items) != 0 || page.Page.Total == nil || *page.Page.Total != 0 {
+		t.Fatalf("empty issue scope changed: %+v, %v", page, err)
+	}
+	if _, err := database.Exec(`INSERT INTO issues(issue_id,journal_id) VALUES(999999,1);
+UPDATE articles SET issue_id=999999 WHERE article_id=1001;
+UPDATE article_listing SET issue_id=999999 WHERE article_id=1001;`); err != nil {
+		t.Fatal(err)
+	}
+	page, err = ListArticles(context.Background(), configuration, nil, params)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ArticleId != 1001 || page.Page.Total == nil || *page.Page.Total != 1 {
+		t.Fatalf("matching issue scope changed: %+v, %v", page, err)
+	}
 }

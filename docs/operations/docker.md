@@ -58,7 +58,7 @@ Dockerfile 的前端阶段和 Ubuntu 基础镜像使用可读 tag 加不可变 d
 
 镜像把 `LITRADAR_OBSCURA_PATH` 和 `LITRADAR_PDFTOTEXT_PATH` 指向打包的辅助程序。征稿刷新可在服务器直接采集 HTML 和 PDF，无需安装 Chromium 或在运行时下载浏览器。发布冒烟测试在非特权、只读服务容器中验证原始 HTML 的 JavaScript 协议、真实 PDF 提取和默认私网拒绝；loopback 例外仅限该次临时测试。
 
-运行层安装 CA 证书、`curl` 和非 root 账户所需的最小系统包，随后切换到固定 UID/GID `10001:10001`。当前二进制新建内容 schema v9，并在 rollout 窗口内读写精确 v6/v7/v8/v9；旧 v6/v7/v8 仍使用 SQLite 内建 `unicode61`，v9 使用固定打包的 `simple 0` 分词库并禁用拼音别名。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
+运行层安装 CA 证书、`curl` 和非 root 账户所需的最小系统包，随后切换到固定 UID/GID `10001:10001`。当前二进制新建内容 schema v10，并在 rollout 窗口内读写精确 v6/v7/v8/v9/v10；旧 v6/v7/v8 仍使用 SQLite 内建 `unicode61`，v9/v10 使用固定打包的 `simple 0` 分词库并禁用拼音别名。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
 
 Go 应用保持运行时取消、进程监管和清理语义。镜像在 `/usr/share/doc/litradar/third-party` 保存 Go 构建清单、许可证与 Obscura 官方发行包信息。构建清单用于记录 Go 源码和二进制身份。用户已明确豁免 Obscura 供应链检查（A13）；清单将其标记为上游二进制，不声称验证其传递依赖、原生引擎或许可证/对应源码完整性。功能、渲染和运行隔离检查仍保留。
 
@@ -175,7 +175,7 @@ Scholarly 增量使用成功期次 anchor 年份的 1 月 1 日作为日期下�
 
 CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
 
-旧 v6/v7/v8 备份与恢复验证不依赖平台原生 tokenizer；v9 验证使用二进制内静态注册的 simple 读取其 FTS 表。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前内容库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向运行镜像临时复制 DLL/SO 绕过版本边界。
+旧 v6/v7/v8 备份与恢复验证不依赖平台原生 tokenizer；v9/v10 验证使用二进制内静态注册的 simple 读取其 FTS 表。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前内容库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向运行镜像临时复制 DLL/SO 绕过版本边界。
 
 ## 数据和秘密
 
@@ -453,7 +453,7 @@ MCP 端点内置于统一应用的 `/mcp`，不需要单独服务：
 
 ## 离线索引存储优化
 
-`admin index optimize-storage` 会整目录重建 `data/index`，必须在停机窗口运行。普通容器启动只 preflight 精确 v6/v7/v8/v9，不会自动改写现有 v6/v7/v8 文件。不支持 v9 的旧镜像不能打开优化后的文件；降级前必须先恢复优化前已验证、包含索引且受目标镜像支持的旧版备份。
+`admin index optimize-storage` 会整目录重建 `data/index`，必须在停机窗口运行。普通容器启动只 preflight 精确 v6/v7/v8/v9/v10，不会自动改写现有 v6/v7/v8/v9 文件。不支持 v10 的旧镜像不能打开优化后的文件；降级前必须先恢复优化前已验证、包含索引且受目标镜像支持的旧版备份。
 
 先停止服务和所有一次性 `index`/投递容器，等待 API/worker/调度心跳超过 90 秒；若任务被强制终止，还要等待最长 300 秒的 batch/catalog lease 过期。创建和验证的备份必须通过独立 `/backups` bind mount 保存：
 
@@ -467,14 +467,14 @@ docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:rw" \
   litradar admin backup create \
     --project-root /app \
-    --output /backups/litradar-before-index-v9 \
+    --output /backups/litradar-before-index-v10 \
     --include-indexes \
     --include-push-state
 
 docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:ro" \
   litradar admin backup verify \
-    --backup /backups/litradar-before-index-v9
+    --backup /backups/litradar-before-index-v10
 ```
 
 在宿主机统计 `data/index/*.sqlite` 总字节数，并用 `df -B1 data` 确认可用空间至少为 `2 × source_bytes + 64 MiB`。保留备份目录为只读，然后运行当前镜像中的维护命令：
@@ -487,7 +487,7 @@ docker compose run --rm --no-deps \
     --confirm-index-maintenance
 ```
 
-保存完整 stdout JSON 和容器日志。成功必须返回 `status=optimized`（空目录为 `noop`），并核对 `source_bytes`、`temporary_bytes_required`、`optimized_bytes`、`reclaimed_bytes`，以及每库 v9、`has_content_shadow=false`、freelist 不超过 1%、FTS 分配和权威行计数。失败若返回 `error.recovery_paths`，不要删除 marker、staging 或 rollback，也不要启动服务；保留这些精确路径、日志和已验证备份处理恢复。
+保存完整 stdout JSON 和容器日志。成功必须返回 `status=optimized`（空目录为 `noop`），并核对 `source_bytes`、`temporary_bytes_required`、`optimized_bytes`、`reclaimed_bytes`，以及每库 v10、`has_content_shadow=false`、freelist 不超过 1%、FTS 分配和权威行计数。失败若返回 `error.recovery_paths`，不要删除 marker、staging 或 rollback，也不要启动服务；保留这些精确路径、日志和已验证备份处理恢复。
 
 成功退出后启动同一镜像并做 smoke：
 
@@ -499,7 +499,7 @@ curl --fail http://localhost:8000/health/ready
 curl --fail http://localhost:8000/openapi.json
 ```
 
-还要用固定查询核对检索、过滤、游标分页和文章详情。保留优化前备份直到镜像降级窗口结束；如需降级，先停止当前服务，再次验证备份受目标镜像支持，并按[离线恢复](backup.md#离线恢复)恢复索引，不能把 v9 文件直接交给不支持该版本的旧镜像。
+还要用固定查询核对检索、过滤、游标分页和文章详情。保留优化前备份直到镜像降级窗口结束；如需降级，先停止当前服务，再次验证备份受目标镜像支持，并按[离线恢复](backup.md#离线恢复)恢复索引，不能把 v10 文件直接交给不支持该版本的旧镜像。
 
 ## 排障
 
@@ -519,7 +519,7 @@ curl --fail http://localhost:8000/openapi.json
 
 ### 历史 `simple` tokenizer 索引
 
-先区分数据库版本与 FTS 定义：受支持的精确 v6/v7/v8 使用内建 `unicode61`，v7/v8 采用无内容影子表的投影；新建 v9 使用镜像提供的 `simple 0`。旧快照中的 `tokenize='simple'` 不能仅凭名称视为当前 v9。恢复前按[数据库参考](../reference/database.md#内容库破坏性切换)确认受支持的迁移或重建路径，完成后复核版本、FTS 定义和代表性查询。不得降低版本号或临时复制历史 DLL/SO 绕过校验。
+先区分数据库版本与 FTS 定义：受支持的精确 v6/v7/v8 使用内建 `unicode61`，v7/v8 采用无内容影子表的投影；新建 v10 使用镜像提供的 `simple 0`。旧快照中的 `tokenize='simple'` 不能仅凭名称视为当前 v10。恢复前按[数据库参考](../reference/database.md#内容库破坏性切换)确认受支持的迁移或重建路径，完成后复核版本、FTS 定义和代表性查询。不得降低版本号或临时复制历史 DLL/SO 绕过校验。
 
 ### 通知没有结果
 
@@ -529,6 +529,6 @@ curl --fail http://localhost:8000/openapi.json
 
 ### 中文检索原生运行库
 
-镜像为目标架构把固定版本的 Simple 按驱动自带的 SQLite 头文件静态链接进应用，不分发 `libsimple.so`；仍保留系统 `libstdc++6` 和 MIT 许可声明，Obscura 与 Poppler 是独立辅助程序。运行时不启用 Jieba 或拼音别名。新建 v9 索引使用 `simple 0`；旧 unicode61 索引仍需显式离线迁移。容器冒烟测试覆盖打包迁移，以及认证后的中文、拉丁文和无拼音查询。详见 [Simple](../../libs/simple/README.md)。
+镜像为目标架构把固定版本的 Simple 按驱动自带的 SQLite 头文件静态链接进应用，不分发 `libsimple.so`；仍保留系统 `libstdc++6` 和 MIT 许可声明，Obscura 与 Poppler 是独立辅助程序。运行时不启用 Jieba 或拼音别名。新建 v10 索引使用 `simple 0`；旧 unicode61 索引仍需显式离线迁移。容器冒烟测试覆盖打包迁移，以及认证后的中文、拉丁文和无拼音查询。详见 [Simple](../../libs/simple/README.md)。
 
-v9 的 simple 静态注册失败时会明确报错，不回退到 unicode61。先核对镜像版本和目标架构；不存在可补装的外部扩展，也不要从未知来源复制 DLL/SO。
+v9/v10 的 simple 静态注册失败时会明确报错，不回退到 unicode61。先核对镜像版本和目标架构；不存在可补装的外部扩展，也不要从未知来源复制 DLL/SO。

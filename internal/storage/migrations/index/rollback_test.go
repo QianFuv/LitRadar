@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QianFuv/LitRadar/internal/storage/indexschema"
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
@@ -126,7 +127,7 @@ func TestLateMalformedAuthorsRollBackWholeMigration(t *testing.T) {
 func TestRepeatedJournalIssnsRetainOneOwner(t *testing.T) {
 	filename, _ := copyFixture(t, fixtures(t)[0])
 	mutateFixture(t, filename, `UPDATE journals SET issns_json='["1234-5679","0378-5955","1234-5679"]',issn='1234-5679',eissn='0378-5955' WHERE journal_id=1`)
-	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{4, 9}) {
+	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{4, indexschema.Version}) {
 		t.Fatalf("repeated identifiers rejected: %+v %v", summary, err)
 	}
 	inspectConnection(t, filename, func(connection *sql.Conn) {

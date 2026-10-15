@@ -24,7 +24,7 @@ func Batch() (domain.JournalCatalogEntry, domain.ProviderBatch) {
 
 // Create writes a fresh database with explicit version boundaries and synthetic records.
 func Create(filename string, version int) error {
-	if version < 4 || version > 9 {
+	if version < 4 || version > indexschema.Version {
 		return fmt.Errorf("unsupported test schema version %d", version)
 	}
 	if err := os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
@@ -47,6 +47,9 @@ func Create(filename string, version int) error {
 // fixtureContentSchema selects the historical search layout before any schema writes.
 func fixtureContentSchema(connection *sql.Conn, version int) (string, error) {
 	schema := indexschema.ContentTables
+	if version < 10 {
+		schema = strings.ReplaceAll(schema, indexschema.IdentifierIndexes, "")
+	}
 	if version < 9 {
 		schema = strings.ReplaceAll(schema, "tokenize = 'simple 0'", "tokenize = 'unicode61 remove_diacritics 2'")
 	} else if err := storage.LoadSimple(connection); err != nil {

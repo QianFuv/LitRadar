@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
+	"github.com/QianFuv/LitRadar/internal/storage/indexschema"
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
@@ -355,7 +356,7 @@ func validateDatabaseComponent(ctx context.Context, item Component, filename str
 	if item.SchemaVersion == nil {
 		return failure("manifest", "database schema version is missing")
 	}
-	maximum := int64(9)
+	maximum := int64(indexschema.Version)
 	if item.Kind == "auth_database" {
 		maximum = 20
 	}

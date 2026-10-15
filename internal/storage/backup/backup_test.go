@@ -115,6 +115,31 @@ func TestCreateRejectsChangingMetadataAndForbiddenKeysBeforePublication(t *testi
 	}
 }
 
+// TestBackupAcceptsCurrentAndHistoricalContentTogether protects versioned index snapshots.
+func TestBackupAcceptsCurrentAndHistoricalContentTogether(t *testing.T) {
+	configuration := fixtureConfig(t)
+	if err := contentfixture.Create(filepath.Join(configuration.IndexDir, "current.sqlite"), 10); err != nil {
+		t.Fatal(err)
+	}
+	options := optionsFor(t, configuration)
+	manifest, err := Create(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasCurrentIndex := false
+	for _, component := range manifest.Components {
+		if component.Kind == "index_database" && component.SchemaVersion != nil && *component.SchemaVersion == 10 {
+			hasCurrentIndex = true
+		}
+	}
+	if !hasCurrentIndex {
+		t.Fatal("current content database was omitted from the backup")
+	}
+	if _, err := Verify(context.Background(), options.OutputDir); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestVerifyRejectsInventoryTamperingAndRetainsHistoricalSchemaSupport(t *testing.T) {
 	ctx := context.Background()
 	configuration := fixtureConfig(t)
@@ -135,7 +160,7 @@ func TestVerifyRejectsInventoryTamperingAndRetainsHistoricalSchemaSupport(t *tes
 	write(t, filepath.Join(options.OutputDir, "meta", "nested", "custom.csv"), []byte("custom metadata\n"))
 	for index := range manifest.Components {
 		if manifest.Components[index].Kind == "index_database" {
-			future := int64(10)
+			future := int64(11)
 			manifest.Components[index].SchemaVersion = &future
 		}
 	}

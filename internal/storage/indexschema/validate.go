@@ -137,7 +137,8 @@ func validateContentColumns(ctx context.Context, connection *sql.Conn, version i
 func validateContentIndexes(ctx context.Context, connection *sql.Conn, version int) error {
 	expectedIndexes := slices.Clone(indexes)
 	expectedIndexes = slices.DeleteFunc(expectedIndexes, func(name string) bool {
-		return name == "idx_journal_identity_keys_catalog" && version < 5 || name == "idx_article_retraction_dois_doi" && version < 6
+		return name == "idx_journal_identity_keys_catalog" && version < 5 || name == "idx_article_retraction_dois_doi" && version < 6 ||
+			version < 10 && (name == "idx_article_listing_doi" || name == "idx_article_listing_pmid")
 	})
 	if version < 8 {
 		expectedIndexes = append(expectedIndexes, "idx_article_change_events_order")

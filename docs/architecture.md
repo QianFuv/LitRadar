@@ -138,7 +138,7 @@ freeze ordered CSV selection -> validate catalog contracts
         |
         +-- catalog stem -> runtime index_provider_routes -> registered provider.IndexContent
         |
-        +-- data/index/<stem>.sqlite         (content v9; v6/v7/v8 compatible)
+        +-- data/index/<stem>.sqlite         (content v10; v6/v7/v8/v9 compatible)
         +-- data/index-control/<stem>.sqlite (disposable control v5)
                     |
                     v
@@ -166,7 +166,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 
 ### 索引数据库
 
-每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v9 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v9 沿用 contentless FTS 布局，使用关闭拼音的 `simple 0` 分词；检索仍走全字段 FTS MATCH，并仅在检索投影和查询参数上规范化拉丁重音及大小写，原始元数据保持不变。运行时仍支持精确 v6/v7/v8 内容库，其 unicode61 索引只在显式离线维护时升级。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
+每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v10 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v9/v10 沿用 contentless FTS 布局，使用关闭拼音的 `simple 0` 分词；检索仍走全字段 FTS MATCH，并仅在检索投影和查询参数上规范化拉丁重音及大小写，原始元数据保持不变。运行时仍支持精确 v6/v7/v8/v9 内容库，其中 v6/v7/v8 的 unicode61 索引只在显式离线维护时升级。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
 
 Simple 按未修改的驱动头文件编译，并在每个准入的物理连接上直接注册；不使用全局自动注册或运行时 DLL/SO 发现。普通/认证连接和版本优先迁移角色仍需显式启用；SQL 扩展加载保持关闭。
 
@@ -279,7 +279,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 正式子命令在业务访问前完成各自需要的存储准备：先解析路径和参数，检查 `PRAGMA user_version`，再执行受支持的迁移或结构预检。认证库按版本在独立的 `BEGIN IMMEDIATE` 事务中迁移；普通查询仓库不负责数据定义操作。
 
-新建内容库使用 v9。精确匹配的 v4/v5 可事务迁移到 v9；现有 v6/v7/v8/v9 在普通启动时只做结构预检，旧版分词器不会被自动替换。非空 v0 及 v1 至 v3 要求先备份，再按错误中点名的文件执行重建。内容库、项目批次账本和目录控制库分别维护版本，当前版本与迁移边界统一见[数据库参考](reference/database.md#连接和版本)。
+新建内容库使用 v10。精确匹配的 v4/v5 可事务迁移到 v10；现有 v6/v7/v8/v9/v10 在普通启动时只做结构预检，旧版分词器不会被自动替换。非空 v0 及 v1 至 v3 要求先备份，再按错误中点名的文件执行重建。内容库、项目批次账本和目录控制库分别维护版本，当前版本与迁移边界统一见[数据库参考](reference/database.md#连接和版本)。
 
 项目批次账本与目录控制库可以重建，但删除它们会丢失恢复进度和已发布通知的交接记录。遇到未来版本或迁移失败时，命令会退出，不会自动删除文件。`serve` 完成存储迁移、密钥验证和 HTTP 准备后，才启动监听器及首轮调度。
 

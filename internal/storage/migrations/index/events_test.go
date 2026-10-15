@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/QianFuv/LitRadar/internal/storage/config"
+	"github.com/QianFuv/LitRadar/internal/storage/indexschema"
 )
 
 // TestBatchStopsAtFailureAndReportsCompletedDatabasesWithoutPaths covers both batch modes.
@@ -84,7 +85,7 @@ func assertMigrationBatchProgress(t *testing.T, configuration config.Config, isP
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := 9
+	expected := indexschema.Version
 	if isPreflight {
 		expected = 6
 	}

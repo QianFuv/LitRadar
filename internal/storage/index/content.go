@@ -60,7 +60,7 @@ func (err *InvalidContentSchema) Error() string {
 	return fmt.Sprintf("invalid content schema v%d: %s", indexschema.Version, err.Message)
 }
 
-// InitContent accepts existing v6-v9 schemas or atomically initializes a completely empty database.
+// InitContent accepts existing v6-v10 schemas or atomically initializes a completely empty database.
 func InitContent(ctx context.Context, connection *sql.Conn) error {
 	isSimple, err := search.UsesSimple(ctx, connection)
 	if err != nil {

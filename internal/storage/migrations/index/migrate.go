@@ -104,7 +104,7 @@ func validate(ctx context.Context, connection *sql.Conn, version int, isFull boo
 	return err
 }
 
-// Preflight upgrades genuine v4/v5 sources but only inspects supported v6-v9 structures.
+// Preflight upgrades genuine v4/v5 sources but only inspects supported v6-v10 structures.
 func Preflight(ctx context.Context, filename string) (string, error) {
 	return loggedPreflight(ctx, filename)
 }
@@ -202,7 +202,7 @@ func migrateContentConnection(ctx context.Context, connection *sql.Conn, from in
 	if err := apply(ctx, connection, from, isUpgrade); err != nil {
 		return Summary{from, from}, err
 	}
-	if _, err := connection.ExecContext(ctx, "PRAGMA user_version=9; COMMIT"); err != nil {
+	if _, err := connection.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d; COMMIT", indexschema.Version)); err != nil {
 		return Summary{from, from}, err
 	}
 	summary := Summary{from, indexschema.Version}
@@ -214,6 +214,7 @@ func migrateContentConnection(ctx context.Context, connection *sql.Conn, from in
 	return summary, validate(ctx, connection, indexschema.Version, true)
 }
 
+// apply preserves v9 search publications while adding covering indexes after historical upgrades.
 func apply(ctx context.Context, connection *sql.Conn, version int, isUpgrade bool) error {
 	if !isUpgrade {
 		return createContentSchema(ctx, connection)
@@ -238,7 +239,13 @@ func apply(ctx context.Context, connection *sql.Conn, version int, isUpgrade boo
 			return err
 		}
 	}
-	return replaceSearch(ctx, connection, true)
+	if version < 9 {
+		if err := replaceSearch(ctx, connection, true); err != nil {
+			return err
+		}
+	}
+	_, err := connection.ExecContext(ctx, indexschema.IdentifierIndexes)
+	return err
 }
 
 // createContentSchema loads the fresh database tokenizer before creating its tables.

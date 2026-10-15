@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/QianFuv/LitRadar/internal/storage/index"
@@ -154,7 +155,7 @@ func TestStaticSimpleCompatibility(t *testing.T) {
 		previousDatabase, previous := compatibilityConnection(t, filename, false)
 		// seed creates independent full v9 schemas from the same canonical corpus.
 		seed := func(connection *sql.Conn) {
-			compatibilityExec(t, connection, indexschema.ContentTables)
+			compatibilityExec(t, connection, strings.ReplaceAll(indexschema.ContentTables, indexschema.IdentifierIndexes, ""))
 			compatibilityExec(t, connection, "INSERT INTO journals(journal_id,catalog_id,title,title_aliases_json,issns_json) VALUES(1,'compat','期刊','[]','[]')")
 			for position, document := range corpus {
 				identifier := position + 1

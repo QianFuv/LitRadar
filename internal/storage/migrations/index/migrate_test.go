@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/QianFuv/LitRadar/internal/storage/indexschema"
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
@@ -22,7 +23,7 @@ type historical struct {
 
 func fixtures(t *testing.T) []historical {
 	t.Helper()
-	return []historical{{Version: 4}, {Version: 5}, {Version: 6}, {Version: 7}, {Version: 8}, {Version: 9}}
+	return []historical{{Version: 4}, {Version: 5}, {Version: 6}, {Version: 7}, {Version: 8}, {Version: 9}, {Version: 10}}
 }
 
 func copyFixture(t *testing.T, fixture historical) (string, []byte) {
@@ -80,7 +81,7 @@ func TestFreshEmptyAndLegacyDatabaseEntrances(t *testing.T) {
 	for _, isEmptyFile := range []bool{false, true} {
 		assertFreshDatabaseEntrance(t, ctx, isEmptyFile)
 	}
-	for _, version := range []int{0, 1, 2, 3, 10} {
+	for _, version := range []int{0, 1, 2, 3, indexschema.Version + 1} {
 		assertRejectedDatabaseEntrance(t, ctx, version)
 	}
 }
@@ -97,7 +98,7 @@ func assertFreshDatabaseEntrance(t *testing.T, ctx context.Context, isEmptyFile 
 			t.Fatal(err)
 		}
 	}
-	if result, err := Migrate(ctx, filename); err != nil || result != (Summary{0, 9}) {
+	if result, err := Migrate(ctx, filename); err != nil || result != (Summary{0, indexschema.Version}) {
 		t.Fatalf("%+v %v", result, err)
 	}
 }
@@ -134,7 +135,7 @@ func assertRejectedEntranceClassification(t *testing.T, version int, failure err
 	}
 	var future UnsupportedVersion
 	var rebuild RebuildRequired
-	if version == 10 && !errors.As(failure, &future) || version < 10 && !errors.As(failure, &rebuild) {
+	if version > indexschema.Version && !errors.As(failure, &future) || version <= indexschema.Version && !errors.As(failure, &rebuild) {
 		t.Fatalf("wrong classification: %v", failure)
 	}
 }

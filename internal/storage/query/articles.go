@@ -355,8 +355,8 @@ func articleFilters(params ArticleListParams) (filter, filter, string, error) {
 	base.optionalBoolean("l.open_access=?", params.OpenAccess)
 	base.optionalText("l.date>=?", params.DateFrom)
 	base.optionalText("l.date<=?", params.DateTo)
-	base.optionalText("l.article_id IN (SELECT article_id FROM article_listing WHERE doi=?)", params.Doi)
-	base.optionalText("l.article_id IN (SELECT article_id FROM article_listing WHERE pmid=?)", params.Pmid)
+	base.optionalText("l.doi=?", params.Doi)
+	base.optionalText("l.pmid=?", params.Pmid)
 	base.optionalInteger("l.publication_year=?", params.Year)
 	match := preparedMatch(params)
 	if match != "" {
@@ -428,12 +428,22 @@ func emptyRatedArticlePage(ctx context.Context, database *sql.DB, match string, 
 	return articlePage(ctx, database, nil, total, params)
 }
 
+// articleListingSource keeps explicitly scoped issue lookups on their bounded index under skewed identifiers.
+func articleListingSource(params ArticleListParams) string {
+	hasIdentifier := params.Doi != nil && strings.TrimSpace(*params.Doi) != "" ||
+		params.Pmid != nil && strings.TrimSpace(*params.Pmid) != ""
+	if params.IssueId != nil && hasIdentifier {
+		return "article_listing l INDEXED BY idx_article_listing_issue"
+	}
+	return "article_listing l"
+}
+
 // articleTotal counts before cursor restrictions and preserves advanced error classification.
 func articleTotal(ctx context.Context, database *sql.DB, base filter, shouldCount bool, params ArticleListParams) (*int64, error) {
 	var total *int64
 	if shouldCount {
 		var count int64
-		if err := database.QueryRowContext(ctx, "SELECT COUNT(*) FROM article_listing l "+base.where(), base.values...).Scan(&count); err != nil {
+		if err := database.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+articleListingSource(params)+" "+base.where(), base.values...).Scan(&count); err != nil {
 			return nil, classifySearchError(err, params)
 		}
 		total = &count
@@ -449,7 +459,7 @@ func collectArticlePositions(ctx context.Context, database *sql.DB, base filter,
 		pagination += " OFFSET ?"
 		values = append(values, params.Offset)
 	}
-	return collect(ctx, database, "SELECT l.article_id,l.date FROM article_listing l "+base.where()+" ORDER BY l.date "+direction+",l.article_id "+direction+" "+pagination, values, func(row scanner) (articlePosition, error) {
+	return collect(ctx, database, "SELECT l.article_id,l.date FROM "+articleListingSource(params)+" "+base.where()+" ORDER BY l.date "+direction+",l.article_id "+direction+" "+pagination, values, func(row scanner) (articlePosition, error) {
 		var id storage.Integer
 		var date storage.OptionalText
 		if err := row.Scan(&id, &date); err != nil {

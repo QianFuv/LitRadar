@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/QianFuv/LitRadar/internal/storage/indexschema"
 	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
@@ -34,7 +35,7 @@ func selectedSnapshot(t *testing.T, connection *sql.Conn, selected []string) map
 
 func TestContentRuntimeVersionBoundary(t *testing.T) {
 	ctx := context.Background()
-	for version := 4; version <= 9; version++ {
+	for version := 4; version <= indexschema.Version; version++ {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "content.sqlite")
 			if err := contentfixture.Create(path, version); err != nil {

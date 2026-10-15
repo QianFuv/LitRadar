@@ -141,7 +141,7 @@ litradar admin backup restore
 
 备份命令不接收部署密钥。清单格式名固定为 `litradar-backup`；新备份使用 version 2，并始终包含认证库和完整 `data/meta` 普通文件树。`--include-indexes` 选择创建时发现的全部 `data/index/*.sqlite`，不按内容 schema 筛选，明确排除可重建的 `data/index-control`（项目 `index-batches.sqlite` 和每个 catalog control）以及 `data/index-work`（Crossref 工作集）；`--include-push-state` 同时选择 `data/push_state` 和 `data/folder_push_state`。验证和恢复仍接受 version 1；v1 恢复不会修改目标 Meta 目录。精确替换和离线门禁见[备份与恢复](../operations/backup.md)。
 
-备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限。通过这些检查的历史数据库可以保留在备份中；恢复后的内容库仍须满足运行时精确 v6/v7/v8/v9 结构或受支持的迁移、重建要求。
+备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限。通过这些检查的历史数据库可以保留在备份中；恢复后的内容库仍须满足运行时精确 v6/v7/v8/v9/v10 结构或受支持的迁移、重建要求。
 
 ### 索引存储优化
 
@@ -151,7 +151,7 @@ litradar admin index optimize-storage
     [--project-root PATH]
 ```
 
-这是显式、离线、整目录替换操作，不接受 `--auth-db` 或部署密钥。它把受支持的精确 v6/v7/v8/v9 内容库从规范关系表重建为当前 v9，使用 `simple 0` 生成搜索投影、移除重复 FTS 内容并压缩空闲页。普通服务或索引启动对现有 v6/v7/v8/v9 只做结构预检，不自动升级旧分词器。
+这是显式、离线、整目录替换操作，不接受 `--auth-db` 或部署密钥。它把受支持的精确 v6/v7/v8/v9/v10 内容库从规范关系表重建为当前 v10，使用 `simple 0` 生成搜索投影、移除重复 FTS 内容并压缩空闲页。普通服务或索引启动对现有 v6/v7/v8/v9/v10 只做结构预检，不自动升级旧分词器。
 
 运行前必须停止 `serve`、独立 `index`/投递命令和计划任务子进程，等待 API/worker/调度心跳超过 90 秒，并等待所有 batch/catalog lease 到期或由正常退出释放。先创建并独立验证带 `--include-indexes` 的备份；需要旧二进制降级时，必须保留受目标旧二进制支持的优化前索引备份。可用空间至少按 `2 × source_bytes + 64 MiB` 预留；命令也会在复制前记录 `temporary_bytes_required` 估计。
 
@@ -161,7 +161,7 @@ litradar admin index optimize-storage
 - `report` 包含 `database_count`、`source_bytes`、`temporary_bytes_required`、`optimized_bytes`、`reclaimed_bytes` 和 `databases`；
 - 每个数据库包含安全文件名、`source_schema_version`、`target_schema_version`、权威 `row_counts`，以及 `before`/`after` 的 `file_bytes`、页大小/页数、freelist、FTS 分配和 `has_content_shadow`。
 
-优化器在任何目录切换前验证源库 `quick_check`、外键、FTS rowid 和固定查询语料；候选还必须通过精确 v9 schema、权威表计数/键集合、无影子表和 freelist 不超过 1%。切换后会再次执行完整验证，失败时自动回滚；成功后才删除 rollback 和维护标记。
+优化器在任何目录切换前验证源库 `quick_check`、外键、FTS rowid 和固定查询语料；候选还必须通过精确 v10 schema、权威表计数/键集合、无影子表和 freelist 不超过 1%。切换后会再次执行完整验证，失败时自动回滚；成功后才删除 rollback 和维护标记。
 
 失败 stdout 先输出 `{"status":"failed","error":...}`，命令随后非零退出。稳定 `error.code` 包括：
 
@@ -239,7 +239,7 @@ CSV 使用 LitRadar 维护的 `catalog_id,catalog_aliases,title,issn,eissn,all_i
 
 `index_provider_routes` 从 `auth.sqlite.runtime_settings` 把 stem 映射到一个已注册的 `provider.IndexContent`。缺少 route、Provider 未注册或没有索引 capability 都会在启动 worker 前失败。改变 route 不改目录或内容库身份；在线摘要页和全文使用各自的 default + per-catalog 顺序，和索引 Provider 单选相互独立。
 
-内容库的新建、预检和迁移要求统一见[数据库版本](database.md#连接和版本)。新建库使用 v9；精确 v6/v7/v8/v9 在普通启动时保留原结构，精确 v4/v5 可事务迁移到 v9。非空 v0 及 v1 至 v3 返回包含确切路径的重建错误，命令不会自动删除、改名或降低 `user_version`。
+内容库的新建、预检和迁移要求统一见[数据库版本](database.md#连接和版本)。新建库使用 v10；精确 v6/v7/v8/v9/v10 在普通启动时保留原结构，精确 v4/v5 可事务迁移到 v10。非空 v0 及 v1 至 v3 返回包含确切路径的重建错误，命令不会自动删除、改名或降低 `user_version`。
 
 ### 实时恢复与增量同步
 

@@ -19,7 +19,7 @@
 
 `--include-push-state` 中的 `.changes.json` 是 Provider-neutral 候选变更清单；其余 `<db>.json` 是启动迁移保留的旧投递导入源。持久投递权威状态已经包含在固定的 `auth.sqlite` 快照中，但若部署仍保留旧文件，建议同时选择该选项，以保留导入 hash 的来源证据和未消费的变更清单。恢复不会自动删除或改写这些源文件。
 
-`--include-indexes` 为创建时发现的全部 `data/index/*.sqlite` 制作快照，不按内容 schema 筛选，因此也可保存通过备份完整性与版本检查的历史数据库。运行时能直接读写的内容库要求精确 v6/v7/v8/v9；恢复后的迁移或重建要求见[数据库参考](../reference/database.md#内容库破坏性切换)。
+`--include-indexes` 为创建时发现的全部 `data/index/*.sqlite` 制作快照，不按内容 schema 筛选，因此也可保存通过备份完整性与版本检查的历史数据库。运行时能直接读写的内容库要求精确 v6/v7/v8/v9/v10；恢复后的迁移或重建要求见[数据库参考](../reference/database.md#内容库破坏性切换)。
 
 `data/index-control` 是可重建的运行控制状态：项目级 `index-batches.sqlite`（batch schema v2，含 typed notify handoff）和每个 catalog 的 v5 anchor/run/lease 控制库即使位于项目根下，也都不会进入 backup manifest、备份树或恢复目标。Provider 切换不需要复制旧 checkpoint；清空控制状态后的首次索引会创建新 batch 并通过内容 identity alias/upsert 幂等收敛，但也会失去尚未完成的 notify handoff/Unknown acknowledgement 证明。
 
@@ -93,7 +93,7 @@ litradar admin backup verify \
 
 ## 为离线索引优化准备回滚点
 
-`litradar admin index optimize-storage` 接受精确 v6/v7/v8/v9 内容库，离线重建为 v9。优化前经验证的备份是降级到旧二进制时的回滚点，其内容版本必须受目标二进制支持。不要降低 v9 文件的 `user_version`，也不要手工补建 `article_search_content` 或历史索引。
+`litradar admin index optimize-storage` 接受精确 v6/v7/v8/v9/v10 内容库，离线重建为 v10。优化前经验证的备份是降级到旧二进制时的回滚点，其内容版本必须受目标二进制支持。不要降低 v10 文件的 `user_version`，也不要手工补建 `article_search_content` 或历史索引。
 
 完整顺序：
 
@@ -110,19 +110,19 @@ litradar admin backup verify \
 ```bash
 litradar admin backup create \
   --project-root /srv/litradar \
-  --output /srv/backups/litradar-before-index-v9 \
+  --output /srv/backups/litradar-before-index-v10 \
   --include-indexes \
   --include-push-state
 
 litradar admin backup verify \
-  --backup /srv/backups/litradar-before-index-v9
+  --backup /srv/backups/litradar-before-index-v10
 
 litradar admin index optimize-storage \
   --project-root /srv/litradar \
   --confirm-index-maintenance
 ```
 
-如果优化失败并返回非空 `error.recovery_paths`，不要删除 marker、staging 或 rollback；保留备份、完整错误 JSON 和这些精确路径。只有优化器成功退出并自行清理恢复状态，才可启动服务。不支持 v9 的旧二进制不能打开优化后的文件；需要降级时先停止当前服务，重新验证受目标二进制支持的优化前备份，再按下述离线恢复流程恢复包含索引的快照。
+如果优化失败并返回非空 `error.recovery_paths`，不要删除 marker、staging 或 rollback；保留备份、完整错误 JSON 和这些精确路径。只有优化器成功退出并自行清理恢复状态，才可启动服务。不支持 v10 的旧二进制不能打开优化后的文件；需要降级时先停止当前服务，重新验证受目标二进制支持的优化前备份，再按下述离线恢复流程恢复包含索引的快照。
 
 ## Docker Compose
 

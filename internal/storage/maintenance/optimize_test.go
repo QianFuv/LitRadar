@@ -38,8 +38,8 @@ func readSource(t *testing.T, configuration config.Config) []byte {
 	return raw
 }
 
-func TestOptimizeActualHistoricalSourcesIntoValidatedV9(t *testing.T) {
-	for _, version := range []int{6, 7, 8, 9} {
+func TestOptimizeActualHistoricalSourcesIntoCurrentSchema(t *testing.T) {
+	for _, version := range []int{6, 7, 8, 9, 10} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			configuration := fixture(t, version)
 			report, err := optimize(context.Background(), Options{configuration, true}, 1000, hooks{})

@@ -13,6 +13,7 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/storage"
 	platform "github.com/QianFuv/LitRadar/internal/platform/sqlite"
+	"github.com/QianFuv/LitRadar/internal/storage/indexschema"
 	migration "github.com/QianFuv/LitRadar/internal/storage/migrations/index"
 	"github.com/QianFuv/LitRadar/internal/storage/search"
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
@@ -123,7 +124,7 @@ func validateSource(ctx context.Context, source sourceDatabase) error {
 
 func buildDatabase(ctx context.Context, source sourceDatabase, destination string) error {
 	if _, err := migration.Migrate(ctx, destination); err != nil {
-		return validation(source.name, fmt.Sprintf("v9 staging initialization: %v", err))
+		return validation(source.name, fmt.Sprintf("v%d staging initialization: %v", indexschema.Version, err))
 	}
 	if err := copyCanonical(ctx, source, destination); err != nil {
 		return err
@@ -277,9 +278,9 @@ func differentKeys(ctx context.Context, connection *sql.Conn, table, keys string
 	return mismatch, err
 }
 func validateRebuilt(ctx context.Context, source sourceDatabase, candidate string) (DatabaseReport, error) {
-	result := DatabaseReport{Database: source.name, SourceSchemaVersion: source.version, TargetSchemaVersion: 9, RowCounts: map[string]uint64{}}
+	result := DatabaseReport{Database: source.name, SourceSchemaVersion: source.version, TargetSchemaVersion: indexschema.Version, RowCounts: map[string]uint64{}}
 	if _, err := migration.Preflight(ctx, candidate); err != nil {
-		return result, validation(source.name, fmt.Sprintf("v9 exact schema preflight: %v", err))
+		return result, validation(source.name, fmt.Sprintf("v%d exact schema preflight: %v", indexschema.Version, err))
 	}
 	err := readConnection(ctx, candidate, func(connection *sql.Conn) error {
 		if err := validateIntegrity(ctx, connection, source.name); err != nil {
@@ -348,7 +349,7 @@ func validateRebuilt(ctx context.Context, source sourceDatabase, candidate strin
 				if err != nil {
 					return err
 				}
-				if source.version == 9 && original != current {
+				if source.version >= 9 && original != current {
 					return validation(source.name, "deterministic FTS result equivalence")
 				}
 			}

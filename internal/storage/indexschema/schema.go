@@ -2,10 +2,16 @@
 package indexschema
 
 // Version is the canonical content layout produced by new and upgraded databases.
-const Version = 9
+const Version = 10
 
 // MinimumSupportedVersion is the oldest layout accepted without an ordinary startup upgrade.
 const MinimumSupportedVersion = 6
+
+// IdentifierIndexes covers nonunique listing identifiers and their stable pagination order.
+const IdentifierIndexes = `
+    CREATE INDEX idx_article_listing_doi ON article_listing(doi, date, article_id);
+    CREATE INDEX idx_article_listing_pmid ON article_listing(pmid, date, article_id);
+`
 
 // ContentTables defines the canonical persisted schema and table identities.
 const ContentTables = `
@@ -143,7 +149,7 @@ const ContentTables = `
             content_revision, article_id, change_kind, journal_id,
             COALESCE(issue_id, -1), in_press
         );
-`
+` + IdentifierIndexes
 
 var columns = []struct {
 	name    string
@@ -160,4 +166,4 @@ var columns = []struct {
 	{"article_change_events", []string{"event_id", "content_revision", "article_id", "change_kind", "journal_id", "issue_id", "in_press", "created_at"}},
 }
 
-var indexes = []string{"idx_article_change_events_revision", "idx_article_identity_keys_article", "idx_article_listing_date_id", "idx_article_listing_issue", "idx_article_listing_journal_date_id", "idx_article_retraction_dois_doi", "idx_articles_date_id", "idx_articles_doi", "idx_articles_issue", "idx_articles_journal", "idx_articles_pmid", "idx_issues_journal_year", "idx_journal_identity_keys_catalog", "idx_journals_eissn", "idx_journals_issn"}
+var indexes = []string{"idx_article_change_events_revision", "idx_article_identity_keys_article", "idx_article_listing_date_id", "idx_article_listing_doi", "idx_article_listing_issue", "idx_article_listing_journal_date_id", "idx_article_listing_pmid", "idx_article_retraction_dois_doi", "idx_articles_date_id", "idx_articles_doi", "idx_articles_issue", "idx_articles_journal", "idx_articles_pmid", "idx_issues_journal_year", "idx_journal_identity_keys_catalog", "idx_journals_eissn", "idx_journals_issn"}

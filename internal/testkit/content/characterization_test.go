@@ -9,12 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QianFuv/LitRadar/internal/storage/indexschema"
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
 // TestCreateHistoricalFixtures preserves seeded records and every supported schema boundary.
 func TestCreateHistoricalFixtures(t *testing.T) {
-	for version := 4; version <= 9; version++ {
+	for version := 4; version <= indexschema.Version; version++ {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			filename := filepath.Join(t.TempDir(), "nested", "content.sqlite")
 			if err := Create(filename, version); err != nil {
@@ -91,6 +92,8 @@ func assertFixtureSchema(t *testing.T, database *sql.DB, version int) {
 	assertFixtureSchemaObject(t, database, "table", "journal_identity_keys", version >= 5)
 	assertFixtureSchemaObject(t, database, "table", "article_retraction_dois", version >= 6)
 	assertFixtureSchemaObject(t, database, "index", "idx_article_change_events_order", version < 8)
+	assertFixtureSchemaObject(t, database, "index", "idx_article_listing_doi", version >= 10)
+	assertFixtureSchemaObject(t, database, "index", "idx_article_listing_pmid", version >= 10)
 	assertFixtureSchemaObject(t, database, "table", "article_search_content", version < 7)
 	assertFixtureLegacyColumn(t, database, version)
 	assertFixtureTokenizer(t, database, version)
@@ -140,7 +143,7 @@ func assertFixtureTokenizer(t *testing.T, database *sql.DB, version int) {
 		t.Fatal(err)
 	}
 	tokenizer := "tokenize = 'unicode61 remove_diacritics 2'"
-	if version == 9 {
+	if version >= 9 {
 		tokenizer = "tokenize = 'simple 0'"
 	}
 	if !strings.Contains(declaration, tokenizer) || strings.Contains(declaration, "contentless_delete = 1") != (version >= 7) {
@@ -150,7 +153,7 @@ func assertFixtureTokenizer(t *testing.T, database *sql.DB, version int) {
 
 // TestCreateRejectsUnsupportedBeforeWrites leaves the supplied root and operator data untouched.
 func TestCreateRejectsUnsupportedBeforeWrites(t *testing.T) {
-	for _, version := range []int{-1, 0, 3, 10, 100} {
+	for _, version := range []int{-1, 0, 3, indexschema.Version + 1, 100} {
 		root := t.TempDir()
 		filename := filepath.Join(root, "missing", "content.sqlite")
 		if err := Create(filename, version); err == nil || err.Error() != fmt.Sprintf("unsupported test schema version %d", version) {
