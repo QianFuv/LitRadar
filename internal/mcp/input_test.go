@@ -12,7 +12,21 @@ func inputSchemaFixture(t *testing.T, encoded string) toolSchema {
 	if err := json.Unmarshal([]byte(encoded), &schema); err != nil {
 		t.Fatal(err)
 	}
+	prepareToolSchema(&schema)
 	return schema
+}
+
+// TestPreparedSchemaRetainsFirstTypeAndAnyOfPriority preserves the original declaration interpretation.
+func TestPreparedSchemaRetainsFirstTypeAndAnyOfPriority(t *testing.T) {
+	schema := inputSchemaFixture(t, `{"properties":{"first":{"type":["null","string"]},"choice":{"type":"integer","anyOf":[{},{}]},"unsupported":{"type":"object"}},"required":["first","choice"]}`)
+	input, err := decodeInput(json.RawMessage(`{"first":7,"choice":["kept"],"unsupported":true}`), schema)
+	if err != nil || input.fields["first"] != json.Number("7") || !reflect.DeepEqual(input.fields["choice"], []any{"kept"}) || input.fields["unsupported"] != true {
+		t.Fatal("preparation changed property interpretation", input, err)
+	}
+	input, err = decodeInput(json.RawMessage(`{"first":7,"choice":1}`), schema)
+	if input != nil || err == nil || err.Error() != "data did not match any variant of untagged enum StringOrStrings" {
+		t.Fatal("declared type overrode anyOf", input, err)
+	}
 }
 
 func TestInputDecodingRetainsTypedValuesAndCompatibilityForms(t *testing.T) {

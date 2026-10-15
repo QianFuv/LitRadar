@@ -53,6 +53,7 @@ func NewServer(services Services) (*sdk.Server, error) {
 		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
 			return nil, err
 		}
+		prepareToolSchema(&schema)
 		if !knownTool(tool.Name) {
 			return nil, fmt.Errorf("unbound MCP tool %q", tool.Name)
 		}

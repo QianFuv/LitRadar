@@ -19,8 +19,19 @@ type toolSchema struct {
 	Properties map[string]struct {
 		Type  json.RawMessage
 		AnyOf json.RawMessage
+		kind  string
 	} `json:"properties"`
 	Required []string `json:"required"`
+}
+
+// prepareToolSchema resolves immutable property kinds before request handlers share the schema.
+func prepareToolSchema(schema *toolSchema) {
+	for key, property := range schema.Properties {
+		if len(property.AnyOf) == 0 {
+			property.kind = toolPropertyKind(property.Type)
+			schema.Properties[key] = property
+		}
+	}
 }
 
 type toolInput struct {
@@ -67,7 +78,7 @@ func normalizeToolFields(fields map[string]any, schema toolSchema) error {
 		if value == nil && !slices.Contains(schema.Required, key) {
 			continue
 		}
-		converted, err := normalizeToolValue(value, property.Type, property.AnyOf)
+		converted, err := normalizeToolValue(value, property.kind, property.AnyOf)
 		if err != nil {
 			return err
 		}
@@ -77,14 +88,14 @@ func normalizeToolFields(fields map[string]any, schema toolSchema) error {
 }
 
 // normalizeToolValue preserves StringOrStrings admission and supported schema type conversion.
-func normalizeToolValue(value any, encoded, anyOf json.RawMessage) (any, error) {
+func normalizeToolValue(value any, kind string, anyOf json.RawMessage) (any, error) {
 	if len(anyOf) != 0 {
 		if acceptsStringOrStrings(value) {
 			return value, nil
 		}
 		return nil, fmt.Errorf("data did not match any variant of untagged enum StringOrStrings")
 	}
-	switch toolPropertyKind(encoded) {
+	switch kind {
 	case "string":
 		if _, ok := value.(string); !ok {
 			return nil, invalidType(value, "a string")
