@@ -16,7 +16,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { Button } from '@/components/ui/button';
-import { useCallback, useMemo, type ReactNode } from 'react';
+import { useCallback, useMemo, type ComponentProps, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { getMonthRangeDateBounds } from '@/lib/article-filters';
@@ -28,6 +28,23 @@ import { appendJournalRatingParams, useJournalRatingFilters } from '@/lib/journa
 type ResultsListProps = {
   filterSummary?: ReactNode;
 };
+
+type HighlightedArticleCardProps = Omit<
+  ComponentProps<typeof ArticleDialogCard>,
+  'title' | 'preview'
+> & {
+  highlightText: (text: string | null | undefined) => ReactNode;
+};
+
+/** Retain each article's highlights while later pages and favorite state change. */
+function HighlightedArticleCard({ highlightText, ...props }: HighlightedArticleCardProps) {
+  const { title, abstract } = props.article;
+  const highlighted = useMemo(
+    () => ({ title: highlightText(title), preview: highlightText(abstract) }),
+    [title, abstract, highlightText],
+  );
+  return <ArticleDialogCard {...props} title={highlighted.title} preview={highlighted.preview} />;
+}
 
 /**
  * Resolve the cursor for the next article page.
@@ -229,15 +246,6 @@ function useResultsViewState() {
 
   const prefetchThreshold = 25;
   const prefetchIndex = Math.max(0, visibleArticles.length - prefetchThreshold);
-  const highlightedArticles = useMemo(
-    () =>
-      visibleArticles.map((article) => ({
-        article,
-        title: highlightText(article.title),
-        preview: highlightText(article.abstract),
-      })),
-    [visibleArticles, highlightText],
-  );
 
   return {
     user,
@@ -254,7 +262,7 @@ function useResultsViewState() {
     isFavoriteStatePending,
     favoriteStateError,
     retryFavoriteChecks,
-    highlightedArticles,
+    highlightText,
     prefetchIndex,
   };
 }
@@ -275,7 +283,7 @@ function getResultsPresentation(state: ResultsViewState) {
     favoriteChecksByArticle,
     isFavoriteStatePending,
     favoriteStateError,
-    highlightedArticles,
+    highlightText,
     prefetchIndex,
   } = state;
   let resultContent: ReactNode;
@@ -331,14 +339,13 @@ function getResultsPresentation(state: ResultsViewState) {
       : `已加载 ${visibleArticles.length} 篇文章`;
     resultContent = (
       <>
-        {highlightedArticles.map(({ article, title, preview }, index) => (
-          <ArticleDialogCard
+        {visibleArticles.map((article, index) => (
+          <HighlightedArticleCard
             key={article.article_id}
             triggerRef={index === prefetchIndex ? prefetchRef : undefined}
             article={article}
             dbName={currentDb}
-            title={title}
-            preview={preview}
+            highlightText={highlightText}
             initialFolderIds={
               favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
             }

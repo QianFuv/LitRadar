@@ -3,6 +3,7 @@
  */
 
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
+import { useQueryState } from 'nuqs';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -143,6 +144,16 @@ function RatingChangeControl() {
   return (
     <button type="button" onClick={() => void setRatings({ abs_rating: ['4'] })}>
       Change rating
+    </button>
+  );
+}
+
+/** Change the query without unmounting article rows already available in cache. */
+function HighlightQueryChangeControl() {
+  const [, setQuery] = useQueryState('q');
+  return (
+    <button type="button" onClick={() => void setQuery('Updated')}>
+      Change highlight query
     </button>
   );
 }
@@ -509,7 +520,90 @@ async function reusesHighlightsForFavoriteChanges(): Promise<void> {
   ).toBe(true);
 }
 
+/** Verify appending a page highlights only new articles without rescanning earlier text. */
+async function reusesHighlightsAcrossPages(): Promise<void> {
+  const firstArticle = {
+    ...SHARED_ARTICLE,
+    title: 'First Fixture title',
+    abstract: 'First Fixture abstract',
+  };
+  const secondArticle = {
+    ...SHARED_ARTICLE,
+    article_id: '9002',
+    title: 'Second Fixture title',
+    abstract: 'Second Fixture abstract',
+  };
+  server.use(
+    http.get('http://localhost/api/articles', ({ request }) =>
+      HttpResponse.json(
+        new URL(request.url).searchParams.has('cursor')
+          ? createArticlePage([secondArticle])
+          : createArticlePage([firstArticle], { hasMore: true, nextCursor: 'page-two' }),
+      ),
+    ),
+  );
+  renderResultsList('?q=Fixture');
+  await screen.findByTestId('result-9001');
+  const split = vi.spyOn(String.prototype, 'split');
+  await act(async () => {
+    resultsListMocks.onFetchNextPage?.();
+  });
+  const secondResult = await screen.findByTestId('result-9002');
+  expect(within(secondResult).getAllByText('Fixture')).toHaveLength(2);
+  const highlightedTexts = split.mock.calls.flatMap(([pattern], index) =>
+    pattern instanceof RegExp && pattern.source.includes('Fixture')
+      ? [String(split.mock.contexts[index])]
+      : [],
+  );
+  expect(highlightedTexts).not.toContain(firstArticle.title);
+  expect(highlightedTexts).not.toContain(firstArticle.abstract);
+  expect(highlightedTexts).toContain(secondArticle.title);
+  expect(highlightedTexts).toContain(secondArticle.abstract);
+}
+
+/** Verify a new query invalidates highlights even when article identity and text are unchanged. */
+async function refreshesHighlightsForQueryChanges(): Promise<void> {
+  const article = {
+    ...SHARED_ARTICLE,
+    title: 'Fixture Updated title',
+    abstract: 'Fixture Updated abstract',
+  };
+  server.use(
+    http.get('http://localhost/api/articles', () =>
+      HttpResponse.json(createArticlePage([article])),
+    ),
+  );
+  const view = renderWithQuery(
+    <NuqsTestingAdapter searchParams="?q=Fixture" hasMemory>
+      <ResultsList />
+      <HighlightQueryChangeControl />
+    </NuqsTestingAdapter>,
+  );
+  const result = await screen.findByTestId('result-9001');
+  expect(Array.from(result.querySelectorAll('span'), (span) => span.textContent)).toEqual([
+    'Fixture',
+    'Fixture',
+  ]);
+  view.queryClient.setQueryData(['articles', 'scenario.sqlite', 'q=Updated'], {
+    pages: [createArticlePage([article])],
+    pageParams: [null],
+  });
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Change highlight query' }));
+  await waitFor(() =>
+    expect(Array.from(result.querySelectorAll('span'), (span) => span.textContent)).toEqual([
+      'Updated',
+      'Updated',
+    ]),
+  );
+  expect(screen.getByTestId('result-9001')).toBe(result);
+}
+
 describe('results list', () => {
+  test(
+    'refreshes mounted article highlights when the query changes',
+    refreshesHighlightsForQueryChanges,
+  );
+  test('reuses earlier article highlights when appending pages', reusesHighlightsAcrossPages);
   test(
     'reuses highlights for favorite updates and refreshes changed articles',
     reusesHighlightsForFavoriteChanges,
