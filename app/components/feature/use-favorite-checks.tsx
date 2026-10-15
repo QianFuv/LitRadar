@@ -110,6 +110,7 @@ export function useFavoriteChecks(
       ? normalizedArticleIds.map((articleId) => ({
           queryKey: [...favoriteBaseKey, articleId],
           queryFn: () => checkFavorite(articleId, dbName),
+          notifyOnChangeProps: ['data'],
           enabled: false,
           staleTime: FAVORITE_CACHE_STALE_TIME,
         }))

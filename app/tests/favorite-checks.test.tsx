@@ -2,7 +2,7 @@
  * Shared batch favorite-check cache and request behavior coverage.
  */
 
-import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
+import { QueryClientProvider, QueryObserver, type QueryClient } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import type { ReactNode } from 'react';
@@ -506,7 +506,39 @@ async function preventsCancelledMembershipWrites(): Promise<void> {
   );
 }
 
+/** Verify large cached lists keep subscription tracking linear and observe membership changes. */
+async function boundsMembershipSubscriptionTracking(count: number): Promise<void> {
+  const queryClient = createTestQueryClient();
+  const articleIds = Array.from({ length: count }, (_, index) => `cached-${index}`);
+  for (const articleId of articleIds) {
+    queryClient.setQueryData(['fav-check', 21, 'fixture.sqlite', articleId], []);
+  }
+  const props = { articleIds, dbName: 'fixture.sqlite', userId: 21 };
+  const { result, rerender } = renderHook(useFavoriteChecksHarness, {
+    initialProps: props,
+    wrapper: createQueryWrapper(queryClient),
+  });
+  await waitFor(() => expect(result.current.isFavoriteStatePending).toBe(false));
+  const trackProperty = vi.spyOn(QueryObserver.prototype, 'trackProp');
+  rerender(props);
+  const dataTrackingCalls = trackProperty.mock.calls.filter(
+    ([property]) => property === 'data',
+  ).length;
+  expect(dataTrackingCalls).toBeLessThanOrEqual(4 * count);
+  const changedMembership = [{ folder_id: 9, folder_name: 'Reading' }];
+  act(() =>
+    queryClient.setQueryData(['fav-check', 21, 'fixture.sqlite', articleIds[0]], changedMembership),
+  );
+  await waitFor(() =>
+    expect(result.current.favoriteChecksByArticle[articleIds[0]]).toEqual(changedMembership),
+  );
+}
+
 describe('useFavoriteChecks', () => {
+  test.each([100, 500])(
+    'bounds property tracking for %i cached memberships',
+    boundsMembershipSubscriptionTracking,
+  );
   test('preserves individual membership freshness', preservesIndividualFreshness);
   test('synchronizes overlapping consumers', synchronizesOverlappingConsumers);
   test('prevents cancelled membership writes', preventsCancelledMembershipWrites);
