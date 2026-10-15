@@ -99,6 +99,12 @@ ORDER BY w.group_rank,w.sort_date,w.key LIMIT 226`, upper, lower, rank, sortDate
 		return page, worksetStorageError(err)
 	}
 	defer rows.Close()
+	var lookup *sql.Stmt
+	defer func() {
+		if lookup != nil {
+			lookup.Close()
+		}
+	}()
 	bytes := 0
 	for rows.Next() {
 		var rowId, rankValue, dateValue, keyValue any
@@ -114,7 +120,13 @@ ORDER BY w.group_rank,w.sort_date,w.key LIMIT 226`, upper, lower, rank, sortDate
 			page.HasMore = true
 			break
 		}
-		decoded, position, payloadBytes, err := workset.readEmissionWork(rowId, rankValue, dateValue, keyValue)
+		if lookup == nil && len(page.Works) > 0 {
+			lookup, err = workset.connection.PrepareContext(context.Background(), "SELECT payload FROM works WHERE rowid=?1")
+			if err != nil {
+				return page, worksetStorageError(err)
+			}
+		}
+		decoded, position, payloadBytes, err := workset.readEmissionWork(lookup, rowId, rankValue, dateValue, keyValue)
 		if err != nil {
 			return page, err
 		}
@@ -163,10 +175,16 @@ func checkEmissionBudget(size storage.Integer, usedBytes, count int) (bool, erro
 }
 
 // readEmissionWork loads and decodes an admitted payload before validating its cursor field types.
-func (workset *CrossrefWorkset) readEmissionWork(rowId, rankValue, dateValue, keyValue any) (any, *EmissionKey, int, error) {
+func (workset *CrossrefWorkset) readEmissionWork(lookup *sql.Stmt, rowId, rankValue, dateValue, keyValue any) (any, *EmissionKey, int, error) {
 	var payload, date, key storage.Text
 	var rank storage.Integer
-	if err := workset.row("SELECT payload FROM works WHERE rowid=?1", rowId).Scan(&payload); err != nil {
+	var row *sql.Row
+	if lookup == nil {
+		row = workset.row("SELECT payload FROM works WHERE rowid=?1", rowId)
+	} else {
+		row = lookup.QueryRowContext(context.Background(), rowId)
+	}
+	if err := row.Scan(&payload); err != nil {
 		return nil, nil, 0, worksetStorageError(err)
 	}
 	decoded, err := transport.ParseJson([]byte(payload))
