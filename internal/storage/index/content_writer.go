@@ -92,14 +92,17 @@ type contentWriter struct {
 	isSimple, shouldRecordEvents bool
 	observedIssues               map[int64]bool
 	statements                   map[string]*sql.Stmt
+	journalTitle                 string
+	isJournalTitlePrepared       bool
 }
 
+// prepareWriter binds shared statements and tokenizer mode to one content transaction.
 func prepareWriter(ctx context.Context, connection *sql.Conn, shouldRecordEvents bool) (*contentWriter, error) {
 	isSimple, err := search.UsesSimple(ctx, connection)
 	if err != nil {
 		return nil, err
 	}
-	writer := &contentWriter{ctx, connection, isSimple, shouldRecordEvents, map[int64]bool{}, map[string]*sql.Stmt{}}
+	writer := &contentWriter{ctx: ctx, connection: connection, isSimple: isSimple, shouldRecordEvents: shouldRecordEvents, observedIssues: map[int64]bool{}, statements: map[string]*sql.Stmt{}}
 	for _, statement := range []string{journalProjectionSql, journalUpsertSql, issueUpsertSql, identityLookupSql, articleLookupSql, retractionLookupSql, articleUpsertSql, retractionDeleteSql, retractionInsertSql, listingUpsertSql, searchDeleteSql, searchInsertSql, identityClaimSql, changeEventInsertSql} {
 		prepared, err := connection.PrepareContext(ctx, statement)
 		if err != nil {
@@ -221,6 +224,7 @@ func (writer *contentWriter) upsertArticle(id, journal int64, issue *int64, arti
 	return nil
 }
 
+// projectArticle publishes changed article fields while reusing the batch's normalized journal title.
 func (writer *contentWriter) projectArticle(id, journal int64, issue *int64, catalog domain.JournalCatalogEntry, article domain.ArticleDraft) error {
 	if _, err := writer.exec(listingUpsertSql, id, journal, issue, article.PublicationYear, article.Date, article.OpenAccess, article.InPress, article.Doi, article.Pmid, catalog.Area); err != nil {
 		return err
@@ -233,9 +237,14 @@ func (writer *contentWriter) projectArticle(id, journal int64, issue *int64, cat
 		authors[position] = author.DisplayName
 	}
 	values := []any{id}
-	for _, value := range []string{article.Title, optionalString(article.AbstractText), optionalString(article.Doi), optionalString(article.Pmid), strings.Join(authors, "; "), catalog.Title} {
+	for _, value := range []string{article.Title, optionalString(article.AbstractText), optionalString(article.Doi), optionalString(article.Pmid), strings.Join(authors, "; ")} {
 		values = append(values, search.PrepareText(value, writer.isSimple))
 	}
+	if !writer.isJournalTitlePrepared {
+		writer.journalTitle = search.PrepareText(catalog.Title, writer.isSimple)
+		writer.isJournalTitlePrepared = true
+	}
+	values = append(values, writer.journalTitle)
 	_, err := writer.exec(searchInsertSql, values...)
 	return err
 }
