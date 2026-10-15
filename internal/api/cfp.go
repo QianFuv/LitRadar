@@ -269,6 +269,15 @@ func cfpFindSnapshot(entry sources.JournalCatalogEntry, snapshots []storage.Jour
 
 // cfpSummary projects catalog identity before optional snapshot and refresh metadata.
 func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, evaluatedAt, now int64) cfpJournalSummary {
+	var registrations []acquisition.SourceConfig
+	if snapshot != nil {
+		registrations = acquisition.Registry()
+	}
+	return cfpSummaryWithRegistry(entry, snapshot, evaluatedAt, now, registrations)
+}
+
+// cfpSummaryWithRegistry reuses validated source configuration within one catalog response.
+func cfpSummaryWithRegistry(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, evaluatedAt, now int64, registrations []acquisition.SourceConfig) cfpJournalSummary {
 	result := cfpJournalSummary{CatalogId: entry.CatalogId, CatalogAliases: entry.CatalogAliases, AllIssns: entry.AllIssns, TitleAliases: entry.TitleAliases, Title: entry.Title, Area: entry.Area, Coverage: "unadapted", RefreshStatus: "unadapted", StateCounts: cfpStateCounts{}}
 	if snapshot == nil {
 		return result
@@ -276,7 +285,7 @@ func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnap
 	result.Coverage, result.CheckedOn, result.SourceUrl, result.SourceStatement = "adapted", &snapshot.CheckedOn, snapshot.SourceUrl, snapshot.SourceStatement
 	result.NoticeCount = len(snapshot.Notices)
 	countCfpNotices(&result, snapshot, evaluatedAt)
-	applyCfpRefresh(&result, snapshot, now)
+	applyCfpRefresh(&result, snapshot, now, registrations)
 	return result
 }
 
@@ -304,8 +313,8 @@ func latestCfpSource(snapshot *storage.JournalSnapshot) *storage.SourceStatus {
 }
 
 // applyCfpRefresh preserves refresh capability and expired-lease projection.
-func applyCfpRefresh(result *cfpJournalSummary, snapshot *storage.JournalSnapshot, now int64) {
-	for _, registration := range acquisition.Registry() {
+func applyCfpRefresh(result *cfpJournalSummary, snapshot *storage.JournalSnapshot, now int64, registrations []acquisition.SourceConfig) {
+	for _, registration := range registrations {
 		if slices.Contains(registration.CatalogIds, snapshot.JournalKey) {
 			result.CanRefresh = registration.CanRefresh()
 			break
@@ -333,12 +342,16 @@ func cfpCatalog(database string, query *string, entries []sources.JournalCatalog
 	if query != nil {
 		search = sources.Lowercase(strings.TrimSpace(*query))
 	}
+	var registrations []acquisition.SourceConfig
 	for _, entry := range entries {
 		snapshot, failure := cfpFindSnapshot(entry, snapshots)
 		if failure != nil {
 			return nil, failure
 		}
-		item := cfpSummary(entry, snapshot, now, now)
+		if snapshot != nil && registrations == nil {
+			registrations = acquisition.Registry()
+		}
+		item := cfpSummaryWithRegistry(entry, snapshot, now, now, registrations)
 		result.Summary.Journals++
 		if item.Coverage == "adapted" {
 			result.Summary.AdaptedJournals++
