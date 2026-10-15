@@ -69,6 +69,15 @@ func DeliveryKey(subscriber domain.Subscriber, articleId int64) string {
 func ApplySelectionRules(result domain.SelectionResult, subscriber domain.Subscriber, candidates map[int64]storage.ArticleCandidate, dedupe map[string]string) []domain.RankedSelection {
 	eligible := []domain.RankedSelection{}
 	selected := map[int64]bool{}
+	matchScores := map[int64]int64{}
+	matchScore := func(articleId int64) int64 {
+		if score, exists := matchScores[articleId]; exists {
+			return score
+		}
+		score := CandidateMatchScore(candidates[articleId], subscriber)
+		matchScores[articleId] = score
+		return score
+	}
 	isDelivered := func(articleId int64) bool { _, exists := dedupe[DeliveryKey(subscriber, articleId)]; return exists }
 	for _, selection := range result.Selections {
 		candidate, exists := candidates[selection.ArticleId]
@@ -80,13 +89,17 @@ func ApplySelectionRules(result domain.SelectionResult, subscriber domain.Subscr
 	}
 	if len(eligible) < MaxArticlesPerPush {
 		supplemental := []domain.RankedSelection{}
-		for _, candidate := range candidates {
-			if !selected[candidate.ArticleId] && !isDelivered(candidate.ArticleId) && CandidateMatchScore(candidate, subscriber) > 0 {
+		for articleId, candidate := range candidates {
+			if selected[candidate.ArticleId] || isDelivered(candidate.ArticleId) {
+				continue
+			}
+			if score := CandidateMatchScore(candidate, subscriber); score > 0 {
+				matchScores[articleId] = score
 				supplemental = append(supplemental, domain.RankedSelection{ArticleId: candidate.ArticleId})
 			}
 		}
 		sort.Slice(supplemental, func(left, right int) bool {
-			leftMatch, rightMatch := CandidateMatchScore(candidates[supplemental[left].ArticleId], subscriber), CandidateMatchScore(candidates[supplemental[right].ArticleId], subscriber)
+			leftMatch, rightMatch := matchScore(supplemental[left].ArticleId), matchScore(supplemental[right].ArticleId)
 			if leftMatch != rightMatch {
 				return leftMatch > rightMatch
 			}
@@ -95,7 +108,7 @@ func ApplySelectionRules(result domain.SelectionResult, subscriber domain.Subscr
 		eligible = append(eligible, supplemental...)
 	}
 	sort.SliceStable(eligible, func(left, right int) bool {
-		leftMatch, rightMatch := CandidateMatchScore(candidates[eligible[left].ArticleId], subscriber), CandidateMatchScore(candidates[eligible[right].ArticleId], subscriber)
+		leftMatch, rightMatch := matchScore(eligible[left].ArticleId), matchScore(eligible[right].ArticleId)
 		if leftMatch != rightMatch {
 			return leftMatch > rightMatch
 		}
