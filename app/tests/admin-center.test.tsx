@@ -58,7 +58,11 @@ vi.mock('@/components/admin/runtime-settings-card', () => ({
 }));
 
 vi.mock('@/components/admin/scheduled-tasks-card', () => ({
-  ScheduledTasksCard: () => <div>scheduled tasks card marker</div>,
+  ScheduledTasksCard: ({ isActive }: { isActive?: boolean }) => (
+    <div data-testid="scheduler-panel" data-active={String(isActive)}>
+      scheduled tasks card marker
+    </div>
+  ),
 }));
 
 vi.mock('@/components/admin/announcements-card', () => ({
@@ -211,11 +215,17 @@ async function givesSettingsConflictPriority(): Promise<void> {
 /** Verify a direct scheduler URL mounts its data owner without starting unrelated panels. */
 async function defersUnvisitedPanelsForDirectLinks(): Promise<void> {
   adminCenterMocks.searchParams = new URLSearchParams('admin=scheduled-tasks');
-  renderWithQuery(<AdminCenterDialog />);
+  const view = renderWithQuery(<AdminCenterDialog />);
   expect(await screen.findByText('scheduled tasks card marker')).toBeInTheDocument();
   expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(6);
   expect(screen.queryByText('overview card marker')).not.toBeInTheDocument();
   expect(screen.queryByText('user card marker')).not.toBeInTheDocument();
+  const scheduler = screen.getByTestId('scheduler-panel');
+  expect(scheduler).toHaveAttribute('data-active', 'true');
+  adminCenterMocks.searchParams = new URLSearchParams('admin=overview');
+  view.rerender(<AdminCenterDialog />);
+  await waitFor(() => expect(scheduler).toHaveAttribute('data-active', 'false'));
+  expect(screen.getByTestId('scheduler-panel')).toBe(scheduler);
 }
 
 beforeEach(() => {

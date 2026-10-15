@@ -2,7 +2,7 @@
  * Administrator scheduled-task mutation and cache invalidation coverage.
  */
 
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test, vi } from 'vitest';
@@ -504,7 +504,64 @@ async function showsInviteListFailure(): Promise<void> {
   expect(await screen.findByRole('alert')).toHaveTextContent('Invite list unavailable');
 }
 
+/** Verify inactive scheduler queries pause without losing the mounted editor draft. */
+async function pausesInactiveSchedulerQueries(): Promise<void> {
+  isTaskDeleted = false;
+  let taskRequests = 0;
+  let statusRequests = 0;
+  server.use(
+    http.get('http://localhost/api/admin/scheduled-tasks', () => {
+      taskRequests += 1;
+      return scheduledTaskListResponse();
+    }),
+    http.get('http://localhost/api/admin/scheduler/status', () => {
+      statusRequests += 1;
+      return schedulerStatusResponse();
+    }),
+  );
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const view = renderWithQuery(<ScheduledTasksCard isActive={false} />);
+  try {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await vi.waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
+    expect([taskRequests, statusRequests]).toEqual([0, 0]);
+    view.rerender(<ScheduledTasksCard isActive />);
+    await screen.findByText('健康 worker：1/1');
+    await vi.waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
+    expect([taskRequests, statusRequests]).toEqual([1, 1]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '新建任务' }));
+    const input = screen.getByLabelText('任务名称');
+    await user.type(input, 'Retained scheduler draft');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    await vi.waitFor(() => expect(statusRequests).toBe(2));
+    await vi.waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
+    view.rerender(<ScheduledTasksCard isActive={false} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(90_000);
+    });
+    expect([taskRequests, statusRequests]).toEqual([1, 2]);
+    vi.useRealTimers();
+    view.rerender(<ScheduledTasksCard isActive />);
+    await waitFor(() => expect([taskRequests, statusRequests]).toEqual([2, 3]));
+    await waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
+    expect(screen.getByLabelText('任务名称')).toBe(input);
+    expect(input).toHaveValue('Retained scheduler draft');
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+}
+
 describe('administrator mutation flow', () => {
+  test(
+    'pauses inactive scheduler queries and retains editor drafts',
+    pausesInactiveSchedulerQueries,
+  );
   test('updates and deletes a scheduled task', updatesAndDeletesTask);
   test(
     'creates a typed scheduled task without an arbitrary command field',

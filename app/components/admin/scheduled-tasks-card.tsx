@@ -294,10 +294,11 @@ function formatSchedulerState(status: SchedulerRunState): string {
 /**
  * Render the admin scheduled task management card.
  *
+ * @param props - Whether the retained panel is active and should fetch scheduler data.
  * @returns Scheduled task management UI.
  */
-export function ScheduledTasksCard() {
-  const state = useSchedulerViewState();
+export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } = {}) {
+  const state = useSchedulerViewState(isActive);
   const { error, isLoading } = state;
   return (
     <Card>
@@ -333,8 +334,8 @@ export function ScheduledTasksCard() {
     </Card>
   );
 }
-/** Own the original hooks, draft stores and exact completion/cache order. */
-function useSchedulerViewState() {
+/** Retain editor state while limiting task and status queries to the active panel. */
+function useSchedulerViewState(isActive: boolean) {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTaskInfo | null>(null);
@@ -351,6 +352,7 @@ function useSchedulerViewState() {
   } = useQuery({
     queryKey: ['admin-scheduled-tasks'],
     queryFn: () => adminGetScheduledTasks(),
+    enabled: isActive,
   });
   const {
     data: schedulerStatus,
@@ -359,6 +361,7 @@ function useSchedulerViewState() {
   } = useQuery({
     queryKey: ['admin-scheduler-status'],
     queryFn: () => adminGetSchedulerStatus(),
+    enabled: isActive,
     refetchInterval: 30_000,
   });
 

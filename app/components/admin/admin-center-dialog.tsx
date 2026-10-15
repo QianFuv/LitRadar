@@ -257,7 +257,7 @@ export function AdminCenterDialog() {
         label="计划任务面板"
         transition={panelTransition}
       >
-        <ScheduledTasksCard />
+        <ScheduledTasksCard isActive={isDialogOpen && activeSection === 'scheduled-tasks'} />
       </AdminPanel>
       <AdminPanel
         isActive={activeSection === 'announcements'}
