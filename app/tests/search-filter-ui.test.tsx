@@ -451,7 +451,27 @@ beforeEach(() => {
   });
 });
 
+/** Verify ordinary typing avoids storage reads while arrows can load newly saved history. */
+async function readsHistoryOnlyForNavigation(): Promise<void> {
+  const user = userEvent.setup();
+  renderWithQuery(
+    <NuqsTestingAdapter>
+      <SearchBar />
+    </NuqsTestingAdapter>,
+  );
+  const input = screen.getByRole('combobox', { name: '搜索文章' });
+  await user.click(input);
+  const storageRead = vi.spyOn(Storage.prototype, 'getItem');
+  await user.type(input, 'a long ordinary search query', { skipClick: true });
+  expect(storageRead).not.toHaveBeenCalled();
+  window.localStorage.setItem('litradar:v1:search_history', JSON.stringify(['recent query']));
+  await user.keyboard('{ArrowDown}');
+  expect(storageRead).toHaveBeenCalledWith('litradar:v1:search_history');
+  expect(await screen.findByRole('option', { name: 'recent query' })).toBeInTheDocument();
+}
+
 describe('search and filter UI', () => {
+  test('reads persisted history only for navigation keys', readsHistoryOnlyForNavigation);
   test(
     'combines rating groups and clears their state on database changes',
     selectsRatingsAndClearsThemWhenChangingDatabase,

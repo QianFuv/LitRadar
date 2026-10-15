@@ -183,7 +183,9 @@ export function SearchBar({ className, queryParam = 'q' }: SearchBarProps) {
    * @param event - Search input keyboard event.
    */
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    const availableHistory = searchHistory.length > 0 ? searchHistory : getSearchHistory();
+    const isHistoryNavigation = event.key === 'ArrowDown' || event.key === 'ArrowUp';
+    const availableHistory =
+      isHistoryNavigation && searchHistory.length === 0 ? getSearchHistory() : searchHistory;
     if (event.key === 'ArrowDown' && availableHistory.length > 0) {
       event.preventDefault();
       setSearchHistory(availableHistory);
