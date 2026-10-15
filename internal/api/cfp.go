@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -26,6 +27,10 @@ import (
 
 const cfpCursorContext = "litradar.cfp.cursor.v1"
 const cfpCursorDetail = "CFP page changed or cursor is invalid; reload from the first page"
+
+var cfpRefreshCapability = sync.OnceValue(func() func(string) bool {
+	return cfpRefreshLookup(acquisition.Registry())
+})
 
 type cfpHandlers struct {
 	storage       config.Config
@@ -303,15 +308,6 @@ func cfpFindIndexedSnapshot(entry sources.JournalCatalogEntry, indexed map[strin
 
 // cfpSummary projects catalog identity before optional snapshot and refresh metadata.
 func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, evaluatedAt, now int64) cfpJournalSummary {
-	var registrations []acquisition.SourceConfig
-	if snapshot != nil {
-		registrations = acquisition.Registry()
-	}
-	return cfpSummaryWithRegistry(entry, snapshot, evaluatedAt, now, registrations)
-}
-
-// cfpSummaryWithRegistry reuses validated source configuration within one catalog response.
-func cfpSummaryWithRegistry(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, evaluatedAt, now int64, registrations []acquisition.SourceConfig) cfpJournalSummary {
 	result := cfpJournalSummary{CatalogId: entry.CatalogId, CatalogAliases: entry.CatalogAliases, AllIssns: entry.AllIssns, TitleAliases: entry.TitleAliases, Title: entry.Title, Area: entry.Area, Coverage: "unadapted", RefreshStatus: "unadapted", StateCounts: cfpStateCounts{}}
 	if snapshot == nil {
 		return result
@@ -319,7 +315,7 @@ func cfpSummaryWithRegistry(entry sources.JournalCatalogEntry, snapshot *storage
 	result.Coverage, result.CheckedOn, result.SourceUrl, result.SourceStatement = "adapted", &snapshot.CheckedOn, snapshot.SourceUrl, snapshot.SourceStatement
 	result.NoticeCount = len(snapshot.Notices)
 	countCfpNotices(&result, snapshot, evaluatedAt)
-	applyCfpRefresh(&result, snapshot, now, registrations)
+	applyCfpRefresh(&result, snapshot, now)
 	return result
 }
 
@@ -346,14 +342,22 @@ func latestCfpSource(snapshot *storage.JournalSnapshot) *storage.SourceStatus {
 	return latest
 }
 
-// applyCfpRefresh preserves refresh capability and expired-lease projection.
-func applyCfpRefresh(result *cfpJournalSummary, snapshot *storage.JournalSnapshot, now int64, registrations []acquisition.SourceConfig) {
+// cfpRefreshLookup retains the first registration for each exact alias without exposing shared storage.
+func cfpRefreshLookup(registrations []acquisition.SourceConfig) func(string) bool {
+	capabilities := make(map[string]bool, len(registrations))
 	for _, registration := range registrations {
-		if slices.Contains(registration.CatalogIds, snapshot.JournalKey) {
-			result.CanRefresh = registration.CanRefresh()
-			break
+		for _, alias := range registration.CatalogIds {
+			if _, exists := capabilities[alias]; !exists {
+				capabilities[alias] = registration.CanRefresh()
+			}
 		}
 	}
+	return func(journalKey string) bool { return capabilities[journalKey] }
+}
+
+// applyCfpRefresh reuses packaged capabilities while projecting live source status and lease expiry.
+func applyCfpRefresh(result *cfpJournalSummary, snapshot *storage.JournalSnapshot, now int64) {
+	result.CanRefresh = cfpRefreshCapability()(snapshot.JournalKey)
 	latest := latestCfpSource(snapshot)
 	if latest != nil {
 		result.LastAttempt, result.LastSuccess, result.LastError = latest.LastAttempt, latest.LastSuccess, latest.LastError
@@ -376,17 +380,13 @@ func cfpCatalog(database string, query *string, entries []sources.JournalCatalog
 	if query != nil {
 		search = sources.Lowercase(strings.TrimSpace(*query))
 	}
-	var registrations []acquisition.SourceConfig
 	indexed := cfpIndexSnapshots(snapshots)
 	for _, entry := range entries {
 		snapshot, failure := cfpFindIndexedSnapshot(entry, indexed)
 		if failure != nil {
 			return nil, failure
 		}
-		if snapshot != nil && registrations == nil {
-			registrations = acquisition.Registry()
-		}
-		item := cfpSummaryWithRegistry(entry, snapshot, now, now, registrations)
+		item := cfpSummary(entry, snapshot, now, now)
 		result.Summary.Journals++
 		if item.Coverage == "adapted" {
 			result.Summary.AdaptedJournals++
