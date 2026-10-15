@@ -267,6 +267,40 @@ func cfpFindSnapshot(entry sources.JournalCatalogEntry, snapshots []storage.Jour
 	return result, nil
 }
 
+// cfpIndexSnapshots marks shared aliases as ambiguous without rejecting unrelated catalog entries.
+func cfpIndexSnapshots(snapshots []storage.JournalSnapshot) map[string]*storage.JournalSnapshot {
+	indexed := make(map[string]*storage.JournalSnapshot, len(snapshots))
+	for index := range snapshots {
+		snapshot := &snapshots[index]
+		for _, alias := range snapshot.CatalogIds {
+			if previous, exists := indexed[alias]; exists && previous != snapshot {
+				indexed[alias] = nil
+			} else {
+				indexed[alias] = snapshot
+			}
+		}
+	}
+	return indexed
+}
+
+// cfpFindIndexedSnapshot retains exact alias matching and rejects distinct matching snapshots.
+func cfpFindIndexedSnapshot(entry sources.JournalCatalogEntry, indexed map[string]*storage.JournalSnapshot) (*storage.JournalSnapshot, *apiError) {
+	var result *storage.JournalSnapshot
+	for _, aliases := range [][]string{{entry.CatalogId}, entry.CatalogAliases} {
+		for _, alias := range aliases {
+			snapshot, exists := indexed[alias]
+			if !exists {
+				continue
+			}
+			if snapshot == nil || result != nil && result != snapshot {
+				return nil, internalError()
+			}
+			result = snapshot
+		}
+	}
+	return result, nil
+}
+
 // cfpSummary projects catalog identity before optional snapshot and refresh metadata.
 func cfpSummary(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot, evaluatedAt, now int64) cfpJournalSummary {
 	var registrations []acquisition.SourceConfig
@@ -343,8 +377,9 @@ func cfpCatalog(database string, query *string, entries []sources.JournalCatalog
 		search = sources.Lowercase(strings.TrimSpace(*query))
 	}
 	var registrations []acquisition.SourceConfig
+	indexed := cfpIndexSnapshots(snapshots)
 	for _, entry := range entries {
-		snapshot, failure := cfpFindSnapshot(entry, snapshots)
+		snapshot, failure := cfpFindIndexedSnapshot(entry, indexed)
 		if failure != nil {
 			return nil, failure
 		}
