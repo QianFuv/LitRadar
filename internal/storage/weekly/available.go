@@ -15,16 +15,25 @@ import (
 
 // LoadAvailable preserves source publication identity while pruning references absent from weekly listings.
 func LoadAvailable(ctx context.Context, configuration config.Config, end Timestamp, selected []string) ([]Manifest, error) {
-	manifests, err := LoadManifests(configuration, end.WindowStart(), end, nil)
-	if err != nil {
-		return nil, err
-	}
-	retained, requested := prepareAvailableManifests(manifests, selected)
-	available, err := loadAvailableGroups(ctx, configuration, requested)
+	retained, available, err := loadAvailableMembership(ctx, configuration, end, selected)
 	if err != nil {
 		return nil, err
 	}
 	return pruneAvailableManifests(retained, available), nil
+}
+
+// loadAvailableMembership preserves global publication admission before selected live database lookups.
+func loadAvailableMembership(ctx context.Context, configuration config.Config, end Timestamp, selected []string) ([]Manifest, map[string]map[int64]bool, error) {
+	manifests, err := LoadManifests(configuration, end.WindowStart(), end, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	retained, requested := prepareAvailableManifests(manifests, selected)
+	available, err := loadAvailableGroups(ctx, configuration, requested)
+	if err != nil {
+		return nil, nil, err
+	}
+	return retained, available, nil
 }
 
 func availableIds(ctx context.Context, filename string, requested map[int64]bool) (map[int64]bool, error) {
@@ -64,21 +73,15 @@ func availableIds(ctx context.Context, filename string, requested map[int64]bool
 
 // CountAvailable counts unique database/article pairs without imposing the legacy response ceiling.
 func CountAvailable(ctx context.Context, configuration config.Config, end Timestamp, selected []string) (int, error) {
-	manifests, err := LoadAvailable(ctx, configuration, end, selected)
+	_, available, err := loadAvailableMembership(ctx, configuration, end, selected)
 	if err != nil {
 		return 0, err
 	}
-	type reference struct {
-		name string
-		id   int64
+	count := 0
+	for _, ids := range available {
+		count += len(ids)
 	}
-	unique := map[reference]bool{}
-	for _, manifest := range manifests {
-		for _, id := range manifest.ArticleIds {
-			unique[reference{manifest.DbName, id}] = true
-		}
-	}
-	return len(unique), nil
+	return count, nil
 }
 
 // prepareAvailableManifests binds source run identity before availability pruning.
