@@ -462,7 +462,7 @@ function useWeeklyViewState() {
     string | null
   >({
     queryKey: weeklyArticleQueryKey,
-    queryFn: ({ pageParam }) => {
+    queryFn: ({ pageParam, signal }) => {
       if (!effectiveSelectedDb || effectiveSelectedJournalId === null || !weeklySummary) {
         throw new Error('每周更新文章请求缺少必要筛选条件');
       }
@@ -475,6 +475,7 @@ function useWeeklyViewState() {
           limit: WEEKLY_ARTICLE_PAGE_SIZE,
         },
         pageParam,
+        signal,
       );
     },
     initialPageParam: null,

@@ -480,7 +480,47 @@ beforeEach(() => {
   });
 });
 
+/** Verify journal changes and workspace exits abort obsolete weekly page requests. */
+async function abortsObsoleteWeeklyRequests(): Promise<void> {
+  const signals: AbortSignal[] = [];
+  let releaseRequests: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    releaseRequests = resolve;
+  });
+  installWeeklyHandlers(async ({ request }) => {
+    signals.push(request.signal);
+    await pending;
+    return HttpResponse.json(weeklyPage([]));
+  });
+  const user = userEvent.setup();
+  const view = renderWeeklyPage('?db=fixture.sqlite&journal=101');
+  try {
+    await waitFor(() => expect(signals).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: /Second Fixture Journal/ }));
+    await waitFor(() => expect(signals).toHaveLength(2));
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    view.unmount();
+    expect(signals[1].aborted).toBe(true);
+    await act(async () => {
+      releaseRequests?.();
+      await pending;
+    });
+    expect(
+      view.queryClient
+        .getQueryCache()
+        .getAll()
+        .every((query) => query.state.error === null),
+    ).toBe(true);
+  } finally {
+    releaseRequests?.();
+    view.unmount();
+  }
+}
+
 describe('weekly updates bounded pagination', () => {
+  test('aborts obsolete article requests', abortsObsoleteWeeklyRequests);
   test('loads one summary and one initial bounded article page', loadsOneInitialBoundedPage);
   test('resets to the first page for a database change', resetsForDatabaseSelection);
   test('resets to the first page for a journal change', resetsForJournalSelection);

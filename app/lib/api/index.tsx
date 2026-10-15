@@ -154,11 +154,13 @@ export function getWeeklyUpdatesSummary(): Promise<WeeklyUpdatesSummaryResponse>
  *
  * @param request - Database, journal, fixed window, search, and limit parameters.
  * @param cursor - Optional descending page cursor.
+ * @param signal - Optional cancellation signal for an obsolete page request.
  * @returns Weekly article page.
  */
 export function getWeeklyUpdateArticles(
   request: WeeklyArticlePageRequest,
   cursor: string | null = null,
+  signal?: AbortSignal,
 ): Promise<WeeklyArticlePage> {
   const params = new URLSearchParams();
   params.set('db', request.dbName);
@@ -173,7 +175,7 @@ export function getWeeklyUpdateArticles(
   }
   return requestJson<WeeklyArticlePage>(
     buildApiUrl('/api/weekly-updates/articles', params),
-    undefined,
+    { signal },
     '获取每周更新文章失败',
   );
 }

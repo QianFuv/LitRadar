@@ -91,12 +91,14 @@ export async function deleteFolder(folderId: number): Promise<void> {
  * @param folderId - Owned favorite folder.
  * @param limit - Maximum returned rows.
  * @param cursor - Opaque server continuation or null for the first page.
+ * @param signal - Optional cancellation signal for an obsolete page request.
  * @returns Favorite rows and the next cursor.
  */
 export function getFolderArticlePage(
   folderId: number,
   limit: number,
   cursor: string | null = null,
+  signal?: AbortSignal,
 ): Promise<FavoriteArticlePage> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor !== null) {
@@ -104,7 +106,7 @@ export function getFolderArticlePage(
   }
   return requestJson<FavoriteArticlePage>(
     buildApiUrl(`/api/favorites/folders/${folderId}/articles/page`, params),
-    undefined,
+    { signal },
     '获取收藏文章失败',
   );
 }

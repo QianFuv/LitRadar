@@ -132,7 +132,8 @@ export function useFavoritesPage(userId: number) {
     refetch: refetchFavorites,
   } = useInfiniteQuery({
     queryKey: ['folder-articles', activeFolderId, 'cursor', userId],
-    queryFn: ({ pageParam }) => getFolderArticlePage(activeFolderId!, PAGE_SIZE, pageParam),
+    queryFn: ({ pageParam, signal }) =>
+      getFolderArticlePage(activeFolderId!, PAGE_SIZE, pageParam, signal),
     getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
     initialPageParam: null as string | null,
     enabled: true && !!activeFolderId && !!selectedFolder,

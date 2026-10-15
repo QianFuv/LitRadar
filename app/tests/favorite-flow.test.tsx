@@ -764,7 +764,45 @@ async function rejectsUnavailableCachedMembership(
   expect(folder).toHaveAttribute('aria-pressed', 'true');
 }
 
+/** Verify leaving the workspace cancels a pending favorite page request. */
+async function abortsUnmountedFavoriteRequest(): Promise<void> {
+  let signal: AbortSignal | undefined;
+  let releaseRequest: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    releaseRequest = resolve;
+  });
+  server.use(
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/favorites/folders/3/articles/page', async ({ request }) => {
+      signal = request.signal;
+      await pending;
+      return favoriteArticlePageResponse([]);
+    }),
+  );
+  const view = renderFavoritesPage();
+  try {
+    await waitFor(() => expect(signal).toBeDefined());
+    expect(signal?.aborted).toBe(false);
+    view.unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => {
+      releaseRequest?.();
+      await pending;
+    });
+    expect(
+      view.queryClient
+        .getQueryCache()
+        .getAll()
+        .every((query) => query.state.error === null),
+    ).toBe(true);
+  } finally {
+    releaseRequest?.();
+    view.unmount();
+  }
+}
+
 describe('favorite mutation flow', () => {
+  test('aborts a pending page when leaving favorites', abortsUnmountedFavoriteRequest);
   test.each(['stale', 'invalidated'] as const)(
     'keeps unavailable %s membership unknown until a fresh lookup succeeds',
     rejectsUnavailableCachedMembership,
