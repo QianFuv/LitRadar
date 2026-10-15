@@ -33,12 +33,12 @@ type typedQuery map[string]any
 // extractQuery rejects known duplicates after form decoding and ignores unknown fields.
 func extractQuery(raw string, fields map[string]queryKind) (typedQuery, *apiError) {
 	values := typedQuery{}
-	for _, part := range strings.Split(raw, "&") {
+	for part := range strings.SplitSeq(raw, "&") {
 		if part == "" {
 			continue
 		}
 		name, value, _ := strings.Cut(part, "=")
-		name, value = formDecode(name), formDecode(value)
+		name = formDecode(name)
 		kind, known := fields[name]
 		if !known {
 			continue
@@ -46,7 +46,7 @@ func extractQuery(raw string, fields map[string]queryKind) (typedQuery, *apiErro
 		if _, exists := values[name]; exists {
 			return nil, queryRejection("duplicate field `" + name + "`")
 		}
-		parsed, failure, isHandled := decodeQueryValue(kind, name, value)
+		parsed, failure, isHandled := decodeQueryValue(kind, name, formDecode(value))
 		if failure != nil {
 			return nil, failure
 		}
@@ -115,7 +115,11 @@ func queryRejection(detail string) *apiError {
 	return &apiError{status: 400, detail: "Failed to deserialize query string: " + detail, isPlain: true}
 }
 
+// formDecode reuses valid unescaped text and retains permissive decoding for all other bytes.
 func formDecode(value string) string {
+	if !strings.ContainsAny(value, "+%") && utf8.ValidString(value) {
+		return value
+	}
 	decoded := make([]byte, 0, len(value))
 	for index := 0; index < len(value); index++ {
 		switch value[index] {

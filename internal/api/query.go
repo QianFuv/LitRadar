@@ -14,9 +14,10 @@ import (
 type queryPair struct{ name, value string }
 type queryPairs []queryPair
 
+// parseQueryPairs retains strict decoding and encounter order without allocating a token slice.
 func parseQueryPairs(raw string) (queryPairs, *apiError) {
 	pairs := queryPairs{}
-	for _, part := range strings.Split(raw, "&") {
+	for part := range strings.SplitSeq(raw, "&") {
 		if part == "" {
 			continue
 		}
