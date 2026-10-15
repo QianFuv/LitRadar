@@ -219,15 +219,17 @@ export function getArticleActionUrlForDatabase(
  *
  * @param articleId - Article id.
  * @param dbName - Database name.
+ * @param signal - Cancellation signal for an obsolete access lookup.
  * @returns Article access capabilities.
  */
 export function getArticleAccess(
   articleId: ArticleId,
   dbName: string,
+  signal?: AbortSignal,
 ): Promise<ArticleAccessResponse> {
   return requestJson<ArticleAccessResponse>(
     buildDatabaseUrl(`/api/articles/${articleId}/access`, dbName),
-    undefined,
+    { signal },
     '获取文章访问状态失败',
   );
 }

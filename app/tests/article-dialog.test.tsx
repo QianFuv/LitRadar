@@ -2,7 +2,7 @@
  * Article card selection, dialog accessibility, copy actions, and safe-link coverage.
  */
 
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test, vi } from 'vitest';
@@ -398,7 +398,45 @@ async function showsMissingTitleWithoutCopyingPlaceholder(title: Article['title'
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 }
 
+/** Verify closing pending details cancels access work and reopening starts a fresh lookup. */
+async function cancelsArticleAccessAfterClosing(): Promise<void> {
+  registerArticleDialogHandlers();
+  const signals: AbortSignal[] = [];
+  let releaseFirstRequest: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    releaseFirstRequest = resolve;
+  });
+  server.use(
+    http.get('http://localhost/api/articles/:articleId/access', async ({ request }) => {
+      signals.push(request.signal);
+      if (signals.length === 1) await pending;
+      return articleAccessResponse();
+    }),
+  );
+  const user = userEvent.setup();
+  await renderArticleCard(SAFE_ARTICLE);
+  try {
+    await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
+    await waitFor(() => expect(signals).toHaveLength(1));
+    expect(signals[0].aborted).toBe(false);
+    await user.click(screen.getByRole('button', { name: '关闭' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(signals[0].aborted).toBe(true);
+    await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
+    expect(await screen.findByRole('link', { name: '获取全文' })).toBeInTheDocument();
+    expect(signals).toHaveLength(2);
+    expect(signals[1].aborted).toBe(false);
+    expect(screen.queryByRole('button', { name: '访问状态失败' })).not.toBeInTheDocument();
+  } finally {
+    await act(async () => {
+      releaseFirstRequest?.();
+      await pending;
+    });
+  }
+}
+
 describe('article dialog workflow', () => {
+  test('cancels pending access requests when details close', cancelsArticleAccessAfterClosing);
   test('shows ordered authors before the journal in the card subtitle', showsAuthorsBeforeJournal);
   test.each<{ authors: Article['authors'] }>([
     { authors: undefined },

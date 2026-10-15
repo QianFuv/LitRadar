@@ -156,7 +156,7 @@ function useArticleDetailViewState({
     error: accessError,
   } = useQuery({
     queryKey: ['article-access', dbName, article.article_id],
-    queryFn: () => getArticleAccess(article.article_id, dbName),
+    queryFn: ({ signal }) => getArticleAccess(article.article_id, dbName, signal),
     enabled: isAccessQueryEnabled,
     staleTime: 0,
     refetchOnMount: 'always',
