@@ -21,6 +21,15 @@ var expressions sync.Map
 // PatternCaptures applies the CFP parser's Unicode regex contract and returns byte offsets.
 func PatternCaptures(pattern, text string) [][]int { return captures(pattern, text) }
 
+// PatternMatches tests cached expressions without collecting captures unless Unicode boundaries require them.
+func PatternMatches(pattern, text string) bool {
+	compiled := expression(pattern)
+	if compiled.SubexpIndex("boundary") < 0 {
+		return compiled.MatchString(text)
+	}
+	return len(captures(pattern, text)) > 0
+}
+
 // expression preserves Unicode character classes; boundary assertions are checked separately.
 func expression(pattern string) *regexp.Regexp {
 	if cached, ok := expressions.Load(pattern); ok {
@@ -126,7 +135,7 @@ func isWordBoundary(text string, position int) bool {
 	return isWord(before) != isWord(after)
 }
 
-func matches(pattern, value string) bool { return len(captures("(?i)"+pattern, value)) != 0 }
+func matches(pattern, value string) bool { return PatternMatches("(?i)"+pattern, value) }
 func group(text string, found []int, index int) string {
 	if found[index*2] < 0 {
 		return ""

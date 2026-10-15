@@ -19,7 +19,10 @@ const statusPattern = `(?i)(?:Submission status|Status)[\s:]+(Open(?: for submis
 const dateLabelPattern = `(?i)deadline|submissions? (?:due|close|open|window|period)|(?:full )?(?:paper|manuscript|abstract|proposal) (?:submission|due)|(?:submit|submission) (?:by|before|until|deadline)|notification|final decision|camera.ready|revised manuscript|截[稿止]|投稿时间|征稿时间|来稿时间|提交时间|论文.*(?:发送|提交)|(?:发送|提交).*论文`
 const dateTokenPattern = `(?i)20\d{2}|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\b|\d+月|ongoing|rolling|TBD|to be (?:announced|determined)|待定`
 
-func pattern(pattern, text string) bool { return len(domain.PatternCaptures(pattern, text)) > 0 }
+var sentenceBoundary = regexp.MustCompile(`([.!?])[\s\p{Z}\x{85}]+([A-Z])`)
+
+// pattern checks publisher text without allocating unused capture results.
+func pattern(pattern, text string) bool { return domain.PatternMatches(pattern, text) }
 func parseHtml(text string) *goquery.Document {
 	node, err := html.Parse(strings.NewReader(text))
 	if err != nil {
@@ -190,9 +193,11 @@ func removePattern(expression, text string) string {
 	result.WriteString(text[previous:])
 	return result.String()
 }
+
+// dateClauses collects labeled dates using the shared immutable sentence expression.
 func dateClauses(body string) string {
 	text := plain(body)
-	text = regexp.MustCompile(`([.!?])[\s\p{Z}\x{85}]+([A-Z])`).ReplaceAllString(text, "$1\n$2")
+	text = sentenceBoundary.ReplaceAllString(text, "$1\n$2")
 	lines := strings.Split(text, "\n")
 	clauses := []string{}
 	for index, line := range lines {
