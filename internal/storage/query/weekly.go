@@ -28,6 +28,7 @@ type weeklyBucket struct {
 	seen      map[int64]bool
 }
 
+// loadWeeklyBuckets adopts private publication membership and deduplicates only when publications overlap.
 func loadWeeklyBuckets(configuration config.Config, end weekly.Timestamp, cache *weekly.Cache) (map[string]*weeklyBucket, error) {
 	manifests, err := weekly.LoadManifests(configuration, end.WindowStart(), end, cache)
 	if err != nil {
@@ -37,8 +38,14 @@ func loadWeeklyBuckets(configuration config.Config, end weekly.Timestamp, cache 
 	for _, manifest := range manifests {
 		bucket := result[manifest.DbName]
 		if bucket == nil {
-			bucket = &weeklyBucket{manifest.GeneratedAt, manifest.RunId, []int64{}, map[int64]bool{}}
-			result[manifest.DbName] = bucket
+			result[manifest.DbName] = &weeklyBucket{manifest.GeneratedAt, manifest.RunId, manifest.ArticleIds, nil}
+			continue
+		}
+		if bucket.seen == nil {
+			bucket.seen = make(map[int64]bool, len(bucket.ids))
+			for _, id := range bucket.ids {
+				bucket.seen[id] = true
+			}
 		}
 		for _, id := range manifest.ArticleIds {
 			if !bucket.seen[id] {
