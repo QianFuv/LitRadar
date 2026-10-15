@@ -70,6 +70,26 @@ func TestInputDecodingKeepsSortedTypeErrorsBeforeRequiredFields(t *testing.T) {
 	}
 }
 
+// TestUnknownInputFieldsRetainValuesAndRequiredPresence excludes ignored extensions from validation order.
+func TestUnknownInputFieldsRetainValuesAndRequiredPresence(t *testing.T) {
+	schema := inputSchemaFixture(t, `{"properties":{"a":{"type":"integer"},"b":{"type":"boolean"}},"required":["untyped","a"]}`)
+	input, err := decodeInput(json.RawMessage(`{"0":{"nested":["kept",true]},"a":2,"aa":[false],"b":false,"untyped":["required"]}`), schema)
+	if err != nil || input.fields["a"] != int64(2) || !reflect.DeepEqual(input.fields["0"], map[string]any{"nested": []any{"kept", true}}) || !reflect.DeepEqual(input.fields["aa"], []any{false}) || !reflect.DeepEqual(input.fields["untyped"], []any{"required"}) {
+		t.Fatal("unknown or untyped required fields changed", input, err)
+	}
+	for _, scenario := range []struct{ encoded, expected string }{
+		{`{"0":[],"a":"bad","aa":{},"b":1,"untyped":true}`, `invalid type: string "bad", expected i64`},
+		{`{"0":[],"b":1}`, "invalid type: integer `1`, expected a boolean"},
+		{`{"0":[],"aa":{}}`, "missing field `untyped`"},
+		{`{"untyped":null,"0":[]}`, "missing field `a`"},
+	} {
+		input, err := decodeInput(json.RawMessage(scenario.encoded), schema)
+		if input != nil || err == nil || err.Error() != scenario.expected {
+			t.Fatal("unknown fields changed validation precedence", input, err)
+		}
+	}
+}
+
 func TestArticleInputRetainsFirstFailureAndPartialParameters(t *testing.T) {
 	input := &toolInput{fields: map[string]any{"journal_id": []any{"bad", "2"}, "area": []any{" x ", ""}, "search_mode": "ADVANCED", "limit": int64(0), "db": " "}}
 	database, params := input.articles()

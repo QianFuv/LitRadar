@@ -22,16 +22,20 @@ type toolSchema struct {
 		kind  string
 	} `json:"properties"`
 	Required []string `json:"required"`
+	keys     []string
 }
 
-// prepareToolSchema resolves immutable property kinds before request handlers share the schema.
+// prepareToolSchema resolves immutable kinds and key order before request handlers share the schema.
 func prepareToolSchema(schema *toolSchema) {
+	schema.keys = make([]string, 0, len(schema.Properties))
 	for key, property := range schema.Properties {
+		schema.keys = append(schema.keys, key)
 		if len(property.AnyOf) == 0 {
 			property.kind = toolPropertyKind(property.Type)
 			schema.Properties[key] = property
 		}
 	}
+	slices.Sort(schema.keys)
 }
 
 type toolInput struct {
@@ -62,19 +66,25 @@ func decodeInput(raw json.RawMessage, schema toolSchema) (*toolInput, error) {
 	return &toolInput{fields: fields}, nil
 }
 
-// normalizeToolFields validates present known fields in sorted order before required-field checks.
+// normalizeToolFields chooses the smaller key inventory while preserving sorted present-field validation.
 func normalizeToolFields(fields map[string]any, schema toolSchema) error {
-	keys := make([]string, 0, len(fields))
-	for key := range fields {
-		keys = append(keys, key)
+	keys := schema.keys
+	if len(fields) < len(keys) {
+		keys = make([]string, 0, len(fields))
+		for key := range fields {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
 	}
-	slices.Sort(keys)
 	for _, key := range keys {
-		property, known := schema.Properties[key]
-		if !known {
+		property, isKnown := schema.Properties[key]
+		if !isKnown {
 			continue
 		}
-		value := fields[key]
+		value, isPresent := fields[key]
+		if !isPresent {
+			continue
+		}
 		if value == nil && !slices.Contains(schema.Required, key) {
 			continue
 		}

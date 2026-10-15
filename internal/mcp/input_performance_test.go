@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -26,6 +27,20 @@ func declaredInputSchema(test testing.TB, name string) toolSchema {
 	return toolSchema{}
 }
 
+// unknownFieldPayload includes ignored extension fields without changing the recognized search inputs.
+func unknownFieldPayload(test testing.TB, count int) string {
+	test.Helper()
+	fields := map[string]any{"q": "research", "db": "fixture.sqlite", "limit": 50}
+	for index := range count {
+		fields[fmt.Sprintf("unknown-%04d", index)] = index
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		test.Fatal(err)
+	}
+	return string(encoded)
+}
+
 // BenchmarkDecodeInput includes JSON admission and typed conversion for real embedded tool schemas.
 func BenchmarkDecodeInput(b *testing.B) {
 	for _, scenario := range []struct {
@@ -35,6 +50,7 @@ func BenchmarkDecodeInput(b *testing.B) {
 		{"article", "get_article", `{"article_id":"42","db":"fixture.sqlite"}`, "article_id", "42"},
 		{"search-typical", "search_articles", `{"q":"research","db":"fixture.sqlite","limit":50,"open_access":true}`, "limit", int64(50)},
 		{"search-all", "search_articles", `{"abs_rating":["4*"],"area":["Research"],"cursor":"next","date_from":"2026-01-01","date_to":"2026-10-01","db":"fixture.sqlite","doi":"10.1234/research","fms_rating":["A"],"fmscn_rating":["A"],"in_press":false,"include_total":true,"issue_id":3,"journal_id":["1","2"],"limit":50,"offset":0,"open_access":true,"pmid":"42","q":"research","search_mode":"simple","sort":"date:desc","utd_rating":["A"],"year":2026}`, "year", int64(2026)},
+		{"search-unknown-1000", "search_articles", unknownFieldPayload(b, 1000), "unknown-0999", json.Number("999")},
 	} {
 		b.Run(scenario.name, func(b *testing.B) {
 			schema := declaredInputSchema(b, scenario.tool)
