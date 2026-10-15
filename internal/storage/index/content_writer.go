@@ -180,7 +180,7 @@ func (writer *contentWriter) writeArticle(catalog domain.JournalCatalogEntry, jo
 	if err != nil {
 		return err
 	}
-	resolution, err := ResolveArticleIdentity(article, aliases)
+	resolution, err := resolveArticleIdentity(incoming, aliases)
 	if err != nil {
 		return err
 	}

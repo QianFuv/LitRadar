@@ -96,7 +96,11 @@ func ArticleIdentityKeys(article domain.ArticleDraft) []ArticleIdentityKey {
 
 // ResolveArticleIdentity refuses fuzzy merging and retains the first matching canonical alias.
 func ResolveArticleIdentity(article domain.ArticleDraft, aliases map[ArticleIdentityKey]int64) (ArticleIdentityResolution, error) {
-	keys := ArticleIdentityKeys(article)
+	return resolveArticleIdentity(ArticleIdentityKeys(article), aliases)
+}
+
+// resolveArticleIdentity uses precomputed ordered keys without changing their priority or ownership.
+func resolveArticleIdentity(keys []ArticleIdentityKey, aliases map[ArticleIdentityKey]int64) (ArticleIdentityResolution, error) {
 	if len(keys) == 0 {
 		return ArticleIdentityResolution{}, errors.New("article has no canonical identity basis")
 	}
