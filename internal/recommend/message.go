@@ -2,6 +2,7 @@ package recommend
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/delivery"
@@ -35,17 +36,22 @@ func BuildMarkdownContent(dbName, runId string, subscriber domain.Subscriber, su
 		sections = append(sections, markdownArticleSection(candidate, len(sections)+1))
 	}
 	kept := []string{}
+	header := renderContent(base, nil)
+	sectionBytes := 0
 	for _, section := range sections {
-		trial := append(append([]string{}, kept...), section)
-		if len(renderContent(base, trial)) <= MaxPushContentLength {
-			kept = trial
+		countGrowth := len(strconv.Itoa(len(kept)+1)) - 1
+		if len(header)+countGrowth+sectionBytes+2+len(section) <= MaxPushContentLength {
+			kept = append(kept, section)
+			sectionBytes += 2 + len(section)
 		}
 	}
-	content := renderContent(base, kept)
+	content := header
+	if len(kept) > 0 {
+		content = renderContent(base, kept)
+	}
 	if len(content) <= MaxPushContentLength {
 		return content
 	}
-	header := renderContent(base, nil)
 	characters := []rune(header)
 	if len(characters) > MaxPushContentLength {
 		characters = characters[:MaxPushContentLength]
