@@ -127,8 +127,10 @@ func LoadManifests(configuration config.Config, start, end Timestamp, cache *Cac
 	return result, nil
 }
 
+// manifestKey serializes exact publication identity while reusing a bounded integer formatting buffer.
 func manifestKey(manifest Manifest) string {
 	var result strings.Builder
+	var numberBuffer [20]byte
 	result.WriteString(strconv.Quote(manifest.DbName))
 	result.WriteByte('|')
 	if manifest.RunId == nil {
@@ -137,12 +139,12 @@ func manifestKey(manifest Manifest) string {
 		result.WriteString(strconv.Quote(*manifest.RunId))
 	}
 	result.WriteByte('|')
-	result.WriteString(strconv.FormatInt(manifest.GeneratedAt.Seconds, 10))
+	result.Write(strconv.AppendInt(numberBuffer[:0], manifest.GeneratedAt.Seconds, 10))
 	result.WriteByte(':')
-	result.WriteString(strconv.FormatUint(uint64(manifest.GeneratedAt.Nanoseconds), 10))
+	result.Write(strconv.AppendUint(numberBuffer[:0], uint64(manifest.GeneratedAt.Nanoseconds), 10))
 	for _, id := range manifest.ArticleIds {
 		result.WriteByte('|')
-		result.WriteString(strconv.FormatInt(id, 10))
+		result.Write(strconv.AppendInt(numberBuffer[:0], id, 10))
 	}
 	return result.String()
 }
