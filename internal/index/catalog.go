@@ -56,7 +56,7 @@ func ParseCatalogCsv(text string) ([]domain.JournalCatalogEntry, error) {
 		if len(values) != len(headers) {
 			return nil, fmt.Errorf("catalog row %d has %d columns; expected %d", position+2, len(values), len(headers))
 		}
-		row := map[string]string{}
+		row := make(map[string]string, len(headers))
 		for column, name := range headers {
 			row[name] = values[column]
 		}
