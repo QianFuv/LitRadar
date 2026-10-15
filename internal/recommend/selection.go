@@ -69,12 +69,36 @@ func DeliveryKey(subscriber domain.Subscriber, articleId int64) string {
 func ApplySelectionRules(result domain.SelectionResult, subscriber domain.Subscriber, candidates map[int64]storage.ArticleCandidate, dedupe map[string]string) []domain.RankedSelection {
 	eligible := []domain.RankedSelection{}
 	selected := map[int64]bool{}
+	var preferences []string
+	scoreCandidate := func(candidate storage.ArticleCandidate) int64 {
+		if preferences == nil {
+			preferences = make([]string, 0, len(subscriber.Keywords)+len(subscriber.Directions))
+			for _, phrases := range [][]string{subscriber.Keywords, subscriber.Directions} {
+				for _, phrase := range phrases {
+					if normalized := sources.Lowercase(strings.TrimSpace(phrase)); normalized != "" {
+						preferences = append(preferences, normalized)
+					}
+				}
+			}
+		}
+		if len(preferences) == 0 {
+			return 0
+		}
+		text := sources.Lowercase(candidate.Title + " " + candidate.Abstract)
+		var score int64
+		for _, phrase := range preferences {
+			if strings.Contains(text, phrase) {
+				score++
+			}
+		}
+		return score
+	}
 	matchScores := map[int64]int64{}
 	matchScore := func(articleId int64) int64 {
 		if score, exists := matchScores[articleId]; exists {
 			return score
 		}
-		score := CandidateMatchScore(candidates[articleId], subscriber)
+		score := scoreCandidate(candidates[articleId])
 		matchScores[articleId] = score
 		return score
 	}
@@ -87,13 +111,13 @@ func ApplySelectionRules(result domain.SelectionResult, subscriber domain.Subscr
 		eligible = append(eligible, selection)
 		selected[selection.ArticleId] = true
 	}
-	if len(eligible) < MaxArticlesPerPush {
+	if len(eligible) < MaxArticlesPerPush && HasSelectionPreferences(subscriber) {
 		supplemental := []domain.RankedSelection{}
 		for articleId, candidate := range candidates {
 			if selected[candidate.ArticleId] || isDelivered(candidate.ArticleId) {
 				continue
 			}
-			if score := CandidateMatchScore(candidate, subscriber); score > 0 {
+			if score := scoreCandidate(candidate); score > 0 {
 				matchScores[articleId] = score
 				supplemental = append(supplemental, domain.RankedSelection{ArticleId: candidate.ArticleId})
 			}

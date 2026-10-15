@@ -70,10 +70,32 @@ func TestSelectionScoreTiesRetainModelOrder(t *testing.T) {
 	}
 }
 
+// TestSelectionPreferencePreparationOwnsInputs keeps duplicates significant without changing subscriber storage.
+func TestSelectionPreferencePreparationOwnsInputs(t *testing.T) {
+	subscriber := domain.Subscriber{Keywords: []string{" DATA ", "data", "\t"}, Directions: []string{"CAFÉ", "ΟΣ", "İ"}}
+	keywords, directions := append([]string(nil), subscriber.Keywords...), append([]string(nil), subscriber.Directions...)
+	candidates := map[int64]storage.ArticleCandidate{
+		1: {ArticleId: 1, Title: "DATA"},
+		2: {ArticleId: 2, Title: "CAFÉ"},
+		3: {ArticleId: 3, Title: "ΟΣ İ CAFÉ"},
+	}
+	actual := ApplySelectionRules(domain.SelectionResult{}, subscriber, candidates, nil)
+	if len(actual) != 3 || actual[0].ArticleId != 3 || actual[1].ArticleId != 1 || actual[2].ArticleId != 2 || !reflect.DeepEqual(subscriber.Keywords, keywords) || !reflect.DeepEqual(subscriber.Directions, directions) {
+		t.Fatal("prepared preferences changed weights, Unicode mapping or source storage", actual, subscriber)
+	}
+	for _, empty := range []domain.Subscriber{{}, {Keywords: []string{" ", "\t"}, Directions: []string{"\u3000"}}} {
+		result := domain.SelectionResult{Selections: []domain.RankedSelection{{ArticleId: 1, Score: 1}, {ArticleId: 2, Score: 2}}}
+		selected := ApplySelectionRules(result, empty, candidates, nil)
+		if len(selected) != 2 || selected[0].ArticleId != 2 || selected[1].ArticleId != 1 {
+			t.Fatal("empty preferences changed model ranking or added candidates", selected)
+		}
+	}
+}
+
 // BenchmarkSelectionRules includes supplemental sorting, already-full model results, and no-match scans.
 func BenchmarkSelectionRules(b *testing.B) {
 	for _, count := range []int{20, 120, 1000} {
-		for _, mode := range []string{"supplement", "full-model", "unmatched"} {
+		for _, mode := range []string{"supplement", "full-model", "unmatched", "no-preferences"} {
 			b.Run(fmt.Sprintf("candidates=%d/%s", count, mode), func(b *testing.B) {
 				candidates := make(map[int64]storage.ArticleCandidate, count)
 				for index := range count {
@@ -89,6 +111,9 @@ func BenchmarkSelectionRules(b *testing.B) {
 					}
 				} else if mode == "unmatched" {
 					subscriber.Keywords, subscriber.Directions = []string{"not present", "unmatched"}, nil
+					expected = 0
+				} else if mode == "no-preferences" {
+					subscriber.Keywords, subscriber.Directions = nil, nil
 					expected = 0
 				}
 				var selections []domain.RankedSelection
