@@ -173,7 +173,8 @@ func BuildCatalogEntries(rows []map[string]string) ([]domain.JournalCatalogEntry
 		row     int
 		catalog string
 	}
-	catalogOwners, issnOwners := map[string]owner{}, map[string]owner{}
+	catalogOwners := make(map[string]owner, len(rows))
+	issnOwners := make(map[string]owner, len(rows))
 	entries := make([]domain.JournalCatalogEntry, 0, len(rows))
 	for position, row := range rows {
 		rowNumber := position + 2
