@@ -145,7 +145,11 @@ function useCfpViewState() {
     }
   }, [cursorRecoveryKey, noticeQueryKey, noticesQuery.error, noticesQuery.isSuccess, queryClient]);
   const selected = getSelectedCfpJournal(noticesQuery.data, selectedCatalog);
-  const visibleNotices = getCfpVisibleNotices(noticesQuery);
+  const { data: noticeData, isError: isNoticeError } = noticesQuery;
+  const visibleNotices = useMemo(
+    () => getCfpVisibleNotices({ data: noticeData, isError: isNoticeError }),
+    [noticeData, isNoticeError],
+  );
   const currentCount = selected?.currentCount ?? 0;
   const isLoading = databasesQuery.isLoading || journalsQuery.isLoading;
   const error = databasesQuery.error ?? journalsQuery.error;

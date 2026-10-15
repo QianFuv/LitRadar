@@ -1,6 +1,7 @@
 /** Database navigation and unadapted-journal behavior for CFP tracking. */
 
-import { screen, waitFor, within } from '@testing-library/react';
+import type { InfiniteData } from '@tanstack/react-query';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
@@ -122,7 +123,39 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
+/** Keep notice projections stable during sidebar search while refreshing changed stored notices. */
+async function reusesUnchangedNoticePages(): Promise<void> {
+  const user = userEvent.setup();
+  const { queryClient } = renderCfp(
+    `?view=cfp-tracking&cfp_db=${DATABASES[0]}&cfp_journal=issn-1949-3045`,
+  );
+  const title = noticePage('issn-1949-3045', false).items[0].title;
+  await screen.findByRole('heading', { name: title });
+  const queryKey = ['cfp', 'notices', DATABASES[0], 'issn-1949-3045', false];
+  const data = queryClient.getQueryData<InfiniteData<CfpNoticePage>>(queryKey)!;
+  const flatten = vi.spyOn(data.pages, 'flatMap');
+  try {
+    await user.type(screen.getByRole('textbox', { name: '搜索征稿期刊' }), 'IEEE');
+    expect(screen.getByRole('heading', { name: title })).toBeVisible();
+    expect(flatten).not.toHaveBeenCalled();
+  } finally {
+    flatten.mockRestore();
+  }
+  await act(async () => {
+    queryClient.setQueryData<InfiniteData<CfpNoticePage>>(queryKey, {
+      ...data,
+      pages: data.pages.map((page) => ({
+        ...page,
+        items: page.items.map((notice) => ({ ...notice, title: `${notice.title} updated` })),
+      })),
+    });
+  });
+  expect(await screen.findByRole('heading', { name: `${title} updated` })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: title })).toBeNull();
+}
+
 describe('CFP tracking', () => {
+  test('reuses notice pages while searching journals', reusesUnchangedNoticePages);
   test('defaults to current calls and alphabetizes independently expandable groups', async () => {
     const user = userEvent.setup();
     const base = journal('issn-1949-3045', 'IEEE Transactions on Affective Computing');
