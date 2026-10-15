@@ -122,29 +122,64 @@ func OpenAlexDoiQuery(dois []string, apiKey *string) []QueryPair {
 	return pairs
 }
 
-// PartitionOpenAlexDois enforces both the upstream DOI count and encoded URL limits.
+const openAlexUrlBudget = 1900
+
+// PartitionOpenAlexDois enforces upstream limits using incremental encoded byte counts.
 func PartitionOpenAlexDois(dois []string, batchSize int, apiKey *string) ([][]string, error) {
 	batches := [][]string{}
-	batch := []string{}
+	if len(dois) == 0 {
+		return batches, nil
+	}
 	batchSize = max(1, min(batchSize, 100))
+	batch := make([]string, 0, min(batchSize, len(dois)))
+	baseLength := len("https://api.openalex.org/works?" + EncodeQuery(OpenAlexDoiQuery(nil, apiKey)))
+	urlLength := baseLength
 	for _, doi := range dois {
-		candidate := append(append([]string{}, batch...), doi)
-		if len(candidate) > batchSize || len("https://api.openalex.org/works?"+EncodeQuery(OpenAlexDoiQuery(candidate, apiKey))) > 1900 {
-			if len(batch) > 0 {
-				batches = append(batches, batch)
-			}
-			batch = []string{doi}
-			if len("https://api.openalex.org/works?"+EncodeQuery(OpenAlexDoiQuery(batch, apiKey))) > 1900 {
-				return nil, &Error{Kind: "Configuration", Message: "One OpenAlex DOI enrichment value exceeds the request URL budget."}
-			}
-		} else {
-			batch = candidate
+		encodedLength := encodedDoiLength(doi)
+		if baseLength+encodedLength > openAlexUrlBudget {
+			return nil, &Error{Kind: "Configuration", Message: "One OpenAlex DOI enrichment value exceeds the request URL budget."}
 		}
+		candidateLength := urlLength + encodedLength
+		if len(batch) > 0 {
+			candidateLength += 3
+			if len(batch) == 9 || len(batch) == 99 {
+				candidateLength++
+			}
+		}
+		if len(batch) == batchSize || candidateLength > openAlexUrlBudget {
+			batches = append(batches, batch)
+			batch = make([]string, 0, batchSize)
+			candidateLength = baseLength + encodedLength
+		}
+		batch = append(batch, doi)
+		urlLength = candidateLength
 	}
 	if len(batch) > 0 {
 		batches = append(batches, batch)
 	}
 	return batches, nil
+}
+
+// encodedDoiLength counts form-encoded bytes, saturating once a DOI cannot fit any request.
+func encodedDoiLength(value string) int {
+	if len(value) > openAlexUrlBudget {
+		return openAlexUrlBudget + 1
+	}
+	length := 0
+	for index := range len(value) {
+		character := value[index]
+		switch {
+		case character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' ||
+			character == '*' || character == '-' || character == '.' || character == '_' || character == ' ':
+			length++
+		default:
+			length += 3
+		}
+		if length > openAlexUrlBudget {
+			return openAlexUrlBudget + 1
+		}
+	}
+	return length
 }
 
 // CrossrefParameters validates frozen date bounds and builds the canonical query.
