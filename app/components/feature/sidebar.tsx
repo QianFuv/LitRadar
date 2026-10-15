@@ -596,42 +596,57 @@ function renderSidebarJournals(state: SidebarViewState) {
               placeholder="搜索期刊"
               className="h-8 text-sm"
             />
-            <ScrollArea className="mt-2 h-60 touch-pan-y">
-              <div className="space-y-2">
-                {filteredJournalOptions.map((option) => {
-                  const id = String(option.journal_id);
-                  return (
-                    <div
-                      key={id}
-                      className="motion-control content-visibility-filter-row flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
-                    >
-                      <Checkbox
-                        id={`journal-${id}`}
-                        className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
-                        checked={journalIds.includes(id)}
-                        onCheckedChange={(checked: boolean | 'indeterminate') =>
-                          handleJournalChange(id, checked as boolean)
-                        }
-                      />
-                      <Label
-                        htmlFor={`journal-${id}`}
-                        className="min-w-0 flex-1 cursor-pointer break-words text-sm leading-snug font-normal whitespace-normal"
-                        title={option.title ?? id}
-                      >
-                        {option.title ?? id}
-                      </Label>
-                    </div>
-                  );
-                })}
-                {filteredJournalOptions.length === 0 && (
-                  <div className="text-xs text-muted-foreground">未找到期刊。</div>
-                )}
-              </div>
-            </ScrollArea>
+            <SidebarJournalOptions
+              journalIds={journalIds}
+              filteredJournalOptions={filteredJournalOptions}
+              handleJournalChange={handleJournalChange}
+            />
           </PopoverContent>
         </Popover>
       )}
     </div>
+  );
+}
+
+/** Construct journal option elements only while the popover content is mounted. */
+function SidebarJournalOptions({
+  journalIds,
+  filteredJournalOptions,
+  handleJournalChange,
+}: Pick<SidebarViewState, 'journalIds' | 'filteredJournalOptions' | 'handleJournalChange'>) {
+  return (
+    <ScrollArea className="mt-2 h-60 touch-pan-y">
+      <div className="space-y-2">
+        {filteredJournalOptions.map((option) => {
+          const id = String(option.journal_id);
+          return (
+            <div
+              key={id}
+              className="motion-control content-visibility-filter-row flex min-w-0 items-start gap-2 transition-colors hover:bg-sidebar-accent focus-within:bg-sidebar-accent"
+            >
+              <Checkbox
+                id={`journal-${id}`}
+                className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
+                checked={journalIds.includes(id)}
+                onCheckedChange={(checked: boolean | 'indeterminate') =>
+                  handleJournalChange(id, checked as boolean)
+                }
+              />
+              <Label
+                htmlFor={`journal-${id}`}
+                className="min-w-0 flex-1 cursor-pointer break-words text-sm leading-snug font-normal whitespace-normal"
+                title={option.title ?? id}
+              >
+                {option.title ?? id}
+              </Label>
+            </div>
+          );
+        })}
+        {filteredJournalOptions.length === 0 && (
+          <div className="text-xs text-muted-foreground">未找到期刊。</div>
+        )}
+      </div>
+    </ScrollArea>
   );
 }
 

@@ -48,6 +48,10 @@ vi.mock('react-intersection-observer', () => ({
   useInView: () => ({ ref: vi.fn() }),
 }));
 
+vi.mock('@/components/ui/scroll-area', () => ({
+  ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
 /**
  * Display one live nuqs string value for interaction assertions.
  *
@@ -470,7 +474,62 @@ async function readsHistoryOnlyForNavigation(): Promise<void> {
   expect(await screen.findByRole('option', { name: 'recent query' })).toBeInTheDocument();
 }
 
+/** Verify closed journal controls skip option construction and keep filtering and selection. */
+async function defersClosedJournalOptions(): Promise<void> {
+  setSelectedDatabase('fixture.sqlite');
+  server.use(
+    http.get('http://localhost/api/meta/ratings', emptyRatingsResponse),
+    http.get('http://localhost/api/auth/me', currentUserResponse),
+    http.get('http://localhost/api/meta/databases', () => HttpResponse.json(['fixture.sqlite'])),
+    http.get('http://localhost/api/meta/areas', () => HttpResponse.json([])),
+    http.get('http://localhost/api/meta/journals', () =>
+      HttpResponse.json(
+        Array.from({ length: 100 }, (_, index) => ({
+          journal_id: String(index),
+          title: `Journal ${index}`,
+        })),
+      ),
+    ),
+    http.get('http://localhost/api/years', () => HttpResponse.json([])),
+  );
+  const view = renderWithQuery(
+    <AuthProvider>
+      <NuqsTestingAdapter hasMemory>
+        <Sidebar />
+      </NuqsTestingAdapter>
+    </AuthProvider>,
+  );
+  await screen.findByRole('button', { name: '全部期刊' });
+  const options = view.queryClient.getQueryData<{ journal_id: string; title: string }[]>([
+    'meta',
+    'journals',
+    'fixture.sqlite',
+  ])!;
+  const mapOptions = vi.spyOn(options, 'map');
+  view.rerender(
+    <AuthProvider>
+      <NuqsTestingAdapter hasMemory>
+        <Sidebar className="updated" />
+      </NuqsTestingAdapter>
+    </AuthProvider>,
+  );
+  expect(mapOptions).not.toHaveBeenCalled();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: '全部期刊' }));
+  expect(await screen.findByRole('checkbox', { name: 'Journal 99' })).toBeInTheDocument();
+  expect(mapOptions).toHaveBeenCalled();
+  await user.type(screen.getByRole('textbox', { name: '搜索期刊' }), 'Journal 99');
+  expect(screen.queryByRole('checkbox', { name: 'Journal 0' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('checkbox', { name: 'Journal 99' }));
+  expect(screen.getByRole('checkbox', { name: 'Journal 99' })).toBeChecked();
+  await user.keyboard('{Escape}');
+  await user.click(await screen.findByRole('button', { name: /Journal 99/ }));
+  expect(await screen.findByRole('checkbox', { name: 'Journal 99' })).toBeChecked();
+  expect(screen.getByRole('textbox', { name: '搜索期刊' })).toHaveValue('Journal 99');
+}
+
 describe('search and filter UI', () => {
+  test('defers journal options until opening the popover', defersClosedJournalOptions, 15000);
   test('reads persisted history only for navigation keys', readsHistoryOnlyForNavigation);
   test(
     'combines rating groups and clears their state on database changes',
