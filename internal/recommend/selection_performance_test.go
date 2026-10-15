@@ -104,3 +104,26 @@ func BenchmarkSelectionRules(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkEnglishSelectionRules measures the usual English article path through preference ranking.
+func BenchmarkEnglishSelectionRules(b *testing.B) {
+	for _, count := range []int{120, 1000} {
+		b.Run(fmt.Sprintf("candidates=%d", count), func(b *testing.B) {
+			candidates := make(map[int64]storage.ArticleCandidate, count)
+			for index := range count {
+				id := int64(index + 1)
+				candidates[id] = storage.ArticleCandidate{ArticleId: id, Title: "Research Article", Abstract: strings.Repeat("An English RESEARCH Abstract. ", 70)}
+			}
+			subscriber := domain.Subscriber{Keywords: []string{" research ", "RESEARCH", "english"}, Directions: []string{"abstract", "article", "absent"}}
+			var selected []domain.RankedSelection
+			b.ReportAllocs()
+			for b.Loop() {
+				selected = ApplySelectionRules(domain.SelectionResult{}, subscriber, candidates, nil)
+			}
+			b.StopTimer()
+			if len(selected) != MaxArticlesPerPush || selected[0].ArticleId != int64(count) {
+				b.Fatal("English ranking changed", selected)
+			}
+		})
+	}
+}

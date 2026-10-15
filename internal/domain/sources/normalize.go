@@ -38,8 +38,15 @@ func NormalizeDate(value string) *PartialDate {
 	return &PartialDate{*normalized, *precision}
 }
 
-// Lowercase implements Unicode string lowercase, including contextual final sigma.
-func Lowercase(value string) string { return cases.Lower(language.Und).String(value) }
+// Lowercase fast-paths ASCII while preserving Unicode string mappings and contextual final sigma.
+func Lowercase(value string) string {
+	for index := range len(value) {
+		if value[index] > unicode.MaxASCII {
+			return cases.Lower(language.Und).String(value)
+		}
+	}
+	return strings.ToLower(value)
+}
 
 // NormalizeDoi validates a canonical bibliographic DOI after stripping one known prefix.
 func NormalizeDoi(value string) *string {
