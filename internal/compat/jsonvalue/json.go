@@ -122,7 +122,11 @@ func validJsonTokens(value string) bool {
 
 // literalSeparators preserves serde's literal line separators without changing escaped backslashes.
 func literalSeparators(value string) string {
+	if !strings.Contains(value, `\u2028`) && !strings.Contains(value, `\u2029`) {
+		return value
+	}
 	var result strings.Builder
+	result.Grow(len(value))
 	for index := 0; index < len(value); {
 		if value[index] != '\\' || index+1 >= len(value) {
 			result.WriteByte(value[index])
