@@ -281,11 +281,17 @@ func ParseArticleDetail(text, articleUrl string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	abstract := firstValue(inputValue(text, "abstract_text"), summaryText(text))
+	abstract := inputValue(text, "abstract_text")
+	if abstract == nil {
+		abstract = summaryText(text)
+	}
 	if abstract != nil {
 		abstract = nonEmpty(stripTags(decodeHtml(*abstract)))
 	}
-	online := firstValue(rowValue(text, "在线公开时间"), rowValue(text, "Online Release Time"))
+	online := rowValue(text, "在线公开时间")
+	if online == nil {
+		online = rowValue(text, "Online Release Time")
+	}
 	if online != nil {
 		parts := strings.Fields(*online)
 		online = nil
@@ -293,7 +299,7 @@ func ParseArticleDetail(text, articleUrl string) (any, error) {
 			online = nonEmpty(parts[0])
 		}
 	}
-	return map[string]any{"article_url": permalink, "platform_id": optional(firstValue(inputValue(text, "paramfilename"), inputValue(text, "param-filename"))), "dbcode": optional(firstValue(inputValue(text, "paramdbcode"), inputValue(text, "param-dbcode"))), "dbname": optional(firstValue(inputValue(text, "paramdbname"), inputValue(text, "param-dbname"))), "title": optional(firstValue(firstBlockText(text, "h1", "title"), firstBlockText(text, "p", "title-one"), titleText(text))), "authors": optional(articleDetailAuthors(text)), "abstract": optional(abstract), "doi": optional(rowValue(text, "DOI")), "online_release_date": optional(online), "pages": optional(labelValue(stripTags(text), "页码", "Pages")), "permalink": permalink, "platform": "NZKPT"}, nil
+	return map[string]any{"article_url": permalink, "platform_id": optional(inputValue(text, "paramfilename", "param-filename")), "dbcode": optional(inputValue(text, "paramdbcode", "param-dbcode")), "dbname": optional(inputValue(text, "paramdbname", "param-dbname")), "title": optional(articleDetailTitle(text)), "authors": optional(articleDetailAuthors(text)), "abstract": optional(abstract), "doi": optional(rowValue(text, "DOI")), "online_release_date": optional(online), "pages": optional(labelValue(stripTags(text), "页码", "Pages")), "permalink": permalink, "platform": "NZKPT"}, nil
 }
 
 // responseHasStructure applies the existing endpoint-specific marker rules.

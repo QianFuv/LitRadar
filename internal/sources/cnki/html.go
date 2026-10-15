@@ -104,12 +104,17 @@ func attrs(tag string) map[string]string {
 	}
 	return result
 }
-func inputValue(text, id string) *string {
-	for _, tag := range startTags(text, "input") {
-		values := attrs(tag)
-		if values["id"] == id {
-			if value := nonEmpty(values["value"]); value != nil {
-				return value
+
+// inputValue checks identifier aliases in priority order and stops at the first nonempty value.
+func inputValue(text string, ids ...string) *string {
+	tags := startTags(text, "input")
+	for _, id := range ids {
+		for _, tag := range tags {
+			values := attrs(tag)
+			if values["id"] == id {
+				if value := nonEmpty(values["value"]); value != nil {
+					return value
+				}
 			}
 		}
 	}
@@ -140,6 +145,18 @@ func titleText(text string) *string {
 	}
 	return nonEmpty(strings.ReplaceAll(strings.ReplaceAll(stripTags(block), " - 中国知网", ""), "-中国知网", ""))
 }
+
+// articleDetailTitle defers lower-priority title sources until earlier fields are empty.
+func articleDetailTitle(text string) *string {
+	if title := firstBlockText(text, "h1", "title"); title != nil {
+		return title
+	}
+	if title := firstBlockText(text, "p", "title-one"); title != nil {
+		return title
+	}
+	return titleText(text)
+}
+
 func labelValue(text string, labels ...string) *string {
 	for _, label := range labels {
 		for _, separator := range []string{":", "："} {
@@ -183,6 +200,8 @@ func rowValue(text, label string) *string {
 	}
 	return nil
 }
+
+// summaryText extracts visible summary spans after the caller has checked the hidden input.
 func summaryText(text string) *string {
 	for _, tag := range tags(text, "span") {
 		values := attrs(tag)
@@ -192,7 +211,7 @@ func summaryText(text string) *string {
 			}
 		}
 	}
-	return inputValue(text, "abstract_text")
+	return nil
 }
 
 // spanTitle uses DOM author extraction and legacy parsing for other span classes.
