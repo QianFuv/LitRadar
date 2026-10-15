@@ -356,6 +356,7 @@ func validateWeeklyArticleParams(params WeeklyArticlePageParams) (weekly.Timesta
 }
 
 // weeklyArticleFilters keeps journal admission before manifests on the caller's pinned connection.
+// Empty unsearched windows carry a false predicate instead of traversing journal history.
 func weeklyArticleFilters(ctx context.Context, configuration config.Config, params WeeklyArticlePageParams, cache *weekly.Cache, connection *sql.Conn, end weekly.Timestamp, name string) (filter, error) {
 	var exists bool
 	if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM journals WHERE journal_id=?)", params.JournalId).Scan(&exists); err != nil {
@@ -388,6 +389,8 @@ func weeklyArticleFilters(ctx context.Context, configuration config.Config, para
 	filters.add("l.journal_id=?", params.JournalId)
 	if match := preparedMatch(ArticleListParams{Query: query}); match != "" {
 		filters.add("l.article_id IN (SELECT rowid FROM article_search WHERE article_search MATCH ?)", match)
+	} else if len(ids) == 0 {
+		filters.add("0")
 	}
 	if err := filters.articleCursor(params.Cursor, "DESC"); err != nil {
 		return filter{}, err

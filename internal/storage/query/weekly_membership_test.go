@@ -2,13 +2,17 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
 
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
+	"github.com/QianFuv/LitRadar/internal/storage/weekly"
 	native "github.com/mattn/go-sqlite3"
 )
 
@@ -64,6 +68,35 @@ func TestWeeklyMembershipPreservesExactIntegerSet(t *testing.T) {
 				t.Fatal("weekly membership or caller input changed", actual, expected, err)
 			}
 		})
+	}
+}
+
+// TestEmptyWeeklyWindowsRetainValidation verifies empty pages without bypassing cursor or publication errors.
+func TestEmptyWeeklyWindowsRetainValidation(t *testing.T) {
+	configuration, _ := queryFixture(t)
+	params := WeeklyArticlePageParams{DbName: "catalog.sqlite", JournalId: 1, WindowEnd: "2026-10-04T00:00:00Z", Limit: 1}
+	for _, query := range []*string{nil, new(" \t"), new("Research")} {
+		params.Query = query
+		page, err := WeeklyArticles(context.Background(), configuration, params, nil)
+		if err != nil || page.Items == nil || len(page.Items) != 0 || page.Page.HasMore == nil || *page.Page.HasMore || page.Page.NextCursor != nil || page.Page.Total != nil {
+			t.Fatal("empty-window page metadata changed", page, err)
+		}
+	}
+	params.Query, params.Cursor = nil, new("broken")
+	if _, err := WeeklyArticles(context.Background(), configuration, params, nil); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatal("empty window skipped cursor validation", err)
+	}
+	writeQueryManifest(t, configuration, "catalog.sqlite", []int64{1001})
+	if err := os.WriteFile(filepath.Join(configuration.ProjectRoot, "data", "push_state", "catalog.sqlite.changes.json"), []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	params.Cursor = nil
+	if _, err := WeeklyArticles(context.Background(), configuration, params, nil); !errors.Is(err, weekly.ErrManifestJson) {
+		t.Fatal("empty-window handling skipped manifest validation", err)
+	}
+	params.JournalId = 999
+	if _, err := WeeklyArticles(context.Background(), configuration, params, nil); err == nil || err.Error() != "Journal not found" {
+		t.Fatal("manifest error replaced journal admission", err)
 	}
 }
 
