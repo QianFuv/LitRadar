@@ -98,6 +98,34 @@ func TestCfpCatalogTitleOrdering(t *testing.T) {
 	}
 }
 
+// TestCfpCatalogSearchFields keeps field coverage, Unicode matching and global totals independent of filtering.
+func TestCfpCatalogSearchFields(t *testing.T) {
+	area := "CafÉ Economics"
+	entries := []sources.JournalCatalogEntry{{CatalogId: "catalog-key", CatalogAliases: []string{"identity-alias"}, Title: "Primary Journal", AllIssns: []string{"1234-5678"}, TitleAliases: []string{"Secondary Title", "中文期刊"}, Area: &area}}
+	baseline, failure := cfpCatalog("fixture.sqlite", nil, entries, nil, 100)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	for _, query := range []string{"PRIMARY", "catalog-key", "1234-5678", "secondary", "中文", "café", "  \t "} {
+		result, failure := cfpCatalog("fixture.sqlite", &query, entries, nil, 100)
+		if failure != nil || len(result.Items) != 1 || result.Summary != baseline.Summary {
+			t.Fatal("search lost an existing field or global totals", query, result, failure)
+		}
+	}
+	for _, query := range []string{"identity-alias", "missing-field"} {
+		result, failure := cfpCatalog("fixture.sqlite", &query, entries, nil, 100)
+		if failure != nil || len(result.Items) != 0 || result.Summary != baseline.Summary {
+			t.Fatal("search included an unrelated field or changed totals", query, result, failure)
+		}
+	}
+	entries[0].Area = nil
+	query := "café"
+	result, failure := cfpCatalog("fixture.sqlite", &query, entries, nil, 100)
+	if failure != nil || len(result.Items) != 0 {
+		t.Fatal("search retained a removed area", result, failure)
+	}
+}
+
 // cfpBenchmarkCatalog loads the maintained English catalog and actual reviewed seed outside measured work.
 func cfpBenchmarkCatalog(t testing.TB) ([]sources.JournalCatalogEntry, []storage.JournalSnapshot) {
 	t.Helper()

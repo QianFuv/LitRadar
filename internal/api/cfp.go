@@ -393,12 +393,7 @@ func cfpCatalog(database string, query *string, entries []sources.JournalCatalog
 		}
 		result.Summary.Notices += item.NoticeCount
 		result.Summary.CurrentNotices += item.CurrentCount
-		fields := append([]string{item.Title, item.CatalogId}, item.AllIssns...)
-		fields = append(fields, item.TitleAliases...)
-		if item.Area != nil {
-			fields = append(fields, *item.Area)
-		}
-		if search == "" || slices.ContainsFunc(fields, func(field string) bool { return strings.Contains(sources.Lowercase(field), search) }) {
+		if search == "" || cfpMatchesSearch(item, search) {
 			result.Items = append(result.Items, item)
 		}
 	}
@@ -424,6 +419,13 @@ func cfpCatalog(database string, query *string, entries []sources.JournalCatalog
 		return strings.Compare(first.CatalogId, second.CatalogId)
 	})
 	return result, nil
+}
+
+// cfpMatchesSearch checks the existing searchable fields without allocating a combined field list.
+func cfpMatchesSearch(item cfpJournalSummary, search string) bool {
+	matches := func(field string) bool { return strings.Contains(sources.Lowercase(field), search) }
+	return matches(item.Title) || matches(item.CatalogId) || slices.ContainsFunc(item.AllIssns, matches) ||
+		slices.ContainsFunc(item.TitleAliases, matches) || item.Area != nil && matches(*item.Area)
 }
 
 func cfpRevision(entry sources.JournalCatalogEntry, snapshot *storage.JournalSnapshot) (string, error) {
