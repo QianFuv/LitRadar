@@ -260,7 +260,7 @@ type preparedWork struct {
 }
 
 // prepareCollectionWork checks creation bounds, exact payload identity and existing leaf ownership.
-func (workset *CrossrefWorkset) prepareCollectionWork(work any, phase CrossrefPhase, keys map[string]bool) (preparedWork, bool, error) {
+func (workset *CrossrefWorkset) prepareCollectionWork(work any, phase CrossrefPhase, keys map[string]bool, lookup **sql.Stmt) (preparedWork, bool, error) {
 	created, err := createdSecond(work)
 	if err != nil {
 		return preparedWork{}, false, err
@@ -278,8 +278,14 @@ func (workset *CrossrefWorkset) prepareCollectionWork(work any, phase CrossrefPh
 		return preparedWork{}, true, workset.retryLeaf(phase.Partition, phase.Retry, "duplicate key inside one response")
 	}
 	keys[key] = true
+	if *lookup == nil {
+		*lookup, err = workset.connection.PrepareContext(context.Background(), "SELECT leaf FROM works WHERE key=?1")
+		if err != nil {
+			return preparedWork{}, false, worksetStorageError(err)
+		}
+	}
 	var leaf storage.Integer
-	err = workset.row("SELECT leaf FROM works WHERE key=?1", key).Scan(&leaf)
+	err = (*lookup).QueryRowContext(context.Background(), key).Scan(&leaf)
 	if err == nil {
 		if int64(leaf) != phase.Partition {
 			return preparedWork{}, true, workset.restartGeneration("duplicate key across creation partitions")
@@ -296,8 +302,14 @@ func (workset *CrossrefWorkset) prepareCollectionWork(work any, phase CrossrefPh
 func (workset *CrossrefWorkset) prepareCollectionWorks(items []any, phase CrossrefPhase) ([]preparedWork, bool, error) {
 	prepared := make([]preparedWork, 0, len(items))
 	keys := map[string]bool{}
+	var lookup *sql.Stmt
+	defer func() {
+		if lookup != nil {
+			lookup.Close()
+		}
+	}()
 	for _, work := range items {
-		item, didAdvance, err := workset.prepareCollectionWork(work, phase, keys)
+		item, didAdvance, err := workset.prepareCollectionWork(work, phase, keys, &lookup)
 		if err != nil || didAdvance {
 			return nil, didAdvance, err
 		}
@@ -308,13 +320,25 @@ func (workset *CrossrefWorkset) prepareCollectionWorks(items []any, phase Crossr
 
 // insertCollectionWorks calculates ordering and writes each prepared payload in response order.
 func (workset *CrossrefWorkset) insertCollectionWorks(prepared []preparedWork, partition int64) error {
+	var insert *sql.Stmt
+	defer func() {
+		if insert != nil {
+			insert.Close()
+		}
+	}()
 	for _, work := range prepared {
 		order, err := crossrefOrder(work.payload, work.key)
 		if err != nil {
 			return err
 		}
-		if err := workset.exec("INSERT INTO works(key,payload,leaf,date,fingerprint,anchor,year,volume,issue) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)", work.key, work.serialized, partition, order.Date, order.Fingerprint, order.Anchor, order.Year, order.Volume, order.Issue); err != nil {
-			return err
+		if insert == nil {
+			insert, err = workset.connection.PrepareContext(context.Background(), "INSERT INTO works(key,payload,leaf,date,fingerprint,anchor,year,volume,issue) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)")
+			if err != nil {
+				return worksetStorageError(err)
+			}
+		}
+		if _, err := insert.ExecContext(context.Background(), work.key, work.serialized, partition, order.Date, order.Fingerprint, order.Anchor, order.Year, order.Volume, order.Issue); err != nil {
+			return worksetStorageError(err)
 		}
 	}
 	return nil

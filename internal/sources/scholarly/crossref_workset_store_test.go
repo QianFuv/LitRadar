@@ -120,7 +120,8 @@ func worksetTestPage(start, count int, second int64, total uint64) CrossrefPage 
 	return page
 }
 
-func createTestWorkset(t *testing.T, state CrossrefCheckpoint) *CrossrefWorkset {
+// createTestWorkset owns a native workset for one test or benchmark and closes it during cleanup.
+func createTestWorkset(t testing.TB, state CrossrefCheckpoint) *CrossrefWorkset {
 	t.Helper()
 	workset, err := CreateCrossrefWorkset(t.TempDir(), "catalog", state)
 	if err != nil {
