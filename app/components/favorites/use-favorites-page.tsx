@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { parseAsInteger, useQueryState } from 'nuqs';
 
@@ -139,7 +139,7 @@ export function useFavoritesPage(userId: number) {
     enabled: true && !!activeFolderId && !!selectedFolder,
   });
 
-  const favoritePages = favPages?.pages ?? [];
+  const favoritePages = useMemo(() => favPages?.pages ?? [], [favPages?.pages]);
   const loadedPages = favoritePages.length;
   const listKey = String(activeFolderId ?? 'none');
   const { visiblePages, prefetchRef, loadMoreRef } = useVisiblePageList({
@@ -151,16 +151,26 @@ export function useFavoritesPage(userId: number) {
     scrollContainerId: 'results-scroll-container',
   });
   const visiblePageCount = Math.min(visiblePages, loadedPages);
-  const favorites = favoritePages.slice(0, visiblePageCount).flatMap((page) => page.items);
+  const favorites = useMemo(
+    () => favoritePages.slice(0, visiblePageCount).flatMap((page) => page.items),
+    [favoritePages, visiblePageCount],
+  );
   const prefetchIndex = Math.max(0, favorites.length - 25);
-  const selectedKeySet = new Set(selectedArticleKeys);
-  const selectedFavorites = favorites.filter((favorite) =>
-    selectedKeySet.has(
-      getFavoriteSelectionKey(favorite.folder_id, favorite.article_id, favorite.db_name),
-    ),
+  const selectedKeySet = useMemo(() => new Set(selectedArticleKeys), [selectedArticleKeys]);
+  const selectedFavorites = useMemo(
+    () =>
+      favorites.filter((favorite) =>
+        selectedKeySet.has(
+          getFavoriteSelectionKey(favorite.folder_id, favorite.article_id, favorite.db_name),
+        ),
+      ),
+    [favorites, selectedKeySet],
   );
   const allLoadedSelected = favorites.length > 0 && selectedFavorites.length === favorites.length;
-  const moveTargetFolders = folders.filter((folder) => folder.id !== activeFolderId);
+  const moveTargetFolders = useMemo(
+    () => folders.filter((folder) => folder.id !== activeFolderId),
+    [folders, activeFolderId],
+  );
   const effectiveMoveTargetFolderId = getEffectiveMoveTargetFolderId(
     moveTargetFolders,
     moveTargetFolderId,

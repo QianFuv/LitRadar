@@ -3,6 +3,7 @@
  */
 
 import type { ReactNode } from 'react';
+import type { InfiniteData } from '@tanstack/react-query';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -12,7 +13,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
-import type { FavoriteArticleItem, FavoriteCheck } from '@/lib/api';
+import type { FavoriteArticleItem, FavoriteArticlePage, FavoriteCheck } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { favoriteArticlePageResponse } from '@/tests/mocks/handlers/favorites';
 import { renderWithQuery } from '@/tests/render';
@@ -801,7 +802,51 @@ async function abortsUnmountedFavoriteRequest(): Promise<void> {
   }
 }
 
+/** Preserve visible article projections through form edits while refreshing changed query data. */
+async function reusesUnchangedFavoritePages(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/favorites/folders', foldersResponse),
+    http.get('http://localhost/api/favorites/folders/3/articles/page', () =>
+      favoriteArticlePageResponse([favoriteArticleFixture(1), favoriteArticleFixture(2)]),
+    ),
+  );
+  const user = userEvent.setup();
+  const { queryClient } = renderFavoritesPage();
+  await screen.findByText('Article 1');
+  const queryKey = ['folder-articles', 3, 'cursor', 21];
+  const data = queryClient.getQueryData<InfiniteData<FavoriteArticlePage>>(queryKey)!;
+  const flatten = vi.spyOn(Array.prototype, 'flatMap');
+  try {
+    await user.click(screen.getByRole('button', { name: '新建收藏夹' }));
+    await user.type(screen.getByLabelText('收藏夹名称'), 'Research reading');
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('checkbox', { name: '选择文章 Article 1' }));
+    expect(screen.getByText('已选 1 篇')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '选择文章 Article 1' })).toBeChecked();
+    expect(
+      flatten.mock.contexts.filter((pages) => Array.isArray(pages) && pages[0] === data.pages[0]),
+    ).toHaveLength(0);
+  } finally {
+    flatten.mockRestore();
+  }
+
+  await act(async () => {
+    queryClient.setQueryData<InfiniteData<FavoriteArticlePage>>(queryKey, {
+      ...data,
+      pages: data.pages.map((page) => ({
+        ...page,
+        items: page.items.map((favorite) => ({ ...favorite, title: `${favorite.title} updated` })),
+      })),
+    });
+  });
+  expect(await screen.findByText('Article 1 updated')).toBeInTheDocument();
+  expect(screen.queryByText('Article 1')).not.toBeInTheDocument();
+  expect(screen.getByRole('checkbox', { name: '选择文章 Article 1 updated' })).toBeChecked();
+  expect(screen.getByText('已选 1 篇')).toBeInTheDocument();
+}
+
 describe('favorite mutation flow', () => {
+  test('reuses unchanged pages across folder edits and selection', reusesUnchangedFavoritePages);
   test('aborts a pending page when leaving favorites', abortsUnmountedFavoriteRequest);
   test.each(['stale', 'invalidated'] as const)(
     'keeps unavailable %s membership unknown until a fresh lookup succeeds',
