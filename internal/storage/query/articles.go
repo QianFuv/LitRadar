@@ -355,8 +355,8 @@ func articleFilters(params ArticleListParams) (filter, filter, string, error) {
 	base.optionalBoolean("l.open_access=?", params.OpenAccess)
 	base.optionalText("l.date>=?", params.DateFrom)
 	base.optionalText("l.date<=?", params.DateTo)
-	base.optionalText("l.doi=?", params.Doi)
-	base.optionalText("l.pmid=?", params.Pmid)
+	base.optionalText("l.article_id IN (SELECT article_id FROM article_listing WHERE doi=?)", params.Doi)
+	base.optionalText("l.article_id IN (SELECT article_id FROM article_listing WHERE pmid=?)", params.Pmid)
 	base.optionalInteger("l.publication_year=?", params.Year)
 	match := preparedMatch(params)
 	if match != "" {

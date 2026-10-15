@@ -209,6 +209,10 @@ func logArticleLookupPlans(b *testing.B, ctx context.Context, database *sql.DB) 
 		"SELECT COUNT(*) FROM article_listing l WHERE l.pmid='30001'",
 		"SELECT l.article_id,l.date FROM article_listing l WHERE l.pmid='30001' ORDER BY l.date DESC,l.article_id DESC LIMIT 51 OFFSET 0",
 		"SELECT article_id FROM articles WHERE pmid='30001'",
+		"SELECT COUNT(*) FROM article_listing l WHERE l.article_id IN (SELECT article_id FROM article_listing WHERE doi='10.0000/synthetic.30001')",
+		"SELECT l.article_id,l.date FROM article_listing l WHERE l.article_id IN (SELECT article_id FROM article_listing WHERE doi='10.0000/synthetic.30001') ORDER BY l.date DESC,l.article_id DESC LIMIT 51 OFFSET 0",
+		"SELECT COUNT(*) FROM article_listing l WHERE l.article_id IN (SELECT article_id FROM article_listing WHERE pmid='30001')",
+		"SELECT l.article_id,l.date FROM article_listing l WHERE l.article_id IN (SELECT article_id FROM article_listing WHERE pmid='30001') ORDER BY l.date DESC,l.article_id DESC LIMIT 51 OFFSET 0",
 	} {
 		rows, err := database.QueryContext(ctx, "EXPLAIN QUERY PLAN "+statement)
 		if err != nil {
