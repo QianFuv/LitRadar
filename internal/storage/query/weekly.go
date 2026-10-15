@@ -57,7 +57,7 @@ func loadWeeklyBuckets(configuration config.Config, end weekly.Timestamp, cache 
 	return result, nil
 }
 
-// installWeeklyMembership atomically loads the exact integer set using bounded multi-row inserts.
+// installWeeklyMembership atomically loads exact IDs and sampled TEMP statistics for query planning.
 func installWeeklyMembership(ctx context.Context, connection *sql.Conn, ids []int64) error {
 	if _, err := connection.ExecContext(ctx, "CREATE TEMP TABLE weekly_membership(article_id INTEGER PRIMARY KEY) WITHOUT ROWID; BEGIN;"); err != nil {
 		return err
@@ -91,7 +91,7 @@ func installWeeklyMembership(ctx context.Context, connection *sql.Conn, ids []in
 			return err
 		}
 	}
-	_, err = connection.ExecContext(ctx, "COMMIT")
+	_, err = connection.ExecContext(ctx, "PRAGMA analysis_limit=500; ANALYZE temp.weekly_membership; COMMIT")
 	return err
 }
 

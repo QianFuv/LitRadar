@@ -69,6 +69,16 @@ func TestWeeklyMembershipPreservesExactIntegerSet(t *testing.T) {
 
 // TestWeeklyMembershipLateFailureRollsBack discards earlier accepted chunks and leaves the connection reusable.
 func TestWeeklyMembershipLateFailureRollsBack(t *testing.T) {
+	for _, shouldRejectStatistics := range []bool{false, true} {
+		t.Run(fmt.Sprintf("statistics=%t", shouldRejectStatistics), func(t *testing.T) {
+			assertWeeklyMembershipFailure(t, shouldRejectStatistics)
+		})
+	}
+}
+
+// assertWeeklyMembershipFailure checks rollback and reuse after insertion or planner-statistics rejection.
+func assertWeeklyMembershipFailure(t *testing.T, shouldRejectStatistics bool) {
+	t.Helper()
 	database, err := storage.OpenPlain(candidateFixture(t))
 	if err != nil {
 		t.Fatal(err)
@@ -80,11 +90,23 @@ func TestWeeklyMembershipLateFailureRollsBack(t *testing.T) {
 	}
 	defer connection.Close()
 	insertAuthorizations := 0
+	hasRejected, hasCanonicalAnalyze := false, false
 	if err := connection.Raw(func(raw any) error {
 		raw.(*native.SQLiteConn).RegisterAuthorizer(func(operation int, table, column, database string) int {
+			if operation == native.SQLITE_ANALYZE {
+				if database != "temp" {
+					hasCanonicalAnalyze = true
+					return native.SQLITE_DENY
+				}
+				if shouldRejectStatistics && table == "weekly_membership" {
+					hasRejected = true
+					return native.SQLITE_DENY
+				}
+			}
 			if operation == native.SQLITE_INSERT && table == "weekly_membership" {
 				insertAuthorizations++
-				if insertAuthorizations == 2 {
+				if !shouldRejectStatistics && insertAuthorizations == 2 {
+					hasRejected = true
 					return native.SQLITE_DENY
 				}
 			}
@@ -98,8 +120,8 @@ func TestWeeklyMembershipLateFailureRollsBack(t *testing.T) {
 	for index := range ids {
 		ids[index] = int64(index + 1)
 	}
-	if err := installWeeklyMembership(context.Background(), connection, ids); err == nil || insertAuthorizations != 2 {
-		t.Fatal("late membership failure was not induced", insertAuthorizations, err)
+	if err := installWeeklyMembership(context.Background(), connection, ids); err == nil || !hasRejected || hasCanonicalAnalyze || insertAuthorizations != 2 {
+		t.Fatal("late membership failure was not induced or modified canonical statistics", insertAuthorizations, hasCanonicalAnalyze, err)
 	}
 	var count int
 	if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM temp.weekly_membership").Scan(&count); err != nil || count != 0 {
