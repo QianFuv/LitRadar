@@ -63,7 +63,9 @@ func addFavorite(t *testing.T, repository *Repository, owner identity.Id, folder
 	}
 	return favorite
 }
-func installMetadata(t *testing.T, configuration config.Config) {
+
+// installMetadata publishes a supported canonical catalog for favorite metadata consumers.
+func installMetadata(t testing.TB, configuration config.Config) {
 	t.Helper()
 	if err := contentfixture.Create(filepath.Join(configuration.IndexDir, "metadata.sqlite"), 9); err != nil {
 		t.Fatal(err)

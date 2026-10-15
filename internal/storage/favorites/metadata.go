@@ -87,11 +87,15 @@ func Enrich(ctx context.Context, configuration config.Config, favorites []Favori
 	for _, favorite := range favorites {
 		groups[favorite.DbName] = append(groups[favorite.DbName], int64(favorite.ArticleId))
 	}
-	metadata := map[Reference]Article{}
+	var metadata map[Reference]Article
 	unavailable := map[string]bool{}
 	for name, ids := range groups {
 		items, category := favoriteMetadataGroup(ctx, configuration, name, ids)
 		if category == "" {
+			if metadata == nil {
+				metadata = items
+				continue
+			}
 			for key, item := range items {
 				metadata[key] = item
 			}
@@ -130,7 +134,7 @@ func LoadCitationRecords(ctx context.Context, configuration config.Config, refer
 	for _, reference := range references {
 		groups[reference.DbName] = append(groups[reference.DbName], int64(reference.ArticleId))
 	}
-	metadata := map[Reference]domain.FavoriteCitation{}
+	var metadata map[Reference]domain.FavoriteCitation
 	for name, ids := range groups {
 		filename, err := resolve(configuration, name)
 		if isMissing(err) || errors.Is(err, config.ErrMultipleDatabases) {
@@ -142,6 +146,10 @@ func LoadCitationRecords(ctx context.Context, configuration config.Config, refer
 		items, err := loadCitations(ctx, filename, name, ids)
 		if err != nil {
 			return nil, err
+		}
+		if metadata == nil {
+			metadata = items
+			continue
 		}
 		for key, item := range items {
 			metadata[key] = item

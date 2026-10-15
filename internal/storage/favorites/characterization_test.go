@@ -44,7 +44,7 @@ func TestSafeMetadataNamesPreserveByteGrammar(t *testing.T) {
 }
 
 // favoriteMetadataFixture creates an actual native catalog without introducing auth ownership.
-func favoriteMetadataFixture(t *testing.T) (config.Config, *sql.DB, string) {
+func favoriteMetadataFixture(t testing.TB) (config.Config, *sql.DB, string) {
 	t.Helper()
 	configuration := config.FromProjectRoot(t.TempDir())
 	installMetadata(t, configuration)
