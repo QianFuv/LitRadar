@@ -285,7 +285,7 @@ func ParseArticleDetail(text, articleUrl string) (any, error) {
 			online = nonEmpty(parts[0])
 		}
 	}
-	return map[string]any{"article_url": permalink, "platform_id": optional(firstValue(inputValue(text, "paramfilename"), inputValue(text, "param-filename"))), "dbcode": optional(firstValue(inputValue(text, "paramdbcode"), inputValue(text, "param-dbcode"))), "dbname": optional(firstValue(inputValue(text, "paramdbname"), inputValue(text, "param-dbname"))), "title": optional(firstValue(firstBlockText(text, "h1", "title"), firstBlockText(text, "p", "title-one"), titleText(text))), "authors": optional(firstValue(authorText(text), spanTitle(text, "author"))), "abstract": optional(abstract), "doi": optional(rowValue(text, "DOI")), "online_release_date": optional(online), "pages": optional(labelValue(stripTags(text), "页码", "Pages")), "permalink": permalink, "platform": "NZKPT"}, nil
+	return map[string]any{"article_url": permalink, "platform_id": optional(firstValue(inputValue(text, "paramfilename"), inputValue(text, "param-filename"))), "dbcode": optional(firstValue(inputValue(text, "paramdbcode"), inputValue(text, "param-dbcode"))), "dbname": optional(firstValue(inputValue(text, "paramdbname"), inputValue(text, "param-dbname"))), "title": optional(firstValue(firstBlockText(text, "h1", "title"), firstBlockText(text, "p", "title-one"), titleText(text))), "authors": optional(articleDetailAuthors(text)), "abstract": optional(abstract), "doi": optional(rowValue(text, "DOI")), "online_release_date": optional(online), "pages": optional(labelValue(stripTags(text), "页码", "Pages")), "permalink": permalink, "platform": "NZKPT"}, nil
 }
 
 // responseHasStructure applies the existing endpoint-specific marker rules.

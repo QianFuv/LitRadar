@@ -198,7 +198,7 @@ func summaryText(text string) *string {
 // spanTitle uses DOM author extraction and legacy parsing for other span classes.
 func spanTitle(text, class string) *string {
 	if class == "author" {
-		return authorSpanTitle(text)
+		return authorSpanTitle(authorNodes(text))
 	}
 	for _, tag := range tags(text, "span") {
 		values := attrs(tag)
@@ -265,8 +265,10 @@ func authorElementText(node *html.Node) *string {
 	appendText(node)
 	return nonEmpty(strings.Join(strings.Fields(output.String()), " "))
 }
-func authorText(text string) *string {
-	for _, block := range authorNodes(text) {
+
+// authorText extracts the first dedicated author heading from the ordered page nodes.
+func authorText(nodes []*html.Node) *string {
+	for _, block := range nodes {
 		if block.Data != "h3" || !htmlHasClass(block, "author") || htmlAttribute(block, "id") != "authorpart" {
 			continue
 		}
@@ -293,6 +295,15 @@ func authorText(text string) *string {
 		return &result
 	}
 	return nil
+}
+
+// articleDetailAuthors shares one ordered DOM across heading extraction and the span fallback.
+func articleDetailAuthors(text string) *string {
+	nodes := authorNodes(text)
+	if authors := authorText(nodes); authors != nil {
+		return authors
+	}
+	return authorSpanTitle(nodes)
 }
 
 // scanQuotedAttributes scans one quote style, preserving duplicate precedence.
@@ -334,8 +345,8 @@ func attributeKey(prefix string) string {
 }
 
 // authorSpanTitle retains DOM decoding and title-before-descendant-text fallback.
-func authorSpanTitle(text string) *string {
-	for _, node := range authorNodes(text) {
+func authorSpanTitle(nodes []*html.Node) *string {
+	for _, node := range nodes {
 		if node.Data == "span" && htmlHasClass(node, "author") {
 			if title := nonEmpty(htmlAttribute(node, "title")); title != nil {
 				return title
