@@ -147,26 +147,41 @@ func decodeManifestOptionalStrings(fields map[string]json.RawMessage) ([]*string
 	return optional, nil
 }
 
+// manifestArticleId stores admitted integer tokens without retaining each element's encoded JSON.
+type manifestArticleId struct {
+	value     int64
+	isInteger bool
+}
+
+// UnmarshalJSON ignores non-integer values and negative zero while preserving valid signed integer spelling.
+func (identifier *manifestArticleId) UnmarshalJSON(value []byte) error {
+	*identifier = manifestArticleId{}
+	raw := strings.TrimSpace(string(value))
+	if raw == "-0" || strings.ContainsAny(raw, ".eE") {
+		return nil
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err == nil {
+		identifier.value, identifier.isInteger = parsed, true
+	}
+	return nil
+}
+
 // decodeManifestArticleIds retains distinct signed integers in source order without decimal coercion.
 func decodeManifestArticleIds(value json.RawMessage) ([]int64, error) {
 	ids := []int64{}
 	seen := map[int64]bool{}
 	if bytes.HasPrefix(bytes.TrimSpace(value), []byte("[")) {
-		var values []json.RawMessage
+		var values []manifestArticleId
 		if json.Unmarshal(value, &values) != nil {
 			return nil, ErrManifestJson
 		}
 		for _, value := range values {
-			raw := strings.TrimSpace(string(value))
-			if raw == "-0" || strings.ContainsAny(raw, ".eE") {
+			if !value.isInteger || seen[value.value] {
 				continue
 			}
-			id, err := strconv.ParseInt(raw, 10, 64)
-			if err != nil || seen[id] {
-				continue
-			}
-			seen[id] = true
-			ids = append(ids, id)
+			seen[value.value] = true
+			ids = append(ids, value.value)
 		}
 	}
 	return ids, nil
