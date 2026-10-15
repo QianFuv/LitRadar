@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
-import type { FavoriteArticleItem, FavoriteArticlePage, FavoriteCheck } from '@/lib/api';
+import type { FavoriteArticleItem, FavoriteArticlePage, FavoriteCheck, Folder } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { favoriteArticlePageResponse } from '@/tests/mocks/handlers/favorites';
 import { renderWithQuery } from '@/tests/render';
@@ -845,7 +845,63 @@ async function reusesUnchangedFavoritePages(): Promise<void> {
   expect(screen.getByText('已选 1 篇')).toBeInTheDocument();
 }
 
+/** Defer cached folder row creation until the real Popover presence mounts its content. */
+async function defersClosedFavoriteFolderRows(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/auth/me', currentUserResponse),
+    http.get('http://localhost/api/favorites/check', emptyFavoriteResponse),
+  );
+  const user = userEvent.setup();
+  const view = renderWithQuery(
+    <AuthProvider>
+      <FavoriteButton articleId="article-1" dbName="fixture.sqlite" />
+    </AuthProvider>,
+  );
+  await screen.findByRole('button', { name: '收藏' });
+  const folders: Folder[] = Array.from({ length: 100 }, (_, index) => ({
+    id: index + 1,
+    name: `Deferred folder ${index + 1}`,
+    is_tracking: false,
+    article_count: 0,
+    created_at: 1,
+  }));
+  view.queryClient.setQueryDefaults(['folders', 21], { staleTime: Infinity });
+  await act(async () => {
+    view.queryClient.setQueryData(['folders', 21], folders);
+  });
+  const cachedFolders = view.queryClient.getQueryData<Folder[]>(['folders', 21]);
+  const map = vi.spyOn(Array.prototype, 'map');
+  try {
+    view.rerender(
+      <AuthProvider>
+        <FavoriteButton articleId="article-2" dbName="fixture.sqlite" />
+      </AuthProvider>,
+    );
+    expect(map.mock.contexts.filter((value) => value === cachedFolders)).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: '收藏' }));
+    expect(await screen.findByRole('button', { name: 'Deferred folder 100' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(map.mock.contexts.some((value) => value === cachedFolders)).toBe(true);
+    await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Deferred folder 100' })).not.toBeInTheDocument(),
+    );
+    map.mockClear();
+    view.rerender(
+      <AuthProvider>
+        <FavoriteButton articleId="article-3" dbName="fixture.sqlite" />
+      </AuthProvider>,
+    );
+    expect(map.mock.contexts.filter((value) => value === cachedFolders)).toHaveLength(0);
+  } finally {
+    map.mockRestore();
+  }
+}
+
 describe('favorite mutation flow', () => {
+  test('defers cached folder rows until opening the favorite menu', defersClosedFavoriteFolderRows);
   test('reuses unchanged pages across folder edits and selection', reusesUnchangedFavoritePages);
   test('aborts a pending page when leaving favorites', abortsUnmountedFavoriteRequest);
   test.each(['stale', 'invalidated'] as const)(

@@ -252,7 +252,7 @@ function renderFavoriteButton(state: FavoriteButtonViewState) {
         >
           <div className="space-y-1">
             <div className="px-2 py-1 text-xs text-muted-foreground font-medium">选择收藏夹</div>
-            {renderFavoriteLookup(state)}
+            <FavoriteLookup state={state} />
           </div>
         </PopoverContent>
       </Popover>
@@ -325,8 +325,8 @@ function renderFavoriteFolderButton(state: FavoriteButtonViewState, folder: Fold
   );
 }
 
-/** Retain error, loading, empty-folder and available-membership presentation priority. */
-function renderFavoriteLookup(state: FavoriteButtonViewState) {
+/** Render lookup states and folder rows only while the Popover mounts its content. */
+function FavoriteLookup({ state }: { state: FavoriteButtonViewState }) {
   const {
     checks,
     isCheckingFavorite,
