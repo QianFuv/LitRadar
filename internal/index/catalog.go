@@ -65,29 +65,38 @@ func ParseCatalogCsv(text string) ([]domain.JournalCatalogEntry, error) {
 	return BuildCatalogEntries(rows)
 }
 
+// parseCatalogLine copies field spans while retaining the historical quote and invalid UTF-8 grammar.
 func parseCatalogLine(line string) ([]string, error) {
-	characters := []rune(strings.TrimRight(line, "\r"))
-	values := []string{}
+	line = strings.TrimRight(line, "\r")
+	if !utf8.ValidString(line) {
+		line = string([]rune(line))
+	}
+	values := make([]string, 0, len(catalogColumns))
 	var current strings.Builder
 	isQuoted := false
-	for position := 0; position < len(characters); position++ {
-		character := characters[position]
+	start := 0
+	for position := 0; position < len(line); position++ {
 		switch {
-		case character == '"' && isQuoted && position+1 < len(characters) && characters[position+1] == '"':
-			current.WriteRune('"')
-			position++
-		case character == '"':
-			isQuoted = !isQuoted
-		case character == ',' && !isQuoted:
+		case line[position] == '"':
+			current.WriteString(line[start:position])
+			if isQuoted && position+1 < len(line) && line[position+1] == '"' {
+				current.WriteByte('"')
+				position++
+			} else {
+				isQuoted = !isQuoted
+			}
+			start = position + 1
+		case line[position] == ',' && !isQuoted:
+			current.WriteString(line[start:position])
 			values = append(values, strings.TrimSpace(current.String()))
 			current.Reset()
-		default:
-			current.WriteRune(character)
+			start = position + 1
 		}
 	}
 	if isQuoted {
 		return nil, errors.New("catalog CSV row has an unterminated quoted field")
 	}
+	current.WriteString(line[start:])
 	return append(values, strings.TrimSpace(current.String())), nil
 }
 
