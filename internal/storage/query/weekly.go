@@ -50,18 +50,37 @@ func loadWeeklyBuckets(configuration config.Config, end weekly.Timestamp, cache 
 	return result, nil
 }
 
+// installWeeklyMembership atomically loads the exact integer set using bounded multi-row inserts.
 func installWeeklyMembership(ctx context.Context, connection *sql.Conn, ids []int64) error {
 	if _, err := connection.ExecContext(ctx, "CREATE TEMP TABLE weekly_membership(article_id INTEGER PRIMARY KEY) WITHOUT ROWID; BEGIN;"); err != nil {
 		return err
 	}
 	defer connection.ExecContext(context.Background(), "ROLLBACK")
-	statement, err := connection.PrepareContext(ctx, "INSERT OR IGNORE INTO temp.weekly_membership(article_id) VALUES(?)")
+	const insertPrefix = "INSERT OR IGNORE INTO temp.weekly_membership(article_id) VALUES"
+	width := min(500, max(1, len(ids)))
+	insertSql := insertPrefix + "(?)"
+	if width > 1 {
+		insertSql = insertPrefix + strings.TrimSuffix(strings.Repeat("(?),", width), ",")
+	}
+	statement, err := connection.PrepareContext(ctx, insertSql)
 	if err != nil {
 		return err
 	}
 	defer statement.Close()
-	for _, id := range ids {
-		if _, err := statement.ExecContext(ctx, id); err != nil {
+	for len(ids) >= width {
+		var err error
+		if width == 1 {
+			_, err = statement.ExecContext(ctx, ids[0])
+		} else {
+			_, err = statement.ExecContext(ctx, arguments(ids[:width])...)
+		}
+		if err != nil {
+			return err
+		}
+		ids = ids[width:]
+	}
+	if len(ids) > 0 {
+		if _, err := connection.ExecContext(ctx, insertPrefix+strings.TrimSuffix(strings.Repeat("(?),", len(ids)), ","), arguments(ids)...); err != nil {
 			return err
 		}
 	}

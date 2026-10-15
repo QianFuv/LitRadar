@@ -13,7 +13,13 @@ import (
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
+// benchmarkCatalog retains the standard candidate dataset used by lookup benchmarks.
 func benchmarkCatalog(benchmark testing.TB) (config.Config, string) {
+	return benchmarkCatalogRows(benchmark, 60000)
+}
+
+// benchmarkCatalogRows creates canonical native rows for a bounded benchmark population.
+func benchmarkCatalogRows(benchmark testing.TB, count int) (config.Config, string) {
 	benchmark.Helper()
 	configuration := config.FromProjectRoot(benchmark.TempDir())
 	filename := filepath.Join(configuration.IndexDir, "benchmark.sqlite")
@@ -33,7 +39,7 @@ SELECT id,printf('synthetic-%d',id),printf('Synthetic Journal %d',id),'[]','[]' 
 WITH RECURSIVE sequence(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM sequence WHERE id<32)
 INSERT INTO issues(issue_id,journal_id,publication_year,title,volume,number)
 SELECT id,(id-1)%8+1,2026,'Synthetic Issue','1',printf('%d',id) FROM sequence;
-WITH RECURSIVE sequence(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM sequence WHERE id<60000)
+WITH RECURSIVE sequence(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM sequence WHERE id<?)
 INSERT INTO articles(article_id,journal_id,issue_id,title,publication_year,date,authors_json,abstract_text,doi,pmid,open_access,in_press)
 SELECT id,(id-1)%8+1,CASE WHEN id%4=0 THEN NULL ELSE (id-1)%32+1 END,
 'Synthetic Article',2026,CASE WHEN id%17=0 THEN NULL ELSE printf('2026-09-%02d',id%28+1) END,
@@ -44,7 +50,7 @@ SELECT article_id,journal_id,issue_id,publication_year,date,open_access,in_press
 INSERT INTO article_search(rowid,article_id,title,abstract_text,doi,pmid,authors,journal_title)
 SELECT a.article_id,a.article_id,a.title,a.abstract_text,a.doi,a.pmid,'Synthetic Author',j.title
 FROM articles a JOIN journals j ON j.journal_id=a.journal_id;
-COMMIT;`)
+COMMIT;`, count)
 	if err != nil {
 		benchmark.Fatal(err)
 	}

@@ -139,7 +139,8 @@ func TestJournalFiltersKeepValidationAndCanonicalMembership(t *testing.T) {
 }
 
 // writeQueryManifest writes one deterministic fixed-window publication under the real discovery path.
-func writeQueryManifest(t *testing.T, configuration config.Config, name string, ids []int64) {
+// writeQueryManifest publishes fixed-window membership for native query tests and benchmarks.
+func writeQueryManifest(t testing.TB, configuration config.Config, name string, ids []int64) {
 	t.Helper()
 	filename := filepath.Join(configuration.ProjectRoot, "data", "push_state", name+".changes.json")
 	if err := os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
