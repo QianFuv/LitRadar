@@ -95,30 +95,39 @@ func installWeeklyMembership(ctx context.Context, connection *sql.Conn, ids []in
 	return err
 }
 
-func sortWeeklyJournals(first, second domain.WeeklyJournalSummary) int {
-	if first.NewArticleCount != second.NewArticleCount {
-		if first.NewArticleCount > second.NewArticleCount {
+// weeklyJournalSorter reuses title keys only within one journal ordering operation.
+func weeklyJournalSorter() func(domain.WeeklyJournalSummary, domain.WeeklyJournalSummary) int {
+	titles := map[string]string{}
+	titleKey := func(title *string) string {
+		if title == nil {
+			return ""
+		}
+		if key, exists := titles[*title]; exists {
+			return key
+		}
+		key := asciiLower(*title)
+		titles[*title] = key
+		return key
+	}
+	return func(first, second domain.WeeklyJournalSummary) int {
+		if first.NewArticleCount != second.NewArticleCount {
+			if first.NewArticleCount > second.NewArticleCount {
+				return -1
+			}
+			return 1
+		}
+		firstTitle, secondTitle := titleKey(first.JournalTitle), titleKey(second.JournalTitle)
+		if order := strings.Compare(firstTitle, secondTitle); order != 0 {
+			return order
+		}
+		if first.JournalId < second.JournalId {
 			return -1
 		}
-		return 1
+		if first.JournalId > second.JournalId {
+			return 1
+		}
+		return 0
 	}
-	firstTitle, secondTitle := "", ""
-	if first.JournalTitle != nil {
-		firstTitle = asciiLower(*first.JournalTitle)
-	}
-	if second.JournalTitle != nil {
-		secondTitle = asciiLower(*second.JournalTitle)
-	}
-	if order := strings.Compare(firstTitle, secondTitle); order != 0 {
-		return order
-	}
-	if first.JournalId < second.JournalId {
-		return -1
-	}
-	if first.JournalId > second.JournalId {
-		return 1
-	}
-	return 0
 }
 
 func sortWeeklyDatabases[Journal any](databases []domain.WeeklyDatabase[Journal]) {
@@ -185,7 +194,7 @@ func weeklyJournalCounts(ctx context.Context, filename string, ids []int64) ([]d
 	if err != nil {
 		return nil, err
 	}
-	slices.SortFunc(items, sortWeeklyJournals)
+	slices.SortFunc(items, weeklyJournalSorter())
 	return items, nil
 }
 
@@ -451,8 +460,9 @@ func legacyWeeklyDatabase(name string, bucket *weeklyBucket, articles []domain.W
 		title := items[0].JournalTitle
 		journals = append(journals, domain.WeeklyJournalUpdate{WeeklyJournalSummary: domain.WeeklyJournalSummary{JournalId: id, JournalTitle: &title, NewArticleCount: len(items)}, Articles: items})
 	}
+	compare := weeklyJournalSorter()
 	slices.SortFunc(journals, func(first, second domain.WeeklyJournalUpdate) int {
-		return sortWeeklyJournals(first.WeeklyJournalSummary, second.WeeklyJournalSummary)
+		return compare(first.WeeklyJournalSummary, second.WeeklyJournalSummary)
 	})
 	return domain.WeeklyDatabase[domain.WeeklyJournalUpdate]{DbName: name, RunId: bucket.runId, GeneratedAt: bucket.generated.Format(false), NewArticleCount: len(articles), Journals: journals}
 }
