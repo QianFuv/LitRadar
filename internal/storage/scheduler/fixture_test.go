@@ -14,7 +14,8 @@ import (
 	migration "github.com/QianFuv/LitRadar/internal/storage/migrations/auth"
 )
 
-func fixture(t *testing.T) (*Repository, string) {
+// fixture creates a migrated scheduler repository for isolated tests and benchmarks.
+func fixture(t testing.TB) (*Repository, string) {
 	t.Helper()
 	filename := filepath.Join(t.TempDir(), "auth.sqlite")
 	if _, err := migration.Migrate(context.Background(), filename); err != nil {

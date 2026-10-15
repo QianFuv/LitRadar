@@ -105,8 +105,24 @@ func (repository *Repository) Enqueue(ctx context.Context, task domain.Task, slo
 			}
 			selected = []int64{choice}
 		}
+		const insertRun = `INSERT OR IGNORE INTO scheduled_task_runs(task_id,task_name,scheduled_for,status) VALUES(?,?,?,'pending')`
+		var statement *sql.Stmt
+		if len(selected) > 1 {
+			var err error
+			statement, err = connection.PrepareContext(ctx, insertRun)
+			if err != nil {
+				return err
+			}
+			defer statement.Close()
+		}
 		for _, slot := range selected {
-			result, err := connection.ExecContext(ctx, `INSERT OR IGNORE INTO scheduled_task_runs(task_id,task_name,scheduled_for,status) VALUES(?,?,?,'pending')`, task.Id, task.Name, slot)
+			var result sql.Result
+			var err error
+			if statement == nil {
+				result, err = connection.ExecContext(ctx, insertRun, task.Id, task.Name, slot)
+			} else {
+				result, err = statement.ExecContext(ctx, task.Id, task.Name, slot)
+			}
 			if err != nil {
 				return err
 			}
