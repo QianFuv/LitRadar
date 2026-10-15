@@ -221,6 +221,9 @@ func validateCatalogColumns(row map[string]string) error {
 			missing = append(missing, column)
 		}
 	}
+	if len(missing) == 0 && len(row) == len(catalogColumns) {
+		return nil
+	}
 	for column := range row {
 		if !slices.Contains(catalogColumns, column) {
 			unexpected = append(unexpected, column)
