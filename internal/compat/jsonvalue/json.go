@@ -4,7 +4,6 @@ package jsonvalue
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -15,7 +14,7 @@ func ValidJson(value string) bool {
 	if !utf8.ValidString(value) || !validJsonStringEscapes(value) {
 		return false
 	}
-	return validJsonTokens(value) && json.Valid([]byte(value))
+	return json.Valid([]byte(value)) && validJsonTokens(value)
 }
 
 // validJsonStringEscapes scans quoted strings without treating escaped quotes as boundaries.
@@ -88,42 +87,37 @@ func jsonLowSurrogateEnd(value string, index int) (int, bool) {
 	return index + 6, true
 }
 
-// validJsonTokens enforces the shared container depth and finite numeric token limits.
+// validJsonTokens scans syntactically valid JSON for shared depth and finite-number limits.
 func validJsonTokens(value string) bool {
-	decoder := json.NewDecoder(strings.NewReader(value))
-	decoder.UseNumber()
 	depth := 0
-	for {
-		token, err := decoder.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return false
-		}
-		switch token := token.(type) {
-		case json.Delim:
-			next, isValid := jsonContainerDepth(token, depth)
-			if !isValid {
+	for index := 0; index < len(value); index++ {
+		switch value[index] {
+		case '"':
+			for index++; value[index] != '"'; index++ {
+				if value[index] == '\\' {
+					index++
+				}
+			}
+		case '{', '[':
+			depth++
+			if depth >= 128 {
 				return false
 			}
-			depth = next
-		case json.Number:
-			if _, err := strconv.ParseFloat(string(token), 64); err != nil {
-				return false
+		case '}', ']':
+			depth--
+		default:
+			if value[index] == '-' || value[index] >= '0' && value[index] <= '9' {
+				start := index
+				for index+1 < len(value) && strings.ContainsRune("0123456789.eE+-", rune(value[index+1])) {
+					index++
+				}
+				if _, err := strconv.ParseFloat(value[start:index+1], 64); err != nil {
+					return false
+				}
 			}
 		}
 	}
 	return true
-}
-
-// jsonContainerDepth counts both object and array nesting with the original 128 boundary.
-func jsonContainerDepth(token json.Delim, depth int) (int, bool) {
-	if token == '{' || token == '[' {
-		depth++
-		return depth, depth < 128
-	}
-	return depth - 1, true
 }
 
 // literalSeparators preserves serde's literal line separators without changing escaped backslashes.
