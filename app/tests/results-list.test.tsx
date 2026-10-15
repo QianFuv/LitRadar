@@ -468,7 +468,52 @@ beforeEach(() => {
   resultsListMocks.visiblePages = 100;
 });
 
+/** Verify favorite updates reuse highlights while article edits invalidate the projection. */
+async function reusesHighlightsForFavoriteChanges(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/articles', () =>
+      HttpResponse.json(createArticlePage([SHARED_ARTICLE])),
+    ),
+  );
+  const view = renderResultsList('?q=Fixture');
+  await screen.findByTestId('result-9001');
+  const split = vi.spyOn(String.prototype, 'split');
+  resultsListMocks.favoriteChecksByArticle = { '9001': [] };
+  resultsListMocks.isFavoriteStatePending = false;
+  view.rerender(
+    <NuqsTestingAdapter searchParams="?q=Fixture" hasMemory>
+      <ResultsList />
+    </NuqsTestingAdapter>,
+  );
+  expect(screen.getByTestId('result-9001')).toHaveAttribute('data-folder-ids', '');
+  expect(screen.getByTestId('result-9001')).toHaveAttribute('data-favorite-pending', 'false');
+  expect(
+    split.mock.calls.filter(
+      ([pattern]) => pattern instanceof RegExp && pattern.source.includes('Fixture'),
+    ),
+  ).toHaveLength(0);
+  await act(async () => {
+    const queryKey = view.queryClient
+      .getQueryCache()
+      .find({ queryKey: ['articles'], exact: false })!.queryKey;
+    view.queryClient.setQueryData(queryKey, {
+      pages: [createArticlePage([{ ...SHARED_ARTICLE, title: 'Updated Fixture title' }])],
+      pageParams: [null],
+    });
+  });
+  expect(await screen.findByRole('heading', { name: 'Updated Fixture title' })).toBeInTheDocument();
+  expect(
+    split.mock.calls.some(
+      ([pattern]) => pattern instanceof RegExp && pattern.source.includes('Fixture'),
+    ),
+  ).toBe(true);
+}
+
 describe('results list', () => {
+  test(
+    'reuses highlights for favorite updates and refreshes changed articles',
+    reusesHighlightsForFavoriteChanges,
+  );
   test('aborts obsolete filter and unmounted article requests', abortsObsoleteArticleRequests);
   test(
     'keeps ratings on later pages and resets results when a grade changes',

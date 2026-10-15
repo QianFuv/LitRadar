@@ -172,7 +172,7 @@ function useResultsViewState() {
       gcTime: 10 * 60 * 1000,
     });
 
-  const pages = data?.pages ?? [];
+  const pages = useMemo(() => data?.pages ?? [], [data?.pages]);
   const loadedPages = pages.length;
   const { visiblePages, prefetchRef, loadMoreRef } = useVisiblePageList({
     listKey: `${currentDb}:${searchKey}`,
@@ -183,8 +183,14 @@ function useResultsViewState() {
     scrollContainerId: 'results-scroll-container',
   });
   const visiblePageCount = Math.min(visiblePages, loadedPages);
-  const visibleArticles = pages.slice(0, visiblePageCount).flatMap((page) => page.items);
-  const visibleArticleIds = visibleArticles.map((article) => article.article_id);
+  const visibleArticles = useMemo(
+    () => pages.slice(0, visiblePageCount).flatMap((page) => page.items),
+    [pages, visiblePageCount],
+  );
+  const visibleArticleIds = useMemo(
+    () => visibleArticles.map((article) => article.article_id),
+    [visibleArticles],
+  );
   const {
     favoriteChecksByArticle,
     isFavoriteStatePending,
@@ -223,6 +229,15 @@ function useResultsViewState() {
 
   const prefetchThreshold = 25;
   const prefetchIndex = Math.max(0, visibleArticles.length - prefetchThreshold);
+  const highlightedArticles = useMemo(
+    () =>
+      visibleArticles.map((article) => ({
+        article,
+        title: highlightText(article.title),
+        preview: highlightText(article.abstract),
+      })),
+    [visibleArticles, highlightText],
+  );
 
   return {
     user,
@@ -239,7 +254,7 @@ function useResultsViewState() {
     isFavoriteStatePending,
     favoriteStateError,
     retryFavoriteChecks,
-    highlightText,
+    highlightedArticles,
     prefetchIndex,
   };
 }
@@ -260,7 +275,7 @@ function getResultsPresentation(state: ResultsViewState) {
     favoriteChecksByArticle,
     isFavoriteStatePending,
     favoriteStateError,
-    highlightText,
+    highlightedArticles,
     prefetchIndex,
   } = state;
   let resultContent: ReactNode;
@@ -316,14 +331,14 @@ function getResultsPresentation(state: ResultsViewState) {
       : `已加载 ${visibleArticles.length} 篇文章`;
     resultContent = (
       <>
-        {visibleArticles.map((article, index) => (
+        {highlightedArticles.map(({ article, title, preview }, index) => (
           <ArticleDialogCard
             key={article.article_id}
             triggerRef={index === prefetchIndex ? prefetchRef : undefined}
             article={article}
             dbName={currentDb}
-            title={highlightText(article.title)}
-            preview={highlightText(article.abstract)}
+            title={title}
+            preview={preview}
             initialFolderIds={
               favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
             }
