@@ -10,6 +10,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { AnnouncementsCard } from '@/components/admin/announcements-card';
 import { AdminInviteCodesCard } from '@/components/admin/invite-codes-card';
 import { ScheduledTasksCard } from '@/components/admin/scheduled-tasks-card';
+import type { AdminInviteCode } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -557,7 +558,68 @@ async function pausesInactiveSchedulerQueries(): Promise<void> {
   }
 }
 
+/** Reuse historical invite labels through form edits and refresh both layouts when cached records change. */
+async function reusesInviteDatesDuringFormEdits(): Promise<void> {
+  const inviteCodes: AdminInviteCode[] = Array.from({ length: 25 }, (_, index) => ({
+    id: index + 1,
+    code: `HISTORICAL-${index + 1}`,
+    created_by: 1,
+    created_by_name: 'admin',
+    used_by: null,
+    used_by_name: null,
+    used_at: null,
+    status: 'active',
+    expires_at: 2_200_000_000 + index * 86400,
+    revoked_at: null,
+    max_uses: 1,
+    use_count: 0,
+    created_at: 1_700_000_000 + index * 86400,
+  }));
+  server.use(
+    http.get('http://localhost/api/admin/invite-codes', () => HttpResponse.json(inviteCodes)),
+  );
+  const view = renderWithQuery(<AdminInviteCodesCard isEnabled />);
+  await screen.findByText('HISTORICAL-25');
+  const updatedExpiry = 2_300_000_000;
+  const updatedCreation = 1_600_000_000;
+  const expiryLabel = new Date(updatedExpiry * 1000).toLocaleString('zh-CN');
+  const creationLabel = new Date(updatedCreation * 1000).toLocaleString('zh-CN');
+  const dates = new Set(
+    inviteCodes.flatMap((code) => [code.expires_at * 1000, code.created_at * 1000]),
+  );
+  const formatDate = vi.spyOn(Date.prototype, 'toLocaleString');
+  const user = userEvent.setup();
+  try {
+    await user.clear(screen.getByLabelText('有效天数'));
+    await user.type(screen.getByLabelText('有效天数'), '30');
+    await user.clear(screen.getByLabelText('最多使用次数'));
+    await user.type(screen.getByLabelText('最多使用次数'), '12');
+    expect(
+      formatDate.mock.contexts.filter((date) => dates.has((date as Date).getTime())),
+    ).toHaveLength(0);
+    await act(async () => {
+      view.queryClient.setQueryData<AdminInviteCode[]>(['admin-invite-codes'], (current) =>
+        current?.map((code) =>
+          code.id === 1
+            ? { ...code, expires_at: updatedExpiry, created_at: updatedCreation }
+            : code,
+        ),
+      );
+    });
+    await waitFor(() => expect(screen.getAllByText(expiryLabel)).toHaveLength(2));
+    expect(screen.getByText(creationLabel)).toBeInTheDocument();
+    expect(screen.getByLabelText('有效天数')).toHaveValue(30);
+    expect(screen.getByLabelText('最多使用次数')).toHaveValue(12);
+  } finally {
+    formatDate.mockRestore();
+  }
+}
+
 describe('administrator mutation flow', () => {
+  test(
+    'reuses invite history dates while editing creation limits',
+    reusesInviteDatesDuringFormEdits,
+  );
   test(
     'pauses inactive scheduler queries and retains editor drafts',
     pausesInactiveSchedulerQueries,

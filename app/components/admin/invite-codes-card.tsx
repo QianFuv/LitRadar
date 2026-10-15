@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, Copy, Plus, Ticket } from 'lucide-react';
 
@@ -164,7 +164,7 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
   const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
   const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const {
-    data: inviteCodes = [],
+    data: inviteCodes,
     error: inviteCodesError,
     isLoading,
   } = useQuery({
@@ -172,6 +172,15 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
     queryFn: () => adminGetInviteCodes(),
     enabled: isEnabled,
   });
+  const inviteRows = useMemo(
+    () =>
+      (inviteCodes ?? []).map((inviteCode) => ({
+        inviteCode,
+        expiresAtLabel: formatDate(inviteCode.expires_at),
+        createdAtLabel: formatDate(inviteCode.created_at),
+      })),
+    [inviteCodes],
+  );
   const createCodeMut = useMutation({
     mutationFn: () =>
       adminCreateInviteCode({
@@ -214,7 +223,7 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
     setInviteCodeToRevoke,
     feedbackTransition,
     rowTransition,
-    inviteCodes,
+    inviteRows,
     inviteCodesError,
     isLoading,
     createCodeMut,
@@ -261,7 +270,7 @@ function renderAdminInviteCards(state: AdminInviteViewState) {
     setInviteCodeToRevoke,
     feedbackTransition,
     rowTransition,
-    inviteCodes,
+    inviteRows,
     revokeCodeMut,
     handleCopyInviteCode,
   } = state;
@@ -269,7 +278,7 @@ function renderAdminInviteCards(state: AdminInviteViewState) {
   return (
     <div className="space-y-3 md:hidden">
       <MotionPresence>
-        {inviteCodes.length === 0 ? (
+        {inviteRows.length === 0 ? (
           <MotionDiv
             key="empty-invite-codes"
             className="rounded-lg border p-4 text-sm text-muted-foreground"
@@ -282,7 +291,7 @@ function renderAdminInviteCards(state: AdminInviteViewState) {
             暂无邀请码
           </MotionDiv>
         ) : (
-          inviteCodes.map((inviteCode) => (
+          inviteRows.map(({ inviteCode, expiresAtLabel }) => (
             <MotionDiv
               key={inviteCode.id}
               data-motion-invite-key={inviteCode.id}
@@ -331,7 +340,7 @@ function renderAdminInviteCards(state: AdminInviteViewState) {
                   </div>
                   <div className="rounded-md bg-muted/40 px-3 py-2">
                     <div className="text-xs text-muted-foreground">有效期</div>
-                    <div className="mt-1">{formatDate(inviteCode.expires_at)}</div>
+                    <div className="mt-1">{expiresAtLabel}</div>
                   </div>
                 </div>
                 {inviteCode.revoked_at === null && (
@@ -362,10 +371,10 @@ function renderAdminInviteCards(state: AdminInviteViewState) {
 function renderAdminInviteTable(
   state: Pick<
     AdminInviteViewState,
-    'setInviteCodeToRevoke' | 'inviteCodes' | 'revokeCodeMut' | 'handleCopyInviteCode'
+    'setInviteCodeToRevoke' | 'inviteRows' | 'revokeCodeMut' | 'handleCopyInviteCode'
   >,
 ) {
-  const { setInviteCodeToRevoke, inviteCodes, revokeCodeMut, handleCopyInviteCode } = state;
+  const { setInviteCodeToRevoke, inviteRows, revokeCodeMut, handleCopyInviteCode } = state;
 
   return (
     <div className="hidden overflow-x-auto rounded-md border md:block">
@@ -399,7 +408,7 @@ function renderAdminInviteTable(
           </tr>
         </thead>
         <tbody>
-          {inviteCodes.map((inviteCode) => (
+          {inviteRows.map(({ inviteCode, expiresAtLabel, createdAtLabel }) => (
             <tr key={inviteCode.id} className="content-visibility-table-row border-b last:border-0">
               <td className="px-3 py-2 font-mono text-xs">
                 <span className="flex items-center gap-1">
@@ -430,12 +439,8 @@ function renderAdminInviteTable(
               <td className="px-3 py-2">
                 {inviteCode.used_by_name ?? <span className="text-muted-foreground">—</span>}
               </td>
-              <td className="px-3 py-2 text-muted-foreground">
-                {formatDate(inviteCode.expires_at)}
-              </td>
-              <td className="px-3 py-2 text-muted-foreground">
-                {formatDate(inviteCode.created_at)}
-              </td>
+              <td className="px-3 py-2 text-muted-foreground">{expiresAtLabel}</td>
+              <td className="px-3 py-2 text-muted-foreground">{createdAtLabel}</td>
               <td className="px-3 py-2">
                 {inviteCode.revoked_at === null && (
                   <Button
@@ -455,7 +460,7 @@ function renderAdminInviteTable(
               </td>
             </tr>
           ))}
-          {inviteCodes.length === 0 && (
+          {inviteRows.length === 0 && (
             <tr>
               <td colSpan={8} className="px-3 py-4 text-center text-muted-foreground">
                 暂无邀请码
