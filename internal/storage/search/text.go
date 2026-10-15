@@ -22,11 +22,8 @@ func PrepareText(value string, usesSimple bool) string {
 	if !usesSimple || isAsciiProjection(value) {
 		return value
 	}
-	var result strings.Builder
-	for _, character := range norm.NFD.String(value) {
-		writeProjectionRune(&result, character)
-	}
-	return result.String()
+	decomposed := strings.TrimLeftFunc(norm.NFD.String(value), unicode.IsMark)
+	return strings.Map(projectionRune, decomposed)
 }
 
 // isAsciiProjection admits only the original ASCII alphanumeric and whitespace fast path.
@@ -44,19 +41,18 @@ func isPrivateProjectionRune(character rune) bool {
 	return character >= 0xe000 && character <= 0xf8ff || character >= 0xf0000 && character <= 0xffffd || character >= 0x100000 && character <= 0x10fffd
 }
 
-// writeProjectionRune drops marks before emitting preserved, lowercased or separator runes.
-func writeProjectionRune(result *strings.Builder, character rune) {
+// projectionRune drops marks before mapping preserved, lowercased or separator runes.
+func projectionRune(character rune) rune {
 	if unicode.IsMark(character) {
-		return
+		return -1
 	}
 	isAlphanumeric := unicode.IsLetter(character) || unicode.IsNumber(character) || unicode.Is(unicode.Properties["Other_Alphabetic"], character)
 	if !isAlphanumeric && !isPrivateProjectionRune(character) {
-		result.WriteByte(' ')
+		return ' '
 	} else if character < 128 {
-		result.WriteRune(character)
-	} else {
-		result.WriteRune(unicode.ToLower(character))
+		return character
 	}
+	return unicode.ToLower(character)
 }
 
 // PrepareQuery normalizes advanced operands without changing operators, columns or malformed quote handling.
