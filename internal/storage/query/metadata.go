@@ -33,11 +33,13 @@ type IssueListParams struct {
 const journalColumns = `j.journal_id,j.catalog_id,j.title,j.title_aliases_json,j.issns_json,j.issn,j.eissn,j.area,j.utd_rank,j.utd_rating,j.abs_rank,j.abs_rating,j.fms_rank,j.fms_rating,j.fmscn_rank,j.fmscn_rating,EXISTS(SELECT 1 FROM articles a WHERE a.journal_id=j.journal_id)`
 const issueColumns = `i.issue_id,i.journal_id,i.publication_year,i.title,i.volume,i.number,i.date`
 
+// journalFromRow maps canonical journal metadata using one fixed-width scan buffer.
 func journalFromRow(row scanner) (domain.Journal, error) {
 	var id, hasArticles storage.Integer
 	var catalog, title, aliases, issns storage.Text
 	var optional [11]storage.OptionalText
-	arguments := []any{&id, &catalog, &title, &aliases, &issns}
+	arguments := make([]any, 0, len(optional)+6)
+	arguments = append(arguments, &id, &catalog, &title, &aliases, &issns)
 	for index := range optional {
 		arguments = append(arguments, &optional[index])
 	}
