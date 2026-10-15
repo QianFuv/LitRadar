@@ -11,13 +11,20 @@ import (
 
 // CheckedText classifies empty and verification responses before endpoint parsing.
 func CheckedText(text string) error {
+	_, err := checkedResponseText(text)
+	return err
+}
+
+// checkedResponseText retains one lowercase projection for subsequent response classification.
+func checkedResponseText(text string) (string, error) {
 	if strings.TrimSpace(text) == "" {
-		return &Error{Kind: "Parse", Message: "domestic CNKI returned an empty response"}
+		return "", &Error{Kind: "Parse", Message: "domestic CNKI returned an empty response"}
 	}
-	if (strings.Contains(domain.Lowercase(text), "captcha") || strings.Contains(text, "访问异常") || strings.Contains(text, "安全验证") || strings.Contains(text, `"code":-403`) || strings.Contains(text, "/verify/home")) && !looksLikeContent(text) {
-		return &Error{Kind: "Request", Message: "domestic CNKI verification required"}
+	lowered := domain.Lowercase(text)
+	if (strings.Contains(lowered, "captcha") || strings.Contains(text, "访问异常") || strings.Contains(text, "安全验证") || strings.Contains(text, `"code":-403`) || strings.Contains(text, "/verify/home")) && !looksLikeContent(text) {
+		return "", &Error{Kind: "Request", Message: "domestic CNKI verification required"}
 	}
-	return nil
+	return lowered, nil
 }
 func containsMarker(text string, markers ...string) bool {
 	for _, marker := range markers {
@@ -39,10 +46,11 @@ func updatePlaceholder(text string) bool {
 
 // validateResponse classifies text and deletion before endpoint structure.
 func validateResponse(endpoint, text string) error {
-	if err := CheckedText(text); err != nil {
+	lowered, err := checkedResponseText(text)
+	if err != nil {
 		return err
 	}
-	if endpoint == "article_detail" && containsMarker(domain.Lowercase(text), "记录已删除", "文献不存在", "该文献不存在", "record has been deleted", "record does not exist") {
+	if endpoint == "article_detail" && containsMarker(lowered, "记录已删除", "文献不存在", "该文献不存在", "record has been deleted", "record does not exist") {
 		return &Error{Kind: "PermanentArticleMissing"}
 	}
 	hasStructure := responseHasStructure(endpoint, text)
