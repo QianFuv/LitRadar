@@ -123,19 +123,25 @@ func NormalizeIssn(value string) *string {
 // NormalizeBibliographicText collapses punctuation after scalar-wise lowercase and NFC.
 func NormalizeBibliographicText(value string) string {
 	var output strings.Builder
+	shouldSeparate := false
 	for _, character := range norm.NFC.String(value) {
-		if character == '\u0130' {
-			output.WriteString("i ")
+		isDottedI := character == '\u0130'
+		if isDottedI {
+			character = 'i'
+		} else {
+			character = unicode.ToLower(character)
+		}
+		if !unicode.IsLetter(character) && !unicode.IsNumber(character) && !unicode.Is(unicode.Properties["Other_Alphabetic"], character) {
+			shouldSeparate = true
 			continue
 		}
-		character = unicode.ToLower(character)
-		if unicode.IsLetter(character) || unicode.IsNumber(character) || unicode.Is(unicode.Properties["Other_Alphabetic"], character) {
-			output.WriteRune(character)
-		} else {
+		if shouldSeparate && output.Len() > 0 {
 			output.WriteByte(' ')
 		}
+		output.WriteRune(character)
+		shouldSeparate = isDottedI
 	}
-	return strings.Join(strings.Fields(output.String()), " ")
+	return output.String()
 }
 
 // NormalizeBibliographicLabel also removes leading decimal zeroes, retaining the legacy empty-to-zero rule.
