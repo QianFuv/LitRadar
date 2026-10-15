@@ -507,6 +507,7 @@ function renderSidebarAreas(
   state: Pick<SidebarViewState, 'areas' | 'areaOptions' | 'loadingAreas' | 'handleAreaChange'>,
 ) {
   const { areas, areaOptions, loadingAreas, handleAreaChange } = state;
+  const selectedAreas = new Set(areas);
 
   return (
     <div className="space-y-3">
@@ -528,7 +529,7 @@ function renderSidebarAreas(
                 <Checkbox
                   id={`area-${opt.value}`}
                   className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
-                  checked={areas.includes(opt.value)}
+                  checked={selectedAreas.has(opt.value)}
                   onCheckedChange={(checked: boolean | 'indeterminate') =>
                     handleAreaChange(opt.value, checked as boolean)
                   }
@@ -614,6 +615,7 @@ function SidebarJournalOptions({
   filteredJournalOptions,
   handleJournalChange,
 }: Pick<SidebarViewState, 'journalIds' | 'filteredJournalOptions' | 'handleJournalChange'>) {
+  const selectedJournalIds = new Set(journalIds);
   return (
     <ScrollArea className="mt-2 h-60 touch-pan-y">
       <div className="space-y-2">
@@ -627,7 +629,7 @@ function SidebarJournalOptions({
               <Checkbox
                 id={`journal-${id}`}
                 className="mt-0.5 shrink-0 data-[state=checked]:border-sidebar-primary data-[state=checked]:bg-sidebar-primary data-[state=checked]:text-sidebar-primary-foreground focus-visible:ring-sidebar-ring/50"
-                checked={journalIds.includes(id)}
+                checked={selectedJournalIds.has(id)}
                 onCheckedChange={(checked: boolean | 'indeterminate') =>
                   handleJournalChange(id, checked as boolean)
                 }

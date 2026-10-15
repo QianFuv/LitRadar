@@ -528,7 +528,84 @@ async function defersClosedJournalOptions(): Promise<void> {
   expect(screen.getByRole('textbox', { name: '搜索期刊' })).toHaveValue('Journal 99');
 }
 
+/** Keep large filter selections on indexed membership checks while preserving order and toggles. */
+async function indexesSelectedJournalMembership(): Promise<void> {
+  setSelectedDatabase('fixture.sqlite');
+  const selected = Array.from({ length: 100 }, (_, index) => String(index * 2 + 1));
+  const selectedAreas = Array.from({ length: 40 }, (_, index) => `PerfArea${index * 2 + 1}`);
+  const searchParams = `?journal_id=${selected.join(',')}&area=${selectedAreas.join(',')}`;
+  server.use(
+    http.get('http://localhost/api/meta/ratings', emptyRatingsResponse),
+    http.get('http://localhost/api/auth/me', currentUserResponse),
+    http.get('http://localhost/api/meta/databases', () => HttpResponse.json(['fixture.sqlite'])),
+    http.get('http://localhost/api/meta/areas', () =>
+      HttpResponse.json(
+        Array.from({ length: 80 }, (_, index) => ({ value: `PerfArea${index}`, count: 1 })),
+      ),
+    ),
+    http.get('http://localhost/api/meta/journals', () =>
+      HttpResponse.json(
+        Array.from({ length: 200 }, (_, index) => ({
+          journal_id: String(index),
+          title: `Journal ${index}`,
+        })),
+      ),
+    ),
+    http.get('http://localhost/api/years', () => HttpResponse.json([])),
+  );
+  const view = renderWithQuery(
+    <AuthProvider>
+      <NuqsTestingAdapter searchParams={searchParams} hasMemory>
+        <Sidebar />
+      </NuqsTestingAdapter>
+    </AuthProvider>,
+  );
+  await waitFor(() =>
+    expect(view.queryClient.getQueryData(['meta', 'journals', 'fixture.sqlite'])).toHaveLength(200),
+  );
+  const trigger = await screen.findByRole('button', { name: /已选 100 本期刊/ });
+  const user = userEvent.setup();
+  const includes = vi.spyOn(Array.prototype, 'includes');
+  try {
+    view.rerender(
+      <AuthProvider>
+        <NuqsTestingAdapter searchParams={searchParams} hasMemory>
+          <Sidebar className="updated" />
+        </NuqsTestingAdapter>
+      </AuthProvider>,
+    );
+    await user.click(trigger);
+    await waitFor(() => expect(document.getElementById('journal-199')).toBeChecked());
+    expect(document.getElementById('journal-0')).not.toBeChecked();
+    expect(document.getElementById('area-PerfArea1')).toBeChecked();
+    expect(document.getElementById('area-PerfArea0')).not.toBeChecked();
+    expect(document.querySelector('[id^="journal-"]')).toHaveAccessibleName('Journal 1');
+    expect(
+      includes.mock.contexts.filter(
+        (values) =>
+          Array.isArray(values) &&
+          ((values.length === 100 && values[0] === '1') ||
+            (values.length === 40 && values[0] === 'PerfArea1')),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    includes.mockRestore();
+  }
+  await user.click(document.getElementById('journal-199')!);
+  expect(document.getElementById('journal-199')).not.toBeChecked();
+  await user.click(document.getElementById('journal-0')!);
+  expect(document.getElementById('journal-0')).toBeChecked();
+  expect(document.querySelector('[id^="journal-"]')).toHaveAccessibleName('Journal 0');
+  await user.click(document.getElementById('area-PerfArea1')!);
+  expect(document.getElementById('area-PerfArea1')).not.toBeChecked();
+}
+
 describe('search and filter UI', () => {
+  test(
+    'indexes large journal selections without row scans',
+    indexesSelectedJournalMembership,
+    15000,
+  );
   test('defers journal options until opening the popover', defersClosedJournalOptions, 15000);
   test('reads persisted history only for navigation keys', readsHistoryOnlyForNavigation);
   test(
