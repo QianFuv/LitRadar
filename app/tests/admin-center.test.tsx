@@ -94,6 +94,16 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
   expect(screen.getByRole('heading', { name: '概览' })).toBeInTheDocument();
   expect(screen.getAllByRole('navigation', { name: '管理分类' })).toHaveLength(2);
   expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(6);
+  expect(screen.getByText('overview card marker')).toBeInTheDocument();
+  for (const marker of [
+    'user card marker',
+    'invite codes card marker',
+    'runtime settings card marker',
+    'scheduled tasks card marker',
+    'announcements card marker',
+  ]) {
+    expect(screen.queryByText(marker)).not.toBeInTheDocument();
+  }
   const overviewPanel = screen.getByRole('tabpanel', { name: '概览面板' });
   const retainedUserPanel = screen
     .getByRole('dialog', { name: '管理面板' })
@@ -136,6 +146,7 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
   ).toHaveAttribute('hidden');
   expect(screen.getByLabelText('用户草稿')).toBe(userDraft);
   expect(userDraft).toHaveValue('preserved');
+  expect(screen.queryByText('scheduled tasks card marker')).not.toBeInTheDocument();
   expect(
     screen
       .getAllByRole('button', { name: '用户' })
@@ -197,6 +208,16 @@ async function givesSettingsConflictPriority(): Promise<void> {
   );
 }
 
+/** Verify a direct scheduler URL mounts its data owner without starting unrelated panels. */
+async function defersUnvisitedPanelsForDirectLinks(): Promise<void> {
+  adminCenterMocks.searchParams = new URLSearchParams('admin=scheduled-tasks');
+  renderWithQuery(<AdminCenterDialog />);
+  expect(await screen.findByText('scheduled tasks card marker')).toBeInTheDocument();
+  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(6);
+  expect(screen.queryByText('overview card marker')).not.toBeInTheDocument();
+  expect(screen.queryByText('user card marker')).not.toBeInTheDocument();
+}
+
 beforeEach(() => {
   adminCenterMocks.auth.user = { id: 71, username: 'admin_user', is_admin: true };
   adminCenterMocks.pathname = '/';
@@ -208,6 +229,7 @@ beforeEach(() => {
 });
 
 describe('AdminCenterDialog', () => {
+  test('defers unvisited panels for a direct section link', defersUnvisitedPanelsForDirectLinks);
   test(
     'preserves unrelated query state for every administrator section',
     preservesAdministratorQueryState,

@@ -85,12 +85,16 @@ const ADMIN_SECTIONS = [
 ];
 
 /**
- * Keep one administrator data owner mounted while animating only its next activation.
+ * Mount administrator data on its first activation and retain visited panels across navigation.
  *
  * @param props - Stable panel content, active state, accessible label, and motion timing.
  * @returns Mounted tab panel with entry-only visual motion.
  */
 function AdminPanel({ children, isActive, label, transition }: AdminPanelProps) {
+  const [hasVisited, setHasVisited] = useState(isActive);
+  if (isActive && !hasVisited) {
+    setHasVisited(true);
+  }
   return (
     <MotionSection
       role="tabpanel"
@@ -102,7 +106,7 @@ function AdminPanel({ children, isActive, label, transition }: AdminPanelProps) 
       animate={isActive ? 'visible' : 'hidden'}
       transition={transition}
     >
-      {children}
+      {hasVisited ? children : null}
     </MotionSection>
   );
 }
