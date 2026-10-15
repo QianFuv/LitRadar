@@ -4,6 +4,7 @@
  * Shared batch favorite-check cache orchestration for article lists.
  */
 
+import { useMemo } from 'react';
 import {
   useQueries,
   useQuery,
@@ -99,7 +100,7 @@ export function useFavoriteChecks(
   userId?: number | null,
 ): FavoriteChecksResult {
   const queryClient = useQueryClient();
-  const normalizedArticleIds = normalizeArticleIds(articleIds);
+  const normalizedArticleIds = useMemo(() => normalizeArticleIds(articleIds), [articleIds]);
   const hasUser = userId !== null && typeof userId !== 'undefined';
   const hasActiveScope = hasUser && dbName.length > 0 && normalizedArticleIds.length > 0;
   const favoriteBaseKey = ['fav-check', userId, dbName] as const;

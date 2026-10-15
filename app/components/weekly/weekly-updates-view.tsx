@@ -511,7 +511,10 @@ function useWeeklyViewState() {
     () => flattenWeeklyArticlePages(articlePages, visiblePageCount),
     [articlePages, visiblePageCount],
   );
-  const renderedArticleIds = renderedArticles.map((article) => article.article_id);
+  const renderedArticleIds = useMemo(
+    () => renderedArticles.map((article) => article.article_id),
+    [renderedArticles],
+  );
   const prefetchIndex = Math.max(0, renderedArticles.length - WEEKLY_PREFETCH_THRESHOLD);
   const {
     favoriteChecksByArticle,

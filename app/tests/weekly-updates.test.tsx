@@ -3,6 +3,7 @@
  */
 
 import { act, screen, waitFor, within } from '@testing-library/react';
+import type { InfiniteData } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, type HttpResponseResolver } from 'msw';
 import { parseAsString, useQueryState } from 'nuqs';
@@ -26,6 +27,7 @@ type VisiblePageOptions = {
 const weeklyViewMocks = vi.hoisted(() => ({
   onFetchNextPage: null as (() => void) | null,
   useVisiblePageList: vi.fn(),
+  favoriteArticleIds: [] as readonly string[],
 }));
 
 vi.mock('@/lib/auth-context', () => ({
@@ -41,10 +43,13 @@ vi.mock('@/components/feature/article-dialog-card', () => ({
 }));
 
 vi.mock('@/components/feature/use-favorite-checks', () => ({
-  useFavoriteChecks: () => ({
-    favoriteChecksByArticle: {},
-    isFavoriteStatePending: false,
-  }),
+  useFavoriteChecks: (articleIds: readonly string[]) => {
+    weeklyViewMocks.favoriteArticleIds = articleIds;
+    return {
+      favoriteChecksByArticle: {},
+      isFavoriteStatePending: false,
+    };
+  },
 }));
 
 vi.mock('@/components/feature/use-visible-page-list', () => ({
@@ -519,7 +524,44 @@ async function abortsObsoleteWeeklyRequests(): Promise<void> {
   }
 }
 
+/** Reuse favorite-check identities on unrelated renders and replace them when cached articles change. */
+async function reusesWeeklyFavoriteIds(): Promise<void> {
+  installDefaultWeeklyHandlers();
+  const searchParams = '?db=fixture.sqlite&journal=101';
+  const view = renderWeeklyPage(searchParams);
+  await screen.findByText('Weekly first');
+  const articleIds = weeklyViewMocks.favoriteArticleIds;
+  expect(articleIds).toEqual(['weekly-1', 'weekly-2', 'weekly-3']);
+  view.rerender(
+    <NuqsTestingAdapter searchParams={searchParams} hasMemory>
+      <WeeklyUpdatesView />
+      <QueryProbe parameter="db" testId="weekly-db" />
+    </NuqsTestingAdapter>,
+  );
+  expect(weeklyViewMocks.favoriteArticleIds).toBe(articleIds);
+  await act(async () => {
+    view.queryClient.setQueryData<InfiniteData<WeeklyArticlePage>>(
+      ['weekly-update-articles', 'fixture.sqlite', '101', '', WEEKLY_SUMMARY_FIXTURE.window_end],
+      (previous) =>
+        previous && {
+          ...previous,
+          pages: previous.pages.map((page) => ({
+            ...page,
+            items: page.items.map((article, index) =>
+              index === 0
+                ? { ...article, article_id: 'weekly-updated', title: 'Updated weekly article' }
+                : article,
+            ),
+          })),
+        },
+    );
+  });
+  expect(await screen.findByText('Updated weekly article')).toBeInTheDocument();
+  expect(weeklyViewMocks.favoriteArticleIds).toEqual(['weekly-updated', 'weekly-2', 'weekly-3']);
+}
+
 describe('weekly updates bounded pagination', () => {
+  test('reuses favorite ids until visible articles change', reusesWeeklyFavoriteIds);
   test('aborts obsolete article requests', abortsObsoleteWeeklyRequests);
   test('loads one summary and one initial bounded article page', loadsOneInitialBoundedPage);
   test('resets to the first page for a database change', resetsForDatabaseSelection);

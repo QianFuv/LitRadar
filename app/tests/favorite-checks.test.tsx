@@ -130,9 +130,10 @@ async function isolatesUserAndDatabaseScopes(): Promise<void> {
   batchRequests.length = 0;
   server.use(http.post('http://localhost/api/favorites/check/batch', favoriteBatchResponse));
   const queryClient = createTestQueryClient();
+  const articleIds = ['shared-article'];
   const { result, rerender } = renderHook(useFavoriteChecksHarness, {
     initialProps: {
-      articleIds: ['shared-article'],
+      articleIds,
       dbName: 'first.sqlite',
       userId: 21,
     },
@@ -146,7 +147,7 @@ async function isolatesUserAndDatabaseScopes(): Promise<void> {
   );
 
   rerender({
-    articleIds: ['shared-article'],
+    articleIds,
     dbName: 'second.sqlite',
     userId: 22,
   });
@@ -520,18 +521,35 @@ async function boundsMembershipSubscriptionTracking(count: number): Promise<void
   });
   await waitFor(() => expect(result.current.isFavoriteStatePending).toBe(false));
   const trackProperty = vi.spyOn(QueryObserver.prototype, 'trackProp');
-  rerender(props);
-  const dataTrackingCalls = trackProperty.mock.calls.filter(
-    ([property]) => property === 'data',
-  ).length;
-  expect(dataTrackingCalls).toBeLessThanOrEqual(4 * count);
-  const changedMembership = [{ folder_id: 9, folder_name: 'Reading' }];
-  act(() =>
-    queryClient.setQueryData(['fav-check', 21, 'fixture.sqlite', articleIds[0]], changedMembership),
-  );
-  await waitFor(() =>
-    expect(result.current.favoriteChecksByArticle[articleIds[0]]).toEqual(changedMembership),
-  );
+  const sort = vi.spyOn(Array.prototype, 'sort');
+  try {
+    rerender(props);
+    const dataTrackingCalls = trackProperty.mock.calls.filter(
+      ([property]) => property === 'data',
+    ).length;
+    expect(dataTrackingCalls).toBeLessThanOrEqual(4 * count);
+    const changedMembership = [{ folder_id: 9, folder_name: 'Reading' }];
+    act(() =>
+      queryClient.setQueryData(
+        ['fav-check', 21, 'fixture.sqlite', articleIds[0]],
+        changedMembership,
+      ),
+    );
+    await waitFor(() =>
+      expect(result.current.favoriteChecksByArticle[articleIds[0]]).toEqual(changedMembership),
+    );
+    expect(
+      sort.mock.contexts.filter(
+        (values) =>
+          Array.isArray(values) &&
+          values.length === count &&
+          typeof values[0] === 'string' &&
+          values[0].startsWith('cached-'),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    sort.mockRestore();
+  }
 }
 
 describe('useFavoriteChecks', () => {
