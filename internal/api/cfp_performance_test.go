@@ -64,6 +64,40 @@ func TestCfpCatalogRetainsPerJournalCapabilities(t *testing.T) {
 	}
 }
 
+// TestCfpCatalogTitleOrdering preserves coverage, full Unicode title order, and exact identifier ties.
+func TestCfpCatalogTitleOrdering(t *testing.T) {
+	entries := []sources.JournalCatalogEntry{
+		{CatalogId: "u-z", Title: "Zulu"},
+		{CatalogId: "a-b", Title: "CAFÉ"},
+		{CatalogId: "a-a", Title: "café"},
+		{CatalogId: "greek-b", Title: "ΟΣ"},
+		{CatalogId: "greek-a", Title: "ος"},
+		{CatalogId: "dotted", Title: "İSTANBUL"},
+		{CatalogId: "adapted", Title: "zzz"},
+		{CatalogId: "same-two", Title: "Repeated"},
+		{CatalogId: "same-one", Title: "Repeated"},
+	}
+	before := append([]sources.JournalCatalogEntry(nil), entries...)
+	snapshots := []storage.JournalSnapshot{{JournalKey: "adapted", CatalogIds: []string{"adapted"}}}
+	result, failure := cfpCatalog("fixture.sqlite", nil, entries, snapshots, 100)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	ids := make([]string, 0, len(result.Items))
+	for _, item := range result.Items {
+		ids = append(ids, item.CatalogId)
+	}
+	want := []string{"adapted", "a-a", "a-b", "dotted", "same-one", "same-two", "u-z", "greek-a", "greek-b"}
+	if !reflect.DeepEqual(ids, want) || !reflect.DeepEqual(entries, before) {
+		t.Fatal("catalog ordering or input ownership changed", ids)
+	}
+	entries[1].Title = "Ωmega"
+	changed, failure := cfpCatalog("fixture.sqlite", nil, entries, snapshots, 100)
+	if failure != nil || changed.Items[len(changed.Items)-1].CatalogId != "a-b" {
+		t.Fatal("updated titles reused stale ordering", changed, failure)
+	}
+}
+
 // cfpBenchmarkCatalog loads the maintained English catalog and actual reviewed seed outside measured work.
 func cfpBenchmarkCatalog(t testing.TB) ([]sources.JournalCatalogEntry, []storage.JournalSnapshot) {
 	t.Helper()

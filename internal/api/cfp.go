@@ -367,6 +367,15 @@ func cfpCatalog(database string, query *string, entries []sources.JournalCatalog
 			result.Items = append(result.Items, item)
 		}
 	}
+	titleKeys := map[string]string{}
+	titleKey := func(title string) string {
+		if normalized, exists := titleKeys[title]; exists {
+			return normalized
+		}
+		normalized := sources.Lowercase(title)
+		titleKeys[title] = normalized
+		return normalized
+	}
 	slices.SortFunc(result.Items, func(first, second cfpJournalSummary) int {
 		if first.Coverage != second.Coverage {
 			if first.Coverage == "adapted" {
@@ -374,7 +383,7 @@ func cfpCatalog(database string, query *string, entries []sources.JournalCatalog
 			}
 			return 1
 		}
-		if order := strings.Compare(sources.Lowercase(first.Title), sources.Lowercase(second.Title)); order != 0 {
+		if order := strings.Compare(titleKey(first.Title), titleKey(second.Title)); order != 0 {
 			return order
 		}
 		return strings.Compare(first.CatalogId, second.CatalogId)
