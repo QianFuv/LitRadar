@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
@@ -54,6 +55,9 @@ func BoundedText(response *http.Response, maximum int64) (string, error) {
 
 // LossyUtf8 replaces each invalid UTF-8 subsequence once, including truncated prefixes.
 func LossyUtf8(body []byte) string {
+	if utf8.Valid(body) {
+		return string(body)
+	}
 	decoded, _ := unicode.UTF8.NewDecoder().Bytes(body)
 	return string(decoded)
 }
