@@ -54,6 +54,7 @@ export function CfpJournalList({
     inactive: isSearching,
     unadapted: isSearching,
   });
+  const [mountedGroups, setMountedGroups] = useState(expandedGroups);
 
   return (
     <div data-slot="cfp-journal-groups" className="flex min-h-0 flex-1 flex-col gap-2">
@@ -77,9 +78,12 @@ export function CfpJournalList({
               type="button"
               aria-expanded={isExpanded}
               aria-controls={panelId}
-              onClick={() =>
-                setExpandedGroups((previous) => ({ ...previous, [group.id]: !isExpanded }))
-              }
+              onClick={() => {
+                setExpandedGroups((previous) => ({ ...previous, [group.id]: !isExpanded }));
+                if (!mountedGroups[group.id]) {
+                  setMountedGroups((previous) => ({ ...previous, [group.id]: true }));
+                }
+              }}
               className="flex min-h-11 w-full shrink-0 items-center gap-2 px-2 py-2 text-left text-xs font-semibold hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 focus-visible:ring-inset"
             >
               <ChevronDown
@@ -102,46 +106,47 @@ export function CfpJournalList({
               data-slot="cfp-journal-list"
               className="sidebar-scroll-gutter min-h-0 flex-1 overflow-y-auto overscroll-contain"
             >
-              {group.journals.length === 0 ? (
-                <p className="px-2 py-3 text-xs leading-5 text-muted-foreground">
-                  暂无符合条件的期刊
-                </p>
-              ) : (
-                group.journals.map((journal) => (
-                  <button
-                    key={journal.catalogId}
-                    type="button"
-                    aria-pressed={selectedCatalogId === journal.catalogId}
-                    title={journal.title}
-                    onClick={() => onSelect(journal.catalogId)}
-                    className={cn(
-                      'motion-control grid min-h-16 w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 focus-visible:ring-inset',
-                      selectedCatalogId === journal.catalogId &&
-                        'border-sidebar-border bg-sidebar-accent',
-                    )}
-                  >
-                    <span className="min-w-0 space-y-1">
-                      <span className="line-clamp-2 text-sm font-medium leading-5 [overflow-wrap:anywhere]">
-                        {journal.title}
+              {mountedGroups[group.id] &&
+                (group.journals.length === 0 ? (
+                  <p className="px-2 py-3 text-xs leading-5 text-muted-foreground">
+                    暂无符合条件的期刊
+                  </p>
+                ) : (
+                  group.journals.map((journal) => (
+                    <button
+                      key={journal.catalogId}
+                      type="button"
+                      aria-pressed={selectedCatalogId === journal.catalogId}
+                      title={journal.title}
+                      onClick={() => onSelect(journal.catalogId)}
+                      className={cn(
+                        'motion-control grid min-h-16 w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 focus-visible:ring-inset',
+                        selectedCatalogId === journal.catalogId &&
+                          'border-sidebar-border bg-sidebar-accent',
+                      )}
+                    >
+                      <span className="min-w-0 space-y-1">
+                        <span className="line-clamp-2 text-sm font-medium leading-5 [overflow-wrap:anywhere]">
+                          {journal.title}
+                        </span>
+                        <span className="block text-[11px] leading-4 text-muted-foreground">
+                          {journal.coverage === 'unadapted'
+                            ? '暂未适配'
+                            : journal.currentCount > 0
+                              ? `${journal.currentCount} 条当前征稿`
+                              : journal.noticeCount > 0
+                                ? `${journal.noticeCount} 条历史征稿`
+                                : '暂无征稿'}
+                        </span>
                       </span>
-                      <span className="block text-[11px] leading-4 text-muted-foreground">
-                        {journal.coverage === 'unadapted'
-                          ? '暂未适配'
-                          : journal.currentCount > 0
-                            ? `${journal.currentCount} 条当前征稿`
-                            : journal.noticeCount > 0
-                              ? `${journal.noticeCount} 条历史征稿`
-                              : '暂无征稿'}
-                      </span>
-                    </span>
-                    {journal.coverage === 'adapted' && (
-                      <span className="min-w-6 rounded px-1 py-0.5 text-center text-[11px] leading-4 tabular-nums text-muted-foreground">
-                        {journal.currentCount}
-                      </span>
-                    )}
-                  </button>
-                ))
-              )}
+                      {journal.coverage === 'adapted' && (
+                        <span className="min-w-6 rounded px-1 py-0.5 text-center text-[11px] leading-4 tabular-nums text-muted-foreground">
+                          {journal.currentCount}
+                        </span>
+                      )}
+                    </button>
+                  ))
+                ))}
             </div>
           </section>
         );
