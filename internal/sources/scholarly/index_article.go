@@ -179,7 +179,22 @@ func openAlexArticle(catalog domain.JournalCatalogEntry, work any) *domain.Artic
 			authors = append(authors, domain.ArticleAuthorDraft{DisplayName: *name})
 		}
 	}
-	return domain.CanonicalArticle(domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: *title, PublicationYear: year, Date: date, Volume: jsonText(field(biblio, "volume")), IssueNumber: jsonText(field(biblio, "issue")), StartPage: jsonText(field(biblio, "first_page")), EndPage: jsonText(field(biblio, "last_page")), Authors: authors, AbstractText: openAlexAbstract(work), Doi: textDoi(field(work, "doi")), OpenAccess: strictBool(field(field(work, "open_access"), "is_oa")), InPress: new(false), RetractionDois: []string{}})
+	article := domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: *title, PublicationYear: year, Date: date, Volume: jsonText(field(biblio, "volume")), IssueNumber: jsonText(field(biblio, "issue")), StartPage: jsonText(field(biblio, "first_page")), EndPage: jsonText(field(biblio, "last_page")), Authors: authors, AbstractText: openAlexAbstract(work), Doi: textDoi(field(work, "doi")), OpenAccess: strictBool(field(field(work, "open_access"), "is_oa")), InPress: new(false), RetractionDois: []string{}}
+	correctOpenAlexChapterVolume(&article)
+	return domain.CanonicalArticle(article)
+}
+
+// correctOpenAlexChapterVolume restores one verified book-part label truncated by OpenAlex.
+// The publisher identifies volume "39 Part A" for this chapter:
+// https://www.emerald.com/books/edited-volume/15860/chapter-abstract/87508795/From-Agents-to-Principles-The-Changing
+// Matching the observed DOI, year and pages avoids inferring equivalence between distinct DOI identities.
+func correctOpenAlexChapterVolume(article *domain.ArticleDraft) {
+	hasChapterIdentity := article.CatalogId == "issn-0733-558x" && article.Doi != nil && *article.Doi == "10.1108/s0733-558x(2013)0039a011"
+	hasTruncatedVolume := article.PublicationYear != nil && *article.PublicationYear == 2013 && article.Volume != nil && *article.Volume == "39" && article.IssueNumber == nil
+	hasVerifiedPages := article.StartPage != nil && *article.StartPage == "203" && article.EndPage != nil && *article.EndPage == "241"
+	if hasChapterIdentity && hasTruncatedVolume && hasVerifiedPages {
+		article.Volume = new("39 Part A")
+	}
 }
 
 // crossrefArticleTitle uses enrichment titles only for matching normalized DOI identities.
