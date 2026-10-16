@@ -18,8 +18,9 @@ type clonableCnki[T any] interface {
 	Clone() T
 }
 type cnkiJournalSnapshot struct {
-	journal any
-	issues  []any
+	journal       any
+	issues        []any
+	shouldRefresh bool
 }
 type cnkiPageCache struct {
 	catalogId, issueId string
@@ -122,10 +123,14 @@ func cnkiBatchRetryFailure(err error, attempt int) *provider.Error {
 	return failure
 }
 
-// resetCnkiBatch resets sessions, creates new clones, joins the old pool and sleeps in the original order.
+// resetCnkiBatch invalidates session handles before rebuilding the detail pool and waiting to retry.
 func (index *CnkiIndexProvider) resetCnkiBatch(ctx context.Context, attempt int) error {
 	if err := index.client.ResetTransientState(ctx); err != nil {
 		return mapCnkiProviderError(err)
+	}
+	for catalogId, snapshot := range index.snapshots {
+		snapshot.shouldRefresh = true
+		index.snapshots[catalogId] = snapshot
 	}
 	pool := newCnkiDetailPool(index.clone, index.pool.count)
 	index.pool.close()

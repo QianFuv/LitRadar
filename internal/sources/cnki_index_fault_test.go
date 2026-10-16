@@ -21,6 +21,7 @@ type cnkiIndexTestState struct {
 	issues                          []any
 	page                            func(any, uint64) cnki.IssueArticlePage
 	detail                          func(string) (any, error)
+	requiresSession                 bool
 }
 type cnkiIndexTestTransport struct {
 	state      *cnkiIndexTestState
@@ -37,13 +38,23 @@ func (source *cnkiIndexTestTransport) ResetTransientState(context.Context) error
 }
 func (source *cnkiIndexTestTransport) ResolveJournal(context.Context, cnki.JournalLocator) (any, error) {
 	source.state.journals.Add(1)
-	return map[string]any{"pykm": "J"}, nil
+	return map[string]any{"pykm": "J", "time": source.state.resets.Load()}, nil
 }
 func (source *cnkiIndexTestTransport) YearIssues(context.Context, any) ([]any, error) {
 	source.state.trees.Add(1)
+	if source.state.requiresSession {
+		issues := copyCnkiJson(source.state.issues).([]any)
+		for _, issue := range issues {
+			issue.(map[string]any)["year_issue"] = source.state.resets.Load()
+		}
+		return issues, nil
+	}
 	return source.state.issues, nil
 }
-func (source *cnkiIndexTestTransport) IssueArticles(_ context.Context, _ any, issue any, page uint64) (cnki.IssueArticlePage, error) {
+func (source *cnkiIndexTestTransport) IssueArticles(_ context.Context, journal any, issue any, page uint64) (cnki.IssueArticlePage, error) {
+	if source.state.requiresSession && (providerField(journal, "time") != source.state.resets.Load() || providerField(issue, "year_issue") != source.state.resets.Load()) {
+		return cnki.IssueArticlePage{}, &cnki.Error{Kind: "Parse", Message: "stale navigation session"}
+	}
 	return source.state.page(issue, page), nil
 }
 func (source *cnkiIndexTestTransport) ArticleDetail(_ context.Context, url string, _ *string) (any, error) {
@@ -243,10 +254,11 @@ func TestCnkiWorkerCountValidatedBeforeClone(t *testing.T) {
 // assertCnkiCacheEndsWithFetch checks a new invocation refetches successes and filters and rebuilds its tree.
 func assertCnkiCacheEndsWithFetch(t *testing.T, index *CnkiIndexProvider, state *cnkiIndexTestState, calls map[string]int) {
 	t.Helper()
+	trees := state.trees.Load()
 	if _, err := cnkiTestFetch(index, nil); err != nil {
 		t.Fatal(err)
 	}
-	if calls["A"] != 2 || calls["D"] != 2 || state.trees.Load() != 2 {
+	if calls["A"] != 2 || calls["D"] != 2 || state.trees.Load() != trees+1 {
 		t.Fatal("cache escaped Fetch or completed snapshot survived", calls, state.trees.Load())
 	}
 }

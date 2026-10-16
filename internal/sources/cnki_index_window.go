@@ -79,10 +79,10 @@ func validCnkiResume(resume cnki.Checkpoint) bool {
 	return resume.Version == cnki.CheckpointVersion && (resume.BaseAnchorIssueId == nil || cnki.IsStableIssueId(*resume.BaseAnchorIssueId)) && cnki.IsStableIssueId(resume.CandidateHeadIssueId) && cnki.IsStableIssueId(resume.CurrentIssueId)
 }
 
-// cnkiSnapshot publishes an owned issue tree before later traversal validation.
+// cnkiSnapshot owns frozen issue metadata and refreshes request handles after session resets.
 func (index *CnkiIndexProvider) cnkiSnapshot(ctx context.Context, catalog domain.JournalCatalogEntry) (cnkiJournalSnapshot, error) {
 	snapshot, exists := index.snapshots[catalog.CatalogId]
-	if !exists {
+	if !exists || snapshot.shouldRefresh {
 		issns := []string{}
 		for _, value := range []*string{catalog.Issn, catalog.Eissn} {
 			if value != nil {
@@ -101,10 +101,47 @@ func (index *CnkiIndexProvider) cnkiSnapshot(ctx context.Context, catalog domain
 		if err != nil {
 			return cnkiJournalSnapshot{}, mapCnkiProviderError(err)
 		}
-		snapshot = cnkiJournalSnapshot{copyCnkiJson(journal), copyCnkiJson(issues).([]any)}
+		fresh := cnkiJournalSnapshot{journal: copyCnkiJson(journal), issues: copyCnkiJson(issues).([]any)}
+		if exists {
+			fresh, err = refreshCnkiSnapshot(snapshot, fresh)
+			if err != nil {
+				return cnkiJournalSnapshot{}, err
+			}
+		}
+		snapshot = fresh
 		index.snapshots[catalog.CatalogId] = snapshot
 	}
 	return snapshot, nil
+}
+
+// refreshCnkiSnapshot renews session tokens without moving or dropping any frozen issue.
+func refreshCnkiSnapshot(frozen, fresh cnkiJournalSnapshot) (cnkiJournalSnapshot, error) {
+	ids, err := cnkiSnapshotIds(fresh.issues)
+	if err != nil {
+		return cnkiJournalSnapshot{}, err
+	}
+	available := make(map[string]any, len(ids))
+	for ordinal, id := range ids {
+		available[id] = fresh.issues[ordinal]
+	}
+	frozenIds, err := cnkiSnapshotIds(frozen.issues)
+	if err != nil {
+		return cnkiJournalSnapshot{}, err
+	}
+	issues := make([]any, len(frozenIds))
+	for ordinal, id := range frozenIds {
+		current, exists := available[id]
+		if !exists {
+			return cnkiJournalSnapshot{}, accessFailure(provider.InvalidResponse, "domestic CNKI frozen issue is missing after session refresh")
+		}
+		issue := copyCnkiJson(frozen.issues[ordinal]).(map[string]any)
+		delete(issue, "year_issue")
+		if token, exists := current.(map[string]any)["year_issue"]; exists {
+			issue["year_issue"] = copyCnkiJson(token)
+		}
+		issues[ordinal] = issue
+	}
+	return cnkiJournalSnapshot{journal: fresh.journal, issues: issues}, nil
 }
 
 // cnkiSnapshotIds validates every stable identifier before checking any duplicates.
