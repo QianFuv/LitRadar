@@ -556,6 +556,7 @@ func (live *LiveTransport) readTextAttempt(ctx context.Context, deadline time.Ti
 	}
 	response, finish, err := live.send(ctx, deadline, method, requestUrl, body, headers)
 	if err != nil {
+		slog.InfoContext(ctx, "CNKI transport failed", "event", "source.cnki.transport.failed", "component", "source", "provider", "cnki", "endpoint", endpoint, "method", method, "error_kind", transportFailureKind(err), "is_retry", didRetry)
 		live.record(endpoint, method, requestUrl, nil, false, didRetry, textPointer("request failed"))
 		if budget.scheduleTransportRetry() {
 			if err := sleepRetry(ctx, budget.transportRetryDelay(), deadline); err != nil {
