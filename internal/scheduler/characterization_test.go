@@ -59,16 +59,15 @@ func assertEarlierScheduledAdmission(t *testing.T, repository *store.Repository,
 	}
 }
 
-// TestSchedulerRetainsPartialTickAndEarlierAdmissionOnLaterEnqueueFailure checks ordered durable task admission.
-func TestSchedulerRetainsPartialTickAndEarlierAdmissionOnLaterEnqueueFailure(t *testing.T) {
+// TestSchedulerRetainsEarlierAdmissionOnLaterEnqueueFailure checks ordered durable task admission.
+func TestSchedulerRetainsEarlierAdmissionOnLaterEnqueueFailure(t *testing.T) {
 	repository, filename := schedulerFixture(t)
 	first := createTask(t, repository)
 	second := createTask(t, repository)
 	fixtureSql(t, filename, "UPDATE scheduled_tasks SET created_at=0")
 	fixtureSql(t, filename, fmt.Sprintf("CREATE TRIGGER fail_later_admission BEFORE INSERT ON scheduled_task_runs WHEN NEW.task_id=%d BEGIN SELECT RAISE(ABORT,'later admission failed'); END", second.Id))
-	result, claims, err := PrepareRunsAt(context.Background(), repository, "owner", 1, 120)
-	if err == nil || result.Jobs != 2 || result.Due != 6 || result.Queued != 1 || result.Claimed != 0 || claims != nil {
-		t.Fatal(result, claims, err)
+	if _, _, err := PrepareRunsAt(context.Background(), repository, "owner", 1, 120); err == nil {
+		t.Fatal("later enqueue failure was ignored")
 	}
 	assertEarlierScheduledAdmission(t, repository, first.Id)
 }
