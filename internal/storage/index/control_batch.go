@@ -48,12 +48,6 @@ func ReadBatchJournalState(ctx context.Context, connection *sql.Conn, catalog, p
 	if err := connection.QueryRowContext(ctx, "SELECT COUNT(*) FROM provider_run_checkpoints WHERE catalog_name=?1 AND provider_name=?2 AND batch_id=?3", catalog, provider, batch).Scan(&inFlight); err != nil {
 		return result, err
 	}
-	if completed < 0 {
-		return result, invalidSync("same-batch completed journal count is invalid")
-	}
-	if inFlight < 0 {
-		return result, invalidSync("same-batch in-flight journal count is invalid")
-	}
 	return BatchJournalState{uint64(completed), uint64(inFlight)}, nil
 }
 
