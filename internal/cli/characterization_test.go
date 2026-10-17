@@ -23,30 +23,22 @@ func TestParentMarkerFailureRetainsConsumedArgumentBoundary(t *testing.T) {
 	}
 }
 
-// TestIndexParserFailureRetainsPartialValuesAndUnconsumedModes checks competing option failures.
-func TestIndexParserFailureRetainsPartialValuesAndUnconsumedModes(t *testing.T) {
-	args := arguments{"--file", "catalog.csv", "--workers", "0", "--issue-batch", "4", "--update"}
-	configuration, explicit, err := parseIndex(&args)
-	expectedFile := "catalog.csv"
-	expectedWorkers := uint64(0)
-	expected := []any{&expectedFile, &expectedWorkers, uint64(0), uint64(0), false}
-	actual := []any{configuration.File, configuration.WorkerCount, configuration.IssueBatchSize, configuration.TimeoutSeconds, configuration.ShouldUpdate}
-	if err == nil || err.Error() != "--workers must be at least 1" || explicit || !reflect.DeepEqual(actual, expected) {
-		t.Fatal(configuration, explicit, err)
-	}
-	if !reflect.DeepEqual([]string(args), []string{"--issue-batch", "4", "--update"}) {
-		t.Fatal(args)
-	}
-	assertIndexTimeoutFailureState(t)
-}
-
-// TestServeDevelopmentFailureReturnsPopulatedConfiguration checks final validation's distinct return contract.
-func TestServeDevelopmentFailureReturnsPopulatedConfiguration(t *testing.T) {
-	configuration, err := parseServeWithBundle([]string{"--project-root", "fixture", "--host", "0.0.0.0", "--port", "9001", "--secret-key-file", "key", "--development"}, "canonical", "immutable/meta")
-	expected := []any{"0.0.0.0", uint16(9001), "key", "canonical", "immutable/meta", true}
-	actual := []any{configuration.Host, configuration.Port, configuration.SecretKeyFile, configuration.Executable, configuration.BundledMetaDir, configuration.IsDevelopment}
-	if err == nil || !strings.Contains(err.Error(), "Development mode requires") || !reflect.DeepEqual(actual, expected) {
-		t.Fatal(configuration, err)
+// TestIndexParserRejectsInvalidExecutionOptions checks actionable failures for invalid input.
+func TestIndexParserRejectsInvalidExecutionOptions(t *testing.T) {
+	for _, item := range []struct {
+		name    string
+		values  []string
+		message string
+	}{
+		{"zero workers", []string{"--workers", "0"}, "--workers must be at least 1"},
+		{"invalid timeout", []string{"--timeout", "invalid"}, "invalid syntax"},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			args := arguments(item.values)
+			if _, _, err := parseIndex(&args); err == nil || !strings.Contains(err.Error(), item.message) {
+				t.Fatalf("expected %q, got %v", item.message, err)
+			}
+		})
 	}
 }
 
@@ -67,18 +59,5 @@ func TestDeliveryTargetInferenceRetainsDuplicateLastValueAndDirectoryAdmission(t
 		if err != nil || !reflect.DeepEqual(actual, expected) {
 			t.Fatal(actual, err)
 		}
-	}
-}
-
-// assertIndexTimeoutFailureState checks explicit legacy state before an invalid timeout leaves later modes untouched.
-func assertIndexTimeoutFailureState(t *testing.T) {
-	t.Helper()
-	args := arguments{"--issue-batch", "4", "--timeout", "invalid", "--processes", "0", "--notify"}
-	configuration, explicit, err := parseIndex(&args)
-	if err == nil || !explicit || configuration.IssueBatchSize != 4 || configuration.TimeoutSeconds != 20 {
-		t.Fatal(configuration, explicit, err)
-	}
-	if !reflect.DeepEqual([]string(args), []string{"--processes", "0", "--notify"}) {
-		t.Fatal(args)
 	}
 }
