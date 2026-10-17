@@ -51,9 +51,6 @@ jobs:
       - name: Verify native compiler
         run: gcc --version
 
-      - name: Build pinned search tokenizer
-        run: node scripts/build-simple-tokenizer.mjs --compatibility-oracle
-
       - name: Run Go static, regular and race checks
         run: node scripts/check-go.mjs
 
