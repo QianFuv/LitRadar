@@ -2,44 +2,43 @@ package sources
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sync/atomic"
 	"testing"
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/internal/provider"
 	"github.com/QianFuv/LitRadar/internal/sources/cnki"
 	"github.com/QianFuv/LitRadar/internal/sources/scholarly"
 )
 
-// observedCnkiError records error traversal to distinguish selected and ignored failures.
-type observedCnkiError struct {
-	visits *int
-}
-
-// Error returns fixture text without traversing the wrapped error.
-func (failure observedCnkiError) Error() string { return "observed CNKI failure" }
-
-// Unwrap observes one classification pass and exposes the same transient source failure.
-func (failure observedCnkiError) Unwrap() error {
-	*failure.visits++
-	return &cnki.Error{Kind: "Request"}
-}
-
-// TestCnkiOnlySelectedFailureIsMapped preserves classification calls for discarded later failures.
-func TestCnkiOnlySelectedFailureIsMapped(t *testing.T) {
-	index, state := newCnkiIndexTest(t, []any{cnkiTestRow("A"), cnkiTestRow("B")}, 1)
-	firstVisits, laterVisits := 0, 0
-	state.detail = func(url string) (any, error) {
-		if url == "A" {
-			return nil, observedCnkiError{&firstVisits}
-		}
-		return nil, observedCnkiError{&laterVisits}
-	}
-	var cache *cnkiPageCache
-	attempts := []scholarly.Attempt{}
-	_, err := index.fetchBatch(context.Background(), domain.JournalCatalogEntry{CatalogId: "J"}, domain.IndexFetchContext{}, &attempts, &cache)
-	if err == nil || firstVisits != 2 || laterVisits != 1 {
-		t.Fatal("discarded failure was mapped", err, firstVisits, laterVisits)
+// TestCnkiReturnsFirstOrdinalFailure preserves error selection and safe provider classification.
+func TestCnkiReturnsFirstOrdinalFailure(t *testing.T) {
+	for _, entry := range []struct {
+		firstKind string
+		laterKind string
+		wantKind  provider.ErrorKind
+	}{
+		{"Parse", "Request", provider.InvalidResponse},
+		{"Request", "Parse", provider.TemporarilyUnavailable},
+	} {
+		t.Run(entry.firstKind, func(t *testing.T) {
+			index, state := newCnkiIndexTest(t, []any{cnkiTestRow("A"), cnkiTestRow("B")}, 1)
+			state.detail = func(url string) (any, error) {
+				if url == "A" {
+					return nil, &cnki.Error{Kind: entry.firstKind}
+				}
+				return nil, &cnki.Error{Kind: entry.laterKind}
+			}
+			var cache *cnkiPageCache
+			attempts := []scholarly.Attempt{}
+			_, err := index.fetchBatch(context.Background(), domain.JournalCatalogEntry{CatalogId: "J"}, domain.IndexFetchContext{}, &attempts, &cache)
+			var failure *provider.Error
+			if !errors.As(err, &failure) || failure.Kind != entry.wantKind || failure.Message != "domestic CNKI provider request failed" {
+				t.Fatal("first ordinal failure was not preserved", err)
+			}
+		})
 	}
 }
 
