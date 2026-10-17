@@ -301,9 +301,6 @@ func yearAgrees(year *int64, date *string) bool {
 	if year == nil || date == nil {
 		return true
 	}
-	if len(*date) < 4 {
-		return false
-	}
 	parsed, err := strconv.ParseInt((*date)[:4], 10, 64)
 	return err == nil && parsed == *year
 }
