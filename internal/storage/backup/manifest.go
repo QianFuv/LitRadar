@@ -353,9 +353,6 @@ func validateDatabaseComponent(ctx context.Context, item Component, filename str
 	if err != nil {
 		return err
 	}
-	if item.SchemaVersion == nil {
-		return failure("manifest", "database schema version is missing")
-	}
 	maximum := int64(indexschema.Version)
 	if item.Kind == "auth_database" {
 		maximum = 20
