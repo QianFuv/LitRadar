@@ -100,7 +100,6 @@ export function readSelectedDatabase(): string {
   const legacySelectedDatabase = readLocalStorageValue(LEGACY_SELECTED_DATABASE_KEY);
   if (legacySelectedDatabase) {
     storeSelectedDatabase(legacySelectedDatabase);
-    removeLocalStorageValue(LEGACY_SELECTED_DATABASE_KEY);
     return legacySelectedDatabase;
   }
   return DEFAULT_DATABASE;

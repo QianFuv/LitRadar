@@ -149,7 +149,7 @@ app/
 
 浏览器 API 请求默认 `credentials: include`，登录令牌只存在后端设置的 `litradar_session` HttpOnly Cookie 中。设置中心创建的 Bearer 访问令牌用于外部客户端，不作为前端登录态存入 Web Storage。
 
-旧版搜索历史键 `search_history` 会一次性迁移到新命名空间并删除；其他升级前的浏览器键不会被读取或复制。升级后用户需要重新登录，数据库选择会在新命名空间中重新建立。
+旧版搜索历史键 `search_history` 和数据库选择键 `selected_database` 会迁移到对应的新命名空间并删除；其他升级前的浏览器键不会被读取或复制。升级后用户需要重新登录。
 
 Web Storage helper 会容忍 SSR、隐私模式和 quota 错误；调用方不应假定写入必然成功。
 
