@@ -275,7 +275,7 @@ func publicError(err error) string {
 	if errors.As(err, &invalid) || errors.As(err, &missing) || errors.As(err, &sort) || errors.As(err, &business) {
 		return err.Error()
 	}
-	for _, known := range []error{config.ErrNoDatabases, config.ErrNotFound, config.ErrMultipleDatabases, config.ErrInvalidName, query.ErrInvalidCursor, query.ErrInvalidSearchExpression, query.ErrUnsupportedArticleSort, query.ErrLegacyWeeklyLimit, favorites.ErrDuplicateFolder, favorites.ErrFolderNotFound, favorites.ErrSourceFolderNotFound, favorites.ErrTargetFolderNotFound, favorites.ErrSameFolders, favorites.ErrCursor, errFavoriteNotFound} {
+	for _, known := range []error{config.ErrNoDatabases, config.ErrNotFound, config.ErrMultipleDatabases, config.ErrInvalidName, query.ErrInvalidCursor, query.ErrInvalidSearchExpression, query.ErrUnsupportedArticleSort, query.ErrLegacyWeeklyLimit, favorites.ErrFolderNotFound, errFavoriteNotFound} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}
