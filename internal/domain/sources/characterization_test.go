@@ -1,7 +1,6 @@
 package sources
 
 import (
-	"bytes"
 	"encoding/json"
 	"math"
 	"reflect"
@@ -29,15 +28,13 @@ func TestNumberVariantsPreserveIdentity(t *testing.T) {
 	}
 }
 
-// TestJsonFailurePreservesOrderedPrefix pins sorted-key admission before value errors.
-func TestJsonFailurePreservesOrderedPrefix(t *testing.T) {
-	var output bytes.Buffer
-	output.WriteString("prefix:")
-	err := appendJson(&output, map[string]any{"z": make(chan int), "a": []any{true, "\xff"}})
-	if err == nil || err.Error() != "source JSON string is not UTF-8" || output.String() != `prefix:{"a":[true,` {
-		t.Fatal(output.String(), err)
+// TestJsonFailureReportsFirstOrderedError preserves sorted-key error priority without partial output.
+func TestJsonFailureReportsFirstOrderedError(t *testing.T) {
+	encoded, err := Json(map[string]any{"z": make(chan int), "a": []any{true, "\xff"}})
+	if err == nil || err.Error() != "source JSON string is not UTF-8" || encoded != nil {
+		t.Fatal(string(encoded), err)
 	}
-	encoded, err := Json([]any{[]any(nil), map[string]any(nil)})
+	encoded, err = Json([]any{[]any(nil), map[string]any(nil)})
 	if err != nil || string(encoded) != "[[],{}]" {
 		t.Fatal(string(encoded), err)
 	}
