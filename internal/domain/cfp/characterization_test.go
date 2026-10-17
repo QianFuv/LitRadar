@@ -231,17 +231,17 @@ func TestDateClausesPreserveAmbiguityAndMetadata(t *testing.T) {
 	}
 }
 
-// TestDefaultSliceDecodingDoesNotClearOmittedPointers fixes decoding into an existing target.
-func TestDefaultSliceDecodingDoesNotClearOmittedPointers(t *testing.T) {
-	type payload struct {
-		Optional *string  `json:"optional"`
-		Items    []string `json:"items" default:"true"`
-	}
-	actual := payload{testPointer("retained"), []string{"old"}}
-	if err := decodeStruct([]byte(`{}`), &actual, true); err != nil {
+// TestSourceReplacementClearsOmittedOptionalFields prevents stale source metadata after a successful decode.
+func TestSourceReplacementClearsOmittedOptionalFields(t *testing.T) {
+	actual := sourceFixture()
+	actual.EntryStage = testPointer(Paper)
+	actual.TimeZone = testPointer("Asia/Shanghai")
+	actual.StatusText = testPointer("open")
+	input := `{"catalogIds":["journal"],"journalTitle":"Journal","title":"Replacement","typeText":"special issue","dateText":"","sourceUrl":"https://example.org/call","checkedOn":"2026-01-01"}`
+	if err := json.Unmarshal([]byte(input), &actual); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(actual, payload{testPointer("retained"), []string{}}) {
+	if actual.Title != "Replacement" || actual.EntryStage != nil || actual.TimeZone != nil || actual.StatusText != nil {
 		t.Fatalf("decoded=%#v", actual)
 	}
 }
