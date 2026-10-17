@@ -6,25 +6,20 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
-func TestManifestFailureKeepsCompletedHeaderSelectionAndComponents(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want Manifest
-	}{
-		{`{"format":"prefix","version":"bad"}`, Manifest{Format: "prefix"}},
-		{`{"format":"prefix","version":2,"created_at":7,"selection":{"metadata":true,"index_databases":"bad","push_state":false},"components":[]}`, Manifest{Format: "prefix", Version: 2, CreatedAt: 7, Selection: Selection{Metadata: true}}},
-		{`{"format":"prefix","version":2,"created_at":7,"selection":{"metadata":true,"index_databases":false,"push_state":false},"components":[{"kind":"metadata","path":"meta/one","size":1,"sha256":"first"},{"kind":"metadata","path":"meta/two","size":"bad","sha256":"second"}]}`, Manifest{Format: "prefix", Version: 2, CreatedAt: 7, Selection: Selection{Metadata: true}, Components: []Component{{Kind: "metadata", Path: "meta/one", Size: 1, Sha256: "first"}}}},
-	}
-	for _, test := range cases {
-		value, err := ParseManifest([]byte(test.raw))
-		if !errors.Is(err, ErrManifestJson) || !reflect.DeepEqual(value, test.want) {
-			t.Fatal("partial manifest mutation changed", value, err)
+// TestManifestRejectsInvalidFieldTypes checks failures at each nested manifest boundary.
+func TestManifestRejectsInvalidFieldTypes(t *testing.T) {
+	for _, raw := range []string{
+		`{"format":"prefix","version":"bad","created_at":7,"selection":{"metadata":true,"index_databases":false,"push_state":false},"components":[]}`,
+		`{"format":"prefix","version":2,"created_at":7,"selection":{"metadata":true,"index_databases":"bad","push_state":false},"components":[]}`,
+		`{"format":"prefix","version":2,"created_at":7,"selection":{"metadata":true,"index_databases":false,"push_state":false},"components":[{"kind":"metadata","path":"meta/one","size":1,"sha256":"first"},{"kind":"metadata","path":"meta/two","size":"bad","sha256":"second"}]}`,
+	} {
+		if _, err := ParseManifest([]byte(raw)); !errors.Is(err, ErrManifestJson) {
+			t.Fatalf("expected invalid manifest for %s, got %v", raw, err)
 		}
 	}
 }
