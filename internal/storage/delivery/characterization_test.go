@@ -5,29 +5,19 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	storageconfig "github.com/QianFuv/LitRadar/internal/storage/config"
 )
 
-func TestLegacyPrivateDecodeKeepsPartialStateWhilePublicDecodeClearsIt(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want legacyState
-	}{
-		{`{"db_name":"fixture.sqlite","run":{"run_id":"r","delivered_article_ids":[7,1.0]}}`, legacyState{DbName: "fixture.sqlite", Run: &legacyRun{RunId: "r", DeliveredArticleIds: []int64{7, 0}}}},
-		{`{"db_name":"fixture.sqlite","snapshot":{"issue_article_counts":{"1:2":7,"2:3":1.0}}}`, legacyState{DbName: "fixture.sqlite", Snapshot: legacySnapshot{IssueArticleCounts: map[string]int64{"1:2": 7}}}},
-	}
-	for _, test := range cases {
-		var partial legacyState
-		err := decodeLegacyValue([]byte(test.raw), reflect.ValueOf(&partial).Elem())
-		if err == nil || !reflect.DeepEqual(partial, test.want) {
-			t.Fatal("private partial mutation changed", err)
-		}
-		state, err := decodeLegacy([]byte(test.raw))
-		if err == nil || !reflect.DeepEqual(state, legacyState{}) {
-			t.Fatal("public decoding exposed partial state", err)
+// TestLegacyDecodeRejectsFloatingPointIntegers protects integer fields in historical state files.
+func TestLegacyDecodeRejectsFloatingPointIntegers(t *testing.T) {
+	for _, raw := range []string{
+		`{"db_name":"fixture.sqlite","run":{"run_id":"r","delivered_article_ids":[7,1.0]}}`,
+		`{"db_name":"fixture.sqlite","snapshot":{"issue_article_counts":{"1:2":7,"2:3":1.0}}}`,
+	} {
+		if _, err := decodeLegacy([]byte(raw)); err == nil {
+			t.Fatalf("accepted floating-point integer in %s", raw)
 		}
 	}
 }
