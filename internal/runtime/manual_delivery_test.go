@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net"
 	"os"
@@ -45,6 +46,62 @@ func TestManualDispatchSpawnFailureFinalizesOnlyQueuedRun(t *testing.T) {
 	stored, err := dispatcher.repository.LoadRun(context.Background(), run.Id)
 	if err != nil || stored.Status != delivery.RunStatusFailed || stored.ErrorCode == nil || *stored.ErrorCode != "spawn_or_assign_failed" || len(dispatcher.children) != 0 {
 		t.Fatal("spawn failure lost durable classification", stored, err)
+	}
+}
+
+// TestManualFinalizationReportsPersistenceFailure prevents failed durable writes from appearing successful.
+func TestManualFinalizationReportsPersistenceFailure(t *testing.T) {
+	for _, scenario := range []string{"forced owner", "forced queued deadline", "queued deadline", "spawn failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			prepared, run := manualFixture(t)
+			dispatcher := manualDispatcher{configuration: prepared.configuration, repository: prepared.services.Delivery}
+			dispatcher.configuration.Executable = filepath.Join(t.TempDir(), "missing-binary")
+			active := &manualChild{runId: run.Id, ownerId: "owner", stopKind: "deadline"}
+			if scenario == "forced owner" {
+				if _, err := dispatcher.repository.ClaimRun(context.Background(), run.Id, active.ownerId, run.Revision, unixTime(), 300); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := prepared.services.Auth.WithConnection(context.Background(), func(connection *sql.Conn) error {
+				if scenario == "queued deadline" {
+					if _, err := connection.ExecContext(context.Background(), "UPDATE delivery_runs SET created_at=?,deadline_at=? WHERE id=?", unixTime()-2, unixTime()-1, run.Id); err != nil {
+						return err
+					}
+				}
+				_, err := connection.ExecContext(context.Background(), "CREATE TRIGGER reject_terminal_write BEFORE UPDATE OF status ON delivery_runs BEGIN SELECT RAISE(ABORT, 'injected storage failure'); END")
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if strings.HasPrefix(scenario, "forced") {
+				err = dispatcher.finalizeForced(active)
+			} else {
+				err = dispatcher.dispatch(1)
+			}
+			if err == nil {
+				t.Fatal("terminal persistence failure was ignored")
+			}
+			if strings.Contains(err.Error(), "injected") {
+				t.Fatal("storage failure detail was exposed", err)
+			}
+		})
+	}
+}
+
+// TestExpiredManualCandidatePreservesConcurrentClaim keeps stale queued observations from stopping dispatch.
+func TestExpiredManualCandidatePreservesConcurrentClaim(t *testing.T) {
+	prepared, run := manualFixture(t)
+	dispatcher := manualDispatcher{repository: prepared.services.Delivery}
+	if _, err := dispatcher.repository.ClaimRun(context.Background(), run.Id, "replacement", run.Revision, unixTime(), 300); err != nil {
+		t.Fatal(err)
+	}
+	if isExpired, err := dispatcher.expireQueuedManualCandidate(*run, *run.DeadlineAt); err != nil || !isExpired {
+		t.Fatal("concurrent claim was treated as a persistence failure", isExpired, err)
+	}
+	stored, err := dispatcher.repository.LoadRun(context.Background(), run.Id)
+	if err != nil || stored.OwnerId == nil || *stored.OwnerId != "replacement" || stored.Status != delivery.RunStatusClaimed {
+		t.Fatal("stale candidate changed replacement ownership", stored, err)
 	}
 }
 

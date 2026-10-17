@@ -102,7 +102,11 @@ func (dispatcher *manualDispatcher) dispatch(concurrency int) error {
 		if isActive {
 			continue
 		}
-		if dispatcher.expireQueuedManualCandidate(candidate, now) {
+		isExpired, err := dispatcher.expireQueuedManualCandidate(candidate, now)
+		if err != nil {
+			return err
+		}
+		if isExpired {
 			continue
 		}
 		active, err := dispatcher.spawn(candidate.Id)
@@ -113,7 +117,9 @@ func (dispatcher *manualDispatcher) dispatch(concurrency int) error {
 		slog.Error("delivery.dispatcher.spawn_failed", "event", "delivery.dispatcher.spawn_failed", "component", "delivery_dispatcher", "outcome", "failure", "error_kind", "spawn_or_assign_failed", "delivery_run_id", candidate.Id)
 		if candidate.Status == delivery.RunStatusQueued {
 			code := "spawn_or_assign_failed"
-			_, _ = dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.Id, candidate.Revision, delivery.RunStatusFailed, nil, &code, unixTime())
+			if _, err := dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.Id, candidate.Revision, delivery.RunStatusFailed, nil, &code, unixTime()); err != nil && !errors.Is(err, delivery.ErrConflict) {
+				return errors.New("delivery terminal state persistence failed")
+			}
 		}
 	}
 	return nil
@@ -166,7 +172,9 @@ func (dispatcher *manualDispatcher) finalizeForced(active *manualChild) error {
 	if run.Status == delivery.RunStatusQueued {
 		if active.stopKind == "deadline" {
 			code := "deadline_exceeded"
-			_, _ = dispatcher.repository.FinalizeQueuedRun(context.Background(), run.Id, run.Revision, delivery.RunStatusTimedOut, nil, &code, unixTime())
+			if _, err := dispatcher.repository.FinalizeQueuedRun(context.Background(), run.Id, run.Revision, delivery.RunStatusTimedOut, nil, &code, unixTime()); err != nil && !errors.Is(err, delivery.ErrConflict) {
+				return errors.New("delivery terminal state persistence failed")
+			}
 		}
 		return nil
 	}
@@ -178,7 +186,9 @@ func (dispatcher *manualDispatcher) finalizeForced(active *manualChild) error {
 		kind = "termination"
 	}
 	code := "forced_" + kind + "_unknown"
-	_, _ = dispatcher.repository.FinalizeRun(context.Background(), run.Id, active.ownerId, run.Revision, delivery.RunStatusUnknown, nil, &code, unixTime())
+	if _, err := dispatcher.repository.FinalizeRun(context.Background(), run.Id, active.ownerId, run.Revision, delivery.RunStatusUnknown, nil, &code, unixTime()); err != nil && !errors.Is(err, delivery.ErrConflict) {
+		return errors.New("delivery terminal state persistence failed")
+	}
 	return nil
 }
 
@@ -206,14 +216,16 @@ func (dispatcher *manualDispatcher) hasActiveManualRun(runId int64) bool {
 	return isActive
 }
 
-// expireQueuedManualCandidate finalizes expired queued admission using the dispatch tick's captured time.
-func (dispatcher *manualDispatcher) expireQueuedManualCandidate(candidate delivery.RunRecord, now float64) bool {
+// expireQueuedManualCandidate reports persistence failures while allowing concurrent ownership changes.
+func (dispatcher *manualDispatcher) expireQueuedManualCandidate(candidate delivery.RunRecord, now float64) (bool, error) {
 	if candidate.Status == delivery.RunStatusQueued && candidate.DeadlineAt != nil && *candidate.DeadlineAt <= now {
 		code := "deadline_exceeded"
-		_, _ = dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.Id, candidate.Revision, delivery.RunStatusTimedOut, nil, &code, now)
-		return true
+		if _, err := dispatcher.repository.FinalizeQueuedRun(context.Background(), candidate.Id, candidate.Revision, delivery.RunStatusTimedOut, nil, &code, now); err != nil && !errors.Is(err, delivery.ErrConflict) {
+			return true, errors.New("delivery terminal state persistence failed")
+		}
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // beginManualStop preserves deadline priority and the original stop-start timestamp updates.
