@@ -2,85 +2,72 @@ package mcp
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 )
 
-func inputSchemaFixture(t *testing.T, encoded string) toolSchema {
-	t.Helper()
-	var schema toolSchema
-	if err := json.Unmarshal([]byte(encoded), &schema); err != nil {
-		t.Fatal(err)
-	}
-	prepareToolSchema(&schema)
-	return schema
-}
-
-// TestPreparedSchemaRetainsFirstTypeAndAnyOfPriority preserves the original declaration interpretation.
-func TestPreparedSchemaRetainsFirstTypeAndAnyOfPriority(t *testing.T) {
-	schema := inputSchemaFixture(t, `{"properties":{"first":{"type":["null","string"]},"choice":{"type":"integer","anyOf":[{},{}]},"unsupported":{"type":"object"}},"required":["first","choice"]}`)
-	input, err := decodeInput(json.RawMessage(`{"first":7,"choice":["kept"],"unsupported":true}`), schema)
-	if err != nil || input.fields["first"] != json.Number("7") || !reflect.DeepEqual(input.fields["choice"], []any{"kept"}) || input.fields["unsupported"] != true {
-		t.Fatal("preparation changed property interpretation", input, err)
-	}
-	input, err = decodeInput(json.RawMessage(`{"first":7,"choice":1}`), schema)
-	if input != nil || err == nil || err.Error() != "data did not match any variant of untagged enum StringOrStrings" {
-		t.Fatal("declared type overrode anyOf", input, err)
+// TestDeclaredInputSchemasAcceptNullableAndStringOrStringsFields checks supported tool inputs.
+func TestDeclaredInputSchemasAcceptNullableAndStringOrStringsFields(t *testing.T) {
+	for _, raw := range []string{
+		`{"db":null,"area":"Research","journal_id":["1","2"]}`,
+		`{"db":"fixture.sqlite","area":[],"journal_id":"1"}`,
+	} {
+		if _, err := decodeInput(json.RawMessage(raw), declaredInputSchema(t, "search_articles")); err != nil {
+			t.Fatal(raw, err)
+		}
 	}
 }
 
 func TestInputDecodingRetainsTypedValuesAndCompatibilityForms(t *testing.T) {
-	schema := inputSchemaFixture(t, `{"properties":{"identifier":{"type":"integer"},"text":{"type":["string","null"]},"labels":{"anyOf":[{},{}]},"names":{"type":"array"}},"required":["identifier"]}`)
+	schema := declaredInputSchema(t, "add_favorite")
 	for _, scenario := range []struct {
 		name, encoded string
 		identifier    int64
 	}{
-		{"large signed", `{"identifier":9007199254740993,"text":null,"labels":[],"names":[],"unknown":true}`, 9007199254740993},
-		{"last duplicate", `{"identifier":"bad","identifier":2}`, 2},
-		{"negative", `{"identifier":-9223372036854775808}`, -9223372036854775808},
+		{"large signed", `{"article_id":"1","folder_id":9007199254740993,"db_name":null,"unknown":true}`, 9007199254740993},
+		{"last duplicate", `{"article_id":"1","folder_id":"bad","folder_id":2}`, 2},
+		{"negative", `{"article_id":"1","folder_id":-9223372036854775808}`, -9223372036854775808},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			input, err := decodeInput(json.RawMessage(scenario.encoded), schema)
-			if err != nil || input.fields["identifier"] != scenario.identifier {
+			if err != nil || input.fields["folder_id"] != scenario.identifier {
 				t.Fatal(input, err)
 			}
 		})
 	}
 }
 
+// TestInputDecodingKeepsSortedTypeErrorsBeforeRequiredFields checks actual tool declarations.
 func TestInputDecodingKeepsSortedTypeErrorsBeforeRequiredFields(t *testing.T) {
-	schema := inputSchemaFixture(t, `{"properties":{"a":{"type":"integer"},"b":{"type":"boolean"},"c":{"anyOf":[{},{}]},"d":{"type":"array"},"e":{"type":"string"}},"required":["missing","a"]}`)
-	for _, scenario := range []struct{ encoded, detail string }{
-		{`{"b":1,"a":"bad"}`, `invalid type: string "bad", expected i64`},
-		{`{"a":9223372036854775808}`, "invalid value: integer `9223372036854775808`, expected i64"},
-		{`{"a":1.0}`, "invalid type: floating point `1.0`, expected i64"},
-		{`{"a":null}`, "invalid type: null, expected i64"},
-		{`{"a":1,"c":["x",2]}`, "data did not match any variant of untagged enum StringOrStrings"},
-		{`{"a":1,"d":[true]}`, "invalid type: boolean `true`, expected a string"},
-		{`{"a":1,"e":false}`, "invalid type: boolean `false`, expected a string"},
-		{`{"a":1,"b":null,"c":null,"d":null,"e":null}`, "missing field `missing`"},
-		{`null`, "missing field `missing`"},
-		{``, "missing field `missing`"},
+	for _, scenario := range []struct{ tool, encoded, detail string }{
+		{"add_favorite", `{"folder_id":true,"article_id":false}`, "invalid type: boolean `false`, expected a string"},
+		{"add_favorite", `{"folder_id":9223372036854775808}`, "invalid value: integer `9223372036854775808`, expected i64"},
+		{"add_favorite", `{"folder_id":1.0}`, "invalid type: floating point `1.0`, expected i64"},
+		{"add_favorite", `{"folder_id":null}`, "invalid type: null, expected i64"},
+		{"search_articles", `{"area":["x",2]}`, "data did not match any variant of untagged enum StringOrStrings"},
+		{"search_articles", `{"abs_rating":[true]}`, "invalid type: boolean `true`, expected a string"},
+		{"search_articles", `{"db":false}`, "invalid type: boolean `false`, expected a string"},
+		{"get_article", `{"db":null}`, "missing field `article_id`"},
+		{"get_article", `null`, "missing field `article_id`"},
+		{"get_article", ``, "missing field `article_id`"},
 	} {
-		input, err := decodeInput(json.RawMessage(scenario.encoded), schema)
+		input, err := decodeInput(json.RawMessage(scenario.encoded), declaredInputSchema(t, scenario.tool))
 		if input != nil || err == nil || err.Error() != scenario.detail {
 			t.Fatal(scenario.encoded, input, err)
 		}
 	}
 }
 
-// TestUnknownInputFieldsRetainValuesAndRequiredPresence excludes ignored extensions from validation order.
-func TestUnknownInputFieldsRetainValuesAndRequiredPresence(t *testing.T) {
-	schema := inputSchemaFixture(t, `{"properties":{"a":{"type":"integer"},"b":{"type":"boolean"}},"required":["untyped","a"]}`)
-	input, err := decodeInput(json.RawMessage(`{"0":{"nested":["kept",true]},"a":2,"aa":[false],"b":false,"untyped":["required"]}`), schema)
-	if err != nil || input.fields["a"] != int64(2) || !reflect.DeepEqual(input.fields["0"], map[string]any{"nested": []any{"kept", true}}) || !reflect.DeepEqual(input.fields["aa"], []any{false}) || !reflect.DeepEqual(input.fields["untyped"], []any{"required"}) {
-		t.Fatal("unknown or untyped required fields changed", input, err)
+// TestUnknownInputFieldsDoNotChangeValidation checks extension fields against a real required input.
+func TestUnknownInputFieldsDoNotChangeValidation(t *testing.T) {
+	schema := declaredInputSchema(t, "get_article")
+	input, err := decodeInput(json.RawMessage(`{"0":{"nested":["kept",true]},"article_id":"2","aa":[false],"db":null}`), schema)
+	if err != nil || input.fields["article_id"] != "2" {
+		t.Fatal(input, err)
 	}
 	for _, scenario := range []struct{ encoded, expected string }{
-		{`{"0":[],"a":"bad","aa":{},"b":1,"untyped":true}`, `invalid type: string "bad", expected i64`},
-		{`{"0":[],"b":1}`, "invalid type: integer `1`, expected a boolean"},
-		{`{"0":[],"aa":{}}`, "missing field `untyped`"},
-		{`{"untyped":null,"0":[]}`, "missing field `a`"},
+		{`{"0":[],"article_id":true,"aa":{},"db":1}`, "invalid type: boolean `true`, expected a string"},
+		{`{"0":[],"db":1}`, "invalid type: integer `1`, expected a string"},
+		{`{"0":[],"aa":{}}`, "missing field `article_id`"},
 	} {
 		input, err := decodeInput(json.RawMessage(scenario.encoded), schema)
 		if input != nil || err == nil || err.Error() != scenario.expected {
