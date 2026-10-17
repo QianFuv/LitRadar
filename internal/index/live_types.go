@@ -14,6 +14,7 @@ import (
 // LiveConfig receives resolved deployment settings without introducing defaults over explicit caller values.
 type LiveConfig struct {
 	ApplicationExecutable, ProjectRoot, SecretKeyFile                                                          string
+	AuthDbPath                                                                                                 string
 	File, StopAfter                                                                                            *string
 	WorkerCount, ProcessCount                                                                                  *uint64
 	IssueBatchSize, TimeoutSeconds                                                                             uint64

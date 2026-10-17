@@ -227,9 +227,16 @@ func (recovery *batchCatalogRecovery) notify(run notifyRunner) (storage.NotifyHa
 	return handoff, nil
 }
 
-// recordNotification persists failures before reporting them, with recorder errors taking precedence.
+// recordNotification preserves the selected auth store and persists failures before reporting them.
 func (recovery *batchCatalogRecovery) recordNotification(run notifyRunner, handoff storage.NotifyHandoffState) (storage.NotifyHandoffState, error) {
-	observed, err := run(recovery.ctx, NotifyProcessConfig{recovery.config.ApplicationExecutable, recovery.config.SecretKeyFile, recovery.config.ProjectRoot, recovery.config.IsNotifyDryRun}, catalogDatabaseName(recovery.input), filepath.Join(recovery.config.ProjectRoot, recovery.intent.Path), handoff.AttemptId)
+	options := NotifyProcessConfig{
+		Executable:    recovery.config.ApplicationExecutable,
+		SecretKeyFile: recovery.config.SecretKeyFile,
+		ProjectRoot:   recovery.config.ProjectRoot,
+		AuthDbPath:    recovery.config.AuthDbPath,
+		IsDryRun:      recovery.config.IsNotifyDryRun,
+	}
+	observed, err := run(recovery.ctx, options, catalogDatabaseName(recovery.input), filepath.Join(recovery.config.ProjectRoot, recovery.intent.Path), handoff.AttemptId)
 	if err != nil {
 		if _, recordError := storage.RecordNotifyAttemptResult(recovery.ctx, recovery.connection, recovery.batch.BatchId, recovery.batch.OwnerId, recovery.stored.Ordinal, handoff.AttemptId, storage.NotifyFailed, nil, time.Now().Unix()); recordError != nil {
 			return storage.NotifyHandoffState{}, recordError

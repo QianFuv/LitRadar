@@ -74,12 +74,16 @@ func readNotifyOutput(reader io.Reader) ([]byte, bool, error) {
 // NotifyProcessConfig contains local invocation paths; no secret contents are serialized.
 type NotifyProcessConfig struct {
 	Executable, SecretKeyFile, ProjectRoot string
+	AuthDbPath                             string
 	IsDryRun                               bool
 }
 
-// RunNotifyProcess drains all output while retaining at most 64 KiB and always closes native tree ownership.
+// RunNotifyProcess forwards the selected auth store, bounds retained output and closes native tree ownership.
 func RunNotifyProcess(ctx context.Context, config NotifyProcessConfig, database, manifest, attempt string) (NotifyObservation, error) {
 	arguments := []string{"notify", "--secret-key-file", config.SecretKeyFile, "--db", database, "--changes-file", manifest, "--project-root", config.ProjectRoot, "--attempt-id", attempt, "--internal-handoff-json"}
+	if config.AuthDbPath != "" {
+		arguments = append(arguments, "--auth-db", config.AuthDbPath)
+	}
 	if config.IsDryRun {
 		arguments = append(arguments, "--dry-run")
 	}

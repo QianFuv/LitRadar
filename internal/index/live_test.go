@@ -117,17 +117,21 @@ func TestLiveResumePublishesFrozenIntentAfterFilesystemFailure(t *testing.T) {
 	assertRecoveredLiveManifest(t, recovered)
 }
 
-// TestLiveUnknownNotificationRequiresAcknowledgmentAndNewAttempt checks ambiguous handoffs require explicit acknowledgment before retry.
+// TestLiveUnknownNotificationRequiresAcknowledgmentAndNewAttempt checks acknowledgment and auth database preservation across retries.
 func TestLiveUnknownNotificationRequiresAcknowledgmentAndNewAttempt(t *testing.T) {
 	ctx := context.Background()
 	config := liveFixture(t, "alpha")
 	config.ShouldNotify = true
+	config.AuthDbPath = filepath.Join(config.ProjectRoot, "private auth", "auth.sqlite")
 	fetches, notifications := 0, []string{}
 	run := liveRunner(t, func(ctx context.Context, entry domain.JournalCatalogEntry, fetch domain.IndexFetchContext) (domain.ProviderBatch, error) {
 		fetches++
 		return liveBatch(entry), nil
 	})
 	notify := func(ctx context.Context, options NotifyProcessConfig, database, manifest, attempt string) (NotifyObservation, error) {
+		if options.AuthDbPath != config.AuthDbPath {
+			t.Fatalf("notification lost auth database: got %q want %q", options.AuthDbPath, config.AuthDbPath)
+		}
 		if database != "alpha.sqlite" {
 			t.Fatalf("database=%s", database)
 		}

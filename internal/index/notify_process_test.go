@@ -34,6 +34,9 @@ func runNotifyChildFixture(mode string) {
 	if invalidNotifyChildFixtureArguments(options) {
 		os.Exit(91)
 	}
+	if options["--auth-db"] != os.Getenv("LITRADAR_NOTIFY_EXPECTED_AUTH_DB") {
+		os.Exit(94)
+	}
 	if mode == "wait" {
 		time.Sleep(time.Minute)
 		return
@@ -66,7 +69,7 @@ func TestActualNotificationProcessDrainsAndClassifies(t *testing.T) {
 			t.Setenv("LITRADAR_NOTIFY_CHILD_FIXTURE", item.mode)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			observed, err := RunNotifyProcess(ctx, NotifyProcessConfig{executable, "private-key-path", "project-root", item.isDryRun}, "catalog.sqlite", "manifest-path", "current-attempt")
+			observed, err := RunNotifyProcess(ctx, NotifyProcessConfig{Executable: executable, SecretKeyFile: "private-key-path", ProjectRoot: "project-root", IsDryRun: item.isDryRun}, "catalog.sqlite", "manifest-path", "current-attempt")
 			if err != nil || observed.Status != item.status || observed.ExitCode == nil || *observed.ExitCode != item.exit {
 				t.Fatalf("observed=%+v err=%v", observed, err)
 			}
@@ -82,7 +85,7 @@ func TestActualNotificationCancellationAndSpawnFailure(t *testing.T) {
 	t.Setenv("LITRADAR_NOTIFY_CHILD_FIXTURE", "wait")
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	observed, err := RunNotifyProcess(ctx, NotifyProcessConfig{executable, "private-key-path", "project-root", false}, "catalog.sqlite", "manifest-path", "current-attempt")
+	observed, err := RunNotifyProcess(ctx, NotifyProcessConfig{Executable: executable, SecretKeyFile: "private-key-path", ProjectRoot: "project-root"}, "catalog.sqlite", "manifest-path", "current-attempt")
 	if err != nil || observed.Status != storage.NotifyUnknown || ctx.Err() == nil {
 		t.Fatalf("observed=%+v err=%v context=%v", observed, err, ctx.Err())
 	}

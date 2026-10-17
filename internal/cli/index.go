@@ -214,7 +214,7 @@ type indexInvocation struct {
 	isLegacyBatchExplicit bool
 }
 
-// parseIndexInvocation retains storage, key-option, execution and leftover admission order.
+// parseIndexInvocation preserves admission order and carries the resolved auth store into notifications.
 func parseIndexInvocation(args *arguments) (indexInvocation, error) {
 	storage, err := args.storage()
 	if err != nil {
@@ -231,6 +231,7 @@ func parseIndexInvocation(args *arguments) (indexInvocation, error) {
 	if len(*args) != 0 {
 		return indexInvocation{}, fmt.Errorf("unexpected index arguments: %s", strings.Join(*args, " "))
 	}
+	configuration.AuthDbPath = storage.AuthDbPath
 	return indexInvocation{storage, keyOption, configuration, isLegacyBatchExplicit}, nil
 }
 
