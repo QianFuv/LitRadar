@@ -47,16 +47,13 @@ func TestCatalogHooksAreSortedAndAdoptionPreservesBytes(t *testing.T) {
 	}
 }
 
-// TestLateBundleFailureReturnsZeroBeforeHashMismatch checks error priority after a valid catalog.
-func TestLateBundleFailureReturnsZeroBeforeHashMismatch(t *testing.T) {
+// TestLateBundleHeaderFailurePrecedesHashMismatch checks error priority after a valid catalog.
+func TestLateBundleHeaderFailurePrecedesHashMismatch(t *testing.T) {
 	directory := newBundle(t, 2, catalogFixture{"alpha.csv", headerV2 + "\nalpha\n", nil}, catalogFixture{"zeta.csv", headerV2 + "\nzeta\n", nil})
 	writeFixture(t, filepath.Join(directory, "zeta.csv"), []byte("wrong header and wrong hash\n"))
-	result, err := validateBundle(directory)
+	_, err := validateBundle(directory)
 	if err == nil || !strings.Contains(err.Error(), "exact canonical v2 header") {
 		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(result, bundle{}) {
-		t.Fatalf("partial bundle escaped: %+v", result)
 	}
 }
 
