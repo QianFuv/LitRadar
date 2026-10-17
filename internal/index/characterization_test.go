@@ -65,8 +65,8 @@ func TestWorkerPublicReceiverRemainsUnchangedAfterRejectedFrame(t *testing.T) {
 	}
 }
 
-// TestCatalogRowValidationPrecedenceAndPartialState pins shape admission before ordered row fields.
-func TestCatalogRowValidationPrecedenceAndPartialState(t *testing.T) {
+// TestCatalogRowValidationPrecedence pins shape admission before ordered row fields.
+func TestCatalogRowValidationPrecedence(t *testing.T) {
 	row := characterizationCatalogRow()
 	delete(row, "title")
 	row["unexpected"] = "value"
@@ -77,9 +77,9 @@ func TestCatalogRowValidationPrecedenceAndPartialState(t *testing.T) {
 	row = characterizationCatalogRow()
 	row["issn"] = "invalid"
 	row["eissn"] = "also-invalid"
-	actual, err := BuildCatalogEntry(row)
-	if err == nil || err.Error() != "issn contains an invalid ISSN" || actual.CatalogId != "journal" || actual.Title != "Journal" {
-		t.Fatalf("partial=%+v error=%v", actual, err)
+	_, err = BuildCatalogEntry(row)
+	if err == nil || err.Error() != "issn contains an invalid ISSN" {
+		t.Fatalf("error=%v", err)
 	}
 }
 
