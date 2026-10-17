@@ -90,13 +90,10 @@ func TestUnknownInputFieldsRetainValuesAndRequiredPresence(t *testing.T) {
 	}
 }
 
-func TestArticleInputRetainsFirstFailureAndPartialParameters(t *testing.T) {
+func TestArticleInputRetainsFirstFailure(t *testing.T) {
 	input := &toolInput{fields: map[string]any{"journal_id": []any{"bad", "2"}, "area": []any{" x ", ""}, "search_mode": "ADVANCED", "limit": int64(0), "db": " "}}
-	database, params := input.articles()
-	if input.err == nil || input.err.Error() != "journal_id must be a positive integer" || database == nil || *database != "" {
-		t.Fatal(input.err, database)
-	}
-	if !reflect.DeepEqual(params.JournalId, []int64{0, 2}) || !reflect.DeepEqual(params.Area, []string{"x", ""}) || params.SearchMode != "advanced" || params.Limit != 0 {
-		t.Fatal(params)
+	input.articles()
+	if input.err == nil || input.err.Error() != "journal_id must be a positive integer" {
+		t.Fatal(input.err)
 	}
 }

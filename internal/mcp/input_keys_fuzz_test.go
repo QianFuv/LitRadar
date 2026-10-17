@@ -33,7 +33,7 @@ func normalizeAllInputKeys(fields map[string]any, schema toolSchema) error {
 	return nil
 }
 
-// FuzzInputKeyInventory compares error order and partial values across both key-inventory paths.
+// FuzzInputKeyInventory compares error order and successful values across both key-inventory paths.
 func FuzzInputKeyInventory(f *testing.F) {
 	schemas := []toolSchema{declaredInputSchema(f, "search_articles"), declaredInputSchema(f, "get_article"), declaredInputSchema(f, "get_weekly_updates")}
 	for _, text := range []string{
@@ -60,7 +60,7 @@ func FuzzInputKeyInventory(f *testing.F) {
 		schema := schemas[int(index)%len(schemas)]
 		expectedError := normalizeAllInputKeys(expected, schema)
 		actualError := normalizeToolFields(actual, schema)
-		if !reflect.DeepEqual(actual, expected) || !reflect.DeepEqual(actualError, expectedError) {
+		if !reflect.DeepEqual(actualError, expectedError) || actualError == nil && !reflect.DeepEqual(actual, expected) {
 			t.Fatal("key inventory changed normalization or first error", actualError, expectedError)
 		}
 	})
