@@ -161,11 +161,6 @@ async function retriesUserDeletion(): Promise<void> {
 
 /** Verify password entry reuses registration labels and refreshed user data updates both layouts. */
 async function reusesRegistrationDatesDuringPasswordEntry(): Promise<void> {
-  users.push(
-    ...Array.from({ length: 24 }, (_, index) =>
-      createAdminUser(index + 3, `user${index + 3}`, false),
-    ),
-  );
   installUserListHandler();
   const view = renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
   const resetButton = await screen.findByRole('button', { name: '重置 member 的密码' });
