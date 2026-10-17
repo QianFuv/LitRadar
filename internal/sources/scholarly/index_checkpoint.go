@@ -312,7 +312,7 @@ func validIndexWindowAnchors(window indexWindow) bool {
 
 // validIndexWindowProgress preserves candidate and base-observation state implications.
 func validIndexWindowProgress(window indexWindow) bool {
-	return (window.CandidateAnchor != nil || !window.HasReachedCandidate && !window.HasSeenBase) && (!window.HasReachedCandidate || window.CandidateAnchor != nil) && (!window.HasSeenBase || window.Phase == "bounded" && window.HasReachedCandidate)
+	return (window.CandidateAnchor != nil || !window.HasReachedCandidate && !window.HasSeenBase) && (!window.HasSeenBase || window.Phase == "bounded" && window.HasReachedCandidate)
 }
 
 // isIndexSourceHead identifies the original unstarted legacy source shapes.
