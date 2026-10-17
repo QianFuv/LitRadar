@@ -162,6 +162,8 @@ func isBackendPath(path string) bool {
 	}
 	return false
 }
+
+// frontendRedirect removes trailing slashes without allowing a network-path destination.
 func frontendRedirect(request *http.Request) string {
 	path := request.URL.EscapedPath()
 	if request.Method != "GET" && request.Method != "HEAD" || !strings.HasSuffix(path, "/") || isBackendPath(path) {
@@ -171,6 +173,7 @@ func frontendRedirect(request *http.Request) string {
 	if path == "" {
 		return ""
 	}
+	path = "/" + strings.TrimLeft(path, "/")
 	if request.URL.RawQuery != "" || request.URL.ForceQuery {
 		path += "?" + request.URL.RawQuery
 	}
