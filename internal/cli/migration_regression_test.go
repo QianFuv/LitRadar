@@ -21,7 +21,6 @@ func TestIndexDefaultsRemainIndependentOfExecutionConcurrency(t *testing.T) {
 }
 
 func TestExplicitLegacyBatchWarnsOnceBeforeMissingKeyFailure(t *testing.T) {
-	t.Setenv("LITRADAR_SECRET_KEY_FILE", "")
 	previous := slog.Default()
 	defer slog.SetDefault(previous)
 	for _, explicit := range []bool{false, true} {
