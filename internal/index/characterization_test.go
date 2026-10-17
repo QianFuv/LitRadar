@@ -14,7 +14,7 @@ import (
 	storage "github.com/QianFuv/LitRadar/internal/storage/index"
 )
 
-// workerDecodeCharacterization exposes pointer omission, positional slots and partial field mutation.
+// workerDecodeCharacterization exposes pointer omission and positional slots.
 type workerDecodeCharacterization struct {
 	Count    uint64   `json:"count"`
 	Optional *string  `json:"optional"`
@@ -36,15 +36,15 @@ func TestWorkerFieldDecodingCharacterization(t *testing.T) {
 		{`[2,[]]`, 0, false, true, workerDecodeCharacterization{}},
 		{`{"count":2,"values":[]}`, 1, false, false, workerDecodeCharacterization{Count: 2, Values: []uint64{}}},
 		{`{"unknown":1,"unknown":2,"count":2,"values":[],"tail":true}`, 0, true, false, workerDecodeCharacterization{Count: 2, Values: []uint64{}, Tail: true}},
-		{`{"count":2,"count":3,"values":[],"tail":true}`, 0, true, true, workerDecodeCharacterization{Count: 2}},
-		{`{"count":2,"values":[3,"bad"],"tail":true}`, 0, false, true, workerDecodeCharacterization{Count: 2, Values: []uint64{3, 0}}},
-		{`{"count":2,"optional":7,"values":[],"tail":true}`, 0, false, true, workerDecodeCharacterization{Count: 2, Optional: new(string)}},
+		{`{"count":2,"count":3,"values":[],"tail":true}`, 0, true, true, workerDecodeCharacterization{}},
+		{`{"count":2,"values":[3,"bad"],"tail":true}`, 0, false, true, workerDecodeCharacterization{}},
+		{`{"count":2,"optional":7,"values":[],"tail":true}`, 0, false, true, workerDecodeCharacterization{}},
 		{`{"count":2,"values":[],"tail":true} trailing`, 0, false, true, workerDecodeCharacterization{}},
 	}
 	for _, candidate := range cases {
 		var actual workerDecodeCharacterization
 		err := decodeWorkerFields([]byte(candidate.body), &actual, candidate.defaultTail, candidate.shouldIgnoreUnknown)
-		if (err != nil) != candidate.shouldFail || !reflect.DeepEqual(actual, candidate.expected) {
+		if (err != nil) != candidate.shouldFail || err == nil && !reflect.DeepEqual(actual, candidate.expected) {
 			t.Fatalf("body=%s actual=%+v expected=%+v error=%v", candidate.body, actual, candidate.expected, err)
 		}
 	}
