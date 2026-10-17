@@ -229,12 +229,9 @@ func validateCatalogColumns(row map[string]string) error {
 			unexpected = append(unexpected, column)
 		}
 	}
-	if len(missing) > 0 || len(unexpected) > 0 {
-		slices.Sort(missing)
-		slices.Sort(unexpected)
-		return fmt.Errorf("catalog row must use exact v3 columns; missing=%s, unexpected=%s", debugStrings(missing), debugStrings(unexpected))
-	}
-	return nil
+	slices.Sort(missing)
+	slices.Sort(unexpected)
+	return fmt.Errorf("catalog row must use exact v3 columns; missing=%s, unexpected=%s", debugStrings(missing), debugStrings(unexpected))
 }
 
 // normalizeCatalogPrimaryIssns preserves ISSN-before-eISSN admission and partial row state on failure.
