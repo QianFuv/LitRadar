@@ -151,9 +151,6 @@ func (repository *Repository) updateRun(ctx context.Context, id int64, query str
 		}
 		var err error
 		run, err = requireRecord(loadRunRecord(ctx, connection, id))
-		if err == nil && run == nil {
-			return ErrNotFound
-		}
 		return err
 	})
 	return run, err
