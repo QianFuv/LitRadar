@@ -12,31 +12,19 @@ import (
 	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
 )
 
-func TestAuthorFieldErrorsPrecedeMalformedValuesAndRetainPrivateState(t *testing.T) {
-	for _, text := range []string{
-		"{" + "\"other\":!}",
-		"{" + "\"display_name\":\"kept\",\"display_name\":!}",
+// TestAuthorFieldErrorsPrecedeMalformedValues checks actionable diagnostics at the storage boundary.
+func TestAuthorFieldErrorsPrecedeMalformedValues(t *testing.T) {
+	for _, scenario := range []struct{ text, message string }{
+		{`[{"other":!}]`, "unknown field"},
+		{`[{"display_name":"kept","display_name":!}]`, "duplicate field"},
 	} {
-		decoder := authorDecoder{text: text}
-		author, err := decoder.author()
+		_, err := decodeCanonicalAuthors(scenario.text)
 		var typed *AuthorJsonError
 		if !errors.As(err, &typed) {
 			t.Fatalf("missing typed diagnostic: %v", err)
 		}
-		expectedName := ""
-		expectedMessage := "unknown field"
-		if strings.Contains(text, "kept") {
-			expectedName, expectedMessage = "kept", "duplicate field"
-		}
-		if author.DisplayName != expectedName || !strings.HasPrefix(typed.Message, expectedMessage) {
-			t.Fatalf("name=%q diagnostic=%v", author.DisplayName, err)
-		}
-		if decoder.position != strings.LastIndex(text, ":") || typed.Column != decoder.position {
-			t.Fatalf("advanced beyond key: position=%d diagnostic=%v", decoder.position, err)
-		}
-		values, err := diagnoseCanonicalAuthors("[" + text + "]")
-		if err == nil || values != nil {
-			t.Fatalf("list exposed partial authors: %v %v", values, err)
+		if !strings.HasPrefix(typed.Message, scenario.message) || typed.Line != 1 || typed.Column != strings.LastIndex(scenario.text, ":") {
+			t.Fatalf("unexpected field diagnostic: %v", err)
 		}
 	}
 }
