@@ -126,7 +126,7 @@ func decodeProxyPolicy(policy string) (map[string]any, error) {
 	if !isObject {
 		return nil, ErrProxyPolicy
 	}
-	if err := validateProxyPolicyValues(policy, object); err != nil {
+	if err := validateProxyPolicyValues(policy); err != nil {
 		return nil, err
 	}
 	if err := validateProxyPolicyNames(object); err != nil {
@@ -136,12 +136,7 @@ func decodeProxyPolicy(policy string) (map[string]any, error) {
 }
 
 // validateProxyPolicyValues rejects nonboolean duplicates even when later fields overwrite them.
-func validateProxyPolicyValues(policy string, object map[string]any) error {
-	for _, value := range object {
-		if _, isBoolean := value.(bool); !isBoolean {
-			return ErrProxyPolicy
-		}
-	}
+func validateProxyPolicyValues(policy string) error {
 	decoder := json.NewDecoder(strings.NewReader(policy))
 	decoder.UseNumber()
 	decoder.Token()
