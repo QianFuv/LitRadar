@@ -95,7 +95,7 @@ export function getJournalOptions(dbName = readSelectedDatabase()): Promise<Jour
  * Fetch a cursor-paginated article page.
  *
  * @param params - Article query parameters.
- * @param pageParam - Cursor or offset page parameter.
+ * @param pageParam - Continuation cursor or null for the initial page.
  * @param includeTotal - Whether to include total on the first page.
  * @param dbName - Database name. Defaults to the selected database.
  * @param signal - Cancellation signal for an obsolete query.
@@ -103,7 +103,7 @@ export function getJournalOptions(dbName = readSelectedDatabase()): Promise<Jour
  */
 export function getArticles(
   params: URLSearchParams,
-  pageParam: string | number | null = null,
+  pageParam: string | null = null,
   includeTotal = false,
   dbName = readSelectedDatabase(),
   signal?: AbortSignal,
@@ -112,9 +112,6 @@ export function getArticles(
   if (typeof pageParam === 'string' && pageParam.length > 0) {
     nextParams.set('cursor', pageParam);
     nextParams.delete('offset');
-  }
-  if (typeof pageParam === 'number') {
-    nextParams.set('offset', String(pageParam));
   }
   if (nextParams.has('q') && !nextParams.has('search_mode')) {
     nextParams.set('search_mode', DEFAULT_ARTICLE_SEARCH_MODE);
