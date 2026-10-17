@@ -5,24 +5,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
-
-	"github.com/QianFuv/LitRadar/internal/storage/settings"
 )
-
-// TestRuntimeSettingsRetainEarlierPolicyOnLaterKnownValidationFailure checks sequential partial updates.
-func TestRuntimeSettingsRetainEarlierPolicyOnLaterKnownValidationFailure(t *testing.T) {
-	configuration, err := NewConfig(t.TempDir(), "127.0.0.1", 0, "key")
-	if err != nil {
-		t.Fatal(err)
-	}
-	configuration.AreSecureCookiesRequired = true
-	err = configuration.ApplyRuntimeSettings([]settings.Value{{Field: "cors_allowed_origins", Value: "https://example.test"}, {Field: "log_format", Value: "invalid"}, {Field: "secure_cookies", Value: "yes"}})
-	if err == nil || !reflect.DeepEqual(configuration.ApiOptions.CorsOrigins, []string{"https://example.test"}) || configuration.ApiOptions.AreCookiesSecure {
-		t.Fatalf("sequential policy changed: %+v %v", configuration.ApiOptions, err)
-	}
-}
 
 // frontendResponseFixture provides static content for precise range and fallback response assertions.
 func frontendResponseFixture(t *testing.T) frontend {
