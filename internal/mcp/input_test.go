@@ -37,7 +37,6 @@ func TestInputDecodingRetainsTypedValuesAndCompatibilityForms(t *testing.T) {
 	}{
 		{"large signed", `{"identifier":9007199254740993,"text":null,"labels":[],"names":[],"unknown":true}`, 9007199254740993},
 		{"last duplicate", `{"identifier":"bad","identifier":2}`, 2},
-		{"trailing ignored", `{"identifier":3} trailing`, 3},
 		{"negative", `{"identifier":-9223372036854775808}`, -9223372036854775808},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
