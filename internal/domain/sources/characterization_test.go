@@ -40,19 +40,16 @@ func TestJsonFailureReportsFirstOrderedError(t *testing.T) {
 	}
 }
 
-// TestContractFailureRetainsAllocatedPartialFields pins internal decoding mutation order.
-func TestContractFailureRetainsAllocatedPartialFields(t *testing.T) {
-	var value struct {
-		Title string   `json:"title"`
-		Year  *int64   `json:"year"`
-		Names []string `json:"names"`
-	}
-	err := decodeContractStruct([]byte(`{"title":"accepted","year":2026.0,"names":[]}`), &value)
-	if err != errContractJson || value.Title != "accepted" || value.Year == nil {
+// TestIssueRejectsFloatingYearWithoutReplacingReceiver preserves typed year admission and atomic decoding.
+func TestIssueRejectsFloatingYearWithoutReplacingReceiver(t *testing.T) {
+	value := IssueDraft{CatalogId: "original", PublicationYear: new(int64(2000))}
+	before := IssueDraft{CatalogId: "original", PublicationYear: new(int64(2000))}
+	err := value.UnmarshalJSON([]byte(`{"catalog_id":"accepted","publication_year":2026.0}`))
+	if err != errContractJson || !reflect.DeepEqual(value, before) {
 		t.Fatal(value, err)
 	}
-	if *value.Year != 0 || value.Names != nil {
-		t.Fatal("later fields changed after invalid year", value)
+	if err := value.UnmarshalJSON([]byte(`{"catalog_id":"accepted","publication_year":2026}`)); err != nil || value.CatalogId != "accepted" || value.PublicationYear == nil || *value.PublicationYear != 2026 {
+		t.Fatal("valid integer year was rejected", value, err)
 	}
 }
 
