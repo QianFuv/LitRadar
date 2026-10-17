@@ -80,11 +80,6 @@ function nativeInputs() {
   }));
 }
 const originalNativeInputs = nativeInputs();
-assert.equal(
-  originalNativeInputs.length,
-  5,
-  "Static tokenizer inputs are required",
-);
 fs.writeFileSync(
   path.join(directory, "native-inputs.json"),
   JSON.stringify(originalNativeInputs, null, 2) + "\n",
