@@ -98,13 +98,6 @@ func isRuntimeNameByte(character byte, index int) bool {
 	return character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || index > 0 && (character == '.' || character == '_' || character == '-')
 }
 
-func rewriteProvider(value string) string {
-	if value == "zjlib_cnki" {
-		return "zjlib"
-	}
-	return value
-}
-
 func sortedKeys[Value any](values map[string]Value) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -152,11 +145,10 @@ func normalizeRoutes(raw string) (string, error) {
 		if !runtimeName(catalog) {
 			return "", invalid("catalog stems must use lowercase ASCII names")
 		}
-		provider := rewriteProvider(result[catalog])
+		provider := result[catalog]
 		if !runtimeName(provider) {
 			return "", invalid("provider names must use lowercase ASCII names")
 		}
-		result[catalog] = provider
 	}
 	return jsonvalue.EncodeJson(result)
 }
@@ -187,9 +179,7 @@ func normalizeOrders(field, raw string) (string, error) {
 	}
 	validate := func(order []string) error {
 		seen := map[string]bool{}
-		for index, value := range order {
-			value = rewriteProvider(value)
-			order[index] = value
+		for _, value := range order {
 			if !runtimeName(value) {
 				return invalid("Provider orders must contain lowercase ASCII names")
 			}

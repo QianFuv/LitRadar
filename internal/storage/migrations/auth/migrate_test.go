@@ -376,6 +376,12 @@ func TestVersionEightMaterializesOnlyHistoricalEntryDefaults(t *testing.T) {
 			if count != expected {
 				t.Fatalf("got %d want %d", count, expected)
 			}
+			if expected > 0 {
+				value := scalar[string](t, connection, "SELECT value FROM runtime_settings WHERE key='article_fulltext_provider_orders'")
+				if value != `{"default":["zjlib"],"catalogs":{}}` {
+					t.Fatalf("historical provider was not migrated: %s", value)
+				}
+			}
 		})
 	}
 }

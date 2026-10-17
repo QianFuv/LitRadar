@@ -85,7 +85,6 @@ func TestNormalizationPreservesValuesAndErrorCategories(t *testing.T) {
 		{"audit_retention_days", "0", "", false},
 		{"provider_proxy_policy", `{"cnki":false,"cnki":true}`, `{"cnki":true}`, true},
 		{"provider_proxy_policy", `{"cnki":"false","cnki":true}`, "", false},
-		{"index_provider_routes", `{"catalog":"zjlib_cnki"}`, `{"catalog":"zjlib"}`, true},
 	}
 	for _, test := range cases {
 		t.Run(test.field+test.input, func(t *testing.T) {
