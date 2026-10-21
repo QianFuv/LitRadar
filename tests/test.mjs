@@ -430,7 +430,7 @@ try {
     GOWORK: "off",
     GOENV: "off",
     GOFLAGS: "",
-    GOTOOLCHAIN: "go1.27.2",
+    GOTOOLCHAIN: "go1.27.3",
     ...(isCi ? { CI: "true", LITRADAR_TEST_CI: "true" } : {}),
   };
   const definitions = stepsForMode(mode, isCi);

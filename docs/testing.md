@@ -88,7 +88,7 @@ Playwright 有两个独立角色：
 
 ## 统一命令
 
-先安装 Go 1.27.2、Node.js 26.11.1 和前端锁定依赖，以及构建静态 Simple 所需的 curl、tar、CMake 和与 Go 目标匹配的 C/C++14 编译器（Linux 使用 Make，Windows 另需 MinGW 和 Ninja）。`tests/test.mjs` 与 `scripts/check-go.mjs` 会自动构建静态 Simple 及兼容性 oracle；Windows 仓库内的旧 DLL 只作为兼容性 oracle。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.2`。
+先安装 Go 1.27.3、Node.js 26.11.1 和前端锁定依赖，以及构建静态 Simple 所需的 curl、tar、CMake 和与 Go 目标匹配的 C/C++14 编译器（Linux 使用 Make，Windows 另需 MinGW 和 Ninja）。`tests/test.mjs` 与 `scripts/check-go.mjs` 会自动构建静态 Simple 及兼容性 oracle；Windows 仓库内的旧 DLL 只作为兼容性 oracle。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.3`。
 
 ```bash
 npm install --global pnpm@12.10.1

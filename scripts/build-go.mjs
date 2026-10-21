@@ -41,7 +41,7 @@ for (const command of ["litradar", "litradar-fixture"]) {
         GOWORK: "off",
         GOENV: "off",
         GOFLAGS: "",
-        GOTOOLCHAIN: "go1.27.2",
+        GOTOOLCHAIN: "go1.27.3",
       },
       stdio: "inherit",
       windowsHide: true,

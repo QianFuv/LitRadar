@@ -118,7 +118,7 @@ const environment = {
   GOWORK: "off",
   GOENV: "off",
   GOFLAGS: "",
-  GOTOOLCHAIN: "go1.27.2",
+  GOTOOLCHAIN: "go1.27.3",
   GOOS: "windows",
   GOARCH: "amd64",
 };

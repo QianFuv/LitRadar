@@ -94,7 +94,7 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 本地开发
 
-项目使用 Go 1.27.2（启用 CGO）、Node.js 26.11.1 和 pnpm 12.10.1；构建静态 Simple 还需要与 Go 目标匹配的 C/C++14 编译器、CMake、curl 和 tar，Windows 另需 MinGW 和 Ninja。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
+项目使用 Go 1.27.3（启用 CGO）、Node.js 26.11.1 和 pnpm 12.10.1；构建静态 Simple 还需要与 Go 目标匹配的 C/C++14 编译器、CMake、curl 和 tar，Windows 另需 MinGW 和 Ninja。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
 
 ## 版本发布
 

@@ -51,7 +51,7 @@ Dockerfile 的前端阶段和 Ubuntu 基础镜像使用可读 tag 加不可变 d
 
 1. Ubuntu 26.04 安装 Node.js 26.11.1 和 pnpm 12.10.1，复制 `app/package.json`、lockfile 和 `app/pnpm-workspace.yaml`，用缓存执行 frozen 依赖安装。
 2. 独立前端构建阶段复制 `app/` 源码，生成 `out/`，并为 HTML、CSS、JavaScript、JSON、SVG、TXT、XML 和 source map 保留原文件及确定性 gzip 兄弟文件。
-3. Ubuntu 26.04 中的 Go 1.27.2 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，先把前端 `out/` 复制到 `internal/webassets/export`，再用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat,litradar_web` 构建唯一 Go 应用并嵌入网页；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
+3. Ubuntu 26.04 中的 Go 1.27.3 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，先把前端 `out/` 复制到 `internal/webassets/export`，再用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat,litradar_web` 构建唯一 Go 应用并嵌入网页；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
 4. 下载 Obscura 官方 v0.2.4 对应 amd64/arm64 的 render + stealth 二进制归档，固定版本和 SHA-256，并一起安装 `obscura` 与 `obscura-worker`。辅助程序无需本地编译。
 5. Go 构建阶段在编译应用前运行 `scripts/build-simple-tokenizer.mjs`，从固定上游源码为目标架构构建静态 `libsimple.a`（不含 Jieba 和示例），并通过 `CGO_CFLAGS` 静态链接进应用，不产生 `libsimple.so`。
 6. `ubuntu:26.04` 接收带内嵌网页和 CSP 的应用（包括静态 Simple）、Obscura 和 `/usr/share/litradar/meta` 中来自 `assets/meta/` 的不可变期刊目录。Ubuntu 26.04 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。

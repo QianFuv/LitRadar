@@ -4,7 +4,8 @@ FROM --platform=$BUILDPLATFORM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e
 
 ARG BUILDARCH
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl gzip libatomic1 libstdc++6 xz-utils \
+    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.1 curl gzip libatomic1 libstdc++6 xz-utils \
+    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.1 \
     && rm -rf /var/lib/apt/lists/* \
     && case "$BUILDARCH" in \
         amd64) node_arch=x64; archive_sha256=3883bfc73f9a680ca4eab04b196068aaaab1373ffa77d8fc1a4408222495b651 ;; \
@@ -65,19 +66,20 @@ ENV CGO_ENABLED=1 GOTOOLCHAIN=local GOWORK=off GOENV=off GOFLAGS="" GOOS=linux G
 ENV PATH=/usr/local/go/bin:$PATH GOPATH=/go
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl gcc g++ git make cmake libatomic1 libstdc++6 \
+    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.1 curl gcc g++ git make cmake libatomic1 libstdc++6 \
+    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.1 \
     && rm -rf /var/lib/apt/lists/* \
     && case "$BUILDARCH" in \
-        amd64) archive_sha256=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5 ;; \
-        arm64) archive_sha256=94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8 ;; \
+        amd64) archive_sha256=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 ;; \
+        arm64) archive_sha256=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49 ;; \
         *) exit 1 ;; \
     esac \
     && curl --fail --location --retry 3 --max-time 300 \
-        "https://go.dev/dl/go1.27.2.linux-$BUILDARCH.tar.gz" --output /tmp/go.tar.gz \
+        "https://go.dev/dl/go1.27.3.linux-$BUILDARCH.tar.gz" --output /tmp/go.tar.gz \
     && printf '%s  /tmp/go.tar.gz\n' "$archive_sha256" | sha256sum --check --strict \
     && tar -xzf /tmp/go.tar.gz -C /usr/local \
     && rm /tmp/go.tar.gz \
-    && test "$(go version | cut -d ' ' -f 3)" = go1.27.2
+    && test "$(go version | cut -d ' ' -f 3)" = go1.27.3
 
 RUN if [ "$TARGETARCH" != "$BUILDARCH" ]; then \
         case "$TARGETARCH" in \
@@ -118,7 +120,8 @@ FROM --platform=$BUILDPLATFORM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e
 
 ARG TARGETARCH
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl \
+    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.1 curl \
+    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.1 \
     && rm -rf /var/lib/apt/lists/*
 RUN case "$TARGETARCH" in \
         amd64) asset=obscura-x86_64-linux-stealth.tar.gz; archive_sha256=49b53f74a509764c42a35c8e73a37301399e1500d43564fad4cb641721efc753 ;; \
@@ -139,7 +142,8 @@ FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl libgcc-s1 libstdc++6 passwd poppler-data poppler-utils \
+    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.1 curl libgcc-s1 libstdc++6 passwd poppler-data poppler-utils \
+    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 litradar \
     && useradd --uid 10001 --gid litradar --no-create-home --home-dir /app --shell /usr/sbin/nologin litradar \

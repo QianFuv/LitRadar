@@ -22,7 +22,7 @@ CI 与前端构建阶段使用：
 | Motion for React  | 13.1.1                                                                                                 |
 | TypeScript        | 5.x                                                                                                    |
 | Tailwind CSS      | 4.x                                                                                                    |
-| Go                | 1.27.2；生成 OpenAPI、启动后端和 full-stack e2e 时需要，另需构建静态 Simple 的 CMake 与 C/C++14 编译器 |
+| Go                | 1.27.3；生成 OpenAPI、启动后端和 full-stack e2e 时需要，另需构建静态 Simple 的 CMake 与 C/C++14 编译器 |
 
 依赖由 `pnpm-lock.yaml` 锁定。前端状态与 UI 的主要库包括 TanStack Query、nuqs、next-themes、Radix UI、Motion、class-variance-authority 和 lucide-react。Motion 只通过 `components/ui/motion.tsx` 的 `LazyMotion` / `domAnimation` 封装进入业务代码；Radix portal 的浮层过渡仍由共享 CSS motion token 驱动。
 

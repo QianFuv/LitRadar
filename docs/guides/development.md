@@ -8,14 +8,14 @@ CI 和容器使用以下主版本：
 
 | 工具    | 版本/来源                                        |
 | ------- | ------------------------------------------------ |
-| Go      | 1.27.2，CGO_ENABLED=1，需 C/C++14 编译器及 CMake |
+| Go      | 1.27.3，CGO_ENABLED=1，需 C/C++14 编译器及 CMake |
 | Node.js | 26.11.1                                          |
 | pnpm    | 12.10.1                                          |
 | Docker  | 当前 Docker Engine / Docker Desktop 与 Compose   |
 
 Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
 
-Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.2`。Windows 原生构建要求 PATH 中有匹配的 MinGW GCC/G++ 和 Ninja；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
+Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.3`。Windows 原生构建要求 PATH 中有匹配的 MinGW GCC/G++ 和 Ninja；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
 
 pnpm 会转发已有的 `NODE_OPTIONS`，并为子进程关闭 Node.js 实验性 Web Storage，使测试中的 jsdom 浏览器存储与 Node.js 宿主存储隔离。
 
@@ -221,7 +221,7 @@ node tests/test.mjs integration
 node tests/test.mjs all
 ```
 
-Backend CI 在 Windows 和 Linux 执行 `node scripts/check-go.mjs`，固定 Go 1.27.2、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。脚本会自行构建静态 Simple 及兼容性 oracle。
+Backend CI 在 Windows 和 Linux 执行 `node scripts/check-go.mjs`，固定 Go 1.27.3、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。脚本会自行构建静态 Simple 及兼容性 oracle。
 
 覆盖率只在每周/手动诊断中分别生成 Go 和前端报告，不设阈值：
 
