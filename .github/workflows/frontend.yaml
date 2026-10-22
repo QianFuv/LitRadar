@@ -24,6 +24,7 @@ permissions:
   contents: read
 
 jobs:
+  # Stage 2: quality, including the production frontend build and full-stack acceptance.
   frontend:
     outputs:
       web_artifact_id: ${{ steps.web_export.outputs.artifact-id }}
@@ -32,23 +33,35 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout source
+        id: checkout_source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ inputs.source_ref || github.sha }}
 
-      - name: Install Go
+      - name: Set up Go
+        id: set_up_go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.3"
           cache: true
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            third_party/go-sdk/go.mod
+            third_party/go-sdk/go.sum
+            third_party/go-sqlite3/go.mod
+            third_party/go-sqlite3/go.sum
 
-      - name: Install pnpm
+      - name: Set up pnpm
+        id: set_up_pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 12.10.1
 
-      - name: Install Node.js
+      - name: Set up Node.js
+        id: set_up_node_js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
@@ -56,9 +69,11 @@ jobs:
           cache-dependency-path: app/pnpm-lock.yaml
 
       - name: Install frontend dependencies
+        id: install_frontend_dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Restore Next.js build cache
+        id: restore_next_js_build_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: app/.next/cache
@@ -67,6 +82,7 @@ jobs:
             ${{ runner.os }}-next-ci-node26-${{ hashFiles('app/pnpm-lock.yaml', 'app/tsconfig*.json', 'app/next.config.ts') }}-
 
       - name: Build pinned search tokenizer
+        id: build_pinned_search_tokenizer
         run: node scripts/build-simple-tokenizer.mjs
         working-directory: .
 
@@ -98,6 +114,7 @@ jobs:
           exit "$status"
 
       - name: Install Chromium
+        id: install_chromium
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Test browser-native components
@@ -136,11 +153,27 @@ jobs:
           exit "$status"
 
       - name: Bind tested frontend export to source
+        id: bind_tested_frontend_export_to_source
         if: inputs.release_web
         working-directory: .
         env:
           SOURCE_SHA: ${{ inputs.source_ref || github.sha }}
         run: node scripts/release-web.mjs prepare "$SOURCE_SHA"
+
+      - name: Record tested frontend artifact provenance
+        id: record_tested_frontend_artifact_provenance
+        if: inputs.release_web
+        working-directory: .
+        env:
+          CI_STAGE: build-acceptance
+          CI_PLATFORMS: independent
+          CI_SOURCE_SHA: ${{ inputs.source_ref || github.sha }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: release-results/web
+          CI_INCLUDE_HIDDEN: "true"
+          CI_REQUIRE_FILES: "true"
+        run: node scripts/ci-report.mjs manifest app/out manifest.json
 
       - name: Upload tested frontend export
         id: web_export
@@ -153,12 +186,28 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Record quality artifact provenance
+        id: record_quality_artifact_provenance
+        if: always()
+        working-directory: .
+        env:
+          CI_STAGE: quality
+          CI_PLATFORMS: linux/amd64
+          CI_SOURCE_SHA: ${{ inputs.source_ref || github.sha }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: app
+          CI_REPORT_FILE: test-results/ci-manifest.json
+        run: node scripts/ci-report.mjs manifest test-results/vitest test-results/vitest-browser test-results/browser-components test-results/playwright-fixtures test-results/playwright-full-stack playwright-report/fixtures playwright-report/full-stack
+
       - name: Upload frontend diagnostics
+        id: upload_frontend_diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-test-diagnostics
           path: |
+            app/test-results/ci-manifest.json
             app/test-results/vitest/
             app/test-results/vitest-browser/
             app/test-results/browser-components/
@@ -169,39 +218,21 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Write frontend summary
+      - name: Report quality summary
+        id: report_quality_summary
         if: always()
+        working-directory: .
         env:
-          BROWSER_DURATION: ${{ steps.browser_components.outputs.duration_seconds }}
-          BROWSER_RESULT: ${{ steps.browser_components.outcome }}
-          FIXTURE_DURATION: ${{ steps.fixture_smoke.outputs.duration_seconds }}
-          FIXTURE_RESULT: ${{ steps.fixture_smoke.outcome }}
-          FULL_STACK_DURATION: ${{ steps.full_stack_smoke.outputs.duration_seconds }}
-          FULL_STACK_RESULT: ${{ steps.full_stack_smoke.outcome }}
-          STATIC_DURATION: ${{ steps.frontend_static.outputs.duration_seconds }}
-          STATIC_RESULT: ${{ steps.frontend_static.outcome }}
-          UNIT_DURATION: ${{ steps.unit_tests.outputs.duration_seconds }}
-          UNIT_RESULT: ${{ steps.unit_tests.outcome }}
-        run: |
-          label() {
-            case "$1" in
-              success) printf 'Passed' ;;
-              failure) printf 'Failed' ;;
-              cancelled) printf 'Cancelled' ;;
-              skipped) printf 'Skipped' ;;
-              *) printf 'Not run' ;;
-            esac
-          }
-          {
-            echo "## Frontend test layers"
-            echo
-            echo "| Layer | Status | Duration |"
-            echo "| --- | --- | ---: |"
-            echo "| Contracts and static checks | $(label "$STATIC_RESULT") | ${STATIC_DURATION:-n/a}s |"
-            echo "| Vitest jsdom | $(label "$UNIT_RESULT") | ${UNIT_DURATION:-n/a}s |"
-            echo "| Vitest Chromium | $(label "$BROWSER_RESULT") | ${BROWSER_DURATION:-n/a}s |"
-            echo "| Fixture Playwright | $(label "$FIXTURE_RESULT") | ${FIXTURE_DURATION:-n/a}s |"
-            echo "| Full-stack Playwright and build | $(label "$FULL_STACK_RESULT") | ${FULL_STACK_DURATION:-n/a}s |"
-            echo
-            echo "Playwright retries: one in CI, with failOnFlakyTests enabled."
-          } >> "$GITHUB_STEP_SUMMARY"
+          CI_STAGE: quality
+          CI_PLATFORMS: linux/amd64
+          CI_SOURCE_SHA: ${{ inputs.source_ref || github.sha }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: app
+          CI_REPORT_FILE: test-results/ci-manifest.json
+        run: node scripts/ci-report.mjs summary
+
+      - name: Report frontend retry policy
+        id: report_frontend_retry_policy
+        if: always()
+        run: echo "Playwright retries once in CI; failOnFlakyTests remains enabled." >> "$GITHUB_STEP_SUMMARY"

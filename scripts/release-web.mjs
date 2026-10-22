@@ -63,7 +63,11 @@ export async function prepareReleaseWeb(sourceDirectory, bundle, source) {
   });
   await fs.writeFile(
     path.join(bundle, "manifest.json"),
-    JSON.stringify({ schema: 1, source, files }, null, 2) + "\n",
+    JSON.stringify(
+      { schema: 1, source, platform: "independent", files },
+      null,
+      2,
+    ) + "\n",
   );
   await verifyReleaseWeb(bundle, source);
 }
@@ -87,6 +91,11 @@ export async function verifyReleaseWeb(bundle, source) {
   assert((await fs.lstat(manifestPath)).isFile(), "Invalid export manifest");
   const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
   assert.equal(manifest.schema, 1, "Unsupported export manifest");
+  assert.equal(
+    manifest.platform,
+    "independent",
+    "Frontend artifact must be platform independent",
+  );
   assert.equal(
     manifest.source,
     source,

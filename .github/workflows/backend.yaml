@@ -19,6 +19,7 @@ permissions:
   contents: read
 
 jobs:
+  # Stage 2: quality. Each lane preserves its complete check contract.
   checks:
     name: Go ${{ matrix.lane }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -29,23 +30,28 @@ jobs:
         os: [ubuntu-26.04, windows-latest]
         lane: [regular, race]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout source
+        id: checkout_source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ inputs.source_ref || github.sha }}
 
-      - name: Install Go
+      - name: Set up Go
+        id: set_up_go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.3"
           cache: false
 
-      - name: Install Node.js
+      - name: Set up Node.js
+        id: set_up_node_js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
 
       - name: Verify native compiler
+        id: verify_native_compiler
         run: gcc --version
 
       - name: Locate Go caches and compiler identity
@@ -58,12 +64,14 @@ jobs:
           echo "compiler=$compiler" >> "$GITHUB_OUTPUT"
 
       - name: Cache Go modules
+        id: cache_go_modules
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.cache.outputs.modules }}
           key: go-mod-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/go-sdk/go.mod', 'third_party/go-sdk/go.sum', 'third_party/go-sqlite3/go.mod', 'third_party/go-sqlite3/go.sum') }}
 
       - name: Cache Go compilation by lane and source
+        id: cache_go_compilation_by_lane_and_source
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.cache.outputs.build }}
@@ -72,9 +80,24 @@ jobs:
             go-build-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ matrix.lane }}-${{ steps.cache.outputs.compiler }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum', 'third_party/simple-static/**', 'third_party/go-sqlite3/*.h', 'scripts/build-simple-tokenizer.mjs', 'scripts/go-check-plan.mjs') }}-
 
       - name: Run complete Go verification lane
+        id: quality
         run: node scripts/check-go.mjs ${{ matrix.lane }}
 
+      - name: Record quality artifact provenance
+        id: record_quality_artifact_provenance
+        if: always()
+        env:
+          CI_STAGE: quality
+          CI_PLATFORMS: ${{ runner.os == 'Windows' && 'windows/amd64' || 'linux/amd64' }}
+          CI_SOURCE_SHA: ${{ inputs.source_ref || github.sha }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: test-results/go
+          CI_REQUIRE_FILES: "true"
+        run: node scripts/ci-report.mjs manifest .
+
       - name: Upload backend diagnostics
+        id: upload_backend_diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -82,6 +105,18 @@ jobs:
           path: test-results/go/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Report quality summary
+        id: report_quality_summary
+        if: always()
+        env:
+          CI_STAGE: quality
+          CI_PLATFORMS: ${{ runner.os == 'Windows' && 'windows/amd64' || 'linux/amd64' }}
+          CI_SOURCE_SHA: ${{ inputs.source_ref || github.sha }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: test-results/go
+        run: node scripts/ci-report.mjs summary
 
   backend:
     name: Go checks (${{ matrix.os }})
@@ -93,6 +128,7 @@ jobs:
         os: [ubuntu-26.04, windows-latest]
     steps:
       - name: Require all regular and race lanes
+        id: require_all_regular_and_race_lanes
         env:
           CHECKS_RESULT: ${{ needs.checks.result }}
         run: test "$CHECKS_RESULT" = success

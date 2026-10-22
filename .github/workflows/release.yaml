@@ -19,6 +19,7 @@ permissions:
   contents: read
 
 jobs:
+  # Stage 3: build-acceptance, only after all caller quality checks succeed.
   context:
     name: Validate version and source
     runs-on: ubuntu-26.04
@@ -28,11 +29,15 @@ jobs:
       published: ${{ steps.context.outputs.published }}
       build: ${{ steps.context.outputs.build }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout source
+        id: checkout_source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Node.js
+        id: set_up_node_js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
       - name: Resolve release source
@@ -42,10 +47,21 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: node scripts/release-context.mjs
       - name: Require tested frontend artifact identity
+        id: require_tested_frontend_artifact_identity
         if: steps.context.outputs.build == 'true'
         env:
           WEB_ARTIFACT_ID: ${{ inputs.web_artifact_id }}
         run: node -e 'require("node:assert/strict").match(process.env.WEB_ARTIFACT_ID, /^[0-9]+$/)'
+
+      - name: Report build-acceptance summary
+        id: report_build_acceptance_summary
+        if: always()
+        env:
+          CI_STAGE: build-acceptance
+          CI_PLATFORMS: independent
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+        run: node scripts/ci-report.mjs summary
 
   windows:
     name: Windows x64 archive and smoke
@@ -58,44 +74,102 @@ jobs:
       RELEASE_VERSION: ${{ needs.context.outputs.version }}
     steps:
       - name: Checkout exact product source
+        id: checkout_exact_product_source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ needs.context.outputs.source }}
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Set up Go
+        id: set_up_go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.3"
-          cache-dependency-path: go.sum
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            third_party/go-sdk/go.mod
+            third_party/go-sdk/go.sum
+            third_party/go-sqlite3/go.mod
+            third_party/go-sqlite3/go.sum
+      - name: Set up Node.js
+        id: set_up_node_js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
       - name: Download tested frontend export
+        id: download_tested_frontend_export
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ inputs.web_artifact_id }}
           path: release-results/web
           merge-multiple: true
       - name: Verify tested frontend export
+        id: verify_tested_frontend_export
         run: node scripts/release-web.mjs verify $env:SOURCE_SHA
       - name: Package and smoke Windows distribution
+        id: package_and_smoke_windows_distribution
         run: node scripts/package-windows.mjs . $env:RELEASE_VERSION $env:SOURCE_SHA --verified-web
+      - name: Record build-acceptance provenance
+        id: record_build_acceptance_provenance
+        if: always()
+        env:
+          CI_STAGE: build-acceptance
+          CI_PLATFORMS: windows/amd64
+          CI_SOURCE_SHA: ${{ needs.context.outputs.source }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: release-results/windows
+          CI_REQUIRE_FILES: "true"
+        run: node scripts/ci-report.mjs manifest assets smoke/summary.json
+
       - name: Upload tested Windows archive
+        id: upload_tested_windows_archive
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-release
           path: |
+            release-results/windows/ci-manifest.json
             release-results/windows/assets/
             release-results/windows/smoke/summary.json
           if-no-files-found: error
           retention-days: 14
+      - name: Record Windows failure provenance
+        id: record_windows_failure_provenance
+        if: failure()
+        env:
+          CI_STAGE: build-acceptance
+          CI_PLATFORMS: windows/amd64
+          CI_SOURCE_SHA: ${{ needs.context.outputs.source }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: release-results/windows/smoke
+        run: |
+          $logs = @(Get-ChildItem -LiteralPath release-results/windows/smoke -File -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object Name)
+          node scripts/ci-report.mjs manifest @logs
+
       - name: Upload Windows failure diagnostics
+        id: upload_windows_failure_diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-release-diagnostics
-          path: release-results/windows/smoke/*.log
+          path: |
+            release-results/windows/smoke/*.log
+            release-results/windows/smoke/ci-manifest.json
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Report build-acceptance summary
+        id: report_build_acceptance_summary
+        if: always()
+        env:
+          CI_STAGE: build-acceptance
+          CI_PLATFORMS: windows/amd64
+          CI_SOURCE_SHA: ${{ needs.context.outputs.source }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: release-results/windows
+        run: node scripts/ci-report.mjs summary
 
   linux:
     name: Linux amd64 image, archive and smoke
@@ -104,17 +178,32 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout source
+        id: checkout_source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Set up Go
+        id: set_up_go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.3"
           cache: true
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            third_party/go-sdk/go.mod
+            third_party/go-sdk/go.sum
+            third_party/go-sqlite3/go.mod
+            third_party/go-sqlite3/go.sum
+      - name: Set up Node.js
+        id: set_up_node_js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Set up Buildx
+        id: set_up_buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Resolve image identity
         id: image
         env:
@@ -131,6 +220,7 @@ jobs:
           fi
           echo "description=$description" >> "$GITHUB_OUTPUT"
       - name: Validate Docker Compose
+        id: validate_docker_compose
         run: |
           mkdir -p release-results
           docker compose -f docker-compose.yml \
@@ -150,17 +240,20 @@ jobs:
             release-results/compose.json >/dev/null
 
       - name: Download tested frontend export
+        id: download_tested_frontend_export
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ inputs.web_artifact_id }}
           path: release-results/web
           merge-multiple: true
       - name: Verify tested frontend export
+        id: verify_tested_frontend_export
         env:
           SOURCE_SHA: ${{ needs.context.outputs.source }}
         run: node scripts/release-web.mjs verify "$SOURCE_SHA"
 
       - name: Build Linux image
+        id: build_linux_image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           DOCKER_BUILD_SUMMARY: "false"
@@ -180,9 +273,10 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.title=LitRadar
             org.opencontainers.image.version=${{ needs.context.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=litradar-linux-amd64
+          cache-to: type=gha,mode=max,scope=litradar-linux-amd64
       - name: Smoke image and package tested binaries
+        id: smoke_image_and_package_tested_binaries
         env:
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
           RELEASE_VERSION: ${{ needs.context.outputs.version }}
@@ -193,11 +287,26 @@ jobs:
           cp test-results/container-smoke/summary.json release-results/smoke-amd64.json
           docker image inspect "$IMAGE_TAG" > release-results/image-amd64.json
           docker save --output release-results/image-amd64.tar "$IMAGE_TAG"
+      - name: Record build-acceptance provenance
+        id: record_build_acceptance_provenance
+        if: always()
+        env:
+          CI_STAGE: build-acceptance
+          CI_PLATFORMS: linux/amd64
+          CI_SOURCE_SHA: ${{ needs.context.outputs.source }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: release-results
+          CI_REQUIRE_FILES: "true"
+        run: node scripts/ci-report.mjs manifest assets smoke-amd64.json image-amd64.json image-amd64.tar
+
       - name: Upload tested Linux bytes
+        id: upload_tested_linux_bytes
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-release
           path: |
+            release-results/ci-manifest.json
             release-results/assets/
             release-results/smoke-amd64.json
             release-results/image-amd64.json
@@ -205,7 +314,20 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
+      - name: Record Linux failure provenance
+        id: record_linux_failure_provenance
+        if: failure()
+        env:
+          CI_STAGE: build-acceptance
+          CI_PLATFORMS: linux/amd64
+          CI_SOURCE_SHA: ${{ needs.context.outputs.source }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: test-results/container-smoke
+        run: node scripts/ci-report.mjs manifest .
+
       - name: Upload Linux failure diagnostics
+        id: upload_linux_failure_diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -214,6 +336,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Report build-acceptance summary
+        id: report_build_acceptance_summary
+        if: always()
+        env:
+          CI_STAGE: build-acceptance
+          CI_PLATFORMS: linux/amd64
+          CI_SOURCE_SHA: ${{ needs.context.outputs.source }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: release-results
+        run: node scripts/ci-report.mjs summary
+
+  # Stage 4: publish only the accepted platform bytes; retain retry and latest gates.
   publish:
     name: Publish verified packages and image
     needs: [context, windows, linux]
@@ -229,25 +364,34 @@ jobs:
       RELEASE_VERSION: ${{ needs.context.outputs.version }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout source
+        id: checkout_source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Node.js
+        id: set_up_node_js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Set up Buildx
+        id: set_up_buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Download tested Linux bytes
+        id: download_tested_linux_bytes
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-release
           path: release-results
       - name: Download tested Windows archive
+        id: download_tested_windows_archive
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-release
           path: release-results/windows
       - name: Load and verify tested image and smoke evidence
+        id: load_and_verify_tested_image_and_smoke_evidence
         env:
           SOURCE_REPOSITORY: ${{ github.repository }}
         run: |
@@ -255,15 +399,20 @@ jobs:
           docker image inspect "ghcr.io/${SOURCE_REPOSITORY,,}:v${RELEASE_VERSION}" > release-results/loaded-image.json
           node scripts/release-evidence.mjs
       - name: Combine and verify both platform archives
+        id: combine_and_verify_both_platform_archives
         run: node scripts/release-assets.mjs "$RELEASE_VERSION"
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - name: Authenticate registry
+        id: authenticate_registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Prepare release notes and binary assets
+        id: prepare_release_notes_and_binary_assets
         run: node scripts/release-github.mjs prepare
       - name: Publish tested Linux image
+        id: publish_tested_linux_image
         env:
           SOURCE_REPOSITORY: ${{ github.repository }}
         run: |
@@ -271,19 +420,49 @@ jobs:
           docker push "$image"
           docker buildx imagetools inspect --raw "$image" > release-results/published-manifest.json
       - name: Publish binary release
+        id: publish_binary_release
         run: node scripts/release-github.mjs publish
+      - name: Record publication provenance
+        id: record_publication_provenance
+        if: always()
+        env:
+          CI_STAGE: publish
+          CI_PLATFORMS: linux/amd64,windows/amd64
+          CI_SOURCE_SHA: ${{ needs.context.outputs.source }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: release-results
+          CI_REPORT_FILE: publication-ci-manifest.json
+          CI_REQUIRE_FILES: "true"
+        run: node scripts/ci-report.mjs manifest notes.md assets/SHA256SUMS loaded-image.json published-manifest.json
+
       - name: Upload publication evidence
+        id: upload_publication_evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-publication
           path: |
+            release-results/publication-ci-manifest.json
             release-results/notes.md
             release-results/assets/SHA256SUMS
             release-results/loaded-image.json
             release-results/published-manifest.json
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Report publish summary
+        id: report_publish_summary
+        if: always()
+        env:
+          CI_STAGE: publish
+          CI_PLATFORMS: linux/amd64,windows/amd64
+          CI_SOURCE_SHA: ${{ needs.context.outputs.source }}
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+          CI_REPORT_ROOT: release-results
+          CI_REPORT_FILE: publication-ci-manifest.json
+        run: node scripts/ci-report.mjs summary
 
   promote:
     name: Update latest pointers
@@ -300,22 +479,41 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout source
+        id: checkout_source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Node.js
+        id: set_up_node_js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - name: Set up Buildx
+        id: set_up_buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Authenticate registry
+        id: authenticate_registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Promote the highest published stable version
+        id: promote_the_highest_published_stable_version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/release-github.mjs promote
+
+      - name: Report publish summary
+        id: report_publish_summary
+        if: always()
+        env:
+          CI_STAGE: publish
+          CI_PLATFORMS: linux/amd64,windows/amd64
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+        run: node scripts/ci-report.mjs summary
 
   complete:
     name: Confirm complete release
@@ -324,18 +522,34 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout source
+        id: checkout_source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Node.js
+        id: set_up_node_js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
       - name: Reject incomplete or skipped publication
+        id: reject_incomplete_or_skipped_publication
         env:
           RELEASE_JOB_RESULTS: ${{ toJSON(needs) }}
         run: node scripts/release-status.mjs
       - name: Verify public release and asset membership
+        id: verify_public_release_and_asset_membership
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ needs.context.outputs.version }}
         run: node scripts/release-github.mjs verify
+
+      - name: Report publish summary
+        id: report_publish_summary
+        if: always()
+        env:
+          CI_STAGE: publish
+          CI_PLATFORMS: linux/amd64,windows/amd64
+          CI_STATUS: ${{ job.status }}
+          CI_CHECKS: ${{ toJSON(steps) }}
+        run: node scripts/ci-report.mjs summary

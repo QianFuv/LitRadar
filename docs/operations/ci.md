@@ -5,6 +5,40 @@ explicit version retries additionally run packaging, platform smoke tests and
 publication. Scheduled coverage remains informational. No path filter or cached
 test result substitutes for a required gate.
 
+## Shared workflow contract
+
+All workflow YAML uses two-space structural indentation and the same stage vocabulary:
+`detect-changes` -> `quality` -> `build-acceptance` -> `publish`. Existing workflow
+names, job IDs and explicit or implicit job names are compatibility interfaces and
+remain unchanged. Stage labels and summaries make the flow consistent without
+renaming required checks. Detection classifies version changes across the entire
+push; it does not filter paths or skip required quality checks. Normal pushes run
+quality and its production frontend build; release packaging runs only for a version
+increase or explicit same-version retry.
+
+Every transferred artifact has source SHA, target platform and file SHA-256 evidence.
+The common `ci-manifest.json` schema records `sourceSha`, `platforms`, `stage`,
+`status`, check outcomes/durations, missing paths and artifact-relative file hashes.
+Platform-independent exports say `independent`; combined publication evidence lists
+both targets. Large image tar files are hashed as streams. Manifests stay inside
+existing artifact roots and outside official release `assets/`, preserving download
+layouts and the exact three public release assets. The tested frontend also retains
+its stricter source/file/CSP validation manifest.
+
+Successful build transfers require actual payloads before upload; a manifest alone
+cannot satisfy the contract. Diagnostic reports may record missing files after an
+earlier failure. Final summaries run after uploads and report the current job status,
+so a failed upload cannot be presented as success. The same heading, source/platform
+fields and check/status/duration table apply to all stages; existing frontend timing
+and flaky-test policy, and informational coverage policy, remain visible.
+
+Go caches explicitly name the root and both replacement modules' `go.mod`/`go.sum`
+inputs. The existing backend compiler/lane/native partitioning remains. pnpm names
+its lockfile; Next.js keys include source/toolchain/configuration identity. BuildKit
+uses the `litradar-linux-amd64` cache scope and hashes Dockerfile, build contexts,
+arguments and pinned bases through its own cache graph. Cached bytes never replace
+tests, source-bound frontend verification or platform smoke acceptance.
+
 ## Quality jobs
 
 - Release rules classify the push before the backend/frontend workflows start.
@@ -86,9 +120,9 @@ runner minutes, and cold caches or queue delays can reduce the benefit.
 
 Cache refresh and avoiding repeated regular-root vet may save compilation work,
 but their separate impact has not been measured. Local contract tests measure
-correctness, not hosted performance. This optimization is validated locally only;
-no new cloud CI run or release is authorized by this work. Record real post-change
-job/step data after a separately authorized push before claiming a speedup.
+correctness, not hosted performance. The initial optimization was validated locally;
+record actual post-change job/step data from an authorized hosted run before claiming
+a speedup. Version releases and deployments require their own authorization.
 
 ## Local validation and remaining measurements
 
