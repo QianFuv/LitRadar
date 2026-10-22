@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { parseVersion } from "./release-version.mjs";
 import { stageWebAssets } from "./stage-web-assets.mjs";
 import { stageReleaseWeb } from "./release-web.mjs";
+import { assertReleasePlatform } from "./release-platform.mjs";
 import {
   buildSimple,
   simpleBuildEnvironment,
@@ -28,6 +29,16 @@ assert.equal(
 assert.match(commit, /^[a-f0-9]{40}$/);
 const source = path.resolve(sourceArgument);
 const version = parseVersion(inputVersion);
+Object.assign(process.env, {
+  CGO_ENABLED: "1",
+  GOWORK: "off",
+  GOENV: "off",
+  GOFLAGS: "",
+  GOTOOLCHAIN: "go1.27.3",
+});
+const target = JSON.parse(run("go", ["env", "-json", "GOOS", "GOARCH"]));
+assertReleasePlatform(target.GOOS, target.GOARCH, "windows");
+Object.assign(process.env, { GOOS: target.GOOS, GOARCH: target.GOARCH });
 if (isLocalSmoke) fs.mkdirSync("test-results", { recursive: true });
 const output = isLocalSmoke
   ? fs.mkdtempSync(path.resolve("test-results/windows-package-"))

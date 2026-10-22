@@ -90,6 +90,25 @@ correctness, not hosted performance. This optimization is validated locally only
 no new cloud CI run or release is authorized by this work. Record real post-change
 job/step data after a separately authorized push before claiming a speedup.
 
+## Local validation and remaining measurements
+
+On 2026-10-23, the combined CI, export, platform, release and existing staging
+contract suites passed 42/42 tests with local Node 24.22.1. Actionlint 1.7.12,
+changed-script syntax checks, scoped Prettier and Git whitespace checks passed.
+The actionlint configuration adds the existing `ubuntu-26.04` hosted label to its
+older label catalog; workflow runners and permissions are unchanged.
+
+The local environment has pnpm 10.32.0; CI uses Node 26.11.1 and pnpm 12.10.1.
+The complete native Go suites and frontend browser suites were not rerun locally;
+their retained scheduling/arguments and packaging contracts were tested instead.
+Docker Desktop's Linux engine was unavailable, so the real named-context image
+build, artifact service transfer and full platform packaging still need a future
+authorized hosted run. No post-change hosted performance saving has been measured.
+
+Published targets remain exactly `windows/amd64` and `linux/amd64`. The scripts now
+reject a mismatched Go target or image identity before native preparation or archive
+extraction. Other platform source paths and historical releases remain intact.
+
 ## Official references and applicability
 
 Release builds now reuse the full-stack job's source-bound export via its immutable

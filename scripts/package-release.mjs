@@ -5,10 +5,17 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { parseVersion } from "./release-version.mjs";
+import { assertReleasePlatform } from "./release-platform.mjs";
 
 const [image, architecture, inputVersion] = process.argv.slice(2);
 assert(image && architecture === "amd64");
 const version = parseVersion(inputVersion);
+const images = JSON.parse(run("docker", ["image", "inspect", image]));
+assert(
+  Array.isArray(images) && images.length === 1,
+  "Expected exactly one release image",
+);
+assertReleasePlatform(images[0].Os, images[0].Architecture, "linux");
 const name = `litradar_${version}_linux_${architecture}`;
 const parent = path.resolve("release-results/packages");
 const directory = path.join(parent, name);

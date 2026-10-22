@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: "26.11.1"
       - name: Verify release contracts
-        run: node --test tests/release.test.mjs tests/ci.test.mjs tests/release-web.test.mjs
+        run: node --test tests/release.test.mjs tests/ci.test.mjs tests/release-web.test.mjs tests/release-platform.test.mjs
       - name: Resolve version increase or explicit retry
         id: version
         if: github.event_name != 'pull_request'

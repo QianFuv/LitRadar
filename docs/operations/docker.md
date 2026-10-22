@@ -47,12 +47,12 @@ SIGINT/SIGTERM 会协调关闭 HTTP 与调度组件。若任务子进程正在�
 
 ## 镜像内容
 
-Dockerfile 的前端阶段和 Ubuntu 基础镜像使用可读 tag 加不可变 digest；Node.js 与 Go 归档使用精确版本和 SHA-256 校验。
+Dockerfile 的前端阶段和 Ubuntu 基础镜像使用可读 tag 加不可变 digest；Node.js 与 Go 归档使用精确版本和 SHA-256 校验。正式发布以已通过全栈测试的静态导出覆盖 `frontend-build` 构建上下文；以下源码构建流程仍可独立执行。发布镜像固定为 `linux/amd64`，归档另提供 `windows/amd64`。
 
 1. Ubuntu 26.04 安装 Node.js 26.11.1 和 pnpm 12.10.1，复制 `app/package.json`、lockfile 和 `app/pnpm-workspace.yaml`，用缓存执行 frozen 依赖安装。
 2. 独立前端构建阶段复制 `app/` 源码，生成 `out/`，并为 HTML、CSS、JavaScript、JSON、SVG、TXT、XML 和 source map 保留原文件及确定性 gzip 兄弟文件。
 3. Ubuntu 26.04 中的 Go 1.27.3 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，先把前端 `out/` 复制到 `internal/webassets/export`，再用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat,litradar_web` 构建唯一 Go 应用并嵌入网页；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
-4. 下载 Obscura 官方 v0.2.4 对应 amd64/arm64 的 render + stealth 二进制归档，固定版本和 SHA-256，并一起安装 `obscura` 与 `obscura-worker`。辅助程序无需本地编译。
+4. 正式发布只选择 Obscura 官方 v0.2.4 的 amd64 render + stealth 二进制归档，固定版本和 SHA-256，并一起安装 `obscura` 与 `obscura-worker`。ARM64 源码构建分支与构建宿主支持保留，但不属于默认发布目标。辅助程序无需本地编译。
 5. Go 构建阶段在编译应用前运行 `scripts/build-simple-tokenizer.mjs`，从固定上游源码为目标架构构建静态 `libsimple.a`（不含 Jieba 和示例），并通过 `CGO_CFLAGS` 静态链接进应用，不产生 `libsimple.so`。
 6. `ubuntu:26.04` 接收带内嵌网页和 CSP 的应用（包括静态 Simple）、Obscura 和 `/usr/share/litradar/meta` 中来自 `assets/meta/` 的不可变期刊目录。Ubuntu 26.04 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。
 
@@ -107,7 +107,7 @@ docker compose ps
 需要验证当前源码时改为本地构建：
 
 ```bash
-docker compose build litradar
+docker buildx build --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar:latest .
 docker compose up -d --remove-orphans
 ```
 
@@ -272,7 +272,7 @@ docker compose logs --no-log-prefix litradar | jq -c 'select(.level == "ERROR")'
 仓库提供 PowerShell 7 脚本 `tests/profiling/profile_docker_memory.ps1`。脚本为每次运行生成唯一的 Compose 项目、容器和网络，只删除这些具名测试资源，并把不含命令参数和密钥值的 JSON 写入已忽略的 `output/memory/`。Docker 必须使用 cgroup v2，目标镜像必须先构建：
 
 ```powershell
-docker compose build litradar
+docker buildx build --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar:latest .
 docker compose config --quiet
 ```
 

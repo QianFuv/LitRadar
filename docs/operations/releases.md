@@ -31,6 +31,13 @@ completion check. The release contains:
 `SHA256SUMS` covers both archives. Releases do not publish a separate Windows
 checksum file. ARM64 builds and partial platform supplementation are not supported.
 
+Packaging scripts enforce the boundary independently of the workflow: Linux checks
+the image's actual OS/architecture before creating output or extracting files;
+Windows checks the effective Go target before preparing native inputs. Wrong OS or
+non-amd64 targets fail immediately. Source/build-host compatibility paths, including
+ARM64, are retained; they do not add publication targets. There is no default
+Android or macOS release path. Historical releases and their assets are unchanged.
+
 Release notes list every commit since the highest older published stable version
 reachable from the release commit. Conventional Commit prefixes group entries by
 type, with unrecognized subjects and merge commits retained under Other commits.
