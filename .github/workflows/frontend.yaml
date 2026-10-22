@@ -7,6 +7,15 @@ on:
         description: Exact product source commit; defaults to the caller commit
         required: false
         type: string
+      release_web:
+        description: Export tested frontend bytes for this run's release
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      web_artifact_id:
+        description: Immutable artifact ID of the tested static export
+        value: ${{ jobs.frontend.outputs.web_artifact_id }}
 
 env:
   LITRADAR_TEST_CI: "true"
@@ -16,6 +25,8 @@ permissions:
 
 jobs:
   frontend:
+    outputs:
+      web_artifact_id: ${{ steps.web_export.outputs.artifact-id }}
     runs-on: ubuntu-26.04
     defaults:
       run:
@@ -123,6 +134,24 @@ jobs:
           set -e
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
           exit "$status"
+
+      - name: Bind tested frontend export to source
+        if: inputs.release_web
+        working-directory: .
+        env:
+          SOURCE_SHA: ${{ inputs.source_ref || github.sha }}
+        run: node scripts/release-web.mjs prepare "$SOURCE_SHA"
+
+      - name: Upload tested frontend export
+        id: web_export
+        if: inputs.release_web
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-web-${{ inputs.source_ref || github.sha }}-${{ github.run_attempt }}
+          path: release-results/web/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload frontend diagnostics
         if: always()

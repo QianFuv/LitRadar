@@ -40,6 +40,18 @@ notes; published release notes remain unchanged.
 
 ## Actions entrypoints
 
+The successful frontend full-stack job exports the exact embedded static files,
+including CSP metadata and deterministic gzip files. Its immutable artifact ID is
+passed to both release jobs in the same workflow run. Each consumer verifies the
+release source SHA and complete SHA-256 file inventory before compilation; missing,
+extra, modified or linked assets fail the build. Windows stages that export without
+installing frontend dependencies. Linux uses the verified directory as Buildx's
+`frontend-build` named context, overriding only the Docker frontend stage. Ordinary
+standalone Docker builds still build the frontend from source. Platform smoke tests
+and publication checks remain mandatory. Artifact expiry requires rerunning the
+frontend prerequisite on the same permitted source, not rebuilding unchecked assets
+inside a packaging job.
+
 - CI runs on main pushes and pull requests. It checks release rules, Linux/Windows
   Go code and the frontend, then calls Release when VERSION increases.
 - CI also accepts a manual version retry on main. It runs the same checks and

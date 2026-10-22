@@ -92,6 +92,23 @@ job/step data after a separately authorized push before claiming a speedup.
 
 ## Official references and applicability
 
+Release builds now reuse the full-stack job's source-bound export via its immutable
+same-run artifact ID. Windows no longer installs pnpm/dependencies or builds Next.js;
+the old web-build step took 12 seconds in the latest baseline and 21 seconds in the
+comparison run. Linux overrides the Docker `frontend-build` stage using a named
+context. Its frontend portion was not separately timed inside the 251-second Docker
+step, so no numeric Linux saving is claimed. Artifact upload/download and hashing
+add overhead; net savings remain unmeasured. CSP, full-stack and platform smoke
+checks are retained. Hidden files and compressed representations travel intact.
+
+- [GitHub artifact transfer](https://docs.github.com/en/actions/tutorials/store-and-share-data)
+  supports cross-job reuse; automatic digest mismatch is a warning, so release
+  consumers independently fail on source/file-inventory mismatch.
+- [Docker named contexts](https://docs.docker.com/reference/cli/docker/buildx/build/#build-context)
+  can override a same-named build stage. The
+  [pinned build-push action](https://github.com/docker/build-push-action/blob/c3c9e263c25d99ce0380d002d59b67737d91b0dc/README.md)
+  exposes this through `build-contexts`. Standalone source builds remain unchanged.
+
 - [GoReleaser build workflow](https://github.com/goreleaser/goreleaser/blob/4762c79733dde55c7f63b3cdb4ef08d249df562d/.github/workflows/build.yml)
   separates test-cache identity from faster lint/license jobs and cancels obsolete
   builds; its [release workflow](https://github.com/goreleaser/goreleaser/blob/4762c79733dde55c7f63b3cdb4ef08d249df562d/.github/workflows/release.yml)

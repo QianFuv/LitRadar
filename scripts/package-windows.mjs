@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseVersion } from "./release-version.mjs";
 import { stageWebAssets } from "./stage-web-assets.mjs";
+import { stageReleaseWeb } from "./release-web.mjs";
 import {
   buildSimple,
   simpleBuildEnvironment,
@@ -15,7 +16,7 @@ import {
 const toolsRoot = fileURLToPath(new URL("..", import.meta.url));
 const [sourceArgument, inputVersion, commit, mode] = process.argv.slice(2);
 assert(
-  mode === undefined || mode === "--local-smoke",
+  mode === undefined || mode === "--local-smoke" || mode === "--verified-web",
   "Unknown packaging mode",
 );
 const isLocalSmoke = mode === "--local-smoke";
@@ -122,7 +123,9 @@ const environment = {
   GOOS: "windows",
   GOARCH: "amd64",
 };
-await stageWebAssets(source);
+if (mode === "--verified-web")
+  await stageReleaseWeb(path.resolve("release-results/web"), commit, source);
+else await stageWebAssets(source);
 run(
   "go",
   [

@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: "26.11.1"
       - name: Verify release contracts
-        run: node --test tests/release.test.mjs tests/ci.test.mjs
+        run: node --test tests/release.test.mjs tests/ci.test.mjs tests/release-web.test.mjs
       - name: Resolve version increase or explicit retry
         id: version
         if: github.event_name != 'pull_request'
@@ -56,6 +56,8 @@ jobs:
       group: frontend-${{ needs.release-rules.outputs.release == 'true' && format('release-{0}', github.run_id) || format('quality-{0}-{1}', github.event_name, github.event.pull_request.number || github.ref) }}
       cancel-in-progress: true
     uses: ./.github/workflows/frontend.yaml
+    with:
+      release_web: ${{ needs.release-rules.outputs.release == 'true' }}
 
   release:
     name: Version release
@@ -67,3 +69,4 @@ jobs:
     uses: ./.github/workflows/release.yaml
     with:
       version: ${{ needs.release-rules.outputs.version }}
+      web_artifact_id: ${{ needs.frontend.outputs.web_artifact_id }}
