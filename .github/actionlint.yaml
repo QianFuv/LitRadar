@@ -1,0 +1,4 @@
+# Additional hosted label already used by successful CI, newer than actionlint's catalog.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

@@ -8,10 +8,6 @@ on:
         required: false
         type: string
 
-concurrency:
-  group: frontend-ci-${{ github.run_id }}-${{ github.run_attempt }}
-  cancel-in-progress: true
-
 env:
   LITRADAR_TEST_CI: "true"
 

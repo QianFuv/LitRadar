@@ -159,7 +159,7 @@ CI 的 artifact upload 使用 `if: always()`。失败时先看 workflow summary 
 - Go 本地和 CI 不自动重试，`-count=1` 禁用结果缓存；`check-go.mjs` 的全模块常规与 race 测试每条上限 25 分钟，其他命令 15 分钟，失败即停止。
 - Playwright 本地零重试；CI 最多一次重试，只用于取得 trace/video。`failOnFlakyTests` 已启用，因此 retry-pass 仍使 CI 失败，不能作为稳定完成证据。
 - Vitest 和统一脚本不自动重试。不要通过重复运行直到通过来关闭缺陷。
-- frontend 和 test-diagnostics workflow summary 记录各层状态与时长，backend 结果见 `backend-<os>` artifact 中的 `test-results/go/`；Go JSON 日志记录测试时长。只有持续数据证明某层成为瓶颈后，才讨论 shard/partition。
+- frontend 和 test-diagnostics workflow summary 记录各层状态与时长，backend 结果见 `backend-<os>-<regular|race>` artifact 中的 `test-results/go/`；Go JSON 日志记录测试时长。Windows regular/race 已按两次成功运行的耗时证据拆成独立 CI job；每个分支仍保留完整测试和原生输入验证。详见 [CI 执行与耗时](operations/ci.md)。
 
 ## 覆盖率策略
 

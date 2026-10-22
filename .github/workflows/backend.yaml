@@ -8,10 +8,6 @@ on:
         required: false
         type: string
 
-concurrency:
-  group: backend-ci-${{ github.run_id }}-${{ github.run_attempt }}
-  cancel-in-progress: true
-
 env:
   CGO_ENABLED: "1"
   GOWORK: "off"
@@ -23,14 +19,15 @@ permissions:
   contents: read
 
 jobs:
-  backend:
-    name: Go checks (${{ matrix.os }})
+  checks:
+    name: Go ${{ matrix.lane }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-26.04, windows-latest]
+        lane: [regular, race]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,7 +38,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.3"
-          cache: true
+          cache: false
 
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -51,14 +48,51 @@ jobs:
       - name: Verify native compiler
         run: gcc --version
 
-      - name: Run Go static, regular and race checks
-        run: node scripts/check-go.mjs
+      - name: Locate Go caches and compiler identity
+        id: cache
+        shell: bash
+        run: |
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          compiler=$(gcc --version | sha256sum | cut -d ' ' -f 1)
+          echo "compiler=$compiler" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Go modules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.modules }}
+          key: go-mod-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/go-sdk/go.mod', 'third_party/go-sdk/go.sum', 'third_party/go-sqlite3/go.mod', 'third_party/go-sqlite3/go.sum') }}
+
+      - name: Cache Go compilation by lane and source
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.build }}
+          key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ matrix.lane }}-${{ steps.cache.outputs.compiler }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum', 'third_party/simple-static/**', 'third_party/go-sqlite3/*.h', 'scripts/build-simple-tokenizer.mjs', 'scripts/go-check-plan.mjs') }}-${{ inputs.source_ref || github.sha }}
+          restore-keys: |
+            go-build-${{ runner.os }}-${{ runner.arch }}-${{ env.GOTOOLCHAIN }}-${{ matrix.lane }}-${{ steps.cache.outputs.compiler }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum', 'third_party/simple-static/**', 'third_party/go-sqlite3/*.h', 'scripts/build-simple-tokenizer.mjs', 'scripts/go-check-plan.mjs') }}-
+
+      - name: Run complete Go verification lane
+        run: node scripts/check-go.mjs ${{ matrix.lane }}
 
       - name: Upload backend diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: backend-${{ matrix.os }}
+          name: backend-${{ matrix.os }}-${{ matrix.lane }}
           path: test-results/go/
           if-no-files-found: error
           retention-days: 14
+
+  backend:
+    name: Go checks (${{ matrix.os }})
+    needs: checks
+    if: always()
+    runs-on: ubuntu-26.04
+    strategy:
+      matrix:
+        os: [ubuntu-26.04, windows-latest]
+    steps:
+      - name: Require all regular and race lanes
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: test "$CHECKS_RESULT" = success

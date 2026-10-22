@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: "26.11.1"
       - name: Verify release contracts
-        run: node --test tests/release.test.mjs
+        run: node --test tests/release.test.mjs tests/ci.test.mjs
       - name: Resolve version increase or explicit retry
         id: version
         if: github.event_name != 'pull_request'
@@ -41,10 +41,20 @@ jobs:
 
   backend:
     name: Backend
+    needs: release-rules
+    if: ${{ !cancelled() }}
+    concurrency:
+      group: backend-${{ needs.release-rules.outputs.release == 'true' && format('release-{0}', github.run_id) || format('quality-{0}-{1}', github.event_name, github.event.pull_request.number || github.ref) }}
+      cancel-in-progress: true
     uses: ./.github/workflows/backend.yaml
 
   frontend:
     name: Frontend
+    needs: release-rules
+    if: ${{ !cancelled() }}
+    concurrency:
+      group: frontend-${{ needs.release-rules.outputs.release == 'true' && format('release-{0}', github.run_id) || format('quality-{0}-{1}', github.event_name, github.event.pull_request.number || github.ref) }}
+      cancel-in-progress: true
     uses: ./.github/workflows/frontend.yaml
 
   release:
