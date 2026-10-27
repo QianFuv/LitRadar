@@ -98,6 +98,13 @@ func TestReadersSeeOnePublicationSnapshot(t *testing.T) {
 		if journal.Notices[0].Scope != fmt.Sprintf("revision-%d", journal.Sources[0].Revision) {
 			t.Fatal("reader mixed header and content revisions", journal)
 		}
+		selected, err := repository.LoadJournalsForCatalogIds(ctx, []string{"a"})
+		if err != nil || len(selected) != 1 {
+			t.Fatal(selected, err)
+		}
+		if selected[0].Notices[0].Scope != fmt.Sprintf("revision-%d", selected[0].Sources[0].Revision) {
+			t.Fatal("selected reader mixed header and content revisions", selected[0])
+		}
 	}
 	if err := <-finished; err != nil {
 		t.Fatal(err)

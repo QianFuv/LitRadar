@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/cfp"
 	platform "github.com/QianFuv/LitRadar/internal/platform/sqlite"
@@ -18,7 +19,13 @@ func (failure *InvalidError) Error() string { return failure.Message }
 func invalid(message string) error          { return &InvalidError{Message: message} }
 
 // Repository never creates parent directories or migrates the business database implicitly.
-type Repository struct{ database *sql.DB }
+type Repository struct {
+	database           *sql.DB
+	snapshotMutex      sync.Mutex
+	snapshotConnection *sql.Conn
+	snapshotVersion    int64
+	snapshot           []JournalSnapshot
+}
 
 func Open(path string) (*Repository, error) {
 	database, err := platform.Open(platform.Config{Filename: path, Mode: "rwc", MaxConnections: 8})
@@ -27,7 +34,23 @@ func Open(path string) (*Repository, error) {
 	}
 	return &Repository{database: database}, nil
 }
-func (repository *Repository) Close() error { return repository.database.Close() }
+
+// Close releases the retained read connection before closing its owning pool.
+func (repository *Repository) Close() error {
+	repository.snapshotMutex.Lock()
+	defer repository.snapshotMutex.Unlock()
+	repository.clearSnapshot()
+	return repository.database.Close()
+}
+
+// clearSnapshot discards connection-local version identity whenever its connection is released.
+func (repository *Repository) clearSnapshot() {
+	if repository.snapshotConnection != nil {
+		repository.snapshotConnection.Close()
+	}
+	repository.snapshotConnection = nil
+	repository.snapshot = nil
+}
 
 func (repository *Repository) transaction(ctx context.Context, isImmediate bool, operation func(*sql.Conn) error) (resultError error) {
 	defer func() { resultError = databaseError(resultError) }()
@@ -36,18 +59,23 @@ func (repository *Repository) transaction(ctx context.Context, isImmediate bool,
 		return err
 	}
 	defer connection.Close()
+	return connectionTransaction(ctx, connection, isImmediate, operation)
+}
+
+// connectionTransaction keeps all statements, including cache validation, in one SQLite snapshot.
+func connectionTransaction(ctx context.Context, connection *sql.Conn, isImmediate bool, operation func(*sql.Conn) error) error {
 	begin := "BEGIN"
 	if isImmediate {
 		begin = "BEGIN IMMEDIATE"
 	}
-	if _, err = connection.ExecContext(ctx, begin); err != nil {
+	if _, err := connection.ExecContext(ctx, begin); err != nil {
 		return err
 	}
 	defer connection.ExecContext(context.Background(), "ROLLBACK")
-	if err = operation(connection); err != nil {
+	if err := operation(connection); err != nil {
 		return err
 	}
-	_, err = connection.ExecContext(ctx, "COMMIT")
+	_, err := connection.ExecContext(ctx, "COMMIT")
 	return err
 }
 
