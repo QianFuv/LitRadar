@@ -41,16 +41,20 @@ func isPrivateProjectionRune(character rune) bool {
 	return character >= 0xe000 && character <= 0xf8ff || character >= 0xf0000 && character <= 0xffffd || character >= 0x100000 && character <= 0x10fffd
 }
 
-// projectionRune drops marks before mapping preserved, lowercased or separator runes.
+// projectionRune classifies ASCII directly and retains Unicode mark, case and separator rules.
 func projectionRune(character rune) rune {
+	if character < 128 {
+		if asciiAlphanumeric(character) {
+			return character
+		}
+		return ' '
+	}
 	if unicode.IsMark(character) {
 		return -1
 	}
 	isAlphanumeric := unicode.IsLetter(character) || unicode.IsNumber(character) || unicode.Is(unicode.Properties["Other_Alphabetic"], character)
 	if !isAlphanumeric && !isPrivateProjectionRune(character) {
 		return ' '
-	} else if character < 128 {
-		return character
 	}
 	return unicode.ToLower(character)
 }
