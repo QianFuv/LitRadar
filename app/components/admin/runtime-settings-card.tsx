@@ -14,11 +14,17 @@ import {
   type RuntimeSettingsUpdate,
 } from '@/lib/api';
 import { ProviderConfigurationEditor } from '@/components/admin/provider-configuration-editor';
-import { Badge } from '@/components/ui/badge';
+import {
+  SettingsGroup,
+  SettingsRow,
+  SettingsSection,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+  StatusPill,
+} from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   COLLAPSE_VARIANTS,
   FADE_UP_VARIANTS,
@@ -330,7 +336,7 @@ function RuntimePoolEditor({
           <MotionDiv
             key={`${field}-${row.id}`}
             data-motion-runtime-input-row={`${field}-${row.id}`}
-            className="flex items-center gap-2 overflow-hidden"
+            className="flex items-center gap-2 overflow-hidden p-0.5"
             initial="hidden"
             animate="visible"
             exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
@@ -353,7 +359,7 @@ function RuntimePoolEditor({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="shrink-0 text-destructive hover:text-destructive"
+              className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               disabled={disabled}
               aria-label={`删除${label}第 ${index + 1} 行`}
               onClick={() => deleteRow(index)}
@@ -363,8 +369,15 @@ function RuntimePoolEditor({
           </MotionDiv>
         ))}
       </MotionPresence>
-      <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={addRow}>
-        <Plus className="mr-2 h-4 w-4" />
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="text-primary hover:text-primary"
+        disabled={disabled}
+        onClick={addRow}
+      >
+        <Plus className="size-4" />
         添加
       </Button>
     </div>
@@ -419,8 +432,8 @@ function RuntimeSecretPoolEditor({
                 <MotionDiv
                   key={item.reference}
                   data-motion-runtime-secret-row={item.reference}
-                  className={`flex items-center justify-between gap-3 overflow-hidden rounded-md border px-3 py-2 ${
-                    isPendingRemoval ? 'bg-muted/50 text-muted-foreground' : ''
+                  className={`flex items-center justify-between gap-3 overflow-hidden rounded-lg bg-muted/60 px-3 py-2 ${
+                    isPendingRemoval ? 'text-muted-foreground' : ''
                   }`}
                   initial="hidden"
                   animate="visible"
@@ -436,13 +449,13 @@ function RuntimeSecretPoolEditor({
                     {item.masked_value}
                   </span>
                   <div className="flex items-center gap-2">
-                    {isPendingRemoval && <Badge variant="outline">保存后删除</Badge>}
+                    {isPendingRemoval && <StatusPill tone="warning">保存后删除</StatusPill>}
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
                       disabled={isCleared}
-                      className="text-destructive hover:text-destructive"
+                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       aria-label={
                         removedReferences.has(item.reference)
                           ? `撤销删除${setting.label}第 ${index + 1} 个密钥`
@@ -497,14 +510,14 @@ export function RuntimeSettingsCard() {
         </CardTitle>
         <CardDescription>管理后端共享运行配置</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent>
         {isLoading ? (
           <div role="status" className="text-sm text-muted-foreground">
             加载中…
           </div>
         ) : (
           <fieldset
-            className="m-0 min-w-0 space-y-6 border-0 p-0"
+            className="m-0 min-w-0 space-y-10 border-0 p-0"
             disabled={saveMutation.isPending}
           >
             {renderRuntimeSettingGroups(state)}
@@ -512,8 +525,10 @@ export function RuntimeSettingsCard() {
             {renderRuntimeProviderSettings(state)}
           </fieldset>
         )}
-        {renderRuntimeFeedback(state)}
-        {renderRuntimeSaveAction(state)}
+        <div className="sticky bottom-0 z-10 mt-10 flex flex-col gap-3 border-t bg-background py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-h-5 flex-1">{renderRuntimeFeedback(state)}</div>
+          {renderRuntimeSaveAction(state)}
+        </div>
       </CardContent>
     </Card>
   );
@@ -720,8 +735,7 @@ function renderRuntimeSettingControl(
   } = state;
   if (setting.control === 'boolean')
     return (
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-muted-foreground">{setting.description}</span>
+      <div className="flex items-center justify-end gap-3">
         <Switch
           id={`runtime-${setting.field}`}
           name={`runtime_${setting.field}`}
@@ -760,7 +774,7 @@ function renderRuntimeSettingControl(
         value={value}
         onValueChange={(nextValue) => updateFormValue(setting.field, nextValue)}
       >
-        <SelectTrigger id={`runtime-${setting.field}`} className="w-full">
+        <SelectTrigger id={`runtime-${setting.field}`} className="w-full sm:w-72">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -785,6 +799,7 @@ function renderRuntimeSettingControl(
       value={value}
       onChange={(event) => updateFormValue(setting.field, event.target.value)}
       placeholder={setting.description}
+      className="w-full sm:w-72"
     />
   );
 }
@@ -797,24 +812,34 @@ function renderRuntimeSettingDescription(
   const { clearedSecrets, toggleSecretClear } = state;
 
   return (
-    setting.control !== 'boolean' && (
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>
-          {setting.description}
-          {getRuntimeSecretDescription(state, setting)}
+    <span className="mt-0.5 block space-y-1.5">
+      <span className="block">
+        {setting.description}
+        {setting.control !== 'boolean' && getRuntimeSecretDescription(state, setting)}
+      </span>
+      <span className="flex flex-wrap items-center gap-1.5">
+        {isSecretPoolSetting(setting) && (
+          <StatusPill tone="info">{setting.secret_items.length} 个密钥</StatusPill>
+        )}
+        <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          {getApplyModeLabel(setting.apply_mode)}
         </span>
-        {setting.is_secret && setting.has_value && (
+        <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          {getSourceLabel(setting.source)}
+        </span>
+        {setting.control !== 'boolean' && setting.is_secret && setting.has_value && (
           <Button
             type="button"
             variant="ghost"
             size="sm"
+            className="h-6 px-1.5 text-[11px] text-destructive hover:bg-destructive/10 hover:text-destructive"
             onClick={() => toggleSecretClear(setting.field)}
           >
             {clearedSecrets.has(setting.field) ? '保留全部密钥' : '清除全部密钥'}
           </Button>
         )}
-      </div>
-    )
+      </span>
+    </span>
   );
 }
 
@@ -823,36 +848,32 @@ function renderRuntimeSettingGroups(state: RuntimeViewState) {
   const { genericSettingGroups, form } = state;
 
   return genericSettingGroups.map(([group, groupSettings]) => (
-    <section key={group} className="space-y-3" aria-labelledby={`runtime-group-${group}`}>
-      <h3 id={`runtime-group-${group}`} className="text-base font-semibold">
-        {RUNTIME_GROUP_LABELS[group]}
-      </h3>
-      <div className="grid gap-3 lg:grid-cols-2">
+    <SettingsSection key={group} aria-labelledby={`runtime-group-${group}`}>
+      <SettingsSectionHeader>
+        <SettingsSectionTitle id={`runtime-group-${group}`}>
+          {RUNTIME_GROUP_LABELS[group]}
+        </SettingsSectionTitle>
+      </SettingsSectionHeader>
+      <SettingsGroup>
         {groupSettings.map((setting) => {
           const value = form[setting.field] ?? '';
+          const isStacked = isPoolSetting(setting) || isSecretPoolSetting(setting);
           return (
-            <div
+            <SettingsRow
               key={setting.field}
               data-runtime-setting-field={setting.field}
-              className="grid gap-2 rounded-md border p-3"
+              title={setting.label}
+              htmlFor={`runtime-${setting.field}`}
+              description={renderRuntimeSettingDescription(state, setting)}
+              isStacked={isStacked}
+              className="sm:items-start"
             >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <Label htmlFor={`runtime-${setting.field}`}>{setting.label}</Label>
-                <div className="flex flex-wrap items-center gap-2">
-                  {isSecretPoolSetting(setting) && (
-                    <Badge variant="outline">{setting.secret_items.length} 个密钥</Badge>
-                  )}
-                  <Badge variant="outline">{getApplyModeLabel(setting.apply_mode)}</Badge>
-                  <Badge variant="secondary">{getSourceLabel(setting.source)}</Badge>
-                </div>
-              </div>
               {renderRuntimeSettingControl(state, setting, value)}
-              {renderRuntimeSettingDescription(state, setting)}
-            </div>
+            </SettingsRow>
           );
         })}
-      </div>
-    </section>
+      </SettingsGroup>
+    </SettingsSection>
   ));
 }
 
@@ -924,6 +945,7 @@ function renderRuntimeSaveAction(state: RuntimeViewState) {
   return (
     <div className="flex justify-end">
       <Button
+        className="w-full sm:w-auto"
         disabled={
           isLoading ||
           saveMutation.isPending ||
@@ -932,7 +954,7 @@ function renderRuntimeSaveAction(state: RuntimeViewState) {
         }
         onClick={() => saveMutation.mutate()}
       >
-        <Save className="mr-2 h-4 w-4" />
+        <Save className="size-4" />
         保存配置
       </Button>
     </div>

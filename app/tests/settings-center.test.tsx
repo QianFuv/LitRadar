@@ -105,7 +105,7 @@ async function opensAndNavigatesSettingsDialog(): Promise<void> {
 
   expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '常规' })).toBeInTheDocument();
-  expect(screen.getAllByRole('navigation', { name: '设置分类' })).toHaveLength(2);
+  expect(screen.getAllByRole('navigation', { name: '设置分类' })).toHaveLength(1);
   expect(screen.getByRole('region', { name: '常规设置内容' })).toBeInTheDocument();
   expect(screen.getByRole('radiogroup', { name: '外观主题' })).toBeInTheDocument();
   expect(document.querySelector('[data-mobile-overflow-cue="true"]')).toBeInTheDocument();

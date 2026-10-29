@@ -2,17 +2,18 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, Key, Plus, Trash2 } from 'lucide-react';
+import { Check, Copy, Key, KeyRound, Plus, Trash2 } from 'lucide-react';
 
 import { createAccessToken, getAccessTokens, revokeAccessToken, type AccessToken } from '@/lib/api';
 import {
+  SettingsGroup,
   SettingsSection,
   SettingsSectionContent,
   SettingsSectionDescription,
   SettingsSectionHeader,
   SettingsSectionTitle,
+  StatusPill,
 } from '@/components/settings/settings-section';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -39,6 +40,7 @@ import type {
   SettingsCopyFeedback,
   SettingsCopyScope,
 } from '@/components/settings/use-settings-copy';
+import { cn } from '@/lib/utils';
 
 const TTL_OPTIONS = [
   { label: '7天', value: 7 * 86400 },
@@ -80,8 +82,8 @@ export function AccessTokensCard(props: {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
+        <div className="flex w-full items-end justify-between gap-4">
+          <div className="min-w-0">
             <SettingsSectionTitle>访问令牌</SettingsSectionTitle>
             <SettingsSectionDescription>
               创建访问令牌，用于接口访问或第三方集成
@@ -95,8 +97,8 @@ export function AccessTokensCard(props: {
             }}
           >
             <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="w-full sm:w-auto">
-                <Plus className="h-4 w-4 mr-1" />
+              <Button size="sm" className="shrink-0">
+                <Plus className="size-4" />
                 新建
               </Button>
             </DialogTrigger>
@@ -115,7 +117,7 @@ export function AccessTokensCard(props: {
         </div>
       </SettingsSectionHeader>
       <SettingsSectionContent>
-        <div className="space-y-2">{renderAccessTokenList(state)}</div>
+        <SettingsGroup>{renderAccessTokenList(state)}</SettingsGroup>
         {renderAccessTokenRevocation(state)}
       </SettingsSectionContent>
     </SettingsSection>
@@ -207,13 +209,19 @@ function renderCreatedAccessToken(
       variants={FADE_UP_VARIANTS}
       transition={feedbackTransition}
     >
-      <p className="text-sm text-muted-foreground">新令牌已创建：</p>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <code className="flex-1 rounded bg-muted p-2 text-xs break-all">{newTokenValue}</code>
+      <p className="flex items-center gap-2 text-sm font-bold text-success-foreground">
+        <span className="flex size-5 items-center justify-center rounded-full bg-success">
+          <Check className="size-3" strokeWidth={3} aria-hidden="true" />
+        </span>
+        新令牌已创建：
+      </p>
+      <div className="flex items-stretch gap-2">
+        <code className="min-w-0 flex-1 rounded-lg border border-dashed border-primary/50 bg-info px-3 py-2.5 text-xs leading-5 break-all text-info-foreground">
+          {newTokenValue}
+        </code>
         <Button
           variant="outline"
-          size="icon"
-          className="self-start sm:self-auto"
+          className="h-auto w-11 shrink-0"
           aria-label="复制新访问令牌"
           onClick={() => void handleCopy(newTokenValue, '访问令牌已复制。', 'token')}
         >
@@ -293,18 +301,30 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
       </div>
       <div className="space-y-2">
         <div className="text-sm font-medium">有效期</div>
-        <div className="flex gap-2 flex-wrap" role="group" aria-label="访问令牌有效期">
-          {TTL_OPTIONS.map((opt) => (
-            <Button
-              type="button"
-              key={opt.value}
-              variant={tokenTtl === opt.value ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setTokenTtl(opt.value)}
-            >
-              {opt.label}
-            </Button>
-          ))}
+        <div
+          className="grid grid-cols-4 gap-1 rounded-lg bg-muted p-1"
+          role="group"
+          aria-label="访问令牌有效期"
+        >
+          {TTL_OPTIONS.map((opt) => {
+            const isSelected = tokenTtl === opt.value;
+            return (
+              <button
+                type="button"
+                key={opt.value}
+                aria-pressed={isSelected}
+                className={cn(
+                  'motion-control h-9 rounded-md text-sm outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring',
+                  isSelected
+                    ? 'bg-background font-bold text-foreground shadow-paper'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+                onClick={() => setTokenTtl(opt.value)}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
       </div>
       <MotionPresence>
@@ -324,7 +344,11 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
           </MotionParagraph>
         )}
       </MotionPresence>
-      <Button type="submit" disabled={createTokenMut.isPending || tokenNameError !== null}>
+      <Button
+        type="submit"
+        className="w-full"
+        disabled={createTokenMut.isPending || tokenNameError !== null}
+      >
         创建
       </Button>
     </MotionForm>
@@ -340,54 +364,74 @@ function renderAccessTokenList(
 ) {
   const { setTokenToRevoke, feedbackTransition, rowTransition, tokens, revokeMut } = state;
 
+  const nowSeconds = Date.now() / 1000;
   return (
     <MotionPresence>
       {tokens.length === 0 ? (
-        <MotionParagraph
+        <MotionDiv
           key="empty-tokens"
-          className="text-sm text-muted-foreground"
+          className="flex flex-col items-center gap-3 px-6 py-10 text-center"
           initial="hidden"
           animate="visible"
           exit="exit"
           variants={FADE_UP_VARIANTS}
           transition={feedbackTransition}
         >
-          暂无访问令牌
-        </MotionParagraph>
+          <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <KeyRound className="size-5" aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-sm font-bold">暂无访问令牌</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              令牌可用于脚本、自动化或第三方工具调用 LitRadar 接口
+            </p>
+          </div>
+        </MotionDiv>
       ) : (
-        tokens.map((t) => (
-          <MotionDiv
-            key={t.id}
-            data-motion-token-key={t.id}
-            className="flex flex-col gap-3 overflow-hidden rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-            initial="hidden"
-            animate="visible"
-            exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-            variants={COLLAPSE_VARIANTS}
-            transition={rowTransition}
-          >
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <Key className="h-4 w-4 text-muted-foreground" />
-              <span className="break-all text-sm">{t.name || '（未命名）'}</span>
-              <Badge variant="outline" className="text-[10px]">
-                到 {formatExpiry(t.expires_at)} 过期
-              </Badge>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 self-end text-destructive sm:self-auto"
-              aria-label={`撤销访问令牌 ${t.name || t.id}`}
-              disabled={revokeMut.isPending}
-              onClick={() => {
-                revokeMut.reset();
-                setTokenToRevoke(t);
-              }}
+        tokens.map((t) => {
+          const remainingDays = Math.max(0, Math.ceil((t.expires_at - nowSeconds) / 86400));
+          return (
+            <MotionDiv
+              key={t.id}
+              data-motion-token-key={t.id}
+              className="flex items-center gap-3 overflow-hidden px-4 py-3.5 sm:px-5"
+              initial="hidden"
+              animate="visible"
+              exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
+              variants={COLLAPSE_VARIANTS}
+              transition={rowTransition}
             >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </MotionDiv>
-        ))
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <Key className="size-4" aria-hidden="true" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold">{t.name || '（未命名）'}</p>
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  到 {formatExpiry(t.expires_at)} 过期
+                </p>
+              </div>
+              <StatusPill
+                tone={remainingDays === 0 ? 'danger' : remainingDays <= 7 ? 'warning' : 'neutral'}
+                className="hidden sm:inline-flex"
+              >
+                {remainingDays === 0 ? '已过期' : `剩余 ${remainingDays} 天`}
+              </StatusPill>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-9 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                aria-label={`撤销访问令牌 ${t.name || t.id}`}
+                disabled={revokeMut.isPending}
+                onClick={() => {
+                  revokeMut.reset();
+                  setTokenToRevoke(t);
+                }}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </MotionDiv>
+          );
+        })
       )}
     </MotionPresence>
   );

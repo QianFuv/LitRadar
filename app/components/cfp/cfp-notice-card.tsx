@@ -51,13 +51,18 @@ export function CfpSourceFooter({
   return (
     <footer
       data-slot="cfp-source-footer"
-      className="flex flex-col gap-3 border-t px-5 py-4 sm:flex-row sm:items-center sm:gap-5 sm:px-6"
+      className="flex flex-col gap-3 border-t border-dashed pt-4 sm:flex-row sm:items-center sm:justify-between sm:gap-5"
     >
       <span className="text-xs leading-5 text-muted-foreground">
         核验于 {checkedOn ? formatDate(checkedOn) : '—'}
       </span>
       {sourceUrl && (
-        <Button variant="outline" size="sm" className="h-9 w-full shrink-0 sm:w-auto" asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 w-full shrink-0 rounded-lg sm:w-auto"
+          asChild
+        >
           <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
             {label}
             <ArrowUpRight className="size-3.5" aria-hidden="true" />
@@ -92,9 +97,9 @@ function CfpTimeline({ notice }: { notice: CfpNoticeView }) {
     <aside
       data-slot="cfp-timeline"
       aria-label="时间安排"
-      className="min-w-0 self-start rounded-lg border border-border/60 bg-muted/30 p-4"
+      className="min-w-0 self-start rounded-xl bg-muted p-4"
     >
-      <h4 className="flex items-center gap-2 text-xs font-semibold leading-5">
+      <h4 className="flex items-center gap-2 text-xs font-bold leading-5">
         <CalendarDays className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         时间安排
       </h4>
@@ -108,7 +113,7 @@ function CfpTimeline({ notice }: { notice: CfpNoticeView }) {
             <dd
               className={cn(
                 'm-0 whitespace-nowrap text-sm leading-5 tabular-nums',
-                row.isPrimary ? 'font-semibold text-foreground' : 'text-muted-foreground',
+                row.isPrimary ? 'font-bold text-foreground' : 'text-muted-foreground',
               )}
             >
               {row.value ? (
@@ -139,9 +144,11 @@ function CfpOriginalText({ label, text }: { label: string; text: string }) {
       role="region"
       aria-label={label}
       tabIndex={0}
-      className="h-48 min-w-0 overflow-y-auto overscroll-contain rounded-sm pr-3 outline-none [scrollbar-gutter:stable] [scrollbar-width:thin] focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
+      className="max-h-72 min-w-0 overflow-y-auto overscroll-contain rounded-sm pr-3 outline-none [scrollbar-gutter:stable] [scrollbar-width:thin] focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
     >
-      <p className="whitespace-pre-wrap text-sm leading-6 [overflow-wrap:anywhere]">{text}</p>
+      <p className="whitespace-pre-wrap text-[13.5px] leading-[1.8] text-foreground/90 [overflow-wrap:anywhere]">
+        {text}
+      </p>
     </div>
   );
 }
@@ -151,50 +158,51 @@ export function CfpNoticeCard({ notice }: { notice: CfpNoticeView }) {
   const hasOriginalText = Boolean(notice.scope || notice.requirements);
 
   return (
-    <article
-      data-slot="cfp-notice"
-      className="min-w-0 overflow-hidden rounded-xl bg-card shadow-vercel-ring"
-    >
-      <header className="space-y-3 border-b border-border/70 px-5 py-5 sm:px-6">
+    <article data-slot="cfp-notice" className="min-w-0 border-t pt-7 pb-8">
+      <header className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary" className="h-6 rounded-md px-2 leading-none">
+          <Badge variant="outline" className="h-6 px-2.5 leading-none">
             {CFP_KIND_LABELS[notice.kind]}
           </Badge>
           <Badge
             variant="secondary"
-            className={cn('h-6 rounded-md px-2 leading-none', STATE_CLASSES[notice.state])}
+            className={cn('h-6 px-2.5 leading-none', STATE_CLASSES[notice.state])}
           >
             <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
             {STATE_LABELS[notice.state]}
           </Badge>
         </div>
-        <h3 className="text-base font-semibold leading-relaxed text-foreground sm:text-lg [overflow-wrap:anywhere]">
+        <h3 className="text-[19px] leading-[1.45] font-bold text-foreground [overflow-wrap:anywhere]">
           {notice.title}
         </h3>
       </header>
       <div
         className={cn(
-          'grid min-w-0 gap-5 px-5 py-5 sm:px-6 sm:py-6',
-          hasOriginalText && 'lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-8',
+          'grid min-w-0 gap-6 py-6',
+          hasOriginalText && '2xl:grid-cols-[minmax(0,1fr)_14rem] 2xl:gap-8',
         )}
       >
-        <div className={cn('min-w-0', hasOriginalText && 'lg:col-start-2 lg:row-start-1')}>
+        <div className={cn('min-w-0', hasOriginalText && '2xl:col-start-2 2xl:row-start-1')}>
           <CfpTimeline notice={notice} />
         </div>
         {hasOriginalText && (
-          <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-1 lg:pt-4">
+          <div className="min-w-0 space-y-6 2xl:col-start-1 2xl:row-start-1">
             {notice.scope && (
               <section data-slot="cfp-scope" className="space-y-3">
-                <h4 className="text-xs font-semibold leading-5 text-muted-foreground">投稿范围</h4>
+                <h4 className="text-xs font-bold leading-5 tracking-[0.08em] text-muted-foreground">
+                  投稿范围
+                </h4>
                 <CfpOriginalText label="投稿范围" text={notice.scope} />
               </section>
             )}
             {notice.requirements && (
               <section
                 data-slot="cfp-requirements"
-                className={cn('space-y-3', notice.scope && 'border-t border-border/70 pt-6')}
+                className={cn('space-y-3', notice.scope && 'border-t pt-6')}
               >
-                <h4 className="text-xs font-semibold leading-5 text-muted-foreground">投稿要求</h4>
+                <h4 className="text-xs font-bold leading-5 tracking-[0.08em] text-muted-foreground">
+                  投稿要求
+                </h4>
                 <CfpOriginalText label="投稿要求" text={notice.requirements} />
               </section>
             )}
@@ -202,7 +210,7 @@ export function CfpNoticeCard({ notice }: { notice: CfpNoticeView }) {
         )}
       </div>
       {notice.rawDateText && (
-        <details className="group border-t border-border/70 px-5 py-4 sm:px-6">
+        <details className="group border-t border-dashed py-4">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-medium leading-5 [&::-webkit-details-marker]:hidden">
             查看原文时间说明
             <ChevronDown

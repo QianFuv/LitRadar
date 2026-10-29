@@ -30,26 +30,45 @@ vi.mock('@/components/feature/use-visible-page-list', () => ({
   useVisiblePageList: favoriteFlowMocks.useVisiblePageList,
 }));
 
-vi.mock('@/components/feature/article-dialog-card', () => ({
-  ArticleDialogCard: ({
-    article,
-    extraActions,
-    leading,
-    preview,
-  }: {
-    article: FavoriteArticleItem;
-    extraActions?: ReactNode;
-    leading?: ReactNode;
-    preview?: ReactNode;
-  }) => (
-    <div>
-      {leading}
-      <span>{article.title}</span>
-      {preview}
-      {extraActions}
-    </div>
-  ),
-}));
+vi.mock('@/components/feature/article-dialog-card', async () => {
+  const { FavoriteButton } = await vi.importActual<
+    typeof import('@/components/feature/favorite-button')
+  >('@/components/feature/favorite-button');
+  return {
+    ArticleDialogCard: ({
+      article,
+      dbName,
+      initialFolderIds,
+      favoriteToggleFolderId,
+      extraActions,
+      leading,
+      preview,
+    }: {
+      article: FavoriteArticleItem;
+      dbName: string;
+      initialFolderIds?: number[];
+      favoriteToggleFolderId?: number;
+      extraActions?: ReactNode;
+      leading?: ReactNode;
+      preview?: ReactNode;
+    }) => (
+      <div>
+        {leading}
+        <span>{article.title}</span>
+        {preview}
+        {favoriteToggleFolderId !== undefined && (
+          <FavoriteButton
+            articleId={article.article_id}
+            dbName={dbName}
+            initialFolderIds={initialFolderIds}
+            toggleFolderId={favoriteToggleFolderId}
+          />
+        )}
+        {extraActions}
+      </div>
+    ),
+  };
+});
 
 let favoriteRequestBody: unknown = null;
 let removeRequestCount = 0;
@@ -145,7 +164,7 @@ function AuthenticatedFavoriteFixture() {
   const { user, loading } = useAuth();
   if (loading || !user) return null;
   return (
-    <NuqsTestingAdapter searchParams="?folder=3">
+    <NuqsTestingAdapter searchParams="?folder=3" hasMemory>
       <FavoritesPageContent userId={user.id} />
     </NuqsTestingAdapter>
   );
@@ -185,8 +204,7 @@ async function rendersFavoritesWorkspace(): Promise<void> {
   renderFavoritesPage();
 
   expect(await screen.findByRole('heading', { name: '我的收藏' })).toBeInTheDocument();
-  expect(screen.getByRole('complementary')).toBeInTheDocument();
-  expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
+  expect(screen.getByRole('region', { name: '收藏文章' })).toBeInTheDocument();
   expect(document.getElementById('results-scroll-container')).toBeInTheDocument();
   await waitFor(() =>
     expect(document.querySelector('[data-motion-folder-key="3"]')).not.toBeNull(),
@@ -195,9 +213,10 @@ async function rendersFavoritesWorkspace(): Promise<void> {
     expect.objectContaining({ scrollContainerId: 'results-scroll-container' }),
   );
 
-  await user.click(screen.getByRole('button', { name: '打开收藏夹' }));
-  const mobileSidebar = screen.getByRole('dialog', { name: '收藏夹' });
-  await user.click(within(mobileSidebar).getByRole('button', { name: '新建收藏夹' }));
+  expect(
+    within(screen.getByRole('group', { name: '收藏夹' })).getByRole('button', { name: 'Reading' }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await user.click(screen.getByRole('button', { name: '新建收藏夹' }));
   expect(screen.getAllByRole('dialog', { name: '新建收藏夹' })).toHaveLength(1);
 }
 
@@ -305,7 +324,8 @@ async function confirmsFolderDeletion(): Promise<void> {
   const user = userEvent.setup();
   renderFavoritesPage();
 
-  await user.click(await screen.findByRole('button', { name: '删除收藏夹 Reading' }));
+  await user.click(await screen.findByRole('button', { name: '管理收藏夹 Reading' }));
+  await user.click(await screen.findByRole('menuitem', { name: '删除收藏夹 Reading' }));
   expect(deleteRequestCount).toBe(0);
   expect(screen.getByRole('alertdialog', { name: '删除收藏夹？' })).toHaveTextContent('Reading');
   await user.click(screen.getByRole('button', { name: '确认删除' }));
@@ -315,16 +335,17 @@ async function confirmsFolderDeletion(): Promise<void> {
   expect(document.querySelector('[data-motion-folder-key="3"]')).not.toBeNull();
   expect(screen.getByRole('alertdialog', { name: '删除收藏夹？' })).toBeInTheDocument();
   releaseDelete();
-  expect(await screen.findByText('暂无收藏夹，点击 + 创建')).toBeInTheDocument();
+  expect(await screen.findByText('暂无收藏夹，点击「新建」创建第一个。')).toBeInTheDocument();
   await waitFor(() => expect(document.querySelector('[data-motion-folder-key="3"]')).toBeNull());
 }
 
 /**
- * Verify a single loaded article remains until removal is confirmed.
+ * Verify the reader favorite button toggles the current folder in one click and can undo it.
  */
-async function confirmsSingleFavoriteRemoval(): Promise<void> {
-  let articles = [favoriteArticleFixture(1)];
+async function togglesFavoriteInCurrentFolder(): Promise<void> {
+  const articles = [favoriteArticleFixture(1)];
   let removeCount = 0;
+  let addCount = 0;
   let releaseFailedRemoval = (): void => undefined;
   const failedRemovalGate = new Promise<void>((resolve) => {
     releaseFailedRemoval = resolve;
@@ -350,8 +371,11 @@ async function confirmsSingleFavoriteRemoval(): Promise<void> {
         await failedRemovalGate;
         return HttpResponse.json({ detail: 'temporary removal failure' }, { status: 503 });
       }
-      articles = [];
       return HttpResponse.json({ ok: true });
+    }),
+    http.post('http://localhost/api/favorites/folders/3/articles', async (context) => {
+      addCount += 1;
+      return addFavoriteResponse(context);
     }),
   );
   const user = userEvent.setup();
@@ -359,34 +383,38 @@ async function confirmsSingleFavoriteRemoval(): Promise<void> {
 
   expect(await screen.findByText('Article 1')).toBeInTheDocument();
   const singleKey = ['fav-check', 21, 'fixture.sqlite', 'article-1'];
-  const batchKey = ['fav-check-batch', 21, 'fixture.sqlite', 'visible', 'article-1'];
   const otherUserKey = ['fav-check', 22, 'fixture.sqlite', 'article-1'];
   queryClient.setQueryData(singleKey, [{ folder_id: 3, folder_name: 'Reading' }]);
-  queryClient.setQueryData(batchKey, { 'article-1': [{ folder_id: 3, folder_name: 'Reading' }] });
   queryClient.setQueryData(otherUserKey, [{ folder_id: 9, folder_name: 'Other user' }]);
-  expect(document.querySelector('[data-motion-favorite-key="1"]')).not.toBeNull();
-  await user.click(await screen.findByRole('button', { name: '移除收藏' }));
-  expect(removeCount).toBe(0);
-  expect(screen.getByRole('alertdialog', { name: '移除收藏？' })).toHaveTextContent('Article 1');
-  await user.click(screen.getByRole('button', { name: '确认移除' }));
+  expect(screen.queryByRole('button', { name: '移除收藏' })).not.toBeInTheDocument();
 
+  const toggle = await screen.findByRole('button', { name: '已收藏' });
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await user.click(toggle);
   await waitFor(() => expect(removeCount).toBe(1));
-  expect(screen.getByText('Article 1')).toBeInTheDocument();
-  expect(document.querySelector('[data-motion-favorite-key="1"]')).not.toBeNull();
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  expect(toggle).toBeDisabled();
   releaseFailedRemoval();
   expect(await screen.findByRole('alert')).toHaveTextContent('temporary removal failure');
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+  await user.click(toggle);
+  await waitFor(() => expect(removeCount).toBe(2));
+  const restored = await screen.findByRole('button', { name: '收藏' });
+  expect(restored).toHaveAttribute('aria-pressed', 'false');
   expect(screen.getByText('Article 1')).toBeInTheDocument();
   expect(document.querySelector('[data-motion-favorite-key="1"]')).not.toBeNull();
-  await user.click(screen.getByRole('button', { name: '确认移除' }));
-
-  await waitFor(() => expect(removeCount).toBe(2));
-  expect(await screen.findByText('此收藏夹为空')).toBeInTheDocument();
-  expect(queryClient.getQueryData(singleKey)).toBeUndefined();
-  expect(queryClient.getQueryData(batchKey)).toBeUndefined();
+  expect(queryClient.getQueryData(singleKey)).toEqual([]);
   expect(queryClient.getQueryData(otherUserKey)).toEqual([
     { folder_id: 9, folder_name: 'Other user' },
   ]);
-  await waitFor(() => expect(document.querySelector('[data-motion-favorite-key="1"]')).toBeNull());
+
+  await user.click(restored);
+  await waitFor(() => expect(addCount).toBe(1));
+  expect(await screen.findByRole('button', { name: '已收藏' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
 }
 
 /**
@@ -474,8 +502,10 @@ async function rendersFavoriteMetadataAvailability(): Promise<void> {
   expect(screen.getByText(/文章元数据暂时无法读取，请稍后重试/)).toBeInTheDocument();
   const missingCheckbox = screen.getByRole('checkbox', { name: '选择文章 article-1' });
   expect(missingCheckbox).toBeEnabled();
-  expect(screen.getAllByRole('button', { name: '移除收藏' })).toHaveLength(2);
-  expect(screen.getByRole('button', { name: '导出引用' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: '移除收藏' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '导出收藏夹' }));
+  expect(await screen.findByRole('button', { name: '导出引用' })).toBeEnabled();
+  await user.keyboard('{Escape}');
 
   await user.click(missingCheckbox);
   const targetFolderSelect = screen.getByRole('combobox', { name: '选择目标收藏夹' });
@@ -530,8 +560,9 @@ async function managesFoldersAndExportFormats(): Promise<void> {
   const user = userEvent.setup();
   renderFavoritesPage();
 
+  await user.click(await screen.findByRole('button', { name: '导出收藏夹' }));
   expect(await screen.findByRole('button', { name: '导出引用' })).toBeEnabled();
-  const exportSelect = screen.getAllByRole('combobox')[0];
+  const exportSelect = screen.getByRole('combobox', { name: '导出格式' });
   exportSelect.focus();
   await user.keyboard('{ArrowDown}');
   expect(await screen.findByRole('option', { name: 'RIS' })).toBeInTheDocument();
@@ -542,6 +573,7 @@ async function managesFoldersAndExportFormats(): Promise<void> {
   expect(await screen.findByRole('option', { name: 'EndNote XML' })).toBeInTheDocument();
   await user.keyboard('{ArrowDown}{Enter}');
   expect(exportSelect).toHaveTextContent('EndNote XML');
+  await user.keyboard('{Escape}');
 
   await user.click(screen.getByRole('button', { name: '新建收藏夹' }));
   await user.type(screen.getByLabelText('收藏夹名称'), '  New Folder  ');
@@ -550,7 +582,9 @@ async function managesFoldersAndExportFormats(): Promise<void> {
   expect(document.querySelector('[data-motion-folder-key="5"]')).not.toBeNull();
   expect(createPayloads).toEqual([{ name: 'New Folder', is_tracking: false }]);
 
-  await user.click(screen.getByRole('button', { name: '重命名收藏夹 Reading' }));
+  await user.click(screen.getByRole('button', { name: 'Reading' }));
+  await user.click(screen.getByRole('button', { name: '管理收藏夹 Reading' }));
+  await user.click(await screen.findByRole('menuitem', { name: '重命名收藏夹 Reading' }));
   const renameInput = await screen.findByRole('textbox', { name: '重命名收藏夹 Reading' });
   expect(renameInput.closest('[data-motion-folder-mode="edit"]')).not.toBeNull();
   await user.clear(renameInput);
@@ -558,8 +592,13 @@ async function managesFoldersAndExportFormats(): Promise<void> {
   await user.keyboard('{Enter}');
   expect(await screen.findAllByText('Reviewed')).not.toHaveLength(0);
   expect(renamePayloads).toEqual([{ name: 'Reviewed' }]);
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: '重命名收藏夹' })).not.toBeInTheDocument(),
+  );
 
-  await user.click(screen.getByRole('button', { name: '设 Archive 为追踪文件夹' }));
+  await user.click(screen.getByRole('button', { name: 'Archive' }));
+  await user.click(await screen.findByRole('button', { name: '管理收藏夹 Archive' }));
+  await user.click(await screen.findByRole('menuitem', { name: '设 Archive 为追踪文件夹' }));
   await waitFor(() => expect(trackingPayloads).toEqual([{ folder_id: 4 }]));
   expect(await screen.findByText('追踪')).toBeInTheDocument();
 }
@@ -914,7 +953,7 @@ describe('favorite mutation flow', () => {
   test('updates visible state and cached folder membership', updatesFavoriteCache);
   test('confirms a removal before mutating folder membership', confirmsFavoriteRemoval);
   test('confirms folder deletion before mutation', confirmsFolderDeletion);
-  test('confirms one favorite removal before mutation', confirmsSingleFavoriteRemoval);
+  test('toggles a favorite in the current folder with one click', togglesFavoriteInCurrentFolder);
   test('confirms bulk favorite removal with a target snapshot', confirmsBulkFavoriteRemoval);
   test(
     'keeps missing and unavailable favorite metadata actionable',

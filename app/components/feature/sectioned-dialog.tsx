@@ -4,10 +4,17 @@
  * Shared responsive frame for query-driven sectioned dialogs.
  */
 
-import type { LucideIcon } from 'lucide-react';
-import type { ReactNode, RefObject } from 'react';
+import { ArrowLeft, X, type LucideIcon } from 'lucide-react';
+import { useRef, type ReactNode, type RefObject } from 'react';
 
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   FADE_UP_VARIANTS,
   MOTION_DURATION_SECONDS,
@@ -30,6 +37,11 @@ export type SectionedDialogSectionDefinition<SectionId extends string> = {
 
 type SectionedDialogFrameProps<SectionId extends string> = {
   activeSection: SectionId;
+  centerIcon: LucideIcon;
+  /** Optional content pinned to the bottom of the desktop category sidebar. */
+  sidebarFooter?: ReactNode;
+  /** Content column width: `narrow` for forms, `wide` for tables and dashboards. */
+  contentWidth?: 'narrow' | 'wide';
   centerSubtitle: string;
   centerTitle: string;
   children: ReactNode;
@@ -89,7 +101,7 @@ function resolveReturnFocusTarget(activeElement: HTMLElement | null): HTMLElemen
 }
 
 /**
- * Render section navigation for desktop or mobile layouts.
+ * Render section navigation as horizontal pills on phones and a vertical list on wider screens.
  *
  * @param props - Section definitions, active state, selection action, and layout class.
  * @returns Accessible category navigation.
@@ -115,14 +127,14 @@ function SectionedDialogNavigation<SectionId extends string>({
             data-section-active={isActive ? 'true' : 'false'}
             disabled={isDisabled}
             className={cn(
-              'motion-control flex shrink-0 items-center gap-3 rounded-md border px-3 py-2.5 text-left text-sm font-medium outline-none transition-[background-color,border-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
+              'motion-control flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] whitespace-nowrap outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:h-10 md:w-full md:gap-3 md:rounded-lg md:px-3 md:text-sm',
               isActive
-                ? 'border-border bg-secondary text-foreground shadow-sm hover:bg-accent-pressed active:bg-accent-pressed'
-                : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent-pressed',
+                ? 'bg-foreground font-bold text-background md:bg-accent md:text-foreground'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent-pressed',
             )}
             onClick={() => onSelect(section.id)}
           >
-            <Icon className="size-4" aria-hidden="true" />
+            <Icon className="size-4 shrink-0" aria-hidden="true" />
             <span>{section.label}</span>
           </button>
         );
@@ -139,6 +151,9 @@ function SectionedDialogNavigation<SectionId extends string>({
  */
 export function SectionedDialogFrame<SectionId extends string>({
   activeSection,
+  centerIcon: CenterIcon,
+  sidebarFooter,
+  contentWidth = 'narrow',
   centerSubtitle,
   centerTitle,
   children,
@@ -157,13 +172,16 @@ export function SectionedDialogFrame<SectionId extends string>({
 }: SectionedDialogFrameProps<SectionId>) {
   const activeDefinition = sections.find((section) => section.id === activeSection) ?? sections[0];
   const headerTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        placement="takeover"
         aria-busy={isBusy || undefined}
-        className="flex h-dvh w-screen max-w-none translate-x-[-50%] translate-y-[-50%] gap-0 overflow-hidden rounded-none border-0 p-0 shadow-none md:h-[min(90dvh,52rem)] md:w-[min(calc(100vw-2rem),72rem)] md:max-w-6xl md:rounded-lg md:border md:shadow-lg"
-        onOpenAutoFocus={() => {
+        className="flex flex-col gap-0 overflow-hidden bg-background focus-visible:ring-0 md:flex-row"
+        ref={contentRef}
+        onOpenAutoFocus={(event) => {
           if (!returnFocusRef.current) {
             const activeElement =
               document.activeElement instanceof HTMLElement &&
@@ -172,6 +190,8 @@ export function SectionedDialogFrame<SectionId extends string>({
                 : null;
             returnFocusRef.current = resolveReturnFocusTarget(activeElement);
           }
+          event.preventDefault();
+          contentRef.current?.focus({ preventScroll: true });
         }}
         onCloseAutoFocus={(event) => {
           if (open) {
@@ -200,41 +220,63 @@ export function SectionedDialogFrame<SectionId extends string>({
         <DialogTitle className="sr-only">{centerTitle}</DialogTitle>
         <DialogDescription className="sr-only">{dialogDescription}</DialogDescription>
 
-        <aside className="hidden w-60 shrink-0 flex-col border-r bg-muted/20 px-3 pb-5 pt-6 md:flex">
-          <div className="px-3 pb-5">
-            <div className="text-lg font-semibold">{centerTitle}</div>
-            <p className="mt-1 text-xs text-muted-foreground">{centerSubtitle}</p>
+        <aside
+          data-slot="sectioned-dialog-sidebar"
+          className="relative shrink-0 border-b bg-background pt-3 pb-2 md:flex md:w-64 md:flex-col md:border-r md:border-b-0 md:pt-4 md:pb-0 lg:w-72"
+        >
+          <DialogClose asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              static
+              aria-label="关闭"
+              className="absolute top-1.5 right-2 size-11 p-0 text-muted-foreground hover:text-foreground md:static md:mx-3 md:h-10 md:w-auto md:justify-start md:gap-1.5 md:self-start md:px-2.5"
+            >
+              <X className="size-5 md:hidden" aria-hidden="true" />
+              <ArrowLeft className="hidden size-4 md:block" aria-hidden="true" />
+              <span className="hidden text-[13px] md:inline">返回</span>
+            </Button>
+          </DialogClose>
+          <div className="flex items-center gap-3 px-4 pr-14 md:px-6 md:pt-6 md:pr-6 md:pb-5">
+            <span
+              aria-hidden="true"
+              className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-foreground text-background md:hidden"
+            >
+              <CenterIcon className="size-4" />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-base leading-6 font-bold md:text-xl">{centerTitle}</p>
+              <p className="hidden text-xs leading-5 text-muted-foreground md:mt-1 md:block">
+                {centerSubtitle}
+              </p>
+            </div>
           </div>
-          <SectionedDialogNavigation
-            activeSection={activeSection}
-            className="flex flex-col gap-1"
-            isDisabled={isNavigationDisabled}
-            label={navigationLabel}
-            onSelect={onSelectSection}
-            sections={sections}
-          />
+          <div className="relative mt-3 md:mt-0" data-mobile-overflow-cue="true">
+            <SectionedDialogNavigation
+              activeSection={activeSection}
+              className="scrollbar-none fade-x-edges flex gap-1.5 overflow-x-auto px-4 md:flex-col md:gap-1 md:overflow-visible md:px-3 md:[mask-image:none]"
+              isDisabled={isNavigationDisabled}
+              label={navigationLabel}
+              onSelect={onSelectSection}
+              sections={sections}
+            />
+          </div>
+          {sidebarFooter && (
+            <div className="mt-auto hidden border-t px-4 py-4 md:block">{sidebarFooter}</div>
+          )}
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="shrink-0 border-b bg-background px-5 pb-4 pt-6 md:px-8 md:py-6">
-            <div className="md:hidden">
-              <div className="pr-12 text-lg font-semibold">{centerTitle}</div>
-              <div className="relative -mx-1 mt-4" data-mobile-overflow-cue="true">
-                <SectionedDialogNavigation
-                  activeSection={activeSection}
-                  className="flex gap-1 overflow-x-auto px-1 pb-1 pr-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                  isDisabled={isNavigationDisabled}
-                  label={navigationLabel}
-                  onSelect={onSelectSection}
-                  sections={sections}
-                />
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background from-25% to-transparent"
-                />
-              </div>
-            </div>
-            <div className="mt-4 min-h-14 md:mt-0 md:pr-12">
+        <div
+          data-slot="sectioned-dialog-scroll"
+          className="min-h-0 min-w-0 flex-1 scroll-pb-28 overflow-y-auto"
+        >
+          <div
+            className={cn(
+              'mx-auto w-full px-5 pt-6 pb-[calc(2rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] md:px-10 md:pt-12',
+              contentWidth === 'wide' ? 'max-w-5xl' : 'max-w-3xl',
+            )}
+          >
+            <div className="mb-6 border-b pb-6 md:mb-8">
               <h2 className="sr-only">{activeDefinition.label}</h2>
               <MotionPresence mode="wait">
                 <MotionDiv
@@ -247,23 +289,20 @@ export function SectionedDialogFrame<SectionId extends string>({
                   exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
                   transition={headerTransition}
                 >
-                  <div className="text-xl font-semibold tracking-tight">
-                    {activeDefinition.label}
-                  </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <div className="text-2xl font-bold tracking-tight">{activeDefinition.label}</div>
+                  <p className="mt-1.5 text-[13px] text-muted-foreground">
                     {activeDefinition.description}
                   </p>
                 </MotionDiv>
               </MotionPresence>
             </div>
-          </header>
-
-          <div
-            role="region"
-            aria-label={`${activeDefinition.label}${contentLabelSuffix}`}
-            className="min-h-0 flex-1 overflow-y-auto px-5 py-6 pb-[calc(1.5rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] md:px-8"
-          >
-            {children}
+            <div
+              role="region"
+              aria-label={`${activeDefinition.label}${contentLabelSuffix}`}
+              data-slot="sectioned-dialog-panel"
+            >
+              {children}
+            </div>
           </div>
         </div>
       </DialogContent>

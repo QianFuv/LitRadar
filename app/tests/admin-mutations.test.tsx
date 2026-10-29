@@ -476,7 +476,7 @@ async function createsCopiesAndRetriesInviteCodes(): Promise<void> {
   const createButton = await screen.findByRole('button', { name: '生成邀请码' });
   await user.click(createButton);
   expect(await screen.findByRole('alert')).toHaveTextContent('Invite code limit reached');
-  expect(screen.getAllByText('暂无邀请码')).toHaveLength(2);
+  expect(screen.getAllByText('暂无邀请码')).toHaveLength(1);
 
   await user.click(createButton);
   expect(await screen.findByText('INVITE-42')).toBeInTheDocument();
@@ -606,7 +606,7 @@ async function reusesInviteDatesDuringFormEdits(): Promise<void> {
         ),
       );
     });
-    await waitFor(() => expect(screen.getAllByText(expiryLabel)).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByText(expiryLabel)).toHaveLength(1));
     expect(screen.getByText(creationLabel)).toBeInTheDocument();
     expect(screen.getByLabelText('有效天数')).toHaveValue(30);
     expect(screen.getByLabelText('最多使用次数')).toHaveValue(12);

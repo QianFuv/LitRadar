@@ -4,12 +4,13 @@
  * Public authentication surface for login, registration, and logout recovery.
  */
 
-import { Eye, EyeOff, Radar } from 'lucide-react';
+import { Eye, EyeOff, Megaphone, Radar, Search } from 'lucide-react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { RadarMark } from '@/components/feature/reader-placeholder';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -29,21 +30,86 @@ import { useAuth } from '@/lib/auth-context';
 const LOGIN_RETURN_ORIGIN = 'https://litradar.invalid';
 
 /**
- * Render the quiet product identity shared by loading and editable authentication states.
+ * Render the compact product identity shown above the form on narrow screens.
  *
- * @returns Compact grayscale LitRadar brand mark.
+ * @returns Compact LitRadar brand mark.
  */
 function AuthBrand() {
   return (
-    <div className="mb-6 flex items-center gap-3" aria-label="LitRadar">
-      <div className="flex size-10 items-center justify-center rounded-lg border bg-card shadow-vercel-ring">
-        <Radar className="size-5" aria-hidden="true" />
-      </div>
+    <div className="mb-8 flex items-center gap-3 lg:hidden" aria-label="LitRadar">
+      <Image
+        src="/litradar-logo.png"
+        alt=""
+        width={40}
+        height={40}
+        className="size-10 rounded-xl object-cover"
+      />
       <div>
-        <p className="font-mono text-base font-semibold tracking-tight">LitRadar</p>
+        <p className="text-base font-bold tracking-tight">LitRadar</p>
         <p className="text-xs text-muted-foreground">文献雷达与持续追踪</p>
       </div>
     </div>
+  );
+}
+
+const AUTH_FEATURES = [
+  { icon: Search, title: '全文检索', description: '按期刊评级、领域与时间快速收窄文献范围' },
+  { icon: Radar, title: '持续追踪', description: '每周新文章按你的研究方向自动推送入库' },
+  { icon: Megaphone, title: '征稿日程', description: '集中查看目标期刊的专题征稿与截止时间' },
+] as const;
+
+/**
+ * Render the dark brand panel shown beside the form on wide screens.
+ *
+ * @returns Decorative product showcase.
+ */
+function AuthShowcase() {
+  return (
+    <aside
+      aria-hidden="true"
+      className="relative hidden min-h-dvh flex-col justify-between overflow-hidden bg-rail p-12 text-rail-active lg:flex"
+    >
+      <div className="flex items-center gap-3">
+        <Image
+          src="/litradar-logo.png"
+          alt=""
+          width={40}
+          height={40}
+          className="size-10 rounded-xl object-cover"
+        />
+        <div>
+          <p className="text-base font-bold tracking-tight">LitRadar</p>
+          <p className="text-xs text-rail-foreground">文献雷达与持续追踪</p>
+        </div>
+      </div>
+      <RadarMark className="pointer-events-none absolute -right-24 top-1/2 size-[34rem] -translate-y-1/2 text-rail-foreground/50" />
+      <div className="relative max-w-md">
+        <p className="text-[32px] leading-[1.3] font-bold tracking-tight">
+          让新文献
+          <br />
+          主动出现在你的雷达上
+        </p>
+        <ul className="mt-10 space-y-5">
+          {AUTH_FEATURES.map((feature) => {
+            const Icon = feature.icon;
+            return (
+              <li key={feature.title} className="flex items-start gap-4">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-rail-hover">
+                  <Icon className="size-4" />
+                </span>
+                <span>
+                  <span className="block text-sm font-bold">{feature.title}</span>
+                  <span className="mt-0.5 block text-[13px] text-rail-foreground">
+                    {feature.description}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <p className="relative text-xs text-rail-foreground">LitRadar · QianFuv</p>
+    </aside>
   );
 }
 
@@ -194,15 +260,18 @@ function renderLoginPage(state: LoginViewState) {
     return (
       <main
         id="main-content"
-        className="flex min-h-dvh items-center justify-center bg-background px-6"
+        className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]"
       >
-        <div className="w-full max-w-md">
-          <AuthBrand />
-          <div
-            role="status"
-            className="rounded-lg border bg-card px-5 py-4 text-sm text-muted-foreground shadow-vercel-card"
-          >
-            正在检查登录状态…
+        <AuthShowcase />
+        <div className="flex items-center justify-center px-6 py-12">
+          <div className="w-full max-w-sm">
+            <AuthBrand />
+            <div
+              role="status"
+              className="rounded-xl bg-muted px-5 py-4 text-sm text-muted-foreground"
+            >
+              正在检查登录状态…
+            </div>
           </div>
         </div>
       </main>
@@ -212,14 +281,15 @@ function renderLoginPage(state: LoginViewState) {
   return (
     <main
       id="main-content"
-      className="flex min-h-dvh items-center justify-center bg-background px-6"
+      className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]"
     >
-      <div className="w-full max-w-md">
-        <AuthBrand />
-        <Card className="gap-0 overflow-hidden border border-border/80 py-0 shadow-lg shadow-black/5 dark:shadow-black/20">
+      <AuthShowcase />
+      <div className="flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-sm">
+          <AuthBrand />
           {renderLoginHeader(state)}
           {renderLoginCardContent(state)}
-        </Card>
+        </div>
       </div>
     </main>
   );
@@ -402,6 +472,7 @@ function renderLoginLogoutWarning(
         {!isLogoutRecovery && (
           <Link
             href="/login?logout_recovery=1"
+            prefetch={false}
             className="motion-control mt-2 inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-[background-color,color] hover:bg-accent hover:text-accent-foreground"
           >
             重新认证并撤销全部会话
@@ -497,9 +568,9 @@ function renderLoginHeader(
   const { isLogoutRecovery, fastTransition, authModeKey, title, description } = state;
 
   return (
-    <CardHeader className="block border-b bg-muted/20 px-6 py-6">
-      <CardTitle className="sr-only">{title}</CardTitle>
-      <CardDescription className="sr-only">{description}</CardDescription>
+    <header className="mb-7">
+      <h1 className="sr-only">{title}</h1>
+      <p className="sr-only">{description}</p>
       <MotionPresence mode="wait">
         <MotionDiv
           key={authModeKey}
@@ -511,14 +582,14 @@ function renderLoginHeader(
           exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
           transition={fastTransition}
         >
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            {isLogoutRecovery ? '账户安全' : '欢迎使用'}
+          <p className="text-xs font-bold tracking-[0.18em] text-primary-text">
+            {isLogoutRecovery ? '账户安全' : '欢迎使用 LitRadar'}
           </p>
-          <div className="mt-2 text-2xl font-semibold tracking-tight">{title}</div>
+          <div className="mt-2 text-[28px] leading-tight font-bold tracking-tight">{title}</div>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
         </MotionDiv>
       </MotionPresence>
-    </CardHeader>
+    </header>
   );
 }
 
@@ -527,7 +598,7 @@ function renderLoginCardContent(state: LoginViewState) {
   const { isLogoutRecovery, setError, mode, setMode, isRecoveryComplete, panelTransition } = state;
 
   return (
-    <CardContent className="py-6">
+    <div>
       {renderLoginLogoutWarning(state)}
       <MotionPresence mode="wait">
         {isRecoveryComplete ? (
@@ -548,7 +619,9 @@ function renderLoginCardContent(state: LoginViewState) {
               全部会话和个人访问令牌已撤销。现在可以重新登录。
             </div>
             <Button asChild className="w-full">
-              <Link href="/login">返回登录</Link>
+              <Link href="/login" prefetch={false}>
+                返回登录
+              </Link>
             </Button>
           </MotionDiv>
         ) : (
@@ -557,7 +630,7 @@ function renderLoginCardContent(state: LoginViewState) {
       </MotionPresence>
       {!isLogoutRecovery && !isRecoveryComplete && (
         <div
-          className="mt-4 text-center text-sm text-muted-foreground"
+          className="mt-6 border-t pt-5 text-center text-sm text-muted-foreground"
           data-auth-mode-switch={mode}
         >
           {mode === 'login' ? '没有账号？' : '已有账号？'}{' '}
@@ -573,7 +646,7 @@ function renderLoginCardContent(state: LoginViewState) {
           </button>
         </div>
       )}
-    </CardContent>
+    </div>
   );
 }
 

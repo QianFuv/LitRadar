@@ -159,7 +159,7 @@ async function protectsRenderedRouteContent(): Promise<void> {
   expect(screen.getByText('protected route content')).toBeInTheDocument();
   expect(screen.getByText('settings center marker')).toBeInTheDocument();
   expect(screen.getByText('admin center marker')).toBeInTheDocument();
-  expect(screen.getByText('user menu marker')).toBeInTheDocument();
+  expect(screen.getAllByText('user menu marker')).toHaveLength(2);
 }
 
 beforeEach(() => {

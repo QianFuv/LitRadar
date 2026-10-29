@@ -158,7 +158,7 @@ async function focusesAndRevealsPasswordSafely(): Promise<void> {
   const passwordInput = screen.getByLabelText('密码');
   const authForm = screen.getByRole('form', { name: '身份验证表单' });
   const modeToggle = screen.getByRole('button', { name: '注册' });
-  expect(screen.getByText('LitRadar')).toBeInTheDocument();
+  expect(screen.getByLabelText('LitRadar')).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '登录' })).toBeInTheDocument();
   expect(document.querySelector('[data-auth-header-mode="login"]')).toBeInTheDocument();
   expect(usernameInput).toHaveFocus();

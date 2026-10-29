@@ -7,8 +7,8 @@
 import { Download, ShieldCheck, X } from 'lucide-react';
 
 import {
+  SettingsGroup,
   SettingsSection,
-  SettingsSectionContent,
   SettingsSectionDescription,
   SettingsSectionHeader,
   SettingsSectionTitle,
@@ -43,10 +43,15 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
         <SettingsSectionTitle>手动推送</SettingsSectionTitle>
         <SettingsSectionDescription>{model.description}</SettingsSectionDescription>
       </SettingsSectionHeader>
-      <SettingsSectionContent className="space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-muted-foreground">
-            可推送文章: {model.weeklyArticlesAvailable ?? '…'} 篇
+      <SettingsGroup>
+        <div className="flex flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div className="flex items-center gap-4">
+            <span className="text-4xl leading-none font-bold tabular-nums">
+              {model.weeklyArticlesAvailable ?? '…'}
+            </span>
+            <span className="text-xs leading-relaxed text-muted-foreground">
+              本周可推送文章（篇）
+            </span>
           </div>
           <div className="flex w-full gap-2 sm:w-auto">
             {model.status?.status === 'unknown' &&
@@ -62,7 +67,11 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
               key="manual-push-result"
               data-motion-feedback="manual-push"
               role={model.hasError ? 'alert' : 'status'}
-              className="rounded-md border px-3 py-2 text-sm"
+              className={
+                model.hasError
+                  ? 'bg-destructive/5 px-4 py-3 text-sm text-destructive sm:px-5'
+                  : 'bg-muted/40 px-4 py-3 text-sm sm:px-5'
+              }
               initial="hidden"
               animate="visible"
               exit="exit"
@@ -73,7 +82,7 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
             </MotionDiv>
           )}
         </MotionPresence>
-      </SettingsSectionContent>
+      </SettingsGroup>
     </SettingsSection>
   );
 }
@@ -89,7 +98,7 @@ function renderUnknownPushAcknowledgement(state: ManualPushViewState) {
       onClick={() => model.acknowledgeUnknownMutation.mutate(model.status?.job_id ?? '')}
       disabled={model.acknowledgeUnknownMutation.isPending}
     >
-      <ShieldCheck className="mr-1 h-4 w-4" />
+      <ShieldCheck className="size-4" />
       {model.acknowledgeUnknownMutation.isPending ? '确认中…' : '确认未知并继续'}
     </Button>
   );
@@ -106,7 +115,7 @@ function renderManualPushCancel(state: ManualPushViewState) {
       onClick={() => model.cancelMutation.mutate(model.status?.job_id ?? '')}
       disabled={model.cancelMutation.isPending}
     >
-      <X className="mr-1 h-4 w-4" />
+      <X className="size-4" />
       {model.cancelMutation.isPending ? '取消中…' : '取消任务'}
     </Button>
   );
@@ -129,7 +138,7 @@ function renderManualPushTrigger(state: ManualPushViewState) {
         (model.requiresTrackingFolder && !model.trackingFolder)
       }
     >
-      <Download className="mr-1 h-4 w-4" />
+      <Download className="size-4" />
       {model.label}
     </Button>
   );

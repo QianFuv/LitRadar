@@ -2,10 +2,12 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Shield, ShieldOff, Trash2, Users } from 'lucide-react';
+import { KeyRound, Shield, ShieldOff, Trash2, Users } from 'lucide-react';
 
 import { adminDeleteUser, adminGetUsers, adminResetPassword, adminSetAdmin } from '@/lib/api';
-import { Badge } from '@/components/ui/badge';
+import { AdminListHeader } from '@/components/admin/admin-list-header';
+import { SettingsGroup, StatusPill } from '@/components/settings/settings-section';
+import { UserAvatar } from '@/components/shell/user-avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -119,203 +121,114 @@ export function AdminUsersCard({
                 : '更新管理员状态失败'}
             </p>
           )}
-          <div className="space-y-3 md:hidden">
+          {users && (
+            <AdminListHeader
+              summary={`共 ${users.length} 位用户 · ${users.filter((entry) => entry.is_admin).length} 位管理员`}
+            />
+          )}
+          <SettingsGroup>
             {userRows.map(({ user: u, registrationDate }) => (
-              <div key={u.id} className="content-visibility-card rounded-lg border p-4">
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{u.username}</span>
-                        {u.is_admin ? (
-                          <Badge>管理员</Badge>
-                        ) : (
-                          <Badge variant="secondary">用户</Badge>
-                        )}
-                      </div>
-                      <div className="text-xs text-muted-foreground">用户 #{u.id}</div>
+              <div
+                key={u.id}
+                className="content-visibility-card flex flex-col gap-3 px-4 py-4 sm:px-5 md:flex-row md:items-center md:gap-6"
+              >
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <UserAvatar
+                    username={u.username}
+                    className={u.is_admin ? undefined : 'bg-muted text-foreground'}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-sm font-bold">{u.username}</span>
+                      {u.is_admin ? (
+                        <StatusPill tone="info">管理员</StatusPill>
+                      ) : (
+                        <StatusPill>用户</StatusPill>
+                      )}
+                      {u.id === currentUserId && (
+                        <span className="text-xs text-muted-foreground">（你）</span>
+                      )}
                     </div>
-                    {u.notify_enabled ? (
-                      <Badge variant="secondary" className="text-xs">
-                        已订阅
-                      </Badge>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">未订阅</span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-md bg-muted/40 px-3 py-2">
-                      <div className="text-xs text-muted-foreground">收藏夹</div>
-                      <div className="mt-1 font-medium">{u.folder_count}</div>
-                    </div>
-                    <div className="rounded-md bg-muted/40 px-3 py-2">
-                      <div className="text-xs text-muted-foreground">收藏</div>
-                      <div className="mt-1 font-medium">{u.favorite_count}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+                      #{u.id} · <span>注册时间: {registrationDate}</span>
                     </div>
                   </div>
-                  <div className="text-xs text-muted-foreground">注册时间: {registrationDate}</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={toggleAdminMut.isPending || u.id === currentUserId}
-                      onClick={() =>
-                        toggleAdminMut.mutate({
-                          userId: u.id,
-                          isAdmin: !u.is_admin,
-                        })
+                </div>
+                <dl className="grid grid-cols-3 gap-2 text-xs md:flex md:gap-6">
+                  <div className="rounded-lg bg-muted/60 px-3 py-2 md:bg-transparent md:p-0 md:text-right">
+                    <dt className="text-muted-foreground">收藏夹</dt>
+                    <dd className="text-sm font-bold tabular-nums">{u.folder_count}</dd>
+                  </div>
+                  <div className="rounded-lg bg-muted/60 px-3 py-2 md:bg-transparent md:p-0 md:text-right">
+                    <dt className="text-muted-foreground">收藏</dt>
+                    <dd className="text-sm font-bold tabular-nums">{u.favorite_count}</dd>
+                  </div>
+                  <div className="rounded-lg bg-muted/60 px-3 py-2 md:w-14 md:bg-transparent md:p-0 md:text-right">
+                    <dt className="text-muted-foreground">推送</dt>
+                    <dd
+                      className={
+                        u.notify_enabled
+                          ? 'text-sm font-bold text-primary'
+                          : 'text-sm text-muted-foreground'
                       }
                     >
-                      {u.is_admin ? (
-                        <ShieldOff className="h-4 w-4" />
-                      ) : (
-                        <Shield className="h-4 w-4" />
-                      )}
-                      {u.is_admin ? '取消管理员' : '设为管理员'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        resetPwMut.reset();
-                        setResetPwUserId(u.id);
-                        setResetPwValue('');
-                        setResetDialogOpen(true);
-                      }}
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                      重置密码
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      className="col-span-2"
-                      disabled={u.id === currentUserId}
-                      onClick={() => {
-                        deleteUserMut.reset();
-                        setDeleteUserId(u.id);
-                        setDeleteDialogOpen(true);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      删除用户
-                    </Button>
+                      {u.notify_enabled ? '已订阅' : '未订阅'}
+                    </dd>
                   </div>
+                </dl>
+                <div className="flex items-center justify-end gap-1 border-t pt-3 md:border-0 md:pt-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-9"
+                    title={u.is_admin ? '取消管理员' : '设为管理员'}
+                    aria-label={
+                      u.is_admin ? `取消 ${u.username} 的管理员` : `设为 ${u.username} 为管理员`
+                    }
+                    disabled={toggleAdminMut.isPending || u.id === currentUserId}
+                    onClick={() =>
+                      toggleAdminMut.mutate({
+                        userId: u.id,
+                        isAdmin: !u.is_admin,
+                      })
+                    }
+                  >
+                    {u.is_admin ? <ShieldOff className="size-4" /> : <Shield className="size-4" />}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-9"
+                    title="重置密码"
+                    aria-label={`重置 ${u.username} 的密码`}
+                    onClick={() => {
+                      resetPwMut.reset();
+                      setResetPwUserId(u.id);
+                      setResetPwValue('');
+                      setResetDialogOpen(true);
+                    }}
+                  >
+                    <KeyRound className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="删除用户"
+                    aria-label={`删除用户 ${u.username}`}
+                    disabled={u.id === currentUserId}
+                    className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => {
+                      deleteUserMut.reset();
+                      setDeleteUserId(u.id);
+                      setDeleteDialogOpen(true);
+                    }}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
                 </div>
               </div>
             ))}
-          </div>
-          <div className="hidden overflow-x-auto rounded-md border md:block">
-            <table className="min-w-[52rem] w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th scope="col" className="px-3 py-2 text-left font-medium">
-                    编号
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-left font-medium">
-                    用户名
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-left font-medium">
-                    角色
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-left font-medium">
-                    收藏夹
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-left font-medium">
-                    收藏
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-left font-medium">
-                    推送
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-left font-medium">
-                    注册时间
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-left font-medium">
-                    操作
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {userRows.map(({ user: u, registrationDate }) => (
-                  <tr key={u.id} className="content-visibility-table-row border-b last:border-0">
-                    <td className="px-3 py-2">{u.id}</td>
-                    <td className="px-3 py-2 font-medium">{u.username}</td>
-                    <td className="px-3 py-2">
-                      {u.is_admin ? <Badge>管理员</Badge> : <Badge variant="secondary">用户</Badge>}
-                    </td>
-                    <td className="px-3 py-2">{u.folder_count}</td>
-                    <td className="px-3 py-2">{u.favorite_count}</td>
-                    <td className="px-3 py-2">
-                      {u.notify_enabled ? (
-                        <Badge variant="secondary" className="text-xs">
-                          已订阅
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground">{registrationDate}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title={u.is_admin ? '取消管理员' : '设为管理员'}
-                          aria-label={
-                            u.is_admin
-                              ? `取消 ${u.username} 的管理员`
-                              : `设为 ${u.username} 为管理员`
-                          }
-                          disabled={toggleAdminMut.isPending || u.id === currentUserId}
-                          onClick={() =>
-                            toggleAdminMut.mutate({
-                              userId: u.id,
-                              isAdmin: !u.is_admin,
-                            })
-                          }
-                        >
-                          {u.is_admin ? (
-                            <ShieldOff className="h-4 w-4" />
-                          ) : (
-                            <Shield className="h-4 w-4" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="重置密码"
-                          aria-label={`重置 ${u.username} 的密码`}
-                          onClick={() => {
-                            resetPwMut.reset();
-                            setResetPwUserId(u.id);
-                            setResetPwValue('');
-                            setResetDialogOpen(true);
-                          }}
-                        >
-                          <RefreshCw className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="删除用户"
-                          aria-label={`删除用户 ${u.username}`}
-                          disabled={u.id === currentUserId}
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => {
-                            deleteUserMut.reset();
-                            setDeleteUserId(u.id);
-                            setDeleteDialogOpen(true);
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          </SettingsGroup>
         </CardContent>
       </Card>
 

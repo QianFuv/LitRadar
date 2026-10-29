@@ -44,8 +44,8 @@ const GLOBAL_ACTIONS_STYLE: CSSProperties = {
 };
 
 const GLOBAL_BUTTON_STYLE: CSSProperties = {
-  background: 'var(--recovery-action-background, #3e63dd)',
-  border: '1px solid #3e63dd',
+  background: 'var(--recovery-action-background, #2563eb)',
+  border: '1px solid #2563eb',
   borderRadius: '6px',
   color: '#ffffff',
   cursor: 'pointer',

@@ -1,17 +1,40 @@
 /**
- * Shared article-workspace shell coverage.
+ * Shared reading-workspace shell and application frame coverage.
  */
 
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
-import { describe, expect, test, vi } from 'vitest';
+import { createPortal } from 'react-dom';
+import { useState } from 'react';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import Home from '@/app/(protected)/page';
+import {
+  READER_ITEM_ATTRIBUTE,
+  WORKSPACE_SEARCH_ATTRIBUTE,
+  useArticleReader,
+} from '@/components/feature/article-reader-context';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
+import { AppFrame } from '@/components/shell/app-frame';
+import { READER_DOCK_MEDIA_QUERY } from '@/lib/use-media-query';
+
+const shellMocks = vi.hoisted(() => ({
+  searchParams: new URLSearchParams('view=favorites&folder=4'),
+}));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useSearchParams: () => shellMocks.searchParams,
+}));
 
 vi.mock('@/lib/auth-context', () => ({
   useAuth: () => ({ user: { id: 21, username: 'workspace_user', is_admin: false } }),
+}));
+
+vi.mock('@/components/feature/user-menu', () => ({
+  UserMenu: ({ placement }: { placement?: string }) => <div>账号菜单 {placement}</div>,
 }));
 
 vi.mock('@/components/feature/search-workspace-view', () => ({
@@ -33,66 +56,241 @@ vi.mock('@/components/cfp/cfp-tracking-view', () => ({
 }));
 
 /**
- * Render a deterministic workspace with visible slot labels.
- *
- * @returns Workspace sidebar trigger.
+ * Make the reader-dock media query match for one test.
  */
-function renderWorkspaceShell(): HTMLElement {
+function enableDockedReader(): void {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string): MediaQueryList => ({
+      matches: query === READER_DOCK_MEDIA_QUERY || query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      addListener: () => undefined,
+      dispatchEvent: () => false,
+      removeEventListener: () => undefined,
+      removeListener: () => undefined,
+    }),
+  });
+}
+
+const originalMatchMedia = window.matchMedia;
+
+afterEach(() => {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: originalMatchMedia,
+  });
+});
+
+/**
+ * Render one selectable row that portals its reader content into the docked desk.
+ *
+ * @param props - Row key and label.
+ * @returns Selectable test row.
+ */
+function ReaderRow({ itemKey, label }: { itemKey: string; label: string }) {
+  const reader = useArticleReader();
+  const isSelected = reader?.selectedKey === itemKey;
+  return (
+    <>
+      <button
+        type="button"
+        {...{ [READER_ITEM_ATTRIBUTE]: '' }}
+        data-selected={isSelected ? 'true' : 'false'}
+        onClick={() => reader?.select(itemKey)}
+      >
+        {label}
+      </button>
+      {isSelected &&
+        reader?.readerNode &&
+        createPortal(
+          <article aria-label={`阅读 ${label}`}>{label} 正文</article>,
+          reader.readerNode,
+        )}
+    </>
+  );
+}
+
+/**
+ * Render a deterministic workspace with visible slot labels.
+ */
+function renderArticleWorkspace(): void {
   render(
     <WorkspaceShell
-      sidebar={
-        <aside aria-label="测试侧栏">
-          <button type="button">侧栏操作</button>
-        </aside>
-      }
-      sidebarOpenLabel="打开测试侧栏"
-      sidebarDialogTitle="测试侧栏"
-      sidebarDialogDescription="测试移动侧栏内容。"
-      toolbar={<div>工作区工具栏</div>}
+      listLabel="测试列表"
+      header={<input aria-label="测试搜索" {...{ [WORKSPACE_SEARCH_ATTRIBUTE]: '' }} />}
+      readerPlaceholder={<p>请选择条目</p>}
     >
-      <article>工作区文章</article>
+      <ReaderRow itemKey="first" label="第一篇" />
+      <ReaderRow itemKey="second" label="第二篇" />
+    </WorkspaceShell>,
+  );
+}
+
+/**
+ * Verify the list column, header slot, scroll container, and bottom spacing.
+ */
+function rendersWorkspaceRegions(): void {
+  renderArticleWorkspace();
+
+  const list = screen.getByRole('region', { name: '测试列表' });
+  const scrollContainer = document.getElementById('results-scroll-container');
+
+  expect(within(list).getByRole('textbox', { name: '测试搜索' })).toBeInTheDocument();
+  expect(within(list).getByRole('button', { name: '第一篇' })).toBeInTheDocument();
+  expect(scrollContainer).toHaveClass('overflow-y-auto', 'workspace-bottom-space');
+  expect(screen.queryByRole('region', { name: '阅读台' })).toBeNull();
+}
+
+/**
+ * Verify docked reading, keyboard row navigation, and the slash search shortcut.
+ */
+async function docksReaderAndSupportsShortcuts(): Promise<void> {
+  enableDockedReader();
+  const user = userEvent.setup();
+  renderArticleWorkspace();
+
+  const desk = screen.getByRole('region', { name: '阅读台' });
+  expect(within(desk).getByText('请选择条目')).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: '第一篇' }));
+  expect(within(desk).getByRole('article', { name: '阅读 第一篇' })).toBeInTheDocument();
+  expect(within(desk).queryByText('请选择条目')).toBeNull();
+
+  await user.keyboard('j');
+  expect(screen.getByRole('button', { name: '第二篇' })).toHaveFocus();
+  expect(within(desk).getByRole('article', { name: '阅读 第二篇' })).toBeInTheDocument();
+
+  await user.keyboard('k');
+  expect(screen.getByRole('button', { name: '第一篇' })).toHaveFocus();
+
+  await user.keyboard('/');
+  expect(screen.getByRole('textbox', { name: '测试搜索' })).toHaveFocus();
+  await user.keyboard('j');
+  expect(screen.getByRole('textbox', { name: '测试搜索' })).toHaveValue('j');
+}
+
+/**
+ * Verify list-emphasized workspaces fill the side panel with the first item automatically.
+ */
+async function autoSelectsFirstItemInSidePanel(): Promise<void> {
+  enableDockedReader();
+  render(
+    <WorkspaceShell
+      listLabel="测试列表"
+      header={<p>列表头部</p>}
+      emphasis="list"
+      shouldAutoSelectFirst
+      readerPlaceholder={<p>请选择条目</p>}
+    >
+      <ReaderRow itemKey="first" label="第一篇" />
+      <ReaderRow itemKey="second" label="第二篇" />
     </WorkspaceShell>,
   );
 
-  return screen.getByRole('button', { name: '打开测试侧栏' });
+  const desk = screen.getByRole('region', { name: '阅读台' });
+  expect(desk).toHaveAttribute('data-emphasis', 'list');
+  expect(await within(desk).findByRole('article', { name: '阅读 第一篇' })).toBeInTheDocument();
+  expect(within(desk).queryByText('请选择条目')).toBeNull();
 }
 
 /**
- * Verify stable landmarks, slots, scrolling, and safe-area spacing.
+ * Render a view-owned reader that opens as a sheet on narrow screens.
+ *
+ * @returns Explicit reader workspace.
  */
-function rendersWorkspaceRegions(): void {
-  renderWorkspaceShell();
-
-  const main = screen.getByRole('main');
-  const scrollContainer = document.getElementById('results-scroll-container');
-
-  expect(main).toHaveAttribute('id', 'main-content');
-  expect(screen.getByRole('complementary', { name: '测试侧栏' })).toBeInTheDocument();
-  expect(screen.getByText('工作区工具栏')).toBeInTheDocument();
-  expect(screen.getByText('工作区文章')).toBeInTheDocument();
-  expect(scrollContainer).toHaveClass('overflow-y-auto');
-  expect(scrollContainer?.style.paddingBottom).toContain('var(--safe-area-inset-bottom');
+function ExplicitReaderWorkspace() {
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
+  return (
+    <WorkspaceShell
+      listLabel="期刊目录"
+      header={<p>目录头部</p>}
+      isListSelfScrolling
+      reader={{
+        content: <p>征稿正文</p>,
+        description: '期刊征稿需求与时间安排',
+        isSheetOpen,
+        onSheetOpenChange: setIsSheetOpen,
+        title: '测试期刊',
+      }}
+      readerPlaceholder={null}
+    >
+      <button type="button" onClick={() => setIsSheetOpen(true)}>
+        选择测试期刊
+      </button>
+    </WorkspaceShell>
+  );
 }
 
 /**
- * Verify the mobile sidebar has an accessible name and restores trigger focus after closing.
+ * Verify explicit reader content opens as an accessible sheet and restores focus.
  */
-async function opensAccessibleSidebarDialog(): Promise<void> {
+async function opensExplicitReaderSheet(): Promise<void> {
   const user = userEvent.setup();
-  const trigger = renderWorkspaceShell();
+  render(<ExplicitReaderWorkspace />);
 
+  expect(document.getElementById('results-scroll-container')).toBeNull();
+  const trigger = screen.getByRole('button', { name: '选择测试期刊' });
   await user.click(trigger);
-  const dialog = screen.getByRole('dialog', { name: '测试侧栏' });
-  expect(dialog).toHaveAttribute('data-motion-placement', 'left');
-  expect(dialog).toHaveClass('motion-drawer');
-  expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass('motion-overlay');
-  expect(within(dialog).getByText('测试移动侧栏内容。')).toBeInTheDocument();
-  expect(within(dialog).getByRole('button', { name: '侧栏操作' })).toBeInTheDocument();
+  const sheet = screen.getByRole('dialog', { name: '测试期刊' });
+  expect(sheet).toHaveAttribute('data-motion-placement', 'right');
+  expect(within(sheet).getByText('征稿正文')).toBeInTheDocument();
 
-  expect(within(dialog).queryByRole('button', { name: '关闭' })).toBeNull();
-  await user.keyboard('{Escape}');
-  await waitFor(() => expect(screen.queryByRole('dialog', { name: '测试侧栏' })).toBeNull());
+  await user.click(within(sheet).getByRole('button', { name: '关闭' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '测试期刊' })).toBeNull());
   expect(trigger).toHaveFocus();
+}
+
+/**
+ * Verify the application frame exposes the main landmark, navigation, and shortcuts.
+ */
+function rendersApplicationFrame(): void {
+  render(
+    <AppFrame>
+      <p>页面内容</p>
+    </AppFrame>,
+  );
+
+  expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
+  expect(within(screen.getByRole('main')).getByText('页面内容')).toBeInTheDocument();
+  const navigations = screen.getAllByRole('navigation', { name: '页面导航' });
+  expect(navigations).toHaveLength(2);
+  for (const navigation of navigations) {
+    expect(within(navigation).getAllByRole('link')).toHaveLength(4);
+    expect(within(navigation).getByRole('link', { name: '文献检索' })).toHaveAttribute('href', '/');
+    expect(within(navigation).getByRole('link', { name: '每周更新' })).toHaveAttribute(
+      'href',
+      '/?view=weekly-updates',
+    );
+    expect(within(navigation).getByRole('link', { name: '征稿追踪' })).toHaveAttribute(
+      'href',
+      '/?view=cfp-tracking',
+    );
+    for (const shortLabel of ['检索', '收藏', '周报', '征稿']) {
+      expect(within(navigation).getByText(shortLabel)).toBeVisible();
+    }
+    expect(within(navigation).getByRole('link', { name: '我的收藏' })).toHaveAttribute(
+      'href',
+      '/?view=favorites',
+    );
+    expect(within(navigation).getByRole('link', { name: '我的收藏' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(within(navigation).getByRole('link', { name: '文献检索' })).not.toHaveAttribute(
+      'aria-current',
+    );
+  }
+  expect(screen.getByRole('link', { name: '设置中心' })).toHaveAttribute(
+    'href',
+    '/?view=favorites&folder=4&settings=general',
+  );
+  expect(screen.queryByRole('link', { name: '管理面板' })).toBeNull();
+  expect(screen.getByText('账号菜单 rail')).toBeInTheDocument();
+  expect(screen.getByText('账号菜单 tab')).toBeInTheDocument();
 }
 
 /**
@@ -142,8 +340,14 @@ function fallsBackToSearchWorkspace(): void {
 }
 
 describe('WorkspaceShell', () => {
-  test('renders stable workspace regions and safe-area scrolling', rendersWorkspaceRegions);
-  test('opens an accessible mobile sidebar and restores focus', opensAccessibleSidebarDialog);
+  test('renders the list column and scroll container', rendersWorkspaceRegions);
+  test('docks the reader and supports keyboard shortcuts', docksReaderAndSupportsShortcuts);
+  test(
+    'auto-selects the first item in a list-emphasized side panel',
+    autoSelectsFirstItemInSidePanel,
+  );
+  test('opens explicit reader content as a sheet and restores focus', opensExplicitReaderSheet);
+  test('renders the application frame landmarks and navigation', rendersApplicationFrame);
   test('dispatches legal root workspace views', dispatchesLegalWorkspaceViews);
   test('dispatches the CFP workspace from its canonical URL', () => {
     renderHome('?view=cfp-tracking');

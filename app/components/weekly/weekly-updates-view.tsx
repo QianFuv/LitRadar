@@ -4,9 +4,9 @@
  * Weekly article updates rendered inside the shared article workspace.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
-import { CalendarDays, Database, FileText } from 'lucide-react';
+import { Check, FileText, Layers } from 'lucide-react';
 import { parseAsString, useQueryState } from 'nuqs';
 
 import {
@@ -22,11 +22,12 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
+import { ArticleListSkeleton } from '@/components/feature/article-list-card';
+import { DatabasePill, FilterFacet } from '@/components/feature/filter-pill';
+import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
 import { SearchBar } from '@/components/feature/search-bar';
-import { WorkspaceSidebar } from '@/components/feature/sidebar';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
-import { Badge } from '@/components/ui/badge';
 import {
   FADE_UP_VARIANTS,
   MOTION_DURATION_SECONDS,
@@ -34,13 +35,6 @@ import {
   MotionPresence,
   useMotionTransition,
 } from '@/components/ui/motion';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { Button } from '@/components/ui/button';
@@ -183,66 +177,45 @@ function flattenWeeklyArticlePages(
   return articles;
 }
 
-type WeeklySidebarProps = {
-  availableDatabases: string[];
-  effectiveSelectedDb: string;
+type WeeklyJournalFacetProps = {
   journals: WeeklyJournalSummary[];
   effectiveSelectedJournalId: JournalId | null;
-  onDatabaseChange: (value: string) => void;
   onSelectJournal: (journalId: JournalId) => void;
 };
 
 /**
- * Render database and journal selection inside the shared workspace sidebar frame.
+ * Render the single-select journal picker for the current weekly database.
  *
- * @param props - Weekly database/journal state and selection actions.
- * @returns Weekly workspace sidebar.
+ * @param props - Weekly journals, current selection, and selection action.
+ * @returns Journal picker pill.
  */
-function WeeklySidebar({
-  availableDatabases,
-  effectiveSelectedDb,
+function WeeklyJournalFacet({
   journals,
   effectiveSelectedJournalId,
-  onDatabaseChange,
   onSelectJournal,
-}: WeeklySidebarProps) {
-  return (
-    <WorkspaceSidebar
-      headerContent={
-        <div className="space-y-4 border-t border-sidebar-border pt-3">
-          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
-              <Database className="size-4" aria-hidden="true" />
-              <span>数据库</span>
-            </div>
-            <Select value={effectiveSelectedDb} onValueChange={onDatabaseChange}>
-              <SelectTrigger aria-label="周报数据库" className="h-9 w-full bg-sidebar">
-                <SelectValue placeholder="选择数据库" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableDatabases.map((dbName) => (
-                  <SelectItem key={dbName} value={dbName}>
-                    {dbName.replace(/\.sqlite$/, '')}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+}: WeeklyJournalFacetProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedJournal =
+    journals.find((journal) => journal.journal_id === effectiveSelectedJournalId) ?? null;
 
-          <h2 className="text-sm font-semibold text-sidebar-foreground">期刊</h2>
-        </div>
-      }
+  return (
+    <FilterFacet
+      label="期刊"
+      tone="selection"
+      summary={selectedJournal ? getJournalLabel(selectedJournal) : undefined}
+      description={`本周有 ${journals.length} 本期刊更新。`}
+      isActive={selectedJournal !== null}
+      open={isOpen}
+      onOpenChange={setIsOpen}
+      contentClassName="w-[24rem]"
     >
       <div
-        data-slot="sidebar-scroll-region"
-        className="sidebar-scroll-gutter min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain"
+        data-slot="weekly-journal-options"
+        className="max-h-[min(60vh,24rem)] overflow-y-auto overscroll-contain py-1 pr-3 pl-1"
       >
         {journals.length === 0 && (
-          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            当前时间窗口内没有新增期刊。
-          </div>
+          <p className="px-2.5 py-3 text-sm text-muted-foreground">当前时间窗口内没有新增期刊。</p>
         )}
-
         {journals.map((journal) => {
           const isActive = effectiveSelectedJournalId === journal.journal_id;
           return (
@@ -250,30 +223,32 @@ function WeeklySidebar({
               key={journal.journal_id}
               type="button"
               aria-pressed={isActive}
-              onClick={() => onSelectJournal(journal.journal_id)}
+              onClick={() => {
+                onSelectJournal(journal.journal_id);
+                setIsOpen(false);
+              }}
               className={cn(
-                'motion-control min-h-11 w-full rounded-md border border-transparent px-2 py-2 text-left text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 focus-visible:ring-inset',
-                isActive && 'border-sidebar-border bg-sidebar-accent',
+                'motion-control flex min-h-10 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset md:min-h-9',
+                isActive && 'bg-info font-bold text-info-foreground hover:bg-info',
               )}
             >
-              <div className="flex items-center justify-between gap-2">
-                <p className="line-clamp-2 min-w-0 break-words text-sm font-medium">
-                  {getJournalLabel(journal)}
-                </p>
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {journal.new_article_count}
-                </span>
-              </div>
+              <span className="line-clamp-2 min-w-0 flex-1 break-words">
+                {getJournalLabel(journal)}
+              </span>
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                {journal.new_article_count}
+              </span>
+              {isActive && <Check className="size-3.5 shrink-0" aria-hidden="true" />}
             </button>
           );
         })}
       </div>
-    </WorkspaceSidebar>
+    </FilterFacet>
   );
 }
 
 /**
- * Render weekly database and journal updates inside the shared article workspace.
+ * Render weekly database and journal updates inside the shared reading workspace.
  *
  * @returns Weekly-updates workspace view.
  */
@@ -289,6 +264,8 @@ export function WeeklyUpdatesView() {
     retryFavoriteChecks,
     setSelectedDb,
     setSelectedJournalId,
+    totalDatabases,
+    totalArticles,
     weeklyState,
     articleState,
   } = state;
@@ -304,32 +281,59 @@ export function WeeklyUpdatesView() {
 
   return (
     <WorkspaceShell
-      sidebar={
-        <WeeklySidebar
-          availableDatabases={availableDatabases}
-          effectiveSelectedDb={effectiveSelectedDb}
-          journals={journals}
-          effectiveSelectedJournalId={effectiveSelectedJournalId}
-          onDatabaseChange={handleDatabaseChange}
-          onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
-        />
-      }
-      sidebarOpenLabel="打开期刊筛选"
-      sidebarDialogTitle="期刊筛选"
-      sidebarDialogDescription="选择数据库和期刊以查看每周更新。"
-      toolbar={
-        <div className="flex min-w-0 flex-1 items-center gap-3 md:mx-auto md:max-w-4xl">
-          <CalendarDays className="size-5 shrink-0" aria-hidden="true" />
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">每周新文章</p>
-            <h1 className="truncate text-xl font-semibold tracking-tight">
-              期刊每周更新
-              {weeklySummary
-                ? ` (${formatDate(weeklySummary.window_start)} - ${formatDate(weeklySummary.window_end)})`
-                : ''}
-            </h1>
+      listLabel="本周文章"
+      emphasis="list"
+      shouldAutoSelectFirst
+      header={
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-lg leading-7 font-bold">期刊每周更新</h1>
+              <p className="text-xs tabular-nums text-muted-foreground">
+                {weeklySummary
+                  ? `统计窗口 ${formatDate(weeklySummary.window_start)} – ${formatDate(weeklySummary.window_end)}`
+                  : '正在读取统计窗口…'}
+              </p>
+            </div>
+            {weeklySummary && (
+              <div
+                data-weekly-summary-key={weeklySummary.window_end}
+                className="flex shrink-0 flex-col items-end gap-0.5 text-[11px] leading-4 text-muted-foreground"
+              >
+                <span className="inline-flex items-center gap-1">
+                  <Layers className="size-3" aria-hidden="true" />
+                  {totalDatabases} 个数据库
+                </span>
+                <span className="inline-flex items-center gap-1 font-bold text-foreground">
+                  <FileText className="size-3" aria-hidden="true" />
+                  {totalArticles} 篇新文章
+                </span>
+              </div>
+            )}
+          </div>
+          <SearchBar queryParam="weekly_q" placeholder="在本周新文章中检索…" />
+          <div className="scrollbar-none -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5">
+            {availableDatabases.length > 0 && (
+              <DatabasePill
+                ariaLabel="周报数据库"
+                databases={availableDatabases}
+                value={effectiveSelectedDb}
+                onChange={handleDatabaseChange}
+              />
+            )}
+            <WeeklyJournalFacet
+              journals={journals}
+              effectiveSelectedJournalId={effectiveSelectedJournalId}
+              onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
+            />
           </div>
         </div>
+      }
+      readerPlaceholder={
+        <ReaderPlaceholder
+          title="本周新文章"
+          description="从左侧列表选择一篇文献查看摘要；切换期刊胶囊浏览其他期刊的更新。"
+        />
       }
     >
       <p
@@ -346,7 +350,7 @@ export function WeeklyUpdatesView() {
       {favoriteStateError && (
         <div
           role="alert"
-          className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 p-3 text-sm"
+          className="m-4 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-[13px] sm:mx-5"
         >
           <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
           <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
@@ -635,7 +639,7 @@ function getWeeklyJournalDescription(
   >,
 ): string {
   const { selectedJournal, searchQuery, articleState, renderedArticles, hasNextPage } = state;
-  if (!selectedJournal) return '从左侧选择期刊后查看本周新收录文章';
+  if (!selectedJournal) return '选择期刊后查看本周新收录文章';
   if (!searchQuery) return `本周新增 ${selectedJournal.new_article_count} 篇文章`;
   if (articleState === 'loading') return '正在检索本周文章…';
   if (articleState === 'error') return '全文检索失败';
@@ -683,7 +687,7 @@ function renderWeeklyArticleResults(state: WeeklyViewState) {
           <MotionDiv
             key="weekly-next-page"
             aria-hidden="true"
-            className="py-2 text-center text-sm text-muted-foreground"
+            className="py-4 text-center text-xs text-muted-foreground"
             variants={FADE_UP_VARIANTS}
             initial="hidden"
             animate="visible"
@@ -733,7 +737,6 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
         key="weekly-articles-loading"
         data-weekly-article-key={articleListKey}
         data-weekly-article-state="loading"
-        className="space-y-2"
         aria-hidden="true"
         variants={FADE_UP_VARIANTS}
         initial="hidden"
@@ -741,8 +744,7 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
         exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
         transition={stateTransition}
       >
-        <Skeleton className="h-28 w-full" />
-        <Skeleton className="h-28 w-full" />
+        <ArticleListSkeleton count={4} />
       </MotionDiv>
     );
   if (articleState === 'error')
@@ -791,7 +793,7 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
       key="weekly-articles-results"
       data-weekly-article-key={articleListKey}
       data-weekly-article-state="results"
-      className="space-y-3"
+      className="min-w-0"
       variants={FADE_UP_VARIANTS}
       initial="hidden"
       animate="visible"
@@ -803,7 +805,7 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
   );
 }
 
-/** Render the complete journal heading presence subtree with its existing identity key. */
+/** Render the selected journal caption above the article rows. */
 function renderWeeklyJournalHeader(state: WeeklyViewState) {
   const { stateTransition, effectiveSelectedDb, effectiveSelectedJournalId, selectedJournal } =
     state;
@@ -812,64 +814,26 @@ function renderWeeklyJournalHeader(state: WeeklyViewState) {
       <MotionDiv
         key={`${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}`}
         data-weekly-journal={effectiveSelectedJournalId ?? 'none'}
-        className="rounded-lg bg-card px-4 py-3 shadow-vercel-ring"
+        className="flex items-start justify-between gap-3 border-b bg-muted/60 px-4 py-2.5 sm:px-5"
         variants={FADE_UP_VARIANTS}
         initial="hidden"
         animate="visible"
         exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
         transition={stateTransition}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold tracking-tight">
-              {selectedJournal ? getJournalLabel(selectedJournal) : '选择期刊'}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {getWeeklyJournalDescription(state)}
-            </p>
-          </div>
-          {selectedJournal && (
-            <Badge variant="secondary" className="shrink-0">
-              {selectedJournal.new_article_count} 篇
-            </Badge>
-          )}
+        <div className="min-w-0">
+          <h2 className="truncate text-[13px] font-bold">
+            {selectedJournal ? getJournalLabel(selectedJournal) : '选择期刊'}
+          </h2>
+          <p className="text-[11px] text-muted-foreground">{getWeeklyJournalDescription(state)}</p>
         </div>
+        {selectedJournal && (
+          <span className="shrink-0 rounded-full bg-info px-2 py-0.5 text-[11px] font-bold text-info-foreground tabular-nums">
+            {selectedJournal.new_article_count} 篇
+          </span>
+        )}
       </MotionDiv>
     </MotionPresence>
-  );
-}
-
-/** Render the complete summary animation and unchanged search control. */
-function renderWeeklySummary(
-  state: Pick<WeeklyViewState, 'stateTransition' | 'totalDatabases' | 'totalArticles'>,
-  weeklySummary: WeeklyUpdatesSummaryResponse,
-) {
-  const { stateTransition, totalDatabases, totalArticles } = state;
-  return (
-    <section className="flex flex-col gap-3 rounded-lg bg-muted/30 p-3 shadow-vercel-ring sm:flex-row sm:items-center">
-      <MotionPresence mode="wait">
-        <MotionDiv
-          key={weeklySummary.window_end}
-          data-weekly-summary-key={weeklySummary.window_end}
-          className="flex shrink-0 flex-wrap gap-2"
-          variants={FADE_UP_VARIANTS}
-          initial="hidden"
-          animate="visible"
-          exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
-          transition={stateTransition}
-        >
-          <Badge variant="secondary" className="gap-1">
-            <Database className="h-3.5 w-3.5" aria-hidden="true" />
-            {totalDatabases} 个数据库
-          </Badge>
-          <Badge variant="secondary" className="gap-1">
-            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-            {totalArticles} 篇新文章
-          </Badge>
-        </MotionDiv>
-      </MotionPresence>
-      <SearchBar className="w-full max-w-none sm:min-w-0 sm:flex-1" queryParam="weekly_q" />
-    </section>
   );
 }
 
@@ -882,7 +846,6 @@ function renderWeeklyPresentation(state: WeeklyViewState) {
         <MotionDiv
           key="weekly-loading"
           data-weekly-state="loading"
-          className="space-y-4"
           aria-hidden="true"
           variants={FADE_UP_VARIANTS}
           initial="hidden"
@@ -890,8 +853,8 @@ function renderWeeklyPresentation(state: WeeklyViewState) {
           exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
           transition={stateTransition}
         >
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-[70vh] w-full" />
+          <Skeleton className="m-4 h-10 sm:mx-5" />
+          <ArticleListSkeleton count={4} />
         </MotionDiv>
       ) : weeklyState === 'error' ? (
         <MotionDiv
@@ -917,16 +880,13 @@ function renderWeeklyPresentation(state: WeeklyViewState) {
           <MotionDiv
             key="weekly-ready"
             data-weekly-state="ready"
-            className="space-y-3"
             variants={FADE_UP_VARIANTS}
             initial="hidden"
             animate="visible"
             exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
             transition={stateTransition}
           >
-            {renderWeeklySummary(state, weeklySummary)}
-
-            <section className="min-w-0 space-y-3" aria-label="每周文章">
+            <section className="min-w-0" aria-label="每周文章">
               {renderWeeklyJournalHeader(state)}
 
               {renderWeeklyArticleStates(state)}

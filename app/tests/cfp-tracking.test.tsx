@@ -7,6 +7,8 @@ import { http, HttpResponse } from 'msw';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { READER_DOCK_MEDIA_QUERY } from '@/lib/use-media-query';
+
 import { CfpTrackingView } from '@/components/cfp/cfp-tracking-view';
 import type { CfpJournalSummary, CfpNoticePage } from '@/lib/api';
 import { CFP_FIXTURE_PAGES } from '@/tests/fixtures/cfp-pages';
@@ -102,7 +104,41 @@ function renderCfp(searchParams = '?view=cfp-tracking') {
   );
 }
 
+const originalMatchMedia = window.matchMedia;
+
+/**
+ * Report the docked reading-desk layout so selected journal details render inline.
+ *
+ * @param query - Browser media query string.
+ * @returns Static media-query result.
+ */
+function dockedMediaQuery(query: string): MediaQueryList {
+  return {
+    matches: query === READER_DOCK_MEDIA_QUERY || query === '(prefers-reduced-motion: reduce)',
+    media: query,
+    onchange: null,
+    addEventListener: () => undefined,
+    addListener: () => undefined,
+    dispatchEvent: () => false,
+    removeEventListener: () => undefined,
+    removeListener: () => undefined,
+  };
+}
+
+afterEach(() => {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: originalMatchMedia,
+  });
+});
+
 beforeEach(() => {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: dockedMediaQuery,
+  });
   window.localStorage.clear();
   server.use(
     http.get('http://localhost/api/meta/databases', () => HttpResponse.json(DATABASES)),

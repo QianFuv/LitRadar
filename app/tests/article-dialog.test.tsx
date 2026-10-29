@@ -2,7 +2,7 @@
  * Article card selection, dialog accessibility, copy actions, and safe-link coverage.
  */
 
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, test, vi } from 'vitest';
@@ -158,13 +158,13 @@ async function opensAndClosesAccessibleDialog(): Promise<void> {
   }
 }
 
-/** Verify the card subtitle lists ordered authors before the journal metadata. */
+/** Verify the row metadata lists ordered authors before the journal metadata. */
 async function showsAuthorsBeforeJournal(): Promise<void> {
   registerArticleDialogHandlers();
   await renderArticleCard({ ...SAFE_ARTICLE, authors: ['Ada Lovelace', 'Grace Hopper'] });
   const subtitle = screen
     .getByRole('button', { name: /^查看文章详情：/ })
-    .querySelector('[data-slot="card-description"]');
+    .querySelector('[data-slot="article-list-meta"]');
   expect(subtitle).toHaveTextContent(/^Ada Lovelace; Grace Hopper.*Journal of Tests/);
 }
 
@@ -174,7 +174,7 @@ async function showsJournalWithoutAuthors(authors: Article['authors']): Promise<
   await renderArticleCard({ ...SAFE_ARTICLE, authors });
   const subtitle = screen
     .getByRole('button', { name: /^查看文章详情：/ })
-    .querySelector('[data-slot="card-description"]');
+    .querySelector('[data-slot="article-list-meta"]');
   expect(subtitle).toHaveTextContent(/^Journal of Tests/);
 }
 
@@ -296,6 +296,64 @@ async function doesNotExposeStoredOrDirectExternalLinks(): Promise<void> {
   expect(screen.queryByRole('link', { name: '打开 DOI' })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: '打开永久链接' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '复制永久链接' })).not.toBeInTheDocument();
+}
+
+/** Verify details list bibliographic metadata, journal ratings, and retraction notices. */
+async function showsBibliographicMetadata(): Promise<void> {
+  registerArticleDialogHandlers();
+  server.use(
+    http.get('http://localhost/api/journals/journal-1', ({ request }) => {
+      expect(new URL(request.url).searchParams.get('db')).toBe('fixture.sqlite');
+      return HttpResponse.json({
+        journal_id: 'journal-1',
+        catalog_id: 'issn-1234-5678',
+        title: 'Journal of Tests',
+        title_aliases: [],
+        issn: '1234-5678',
+        eissn: '8765-4321',
+        issns: ['1234-5678'],
+        area: 'Management',
+        has_articles: true,
+        abs_rating: '4*',
+        utd_rating: 'UTD24',
+        fms_rating: null,
+        fmscn_rating: 'A',
+      });
+    }),
+  );
+  const user = userEvent.setup();
+  await renderArticleCard({
+    ...SAFE_ARTICLE,
+    volume: '12',
+    number: '3',
+    start_page: '101',
+    end_page: '120',
+    pmid: '123456',
+    retraction_dois: ['10.1000/retraction'],
+  });
+
+  await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
+  const dialog = await screen.findByRole('dialog');
+  const notice = within(dialog).getByRole('note', { name: '撤稿提醒' });
+  expect(notice).toHaveTextContent('此文章已被撤稿');
+  expect(notice).toHaveTextContent('10.1000/retraction');
+
+  expect(
+    within(dialog).getByText('Journal of Tests • 第 12 卷, 第 3 期 • 2024-05-17'),
+  ).toBeInTheDocument();
+  expect(within(dialog).getByText('101–120')).toBeInTheDocument();
+  expect(within(dialog).getByText('123456')).toBeInTheDocument();
+  expect(await within(dialog).findByText('1234-5678 / 8765-4321')).toBeInTheDocument();
+  expect(
+    within(dialog)
+      .getAllByRole('term')
+      .map((term) => term.textContent),
+  ).toEqual(['页码', 'ISSN', '期刊评级', '学科领域', 'DOI', 'PMID']);
+  expect(within(dialog).getByText('UTD24')).toBeInTheDocument();
+  expect(within(dialog).getByText('4*')).toBeInTheDocument();
+  expect(within(dialog).queryByText('FMS')).not.toBeInTheDocument();
+  expect(within(dialog).getByText('Management')).toBeInTheDocument();
+  expect(within(dialog).queryByRole('link', { name: /10\.1000/ })).not.toBeInTheDocument();
 }
 
 /** Verify clipboard rejection remains visible as an accessible error. */
@@ -463,6 +521,7 @@ describe('article dialog workflow', () => {
   );
   test('does not expose stored or direct external links', doesNotExposeStoredOrDirectExternalLinks);
   test('reports clipboard rejection as an accessible error', reportsCopyFailure);
+  test('shows bibliographic metadata, ratings, and retractions', showsBibliographicMetadata);
   test(
     'opens data-source settings without stacking dialogs',
     opensDataSourceSettingsWithoutDialogStacking,

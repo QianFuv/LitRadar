@@ -5,7 +5,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Database, Plus, Trash2 } from 'lucide-react';
 
 import {
   type IndexProviderRoutes,
@@ -22,7 +22,15 @@ import {
   parseProviderProxyPolicy,
   type ProviderProxyPolicy,
 } from '@/lib/api-contract';
-import { Badge } from '@/components/ui/badge';
+import {
+  SettingsGroup,
+  SettingsRow,
+  SettingsSection,
+  SettingsSectionDescription,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+  StatusPill,
+} from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import {
@@ -250,13 +258,16 @@ function ProviderCapabilityBadges({ provider }: { provider: ProviderCapabilityIn
   ].filter((capability): capability is string => capability !== null);
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <span className="mt-1 flex flex-wrap items-center gap-1">
       {capabilities.map((capability) => (
-        <Badge key={capability} variant="secondary">
+        <span
+          key={capability}
+          className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+        >
           {capability}
-        </Badge>
+        </span>
       ))}
-    </div>
+    </span>
   );
 }
 
@@ -288,13 +299,19 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
   const availableProviders = providers.filter((provider) => !order.includes(provider.name));
 
   return (
-    <div className="space-y-2">
+    <ol className="space-y-2">
       {order.map((providerName, index) => {
         const selectableProviders = providers.filter(
           (provider) => provider.name === providerName || !order.includes(provider.name),
         );
         return (
-          <div key={providerName} className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+          <li key={providerName} className="flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="flex size-6 shrink-0 items-center justify-center rounded-full bg-foreground text-[11px] font-bold text-background tabular-nums"
+            >
+              {index + 1}
+            </span>
             <Select
               value={providerName}
               onValueChange={(nextProvider) => {
@@ -314,10 +331,10 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
                 ))}
               </SelectContent>
             </Select>
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="flex shrink-0 items-center">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="icon-sm"
                 disabled={index === 0}
                 aria-label={`上移${label}第 ${index + 1} 项`}
@@ -327,7 +344,7 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
               </Button>
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="icon-sm"
                 disabled={index === order.length - 1}
                 aria-label={`下移${label}第 ${index + 1} 项`}
@@ -339,27 +356,30 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="text-destructive hover:text-destructive"
+                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 aria-label={`删除${label}第 ${index + 1} 项`}
                 onClick={() => onChange(order.filter((_, itemIndex) => itemIndex !== index))}
               >
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
-          </div>
+          </li>
         );
       })}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={availableProviders.length === 0}
-        onClick={() => onChange([...order, availableProviders[0].name])}
-      >
-        <Plus className="mr-2 h-4 w-4" />
-        添加 Provider
-      </Button>
-    </div>
+      <li>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-primary hover:text-primary"
+          disabled={availableProviders.length === 0}
+          onClick={() => onChange([...order, availableProviders[0].name])}
+        >
+          <Plus className="size-4" />
+          添加 Provider
+        </Button>
+      </li>
+    </ol>
   );
 }
 
@@ -379,9 +399,11 @@ function DefaultProviderOrder({
   const isDisabled = order.length === 0;
 
   return (
-    <div className="space-y-3 rounded-md border p-3">
+    <div className="space-y-3 px-4 py-4 sm:px-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Label htmlFor={`default-${capabilityLabel}-disabled`}>{label}</Label>
+        <Label className="font-bold" htmlFor={`default-${capabilityLabel}-disabled`}>
+          {label}
+        </Label>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">默认禁用</span>
           <Switch
@@ -400,7 +422,9 @@ function DefaultProviderOrder({
         </div>
       </div>
       {isDisabled ? (
-        <p className="text-sm text-muted-foreground">所有未覆盖目录均不提供{capabilityLabel}。</p>
+        <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+          所有未覆盖目录均不提供{capabilityLabel}。
+        </p>
       ) : (
         <ProviderOrderEditor
           label={label}
@@ -432,9 +456,9 @@ function CatalogProviderOrder({
   const isDisabled = !isInherited && order.length === 0;
 
   return (
-    <div className="space-y-3 rounded-md bg-muted/30 p-3">
+    <div className="space-y-3 px-4 py-3.5 sm:px-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="text-sm font-medium">{capabilityLabel}</span>
+        <span className="text-sm font-bold">{capabilityLabel}</span>
         <div className="flex items-center gap-2">
           <Label className="text-xs font-normal" htmlFor={`${label}-inherit`}>
             继承默认顺序
@@ -498,13 +522,13 @@ function CatalogProviderOrder({
  */
 function CatalogPresenceBadges({ catalog }: { catalog: ProviderCatalogInfo }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Badge variant={catalog.csv_filename ? 'secondary' : 'outline'}>
+    <div className="flex flex-wrap items-center gap-1.5">
+      <StatusPill tone={catalog.csv_filename ? 'success' : 'neutral'}>
         {catalog.csv_filename ? 'CSV 已发现' : '无 CSV'}
-      </Badge>
-      <Badge variant={catalog.database_filename ? 'secondary' : 'outline'}>
+      </StatusPill>
+      <StatusPill tone={catalog.database_filename ? 'success' : 'neutral'}>
         {catalog.database_filename ? '数据库已发现' : '无数据库'}
-      </Badge>
+      </StatusPill>
     </div>
   );
 }
@@ -578,34 +602,28 @@ export function ProviderConfigurationEditor({
   };
 
   return (
-    <section className="space-y-4" aria-labelledby="provider-configuration-title">
-      <div
-        data-runtime-setting-field={configuration.proxySetting.field}
-        className="space-y-3 rounded-lg border p-3 sm:p-4"
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1">
-            <h3 className="text-base font-semibold">{configuration.proxySetting.label}</h3>
-            <p className="text-sm text-muted-foreground">
-              {configuration.proxySetting.description}
-            </p>
-          </div>
-          <Badge variant="outline">
-            {getApplyModeLabel(configuration.proxySetting.apply_mode)}
-          </Badge>
-        </div>
-        <div className="grid gap-2 lg:grid-cols-2">
+    <div className="space-y-10">
+      <SettingsSection data-runtime-setting-field={configuration.proxySetting.field}>
+        <SettingsSectionHeader>
+          <SettingsSectionTitle>{configuration.proxySetting.label}</SettingsSectionTitle>
+          <SettingsSectionDescription>
+            {configuration.proxySetting.description} ·{' '}
+            <span>{getApplyModeLabel(configuration.proxySetting.apply_mode)}</span>
+          </SettingsSectionDescription>
+        </SettingsSectionHeader>
+        <SettingsGroup className="sm:grid sm:grid-cols-2 sm:divide-y-0 sm:gap-px sm:bg-border">
           {catalog.providers.map((provider) => (
             <div
               key={provider.name}
               role="group"
               aria-labelledby={`provider-proxy-label-${provider.name}`}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2"
+              className="flex items-center justify-between gap-3 bg-background px-4 py-3 sm:px-5"
             >
-              <div className="space-y-1">
+              <div className="min-w-0">
                 <Label
                   id={`provider-proxy-label-${provider.name}`}
                   htmlFor={`provider-proxy-${provider.name}`}
+                  className="font-bold"
                 >
                   {provider.name}
                 </Label>
@@ -619,104 +637,111 @@ export function ProviderConfigurationEditor({
               />
             </div>
           ))}
-        </div>
-      </div>
+        </SettingsGroup>
+      </SettingsSection>
 
-      <div className="space-y-1">
-        <h3 id="provider-configuration-title" className="text-base font-semibold">
-          Provider 路由
-        </h3>
-        <p className="text-sm text-muted-foreground">
-          索引 Provider 每个目录单选；摘要页和全文按顺序回退。
-        </p>
-      </div>
+      <section className="space-y-3" aria-labelledby="provider-configuration-title">
+        <SettingsSectionHeader>
+          <h3 id="provider-configuration-title" className="text-sm leading-6 font-bold">
+            Provider 路由
+          </h3>
+          <SettingsSectionDescription>
+            索引 Provider 每个目录单选；摘要页和全文按顺序回退。
+          </SettingsSectionDescription>
+        </SettingsSectionHeader>
 
-      <div className="grid gap-2 sm:grid-cols-3">
-        {[
-          configuration.indexSetting,
-          configuration.abstractSetting,
-          configuration.fulltextSetting,
-        ].map((setting) => (
-          <div
-            key={setting.field}
-            data-runtime-setting-field={setting.field}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2"
-          >
-            <span className="text-sm font-medium">{setting.label}</span>
-            <Badge variant="outline">{getApplyModeLabel(setting.apply_mode)}</Badge>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-2">
-        <DefaultProviderOrder
-          capabilityLabel="摘要页"
-          label="默认摘要页 Provider 顺序"
-          providers={abstractProviders}
-          order={configuration.abstractOrders.default}
-          onChange={(order) =>
-            updateDefaultOrder(configuration.abstractSetting, configuration.abstractOrders, order)
-          }
-        />
-        <DefaultProviderOrder
-          capabilityLabel="全文"
-          label="默认全文 Provider 顺序"
-          providers={fulltextProviders}
-          order={configuration.fulltextOrders.default}
-          onChange={(order) =>
-            updateDefaultOrder(configuration.fulltextSetting, configuration.fulltextOrders, order)
-          }
-        />
-      </div>
-
-      <div className="space-y-3">
-        {catalog.catalogs.map((catalogInfo) => {
-          const abstractOverride = configuration.abstractOrders.catalogs[catalogInfo.stem];
-          const fulltextOverride = configuration.fulltextOrders.catalogs[catalogInfo.stem];
-          return (
-            <section
-              key={catalogInfo.stem}
-              className="space-y-4 rounded-lg border p-3 sm:p-4"
-              aria-labelledby={`provider-catalog-${catalogInfo.stem}`}
+        <div className="flex flex-wrap gap-1.5 px-1">
+          {[
+            configuration.indexSetting,
+            configuration.abstractSetting,
+            configuration.fulltextSetting,
+          ].map((setting) => (
+            <span
+              key={setting.field}
+              data-runtime-setting-field={setting.field}
+              className="inline-flex items-center gap-1.5 rounded-md bg-background px-2 py-1 text-xs shadow-[inset_0_0_0_1px_var(--border)]"
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h4
-                    id={`provider-catalog-${catalogInfo.stem}`}
-                    className="font-mono font-semibold"
-                  >
-                    {catalogInfo.stem}
-                  </h4>
-                  <p className="text-xs text-muted-foreground">CSV stem / 数据库目录键</p>
+              <span className="font-bold">{setting.label}</span>
+              <span className="text-muted-foreground">{getApplyModeLabel(setting.apply_mode)}</span>
+            </span>
+          ))}
+        </div>
+
+        <SettingsGroup className="lg:grid lg:grid-cols-2 lg:divide-y-0 lg:gap-px lg:bg-border [&>*]:bg-background">
+          <DefaultProviderOrder
+            capabilityLabel="摘要页"
+            label="默认摘要页 Provider 顺序"
+            providers={abstractProviders}
+            order={configuration.abstractOrders.default}
+            onChange={(order) =>
+              updateDefaultOrder(configuration.abstractSetting, configuration.abstractOrders, order)
+            }
+          />
+          <DefaultProviderOrder
+            capabilityLabel="全文"
+            label="默认全文 Provider 顺序"
+            providers={fulltextProviders}
+            order={configuration.fulltextOrders.default}
+            onChange={(order) =>
+              updateDefaultOrder(configuration.fulltextSetting, configuration.fulltextOrders, order)
+            }
+          />
+        </SettingsGroup>
+
+        <div className="space-y-3 pt-3">
+          {catalog.catalogs.map((catalogInfo) => {
+            const abstractOverride = configuration.abstractOrders.catalogs[catalogInfo.stem];
+            const fulltextOverride = configuration.fulltextOrders.catalogs[catalogInfo.stem];
+            return (
+              <SettingsGroup
+                key={catalogInfo.stem}
+                role="region"
+                aria-labelledby={`provider-catalog-${catalogInfo.stem}`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/40 px-4 py-3 sm:px-5">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span
+                      aria-hidden="true"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-foreground text-background"
+                    >
+                      <Database className="size-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <h4
+                        id={`provider-catalog-${catalogInfo.stem}`}
+                        className="truncate text-sm font-bold"
+                      >
+                        {catalogInfo.stem}
+                      </h4>
+                      <p className="text-xs text-muted-foreground">CSV stem / 数据库目录键</p>
+                    </div>
+                  </div>
+                  <CatalogPresenceBadges catalog={catalogInfo} />
                 </div>
-                <CatalogPresenceBadges catalog={catalogInfo} />
-              </div>
 
-              <div className="grid gap-2">
-                <Label htmlFor={`index-provider-${catalogInfo.stem}`}>索引 Provider</Label>
-                <Select
-                  value={configuration.indexRoutes[catalogInfo.stem]}
-                  disabled={indexProviders.length === 0}
-                  onValueChange={(provider) => updateIndexRoute(catalogInfo.stem, provider)}
-                >
-                  <SelectTrigger
-                    id={`index-provider-${catalogInfo.stem}`}
-                    className="w-full"
-                    aria-label={`${catalogInfo.stem} 索引 Provider`}
+                <SettingsRow title="索引 Provider" htmlFor={`index-provider-${catalogInfo.stem}`}>
+                  <Select
+                    value={configuration.indexRoutes[catalogInfo.stem]}
+                    disabled={indexProviders.length === 0}
+                    onValueChange={(provider) => updateIndexRoute(catalogInfo.stem, provider)}
                   >
-                    <SelectValue placeholder="请选择索引 Provider" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {indexProviders.map((provider) => (
-                      <SelectItem key={provider.name} value={provider.name}>
-                        {provider.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                    <SelectTrigger
+                      id={`index-provider-${catalogInfo.stem}`}
+                      className="w-full sm:w-60"
+                      aria-label={`${catalogInfo.stem} 索引 Provider`}
+                    >
+                      <SelectValue placeholder="请选择索引 Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {indexProviders.map((provider) => (
+                        <SelectItem key={provider.name} value={provider.name}>
+                          {provider.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingsRow>
 
-              <div className="grid gap-3 lg:grid-cols-2">
                 <CatalogProviderOrder
                   capabilityLabel="摘要页"
                   label={`${catalogInfo.stem}-abstract`}
@@ -765,12 +790,12 @@ export function ProviderConfigurationEditor({
                     )
                   }
                 />
-              </div>
-            </section>
-          );
-        })}
-      </div>
-    </section>
+              </SettingsGroup>
+            );
+          })}
+        </div>
+      </section>
+    </div>
   );
 }
 

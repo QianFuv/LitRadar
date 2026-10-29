@@ -2,7 +2,7 @@
  * Tracking section rendering, shared textarea, database, save, and secret coverage.
  */
 
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -155,7 +155,7 @@ async function rendersSectionsWithSharedTextareas(): Promise<void> {
   expect(backupPrompt).toHaveClass('shadow-vercel-ring');
 
   rerender(<TrackingSettingsContent userId={51} section="notifications" />);
-  expect(screen.getByRole('heading', { name: '通知与推送' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: '推送方式' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '手动推送' })).toBeInTheDocument();
 }
 
@@ -361,14 +361,19 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
   await user.keyboard('{Control>}a{/Control}5');
 
   rerender(<TrackingSettingsContent userId={51} section="notifications" />);
-  const deliverySelect = screen.getByRole('combobox', { name: '推送方式' });
+  const deliveryMethods = screen.getByRole('radiogroup', { name: '推送方式' });
   const deliveryPanel = document.querySelector('[data-motion-delivery-panel="pushplus"]');
   expect(deliveryPanel).toHaveAttribute('inert');
   expect(deliveryPanel).toHaveAttribute('aria-hidden', 'true');
-  deliverySelect.focus();
-  await user.keyboard('{ArrowDown}');
-  expect(await screen.findByRole('option', { name: 'PushPlus 外部推送' })).toBeInTheDocument();
-  await user.keyboard('{ArrowDown}{Enter}');
+  expect(within(deliveryMethods).getByRole('radio', { name: '追踪文件夹推送' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await user.click(within(deliveryMethods).getByRole('radio', { name: 'PushPlus 外部推送' }));
+  expect(within(deliveryMethods).getByRole('radio', { name: 'PushPlus 外部推送' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
   await waitFor(() => expect(deliveryPanel).not.toHaveAttribute('inert'));
   expect(deliveryPanel).toHaveAttribute('aria-hidden', 'false');
 
@@ -384,13 +389,11 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
     await user.type(field, value);
   }
   const pushplusToken = screen.getByLabelText('PushPlus 令牌');
-  deliverySelect.focus();
-  await user.keyboard('{Enter}{Home}{Enter}');
+  await user.click(within(deliveryMethods).getByRole('radio', { name: '追踪文件夹推送' }));
   await waitFor(() => expect(deliveryPanel).toHaveAttribute('inert'));
   expect(pushplusToken).toHaveValue('pushplus-secret');
   expect(pushplusToken).not.toHaveFocus();
-  deliverySelect.focus();
-  await user.keyboard('{Enter}{End}{Enter}');
+  await user.click(within(deliveryMethods).getByRole('radio', { name: 'PushPlus 外部推送' }));
   await waitFor(() => expect(deliveryPanel).not.toHaveAttribute('inert'));
   expect(screen.getByLabelText('PushPlus 令牌')).toHaveValue('pushplus-secret');
   await user.click(screen.getByRole('switch', { name: '同步写入追踪文件夹' }));

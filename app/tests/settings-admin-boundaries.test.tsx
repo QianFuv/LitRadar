@@ -42,7 +42,7 @@ async function rendersAdministratorCards(): Promise<void> {
   );
 
   expect(await screen.findByText('账号管理')).toBeInTheDocument();
-  expect(await screen.findAllByText('暂无邀请码')).toHaveLength(2);
+  expect(await screen.findAllByText('暂无邀请码')).toHaveLength(1);
 }
 
 /**

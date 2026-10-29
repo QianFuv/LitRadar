@@ -159,7 +159,7 @@ async function retriesUserDeletion(): Promise<void> {
   expect(userListRequestCount).toBeGreaterThanOrEqual(2);
 }
 
-/** Verify password entry reuses registration labels and refreshed user data updates both layouts. */
+/** Verify password entry reuses registration labels and refreshed user data updates the list. */
 async function reusesRegistrationDatesDuringPasswordEntry(): Promise<void> {
   installUserListHandler();
   const view = renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
@@ -185,8 +185,7 @@ async function reusesRegistrationDatesDuringPasswordEntry(): Promise<void> {
       ),
     );
   });
-  expect(await screen.findByText(updatedLabel)).toBeInTheDocument();
-  expect(screen.getByText(`注册时间: ${updatedLabel}`)).toBeInTheDocument();
+  expect(await screen.findByText(`注册时间: ${updatedLabel}`)).toBeInTheDocument();
 }
 
 beforeEach(() => {

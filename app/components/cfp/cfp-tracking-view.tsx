@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { parseAsString, useQueryState } from 'nuqs';
-import { Database, Megaphone, Search } from 'lucide-react';
+import { Database, Search } from 'lucide-react';
 
 import { CfpNoticeCard, CfpSourceFooter } from '@/components/cfp/cfp-notice-card';
 import {
@@ -13,19 +13,14 @@ import {
   groupCfpJournals,
   type CfpJournalGroup,
 } from '@/components/cfp/cfp-journal-list';
-import { WorkspaceSidebar } from '@/components/feature/sidebar';
+import { DatabasePill } from '@/components/feature/filter-pill';
+import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
+import { WORKSPACE_SEARCH_ATTRIBUTE } from '@/components/feature/article-reader-context';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import {
@@ -43,30 +38,49 @@ const DATABASE_LABELS: Readonly<Record<string, string>> = {
   'chinese_journals.sqlite': '中文期刊',
   'english_journals.sqlite': '英文期刊',
 };
-/** Compose the existing workspace with independent CFP database and journal selections. */
+/**
+ * Format a CFP database file name for display.
+ *
+ * @param name - Database file name.
+ * @returns Human-readable database label.
+ */
+function formatCfpDatabase(name: string): string {
+  return DATABASE_LABELS[name] ?? name.replace(/\.sqlite$/, '');
+}
+
+/** Keep CFP catalog and notice responses fresh long enough to make revisits instant. */
+const CFP_STALE_TIME_MS = 5 * 60 * 1000;
+/** Wait briefly on hover so passing the pointer over the list does not prefetch every journal. */
+const CFP_PREFETCH_INTENT_DELAY_MS = 150;
+
+/** Compose the journal directory and the reading desk with independent CFP selections. */
 export function CfpTrackingView() {
   const state = useCfpViewState();
+  const [isReaderSheetOpen, setIsReaderSheetOpen] = useState(false);
+
   return (
     <WorkspaceShell
-      contentClassName="space-y-5 sm:space-y-6"
-      sidebar={renderCfpSidebar(state)}
-      sidebarOpenLabel="打开征稿筛选"
-      sidebarDialogTitle="征稿筛选"
-      sidebarDialogDescription="按数据库和期刊查看征稿信息。"
-      toolbar={
-        <div className="flex min-w-0 flex-1 items-center gap-3 md:mx-auto md:max-w-4xl">
-          <Megaphone className="size-5 shrink-0" aria-hidden="true" />
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">征稿追踪</h1>
-            <p className="mt-0.5 text-xs text-muted-foreground">按期刊发现征稿主题与投稿要求</p>
+      listLabel="征稿期刊"
+      isListSelfScrolling
+      header={renderCfpHeader(state)}
+      reader={{
+        content: (
+          <div className="mx-auto w-full max-w-[44rem] space-y-6 px-5 pt-7 pb-14 sm:px-8 xl:pt-10">
+            {renderCfpWorkspace(state)}
           </div>
-        </div>
-      }
+        ),
+        description: '期刊征稿需求与时间安排',
+        isSheetOpen: isReaderSheetOpen,
+        onSheetOpenChange: setIsReaderSheetOpen,
+        title: state.selected?.title ?? '征稿详情',
+      }}
+      readerPlaceholder={null}
     >
-      {renderCfpWorkspace(state)}
+      {renderCfpJournalPanel(state, () => setIsReaderSheetOpen(true))}
     </WorkspaceShell>
   );
 }
+
 /** Own unchanged CFP hooks, requests, cursor recovery and dependent reset order. */
 function useCfpViewState() {
   const { user } = useAuth();
@@ -93,6 +107,7 @@ function useCfpViewState() {
     queryKey: ['cfp', 'journals', database],
     queryFn: ({ signal }) => getCfpJournals(database, signal),
     enabled: Boolean(user && database),
+    staleTime: CFP_STALE_TIME_MS,
   });
   const journals = useMemo(() => journalsQuery.data?.items ?? [], [journalsQuery.data]);
   const journalGroups = useMemo(() => groupCfpJournals(journals), [journals]);
@@ -130,7 +145,34 @@ function useCfpViewState() {
     getNextPageParam: (lastPage) => lastPage.page.next_cursor ?? undefined,
     enabled: Boolean(user && database && selectedCatalog),
     retry: false,
+    staleTime: CFP_STALE_TIME_MS,
   });
+  const prefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (prefetchTimer.current) clearTimeout(prefetchTimer.current);
+    },
+    [],
+  );
+
+  /** Prefetch the first notice page of a journal the user is about to open. */
+  function handleJournalIntent(catalogId: string): void {
+    if (prefetchTimer.current) clearTimeout(prefetchTimer.current);
+    if (!user || !database) return;
+    prefetchTimer.current = setTimeout(() => {
+      void queryClient.prefetchInfiniteQuery({
+        queryKey: ['cfp', 'notices', database, catalogId, shouldShowClosed] as const,
+        queryFn: ({ pageParam, signal }) =>
+          getCfpNotices(
+            { dbName: database, catalogId, includeClosed: shouldShowClosed },
+            pageParam,
+            signal,
+          ),
+        initialPageParam: null as string | null,
+        staleTime: CFP_STALE_TIME_MS,
+      });
+    }, CFP_PREFETCH_INTENT_DELAY_MS);
+  }
   const cursorRecoveryKey = JSON.stringify(noticeQueryKey);
   useEffect(() => {
     if (
@@ -186,6 +228,7 @@ function useCfpViewState() {
     isLoading,
     error,
     handleDatabaseChange,
+    handleJournalIntent,
     handleRetry,
   };
 }
@@ -208,9 +251,9 @@ function renderCfpNoticeContent(
     return visibleNotices.map((notice) => <CfpNoticeCard key={notice.id} notice={notice} />);
   if (selected.sourceStatement)
     return (
-      <div className="overflow-hidden rounded-xl bg-card shadow-vercel-ring">
-        <div className="space-y-3 px-5 py-5 sm:px-6 sm:py-6">
-          <h3 className="text-sm font-semibold leading-6">暂无已收录的征稿公告</h3>
+      <div className="border-t pt-7">
+        <div className="space-y-3 pb-6">
+          <h3 className="text-sm font-bold leading-6">暂无已收录的征稿公告</h3>
           <p className="whitespace-pre-line text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
             {selected.sourceStatement}
           </p>
@@ -241,9 +284,9 @@ function renderCfpNotices(
   const { shouldShowClosed, setShouldShowClosed, noticesQuery } = state;
 
   return (
-    <section aria-label="征稿需求" className="space-y-4 sm:space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 sm:px-6">
-        <h2 className="text-sm font-semibold">征稿需求</h2>
+    <section aria-label="征稿需求" className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h2 className="text-sm font-bold">征稿需求</h2>
         <label className="flex min-h-9 shrink-0 cursor-pointer items-center gap-2 text-xs leading-5 text-muted-foreground">
           <Checkbox
             checked={shouldShowClosed}
@@ -256,7 +299,7 @@ function renderCfpNotices(
       {noticesQuery.hasNextPage && !noticesQuery.isError && (
         <Button
           variant="outline"
-          className="w-full"
+          className="w-full rounded-xl"
           disabled={noticesQuery.isFetchingNextPage}
           onClick={() => void noticesQuery.fetchNextPage()}
         >
@@ -266,7 +309,7 @@ function renderCfpNotices(
       {selected.refreshStatus === 'failed' && (
         <p
           role="status"
-          className="rounded-lg border border-warning-border bg-warning px-5 py-3 text-xs leading-6 text-warning-foreground sm:px-6"
+          className="rounded-xl border border-warning-border bg-warning px-5 py-3 text-xs leading-6 text-warning-foreground"
         >
           最近一次更新未成功，当前显示上次核验的内容。
         </p>
@@ -301,7 +344,7 @@ function renderCfpNoticeState(
   return renderCfpNotices(state, selected);
 }
 
-/** Retain selected server metadata and its total count. */
+/** Render the selected journal masthead with its catalog metadata and current count. */
 function renderCfpJournalHeader(
   state: Pick<CfpViewState, 'database' | 'currentCount'>,
   selected: NonNullable<CfpViewState['selected']>,
@@ -309,21 +352,22 @@ function renderCfpJournalHeader(
   const { database, currentCount } = state;
 
   return (
-    <section className="rounded-xl bg-card px-5 py-5 shadow-vercel-ring sm:px-6 sm:py-6">
+    <section className="pb-2">
       <div className="mb-3 flex items-center gap-2 text-xs leading-5 text-muted-foreground">
         <Database className="size-3.5 shrink-0" aria-hidden="true" />
-        <span>{DATABASE_LABELS[database] ?? database.replace(/\.sqlite$/, '')}</span>
+        <span>{formatCfpDatabase(database)}</span>
       </div>
-      <h2 className="text-xl font-semibold leading-relaxed tracking-tight [overflow-wrap:anywhere]">
+      <h2 className="text-[24px] leading-[1.35] font-bold tracking-[-0.01em] [overflow-wrap:anywhere]">
         {selected.title}
       </h2>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-t border-border/70 pt-4 text-xs leading-5">
-        {selected.allIssns.length > 0 && (
-          <span className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
-            ISSN {selected.allIssns.join(' / ')}
-          </span>
-        )}
-        <Badge variant="secondary" className="h-6 rounded-md px-2 leading-none tabular-nums">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-t pt-4 text-xs leading-5">
+        <span className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
+          {selected.allIssns.length > 0 ? `ISSN ${selected.allIssns.join(' / ')}` : '未登记 ISSN'}
+        </span>
+        <Badge
+          variant={selected.coverage === 'adapted' && currentCount > 0 ? 'success' : 'secondary'}
+          className="h-6 px-2.5 leading-none tabular-nums"
+        >
           {selected.coverage === 'adapted' ? `${currentCount} 条已收录征稿` : '暂未适配'}
         </Badge>
       </div>
@@ -333,26 +377,21 @@ function renderCfpJournalHeader(
 
 /** Retain metadata loading, error, missing journal and selected workspace priority. */
 function renderCfpWorkspace(state: CfpViewState) {
-  const { selected, isLoading, error, handleRetry } = state;
+  const { selected, isLoading, error } = state;
   if (isLoading)
     return (
       <div role="status" className="space-y-4">
         <span className="sr-only">正在加载征稿期刊</span>
-        <Skeleton className="h-28 w-full" />
-        <Skeleton className="h-72 w-full" />
+        <Skeleton className="h-36 w-full rounded-2xl" />
+        <Skeleton className="h-72 w-full rounded-2xl" />
       </div>
     );
   if (error)
     return (
-      <StateMessage
-        tone="danger"
-        title="加载征稿期刊失败"
-        description={error instanceof Error ? error.message : '请稍后重试。'}
-        action={
-          <Button variant="outline" size="sm" onClick={handleRetry}>
-            重试
-          </Button>
-        }
+      <ReaderPlaceholder
+        title="暂时无法显示征稿详情"
+        description="期刊目录加载失败，请在左侧列表中重试。"
+        hints={[]}
       />
     );
   if (!selected)
@@ -365,88 +404,107 @@ function renderCfpWorkspace(state: CfpViewState) {
   );
 }
 
-/** Retain independent journal navigation, search and expansion-reset identity. */
-function renderCfpSidebar(state: CfpViewState) {
+/** Render the page title, database pill, and journal search. */
+function renderCfpHeader(state: CfpViewState) {
   const {
-    setSelectedCatalogId,
     journalSearch,
     setJournalSearch,
     databasesQuery,
     databases,
     database,
     journals,
-    filteredGroups,
-    selected,
-    isLoading,
     handleDatabaseChange,
   } = state;
 
   return (
-    <WorkspaceSidebar
-      headerContent={
-        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-t border-sidebar-border pt-3">
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <Database className="size-4" aria-hidden="true" />
-            数据库
-          </div>
-          {databasesQuery.isLoading ? (
-            <Skeleton className="h-9 w-full" />
-          ) : (
-            <Select
-              value={database}
-              onValueChange={handleDatabaseChange}
-              disabled={databases.length === 0}
-            >
-              <SelectTrigger aria-label="征稿数据库" className="h-9 w-full bg-sidebar">
-                <SelectValue placeholder="选择数据库" />
-              </SelectTrigger>
-              <SelectContent>
-                {databases.map((name) => (
-                  <SelectItem key={name} value={name}>
-                    {DATABASE_LABELS[name] ?? name.replace(/\.sqlite$/, '')}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        </div>
-      }
-    >
-      <section className="flex min-h-0 flex-1 flex-col gap-3" aria-label="征稿期刊">
-        <div className="flex shrink-0 items-center justify-between">
-          <h2 className="text-sm font-semibold">期刊</h2>
-          <span className="text-xs tabular-nums text-muted-foreground">{journals.length} 本</span>
-        </div>
-        <div className="relative shrink-0">
-          <Search
-            className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            aria-label="搜索征稿期刊"
-            placeholder="搜索刊名或 ISSN"
-            className="h-9 bg-sidebar pl-9"
-            value={journalSearch}
-            onChange={(event) => setJournalSearch(event.target.value)}
-          />
-        </div>
-        {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
-          </div>
+    <div className="space-y-3">
+      <div>
+        <h1 className="text-lg leading-7 font-bold">征稿追踪</h1>
+        <p className="text-xs text-muted-foreground">按期刊发现征稿主题与投稿要求</p>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        {databasesQuery.isLoading ? (
+          <Skeleton className="h-8 w-36 rounded-full" />
         ) : (
-          <CfpJournalList
-            key={`${database}:${Boolean(journalSearch.trim())}`}
-            groups={filteredGroups}
-            selectedCatalogId={selected?.catalogId}
-            isSearching={Boolean(journalSearch.trim())}
-            onSelect={(catalogId) => void setSelectedCatalogId(catalogId)}
+          <DatabasePill
+            ariaLabel="征稿数据库"
+            databases={databases}
+            value={database}
+            onChange={handleDatabaseChange}
+            formatLabel={formatCfpDatabase}
+            isDisabled={databases.length === 0}
           />
         )}
-      </section>
-    </WorkspaceSidebar>
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {journals.length} 本期刊
+        </span>
+      </div>
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <Input
+          aria-label="搜索征稿期刊"
+          placeholder="搜索刊名或 ISSN"
+          className="h-10 rounded-xl bg-muted pl-10 !shadow-[inset_0_0_0_1px_var(--border)] focus-visible:bg-background"
+          value={journalSearch}
+          onChange={(event) => setJournalSearch(event.target.value)}
+          {...{ [WORKSPACE_SEARCH_ATTRIBUTE]: '' }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Render the grouped journal directory with its loading and error states. */
+function renderCfpJournalPanel(state: CfpViewState, onOpenReader: () => void) {
+  const {
+    setSelectedCatalogId,
+    journalSearch,
+    database,
+    filteredGroups,
+    selected,
+    isLoading,
+    error,
+    handleJournalIntent,
+    handleRetry,
+  } = state;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col px-2 pt-2 pb-[calc(4.5rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] md:pb-2">
+      {isLoading ? (
+        <div className="space-y-2 p-2" aria-hidden="true">
+          <Skeleton className="h-14 w-full" />
+          <Skeleton className="h-14 w-full" />
+          <Skeleton className="h-14 w-full" />
+        </div>
+      ) : error ? (
+        <StateMessage
+          isLive={false}
+          tone="danger"
+          title="加载征稿期刊失败"
+          description={error instanceof Error ? error.message : '请稍后重试。'}
+          action={
+            <Button variant="outline" size="sm" onClick={handleRetry}>
+              重试
+            </Button>
+          }
+        />
+      ) : (
+        <CfpJournalList
+          key={`${database}:${Boolean(journalSearch.trim())}`}
+          groups={filteredGroups}
+          selectedCatalogId={selected?.catalogId}
+          isSearching={Boolean(journalSearch.trim())}
+          onIntent={handleJournalIntent}
+          onSelect={(catalogId) => {
+            void setSelectedCatalogId(catalogId);
+            onOpenReader();
+          }}
+        />
+      )}
+    </div>
   );
 }
 

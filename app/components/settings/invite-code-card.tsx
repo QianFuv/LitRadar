@@ -12,19 +12,22 @@ import {
   type InviteCodeStatus,
 } from '@/lib/api';
 import {
+  SettingsGroup,
+  SettingsRow,
   SettingsSection,
   SettingsSectionContent,
   SettingsSectionDescription,
   SettingsSectionHeader,
   SettingsSectionTitle,
+  StatusPill,
 } from '@/components/settings/settings-section';
 import type {
   SettingsCopyFeedback,
   SettingsCopyScope,
 } from '@/components/settings/use-settings-copy';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { cn } from '@/lib/utils';
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
   active: '可用',
@@ -65,35 +68,41 @@ export function InviteCodeCard(props: {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <SettingsSectionTitle className="flex items-center gap-2">
-              <Ticket className="h-5 w-5" />
-              邀请码
-            </SettingsSectionTitle>
-            <SettingsSectionDescription>
-              邀请码默认有效 7 天且可注册 1 次，可随时轮换或永久撤销
-            </SettingsSectionDescription>
-          </div>
-        </div>
+        <SettingsSectionTitle>邀请码</SettingsSectionTitle>
+        <SettingsSectionDescription>
+          邀请码默认有效 7 天且可注册 1 次，可随时轮换或永久撤销
+        </SettingsSectionDescription>
       </SettingsSectionHeader>
       <SettingsSectionContent>
         {inviteCodeData ? (
           renderCurrentInviteCode(state, inviteCodeData)
         ) : (
-          <Button
-            onClick={() => {
-              rotateInviteMut.reset();
-              revokeInviteMut.reset();
-              generateInviteMut.mutate();
-            }}
-            disabled={isMutating}
-          >
-            生成邀请码
-          </Button>
+          <SettingsGroup>
+            <SettingsRow
+              leading={
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-info text-primary">
+                  <Ticket className="size-5" aria-hidden="true" />
+                </span>
+              }
+              title="还没有邀请码"
+              description="生成后即可分享给同事注册 LitRadar"
+            >
+              <Button
+                size="sm"
+                onClick={() => {
+                  rotateInviteMut.reset();
+                  revokeInviteMut.reset();
+                  generateInviteMut.mutate();
+                }}
+                disabled={isMutating}
+              >
+                生成邀请码
+              </Button>
+            </SettingsRow>
+          </SettingsGroup>
         )}
         {mutationError && (
-          <p role="alert" className="mt-2 text-sm text-destructive">
+          <p role="alert" className="mt-2 px-1 text-sm text-destructive">
             {mutationError instanceof Error ? mutationError.message : '邀请码操作失败'}
           </p>
         )}
@@ -184,34 +193,93 @@ function renderCurrentInviteCode(
     isMutating,
   } = state;
 
+  const usageRatio =
+    inviteCodeData.max_uses > 0
+      ? Math.min(1, inviteCodeData.use_count / inviteCodeData.max_uses)
+      : 0;
+  const isActive = inviteCodeData.status === 'active';
+
   return (
-    <div className="space-y-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <code className="flex-1 rounded bg-muted p-2 text-xs break-all sm:text-sm">
-          {inviteCodeData.code}
-        </code>
+    <SettingsGroup>
+      <div className="flex items-stretch gap-3 px-4 py-4 sm:px-5">
+        <div
+          className={cn(
+            'relative min-w-0 flex-1 rounded-lg border border-dashed px-4 py-3',
+            isActive ? 'border-primary/50 bg-info' : 'bg-muted/60',
+          )}
+        >
+          <p className="text-xs text-muted-foreground">当前邀请码</p>
+          <code
+            className={cn(
+              'mt-1 block text-base leading-6 font-bold tracking-wide break-all sm:text-lg',
+              isActive ? 'text-info-foreground' : 'text-muted-foreground line-through',
+            )}
+          >
+            {inviteCodeData.code}
+          </code>
+        </div>
         <Button
           variant="outline"
-          size="icon"
-          className="self-start sm:self-auto"
+          className="h-auto w-12 shrink-0"
           aria-label="复制邀请码"
-          disabled={inviteCodeData.status !== 'active'}
+          disabled={!isActive}
           onClick={() => void handleCopy(inviteCodeData.code, '邀请码已复制。', 'invite')}
         >
-          <Copy className="h-4 w-4" />
+          <Copy className="size-4" />
         </Button>
       </div>
-      {renderInviteCopyFeedback(state)}
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <Badge variant={inviteCodeData.status === 'active' ? 'default' : 'secondary'}>
-          {INVITE_STATUS_LABELS[inviteCodeData.status]}
-        </Badge>
-        <span>
-          已使用 {inviteCodeData.use_count}/{inviteCodeData.max_uses} 次
-        </span>
-        <span>有效期至 {formatInviteDate(inviteCodeData.expires_at)}</span>
-      </div>
-      <div className="flex flex-wrap gap-2">
+      {state.copyFeedback?.scope === 'invite' && (
+        <div className="px-4 py-2.5 sm:px-5">{renderInviteCopyFeedback(state)}</div>
+      )}
+      <dl className="grid grid-cols-1 divide-y text-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">
+          <dt className="text-xs text-muted-foreground">状态</dt>
+          <dd className="sm:mt-1.5">
+            <StatusPill tone={isActive ? 'success' : 'neutral'}>
+              {INVITE_STATUS_LABELS[inviteCodeData.status]}
+            </StatusPill>
+          </dd>
+        </div>
+        <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">
+          <dt className="text-xs text-muted-foreground">使用情况</dt>
+          <dd className="flex items-center gap-2 sm:mt-1.5">
+            <span className="tabular-nums">
+              已使用 {inviteCodeData.use_count}/{inviteCodeData.max_uses} 次
+            </span>
+            <span
+              aria-hidden="true"
+              className="hidden h-1.5 w-16 overflow-hidden rounded-full bg-muted sm:block"
+            >
+              <span
+                className="block h-full rounded-full bg-primary"
+                style={{ width: `${usageRatio * 100}%` }}
+              />
+            </span>
+          </dd>
+        </div>
+        <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">
+          <dt className="text-xs text-muted-foreground">有效期至</dt>
+          <dd className="tabular-nums sm:mt-1.5">{formatInviteDate(inviteCodeData.expires_at)}</dd>
+        </div>
+      </dl>
+      <div className="flex flex-wrap justify-end gap-2 bg-muted/40 px-4 py-3 sm:px-5">
+        {inviteCodeData.revoked_at === null && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            disabled={isMutating}
+            onClick={() => {
+              generateInviteMut.reset();
+              rotateInviteMut.reset();
+              revokeInviteMut.reset();
+              setIsRevokeOpen(true);
+            }}
+          >
+            <Ban className="size-4" />
+            撤销邀请码
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -222,27 +290,11 @@ function renderCurrentInviteCode(
             rotateInviteMut.mutate();
           }}
         >
-          <RotateCcw className="h-4 w-4" />
+          <RotateCcw className="size-4" />
           轮换邀请码
         </Button>
-        {inviteCodeData.revoked_at === null && (
-          <Button
-            variant="destructive"
-            size="sm"
-            disabled={isMutating}
-            onClick={() => {
-              generateInviteMut.reset();
-              rotateInviteMut.reset();
-              revokeInviteMut.reset();
-              setIsRevokeOpen(true);
-            }}
-          >
-            <Ban className="h-4 w-4" />
-            撤销邀请码
-          </Button>
-        )}
       </div>
-    </div>
+    </SettingsGroup>
   );
 }
 

@@ -47,7 +47,7 @@ export default function Home() {
       <MotionDiv
         key={view}
         data-workspace-view={view}
-        className="h-dvh"
+        className="h-full min-h-0"
         variants={FADE_UP_VARIANTS}
         initial="hidden"
         animate="visible"

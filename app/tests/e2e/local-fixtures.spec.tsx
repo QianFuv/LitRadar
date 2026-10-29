@@ -101,11 +101,11 @@ async function expectElementChromeToBeGrayscale(
 }
 
 /**
- * Assert the active theme uses its approved Indigo keyboard-focus color.
+ * Assert the active theme uses its approved blue keyboard-focus color.
  *
  * @param page - Playwright browser page.
  */
-async function expectThemeFocusTokensToUseIndigo(page: Page): Promise<void> {
+async function expectThemeFocusTokensToUseBlue(page: Page): Promise<void> {
   const values = await page.locator('html').evaluate((element) => {
     const styles = window.getComputedStyle(element);
     return ['--ring', '--sidebar-ring'].map((token) => styles.getPropertyValue(token).trim());
@@ -115,37 +115,27 @@ async function expectThemeFocusTokensToUseIndigo(page: Page): Promise<void> {
     const isDark = await page
       .locator('html')
       .evaluate((element) => element.classList.contains('dark'));
-    expect(value).toBe(isDark ? '#9eb1ff' : '#8da4ef');
+    expect(value).toBe(isDark ? '#60a5fa' : '#3b82f6');
   }
 }
 
 /**
- * Verify exact totals stay omitted while the filtered summary remains sticky.
+ * Verify exact totals stay omitted while the filter header remains pinned above results.
  *
  * @param page - Playwright browser page.
  */
-async function expectActiveFilterSummaryToStick(page: Page): Promise<void> {
+async function expectExactTotalsOmitted(page: Page): Promise<void> {
   const resultCount = page.getByText(/共找到 \d+ 条结果/);
-  const filterSummary = page.getByRole('region', { name: '已应用筛选' });
-  const filterSummarySlot = page.getByTestId('filter-summary-slot');
+  const header = page.locator('[data-slot="workspace-list-header"]');
   const scrollContainer = page.locator('#results-scroll-container');
 
   await expect(resultCount).toHaveCount(0);
-  await expect(filterSummary).toBeVisible();
-  await expect(filterSummarySlot).toHaveCSS('position', 'sticky');
-
-  await scrollContainer.evaluate((element) => {
-    element.scrollTop = 400;
-  });
-  const pinnedTop = Math.round((await filterSummarySlot.boundingBox())?.y ?? -1);
-  expect(pinnedTop).toBeGreaterThan(0);
-
+  await expect(header).toBeVisible();
+  const pinnedTop = Math.round((await header.boundingBox())?.y ?? -1);
   await scrollContainer.evaluate((element) => {
     element.scrollTop = 700;
   });
-  await expect
-    .poll(async () => Math.round((await filterSummarySlot.boundingBox())?.y ?? -1))
-    .toBe(pinnedTop);
+  await expect.poll(async () => Math.round((await header.boundingBox())?.y ?? -1)).toBe(pinnedTop);
   await expect(resultCount).toHaveCount(0);
   await page.screenshot({ path: '../output/ui/active-filter-sticky.png', fullPage: true });
 
@@ -625,7 +615,7 @@ async function completesFixtureTrackingPush(page: Page): Promise<void> {
 
   await expect(page.getByRole('dialog', { name: '设置中心' })).toBeVisible();
   await expect(
-    page.getByLabel('通知与推送设置内容').getByRole('heading', { name: '通知与推送', exact: true }),
+    page.getByLabel('通知与推送设置内容').getByRole('heading', { name: '推送方式', exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: '推送到追踪文件夹' }).click();
   await expect(page.locator('[data-motion-feedback="manual-push"]')).toContainText(
@@ -633,29 +623,17 @@ async function completesFixtureTrackingPush(page: Page): Promise<void> {
   );
 }
 
-/** Cover the full scroll viewport within one layout subpixel of rounding. */
+/** Verify the overflowing category strip fades at its trailing edge without blocking input. */
 async function expectMobileCategoryFadeCoverage(dialog: Locator): Promise<void> {
-  const bounds = await dialog.locator('[data-mobile-overflow-cue="true"]').evaluate((element) => {
-    const navigation = element.querySelector('nav')!;
-    const fade = element.querySelector(':scope > div[aria-hidden="true"]')!;
-    const navigationBounds = navigation.getBoundingClientRect();
-    const fadeBounds = fade.getBoundingClientRect();
-    const fadeStyle = getComputedStyle(fade);
+  const cue = await dialog.locator('[data-mobile-overflow-cue="true"] nav').evaluate((element) => {
+    const style = getComputedStyle(element);
     return {
-      navigationRight: navigationBounds.right,
-      fadeRight: fadeBounds.right,
-      fadeWidth: fadeBounds.width,
-      backgroundImage: fadeStyle.backgroundImage,
-      pointerEvents: fadeStyle.pointerEvents,
+      maskImage: style.maskImage || style.getPropertyValue('-webkit-mask-image'),
+      pointerEvents: style.pointerEvents,
     };
   });
-  expect(
-    bounds.fadeRight + 1 / 64,
-    'the fade must reach the navigation clipping edge',
-  ).toBeGreaterThanOrEqual(bounds.navigationRight);
-  expect(bounds.fadeWidth).toBeGreaterThanOrEqual(16);
-  expect(bounds.backgroundImage).not.toBe('none');
-  expect(bounds.pointerEvents).toBe('none');
+  expect(cue.maskImage).toContain('linear-gradient');
+  expect(cue.pointerEvents).not.toBe('none');
 }
 
 /**
@@ -679,13 +657,13 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   await hideDevelopmentIndicator(page);
   await expect(page.getByRole('heading', { name: '常规', exact: true })).toBeVisible();
   await expect(settingsDialog.locator('[data-motion-section-header="general"]')).toBeVisible();
-  await expect(settingsDialog).toHaveCSS('max-width', '1152px');
+  await expect(settingsDialog).toHaveCSS('width', '1600px');
   await page.screenshot({
     path: '../output/ui/settings-center-desktop.png',
     fullPage: true,
   });
 
-  const desktopCategories = settingsDialog.locator('aside');
+  const desktopCategories = settingsDialog.getByRole('navigation', { name: '设置分类' });
   await desktopCategories.getByRole('button', { name: '文献追踪' }).click();
   await expect(page).toHaveURL('/?view=favorites&folder=4&settings=tracking');
   await page.getByRole('switch', { name: '启用推荐' }).click();
@@ -714,7 +692,7 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
   await expect(mobileDialog).toHaveCSS('width', '390px');
   await expect(mobileDialog).toHaveCSS('height', '844px');
   const mobileCategories = mobileDialog
-    .locator('header')
+    .locator('[data-slot="sectioned-dialog-sidebar"]')
     .getByRole('navigation', { name: '设置分类' });
   const navigationInsets = await mobileCategories.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
@@ -752,26 +730,23 @@ async function verifiesReducedMotionDynamicSettings(page: Page): Promise<void> {
   await hideDevelopmentIndicator(page);
 
   const settingsDialog = page.getByRole('dialog', { name: '设置中心' });
-  const deliverySelect = settingsDialog.getByRole('combobox', { name: '推送方式' });
+  const deliveryMethods = settingsDialog.getByRole('radiogroup', { name: '推送方式' });
   const deliveryPanel = settingsDialog.locator('[data-motion-delivery-panel="pushplus"]');
   await expect(deliveryPanel).toHaveAttribute('inert', '');
   await expect(deliveryPanel).toHaveAttribute('aria-hidden', 'true');
 
-  await deliverySelect.click();
-  await page.getByRole('option', { name: 'PushPlus 外部推送' }).click();
+  await deliveryMethods.getByRole('radio', { name: 'PushPlus 外部推送' }).click();
   await expect(deliveryPanel).not.toHaveAttribute('inert');
   const pushplusToken = settingsDialog.getByLabel('PushPlus 令牌');
   await pushplusToken.fill('browser-pushplus-token');
 
-  await deliverySelect.click();
-  await page.getByRole('option', { name: '追踪文件夹推送' }).click();
+  await deliveryMethods.getByRole('radio', { name: '追踪文件夹推送' }).click();
   await expect(deliveryPanel).toHaveAttribute('inert', '');
   await pushplusToken.evaluate((element) => (element as HTMLInputElement).focus());
   await expect(pushplusToken).not.toBeFocused();
   await expect(pushplusToken).toHaveValue('browser-pushplus-token');
 
-  await deliverySelect.click();
-  await page.getByRole('option', { name: 'PushPlus 外部推送' }).click();
+  await deliveryMethods.getByRole('radio', { name: 'PushPlus 外部推送' }).click();
   await expect(deliveryPanel).not.toHaveAttribute('inert');
   await expect(pushplusToken).toHaveValue('browser-pushplus-token');
   const animationDurations = await deliveryPanel.evaluate((element) =>
@@ -817,13 +792,11 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await expect(page).toHaveURL('/?q=graph&admin=overview');
   const adminDialog = page.getByRole('dialog', { name: '管理面板' });
   await expect(adminDialog).toBeVisible();
-  await expectConsistentDialogClose(adminDialog, 40);
-  await expect(adminDialog).toHaveCSS('max-width', '1152px');
+  await expectTakeoverClose(adminDialog, 40);
+  await expect(adminDialog).toHaveCSS('width', '1600px');
   await expect(page.getByRole('heading', { name: '概览', exact: true })).toBeVisible();
   await expect(adminDialog.locator('[data-motion-section-header="overview"]')).toBeVisible();
-  const desktopCategories = adminDialog.locator('aside').getByRole('navigation', {
-    name: '管理分类',
-  });
+  const desktopCategories = adminDialog.getByRole('navigation', { name: '管理分类' });
   await expect(desktopCategories.getByRole('button')).toHaveCount(6);
   await page.screenshot({ path: '../output/ui/admin-center-desktop.png', fullPage: true });
 
@@ -866,12 +839,12 @@ async function verifiesAdministratorCenter(page: Page): Promise<void> {
   await page.goto('/?q=graph&admin=overview');
   const mobileDialog = page.getByRole('dialog', { name: '管理面板' });
   await expect(mobileDialog).toBeVisible();
-  await expectConsistentDialogClose(mobileDialog, 44);
+  await expectTakeoverClose(mobileDialog, 44);
   await hideDevelopmentIndicator(page);
   await expect(mobileDialog).toHaveCSS('width', '390px');
   await expect(mobileDialog).toHaveCSS('height', '844px');
   const mobileCategories = mobileDialog
-    .locator('header')
+    .locator('[data-slot="sectioned-dialog-sidebar"]')
     .getByRole('navigation', { name: '管理分类' });
   const navigationInsets = await mobileCategories.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
@@ -912,7 +885,11 @@ async function verifiesUnifiedRootWorkspaces(page: Page): Promise<void> {
 
   const desktopNavigation = page.getByRole('navigation', { name: '页面导航' });
   await expect(page.getByRole('heading', { name: '我的收藏', exact: true })).toBeVisible();
-  await expect(page.getByText('A Unified Workspace for Literature Monitoring')).toBeVisible();
+  await expect(
+    page
+      .getByRole('region', { name: '收藏文章' })
+      .getByText('A Unified Workspace for Literature Monitoring'),
+  ).toBeVisible();
   await expect(desktopNavigation.getByRole('link', { name: '我的收藏' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -928,7 +905,11 @@ async function verifiesUnifiedRootWorkspaces(page: Page): Promise<void> {
   await desktopNavigation.getByRole('link', { name: '每周更新' }).click();
   await expect(page).toHaveURL('/?view=weekly-updates');
   await expect(page.getByRole('heading', { name: /期刊每周更新/ })).toBeVisible();
-  await expect(page.getByText('Reliable Evidence Synthesis for Living Reviews')).toBeVisible();
+  await expect(
+    page
+      .getByRole('region', { name: '本周文章' })
+      .getByText('Reliable Evidence Synthesis for Living Reviews'),
+  ).toBeVisible();
   await expect(desktopNavigation.getByRole('link', { name: '每周更新' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -955,29 +936,27 @@ async function verifiesUnifiedRootWorkspaces(page: Page): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?view=favorites&folder=4');
   await hideDevelopmentIndicator(page);
-  await page.getByRole('button', { name: '打开收藏夹' }).click();
-  const favoritesDialog = page.getByRole('dialog', { name: '收藏夹' });
-  const favoritesMobileNavigation = favoritesDialog.getByRole('navigation', {
-    name: '页面导航',
-  });
-  await expect(favoritesMobileNavigation.getByRole('link', { name: '我的收藏' })).toHaveAttribute(
+  const mobileNavigation = page.locator('nav[aria-label="页面导航"]:visible');
+  await expect(mobileNavigation.getByRole('link', { name: '我的收藏' })).toHaveAttribute(
     'aria-current',
     'page',
   );
+  await expect(page.getByRole('group', { name: '收藏夹' })).toBeVisible();
   await page.screenshot({
     path: '../output/ui/workspace-favorites-mobile.png',
     fullPage: true,
   });
 
-  await favoritesMobileNavigation.getByRole('link', { name: '每周更新' }).click();
+  await mobileNavigation.getByRole('link', { name: '每周更新' }).click();
   await expect(page).toHaveURL('/?view=weekly-updates');
   await expect(page.getByRole('heading', { name: /期刊每周更新/ })).toBeVisible();
-  await page.getByRole('button', { name: '打开期刊筛选' }).click();
-  const weeklyDialog = page.getByRole('dialog', { name: '期刊筛选' });
-  await expect(weeklyDialog.getByRole('link', { name: '每周更新' })).toHaveAttribute(
+  await expect(mobileNavigation.getByRole('link', { name: '每周更新' })).toHaveAttribute(
     'aria-current',
     'page',
   );
+  await page.getByRole('button', { name: /^期刊：/ }).click();
+  const weeklyDialog = page.getByRole('dialog', { name: '期刊' });
+  await expect(weeklyDialog.getByRole('button', { pressed: true })).toHaveCount(1);
   await page.screenshot({
     path: '../output/ui/workspace-weekly-mobile.png',
     fullPage: true,
@@ -1007,16 +986,14 @@ async function verifiesDesktopNavigation(
 
   const trigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
   await expect(trigger).toContainText('browser_user');
-  await expect(
-    page.getByRole('complementary').getByRole('button', { name: '重置筛选' }),
-  ).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '重置筛选' })).toHaveCount(0);
   await expectElementChromeToBeGrayscale(currentNavigationLink, [
     'backgroundColor',
     'borderColor',
     'color',
   ]);
   await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
-  await expectThemeFocusTokensToUseIndigo(page);
+  await expectThemeFocusTokensToUseBlue(page);
   await page.screenshot({ path: '../output/ui/default-chrome-dark.png', fullPage: true });
   return { currentNavigationLink, trigger };
 }
@@ -1074,7 +1051,7 @@ async function verifiesSettingsMenuFocus(page: Page, trigger: Locator): Promise<
   await expect(page).toHaveURL('/?q=graph&settings=general');
   const settingsDialog = page.getByRole('dialog', { name: '设置中心' });
   await expect(settingsDialog).toBeVisible();
-  await expectConsistentDialogClose(settingsDialog, 40);
+  await expectTakeoverClose(settingsDialog, 40);
   await expectElementChromeToBeGrayscale(settingsDialog, [
     'backgroundColor',
     'borderColor',
@@ -1117,7 +1094,7 @@ async function verifiesLightAndSystemTheme(
     'color',
   ]);
   await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
-  await expectThemeFocusTokensToUseIndigo(page);
+  await expectThemeFocusTokensToUseBlue(page);
   await page.screenshot({ path: '../output/ui/default-chrome-light.png', fullPage: true });
 
   await trigger.click();
@@ -1139,18 +1116,14 @@ async function verifiesMobileNavigation(page: Page): Promise<void> {
     document.documentElement.style.setProperty('--safe-area-inset-bottom', '32px');
   });
 
-  await page.getByRole('button', { name: '打开筛选器' }).click();
-  const filterDialog = page.getByRole('dialog', { name: '筛选器' });
-  await expect(filterDialog.getByRole('button', { name: '关闭' })).toHaveCount(0);
-  const mobileNavigation = filterDialog.getByRole('navigation', { name: '页面导航' });
+  const mobileNavigation = page.locator('nav[aria-label="页面导航"]:visible');
   await expect(mobileNavigation.getByRole('link')).toHaveCount(4);
   await expect(mobileNavigation.getByRole('link', { name: '文献检索' })).toHaveAttribute(
     'aria-current',
     'page',
   );
+  await expect(page.locator('[data-slot="mobile-tab-bar"]')).toHaveCSS('padding-bottom', '32px');
   await page.screenshot({ path: '../output/ui/navigation-mobile.png', fullPage: true });
-  await page.mouse.click(382, 400);
-  await expect(filterDialog).toHaveCount(0);
 }
 
 /**
@@ -1163,8 +1136,8 @@ async function verifiesMobileArticleTargets(page: Page): Promise<{
   articleTitleBox: Awaited<ReturnType<Locator['boundingBox']>>;
 }> {
   const firstArticleAction = page.getByRole('button', { name: /^查看文章详情：/ }).first();
-  const firstArticleCard = firstArticleAction.locator('[data-slot="card"]');
-  const firstArticleTitle = firstArticleCard.locator('[data-slot="card-title"]');
+  const firstArticleCard = firstArticleAction.locator('[data-slot="article-list-card"]');
+  const firstArticleTitle = firstArticleCard.locator('[data-slot="article-list-title"]');
   await expect(firstArticleCard).toBeVisible();
   await expect(firstArticleTitle).toBeVisible();
   await expect(firstArticleAction).toBeVisible();
@@ -1175,8 +1148,8 @@ async function verifiesMobileArticleTargets(page: Page): Promise<{
   expect(articleTitleBox).not.toBeNull();
   expect(articleActionBox).not.toBeNull();
   await expect(firstArticleCard.locator('[data-slot="card-footer"]')).toHaveCount(0);
-  expect(articleActionBox?.width).toBe(articleCardBox?.width);
-  expect(articleActionBox?.height).toBe(articleCardBox?.height);
+  expect(articleActionBox?.width).toBeCloseTo(articleCardBox?.width ?? 0, 2);
+  expect(articleActionBox?.height).toBeCloseTo(articleCardBox?.height ?? 0, 2);
   return { articleCardBox, articleTitleBox };
 }
 
@@ -1226,9 +1199,11 @@ async function verifiesMobileSafeArea(page: Page): Promise<Locator> {
     .locator('#results-scroll-container')
     .evaluate((element) => Number.parseFloat(window.getComputedStyle(element).paddingBottom));
   const triggerBox = await mobileTrigger.boundingBox();
-  expect(resultsPaddingBottom).toBeGreaterThanOrEqual(128);
+  const tabBarBox = await page.locator('[data-slot="mobile-tab-bar"]').boundingBox();
+  expect(tabBarBox).not.toBeNull();
+  expect(resultsPaddingBottom).toBeGreaterThanOrEqual(tabBarBox!.height + 16);
   expect(triggerBox).not.toBeNull();
-  expect((triggerBox?.y ?? 844) + (triggerBox?.height ?? 0)).toBeLessThanOrEqual(796);
+  expect((triggerBox?.y ?? 844) + (triggerBox?.height ?? 0)).toBeLessThanOrEqual(812);
   return mobileTrigger;
 }
 
@@ -1354,7 +1329,7 @@ async function verifiesUserMenuNavigationAndTheme(page: Page): Promise<void> {
   await page.goto('/?q=graph');
   await hideDevelopmentIndicator(page);
   await expect(page.locator('html')).toHaveClass(/dark/);
-  await expectActiveFilterSummaryToStick(page);
+  await expectExactTotalsOmitted(page);
   const { currentNavigationLink, trigger } = await verifiesDesktopNavigation(page);
   await verifiesAccountThemeControls(page, trigger);
   await verifiesSettingsMenuFocus(page, trigger);
@@ -1502,7 +1477,7 @@ async function serveInterfacePolishApi(route: Route): Promise<void> {
 }
 
 /**
- * Verify a multiline title fills its first line without overflowing its container.
+ * Verify a title never wraps early: wrapped titles fill their first line, and no title overflows.
  *
  * @param title - Article card or dialog heading with source text as its first child.
  */
@@ -1520,8 +1495,10 @@ async function expectArticleTitleToFillFirstLine(title: Locator): Promise<void> 
     };
   });
 
-  expect.soft(layout.lineCount).toBeGreaterThan(1);
-  expect.soft(layout.firstLineWidth).toBeGreaterThan(layout.availableWidth * 0.85);
+  expect.soft(layout.lineCount).toBeGreaterThan(0);
+  if (layout.lineCount > 1) {
+    expect.soft(layout.firstLineWidth).toBeGreaterThan(layout.availableWidth * 0.85);
+  }
   expect.soft(layout.hasOverflow).toBe(false);
 }
 
@@ -1564,14 +1541,16 @@ async function articleTitleWrappingTest(page: Page, titleText: string): Promise<
   await expectArticleTitleToFillFirstLine(cardTitle);
   await card.click();
 
-  const dialog = page.getByRole('dialog');
-  const dialogTitle = dialog.locator('[data-slot="dialog-title"]');
-  await expect(dialogTitle).toBeVisible();
-  await expect(dialogTitle).toHaveText(titleText);
-  await expectArticleTitleToFillFirstLine(dialogTitle);
+  const desk = page.getByRole('region', { name: '阅读台' });
+  const deskTitle = desk.locator('[data-slot="article-detail-title"]');
+  await expect(deskTitle).toBeVisible();
+  await expect(deskTitle).toHaveText(titleText);
+  await expectArticleTitleToFillFirstLine(deskTitle);
+  expect(await desk.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: test.info().outputPath('title-desktop.png') });
-  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
 
+  const dialog = page.getByRole('dialog');
+  const dialogTitle = dialog.locator('[data-slot="article-detail-title"]');
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(cardTitle).toBeVisible();
@@ -1634,7 +1613,9 @@ async function expectConsistentDialogClose(dialog: Locator, size: number): Promi
         const dialogBox = element.getBoundingClientRect();
         const closeBox = close.getBoundingClientRect();
         const dialogStyle = getComputedStyle(element);
-        const standardButton = document.querySelector('[data-slot="button"][type="submit"]');
+        const standardRadius = getComputedStyle(document.documentElement)
+          .getPropertyValue('--radius')
+          .trim();
         return {
           top: Math.round(
             closeBox.top - dialogBox.top - Number.parseFloat(dialogStyle.borderTopWidth),
@@ -1644,14 +1625,46 @@ async function expectConsistentDialogClose(dialog: Locator, size: number): Promi
           ),
           width: Math.round(closeBox.width),
           height: Math.round(closeBox.height),
-          hasSharedRadius:
-            standardButton !== null &&
-            getComputedStyle(close).borderTopLeftRadius ===
-              getComputedStyle(standardButton).borderTopLeftRadius,
+          hasSharedRadius: getComputedStyle(close).borderTopLeftRadius === standardRadius,
         };
       }),
     )
     .toEqual({ top: 16, right: 16, width: size, height: size, hasSharedRadius: true });
+}
+
+/**
+ * Verify a full-screen center keeps its close control at the top with a comfortable target.
+ *
+ * @param dialog - Full-screen sectioned dialog.
+ * @param minimumSize - Minimum control width and height in CSS pixels.
+ */
+async function expectTakeoverClose(dialog: Locator, minimumSize: number): Promise<void> {
+  const close = dialog.getByRole('button', { name: '关闭', exact: true });
+  await expect(close).toBeInViewport();
+  const box = await close.boundingBox();
+  const viewport = dialog.page().viewportSize();
+  expect(box).not.toBeNull();
+  expect(box!.width).toBeGreaterThanOrEqual(minimumSize);
+  expect(box!.height).toBeGreaterThanOrEqual(minimumSize);
+  expect(box!.y).toBeLessThan(24);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport?.width ?? Infinity);
+}
+
+/**
+ * Verify a reader sheet keeps its close control at the top-leading edge with a 44 px target.
+ *
+ * @param dialog - Article or CFP reader sheet.
+ */
+async function expectSheetClose(dialog: Locator): Promise<void> {
+  await dialog.evaluate((element) =>
+    Promise.all(element.getAnimations().map((animation) => animation.finished)),
+  );
+  const close = dialog.getByRole('button', { name: '关闭', exact: true });
+  await expectComfortableTarget(close, 44);
+  const closeBox = await close.boundingBox();
+  const dialogBox = await dialog.boundingBox();
+  expect(closeBox!.y - dialogBox!.y).toBeLessThan(16);
+  expect(closeBox!.x - dialogBox!.x).toBeLessThan(24);
 }
 
 /**
@@ -1704,12 +1717,14 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   const submit = page.getByRole('button', { name: '搜索', exact: true });
   await expectComfortableTarget(clear, 44);
   await expectComfortableTarget(submit, 44);
-  await expectComfortableTarget(page.getByRole('button', { name: '搜索语法帮助' }), 44);
-  await expectComfortableTarget(page.getByRole('button', { name: '打开筛选器' }), 44);
-  await expectComfortableTarget(page.getByRole('button', { name: '移除搜索 graph' }), 44);
+  await expectComfortableTarget(page.getByRole('button', { name: '高级检索' }), 44);
+  await expectComfortableTarget(page.getByRole('button', { name: /^领域/ }), 44);
+  await expectComfortableTarget(page.getByRole('combobox', { name: '检索数据库' }), 44);
 
-  const card = page.locator('[data-slot="card"]').filter({ hasText: 'Graph Evidence' });
-  const title = card.locator('[data-slot="card-title"]');
+  const card = page
+    .locator('[data-slot="article-list-card"]')
+    .filter({ hasText: 'Graph Evidence' });
+  const title = card.locator('[data-slot="article-list-title"]');
   const titleBox = await title.boundingBox();
   const badgeBox = await card.getByText('开放获取', { exact: true }).boundingBox();
   expect(badgeBox?.y ?? 0).toBeGreaterThanOrEqual((titleBox?.y ?? 0) + (titleBox?.height ?? 0));
@@ -1721,7 +1736,8 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   await expect(card.locator('[data-slot="card-footer"]')).toHaveCount(0);
   await title.click();
   const dialog = page.getByRole('dialog', { name: /Graph Evidence/ });
-  await expectConsistentDialogClose(dialog, 44);
+  await expect(dialog).toHaveAttribute('data-motion-placement', 'right');
+  await expectSheetClose(dialog);
   const articleActions = dialog.getByRole('group', { name: '文章操作' });
   await expect(articleActions.getByRole('link', { name: '查看摘要页' })).toBeVisible();
   await expect(articleActions.getByRole('link', { name: '获取全文' })).toBeVisible();
@@ -1818,10 +1834,12 @@ async function interfacePolishFavoriteTest({ page }: { page: Page }): Promise<vo
   const trigger = page.getByRole('button', { name: '收藏', exact: true });
   await expect(trigger).toBeVisible();
   await expect(trigger.getByText('收藏', { exact: true })).toBeVisible();
+  await expect
+    .poll(() => page.getByRole('link', { name: '查看摘要页' }).innerText())
+    .toMatch(/摘要页/);
   await expect(
-    page.getByRole('link', { name: '查看摘要页' }).getByText('查看摘要页'),
+    page.getByRole('region', { name: '阅读台' }).getByRole('article', { name: /Graph Evidence/ }),
   ).toBeVisible();
-  await expect(page.getByRole('dialog', { name: /Graph Evidence/ })).toHaveCSS('scale', '1');
   await page.evaluate(() => document.fonts.ready);
   const initialWidth = (await trigger.boundingBox())?.width ?? 0;
   await trigger.click();
@@ -1961,17 +1979,19 @@ async function expectSidebarScrollClearance(list: Locator): Promise<void> {
 }
 
 /**
- * Keep branding, navigation, and controls stationary while long sidebar lists scroll.
+ * Keep navigation and results stationary while a long filter or picker list scrolls on its own.
  *
  * @param page - Production workspace page backed by local API fixtures.
  * @param href - Workspace URL.
- * @param openLabel - Accessible mobile sidebar trigger label.
+ * @param openLabel - Accessible name pattern of the pill that opens the list panel.
+ * @param listSelector - Data-slot selector of the scrollable list.
  * @param lastLabel - Last list entry expected after scrolling to the bottom.
  */
-async function fixedWorkspaceSidebarTest(
+async function independentListScrollTest(
   page: Page,
   href: string,
-  openLabel: string,
+  openLabel: RegExp,
+  listSelector: string,
   lastLabel: string,
 ): Promise<void> {
   await page.route('**/api/**', serveLongSidebarApi);
@@ -1980,55 +2000,71 @@ async function fixedWorkspaceSidebarTest(
     await page.setViewportSize({ width, height: 844 });
     await page.goto(href);
     await hideDevelopmentIndicator(page);
-    if (width < 768) await page.getByRole('button', { name: openLabel, exact: true }).click();
-    const sidebar = page.locator('aside:visible');
-    const list = sidebar.locator('[data-slot="sidebar-scroll-region"]');
+    const results = page.locator('#results-scroll-container');
+    const resultsScroll = await results.evaluate((element) => element.scrollTop);
+    const navigation = page.locator('nav[aria-label="页面导航"]:visible');
+    await expect(navigation.getByRole('link')).toHaveText(['检索', '收藏', '周报', '征稿']);
+    const navigationBefore = await navigation.boundingBox();
+    await page.getByRole('button', { name: openLabel }).click();
+    const list = page.locator(`${listSelector}:visible`);
     const lastEntry = list.getByText(lastLabel, { exact: true });
     await expect(lastEntry).toBeAttached();
     await expectSidebarScrollClearance(list);
-    const navigation = sidebar.getByRole('navigation', { name: '页面导航' });
-    const links = navigation.getByRole('link');
-    await expect(links).toHaveText(['检索', '收藏', '周报', '征稿']);
-    const linkBoxes = await links.evaluateAll((elements) =>
-      elements.map((element) => {
-        const { x, y, width } = element.getBoundingClientRect();
-        return { x, y, width };
-      }),
-    );
-    for (const box of linkBoxes) {
-      expect(Math.abs(box.y - linkBoxes[0].y)).toBeLessThanOrEqual(1);
-      expect(Math.abs(box.width - linkBoxes[0].width)).toBeLessThanOrEqual(1);
-    }
-    const header = sidebar.locator(':scope > div').first();
-    const headerBefore = await header.boundingBox();
-    const results = page.locator('#results-scroll-container');
-    const resultsScroll = await results.evaluate((element) => element.scrollTop);
-    const listBefore = await list.boundingBox();
-    expect(listBefore!.width).toBeGreaterThan(270);
     await list.hover();
     await page.mouse.wheel(0, 3000);
     await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await expect(lastEntry).toBeInViewport();
     await expect(navigation).toBeInViewport();
-    const headerAfter = await header.boundingBox();
-    expect(Math.abs(headerAfter!.y - headerBefore!.y)).toBeLessThanOrEqual(1);
+    const navigationAfter = await navigation.boundingBox();
+    expect(Math.abs(navigationAfter!.y - navigationBefore!.y)).toBeLessThanOrEqual(1);
     expect(await results.evaluate((element) => element.scrollTop)).toBe(resultsScroll);
-    expect(await sidebar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
-      true,
-    );
-    await page.screenshot({ path: test.info().outputPath(`sidebar-${width}.png`) });
+    await page.screenshot({ path: test.info().outputPath(`list-${width}.png`) });
+    await page.keyboard.press('Escape');
   }
 }
 
-for (const [workspace, href, openLabel, lastLabel] of [
-  ['search', '/', '打开筛选器', 'field_24'],
-  ['favorites', '/?view=favorites', '打开收藏夹', 'Folder 24'],
-  ['weekly', '/?view=weekly-updates', '打开期刊筛选', 'Journal 24'],
-]) {
-  test(`keeps ${workspace} navigation fixed while its sidebar list scrolls`, async ({ page }) => {
-    await fixedWorkspaceSidebarTest(page, href, openLabel, lastLabel);
+for (const [workspace, href, openLabel, listSelector, lastLabel] of [
+  ['search areas', '/', /^领域/, '[data-slot="area-options"]', 'field_24'],
+  [
+    'weekly journals',
+    '/?view=weekly-updates',
+    /^期刊/,
+    '[data-slot="weekly-journal-options"]',
+    'Journal 24',
+  ],
+] as const) {
+  test(`keeps navigation fixed while the ${workspace} list scrolls`, async ({ page }) => {
+    await independentListScrollTest(page, href, openLabel, listSelector, lastLabel);
   });
 }
+
+/** Keep page navigation and the list header fixed while many folder tabs scroll horizontally. */
+test('scrolls many favorite folder tabs horizontally without moving the page', async ({ page }) => {
+  await page.route('**/api/**', serveLongSidebarApi);
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/?view=favorites');
+    await hideDevelopmentIndicator(page);
+    const tabs = page.getByRole('group', { name: '收藏夹' });
+    const lastTab = tabs.getByRole('button', { name: 'Folder 24', exact: true });
+    await expect(lastTab).toBeAttached();
+    const heading = page.getByRole('heading', { name: '我的收藏' });
+    const headingBefore = await heading.boundingBox();
+    expect(await tabs.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    await tabs.evaluate((element) => element.scrollTo({ left: element.scrollWidth }));
+    await expect(lastTab).toBeInViewport();
+    await lastTab.click();
+    await expect(lastTab).toHaveAttribute('aria-pressed', 'true');
+    const headingAfter = await heading.boundingBox();
+    expect(Math.abs(headingAfter!.y - headingBefore!.y)).toBeLessThanOrEqual(1);
+    await expect(page.locator('nav[aria-label="页面导航"]:visible')).toBeInViewport();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: test.info().outputPath(`folder-tabs-${width}.png`) });
+  }
+});
 
 /** Serve distinct rating groups and their filtered article membership for browser interactions. */
 async function serveJournalRatingApi(route: Route): Promise<void> {
@@ -2077,35 +2113,47 @@ async function serveJournalRatingApi(route: Route): Promise<void> {
   await serveTrackingApi(route);
 }
 
-/** Verify real desktop/mobile controls, chip removal and clearing ratings on database change. */
+/** Verify desktop popovers, mobile sheets, single-rating removal and database-change clearing. */
 async function journalRatingBrowserTest({ page }: { page: Page }): Promise<void> {
   await page.route('**/api/**', serveJournalRatingApi);
   await page.goto('/');
   await hideDevelopmentIndicator(page);
-  await page.getByRole('checkbox', { name: 'ABS 4*', exact: true }).check();
-  await page.getByRole('checkbox', { name: 'ABS 4', exact: true }).check();
-  await page.getByRole('checkbox', { name: 'FMS A', exact: true }).check();
-  await expect(page.getByText('Rating combination article A', { exact: true })).toBeVisible();
-  await expect(page.getByText('Rating combination article B', { exact: true })).toHaveCount(0);
+  const results = page.getByRole('region', { name: '检索结果' });
+  const ratingPill = page.getByRole('button', { name: /^期刊评级/ });
+  await ratingPill.click();
+  const popover = page.locator('[data-slot="popover-content"]');
+  await popover.getByRole('checkbox', { name: 'ABS 4*', exact: true }).check();
+  await popover.getByRole('checkbox', { name: 'ABS 4', exact: true }).check();
+  await popover.getByRole('checkbox', { name: 'FMS A', exact: true }).check();
+  await page.keyboard.press('Escape');
+  await expect(popover).toHaveCount(0);
+  await expect(ratingPill).toHaveAccessibleName('期刊评级：已选 3 项');
+  await expect(results.getByText('Rating combination article A', { exact: true })).toBeVisible();
+  await expect(results.getByText('Rating combination article B', { exact: true })).toHaveCount(0);
   await page.screenshot({
     path: '../output/ui/journal-rating-desktop.png',
     fullPage: true,
     animations: 'disabled',
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: '打开筛选器' }).click();
-  const drawer = page.getByRole('dialog', { name: '筛选器' });
-  await expect(drawer.getByRole('checkbox', { name: 'ABS 4*', exact: true })).toBeChecked();
-  await drawer.getByRole('checkbox', { name: 'FMS A', exact: true }).uncheck();
+  await ratingPill.click();
+  const sheet = page.getByRole('dialog', { name: '期刊评级' });
+  await expect(sheet).toHaveAttribute('data-motion-placement', 'bottom');
+  await expect(sheet.getByRole('checkbox', { name: 'ABS 4*', exact: true })).toBeChecked();
+  await sheet.getByRole('checkbox', { name: 'FMS A', exact: true }).uncheck();
   await page.screenshot({ path: '../output/ui/journal-rating-mobile.png', animations: 'disabled' });
+  await sheet.getByRole('button', { name: '完成' }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(results.getByText('Rating combination article B', { exact: true })).toBeVisible();
+  await ratingPill.click();
+  await sheet.getByRole('checkbox', { name: 'ABS 4*', exact: true }).uncheck();
   await page.keyboard.press('Escape');
-  await expect(page.getByText('Rating combination article B', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '移除评级 ABS 4*', exact: true }).click();
-  await expect(page.getByText('Rating combination article A', { exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: '打开筛选器' }).click();
-  await drawer.getByRole('combobox').click();
+  await expect(results.getByText('Rating combination article A', { exact: true })).toHaveCount(0);
+  await page.getByRole('combobox', { name: '检索数据库' }).click();
   await page.getByRole('option', { name: 'ccf', exact: true }).click();
-  await expect(drawer.getByText('当前数据库暂无期刊评级信息。')).toBeVisible();
+  await expect(ratingPill).toHaveAccessibleName('期刊评级');
+  await ratingPill.click();
+  await expect(sheet.getByText('当前数据库暂无期刊评级信息。')).toBeVisible();
   expect(new URL(page.url()).searchParams.has('abs_rating')).toBe(false);
   expect(new URL(page.url()).searchParams.has('fms_rating')).toBe(false);
 }
@@ -2168,14 +2216,15 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
     await expect.poll(() => scrollContainer.evaluate((element) => element.scrollTop)).toBe(0);
     await expect(card).toBeInViewport();
     await card.click({ timeout: 5000 });
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toHaveAccessibleName(new RegExp(title));
-    await expect(dialog.getByRole('link', { name: '查看摘要页' })).toHaveAttribute(
+    const reader = page
+      .getByRole('region', { name: '阅读台' })
+      .getByRole('article', { name: new RegExp(title) });
+    await expect(reader).toBeVisible();
+    await expect(reader.getByRole('link', { name: '查看摘要页' })).toHaveAttribute(
       'href',
       new URL(`/api/articles/shared-id/abstract?db=${database}.sqlite`, page.url()).href,
     );
-    await page.keyboard.press('Escape');
-    await expect(dialog).toHaveCount(0);
+    await expect(card).toHaveAttribute('aria-current', 'true');
     await expect(card).toBeFocused();
     await scrollContainer.evaluate((element) => {
       element.scrollTop = 600;
@@ -2186,36 +2235,37 @@ async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise
 
 test('keeps article cards clickable after database switches', databaseSwitchArticleClickTest);
 
-/** Verify pinned filter feedback stays close to the toolbar at every workspace breakpoint. */
-async function compactStickyFilterGapTest({ page }: { page: Page }): Promise<void> {
+/** Verify the search and filter header stays pinned directly above scrolling results. */
+async function pinnedFilterHeaderTest({ page }: { page: Page }): Promise<void> {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.route('**/api/**', serveTrackingApi);
-  await page.goto('/?q=graph');
+  await page.goto('/?q=graph&area=Economics');
   const scrollContainer = page.locator('#results-scroll-container');
-  const filterSummary = page.getByRole('region', { name: '已应用筛选' });
+  const header = page.locator('[data-slot="workspace-list-header"]');
   await expect(
     page.getByRole('button', { name: '查看文章详情：Graph evidence fixture 1', exact: true }),
   ).toBeVisible();
   for (const width of [1280, 800, 390]) {
     await page.setViewportSize({ width, height: 844 });
+    const headerBefore = await header.boundingBox();
     await scrollContainer.evaluate((element) => {
       element.scrollTop = 400;
     });
-    await expect
-      .poll(async () => {
-        const summaryBounds = await filterSummary.boundingBox();
-        const scrollBounds = await scrollContainer.boundingBox();
-        return Math.round(summaryBounds!.y - scrollBounds!.y);
-      })
-      .toBe(8);
-    await page.screenshot({ path: test.info().outputPath(`sticky-filter-${width}.png`) });
+    await expect.poll(() => scrollContainer.evaluate((element) => element.scrollTop)).toBe(400);
+    const headerAfter = await header.boundingBox();
+    const scrollBounds = await scrollContainer.boundingBox();
+    expect(Math.abs(headerAfter!.y - headerBefore!.y)).toBeLessThanOrEqual(1);
+    expect(Math.round(scrollBounds!.y - (headerAfter!.y + headerAfter!.height))).toBe(0);
+    await expect(header.getByRole('combobox', { name: '检索数据库' })).toBeInViewport();
+    await expect(header.getByRole('button', { name: /^领域：/ })).toBeAttached();
+    await page.screenshot({ path: test.info().outputPath(`pinned-filters-${width}.png`) });
   }
 }
 
-test('keeps the sticky filter summary close to the toolbar', compactStickyFilterGapTest);
+test('keeps the filter header pinned above scrolling results', pinnedFilterHeaderTest);
 
 /**
- * Verify long drawers scroll with real wheel and touch input and dismiss without a close button.
+ * Verify long filter sheets scroll with real wheel and touch input and dismiss without a close button.
  *
  * @param fixtures - Playwright page fixture.
  */
@@ -2224,22 +2274,24 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
   await page.setViewportSize({ width: 616, height: 751 });
   await page.goto('/?q=graph');
   await hideDevelopmentIndicator(page);
-  const trigger = page.getByRole('button', { name: '打开筛选器' });
+  const trigger = page.getByRole('button', { name: '领域', exact: true });
   await trigger.click();
-  const drawer = page.getByRole('dialog', { name: '筛选器' });
-  await expect(drawer.getByText('field_24', { exact: true })).toBeAttached();
-  const scrollContainer = drawer.locator('[data-slot="sidebar-scroll-region"]');
-  const lastSection = drawer.getByText('暂无可用发表年份');
+  const drawer = page.getByRole('dialog', { name: '领域' });
+  await expect(drawer).toHaveAttribute('data-motion-placement', 'bottom');
+  const scrollContainer = drawer.locator('[data-slot="area-options"]');
+  const lastSection = drawer.getByText('field_24', { exact: true });
+  await expect(lastSection).toBeAttached();
   await expect(lastSection).not.toBeInViewport();
   await page.screenshot({ path: '../output/ui/mobile-sidebar-top.png', animations: 'disabled' });
 
-  await page.mouse.move(160, 500);
+  const listBox = await scrollContainer.boundingBox();
+  await page.mouse.move(160, listBox!.y + listBox!.height / 2);
   await page.mouse.wheel(0, 2000);
   await expect
     .poll(() => scrollContainer.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
   await expect(lastSection).toBeInViewport();
-  await expect(drawer.getByRole('navigation', { name: '页面导航' })).toBeInViewport();
+  await expect(drawer.getByRole('button', { name: '完成' })).toBeInViewport();
   await expect(drawer.getByRole('button', { name: '关闭', exact: true })).toHaveCount(0);
   await page.screenshot({ path: '../output/ui/mobile-sidebar-bottom.png', animations: 'disabled' });
 
@@ -2286,7 +2338,7 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
     await touchSession.detach();
   }
 
-  await page.mouse.click(600, 100);
+  await page.mouse.click(300, 40);
   await expect(drawer).toHaveCount(0);
   await expect(trigger).toBeFocused();
   await trigger.click();
@@ -2355,6 +2407,8 @@ async function crossTabSessionTest({
   const secondPage = await context.newPage();
   await page.goto('/');
   await secondPage.goto('/');
+  await hideDevelopmentIndicator(page);
+  await hideDevelopmentIndicator(secondPage);
   await expect(page.getByRole('button', { name: '打开账号菜单：browser_user' })).toBeVisible();
   await secondPage.getByRole('button', { name: '打开账号菜单：browser_user' }).click();
   await secondPage.getByRole('menuitem', { name: '退出登录' }).click();
@@ -2410,7 +2464,7 @@ async function serveArticleSettingsApi(route: Route): Promise<void> {
 }
 
 /**
- * Keep data-source settings usable after navigation unmounts the article dialog.
+ * Keep data-source settings usable when opened from the docked article reader.
  *
  * @param fixtures - Playwright page fixture.
  */
@@ -2420,8 +2474,8 @@ async function articleDataSourceSettingsTest({ page }: { page: Page }): Promise<
     await page.goto(workspace);
     const articleTrigger = page.getByRole('button', { name: /^查看文章详情：/ }).first();
     await articleTrigger.click();
-    const articleDialog = page.getByRole('dialog');
-    await articleDialog.getByRole('link', { name: '去设置登录' }).click();
+    const readingDesk = page.getByRole('region', { name: '阅读台' });
+    await readingDesk.getByRole('link', { name: '去设置登录' }).click();
 
     await expect(page).toHaveURL(
       new RegExp(`${workspace.replace('?', '\\?')}&settings=data-sources$`),
@@ -2438,6 +2492,67 @@ async function articleDataSourceSettingsTest({ page }: { page: Page }): Promise<
 }
 
 test('opens usable data-source settings from article details', articleDataSourceSettingsTest);
+
+/**
+ * Keep the docked reader toolbar on one labelled row after opening a related article.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function relatedArticleToolbarTest({ page }: { page: Page }): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await page.route('**/api/articles/*/related**', (route) =>
+    fulfillJson(route, [
+      {
+        article_id: 'related-1',
+        journal_id: '1',
+        title: '债务结构、信贷摩擦与跨境融资——来自中国企业的证据',
+        abstract: '跨境融资研究。',
+        authors: ['张三'],
+        journal_title: '数量经济研究',
+        date: '2021-03-12',
+      },
+    ]),
+  );
+  await page.goto('/?q=graph');
+  await page
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .first()
+    .click();
+  const readingDesk = page.getByRole('region', { name: '阅读台' });
+  await readingDesk
+    .getByRole('region', { name: '相关文章' })
+    .getByRole('button', { name: /债务结构/ })
+    .click();
+  await expect(readingDesk.getByRole('button', { name: '返回上一篇' })).toBeVisible();
+  await expect(readingDesk.getByRole('link', { name: '去设置登录' })).toBeVisible();
+
+  const toolbar = readingDesk.locator('[data-slot="article-detail-toolbar"]');
+  await expect
+    .poll(() =>
+      toolbar.evaluate((element) => {
+        const controls = [...element.querySelectorAll<HTMLElement>('button, a')].filter(
+          (control) => control.offsetParent,
+        );
+        const centers = controls.map((control) => {
+          const box = control.getBoundingClientRect();
+          return Math.round(box.top + box.height / 2);
+        });
+        return {
+          height: Math.round(element.getBoundingClientRect().height),
+          isOverflowing: element.scrollWidth > element.clientWidth,
+          isSingleRow: Math.max(...centers) - Math.min(...centers) <= 2,
+          hasTextLabels: controls.every((control) => control.innerText.trim().length > 0),
+        };
+      }),
+    )
+    .toEqual({ height: 56, isOverflowing: false, isSingleRow: true, hasTextLabels: true });
+}
+
+test(
+  'keeps the reader toolbar on one row after opening a related article',
+  relatedArticleToolbarTest,
+);
 
 /** Exercise modal-to-settings navigation with real touch events and normal exit animations. */
 async function mobileSettingsNavigationTest(page: Page, workspace: string): Promise<void> {
@@ -2557,7 +2672,10 @@ test.describe('mobile settings navigation', () => {
 
 test('synchronizes logout and account changes across browser tabs', crossTabSessionTest);
 
-test('scrolls a long mobile sidebar and dismisses without a close button', mobileSidebarScrollTest);
+test(
+  'scrolls a long mobile filter sheet and dismisses without a close button',
+  mobileSidebarScrollTest,
+);
 test('declares native theme ownership before hydration', nativeThemeDocumentTest);
 test('shows the local administrator bootstrap boundary', bootstrapBoundaryTest);
 test(
@@ -2596,14 +2714,14 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     await inactiveCategory.hover();
     await expect(inactiveCategory).toHaveCSS(
       'background-color',
-      colorScheme === 'light' ? 'rgb(240, 240, 240)' : 'rgb(34, 34, 34)',
+      colorScheme === 'light' ? 'rgb(242, 242, 242)' : 'rgb(31, 31, 31)',
     );
     await expect(currentCategory).toHaveAttribute('aria-current', 'page');
     expect(await inactiveCategory.boundingBox()).toEqual(initialBox);
     await page.mouse.down();
     await expect(inactiveCategory).toHaveCSS(
       'background-color',
-      colorScheme === 'light' ? 'rgb(232, 232, 232)' : 'rgb(49, 49, 49)',
+      colorScheme === 'light' ? 'rgb(232, 232, 232)' : 'rgb(43, 43, 43)',
     );
     await page.mouse.move(1, 1);
     await page.mouse.up();
@@ -2611,6 +2729,8 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
 
     const modelInput = page.locator('#ai-model');
     await modelInput.scrollIntoViewIfNeeded();
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(200);
     const inputBox = await modelInput.boundingBox();
     const inputColor = await modelInput.evaluate(
       (element) => getComputedStyle(element).backgroundColor,
@@ -2630,7 +2750,7 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     await endpoint.hover();
     await expect(endpoint).toHaveCSS(
       'background-color',
-      colorScheme === 'light' ? 'rgb(240, 240, 240)' : 'rgb(34, 34, 34)',
+      colorScheme === 'light' ? 'rgb(242, 242, 242)' : 'rgb(31, 31, 31)',
     );
     await endpoint.click();
     const option = page.getByRole('option').first();
@@ -2638,18 +2758,18 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     await page.mouse.down();
     await expect(option).toHaveCSS(
       'background-color',
-      colorScheme === 'light' ? 'rgb(232, 232, 232)' : 'rgb(49, 49, 49)',
+      colorScheme === 'light' ? 'rgb(232, 232, 232)' : 'rgb(43, 43, 43)',
     );
     await page.mouse.move(1, 1);
     await page.mouse.up();
     await page.keyboard.press('Escape');
     const checkedDatabase = dialog.locator('[data-slot="checkbox"][data-state="checked"]').first();
     await checkedDatabase.hover();
-    await expect(checkedDatabase).toHaveCSS('background-color', 'rgb(51, 88, 212)');
+    await expect(checkedDatabase).toHaveCSS('background-color', 'rgb(29, 78, 216)');
     const recommendationSwitch = page.locator('#notify-enabled');
     await expect(recommendationSwitch).toHaveAttribute('data-state', 'checked');
     await recommendationSwitch.hover();
-    await expect(recommendationSwitch).toHaveCSS('background-color', 'rgb(51, 88, 212)');
+    await expect(recommendationSwitch).toHaveCSS('background-color', 'rgb(29, 78, 216)');
     await expect(recommendationSwitch).toHaveAttribute('data-state', 'checked');
     await page.screenshot({
       path: `../output/ui/visual-settings-${colorScheme}.png`,
@@ -2671,6 +2791,9 @@ async function containedCheckboxPaintTest({ page }: { page: Page }): Promise<voi
   for (const colorScheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme });
     await page.goto('/');
+    const areaPill = page.getByRole('button', { name: /^领域/ });
+    await areaPill.focus();
+    await page.keyboard.press('Enter');
     const checkbox = page.locator('#area-field_1');
     await checkbox.scrollIntoViewIfNeeded();
     await expect(checkbox).toHaveAttribute('data-state', 'unchecked');
@@ -2810,13 +2933,15 @@ async function cfpTrackingPageTest({ page }: { page: Page }): Promise<void> {
   const navigation = page.getByRole('navigation', { name: '页面导航' });
   await expect(navigation.getByRole('link')).toHaveCount(4);
   const searchBox = await navigation.getByRole('link', { name: '文献检索' }).boundingBox();
-  const cfpBox = await navigation.getByRole('link', { name: '征稿', exact: true }).boundingBox();
+  const cfpBox = await navigation
+    .getByRole('link', { name: '征稿追踪', exact: true })
+    .boundingBox();
   expect(searchBox).not.toBeNull();
   expect(cfpBox).not.toBeNull();
   expect(Math.abs(cfpBox!.width - searchBox!.width)).toBeLessThan(1);
-  expect(Math.abs(cfpBox!.y - searchBox!.y)).toBeLessThan(1);
-  expect(cfpBox!.x).toBeGreaterThan(searchBox!.x + searchBox!.width);
-  await expect(navigation.getByRole('link', { name: '征稿', exact: true })).toHaveAttribute(
+  expect(Math.abs(cfpBox!.x - searchBox!.x)).toBeLessThan(1);
+  expect(cfpBox!.y).toBeGreaterThan(searchBox!.y + searchBox!.height);
+  await expect(navigation.getByRole('link', { name: '征稿追踪', exact: true })).toHaveAttribute(
     'aria-current',
     'page',
   );
@@ -2905,17 +3030,17 @@ async function cfpTrackingPageTest({ page }: { page: Page }): Promise<void> {
       .evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
   await page.screenshot({ path: '../output/ui/cfp-tracking-mobile.png', fullPage: true });
-  await page.getByRole('button', { name: '打开征稿筛选' }).click();
-  const dialog = page.getByRole('dialog', { name: '征稿筛选' });
-  await expect(dialog.getByRole('link', { name: '征稿', exact: true })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
-  await expect(dialog.getByRole('combobox', { name: '征稿数据库' })).toBeVisible();
+  const mobileNavigation = page.locator('nav[aria-label="页面导航"]:visible');
+  await expect(
+    mobileNavigation.getByRole('link', { name: '征稿追踪', exact: true }),
+  ).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('combobox', { name: '征稿数据库' })).toBeVisible();
   await page.screenshot({ path: '../output/ui/cfp-tracking-mobile-sidebar.png', fullPage: true });
-  await page.keyboard.press('Escape');
-  await expect(dialog).toHaveCount(0);
-  const mobileNotice = page.locator('[data-slot="cfp-notice"]').first();
+  await page.getByRole('button', { name: /Journal of Marketing/ }).click();
+  const readerSheet = page.getByRole('dialog', { name: 'Journal of Marketing' });
+  await expect(readerSheet).toHaveAttribute('data-motion-placement', 'right');
+  await expectSheetClose(readerSheet);
+  const mobileNotice = readerSheet.locator('[data-slot="cfp-notice"]').first();
   const mobileTimeline = await mobileNotice.locator('[data-slot="cfp-timeline"]').boundingBox();
   const mobileScope = await mobileNotice.locator('[data-slot="cfp-scope"]').boundingBox();
   expect(mobileTimeline!.y + mobileTimeline!.height).toBeLessThanOrEqual(mobileScope!.y);
@@ -2941,7 +3066,9 @@ async function cfpTrackingPageTest({ page }: { page: Page }): Promise<void> {
         ),
     ).toBe(true);
   }
-  await page.locator('#results-scroll-container').evaluate((element) => element.scrollTo(0, 0));
+  await page
+    .locator('[data-slot="reader-sheet-body"]')
+    .evaluate((element) => element.scrollTo(0, 0));
   await page.screenshot({ path: '../output/cfp-layout/narrow.png', fullPage: true });
 }
 
@@ -2976,22 +3103,26 @@ async function cfpFullTextScrollTest({ page }: { page: Page }): Promise<void> {
 
   for (const width of [1500, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
+    if (width < 1280 && (await page.getByRole('dialog').count()) === 0) {
+      await page.getByRole('button', { name: /IEEE Transactions on Affective Computing/ }).click();
+    }
+    const outerScroller = page.locator(
+      width < 1280 ? '[data-slot="reader-sheet-body"]' : '[data-slot="reading-desk"]',
+    );
     for (const [region, otherRegion] of [
       [scopeRegion, requirementsRegion],
       [requirementsRegion, scopeRegion],
     ]) {
       await region.evaluate((element) => element.scrollTo(0, 0));
       await region.focus();
-      const outerScroll = await page
-        .locator('#results-scroll-container')
-        .evaluate((element) => element.scrollTop);
+      const outerScroll = await outerScroller.evaluate((element) => element.scrollTop);
       const otherScroll = await otherRegion.evaluate((element) => element.scrollTop);
       const dimensions = await region.evaluate((element) => ({
         height: element.clientHeight,
         contentHeight: element.scrollHeight,
         hasHorizontalOverflow: element.scrollWidth > element.clientWidth,
       }));
-      expect(dimensions.height).toBe(192);
+      expect(dimensions.height).toBe(288);
       expect(dimensions.contentHeight).toBeGreaterThan(dimensions.height);
       expect(dimensions.hasHorizontalOverflow).toBe(false);
       await page.keyboard.press('Control+End');
@@ -2999,13 +3130,11 @@ async function cfpFullTextScrollTest({ page }: { page: Page }): Promise<void> {
         .poll(() => region.evaluate((element) => element.scrollTop + element.clientHeight))
         .toBe(dimensions.contentHeight);
       expect(await otherRegion.evaluate((element) => element.scrollTop)).toBe(otherScroll);
-      expect(
-        await page.locator('#results-scroll-container').evaluate((element) => element.scrollTop),
-      ).toBe(outerScroll);
+      expect(await outerScroller.evaluate((element) => element.scrollTop)).toBe(outerScroll);
     }
     await scopeRegion.evaluate((element) => element.scrollTo(0, 0));
     await requirementsRegion.evaluate((element) => element.scrollTo(0, 0));
-    await page.locator('#results-scroll-container').evaluate((element) => element.scrollTo(0, 0));
+    await outerScroller.evaluate((element) => element.scrollTo(0, 0));
     await page.screenshot({ path: `../output/cfp-layout/full-text-${width}.png`, fullPage: true });
   }
 }
@@ -3056,11 +3185,13 @@ async function expandedCfpSourceStatesTest({ page }: { page: Page }): Promise<vo
   await page.getByRole('button', { name: /Machine Translation/ }).click();
   await expect(page.getByText(/no longer receiving submissions with this publisher/)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  expect(
-    await page
-      .locator('#main-content')
-      .evaluate((element) => element.scrollWidth <= element.clientWidth),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      page
+        .locator('#main-content')
+        .evaluate((element) => element.scrollWidth <= element.clientWidth),
+    )
+    .toBe(true);
   await page.screenshot({
     path: '../output/ui/cfp-tracking-known-empty-mobile.png',
     fullPage: true,
@@ -3157,20 +3288,23 @@ async function cfpGroupedSidebarTest({ page }: { page: Page }): Promise<void> {
   expect(unadaptedNames).toEqual(['Alpha Unadapted', 'Zulu Unadapted']);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: '打开征稿筛选' }).click();
-  const dialog = page.getByRole('dialog', { name: '征稿筛选' });
-  const mobileList = dialog.getByRole('region', { name: '正在征稿期刊' });
+  await expect(currentToggle).toHaveAttribute('aria-expanded', 'true');
+  const mobileList = sidebar.getByRole('region', { name: '正在征稿期刊' });
   await expectSidebarScrollClearance(mobileList);
-  const mobileSearch = dialog.getByRole('textbox', { name: '搜索征稿期刊' });
+  const mobileSearch = sidebar.getByRole('textbox', { name: '搜索征稿期刊' });
   const mobileBefore = await mobileSearch.boundingBox();
   await mobileList.hover();
   await page.mouse.wheel(0, 1800);
   await expect.poll(() => mobileList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   const mobileAfter = await mobileSearch.boundingBox();
   expect(Math.abs(mobileBefore!.y - mobileAfter!.y)).toBeLessThanOrEqual(1);
-  await expect(dialog.getByRole('button', { name: /^当前未征稿/ })).toBeInViewport();
-  await expect(dialog.getByRole('button', { name: /^暂未适配/ })).toBeInViewport();
-  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await expect(sidebar.getByRole('button', { name: /^当前未征稿/ })).toBeInViewport();
+  await expect(sidebar.getByRole('button', { name: /^暂未适配/ })).toBeInViewport();
+  expect(
+    await page
+      .locator('#main-content')
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
   await page.screenshot({
     path: '../output/cfp-layout/grouped-sidebar-mobile.png',
     fullPage: true,

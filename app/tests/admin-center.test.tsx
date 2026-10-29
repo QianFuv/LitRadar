@@ -96,7 +96,7 @@ async function navigatesPersistentAdministratorPanels(): Promise<void> {
 
   expect(await screen.findByRole('dialog', { name: '管理面板' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: '概览' })).toBeInTheDocument();
-  expect(screen.getAllByRole('navigation', { name: '管理分类' })).toHaveLength(2);
+  expect(screen.getAllByRole('navigation', { name: '管理分类' })).toHaveLength(1);
   expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(6);
   expect(screen.getByText('overview card marker')).toBeInTheDocument();
   for (const marker of [

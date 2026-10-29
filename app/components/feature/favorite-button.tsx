@@ -34,6 +34,9 @@ export function FavoriteButton(props: FavoriteButtonProps) {
   const queryState = useFavoriteButtonState(props);
   if (!queryState.user) return null;
   const state = { ...queryState, ...getFavoriteButtonPresentation(queryState) };
+  if (props.toggleFolderId !== undefined) {
+    return renderFavoriteToggle(state, props.toggleFolderId);
+  }
   return renderFavoriteButton(state);
 }
 
@@ -42,6 +45,11 @@ type FavoriteButtonProps = {
   dbName: string;
   initialFolderIds?: number[];
   isFavoriteStateUnavailable?: boolean;
+  /**
+   * Toggle membership in this folder with one click instead of opening the folder picker.
+   * The folder's article list is left in place so an accidental removal can be undone.
+   */
+  toggleFolderId?: number;
 };
 /** Own the unchanged cache, optimistic state, queries, mutations and confirmation ref. */
 function useFavoriteButtonState({
@@ -49,6 +57,7 @@ function useFavoriteButtonState({
   dbName,
   initialFolderIds = [],
   isFavoriteStateUnavailable = false,
+  toggleFolderId,
 }: FavoriteButtonProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -111,7 +120,9 @@ function useFavoriteButtonState({
       queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
       await queryClient.invalidateQueries({ queryKey: batchKey });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
-      queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
+      if (folderId !== toggleFolderId) {
+        queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
+      }
     },
   });
 
@@ -137,7 +148,9 @@ function useFavoriteButtonState({
       queryClient.removeQueries({ queryKey: batchKey, type: 'inactive' });
       await queryClient.invalidateQueries({ queryKey: batchKey });
       queryClient.invalidateQueries({ queryKey: ['folders'] });
-      queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
+      if (folderId !== toggleFolderId) {
+        queryClient.invalidateQueries({ queryKey: ['folder-articles', folderId] });
+      }
       setFolderToRemove((current) => (current?.id === folderId ? null : current));
     },
   });
@@ -279,6 +292,67 @@ function renderFavoriteButton(state: FavoriteButtonViewState) {
     </>
   );
 }
+/**
+ * Render a one-click toggle for membership in a single folder.
+ *
+ * @param state - Favorite button state.
+ * @param folderId - Folder whose membership is toggled.
+ * @returns Toggle button with inline failure feedback.
+ */
+function renderFavoriteToggle(state: FavoriteButtonViewState, folderId: number) {
+  const { triggerRef, addMut, removeMut, isFavoriteUnknown, favFolderIds } = state;
+  const isInFolder = !isFavoriteUnknown && favFolderIds.has(folderId);
+  const label = isFavoriteUnknown ? '收藏状态未知' : isInFolder ? '已收藏' : '收藏';
+  const failure = addMut.error ?? removeMut.error;
+  return (
+    <span className="inline-flex items-center gap-2">
+      <Button
+        ref={triggerRef}
+        variant="outline"
+        size="sm"
+        static
+        aria-pressed={isInFolder}
+        aria-label={label}
+        title={isInFolder ? '取消收藏' : '收藏到此收藏夹'}
+        className={cn(
+          'size-11 p-0 md:h-10 md:w-auto md:px-3',
+          isInFolder && 'text-warning-foreground hover:text-warning-foreground',
+        )}
+        disabled={addMut.isPending || removeMut.isPending || isFavoriteUnknown}
+        onClick={(event: MouseEvent<HTMLButtonElement>) => {
+          event.stopPropagation();
+          addMut.reset();
+          removeMut.reset();
+          if (isInFolder) {
+            removeMut.mutate(folderId);
+          } else {
+            addMut.mutate(folderId);
+          }
+        }}
+      >
+        <span
+          data-favorite-state={isFavoriteUnknown ? 'unknown' : isInFolder ? 'active' : 'inactive'}
+          className="flex items-center gap-1"
+          aria-hidden="true"
+        >
+          <Star
+            className={cn('motion-control size-4 transition-[fill]', isInFolder && 'fill-current')}
+          />
+          <span className="hidden md:grid">
+            <span className="invisible col-start-1 row-start-1">已收藏</span>
+            <span className="col-start-1 row-start-1">{label}</span>
+          </span>
+        </span>
+      </Button>
+      {failure && (
+        <span role="alert" className="text-xs text-destructive">
+          {failure instanceof Error ? failure.message : '收藏操作失败'}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** Retain each folder button, pending guards and reset-before-target event order. */
 function renderFavoriteFolderButton(state: FavoriteButtonViewState, folder: Folder) {
   const {

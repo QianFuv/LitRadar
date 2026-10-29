@@ -137,6 +137,7 @@ function SectionedDialogHarness() {
       </button>
       <SectionedDialogFrame
         activeSection={activeSection}
+        centerIcon={Circle}
         centerSubtitle="浏览器生命周期测试"
         centerTitle="分区测试"
         contentLabelSuffix="测试内容"

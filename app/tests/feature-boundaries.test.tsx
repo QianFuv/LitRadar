@@ -39,7 +39,7 @@ async function rendersFavoritesBoundary(): Promise<void> {
     </NuqsTestingAdapter>,
   );
 
-  expect(await screen.findByText('暂无收藏夹，点击 + 创建')).toBeInTheDocument();
+  expect(await screen.findByText('暂无收藏夹，点击「新建」创建第一个。')).toBeInTheDocument();
   expect(getFavoriteSelectionKey(7, 'article-1', 'fixture.sqlite')).toBe(
     '7:article-1:fixture.sqlite',
   );

@@ -3,8 +3,8 @@
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect } from 'react';
 import { AdminCenterDialog } from '@/components/admin/admin-center-dialog';
-import { UserMenu } from '@/components/feature/user-menu';
 import { SettingsCenterDialog } from '@/components/settings/settings-center-dialog';
+import { AppFrame } from '@/components/shell/app-frame';
 import { useAuth } from '@/lib/auth-context';
 
 /**
@@ -50,10 +50,9 @@ function ProtectedLayoutContent({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      {children}
+      <AppFrame>{children}</AppFrame>
       <SettingsCenterDialog />
       <AdminCenterDialog />
-      <UserMenu />
     </>
   );
 }

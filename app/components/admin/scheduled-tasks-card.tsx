@@ -15,6 +15,8 @@ import {
   type ScheduledTaskCreate,
   type ScheduledTaskInfo,
 } from '@/lib/api';
+import { AdminListHeader } from '@/components/admin/admin-list-header';
+import { SettingsGroup, StatusPill } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -46,6 +48,7 @@ import {
   useMotionTransition,
 } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
+import { cn } from '@/lib/utils';
 
 type TaskFormState = {
   coalesce: boolean;
@@ -309,10 +312,12 @@ export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } =
         </CardTitle>
         <CardDescription>管理后台自动执行的类型化任务</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {renderScheduledTaskEditor(state)}
-
+      <CardContent className="space-y-3">
         {renderSchedulerStatus(state)}
+
+        <AdminListHeader summary={`共 ${state.tasks.length} 个任务`}>
+          {renderScheduledTaskEditor(state)}
+        </AdminListHeader>
 
         {error instanceof Error && (
           <p role="alert" className="text-sm text-destructive">
@@ -325,7 +330,7 @@ export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } =
             加载中…
           </p>
         ) : (
-          <div className="space-y-3">{renderScheduledTaskList(state)}</div>
+          <SettingsGroup>{renderScheduledTaskList(state)}</SettingsGroup>
         )}
 
         {renderRecentSchedulerRuns(state)}
@@ -608,8 +613,8 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={openCreateDialog}>
-          <Plus className="mr-2 h-4 w-4" />
+        <Button size="sm" onClick={openCreateDialog}>
+          <Plus className="size-4" />
           新建任务
         </Button>
       </DialogTrigger>
@@ -801,7 +806,7 @@ function renderSchedulerStatus(state: SchedulerViewState) {
   } = state;
 
   return (
-    <div aria-label="调度器状态" className="rounded-lg border bg-muted/30 p-3 text-sm">
+    <div aria-label="调度器状态" className="overflow-hidden border-y py-4 text-sm">
       <MotionPresence mode="wait">
         <MotionDiv
           key={schedulerStatusKey}
@@ -819,11 +824,27 @@ function renderSchedulerStatus(state: SchedulerViewState) {
               {schedulerStatusError.message}
             </span>
           ) : (
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-              <span>
-                健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
-              </span>
-              <span className="text-xs text-muted-foreground">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <span aria-hidden="true" className="relative flex size-3">
+                  {healthyWorkerCount > 0 && (
+                    <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:hidden" />
+                  )}
+                  <span
+                    className={cn(
+                      'relative inline-flex size-3 rounded-full',
+                      healthyWorkerCount > 0 ? 'bg-emerald-400' : 'bg-red-400',
+                    )}
+                  />
+                </span>
+                <div>
+                  <p className="text-xs text-muted-foreground">调度器</p>
+                  <p className="font-bold tabular-nums">
+                    健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs text-muted-foreground tabular-nums">
                 最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
               </span>
             </div>
@@ -851,7 +872,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
       {tasks.length === 0 ? (
         <MotionParagraph
           key="empty-scheduled-tasks"
-          className="text-sm text-muted-foreground"
+          className="px-5 py-10 text-center text-sm text-muted-foreground"
           initial="hidden"
           animate="visible"
           exit="exit"
@@ -865,38 +886,56 @@ function renderScheduledTaskList(state: SchedulerViewState) {
           <MotionDiv
             key={task.id}
             data-motion-scheduled-task-key={task.id}
-            className="overflow-hidden rounded-lg border p-4"
+            className="overflow-hidden px-4 py-4 sm:px-5"
             initial="hidden"
             animate="visible"
             exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
             variants={COLLAPSE_VARIANTS}
             transition={panelTransition}
           >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="font-medium">{task.name}</div>
-                <div className="font-mono text-xs text-muted-foreground">{task.cron}</div>
-                <div className="text-xs text-muted-foreground">
-                  {task.timezone} · 超时 {task.timeout_seconds} 秒 ·
-                  {task.coalesce ? ' 合并补跑' : ' 逐次补跑'}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'hidden size-10 shrink-0 items-center justify-center rounded-xl sm:flex',
+                  task.enabled ? 'bg-info text-primary' : 'bg-muted text-muted-foreground',
+                )}
+              >
+                <Clock3 className="size-5" />
+              </span>
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold">{task.name}</span>
+                  <StatusPill tone={getSchedulerStateTone(task.last_status)}>
+                    {formatSchedulerState(task.last_status)}
+                  </StatusPill>
                 </div>
-                <div className="text-sm text-muted-foreground break-all">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <code className="rounded-md bg-foreground px-1.5 py-0.5 font-bold text-background">
+                    {task.cron}
+                  </code>
+                  <span className="text-muted-foreground">
+                    {task.timezone} · 超时 {task.timeout_seconds} 秒 ·
+                    {task.coalesce ? ' 合并补跑' : ' 逐次补跑'}
+                  </span>
+                </div>
+                <div className="text-sm break-all text-muted-foreground">
                   {describeJob(task.job)}
                 </div>
                 {task.legacy_command && (
-                  <div className="rounded border border-warning-border px-2 py-1 text-xs text-muted-foreground break-all">
+                  <div className="rounded-lg border border-warning-border bg-warning px-2.5 py-1.5 text-xs break-all text-warning-foreground">
                     旧命令（只读）：{task.legacy_command}
                   </div>
                 )}
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs text-muted-foreground tabular-nums">
                   最近执行: {formatDateTime(task.last_run_at)}
-                  {` · ${formatSchedulerState(task.last_status)}`}
                 </div>
               </div>
-              <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:flex-nowrap">
+              <div className="flex items-center justify-end gap-1 border-t pt-3 sm:border-0 sm:pt-0">
                 <Switch
                   checked={task.enabled}
                   disabled={task.job === null}
+                  className="mr-2"
                   aria-label={
                     task.job
                       ? `${task.enabled ? '停用' : '启用'}定时任务 ${task.name}`
@@ -911,15 +950,16 @@ function renderScheduledTaskList(state: SchedulerViewState) {
                 <Button
                   variant="ghost"
                   size="icon"
+                  className="size-9"
                   aria-label={`编辑定时任务 ${task.name}`}
                   onClick={() => openEditDialog(task)}
                 >
-                  <Pencil className="h-4 w-4" />
+                  <Pencil className="size-4" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="text-destructive hover:text-destructive"
+                  className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   aria-label={`删除定时任务 ${task.name}`}
                   disabled={deleteMutation.isPending}
                   onClick={() => {
@@ -927,7 +967,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
                     setTaskToDelete(task);
                   }}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="size-4" />
                 </Button>
               </div>
             </div>
@@ -944,28 +984,56 @@ function renderRecentSchedulerRuns(state: Pick<SchedulerViewState, 'schedulerSta
 
   return (
     schedulerStatus && (
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium">最近调度运行</h3>
+      <section className="space-y-3 pt-7">
+        <h3 className="px-1 text-sm font-bold">最近调度运行</h3>
         {schedulerStatus.recent_runs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">暂无调度运行记录</p>
+          <p className="px-1 text-sm text-muted-foreground">暂无调度运行记录</p>
         ) : (
-          <div className="divide-y rounded-lg border">
+          <ol className="relative space-y-0 pl-4 before:absolute before:top-2 before:bottom-2 before:left-[5px] before:w-px before:bg-border">
             {schedulerStatus.recent_runs.slice(0, 5).map((run) => (
-              <div
-                key={run.id}
-                className="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
-              >
-                <span className="min-w-0 truncate">{run.task_name}</span>
-                <span className="text-xs text-muted-foreground">
+              <li key={run.id} className="relative flex items-center gap-3 py-2 pl-3 text-sm">
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'absolute top-1/2 -left-4 size-[11px] -translate-y-1/2 rounded-full border-2 border-background',
+                    SCHEDULER_STATE_DOT_CLASSES[getSchedulerStateTone(run.status)],
+                  )}
+                />
+                <span className="min-w-0 flex-1 truncate">{run.task_name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                   {formatSchedulerState(run.status)} · {formatDateTime(run.scheduled_for)}
                 </span>
-              </div>
+              </li>
             ))}
-          </div>
+          </ol>
         )}
-      </div>
+      </section>
     )
   );
+}
+
+const SCHEDULER_STATE_DOT_CLASSES = {
+  danger: 'bg-destructive',
+  info: 'bg-primary',
+  neutral: 'bg-muted-foreground/50',
+  success: 'bg-success-foreground',
+  warning: 'bg-warning-foreground',
+} as const;
+
+/**
+ * Map a scheduler run state to a status tone.
+ *
+ * @param status - Scheduler run state.
+ * @returns Status pill tone.
+ */
+function getSchedulerStateTone(
+  status: SchedulerRunState,
+): keyof typeof SCHEDULER_STATE_DOT_CLASSES {
+  if (status === 'success') return 'success';
+  if (status === 'failed' || status === 'timed_out' || status === 'error') return 'danger';
+  if (status === 'pending' || status === 'claimed' || status === 'running') return 'info';
+  if (status === 'unknown') return 'warning';
+  return 'neutral';
 }
 
 /** Retain confirmation target identity and pending-dismissal safeguards. */

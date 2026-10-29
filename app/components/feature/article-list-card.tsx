@@ -1,13 +1,12 @@
 'use client';
 
 /**
- * Compact article summary card with selectable content.
+ * Dense article row content for reading-workspace lists.
  */
 
 import { type ReactNode } from 'react';
 
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 type ArticleListCardProps = {
@@ -37,7 +36,7 @@ function isEnabledFlag(value: number | boolean | string | null | undefined): boo
  * Check whether the preview prop contains visible content.
  *
  * @param preview - Preview node supplied by the article list.
- * @returns True when the card should render its preview section.
+ * @returns True when the row should render its preview line.
  */
 function hasPreviewContent(preview: ReactNode): boolean {
   if (preview === null || preview === undefined || preview === false) {
@@ -50,10 +49,10 @@ function hasPreviewContent(preview: ReactNode): boolean {
 }
 
 /**
- * Render article metadata and selectable title/preview content.
+ * Render an article row: title, authors, source line with access tags, and a short preview.
  *
- * @param props - Article list card content.
- * @returns Article list card.
+ * @param props - Article row content.
+ * @returns Article list row content.
  */
 export function ArticleListCard({
   title,
@@ -70,68 +69,74 @@ export function ArticleListCard({
   const hasPreview = hasPreviewContent(preview);
   const isOpenAccess = isEnabledFlag(openAccess);
   const isInPress = isEnabledFlag(inPress);
-  const hasBadges = isOpenAccess || isInPress;
   const issueLabel = [volume && `第 ${volume} 卷`, number && `第 ${number} 期`]
     .filter(Boolean)
     .join(', ');
+  const authorText = authors && authors.length > 0 ? authors.join('; ') : '';
 
-  const state = { authors, journalTitle, issueLabel, date };
   return (
-    <Card
-      className={cn(
-        'motion-control content-visibility-card gap-0 overflow-hidden py-0 transition-[background-color] hover:bg-accent',
-        className,
-      )}
+    <div
+      data-slot="article-list-card"
+      className={cn('content-visibility-card min-w-0 py-5 pr-5 pl-5 sm:pr-7 sm:pl-7', className)}
     >
-      <CardHeader className="gap-2 px-4 py-4 sm:px-5 sm:py-5">
-        <div className="flex flex-col items-start gap-2 sm:flex-row sm:justify-between sm:gap-3">
-          <CardTitle className="min-w-0 text-wrap break-words text-base leading-snug text-foreground sm:text-lg">
-            {title}
-          </CardTitle>
-          {hasBadges && (
-            <div className="flex shrink-0 flex-wrap gap-1.5 sm:justify-end">
-              {isOpenAccess && (
-                <Badge variant="secondary" className="px-2 py-0 text-[11px]">
-                  开放获取
-                </Badge>
-              )}
-              {isInPress && (
-                <Badge variant="outline" className="px-2 py-0 text-[11px]">
-                  预发表
-                </Badge>
-              )}
-            </div>
+      <h3
+        data-slot="article-list-title"
+        className="line-clamp-3 text-[15px] leading-[1.5] font-bold tracking-[-0.005em] text-wrap break-words text-foreground"
+      >
+        {title}
+      </h3>
+      <div data-slot="article-list-meta" className="mt-2 space-y-1 text-xs leading-5">
+        {authorText && (
+          <p className="truncate text-foreground/65" title={authorText}>
+            {authorText}
+          </p>
+        )}
+        <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-muted-foreground">
+          <span className="min-w-0 truncate font-bold tracking-[0.02em] text-foreground/80">
+            {journalTitle || '未知期刊'}
+          </span>
+          {issueLabel && <span className="shrink-0">{issueLabel}</span>}
+          {date && <time className="shrink-0 tabular-nums">{date}</time>}
+          {isOpenAccess && (
+            <span className="inline-flex shrink-0 items-center gap-1 font-bold text-success-foreground">
+              <i aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+              开放获取
+            </span>
           )}
-        </div>
-        {renderArticleListMetadata(state)}
-      </CardHeader>
+          {isInPress && (
+            <span className="inline-flex shrink-0 items-center gap-1 font-bold text-warning-foreground">
+              <i aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+              预发表
+            </span>
+          )}
+        </p>
+      </div>
       {hasPreview && (
-        <CardContent className="px-4 pb-4 sm:px-5 sm:pb-5">
-          <div className="line-clamp-3 text-pretty text-sm leading-6 text-muted-foreground">
-            {preview}
-          </div>
-        </CardContent>
+        <div className="mt-3 line-clamp-2 text-pretty text-[12.5px] leading-[1.75] text-muted-foreground/85">
+          {preview}
+        </div>
       )}
-    </Card>
+    </div>
   );
 }
 
-/** Retain authors, journal, issue and date metadata order and truthy fallbacks. */
-function renderArticleListMetadata(state: ArticleListViewState) {
-  const { authors, journalTitle, date, issueLabel } = state;
-
+/**
+ * Render decorative placeholders shaped like article rows.
+ *
+ * @param props - Number of placeholder rows.
+ * @returns Hidden loading placeholders.
+ */
+export function ArticleListSkeleton({ count = 6 }: { count?: number }) {
   return (
-    <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed">
-      {authors && authors.length > 0 && (
-        <span className="min-w-0 break-words">{authors.join('; ')}</span>
-      )}
-      <span className="font-medium text-foreground/70">{journalTitle || '未知期刊'}</span>
-      {issueLabel && <span>{issueLabel}</span>}
-      {date && <time>{date}</time>}
-    </CardDescription>
+    <div className="divide-y divide-border/70" aria-hidden="true">
+      {Array.from({ length: count }, (_, index) => (
+        <div key={index} className="space-y-2.5 px-5 py-5 sm:px-7">
+          <Skeleton className="h-4 w-11/12" />
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-3 w-1/2" />
+          <Skeleton className="h-3 w-full" />
+        </div>
+      ))}
+    </div>
   );
 }
-
-type ArticleListViewState = Pick<ArticleListCardProps, 'authors' | 'journalTitle' | 'date'> & {
-  issueLabel: string;
-};

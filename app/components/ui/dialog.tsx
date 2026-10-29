@@ -64,18 +64,18 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
-      className={cn('motion-overlay fixed inset-0 z-50 bg-black/50', className)}
+      className={cn('motion-overlay fixed inset-0 z-50 bg-black/40', className)}
       {...props}
     />
   );
 }
 
 type DialogContentProps = React.ComponentProps<typeof DialogPrimitive.Content> & {
-  placement?: 'center' | 'left';
+  placement?: 'center' | 'left' | 'right' | 'bottom' | 'takeover';
 };
 
 /**
- * Render accessible modal content with a centered or left-drawer placement.
+ * Render accessible modal content as a centered dialog, side sheet, bottom sheet, or takeover.
  *
  * @param props - Radix Dialog content properties, children, and placement.
  * @returns Portaled Dialog content.
@@ -93,11 +93,17 @@ function DialogContent({
         data-slot="dialog-content"
         data-motion-placement={placement}
         className={cn(
-          'bg-background fixed z-50 grid gap-4 overscroll-contain border p-6 shadow-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+          'bg-background fixed z-50 grid gap-4 overscroll-contain p-6 shadow-overlay outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
           placement === 'center' &&
-            'motion-dialog w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] rounded-lg md:max-w-4xl',
+            'motion-dialog w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] rounded-2xl md:max-w-xl',
           placement === 'left' &&
-            'motion-drawer inset-y-0 left-0 h-dvh w-80 max-w-[calc(100vw-2rem)] rounded-none border-r',
+            'motion-drawer inset-y-0 left-0 h-dvh w-80 max-w-[calc(100vw-2rem)] rounded-none',
+          placement === 'right' &&
+            'motion-sheet-right inset-y-0 right-0 h-dvh w-full max-w-full rounded-none p-0 md:w-[min(46rem,calc(100vw-5rem))]',
+          placement === 'bottom' &&
+            'motion-sheet-bottom inset-x-0 bottom-0 max-h-[85dvh] w-full rounded-t-2xl rounded-b-none p-0 pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))]',
+          placement === 'takeover' &&
+            'motion-takeover inset-0 h-dvh w-screen max-w-none rounded-none p-0 shadow-none',
           className,
         )}
         {...props}
@@ -164,7 +170,7 @@ function DialogTitle({ className, ...props }: React.ComponentProps<typeof Dialog
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('text-balance text-lg leading-snug font-semibold', className)}
+      className={cn('text-balance text-lg leading-snug font-bold', className)}
       {...props}
     />
   );

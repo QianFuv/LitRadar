@@ -134,6 +134,20 @@ async function serializesArticleQuery(): Promise<void> {
 }
 
 /**
+ * Verify article requests switch to advanced mode only for FTS5 syntax.
+ */
+async function selectsAdvancedModeForSyntax(): Promise<void> {
+  server.use(http.get('http://localhost/api/articles', captureArticleRequest));
+  for (const [query, mode] of [
+    ['title:graph AND "neural network"', 'advanced'],
+    ['graph neural network', 'simple'],
+  ] as const) {
+    await getArticles(new URLSearchParams({ q: query }), null, false, 'fixture.sqlite');
+    expect(new URL(capturedArticleUrl).searchParams.get('search_mode')).toBe(mode);
+  }
+}
+
+/**
  * Verify cursor pagination appends the next page and then stops.
  */
 async function loadsInfinitePages(): Promise<void> {
@@ -187,6 +201,7 @@ describe('article query flows', () => {
   test('forwards article query cancellation to fetch', forwardsArticleCancellation);
   test('serializes favorite cursor pagination', serializesFavoriteCursor);
   test('serializes filters and cursor parameters', serializesArticleQuery);
+  test('selects advanced search mode for FTS5 syntax', selectsAdvancedModeForSyntax);
   test('loads cursor pages through an infinite query', loadsInfinitePages);
   test('preserves partial publication-date precision', preservesPartialDatePrecision);
 });

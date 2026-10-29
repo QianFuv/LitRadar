@@ -1,22 +1,25 @@
 # 前端设计系统
 
-本文档说明当前实现中的设计变量（token）、基础组件、布局和无障碍约定。修改界面时先复用这里的语义变量和组件，再核对实现来源：
+本文档说明当前实现中的设计变量（token）、基础组件、应用框架、布局和无障碍约定。修改界面时先复用这里的语义变量和组件，再核对实现来源：
 
-- [全局样式](../../app/app/globals.css)：主题、字体、圆角、阴影和全局行为
+- [全局样式](../../app/app/globals.css)：主题、字体、圆角、阴影、动画和全局行为
 - [根布局](../../app/app/layout.tsx)、[根级上下文](../../app/app/providers.tsx)：根文档、主题和根级无障碍
 - [基础组件目录](../../app/components/ui/)：组件变体
+- [应用框架](../../app/components/shell/)：导航轨、手机底栏与账号头像
+- [阅读工作区](../../app/components/feature/workspace-shell.tsx)：列表栏、阅读台与详情面板
 - `app/app/(protected)/*.tsx` 与业务组件：真实布局和响应式用法
 
 前端开发流程见[前端包说明](../../app/README.md)。
 
 ## 系统层次
 
-| 层                  | 职责                                                                             |
-| ------------------- | -------------------------------------------------------------------------------- |
-| 语义 token          | light/dark 的背景、文字、交互、边框、状态色                                      |
-| Tailwind theme 映射 | 把 CSS 变量映射为 `bg-background`、`text-foreground`、`border-border` 等 utility |
-| UI primitives       | Button、Card、Dialog、Input、Select 等可复用外观和交互                           |
-| 业务组件            | 搜索、文章、收藏、追踪和管理页面的组合与少量场景色                               |
+| 层                  | 职责                                                                           |
+| ------------------- | ------------------------------------------------------------------------------ |
+| 语义 token          | light/dark 的背景、文字、交互、边框、状态色，以及阅读桌面与导航轨表面          |
+| Tailwind theme 映射 | 把 CSS 变量映射为 `bg-background`、`bg-canvas`、`bg-rail` 等 utility           |
+| UI primitives       | Button、Badge、Card、Dialog、DropdownMenu、Input、Select、Popover 等           |
+| 应用框架            | `AppFrame`（导航轨 + 主区域 + 手机底栏）与 `WorkspaceShell`（列表栏 + 阅读台） |
+| 业务组件            | 检索、收藏、周报、征稿、设置和管理页面的组合与少量场景色               |
 
 优先复用语义 token 和 UI primitive。业务层统一使用 info、success、warning 和 destructive 语义 token 表达状态；结构文字、背景、边框和 hover 同样使用语义 token，不在页面中硬编码色阶。
 
@@ -29,226 +32,288 @@
 | 正文与普通 UI                | `'JetBrainsLxgwNerdMono', monospace` |
 | `code`、`kbd`、`samp`、`pre` | `'JetBrainsLxgwNerdMono', monospace` |
 
-`JetBrainsLxgwNerdMono` 是正文、控件、标题、文章内容、设置/管理 Dialog 和代码区域的统一首选字体。`app/assets/JetBrainsLxgwNerdMono-Regular/result.css` 通过 344 个本地 WOFF2 分片提供 400 字重，`app/assets/JetBrainsLxgwNerdMono-Bold/result.css` 通过 324 个本地 WOFF2 分片提供 700 字重；两套生成样式都保留生成器、版权与 OFL/MIT 授权元数据，按 Unicode range 引用字体并为每个 `@font-face` 使用 `font-display: swap`。根布局不加载 Google 托管字体，字体链只在本地字体缺失时回退系统 `monospace`；正文与代码继续启用 `'liga' 1`，700 字重使用本地 Bold 字形。
+`JetBrainsLxgwNerdMono` 是正文、控件、标题、文章内容、设置/管理页面和代码区域的统一首选字体。`app/assets/JetBrainsLxgwNerdMono-Regular/result.css` 通过 344 个本地 WOFF2 分片提供 400 字重，`app/assets/JetBrainsLxgwNerdMono-Bold/result.css` 通过 324 个本地 WOFF2 分片提供 700 字重；两套生成样式都保留生成器、版权与 OFL/MIT 授权元数据，按 Unicode range 引用字体并为每个 `@font-face` 使用 `font-display: swap`。根布局不加载 Google 托管字体，字体链只在本地字体缺失时回退系统 `monospace`；正文与代码继续启用 `'liga' 1`。
 
-字号和字重主要使用 Tailwind utility，由具体组件按信息层级选择；项目没有一套独立的固定 display typography scale。旧版外部品牌标题尺寸、负字距和三字重规则不属于项目约束。
+字体只有 400 与 700 两个字重：`font-medium` 实际渲染为 400，`font-semibold` 渲染为 700。需要强调时直接使用 `font-bold`。这套等宽中文字体的粗细差异较小，因此检索命中词同时使用粗体与 `bg-info` 浅蓝底，不能只靠字重表达。
+
+可读性通过字号、行高与版面调整，不替换字体：
+
+| 层级           | 约定                                                      |
+| -------------- | --------------------------------------------------------- |
+| 列表标题       | 14.5 px、行高 1.5、粗体，最多三行                         |
+| 列表元信息     | 12 px；作者单行截断，期刊粗体后接卷期与日期               |
+| 列表摘要       | 12.5 px、行高 20 px，最多两行                             |
+| 阅读台标题     | 22 px（`2xl` 起 26 px）、行高 1.35、粗体，字距 -0.01em    |
+| 阅读台摘要正文 | 15 px、行高 1.95，`text-pretty`，阅读栏最宽 42 rem        |
+| 页面标题       | 列表栏 18 px 粗体；设置分区 20 px 粗体；登录页 28 px 粗体 |
 
 ## 主题
 
 ThemeProvider 使用 `attribute="class"`、`defaultTheme="system"` 和 `enableSystem`：
 
 - 首次渲染跟随操作系统主题。
-- 认证后的全局用户菜单提供 system/light/dark 单选项。
+- 账号菜单提供 system/light/dark 单选项，设置中心「常规」提供同样的选择。
 - light/dark 是持久化的显式选择；system 会继续响应系统偏好变化。
 - 依赖当前主题的控件必须在客户端快照可用后渲染，避免 hydration 差异。
-- 根 viewport 声明 `colorScheme: light dark`，并分别给出浅灰与炭黑 theme color。
+- 根 viewport 声明 `colorScheme: light dark`，theme color 为白色与炭黑。
 
 ### 核心颜色
 
-配色采用 [Radix Colors](https://www.radix-ui.com/colors/docs/palette-composition/composing-a-palette) 的 Gray 与 Indigo 色阶。中性灰用于结构，Indigo 用于主操作与焦点；保持现有字体、布局、尺寸、间距与控件类型。浅色成功/警告文字使用较深的第 12 阶，深色使用第 11 阶；主按钮各状态保留白色文字的可读对比度。
+黑白中性灰构成结构，蓝色 `#2563eb` 是唯一强调色（主按钮、选中、焦点与当前导航指示）。所有结构 token 保持 R=G=B 的纯中性灰；成功、警告、错误和信息只用于状态语义，并始终配合文字、图标或 ARIA。
 
-| Token                                        | Light                 | Dark                  | 用途                     |
-| -------------------------------------------- | --------------------- | --------------------- | ------------------------ |
-| `--background`                               | `#f9f9f9`             | `#111111`             | 页面背景                 |
-| `--foreground`                               | `#202020`             | `#eeeeee`             | 主文字                   |
-| `--card` / `--popover`                       | `#ffffff`             | `#191919`             | 内容与浮层表面           |
-| `--primary`                                  | `#3e63dd`             | `#3e63dd`             | 主按钮、选中开关与复选框 |
-| `--primary-foreground`                       | `#ffffff`             | `#ffffff`             | 主操作文字               |
-| `--primary-hover`                            | `#3358d4`             | `#3358d4`             | 主操作悬停               |
-| `--primary-pressed`                          | `#3a5bc7`             | `#435db1`             | 主操作按下               |
-| `--primary-text`                             | `#3a5bc7`             | `#9eb1ff`             | 链接文字                 |
-| `--secondary`                                | `#f0f0f0`             | `#2a2a2a`             | 次级表面与导航选中态     |
-| `--muted`                                    | `#f9f9f9`             | `#191919`             | 弱表面                   |
-| `--muted-foreground`                         | `#646464`             | `#b4b4b4`             | 辅助文字                 |
-| `--accent`                                   | `#f0f0f0`             | `#222222`             | 悬停与键盘高亮           |
-| `--accent-pressed`                           | `#e8e8e8`             | `#313131`             | 中性控件按下态           |
-| `--border`                                   | `#d9d9d9`             | `#3a3a3a`             | 分隔线                   |
-| `--input` / `--input-hover`                  | `#cecece` / `#bbbbbb` | `#484848` / `#606060` | 控件轮廓与悬停           |
-| `--ring` / `--sidebar-ring`                  | `#8da4ef`             | `#9eb1ff`             | 键盘焦点                 |
-| `--info` / `--info-foreground`               | `#edf2fe` / `#3a5bc7` | `#182449` / `#9eb1ff` | 信息与搜索高亮           |
-| `--success` / `--success-foreground`         | `#e6f6eb` / `#193b2d` | `#132d21` / `#3dd68c` | 成功                     |
-| `--warning` / `--warning-foreground`         | `#fff7c2` / `#4f3422` | `#302008` / `#ffca16` | 收藏与警告               |
-| `--destructive` / `--destructive-foreground` | `#ce2c31` / `#ffffff` | `#ff9592` / `#3b1219` | 错误文字与危险按钮       |
-| `--destructive-hover`                        | `#641723`             | `#ffd1d9`             | 危险按钮与徽标悬停       |
+| Token                                        | Light                             | Dark                              | 用途                                 |
+| -------------------------------------------- | --------------------------------- | --------------------------------- | ------------------------------------ |
+| `--background`                               | `#ffffff`                         | `#111111`                         | 列表栏、浮层底与页面背景             |
+| `--foreground`                               | `#1a1a1a`                         | `#ececec`                         | 主文字                               |
+| `--card` / `--popover`                       | `#ffffff`                         | `#171717` / `#1a1a1a`             | 卡片与浮层表面                       |
+| `--canvas`                                   | `#f4f4f4`                         | `#0a0a0a`                         | 阅读台占位、少量次级底色             |
+| `--paper`                                    | `#ffffff`                         | `#151515`                         | 保留 token，当前页面不再使用纸张表面 |
+| `--primary`                                  | `#2563eb`                         | `#2563eb`                         | 主按钮、选中开关与复选框             |
+| `--primary-hover` / `--primary-pressed`      | `#1d4ed8` / `#1e40af`             | `#1d4ed8` / `#1e40af`             | 主操作悬停与按下                     |
+| `--primary-text`                             | `#1d4ed8`                         | `#8ab4ff`                         | 链接与强调文字                       |
+| `--secondary`                                | `#f3f3f3`                         | `#222222`                         | 次级表面                             |
+| `--muted`                                    | `#f6f6f6`                         | `#171717`                         | 弱表面、搜索框底、工具条             |
+| `--muted-foreground`                         | `#666666`                         | `#a3a3a3`                         | 辅助文字                             |
+| `--accent` / `--accent-pressed`              | `#f2f2f2` / `#e8e8e8`             | `#1f1f1f` / `#2b2b2b`             | 悬停与按下                           |
+| `--border`                                   | `#e8e8e8`                         | `#262626`                         | 分隔线                               |
+| `--input` / `--input-hover`                  | `#dadada` / `#c2c2c2`             | `#363636` / `#4a4a4a`             | 控件轮廓与悬停                       |
+| `--ring` / `--sidebar-ring`                  | `#3b82f6`                         | `#60a5fa`                         | 键盘焦点                             |
+| `--rail` / `--rail-hover` / `--rail-border`  | `#f7f7f7` / `#ebebeb` / `#e8e8e8` | `#0b0b0b` / `#1c1c1c` / `#1f1f1f` | 导航轨表面、悬停与分隔               |
+| `--rail-foreground` / `--rail-active`        | `#737373` / `#111111`             | `#8a8a8a` / `#f5f5f5`             | 导航轨图标与当前项                   |
+| `--info` / `--info-foreground`               | `#eef3fe` / `#1d4ed8`             | `#12224a` / `#a5c2ff`             | 选中行、已应用筛选与命中高亮         |
+| `--success` / `--success-foreground`         | `#ecfdf3` / `#166534`             | `#0f2a1c` / `#6ee7a0`             | 开放获取、征稿中、成功               |
+| `--warning` / `--warning-foreground`         | `#fffbeb` / `#92400e`             | `#2b1d06` / `#fbbf24`             | 收藏与警告                           |
+| `--destructive` / `--destructive-foreground` | `#dc2626` / `#ffffff`             | `#f87171` / `#450a0a`             | 错误文字与危险按钮                   |
+| `--destructive-hover`                        | `#b91c1c`                         | `#fca5a5`                         | 危险按钮悬停                         |
 
-`success-border` 和 `warning-border` 提供配套状态边框。侧栏保留独立语义 token；导航选中态使用中性 secondary，侧栏 primary 只用于选中复选框等主交互。滚动条保持中性灰。状态始终配合文字、图标或 ARIA 语义；Logo、账号头像和 CNKI 二维码属于内容资产，保持原色与必要的白底。
-
-独立根错误页不能依赖失效的根样式，使用对应深色值作为内联后备；不会改变其原有布局或后备字体。
+`success-border` 和 `warning-border` 提供配套状态边框。`--sidebar-*` 保留为中性 token，供历史组件与契约测试使用。滚动条保持中性灰。`public/litradar-logo.png` 是品牌图像，出现在导航轨顶部、登录页与 favicon；账号头像使用用户名首字母。CNKI 二维码属于内容资产，保持原色与必要的白底。独立根错误页不能依赖失效的根样式，使用对应深色值作为内联后备。
 
 ## 圆角
 
-基础值为 `--radius: 6px`。Tailwind 映射：
+基础值为 `--radius: 8px`。Tailwind 映射：
 
-| Utility token | 计算值 |
-| ------------- | -----: |
-| `radius-sm`   |   2 px |
-| `radius-md`   |   4 px |
-| `radius-lg`   |   6 px |
-| `radius-xl`   |  10 px |
-| `radius-2xl`  |  14 px |
-| `radius-3xl`  |  18 px |
-| `radius-4xl`  |  22 px |
+| Utility token | 计算值 | 常见用途                       |
+| ------------- | -----: | ------------------------------ |
+| `radius-sm`   |   4 px | 复选框、紧凑标记               |
+| `radius-md`   |   6 px | 紧凑按钮尺寸、内嵌行           |
+| `radius-lg`   |   8 px | 按钮、输入框、选择器、菜单项   |
+| `radius-xl`   |  12 px | 卡片、浮层、搜索框、导航轨项   |
+| `radius-2xl`  |  16 px | 居中对话框、征稿纸张、设置面板 |
+| `radius-3xl`  |  20 px | —                              |
+| `radius-4xl`  |  24 px | —                              |
 
-Badge 和滚动条使用全圆角；个别紧凑控件使用 Tailwind 自带的 `rounded-xs`。圆角由组件语义决定，不存在“主按钮禁止 pill”之类的额外品牌规则。
+筛选胶囊、收藏夹标签、Badge、头像和滚动条使用全圆角。
 
 ## 阴影与边框
 
-项目保留两个历史命名的 shadow token：
+| Token                  | 定义                          | 用途                                       |
+| ---------------------- | ----------------------------- | ------------------------------------------ |
+| `--shadow-vercel-ring` | `0 0 0 1px var(--input)` 等值 | outline Button、Input、Select 等控件轮廓   |
+| `--shadow-vercel-card` | 边框外环 + 1 px/2 px 轻阴影   | Card、skip link                            |
+| `--shadow-paper`       | 细外环 + 8 px/24 px 柔和投影  | 仅用于少量选择卡片的悬停，页面表面不再使用 |
+| `--shadow-overlay`     | 细外环 + 12 px/32 px 投影     | Dialog、Popover、Select、DropdownMenu      |
 
-| Token                  | Light                               | Dark                                |
-| ---------------------- | ----------------------------------- | ----------------------------------- |
-| `--shadow-vercel-ring` | `#cecece 0 0 0 1px`                 | `#484848 0 0 0 1px`                 |
-| `--shadow-vercel-card` | `#d9d9d9` 外环 + 2 px / 4 px 轻阴影 | `#3a3a3a` 外环 + 2 px / 4 px 轻阴影 |
-
-`shadow-vercel-ring` 用于 outline Button、Badge、Input、Select 等紧凑控件；`shadow-vercel-card` 用于 Card 和可见的 skip link。
-
-阴影环没有取代所有 CSS border。当前实现明确混用两者：
-
-- Dialog 使用 `border` 与 `shadow-lg`。
-- 页面分隔、列表项、虚线空状态和表单反馈使用 `border-*`。
-- Card 默认使用 shadow stack，业务 hover 可能替换为局部 shadow。
-- 控件的 invalid 状态可以增加 destructive border。
-
-真实边框仍是系统组成部分；根据布局分隔、焦点、状态和 elevation 选择边框或阴影。
+表面层级：所有页面主体都是白色 `background`，列表栏、阅读台、设置与管理内容处在同一平面，只用 1 px 细线分隔；阴影与浮起只留给浮层（菜单、对话框、弹出面板）。这一处理参照 Apple HIG 的分栏视图与 Linear 的界面改版：两栏平铺、导航调暗、强调色克制。
 
 ## 基础组件
 
 ### Button
 
-外观变体：
+外观变体：`default`、`destructive`、`outline`、`secondary`、`ghost`、`link`；尺寸：`xs`、`sm`、`default`、`lg` 与 `icon-xs`、`icon-sm`、`icon`、`icon-lg`。
 
-- `default`：primary 实底
-- `destructive`：破坏性实底
-- `outline`：背景 + shadow ring
-- `secondary`：次级表面
-- `ghost`：仅 hover 表面
-- `link`：文本链接
-
-尺寸：
-
-- `xs`、`sm`、`default`、`lg`
-- `icon-xs`、`icon-sm`、`icon`、`icon-lg`
-
-Button 的 default、outline、secondary、ghost variants 提供配套 hover/active 底色，link 使用 primary-text。Button 统一使用 `rounded-md`、禁用态 opacity、有限属性 transition 和 3 px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、筛选移除、收藏等高频或需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
+Button 统一使用 `rounded-lg`、禁用态 opacity、有限属性 transition 和 3 px `focus-visible` ring。非 link 按钮在按下时使用 `scale(0.96)`，只在未请求 reduced motion 且未禁用时启用；`static` 可关闭按压缩放，用于搜索清空、关闭按钮等需要保持锚点稳定的操作。图标按钮必须提供可访问名称。
 
 ### Badge
 
-Badge 默认全圆角，支持 `default`、`secondary`、`destructive`、`outline`、`ghost` 和 `link`。默认 variant 使用 `info`/`info-foreground` token；状态语义可以选择其他 variant。
+Badge 默认全圆角、11 px 文字，支持 `default`（info）、`secondary`、`success`、`warning`、`destructive`、`outline`、`ghost` 和 `link`。开放获取用 `success`，预发表用 `outline`，追踪文件夹用 `default`。
 
 ### Card
 
-Card 使用 card token、`rounded-lg`、`shadow-vercel-card`、24 px 外层纵向 padding 和统一 header/content/footer 结构。业务组件可以调整间距、hover 背景或 shadow，但应复用 Card 的语义结构。聚合设置中心是明确例外：内部使用 `SettingsSection` 的无阴影分隔行，避免在大 Dialog 中继续嵌套整组 Card elevation。
+Card 使用 card token、`rounded-xl`、`shadow-vercel-card` 与统一 header/content/footer 结构。管理面板由 `AdminPanel` 把顶层 Card 压平为透明分区，避免在白色内容面板里再嵌一层卡片。
 
-### 表单和浮层
+### 表单与浮层
 
-| 组件              | 实现约定                                                                    |
-| ----------------- | --------------------------------------------------------------------------- |
-| Input             | 36 px 高、shadow ring、移动端 16 px 字号、`md` 后 14 px、3 px focus ring    |
-| Checkbox / Switch | Radix 状态属性驱动颜色、焦点和禁用态                                        |
-| Select / Popover  | Radix portal，使用 popover token 与 shadow；内容限制在 viewport 内          |
-| Dialog            | `bg-black/50` overlay；默认居中，移动工作区侧栏使用 `placement="left"` 抽屉 |
-| ScrollArea        | Radix viewport 与 10 px 自定义 scrollbar                                    |
-| Skeleton          | muted pulse，用于加载占位                                                   |
-| StateMessage      | 紧凑的空态/错误/成功/警告表面；色彩始终配合图标、标题与 live-region role    |
-| Label             | 与原生表单关联；禁用状态随 peer/group 传播                                  |
+| 组件              | 实现约定                                                                         |
+| ----------------- | -------------------------------------------------------------------------------- |
+| Input             | 36 px 高、`rounded-lg`、shadow ring、移动端 16 px 字号、3 px focus ring          |
+| Checkbox / Switch | Radix 状态属性驱动颜色、焦点和禁用态；Switch 为 20 × 36 px                       |
+| Select / Popover  | Radix portal、`rounded-xl` 与 `shadow-overlay`；内容限制在 viewport 内           |
+| DropdownMenu      | `components/ui/dropdown-menu.tsx` 统一菜单表面、菜单项与危险项样式               |
+| ScrollArea        | Radix viewport 与自定义 scrollbar                                                |
+| Skeleton          | muted pulse；文章列表使用与条目同构的 `ArticleListSkeleton`                      |
+| StateMessage      | 无边框的空态/错误/成功/警告：圆角图标块 + 粗体标题 + 说明，配合 live-region role |
 
-Input/Textarea 使用 card 表面，悬停时改变底色与轮廓；Select、Checkbox、Switch 与分类项提供对应状态底色。现有筛选和数据库多选行在悬停或内部键盘焦点时显示背景，不改变点击范围、几何尺寸或事件处理。
+Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制，避免 `content-visibility: auto` 的绘制裁剪截断边缘。
 
-Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制，避免领域和期刊列表的 `content-visibility: auto` 绘制裁剪截断边缘；控件外部尺寸与选中逻辑保持不变。
+### Dialog 形态
 
-复杂表单应组合现有 primitive，不要重新实现键盘导航、焦点管理或 portal 行为。
+`DialogContent` 通过 `placement` 选择形态，overlay 为不透明度 40% 的黑色遮罩（不使用 backdrop 模糊，避免全屏层滚动时逐帧重绘）：
 
-### 聚合设置与管理中心
+| placement  | 用途                          | 形态                                               |
+| ---------- | ----------------------------- | -------------------------------------------------- |
+| `center`   | 确认、新建/重命名、公告、表单 | 居中、`rounded-2xl`、`md:max-w-xl`，右上角关闭按钮 |
+| `right`    | 窄屏文章详情、征稿详情        | 手机全屏；`md` 起右侧 46 rem 宽面板，顶部关闭按钮  |
+| `bottom`   | 手机端筛选面板与期刊选择      | 底部抽屉、顶部拖拽条、底部「完成」按钮             |
+| `takeover` | 设置中心、管理面板            | 全屏页面式外壳，顶部标题栏与分类标签               |
+| `left`     | 保留的左侧抽屉                | 左侧 320 px                                        |
 
-所有已认证页面都从当前 pathname 的 `settings` query 打开全局设置 Dialog。稳定分类为 `general`、`tracking`、`notifications`、`data-sources`、`account` 和 `tokens`；分类切换使用 replace 语义，只改这一参数，关闭时移除参数，未知值直接规范化移除。`/settings` 与 `/tracking` 不是页面路由。
+居中对话框的关闭按钮距上、右边缘各 16 px，命中区为移动端 44 × 44 px、桌面 40 × 40 px，与普通按钮同圆角。侧滑面板与全屏外壳的关闭按钮位于顶部栏，移动端同样为 44 px。
 
-桌面 `md` 及以上使用受 `90dvh` 和 1 rem viewport margin 限制的大型双栏 Dialog：左侧约 240 px 分类栏，右侧为固定标题和独立滚动内容。移动端使用 `h-dvh`、`w-screen` 的全屏单列布局，分类导航置于顶部并允许水平滚动，底部操作栏避开 safe area。
+## 应用框架
 
-该响应式外壳由无业务状态的 `SectionedDialogFrame` 统一提供，包括分类导航、当前分类标题、内容滚动区、关闭控件和焦点归还；设置中心只持有 URL、追踪草稿与确认状态，不重复实现布局。
+`AppFrame` 由受保护布局挂载，包含三部分：
 
-管理员通过当前受保护 pathname 的 `admin` query 打开同一外壳。稳定分类为 `overview`、`users`、`invite-codes`、`runtime-settings`、`scheduled-tasks` 和 `announcements`；六个既有管理卡片在一次 Dialog 会话内保持挂载，非当前 panel 使用原生 `hidden` 隐藏，因此切换分类不会丢失局部表单状态。`settings` 与 `admin` 互斥，打开任一中心会移除另一个参数；合法 `settings` 与手工冲突的 `admin` 同时出现时由设置中心优先并清理管理参数。未知分类和普通用户手工添加的 `admin` 会被规范化移除，不会挂载管理数据组件。
+- **导航轨**（`md` 及以上）：64 px 宽的浅灰竖条（深色模式近黑），右侧 1 px 分隔线，比内容更暗淡以突出正文。顶部是品牌图像链接，中部是「检索 / 收藏 / 周报 / 征稿」四个图标加短标签的链接，当前项使用 `rail-hover` 底色、深色图标和左侧 3 px 蓝色指示条；底部依次为设置中心入口、管理面板入口（仅管理员）和账号头像。链接保留 `aria-label`、`title` 与 `aria-current="page"`。
+- **主区域**：`<main id="main-content">` 占满剩余宽度，内部由各工作区自行分栏与滚动。
+- **手机底栏**（`md` 以下）：固定在底部的五栏标签：四个工作区加「我的」（账号菜单），高 56 px 并加上 safe area 内边距。
 
-文献追踪与通知分类在两者之间切换时复用同一个 tracking view model 和草稿；保存/取消栏 sticky 在内容滚动区底部。关闭设置、浏览器返回或离开追踪分类组时，如果草稿未保存，必须先显示独立 `ConfirmDialog`。文章详情中的数据源入口必须先关闭文章 Dialog，再打开 `settings=data-sources`，不允许叠加两个 modal。Dialog 关闭后把焦点归还给仍在文档中的发起控件。
+导航直接读取 URL 的 `view` 参数，不依赖 nuqs 适配器。内部链接统一设置 `prefetch={false}`，避免静态服务未映射的 segment 预取请求。
 
-### 页面导航与账号菜单
+账号菜单是一个组件，有两种触发位置：导航轨（`placement="rail"`，菜单向右弹出）和手机底栏（`placement="tab"`，菜单向上弹出）。菜单只承载账号级动作：打开设置中心、外观主题三选一、管理员的管理面板入口，以及 destructive 语义的退出登录。设置与管理链接保留当前 pathname 和 query，并用一次性标记让外壳关闭后把焦点归还给发起控件。服务端会话撤销未确认的提示通过 portal 固定在右下角（手机端在底栏之上）。
 
-首页侧栏顶部使用紧凑的品牌栏，品牌栏下方是一行四列导航：“检索”“收藏”“周报”“征稿”。品牌、导航和数据库或收藏夹管理控件固定，下方筛选项、收藏夹和期刊列表独立滚动；征稿分组继续各自滚动。侧栏统一保留一层 16 px 外层留白，数据库标签与选择器同行，列表不叠加外框；四个工作区的独立滚动列表共用 `sidebar-scroll-gutter`，左侧及上下各预留 4 px、右侧预留 12 px，并使用 `scrollbar-gutter: stable`，保护外侧边框和 3 px 焦点环，期刊和收藏夹条目使用 8 px 水平内边距及一致的选中状态。短标签始终可见，链接同时保留 `aria-label`、`title` 和 `aria-current="page"` 当前页语义；桌面侧栏与移动端筛选 Dialog 复用同一导航组件。
+## 阅读工作区
 
-所有受保护页面右下角使用带圆形头像、用户名和展开提示的账号 pill。账号菜单只承载四类账号级动作：打开聚合设置中心、在“外观主题”右侧通过 Monitor / Sun / Moon 三个图标直接选择 system/light/dark 主题、向管理员显示管理面板入口，以及使用 destructive 语义退出登录。主题选项使用同一行的 radio items、明确的可访问名称与选中态，不再展开子菜单。页面级导航不应在账号菜单中重复；设置与管理链接必须保留当前 pathname 和现有 query，并用一次性标记让 Dialog 关闭后把焦点归还给账号按钮。菜单复用 Radix Dropdown Menu 的键盘导航、Escape、点击外部关闭与焦点归还行为，并避开设备 safe area。退出登录的红色属于明确的危险操作语义，不受普通 UI chrome 的中性色约束。
+`WorkspaceShell` 是检索、收藏、周报、征稿共用的两栏布局：
 
-### 文章列表层级
+- **列表栏**：`xl` 以下占满宽度。顶部 `workspace-list-header` 固定，放置页面标题、搜索框和筛选胶囊；下方 `#results-scroll-container` 独立滚动，底部留白避开手机底栏（`workspace-bottom-space`）。征稿目录使用 `isListSelfScrolling`，由分组列表各自滚动。
+- **阅读台**（`xl` 即 1280 px 及以上）停靠在列表右侧，按 `emphasis` 分配宽度：
+  - `emphasis="list"`（检索、收藏、周报）：列表与详情栏按 3 : 2 弹性分配（1440 宽时约 826 px 与 550 px）。列表是页面主体；详情栏为白底加左侧分隔线，内容直接排版、不加卡片，详情较短时下方自然留白而不显空洞。`shouldAutoSelectFirst` 让详情栏在进入页面、切换筛选或数据库后自动显示列表第一篇。
+  - `emphasis="reader"`（征稿）：期刊目录固定 460 px（`2xl` 起 520 px），右侧白色阅读台用细线分段呈现期刊抬头与各条征稿。
+  - 列表为空或加载失败时显示雷达图形、引导文字与快捷键提示（`ReaderPlaceholder`）。
+- **窄屏**：没有阅读台。文章条目点击后以右侧面板打开详情；征稿通过 `reader` 属性提供详情内容，点击期刊后以同样的面板打开。
 
-文章卡片使用紧凑的单一表面：标题是第一视觉层，期刊/卷期/日期使用较小的中性元数据行，开放获取与预发表 badge 作为次级信号，摘要限制三行。整张卡片是详情入口，不再保留“查看详情”按钮及底栏；点击标题、摘要或空白区域均可打开，也支持 Enter、空格与可见焦点环，关闭后焦点回到卡片。文章卡片和详情标题使用 `text-wrap` 自然换行，优先利用可用行宽，摘要使用 `text-pretty`；窄屏 badge 排在标题下方，避免挤压长标题。拖选正文与卡片外的独立多选框不会打开详情。hover 只改变背景，沿用共享阴影环。
+阅读台中的文献详情是「工具栏 + 正文」：顶部 56 px 吸顶工具栏承载收藏、复制信息、查看摘要页、获取全文（无边框 ghost 按钮），按钮始终排成一行，完整文字放不下时改用短文字（如「复制」「摘要页」「全文」「登录」）；从相关文章进入时，工具栏上方多一条 40 px 的「返回上一篇 · 原文标题」导航条，下方正文居中、最宽 42 rem；列表选中项使用中性的 `accent` 底色，不再使用蓝色竖条或蓝色标题。
 
-搜索框、清空、搜索、帮助、筛选移除及收藏操作在移动端保留至少 44 px 的实际命中高度，桌面为 40 px；图标按钮同时保证相应宽度，不使用会重叠的伪元素扩展命中区。搜索清空即时反馈并归还输入焦点，不改变已提交查询。搜索历史与收藏选择器使用 10 px 外圆角、8 px padding 和 2 px 内圆角，沿用共享 shadow stack。
+文章条目通过 `ArticleReaderContext` 与阅读台协作：停靠模式下点击条目只记录选中项，条目自身把 `ArticleDetailPane` 通过 portal 渲染进阅读台；条目卸载（如切换筛选或数据库）时释放选中状态，随后由自动选中显示新列表的第一篇。非停靠模式与测试环境下，条目回退为对话框行为。
 
-收藏按钮为两个文字状态预留相同宽度，避免切换时推动相邻操作；星形使用 `currentColor`，仅选中状态填充，配合文字和收藏夹的 `aria-pressed` 表达状态。收藏文字使用浅色 `amber-700` / 深色 `amber-400`，不对标签或图标重播 presence 入场。
+键盘快捷键在可编辑控件、菜单和对话框之外生效：`/` 聚焦当前页面的搜索框（带 `data-workspace-search`），`J` / `K` 在带 `data-reader-item` 的条目之间移动焦点并在停靠模式下切换阅读内容，`Enter` 或空格打开当前条目。
 
-文章详情底部操作在 `md` 以下显示为 44 × 44 px 的纯图标圆角按钮，间距为 4 px；复制、摘要页、全文、数据源登录、收藏和移除收藏均保留可访问名称。加载与错误使用明确的状态图标。桌面端恢复文字与 8 px 间距；收藏按钮在移动端固定宽度、桌面端为文字状态预留宽度。
+### 文章条目与详情
 
-搜索的 loading、error、empty 和 results 只在列表级状态边界交叉淡入淡出；错误与空态使用 `StateMessage`。列表边界之外只保留一个即时更新的 live region，分页加载复用该语义状态，避免退出中的视觉表面成为陈旧播报。长文章结果不逐卡应用 presence、layout 或 stagger，继续保留 `content-visibility-card` 与 Intersection Observer sentinel。
+`ArticleDialogCard` 是整行可点击的条目：标题、作者（单行截断，`title` 提供完整列表）、期刊（粗体）· 卷期 · 日期与开放获取/预发表 badge、两行摘要。整行是详情入口，支持 Enter、空格与可见焦点环；拖选正文与条目外的复选框不会打开详情。悬停使用半透明 `accent`，选中行使用中性 `accent` 底色。
+
+详情（`ArticleDetailPane` 与窄屏的 `ArticleDetailDialogContent` 共用同一内容）依次为：期刊与卷期日期描述行、标题与复制标题按钮、状态 badge、作者、撤稿提醒、操作组（收藏、复制信息、摘要页、全文、数据源登录、业务附加操作）、摘要、「文献信息」与「相关文章」。
+
+「文献信息」只列描述行没有的字段：页码、ISSN、期刊评级（UTD / ABS / FMS / FMS 中国）、学科领域、DOI、PMID；期刊字段来自 `GET /api/journals/{id}`，缺失的行直接省略。DOI 与 PMID 只以可选中的纯文本显示，不生成外部直链；访问入口只使用服务端路由。
+
+「相关文章」在区块进入视口附近时才请求 `GET /api/articles/{id}/related?limit=6`。后端把来源标题切成检索词（英文去掉功能词；中文 2–3 字整段作短语，更长的连续汉字切成不含虚词与泛用学术词的二字词），再按每个词在标题与摘要中的出现篇数（结果按库缓存）挑出最少见、合计规模不超过预算的词做召回，中文短语按 4 倍计入；英文中较常见的词不参与召回但参与排序；全是常见词时，要求最少见的词与任一其他词同时出现。候选按 FTS5 `bm25` 排序（标题权重 10、摘要 1、作者 1，以标题之间的相似为主），并去掉与原文或彼此同名的条目。每条只显示标题与期刊 · 日期；点击后在同一详情中打开并提供「返回上一篇」。
+
+在收藏夹中，收藏按钮是一键切换（`aria-pressed`，「已收藏」/「收藏」），取消后条目保留在当前列表中，便于立即撤销。操作在 `md` 以下显示为 44 × 44 px 的纯图标按钮，桌面恢复文字。收藏按钮为两种文字状态预留相同宽度，选中色使用 warning 语义 token。
+
+搜索的 loading、error、empty 和 results 只在列表级状态边界交叉淡入淡出；错误与空态使用 `StateMessage`。列表边界之外只保留一个即时更新的 live region。长结果不逐条应用 presence、layout 或 stagger，继续保留 `content-visibility-card` 与 Intersection Observer sentinel；不显示精确结果总数。
+
+### 筛选胶囊
+
+检索的数据库、发表时间、期刊评级、期刊和领域以一排胶囊放在搜索框下方（`SearchFilters`）。共享实现位于 `filter-pill.tsx`：
+
+- `DatabasePill`：深色胶囊，内部是 Radix Select，用于检索、周报和征稿的数据库选择。
+- `FilterFacet`：普通胶囊，`md` 起以浮层打开面板，`md` 以下以底部抽屉打开并提供「完成」按钮。面板标题区带说明与单项「清除」。
+- `FilterOptionRow`：复选行，整行可点，右侧显示数量。
+
+未应用时胶囊显示维度名；已应用时显示摘要并使用 `bg-info` 粗体样式。可访问名称为「维度：摘要」，多选时读作「已选 N 项 / 本 / 个」。有已应用筛选时末尾出现「清除筛选」（title「清空全部筛选」），只清除领域、期刊、评级与时间，保留检索词和数据库。发表时间面板提供「不限 / 近 1、3、5 年 / 自定义范围」单选组（`role="radio"`），自定义时显示起止年月选择。期刊选项只在面板打开后构建，大量选中项用 Set 判断成员关系。
+
+胶囊行在 `md` 起自动换行，在手机端横向滚动并以 `fade-x-edges` 在右侧渐隐。可滚动的面板列表左侧至少留 3 px 给焦点环，右侧至少留 8 px 避开滚动条。
+
+### 收藏、周报与征稿
+
+- **收藏**：列表栏顶部依次为标题与「新建」、可横向滚动的收藏夹标签（当前项为深色胶囊，追踪文件夹带雷达图标）、当前收藏夹工具条（名称、篇数、追踪 badge、导出浮层、管理菜单：设为追踪 / 重命名 / 删除）。条目上方是吸顶的选择栏，勾选后才展开目标收藏夹选择与「移动所选」「删除所选」。重命名使用独立的小对话框。
+- **周报**：标题与统计窗口、数据库数与新文章数，下方为周报内检索框、数据库胶囊和期刊选择胶囊（单选，选中后自动收起）；列表顶部有当前期刊的说明条。
+- **征稿**：列表栏是期刊目录（正在征稿 / 当前未征稿 / 暂未适配分组，含刊名与 ISSN 搜索），阅读台显示期刊抬头纸张与征稿公告纸张。公告的投稿范围与要求位于独立的键盘可滚动区域（最高 288 px），时间安排在宽屏时位于右侧栏。目录加载失败时，错误与重试只出现在列表栏，阅读台显示中性占位。
+
+## 设置中心与管理面板
+
+所有已认证页面都从当前 pathname 的 `settings` query 打开设置中心，从 `admin` query 打开管理面板；分类 id、replace 语义、互斥规则、未知值规范化与草稿确认保持不变。两者共用无业务状态的 `SectionedDialogFrame`：
+
+- 使用 `takeover` 形态覆盖整个视口，左右两栏。
+- 左侧分类栏（`md` 起，宽 256–288 px，白底）：顶部「← 返回」关闭按钮，中心名称与副标题，竖排分类列表（当前项为 `accent` 底、粗体），底部可放 `sidebarFooter`（设置中心显示当前账号）。
+- 手机端同一侧栏变为顶部区域：中心名称、右上角关闭按钮、横向滚动的分类胶囊（当前项为深色胶囊），右侧渐隐提示可滚动。分类导航只有一个 `nav` 元素，当前项 `aria-current="page"`。
+- 右侧内容区为白底，`contentWidth` 控制版心：设置中心 `narrow`（48 rem），管理面板 `wide`（64 rem）。顶部是当前分类的大标题与说明，下方为带 `role="region"` 的内容。
+- 管理面板中各卡片自带的标题区改为仅读屏可见，避免与分类标题重复。
+- 打开时焦点落在外壳容器本身；关闭后焦点归还给发起控件。
+
+### 分组列表语言
+
+设置与管理内容统一使用 `components/settings/settings-section.tsx` 中的分组列表原语：
+
+| 原语                | 作用                                                                                          |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| `SettingsSection`   | 一个分区：小标题与说明在上（`SettingsSectionHeader`），相邻分区间距 40 px                     |
+| `SettingsGroup`     | 平铺分组：上下 1 px 细线，子项之间细分隔，左右外扩以让行内文字与分区标题对齐                  |
+| `SettingsRow`       | 行：左侧标签（传 `htmlFor` 时为 `<label>`）与说明，右侧控件；`isStacked` 时控件在下方占满宽度 |
+| `SettingsGroupBody` | 面板中的自由内容区                                                                            |
+| `StatusPill`        | 带圆点的状态标签，tone 为 neutral / success / warning / danger / info                         |
+
+面板底部的操作区使用 `bg-muted/40` 底条，主操作在右，破坏性操作为左侧红色 ghost 按钮。各分区的具体形态：
+
+- **常规**：主题以界面缩略图卡片呈现（跟随系统为斜切的明暗双拼），下方是单选圆点与说明。
+- **文献追踪**：顶部四步流程条；追踪文件夹为「当前文件夹 + 新建」两行；关键词与研究方向使用芯片与输入合一的标签输入框；推送数据库为逐行复选并带范围进度条；主/备 AI 配置是带深色图标块标题的行式表单，密钥状态用 `StatusPill`。
+- **通知与推送**：推送方式为两张单选卡片（`role="radiogroup"`），PushPlus 参数为行式表单；手动推送以大号数字展示本周可推送数量。
+- **数据源**：CNKI 连接卡，头部图标与状态胶囊，三栏元数据，扫码区带步骤说明。
+- **账号与安全**：头像资料头、行式改密表单、票券样式的邀请码（虚线框、使用进度条、状态胶囊）。
+- **访问令牌**：令牌列表行（图标、名称、过期时间、剩余天数胶囊、撤销按钮），新建对话框的有效期为分段控件。
+- **管理面板**：概览以大号总量数字、细线网格统计和数据库占比条呈现；用户、邀请码为单一响应式列表（不再区分表格与手机卡片）；运行配置按分组行式呈现，生效时机与来源为小标签；Provider 顺序为带序号的有序列表；计划任务以细线状态行、任务行与最近运行时间线呈现；公告为带优先级色条的分隔行。
+
+列表上方的统计与操作使用 `AdminListHeader`。文献追踪、通知与运行配置的保存栏 sticky 在内容滚动区底部（白底），滚动容器设置 `scroll-padding-bottom`，避免聚焦控件被保存栏遮住。
+
+## 检索栏与高级检索
+
+检索页的 `SearchBar` 开启 `hasSyntaxAssist`。高级检索以可视化构建器为主，手写语法为辅：
+
+- **高级检索构建器**（`SearchBuilderDialog`，搜索框右侧「高级」按钮或下拉面板入口打开）：每行一个条件，依次是连接方式（且 / 或 / 不含三段式切换，首行显示「检索」）、字段（全部字段 / 标题 / 摘要 / 作者 / 期刊 / DOI）、匹配方式（包含全部词 / 精确短语 / 包含任一词 / 前缀匹配）、检索词与删除按钮，可添加至 8 行。不再单独显示预览，条件行本身即为直观描述；「不含」条件前没有包含条件时给出提示并禁用检索。
+- **生成规则**（`lib/search-builder.tsx`）：用户只填写普通文字；每个词加引号并转义内部引号，字段用 `列 : ( … )` 作用于整组，前缀写作 `"词" *`，多个条件逐级加括号组合，因此生成的检索式总是合法的 FTS5 表达式。
+- **已应用条件**：用构建器检索后，搜索框下方显示条件标签（连接词 + 「字段 · 匹配 · 词」），点标签回到构建器继续编辑，点 × 移除该条件并立即重新检索；会让「不含」条件变成首个条件的移除被禁用。构建器状态按检索式记录在 `sessionStorage`，只有当前检索式与记录一致时才恢复。
+- **下拉面板**：点击或输入时弹出，包括「改写当前输入」（精确短语、AND、OR、按标题/作者/期刊、前缀、排除，均生成合法表达式）、「最近搜索」（沿用 `litradar:v1:search_history` 与「清空」，输入时按子串过滤）和「使用高级检索构建器」入口。三组共用方向键导航，`Enter` 执行，`Esc` 关闭；底部提示本次以普通关键词还是高级语法执行。
+
+`lib/search-syntax.tsx` 识别 FTS5 语法，`getArticles` 在请求未显式指定时据此选择 `search_mode=advanced` 或 `simple`；语法错误返回的 `Invalid search expression` 在结果区显示为中文说明。手写语法的速查表折叠在构建器底部。周报检索只支持普通模式，因此周报页的检索栏只保留搜索历史，不显示「高级」按钮。
+
+## 登录与错误页
+
+登录页在 `lg` 起左右分屏：左侧浅灰品牌面板（与导航轨同色）包含品牌、主张文案、三项核心能力（全文检索、持续追踪、征稿日程）和大幅雷达线条图；右侧是表单。窄屏只显示表单与紧凑品牌。表单逻辑、可访问名称与模式切换不变。404 与路由错误页以居中的雷达图形配合标题、说明和操作按钮，背景为 `canvas`。
 
 ## 布局与响应式
 
-项目使用组件内的 Tailwind mobile-first breakpoint，没有单独维护一套自定义 breakpoint 表。
+| 断点         | 变化                                                             |
+| ------------ | ---------------------------------------------------------------- |
+| 默认（手机） | 底栏导航；列表全宽；详情为全屏面板；筛选为底部抽屉；胶囊高 44 px |
+| `md` 768     | 导航轨出现、底栏隐藏；筛选改为浮层；胶囊高 32 px；详情为右侧面板 |
+| `xl` 1280    | 阅读台停靠：文献页列表与详情 3 : 2，征稿目录 460 px              |
+| `2xl` 1536   | 征稿目录 520 px；详情栏加大内边距与标题字号                      |
 
-当前主要模式：
-
-- 首页使用动态 viewport 高度；桌面在 `md` 显示 `w-80` 固定侧栏，移动端改为左侧 Dialog 筛选器。
-- 首页搜索头 sticky，搜索与结果正文限制为 `max-w-4xl`。
-- 有已应用筛选时，结果区先显示“共找到 N 条结果”，再显示相对 `results-scroll-container` 悬浮的筛选摘要；总数随文章列表滚动离开，筛选摘要保持可操作。
-- 聚合设置中心与管理面板按上面的共享响应式 Dialog 规则布局；收藏使用 `max-w-5xl`，周报使用 `max-w-6xl`。
-- 页面 padding 常从 `p-4` / 紧凑间距过渡到 `sm:p-6`。
-- 收藏页在 `md` 从单列变成 `280px + 1fr`。
-- 表单按钮和选择器通常在移动端占满宽度，`sm` 后恢复行内布局。
-- Dialog 默认适应窄屏；首页筛选器在移动端覆盖左侧并在 `md` 隐藏。移动侧栏不显示关闭按钮或为其留白，点击遮罩或按 Escape 关闭；固定高度的 flex 容器通过 `min-h-0` 约束内部滚动区，长内容可以上下滑动。
-- 设置中心与管理面板的移动分类导航占满头部可用宽度，只有标题行预留关闭按钮空间。
-- 全视口 shell 使用 `h-dvh` / `min-h-dvh`，避免移动浏览器工具栏遮挡。
-- 浮动账号 pill 使用设备安全区定位；页面或内部滚动区预留对应底部净空。
-- 长列表使用独立滚动容器、Intersection Observer 和命名的 `content-visibility-card`、`content-visibility-row`、`content-visibility-table-row`、`content-visibility-filter-row` 类。每个类都编码匹配内容类型的 intrinsic block size，业务组件不重复任意 CSS 声明。
-- 固定头部与滚动正文使用 `flex`、`min-h-0` 和 `flex-1` 分配高度，不使用依赖头部像素值的 `calc(100% - …)`。
-
-页面宽度、列数、导航和 breakpoint 以现有 utility 与组件行为为准，不从旧设计稿推导新规则。
+- 全视口 shell 使用 `h-dvh`，固定头部与滚动正文使用 `flex`、`min-h-0` 和 `flex-1` 分配高度。
+- 搜索框、清空、搜索、帮助、筛选胶囊、数据库胶囊、收藏夹标签与收藏操作在移动端保留至少 44 px 的实际命中高度，桌面多为 32–40 px；不使用会重叠的伪元素扩展命中区。
+- 手机底栏与内容底部留白都计入 `--safe-area-inset-bottom`。
+- 长列表使用独立滚动容器、Intersection Observer 和 `content-visibility-*` 类。
 
 ## 无障碍与动效
 
 根级保障：
 
-- `<html lang="zh-CN">`。
-- 页面首个可聚焦元素是“跳到主要内容”链接；各页面主区域使用 `id="main-content"`。
-- `.skip-link` 平时视觉隐藏，`focus-visible` 时显示。
-- `prefers-reduced-motion: reduce` 将 animation/transition 缩短到 0.01 ms，并关闭平滑滚动。
+- `<html lang="zh-CN">`；首个可聚焦元素是「跳到主要内容」链接，主区域 `id="main-content"`。
+- `prefers-reduced-motion: reduce` 将 animation/transition 缩短到 0.01 ms，并关闭平滑滚动；雷达扫描动画因此静止。
 - 滚动条同时提供 Firefox 与 WebKit 样式。
 
 组件保障：
 
-- 交互控件使用可见的 ring；不要用 `outline: none` 后不补焦点样式。
-- 图标按钮使用 `aria-label` 或 `sr-only` 文本。
+- 交互控件使用可见的 ring；图标按钮使用 `aria-label` 或 `sr-only` 文本。
 - 加载、成功与错误反馈使用 `role="status"` / `role="alert"`。
-- 展开、选中和当前状态使用 Radix data attributes 或对应 ARIA 属性。
-- Dialog、DropdownMenu、Select、Popover、Checkbox 和 Switch 复用 Radix 的键盘与焦点行为。
-- 居中 Dialog（包括移动端全屏设置与管理面板）的关闭按钮统一位于右上角，距上、右边缘各 16 px；复用 ghost Button，静止时仅显示 16 px 细线叉号，不显示边框、阴影或底色，悬停时出现淡色圆角背景，键盘焦点保留可见提示。实际命中区为移动端 44 × 44 px、桌面 40 × 40 px。标题行预留按钮空间，设置中心与后台不单独覆盖位置或样式；左侧抽屉不显示该按钮。通用标题默认均衡换行，文章详情标题覆盖为自然换行，描述使用 `text-pretty`。
-- Dialog 动画和普通 transition 受全局 reduced-motion 规则约束；关闭动画期间仍由 Radix 保持 portal 与焦点归还生命周期。
-
-颜色不能作为唯一状态信号；状态文本、图标或 ARIA 语义应与颜色同时存在。
+- 展开、选中和当前状态使用 Radix data attributes 或对应 ARIA 属性（`aria-current`、`aria-pressed`、`aria-checked`、`aria-expanded`）。
+- Dialog、DropdownMenu、Select、Popover、Checkbox 和 Switch 复用 Radix 的键盘与焦点行为；侧滑面板关闭后焦点回到打开它的条目或期刊。
+- 颜色不能作为唯一状态信号。
 
 ### 动效约定
 
-根 `Providers` 在主题 Provider 内提供 `MotionProvider`。它使用 Motion 的 `LazyMotion`、`domAnimation` 和 strict 模式；业务组件只能从 `components/ui/motion.tsx` 使用本地 presence、variant、transition 和 `m` 元素封装，不直接导入 Motion 包。页面级 presence 默认 `initial={false}`，避免首次服务端渲染与 hydration 产生无意义入场。
-
-动效保持快速、克制且可预测：
+根 `Providers` 在主题 Provider 内提供 `MotionProvider`（`LazyMotion`、`domAnimation`、strict 模式）；业务组件只从 `components/ui/motion.tsx` 使用本地封装。
 
 | 场景             | 进入                                | 退出                                |
 | ---------------- | ----------------------------------- | ----------------------------------- |
 | Overlay          | opacity，160 ms                     | opacity，120 ms                     |
 | 居中 Dialog      | opacity + 6 px + scale 0.98，200 ms | opacity + 4 px + scale 0.98，140 ms |
-| 左侧移动抽屉     | `translateX(-100%)`，220 ms         | `translateX(-100%)`，160 ms         |
+| 右侧 / 底部面板  | 平移 100%，220 ms                   | 平移 100%，160 ms                   |
+| 全屏外壳         | opacity，200 ms                     | opacity，140 ms                     |
 | Popover / Select | opacity + 4 px + scale 0.98，140 ms | opacity + 4 px + scale 0.98，110 ms |
 | 普通状态切换     | 120 至 180 ms，进入曲线             | 120 至 140 ms，退出曲线             |
 
-进入使用 `cubic-bezier(0.16, 1, 0.3, 1)`，退出使用 `cubic-bezier(0.4, 0, 1, 1)`。只对会被 React 条件卸载且需要退出生命周期的状态使用 JS presence；Radix portal 使用共享 CSS animation，继续由 Radix 管理键盘、Escape、点击外部与焦点。长结果列表不逐项错峰，key 必须来自稳定业务标识，控件只声明需要过渡的属性，不使用 `transition-all`。
-
-系统不使用 bounce、spring、parallax、drag、layout animation 或 `domMax`。`prefers-reduced-motion: reduce` 和测试 override 会移除空间位移、延迟与 JS presence 时长；CSS animation/transition 保持 0.01 ms，以便状态完成而不制造可感知运动。
+进入使用 `cubic-bezier(0.16, 1, 0.3, 1)`，退出使用 `cubic-bezier(0.4, 0, 1, 1)`。长结果列表不逐项错峰，控件只声明需要过渡的属性，不使用 `transition-all`。系统不使用 bounce、spring、parallax、drag 或 layout animation。
 
 ## 修改准则
 
@@ -256,9 +321,9 @@ Checkbox 的轮廓使用 inset shadow，键盘焦点环也在控件内部绘制�
 
 1. 先选择语义 token，再决定是否需要场景色。
 2. 先扩展现有 primitive variant，再创建新的基础组件。
-3. 同时验证 system/light/dark；允许的局部 Tailwind 状态色必须有必要的 dark 对应。
+3. 同时验证 system/light/dark。
 4. 保留键盘焦点、可访问名称、状态角色和 reduced-motion 行为。
-5. 使用现有页面宽度、动态 viewport、`w-80` 侧栏与 mobile-first 组合，不引入未经实现验证的布局规则或固定像素高度差。
+5. 新工作区复用 `AppFrame` + `WorkspaceShell`；列表条目需要参与阅读台时使用 `ArticleReaderContext` 与 `data-reader-item`。
 6. 运行前端包说明中的格式、类型、测试和构建检查。
 
 token 或基础组件变化时更新本页；单个页面的业务规则应留在代码和对应功能文档中。

@@ -203,9 +203,10 @@ async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void>
     .getByRole('button', { name: /^查看文章详情：/ })
     .first()
     .click();
-  let articleDialog = page.getByRole('dialog', { name: ARTICLE_TITLE });
-  await expect(articleDialog).toBeVisible();
-  await articleDialog.getByRole('button', { name: '收藏', exact: true }).click();
+  const readingDesk = page.getByRole('region', { name: '阅读台' });
+  let articleReader = readingDesk.getByRole('article', { name: `文献详情：${ARTICLE_TITLE}` });
+  await expect(articleReader).toBeVisible();
+  await articleReader.getByRole('button', { name: '收藏', exact: true }).click();
   const favoriteResponse = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
@@ -213,7 +214,7 @@ async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void>
   );
   await page.getByRole('button', { name: 'Reading', exact: true }).click();
   expect((await favoriteResponse).ok()).toBe(true);
-  await expect(articleDialog.getByRole('button', { name: '已收藏', exact: true })).toBeVisible();
+  await expect(articleReader.getByRole('button', { name: '已收藏', exact: true })).toBeVisible();
 
   await page.reload();
   await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
@@ -221,8 +222,8 @@ async function searchAndFavoriteJourney({ page }: { page: Page }): Promise<void>
     .getByRole('button', { name: /^查看文章详情：/ })
     .first()
     .click();
-  articleDialog = page.getByRole('dialog', { name: ARTICLE_TITLE });
-  await expect(articleDialog.getByRole('button', { name: '已收藏', exact: true })).toBeVisible();
+  articleReader = readingDesk.getByRole('article', { name: `文献详情：${ARTICLE_TITLE}` });
+  await expect(articleReader.getByRole('button', { name: '已收藏', exact: true })).toBeVisible();
 }
 
 /**
@@ -243,9 +244,7 @@ async function administratorMutationJourney(
   await page.goto('/?admin=overview');
   await expect(page).toHaveURL(/\/?\?admin=overview$/);
   const adminDialog = page.getByRole('dialog', { name: '管理面板' });
-  const adminCategories = adminDialog
-    .locator('aside')
-    .getByRole('navigation', { name: '管理分类' });
+  const adminCategories = adminDialog.getByRole('navigation', { name: '管理分类' });
   await expect(adminDialog).toBeVisible();
   await expect(adminDialog.getByText('full-stack.sqlite', { exact: true })).toBeVisible();
   const usersCategory = adminCategories.getByRole('button', { name: '用户', exact: true });
@@ -395,13 +394,17 @@ async function journalRatingJourney({ page }: { page: Page }): Promise<void> {
   await page.goto('/');
   await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
   await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
-  await page.getByRole('checkbox', { name: 'ABS 4*', exact: true }).check();
+  const ratingPill = page.getByRole('button', { name: /^期刊评级/ });
+  const ratingPanel = page.locator('[data-slot="popover-content"]');
+  await ratingPill.click();
+  await ratingPanel.getByRole('checkbox', { name: 'ABS 4*', exact: true }).check();
   await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
-  await page.getByRole('checkbox', { name: 'ABS 4', exact: true }).check();
+  await ratingPanel.getByRole('checkbox', { name: 'ABS 4', exact: true }).check();
   await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
-  await page.getByRole('checkbox', { name: 'FMS A', exact: true }).check();
+  await ratingPanel.getByRole('checkbox', { name: 'FMS A', exact: true }).check();
   await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
   await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await page.keyboard.press('Escape');
   const response = await page.request.get(
     '/api/articles?db=full-stack.sqlite&abs_rating=4&abs_rating=4%2A&fms_rating=A',
   );
@@ -410,11 +413,13 @@ async function journalRatingJourney({ page }: { page: Page }): Promise<void> {
   expect(payload.page.total).toBe(1);
   expect(payload.items[0].title).toBe(ARTICLE_TITLE);
   await page.reload();
-  await expect(page.getByRole('checkbox', { name: 'FMS A', exact: true })).toBeChecked();
-  await expect(page.getByRole('button', { name: '移除评级 ABS 4*', exact: true })).toBeVisible();
-  await page.getByRole('checkbox', { name: 'ABS 4*', exact: true }).uncheck();
+  await expect(ratingPill).toHaveAccessibleName('期刊评级：已选 3 项');
+  await ratingPill.click();
+  await expect(ratingPanel.getByRole('checkbox', { name: 'FMS A', exact: true })).toBeChecked();
+  await ratingPanel.getByRole('checkbox', { name: 'ABS 4*', exact: true }).uncheck();
+  await page.keyboard.press('Escape');
   await expect(page.getByText('未找到文章。', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '重置筛选', exact: true }).click();
+  await page.getByRole('button', { name: '清除筛选', exact: true }).click();
   await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
   await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
   expect(new URL(page.url()).searchParams.has('abs_rating')).toBe(false);

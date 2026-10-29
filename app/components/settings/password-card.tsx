@@ -6,14 +6,15 @@ import { useMutation } from '@tanstack/react-query';
 import { changePassword } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import {
+  SettingsGroup,
+  SettingsRow,
   SettingsSection,
-  SettingsSectionContent,
+  SettingsSectionDescription,
   SettingsSectionHeader,
   SettingsSectionTitle,
 } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   FADE_UP_VARIANTS,
   MOTION_DURATION_SECONDS,
@@ -46,18 +47,19 @@ export function PasswordCard() {
     <SettingsSection>
       <SettingsSectionHeader>
         <SettingsSectionTitle>修改密码</SettingsSectionTitle>
+        <SettingsSectionDescription>
+          修改成功后需要重新登录，新密码至少 12 位。
+        </SettingsSectionDescription>
       </SettingsSectionHeader>
-      <SettingsSectionContent>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setPwdMsg(null);
-            changePwdMut.mutate();
-          }}
-          className="space-y-4 max-w-sm"
-        >
-          <div className="space-y-2">
-            <Label htmlFor="old-password">原密码</Label>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setPwdMsg(null);
+          changePwdMut.mutate();
+        }}
+      >
+        <SettingsGroup>
+          <SettingsRow title="原密码" htmlFor="old-password">
             <Input
               id="old-password"
               name="old_password"
@@ -66,11 +68,11 @@ export function PasswordCard() {
               value={oldPwd}
               onChange={(e) => setOldPwd(e.target.value)}
               aria-invalid={changePwdMut.isError}
+              className="sm:w-64"
               required
             />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="new-password">新密码</Label>
+          </SettingsRow>
+          <SettingsRow title="新密码" htmlFor="new-password">
             <Input
               id="new-password"
               name="new_password"
@@ -81,31 +83,36 @@ export function PasswordCard() {
               placeholder="至少12位"
               minLength={12}
               aria-invalid={changePwdMut.isError}
+              className="sm:w-64"
               required
             />
+          </SettingsRow>
+          <div className="flex flex-col gap-3 bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <div className="min-h-5 text-sm">
+              <MotionPresence>
+                {pwdMsg && (
+                  <MotionParagraph
+                    key="password-feedback"
+                    data-motion-feedback="password"
+                    role={changePwdMut.isError ? 'alert' : 'status'}
+                    className={changePwdMut.isError ? 'text-destructive' : 'text-muted-foreground'}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    variants={FADE_UP_VARIANTS}
+                    transition={feedbackTransition}
+                  >
+                    {pwdMsg}
+                  </MotionParagraph>
+                )}
+              </MotionPresence>
+            </div>
+            <Button type="submit" size="sm" disabled={changePwdMut.isPending}>
+              修改密码
+            </Button>
           </div>
-          <MotionPresence>
-            {pwdMsg && (
-              <MotionParagraph
-                key="password-feedback"
-                data-motion-feedback="password"
-                role={changePwdMut.isError ? 'alert' : 'status'}
-                className="text-sm text-muted-foreground"
-                initial="hidden"
-                animate="visible"
-                exit="exit"
-                variants={FADE_UP_VARIANTS}
-                transition={feedbackTransition}
-              >
-                {pwdMsg}
-              </MotionParagraph>
-            )}
-          </MotionPresence>
-          <Button type="submit" disabled={changePwdMut.isPending}>
-            修改密码
-          </Button>
-        </form>
-      </SettingsSectionContent>
+        </SettingsGroup>
+      </form>
     </SettingsSection>
   );
 }

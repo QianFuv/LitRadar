@@ -59,21 +59,23 @@ export function StateMessage({
       aria-atomic={isLive ? 'true' : undefined}
       aria-live={isLive ? (resolvedRole === 'alert' ? 'assertive' : 'polite') : undefined}
       className={cn(
-        'flex min-h-40 flex-col items-center justify-center rounded-lg bg-muted/30 px-5 py-8 text-center shadow-vercel-ring',
+        'flex min-h-48 flex-col items-center justify-center px-6 py-10 text-center',
         className,
       )}
     >
       <span
         className={cn(
-          'mb-3 inline-flex size-9 items-center justify-center rounded-full bg-background shadow-vercel-ring',
+          'mb-4 inline-flex size-12 items-center justify-center rounded-2xl bg-muted',
           STATE_MESSAGE_TONE_CLASSES[tone],
         )}
       >
-        <Icon className="size-4.5" aria-hidden="true" />
+        <Icon className="size-5" aria-hidden="true" />
       </span>
-      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+      <h2 className="text-[15px] font-bold text-foreground">{title}</h2>
       {description && (
-        <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">{description}</p>
+        <p className="mt-1.5 max-w-sm text-[13px] leading-relaxed text-muted-foreground">
+          {description}
+        </p>
       )}
       {action && <div className="mt-4">{action}</div>}
     </section>

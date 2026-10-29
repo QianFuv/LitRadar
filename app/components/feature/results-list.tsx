@@ -4,8 +4,8 @@ import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/r
 import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
 import { getArticles, type ArticlePage } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
+import { ArticleListSkeleton } from '@/components/feature/article-list-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
   FADE_UP_VARIANTS,
   MOTION_DURATION_SECONDS,
@@ -24,10 +24,7 @@ import { createFtsHighlightPattern, parseFtsHighlightTerms } from '@/lib/fts-hig
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import { appendJournalRatingParams, useJournalRatingFilters } from '@/lib/journal-ratings';
-
-type ResultsListProps = {
-  filterSummary?: ReactNode;
-};
+import { describeSearchError } from '@/lib/search-syntax';
 
 type HighlightedArticleCardProps = Omit<
   ComponentProps<typeof ArticleDialogCard>,
@@ -89,24 +86,15 @@ function validateArticlePageCursor(
 /**
  * Fetch and render the filtered, progressively visible article result list.
  *
- * @param props - Optional filter content rendered above the result cards.
- * @returns Article cards, filter content, and pagination sentinels.
+ * @returns Article rows and pagination sentinels.
  */
-export function ResultsList({ filterSummary }: ResultsListProps) {
+export function ResultsList() {
   const state = useResultsViewState();
   const { stateTransition, favoriteStateError, retryFavoriteChecks } = state;
   const { resultContent, resultAnnouncement, resultAnnouncementRole, resultState } =
     getResultsPresentation(state);
   return (
-    <div className="space-y-4">
-      {filterSummary && (
-        <div
-          data-testid="filter-summary-slot"
-          className="sticky -top-3 z-20 bg-background py-2 empty:hidden sm:-top-5 lg:-top-6"
-        >
-          {filterSummary}
-        </div>
-      )}
+    <div>
       <p
         key={`${resultState}-${resultAnnouncement}`}
         data-testid="results-state-announcement"
@@ -121,7 +109,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
       {favoriteStateError && (
         <div
           role="alert"
-          className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 p-3 text-sm"
+          className="m-4 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-[13px] sm:mx-5"
         >
           <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
           <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
@@ -133,7 +121,7 @@ export function ResultsList({ filterSummary }: ResultsListProps) {
         <MotionDiv
           key={resultState}
           data-testid={`results-state-${resultState}`}
-          className="space-y-4"
+          className="min-w-0"
           variants={{
             ...FADE_UP_VARIANTS,
             visible: { ...FADE_UP_VARIANTS.visible, pointerEvents: 'inherit' },
@@ -230,7 +218,10 @@ function useResultsViewState() {
       try {
         return text.split(highlightPattern).map((part, index) =>
           index % 2 === 1 ? (
-            <span key={index} className="text-info-foreground font-bold bg-info rounded-xs">
+            <span
+              key={index}
+              className="rounded-[3px] bg-info px-0.5 font-bold text-info-foreground"
+            >
               {part}
             </span>
           ) : (
@@ -294,34 +285,19 @@ function getResultsPresentation(state: ResultsViewState) {
   if (isError) {
     resultState = 'error';
     resultAnnouncementRole = 'alert';
-    resultAnnouncement = `无法加载文章：${error instanceof Error ? error.message : '未知错误'}`;
+    resultAnnouncement = `无法加载文章：${error instanceof Error ? describeSearchError(error.message) : '未知错误'}`;
     resultContent = (
       <StateMessage
         isLive={false}
         tone="danger"
         title="无法加载文章"
-        description={error instanceof Error ? error.message : '未知错误'}
+        description={error instanceof Error ? describeSearchError(error.message) : '未知错误'}
       />
     );
   } else if (isLoading) {
     resultState = 'loading';
     resultAnnouncement = '正在加载搜索结果';
-    resultContent = (
-      <div className="space-y-4" aria-hidden="true">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Card key={i}>
-            <CardHeader>
-              <Skeleton className="h-6 w-3/4" />
-              <Skeleton className="h-4 w-1/4 mt-2" />
-            </CardHeader>
-            <CardContent>
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-full mt-2" />
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    );
+    resultContent = <ArticleListSkeleton />;
   } else if (visibleArticles.length === 0) {
     resultState = 'empty';
     resultAnnouncement = '未找到文章。请尝试调整搜索词、数据库或筛选条件。';
@@ -366,14 +342,15 @@ function getResultsPresentation(state: ResultsViewState) {
             <MotionDiv
               key="next-page-loading"
               aria-hidden="true"
-              className="flex justify-center py-4"
+              className="space-y-2 px-4 py-4 sm:px-5"
               variants={FADE_UP_VARIANTS}
               initial="hidden"
               animate="visible"
               exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
               transition={stateTransition}
             >
-              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-4 w-11/12" />
+              <Skeleton className="h-3 w-1/2" />
             </MotionDiv>
           )}
         </MotionPresence>

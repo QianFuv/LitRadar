@@ -12,17 +12,20 @@ import {
 import type {
   AnnouncementInfo,
   ArticleAccessResponse,
+  Article,
   ArticleId,
   ArticlePage,
   ArticleSearchMode,
   JournalId,
   JournalOption,
   JournalRatingOptions,
+  JournalRecord,
   ValueCount,
   WeeklyArticlePage,
   WeeklyUpdatesSummaryResponse,
   YearSummary,
 } from '@/lib/api/types';
+import { isAdvancedSearchQuery } from '@/lib/search-syntax';
 
 const DEFAULT_ARTICLE_SEARCH_MODE: ArticleSearchMode = 'simple';
 
@@ -92,6 +95,52 @@ export function getJournalOptions(dbName = readSelectedDatabase()): Promise<Jour
 }
 
 /**
+ * Fetch one journal record with its ISSNs, subject area, and ratings.
+ *
+ * @param journalId - Journal identifier.
+ * @param dbName - Database name.
+ * @param signal - Cancellation signal for an obsolete request.
+ * @returns Journal record.
+ */
+export function getJournal(
+  journalId: string,
+  dbName: string,
+  signal?: AbortSignal,
+): Promise<JournalRecord> {
+  return requestJson<JournalRecord>(
+    buildDatabaseUrl(`/api/journals/${encodeURIComponent(journalId)}`, dbName),
+    { signal },
+    '获取期刊信息失败',
+  );
+}
+
+/**
+ * Fetch articles ranked by FTS5 similarity to one article's title.
+ *
+ * @param articleId - Source article identifier.
+ * @param dbName - Database name.
+ * @param limit - Maximum number of related articles (1–30).
+ * @param signal - Cancellation signal for an obsolete request.
+ * @returns Related articles, most similar first.
+ */
+export function getRelatedArticles(
+  articleId: ArticleId,
+  dbName: string,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<Article[]> {
+  return requestJson<Article[]>(
+    buildDatabaseUrl(
+      `/api/articles/${encodeURIComponent(String(articleId))}/related`,
+      dbName,
+      new URLSearchParams({ limit: String(limit) }),
+    ),
+    { signal },
+    '获取相关文章失败',
+  );
+}
+
+/**
  * Fetch a cursor-paginated article page.
  *
  * @param params - Article query parameters.
@@ -114,7 +163,10 @@ export function getArticles(
     nextParams.delete('offset');
   }
   if (nextParams.has('q') && !nextParams.has('search_mode')) {
-    nextParams.set('search_mode', DEFAULT_ARTICLE_SEARCH_MODE);
+    nextParams.set(
+      'search_mode',
+      isAdvancedSearchQuery(nextParams.get('q') ?? '') ? 'advanced' : DEFAULT_ARTICLE_SEARCH_MODE,
+    );
   }
   nextParams.set('include_total', includeTotal ? '1' : '0');
   return requestJson<ArticlePage>(

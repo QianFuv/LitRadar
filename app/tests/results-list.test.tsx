@@ -132,11 +132,6 @@ async function abortsObsoleteArticleRequests(): Promise<void> {
     view.unmount();
   }
 }
-const FILTER_SUMMARY = (
-  <section aria-label="已应用筛选" data-testid="filter-summary">
-    已应用
-  </section>
-);
 
 /** Change only one rating system to exercise the real query-key transition. */
 function RatingChangeControl() {
@@ -242,12 +237,11 @@ function createArticlePage(
  */
 function renderResultsList(
   searchParams = '?q=Fixture&area=Medicine&journal_id=101&month_range=2024-01..2024-02',
-  filterSummary: React.ReactNode = FILTER_SUMMARY,
 ) {
   resultsListMocks.searchParams = searchParams;
   return renderWithQuery(
     <NuqsTestingAdapter searchParams={searchParams} hasMemory>
-      <ResultsList filterSummary={filterSummary} />
+      <ResultsList />
     </NuqsTestingAdapter>,
   );
 }
@@ -273,21 +267,12 @@ async function rendersTypedResultContent(): Promise<void> {
   expect(screen.getByRole('status', { name: '正在加载搜索结果' })).toBeInTheDocument();
   expect(screen.getByTestId('results-state-loading')).toBeInTheDocument();
   expect(within(screen.getByTestId('results-state-loading')).queryByRole('status')).toBeNull();
-  expect(screen.getByRole('region', { name: '已应用筛选' })).toBeInTheDocument();
   resolveRequest?.();
 
   const article = await screen.findByTestId('result-9001');
   expect(screen.getByTestId('results-state-results')).toBeInTheDocument();
   expect(screen.getByRole('status', { name: '已加载 1 篇文章' })).toBeInTheDocument();
   expect(screen.getAllByRole('status')).toHaveLength(1);
-  const filterSummary = screen.getByRole('region', { name: '已应用筛选' });
-  expect(filterSummary.parentElement).toHaveClass(
-    'sticky',
-    '-top-3',
-    'z-20',
-    'bg-background',
-    'empty:hidden',
-  );
   expect(within(article).getAllByText('Fixture')).toHaveLength(2);
   for (const highlight of within(article).getAllByText('Fixture')) {
     expect(highlight).toHaveClass('font-bold');
@@ -322,7 +307,6 @@ async function recoversFirstPageFailureToEmptyState(): Promise<void> {
   expect(await screen.findByRole('alert')).toHaveTextContent('article index unavailable');
   expect(screen.getAllByRole('alert')).toHaveLength(1);
   expect(await screen.findByTestId('results-state-error')).toHaveTextContent('无法加载文章');
-  expect(screen.getByRole('region', { name: '已应用筛选' })).toBeInTheDocument();
   shouldFail = false;
   await queryClient.invalidateQueries({ queryKey: ['articles'] });
 
@@ -334,14 +318,14 @@ async function recoversFirstPageFailureToEmptyState(): Promise<void> {
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 }
 
-/** Verify an absent filter summary does not render an empty sticky wrapper. */
+/** Verify the result list renders no legacy sticky filter-summary wrapper. */
 async function omitsEmptyFilterSummarySlot(): Promise<void> {
   server.use(
     http.get('http://localhost/api/articles', () =>
       HttpResponse.json(createArticlePage([SHARED_ARTICLE], { total: 1 })),
     ),
   );
-  renderResultsList('', null);
+  renderResultsList('');
 
   expect(await screen.findByTestId('result-9001')).toBeInTheDocument();
   expect(screen.queryByTestId('filter-summary-slot')).not.toBeInTheDocument();

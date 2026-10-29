@@ -4,7 +4,7 @@
  * Theme preference controls for the general settings category.
  */
 
-import { Check, Monitor, Moon, Sun, type LucideIcon } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useSyncExternalStore } from 'react';
 
@@ -21,20 +21,14 @@ type ThemePreference = 'system' | 'light' | 'dark';
 
 type ThemeOption = {
   description: string;
-  icon: LucideIcon;
   label: string;
   value: ThemePreference;
 };
 
 const THEME_OPTIONS: readonly ThemeOption[] = [
-  {
-    description: '跟随设备的浅色或深色外观',
-    icon: Monitor,
-    label: '跟随系统',
-    value: 'system',
-  },
-  { description: '始终使用浅色界面', icon: Sun, label: '浅色', value: 'light' },
-  { description: '始终使用深色界面', icon: Moon, label: '深色', value: 'dark' },
+  { description: '跟随设备的浅色或深色外观', label: '跟随系统', value: 'system' },
+  { description: '始终使用浅色界面', label: '浅色', value: 'light' },
+  { description: '始终使用深色界面', label: '深色', value: 'dark' },
 ];
 
 /**
@@ -88,9 +82,8 @@ export function GeneralSettingsSection() {
       </SettingsSectionHeader>
       <SettingsSectionContent>
         {isMounted ? (
-          <div className="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="外观主题">
+          <div className="grid grid-cols-3 gap-3 sm:gap-4" role="radiogroup" aria-label="外观主题">
             {THEME_OPTIONS.map((option) => {
-              const Icon = option.icon;
               const isSelected = selectedTheme === option.value;
               return (
                 <button
@@ -98,19 +91,36 @@ export function GeneralSettingsSection() {
                   type="button"
                   role="radio"
                   aria-checked={isSelected}
-                  className={cn(
-                    'relative flex min-h-24 flex-col items-start gap-2 rounded-md border p-4 text-left motion-control transition-colors outline-none hover:bg-accent active:bg-accent-pressed focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                    isSelected && 'bg-secondary text-accent-foreground hover:bg-accent-pressed',
-                  )}
+                  aria-label={option.label}
+                  className="group flex flex-col gap-2.5 rounded-xl text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   onClick={() => setTheme(option.value)}
                 >
-                  <div className="flex w-full items-center justify-between gap-3">
-                    <Icon className="size-5" />
-                    {isSelected && <Check className="size-4" aria-hidden="true" />}
-                  </div>
-                  <span className="text-sm font-medium">{option.label}</span>
-                  <span className="text-xs leading-relaxed text-muted-foreground">
-                    {option.description}
+                  <span
+                    className={cn(
+                      'motion-control block aspect-[4/3] w-full overflow-hidden rounded-xl border bg-background transition-[box-shadow,border-color]',
+                      isSelected
+                        ? 'border-primary shadow-[0_0_0_2px_var(--primary)]'
+                        : 'group-hover:border-foreground/30',
+                    )}
+                  >
+                    <ThemeThumbnail preference={option.value} />
+                  </span>
+                  <span className="flex items-start gap-2 px-0.5">
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
+                        isSelected && 'border-primary bg-primary text-primary-foreground',
+                      )}
+                    >
+                      {isSelected && <Check className="size-2.5" strokeWidth={3} />}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm leading-5 font-bold">{option.label}</span>
+                      <span className="hidden text-xs leading-relaxed text-muted-foreground sm:block">
+                        {option.description}
+                      </span>
+                    </span>
                   </span>
                 </button>
               );
@@ -123,5 +133,79 @@ export function GeneralSettingsSection() {
         )}
       </SettingsSectionContent>
     </SettingsSection>
+  );
+}
+
+/**
+ * Render a miniature mock of the workspace in one fixed color scheme.
+ *
+ * @param props - Scheme to depict.
+ * @returns Static workspace miniature.
+ */
+function ThemeMiniature({ scheme }: { scheme: 'light' | 'dark' }) {
+  const isDark = scheme === 'dark';
+  return (
+    <span className={cn('flex h-full w-full', isDark ? 'bg-[#0a0a0a]' : 'bg-[#f4f4f4]')}>
+      <span className="flex w-[16%] flex-col items-center gap-1.5 bg-[#111] pt-2.5">
+        <i className="size-2 rounded-[3px] bg-[#2563eb]" />
+        <i className="h-1 w-3 rounded-full bg-white/40" />
+        <i className="h-1 w-3 rounded-full bg-white/20" />
+        <i className="h-1 w-3 rounded-full bg-white/20" />
+      </span>
+      <span className="flex flex-1 gap-1.5 p-2">
+        <span className="flex flex-[3] flex-col gap-1.5">
+          {[0, 1, 2].map((index) => (
+            <span
+              key={index}
+              className={cn(
+                'flex flex-col gap-1 rounded-[3px] p-1.5',
+                isDark ? 'bg-[#1a1a1a]' : 'bg-white',
+              )}
+            >
+              <i
+                className={cn(
+                  'h-1 rounded-full',
+                  index === 0 ? 'w-4/5 bg-[#2563eb]' : 'w-3/4',
+                  index !== 0 && (isDark ? 'bg-white/50' : 'bg-black/45'),
+                )}
+              />
+              <i className={cn('h-1 w-1/2 rounded-full', isDark ? 'bg-white/20' : 'bg-black/15')} />
+            </span>
+          ))}
+        </span>
+        <span
+          className={cn(
+            'flex flex-[2] flex-col gap-1 rounded-[3px] p-1.5',
+            isDark ? 'bg-[#1a1a1a]' : 'bg-white',
+          )}
+        >
+          <i className={cn('h-1.5 w-4/5 rounded-full', isDark ? 'bg-white/60' : 'bg-black/55')} />
+          {[0, 1, 2, 3].map((index) => (
+            <i
+              key={index}
+              className={cn('h-1 w-full rounded-full', isDark ? 'bg-white/15' : 'bg-black/10')}
+            />
+          ))}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Render the preview artwork for one theme preference.
+ *
+ * @param props - Theme preference to depict.
+ * @returns Theme thumbnail, split diagonally for the system preference.
+ */
+function ThemeThumbnail({ preference }: { preference: ThemePreference }) {
+  if (preference !== 'system') return <ThemeMiniature scheme={preference} />;
+  return (
+    <span className="relative block h-full w-full">
+      <ThemeMiniature scheme="light" />
+      <span className="absolute inset-0 [clip-path:polygon(62%_0,100%_0,100%_100%,38%_100%)]">
+        <ThemeMiniature scheme="dark" />
+      </span>
+    </span>
   );
 }

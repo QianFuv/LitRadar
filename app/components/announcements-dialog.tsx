@@ -108,7 +108,7 @@ export function AnnouncementsDialog() {
         }
       }}
     >
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="md:max-w-2xl">
         <DialogHeader>
           <DialogTitle>系统公告</DialogTitle>
           <DialogDescription>
@@ -117,14 +117,14 @@ export function AnnouncementsDialog() {
         </DialogHeader>
         <div className="max-h-[60vh] space-y-3 overflow-y-auto overscroll-contain pr-1">
           {unreadAnnouncements.map((announcement) => (
-            <div key={announcement.id} className="rounded-lg border bg-muted/20 p-4">
+            <div key={announcement.id} className="rounded-xl bg-muted p-4">
               <div className="mb-2 flex items-center gap-2">
-                <h3 className="font-medium">{announcement.title}</h3>
-                <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                <h3 className="font-bold">{announcement.title}</h3>
+                <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted-foreground shadow-vercel-ring">
                   {PRIORITY_LABELS[announcement.priority]}
                 </span>
               </div>
-              <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+              <p className="whitespace-pre-wrap text-sm leading-6 text-foreground/80">
                 {announcement.message}
               </p>
             </div>

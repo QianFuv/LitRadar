@@ -12,14 +12,12 @@ import {
   downloadFavoriteExport,
   getFolderArticlePage,
   getFolders,
-  removeFavorite,
   renameFolder,
   setTrackingFolder,
   type ArticleId,
   type CitationFormat,
   type FavoriteArticleItem,
   type FavoriteArticleRef,
-  type FavoriteItem,
   type Folder,
 } from '@/lib/api';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
@@ -214,16 +212,6 @@ export function useFavoritesPage(userId: number) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['folders'] }),
   });
 
-  const removeMut = useMutation({
-    mutationFn: (item: FavoriteItem) =>
-      removeFavorite(item.folder_id, item.article_id, item.db_name),
-    onSuccess: async () => {
-      await invalidateFavoriteMemberships(queryClient, userId);
-      queryClient.invalidateQueries({ queryKey: ['folder-articles'] });
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
-    },
-  });
-
   const exportMut = useMutation({
     mutationFn: ({ folderId, format }: { folderId: number; format: CitationFormat }) =>
       downloadFavoriteExport(folderId, format),
@@ -396,7 +384,6 @@ export function useFavoritesPage(userId: number) {
     prefetchIndex,
     prefetchRef,
     refetchFavorites,
-    removeMut,
     renameMut,
     selectedFavorites,
     selectedFolder,

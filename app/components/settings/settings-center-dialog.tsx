@@ -31,6 +31,7 @@ import {
   MotionPresence,
   useMotionTransition,
 } from '@/components/ui/motion';
+import { UserAvatar } from '@/components/shell/user-avatar';
 import { useAuth } from '@/lib/auth-context';
 import {
   buildSettingsCenterHref,
@@ -359,7 +360,17 @@ function SettingsCenterSession({
     <>
       <SectionedDialogFrame
         activeSection={activeSection}
-        centerSubtitle="集中管理 LitRadar"
+        centerIcon={Settings2}
+        sidebarFooter={
+          <div className="flex min-w-0 items-center gap-3">
+            <UserAvatar username={username} size="md" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold">{username}</p>
+              <p className="text-xs text-muted-foreground">当前登录账号</p>
+            </div>
+          </div>
+        }
+        centerSubtitle="个人偏好、文献追踪、数据源与账号安全"
         centerTitle="设置中心"
         contentLabelSuffix="设置内容"
         dialogDescription="在一个弹窗中管理常规、文献追踪、通知、数据源、账号安全和访问令牌设置。"

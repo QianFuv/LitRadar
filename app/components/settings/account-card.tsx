@@ -1,27 +1,22 @@
-import {
-  SettingsSection,
-  SettingsSectionContent,
-  SettingsSectionHeader,
-  SettingsSectionTitle,
-} from '@/components/settings/settings-section';
+import { UserAvatar } from '@/components/shell/user-avatar';
+import { SettingsGroup, SettingsSection } from '@/components/settings/settings-section';
 
 /**
- * Render immutable account identity information.
+ * Render immutable account identity information as a profile header.
  *
  * @param props - Authenticated username.
- * @returns Account information card.
+ * @returns Account profile header.
  */
 export function AccountCard({ username }: { username: string }) {
   return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <SettingsSectionTitle>账号信息</SettingsSectionTitle>
-      </SettingsSectionHeader>
-      <SettingsSectionContent>
-        <div className="text-sm">
-          用户名: <span className="font-medium">{username}</span>
+    <SettingsSection aria-label="账号信息">
+      <SettingsGroup className="flex items-center gap-4 px-4 py-5 sm:px-5">
+        <UserAvatar username={username} className="size-14 text-xl" />
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">用户名</p>
+          <p className="truncate text-lg leading-7 font-bold">{username}</p>
         </div>
-      </SettingsSectionContent>
+      </SettingsGroup>
     </SettingsSection>
   );
 }

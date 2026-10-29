@@ -101,6 +101,7 @@ function AdminPanel({ children, isActive, label, transition }: AdminPanelProps) 
       aria-label={label}
       data-admin-panel-state={isActive ? 'active' : 'inactive'}
       hidden={!isActive}
+      className="[&>[data-slot=card]]:gap-0 [&>[data-slot=card]]:rounded-none [&>[data-slot=card]]:bg-transparent [&>[data-slot=card]]:py-0 [&>[data-slot=card]]:!shadow-none [&>[data-slot=card]>[data-slot=card-content]]:px-0 [&>[data-slot=card]>[data-slot=card-header]]:sr-only"
       variants={FADE_UP_VARIANTS}
       initial={false}
       animate={isActive ? 'visible' : 'hidden'}
@@ -203,7 +204,9 @@ export function AdminCenterDialog() {
   return (
     <SectionedDialogFrame
       activeSection={activeSection}
-      centerSubtitle="集中管理 LitRadar"
+      centerIcon={Shield}
+      contentWidth="wide"
+      centerSubtitle="用户、邀请、运行配置、计划任务与公告"
       centerTitle="管理面板"
       contentLabelSuffix="管理内容"
       dialogDescription="在一个弹窗中管理系统概览、用户、邀请码、运行配置、计划任务和公告。"

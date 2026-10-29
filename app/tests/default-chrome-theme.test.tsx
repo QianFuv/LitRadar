@@ -37,8 +37,10 @@ const DEFAULT_CHROME_TOKENS = [
 const DEFAULT_CHROME_COMPONENTS = [
   'components/feature/workspace-shell.tsx',
   'components/feature/search-workspace-view.tsx',
-  'components/feature/sidebar.tsx',
-  'components/feature/sidebar-navigation.tsx',
+  'components/feature/search-filters.tsx',
+  'components/feature/filter-pill.tsx',
+  'components/shell/app-frame.tsx',
+  'components/shell/primary-navigation.tsx',
   'components/feature/sectioned-dialog.tsx',
   'components/feature/user-menu.tsx',
   'components/admin/admin-center-dialog.tsx',
@@ -148,7 +150,7 @@ function expectGrayscaleHex(value: string, context: string): void {
 }
 
 /**
- * Verify structural surfaces and text stay neutral while interaction colors use Indigo.
+ * Verify structural surfaces and text stay neutral while interaction colors use the blue accent.
  */
 function keepsDefaultChromeTokensGrayscale(): void {
   const stylesheet = readProjectFile('app/globals.css');
@@ -163,7 +165,7 @@ function keepsDefaultChromeTokensGrayscale(): void {
   }
 
   const darkVariables = parseCustomProperties(extractDeclarationBlock(stylesheet, '.dark'));
-  expect(darkVariables.get('--sidebar-primary')).toBe('#3e63dd');
+  expect(darkVariables.get('--sidebar-primary')).toBe('#2563eb');
   expect(darkVariables.get('--sidebar-primary-foreground')).toBe('#ffffff');
 }
 
@@ -183,8 +185,8 @@ function sharesSectionedDialogChrome(): void {
   const adminSource = readProjectFile('components/admin/admin-center-dialog.tsx');
   const settingsSource = readProjectFile('components/settings/settings-center-dialog.tsx');
 
-  expect(frameSource).toContain('md:w-[min(calc(100vw-2rem),72rem)]');
-  expect(frameSource).toContain('hidden w-60');
+  expect(frameSource).toContain('placement="takeover"');
+  expect(frameSource).toContain("aria-current={isActive ? 'page' : undefined}");
   expect(frameSource).toContain('overflow-x-auto');
   expect(settingsSource).toContain('<SectionedDialogFrame');
   expect(settingsSource).not.toContain('<DialogContent');
@@ -205,12 +207,12 @@ function retainsSemanticColorsAndRasterAssets(): void {
     destructive: lightVariables.get('--destructive'),
     info: lightVariables.get('--info'),
     infoForeground: lightVariables.get('--info-foreground'),
-  }).toEqual({ destructive: '#ce2c31', info: '#edf2fe', infoForeground: '#3a5bc7' });
+  }).toEqual({ destructive: '#dc2626', info: '#eef3fe', infoForeground: '#1d4ed8' });
   expect({
     destructive: darkVariables.get('--destructive'),
     info: darkVariables.get('--info'),
     infoForeground: darkVariables.get('--info-foreground'),
-  }).toEqual({ destructive: '#ff9592', info: '#182449', infoForeground: '#9eb1ff' });
+  }).toEqual({ destructive: '#f87171', info: '#12224a', infoForeground: '#a5c2ff' });
 
   for (const fixture of SEMANTIC_COLOR_FIXTURES) {
     const source = readProjectFile(fixture.path);
@@ -220,8 +222,8 @@ function retainsSemanticColorsAndRasterAssets(): void {
   }
 
   expect(existsSync(path.resolve(PROJECT_ROOT, 'public/litradar-logo.png'))).toBe(true);
-  expect(readProjectFile('components/feature/sidebar.tsx')).toContain('/litradar-logo.png');
-  expect(readProjectFile('components/feature/user-menu.tsx')).toContain('/litradar-logo.png');
+  expect(readProjectFile('components/shell/app-frame.tsx')).toContain('/litradar-logo.png');
+  expect(readProjectFile('app/login/login-client.tsx')).toContain('/litradar-logo.png');
 }
 
 /** Calculate relative luminance for a six-digit sRGB token. */
