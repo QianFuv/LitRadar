@@ -2618,6 +2618,20 @@ async function relationGraphTest({ page }: { page: Page }): Promise<void> {
   await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(3);
 
   const hoverCard = page.locator('[data-slot="relation-hover-card"]');
+  const waitForSteadyNode = (name: RegExp) =>
+    expect
+      .poll(
+        async () => {
+          const node = page.getByRole('button', { name });
+          const first = await node.boundingBox();
+          await page.waitForTimeout(250);
+          const second = await node.boundingBox();
+          return first && second ? Math.hypot(second.x - first.x, second.y - first.y) : -1;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(0);
+  await waitForSteadyNode(/^相关文章：关系文章 .+\.1$/);
   await firstChild.hover();
   await expect(hoverCard).toBeVisible();
   await expect(hoverCard).toContainText(/关系文章 .+\.1/);
@@ -2653,6 +2667,7 @@ async function relationGraphTest({ page }: { page: Page }): Promise<void> {
         );
         return { x: Number(match?.[1]), y: Number(match?.[2]) };
       });
+  await waitForSteadyNode(branch);
   const before = {
     branch: await readFlowPosition(branch),
     branchChild: await readFlowPosition(branchChild),
