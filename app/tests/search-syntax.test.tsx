@@ -291,9 +291,11 @@ async function keepsHistoryBesideBuilder(): Promise<void> {
   expect(screen.getByRole('listbox', { name: '高级检索构建器' })).toBeInTheDocument();
 
   await user.type(input, 'gra', { skipClick: true });
-  expect(
-    within(screen.getByRole('listbox', { name: '最近搜索' })).getAllByRole('option'),
-  ).toHaveLength(1);
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole('listbox', { name: '最近搜索' })).getAllByRole('option'),
+    ).toHaveLength(1),
+  );
   await user.click(screen.getByRole('option', { name: 'graph theory' }));
   await waitFor(() => expect(screen.getByTestId('query-value')).toHaveTextContent('graph theory'));
 
