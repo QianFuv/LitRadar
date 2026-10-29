@@ -973,7 +973,7 @@ async function verifiesDesktopNavigation(
 ): Promise<{ currentNavigationLink: Locator; trigger: Locator }> {
   const pageNavigation = page.getByRole('navigation', { name: '页面导航' });
   const currentNavigationLink = pageNavigation.getByRole('link', { name: '文献检索' });
-  await expect(pageNavigation.getByRole('link')).toHaveCount(4);
+  await expect(pageNavigation.getByRole('link')).toHaveCount(5);
   await expect(currentNavigationLink).toHaveAttribute('aria-current', 'page');
   await expect(pageNavigation.getByRole('link', { name: '我的收藏' })).toHaveAttribute(
     'title',
@@ -1117,7 +1117,7 @@ async function verifiesMobileNavigation(page: Page): Promise<void> {
   });
 
   const mobileNavigation = page.locator('nav[aria-label="页面导航"]:visible');
-  await expect(mobileNavigation.getByRole('link')).toHaveCount(4);
+  await expect(mobileNavigation.getByRole('link')).toHaveCount(5);
   await expect(mobileNavigation.getByRole('link', { name: '文献检索' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -1743,8 +1743,9 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   await expect(articleActions.getByRole('link', { name: '获取全文' })).toBeVisible();
   await expect(articleActions.getByRole('button', { name: '复制信息' })).toBeVisible();
   await expect(articleActions.getByRole('button', { name: '收藏', exact: true })).toBeVisible();
+  await expect(articleActions.getByRole('link', { name: '查看关系图' })).toBeVisible();
   const actionControls = articleActions.locator('button, a');
-  await expect(actionControls).toHaveCount(4);
+  await expect(actionControls).toHaveCount(5);
   for (const control of await actionControls.all()) {
     await expectComfortableTarget(control, 44);
     await expect.poll(() => control.innerText()).toBe('');
@@ -2003,7 +2004,7 @@ async function independentListScrollTest(
     const results = page.locator('#results-scroll-container');
     const resultsScroll = await results.evaluate((element) => element.scrollTop);
     const navigation = page.locator('nav[aria-label="页面导航"]:visible');
-    await expect(navigation.getByRole('link')).toHaveText(['检索', '收藏', '周报', '征稿']);
+    await expect(navigation.getByRole('link')).toHaveText(['检索', '收藏', '周报', '征稿', '关系']);
     const navigationBefore = await navigation.boundingBox();
     await page.getByRole('button', { name: openLabel }).click();
     const list = page.locator(`${listSelector}:visible`);
@@ -2554,6 +2555,162 @@ test(
   relatedArticleToolbarTest,
 );
 
+/**
+ * Build a related-article record for the relation-graph test.
+ *
+ * @param id - Article identifier.
+ * @returns Article record.
+ */
+function relationArticle(id: string): Record<string, unknown> {
+  return {
+    article_id: id,
+    journal_id: '1',
+    title: `关系文章 ${id}`,
+    abstract: `${id} 的摘要。`,
+    authors: ['张三'],
+    journal_title: '数量经济研究',
+    date: '2021-03-12',
+  };
+}
+
+/**
+ * Open the relation graph from an article, grow a branch, read a node, drag a branch while the
+ * force layout settles, and use the list view. Marked slow because it waits on several layout
+ * settles in one flow.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function relationGraphTest({ page }: { page: Page }): Promise<void> {
+  test.slow();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await page.route(/\/api\/articles\/[^/?]+(\?.*)?$/, (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop() ?? '');
+    return fulfillJson(route, relationArticle(id));
+  });
+  await page.route('**/api/articles/*/related**', (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/')[3]);
+    return fulfillJson(
+      route,
+      ['1', '2', '3'].map((suffix) => relationArticle(`${id}.${suffix}`)),
+    );
+  });
+
+  await page.goto('/?q=graph');
+  await page
+    .getByRole('button', { name: /^查看文章详情：/ })
+    .first()
+    .click();
+  await page
+    .getByRole('region', { name: '阅读台' })
+    .getByRole('link', { name: '查看关系图' })
+    .click();
+  await expect(page).toHaveURL(/view=relations/);
+  await expect(page.getByRole('link', { name: '文献关系图' }).first()).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+
+  const canvas = page.locator('[data-slot="relation-canvas"]');
+  await expect(page.getByRole('button', { name: /^中心文章：/ })).toBeVisible();
+  const firstChild = page.getByRole('button', { name: /^相关文章：关系文章 .+\.1$/ });
+  await expect(firstChild).toBeVisible();
+  await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(3);
+
+  const hoverCard = page.locator('[data-slot="relation-hover-card"]');
+  await firstChild.hover();
+  await expect(hoverCard).toBeVisible();
+  await expect(hoverCard).toContainText(/关系文章 .+\.1/);
+  await expect(hoverCard).toContainText('的摘要。');
+  await page.mouse.move(0, 0);
+  await expect(hoverCard).toHaveCount(0);
+
+  await page.getByRole('button', { name: /^展开相关文章：关系文章 .+\.1$/ }).click();
+  await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(6);
+  await page.getByRole('button', { name: /^相关文章：关系文章 .+\.1\.2$/ }).click();
+  await expect(
+    page
+      .getByRole('region', { name: '阅读台' })
+      .getByRole('heading', { name: /关系文章 .+\.1\.2/ }),
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: /^展开相关文章：关系文章 .+\.1\.2$/ }).click();
+  await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(9);
+  for (const firstLevel of [/^相关文章：关系文章 [^.]+\.1$/, /^相关文章：关系文章 [^.]+\.3$/]) {
+    await expect(page.getByRole('button', { name: firstLevel })).toBeInViewport();
+  }
+  await expect(page.getByRole('button', { name: /^中心文章：/ })).toBeInViewport();
+
+  const branch = /^相关文章：关系文章 [^.]+\.1$/;
+  const branchChild = /^相关文章：关系文章 .+\.1\.1$/;
+  const readFlowPosition = (name: RegExp) =>
+    page
+      .getByRole('button', { name })
+      .locator('xpath=ancestor::div[contains(@class, "react-flow__node")][1]')
+      .evaluate((element) => {
+        const match = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(
+          (element as HTMLElement).style.transform,
+        );
+        return { x: Number(match?.[1]), y: Number(match?.[2]) };
+      });
+  const before = {
+    branch: await readFlowPosition(branch),
+    branchChild: await readFlowPosition(branchChild),
+  };
+  const branchBox = await page.getByRole('button', { name: branch }).boundingBox();
+  expect(branchBox).not.toBeNull();
+  await page.mouse.move(branchBox!.x + branchBox!.width / 2, branchBox!.y + 6);
+  await expect(hoverCard).toBeVisible();
+  await page.mouse.down();
+  await expect(hoverCard).toHaveCount(0);
+  await page.mouse.move(branchBox!.x + branchBox!.width / 2 + 90, branchBox!.y + 76, {
+    steps: 10,
+  });
+  await page.waitForTimeout(400);
+  await expect(hoverCard).toHaveCount(0);
+  await page.mouse.up();
+  const dropped = await readFlowPosition(branch);
+  const offset = { x: dropped.x - before.branch.x, y: dropped.y - before.branch.y };
+  expect(Math.hypot(offset.x, offset.y)).toBeGreaterThan(40);
+  await expect
+    .poll(async () => {
+      const child = await readFlowPosition(branchChild);
+      return (
+        (child.x - before.branchChild.x) * offset.x + (child.y - before.branchChild.y) * offset.y
+      );
+    })
+    .toBeGreaterThan(0);
+  await page.waitForTimeout(600);
+  expect(await readFlowPosition(branch)).toEqual(dropped);
+  await expect(
+    page
+      .getByRole('region', { name: '阅读台' })
+      .getByRole('heading', { name: /关系文章 .+\.1\.2/ }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: '重新排列' }).click();
+  await expect
+    .poll(async () => {
+      const current = await readFlowPosition(branch);
+      return Math.hypot(current.x - dropped.x, current.y - dropped.y);
+    })
+    .toBeGreaterThan(20);
+
+  await page.getByRole('button', { name: /^收起相关文章：关系文章 .+\.1$/ }).click();
+  await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(3);
+
+  await page.getByRole('radio', { name: '列表' }).click();
+  await expect(page.getByRole('list', { name: '关系节点列表' }).getByRole('listitem')).toHaveCount(
+    4,
+  );
+  await expect(canvas).toHaveCount(0);
+
+  await page.goto('/?view=relations');
+  await expect(page).toHaveURL(/article=/);
+  await expect(page.getByRole('button', { name: /^中心文章：/ })).toBeVisible();
+}
+
+test('explores article relations as an interactive graph', relationGraphTest);
+
 /** Exercise modal-to-settings navigation with real touch events and normal exit animations. */
 async function mobileSettingsNavigationTest(page: Page, workspace: string): Promise<void> {
   await page.route('**/api/**', serveArticleSettingsApi);
@@ -2931,7 +3088,7 @@ async function cfpTrackingPageTest({ page }: { page: Page }): Promise<void> {
     page.getByRole('heading', { name: /When Affective Computing Meets Multimodal/ }),
   ).toBeVisible();
   const navigation = page.getByRole('navigation', { name: '页面导航' });
-  await expect(navigation.getByRole('link')).toHaveCount(4);
+  await expect(navigation.getByRole('link')).toHaveCount(5);
   const searchBox = await navigation.getByRole('link', { name: '文献检索' }).boundingBox();
   const cfpBox = await navigation
     .getByRole('link', { name: '征稿追踪', exact: true })

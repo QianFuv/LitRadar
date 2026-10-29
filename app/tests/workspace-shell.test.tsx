@@ -259,7 +259,7 @@ function rendersApplicationFrame(): void {
   const navigations = screen.getAllByRole('navigation', { name: '页面导航' });
   expect(navigations).toHaveLength(2);
   for (const navigation of navigations) {
-    expect(within(navigation).getAllByRole('link')).toHaveLength(4);
+    expect(within(navigation).getAllByRole('link')).toHaveLength(5);
     expect(within(navigation).getByRole('link', { name: '文献检索' })).toHaveAttribute('href', '/');
     expect(within(navigation).getByRole('link', { name: '每周更新' })).toHaveAttribute(
       'href',
@@ -269,7 +269,11 @@ function rendersApplicationFrame(): void {
       'href',
       '/?view=cfp-tracking',
     );
-    for (const shortLabel of ['检索', '收藏', '周报', '征稿']) {
+    expect(within(navigation).getByRole('link', { name: '文献关系图' })).toHaveAttribute(
+      'href',
+      '/?view=relations',
+    );
+    for (const shortLabel of ['检索', '收藏', '周报', '征稿', '关系']) {
       expect(within(navigation).getByText(shortLabel)).toBeVisible();
     }
     expect(within(navigation).getByRole('link', { name: '我的收藏' })).toHaveAttribute(

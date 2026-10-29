@@ -23,6 +23,7 @@ import {
   FileDown,
   Loader2,
   ArrowLeft,
+  Network,
   Settings,
   TriangleAlert,
   X,
@@ -55,6 +56,7 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { getDoiUrl } from '@/lib/citation';
 import { getArticleDisplayTitle, hasArticleTitle } from '@/lib/article-title';
 import { JOURNAL_RATING_SYSTEMS } from '@/lib/journal-ratings';
+import { buildRelationHref } from '@/lib/relation-graph';
 import { buildSettingsCenterHref } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
 
@@ -262,6 +264,29 @@ function ArticleDialogBodyView(props: ArticleDetailDialogContentProps & ArticleT
     if (isRelated) rootRef.current?.scrollIntoView?.({ block: 'start' });
   }, [isRelated]);
   return <div ref={rootRef}>{renderArticleDetailBody(state, 'dialog', props.onOpenRelated)}</div>;
+}
+
+/**
+ * Render a docked article whose favorite membership is loaded first, for readers that show
+ * articles outside favorite-aware lists such as the relation graph.
+ *
+ * @param props - Article and database.
+ * @returns Reading-desk article with accurate favorite state.
+ */
+export function CheckedArticleDetailPane({
+  article,
+  dbName,
+}: {
+  article: Article;
+  dbName: string;
+}) {
+  return (
+    <RelatedArticleFavoriteState article={article} dbName={dbName}>
+      {(favoriteProps) => (
+        <ArticleDetailPane article={article} dbName={dbName} {...favoriteProps} />
+      )}
+    </RelatedArticleFavoriteState>
+  );
 }
 
 /**
@@ -591,7 +616,36 @@ function renderArticleActions(state: ArticleDetailViewState, variant: ArticleDet
       {renderArticleInfoCopy(state)}
       {renderArticleAccessActions(state, variant)}
       {state.extraActions}
+      {renderArticleRelationAction(state, variant)}
     </div>
+  );
+}
+
+/**
+ * Link to the relation graph centred on this article; the docked toolbar pins it to the right.
+ *
+ * @param state - Article detail state.
+ * @param variant - Detail layout.
+ * @returns Relation-graph link.
+ */
+function renderArticleRelationAction(state: ArticleDetailViewState, variant: ArticleDetailVariant) {
+  return (
+    <Button
+      asChild
+      variant="outline"
+      size="sm"
+      className={cn(ARTICLE_ACTION_BUTTON_CLASS_NAME, variant === 'pane' && 'ml-auto')}
+    >
+      <Link
+        href={buildRelationHref(state.article, state.dbName)}
+        prefetch={false}
+        aria-label="查看关系图"
+        title="查看关系图"
+      >
+        <Network className="h-4 w-4" aria-hidden="true" />
+        {renderActionLabel('关系图', '关系')}
+      </Link>
+    </Button>
   );
 }
 

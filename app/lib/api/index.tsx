@@ -115,6 +115,26 @@ export function getJournal(
 }
 
 /**
+ * Fetch one article.
+ *
+ * @param articleId - Article identifier.
+ * @param dbName - Database name.
+ * @param signal - Cancellation signal for an obsolete request.
+ * @returns Article record.
+ */
+export function getArticle(
+  articleId: ArticleId,
+  dbName: string,
+  signal?: AbortSignal,
+): Promise<Article> {
+  return requestJson<Article>(
+    buildDatabaseUrl(`/api/articles/${encodeURIComponent(String(articleId))}`, dbName),
+    { signal },
+    '获取文章失败',
+  );
+}
+
+/**
  * Fetch articles ranked by FTS5 similarity to one article's title.
  *
  * @param articleId - Source article identifier.

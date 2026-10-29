@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import { SearchWorkspaceView } from '@/components/feature/search-workspace-view';
 import { CfpTrackingView } from '@/components/cfp/cfp-tracking-view';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
+import { RelationsWorkspaceView } from '@/components/relations/relations-workspace-view';
 import {
   FADE_UP_VARIANTS,
   MOTION_DURATION_SECONDS,
@@ -38,6 +39,8 @@ export default function Home() {
     workspaceContent = <WeeklyUpdatesView />;
   } else if (view === 'cfp-tracking') {
     workspaceContent = <CfpTrackingView />;
+  } else if (view === 'relations') {
+    workspaceContent = <RelationsWorkspaceView />;
   } else {
     workspaceContent = <SearchWorkspaceView />;
   }

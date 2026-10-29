@@ -9,6 +9,7 @@ export const WORKSPACE_VIEW_IDS = [
   'favorites',
   'weekly-updates',
   'cfp-tracking',
+  'relations',
 ] as const;
 
 export type WorkspaceView = (typeof WORKSPACE_VIEW_IDS)[number];
@@ -20,6 +21,7 @@ const WORKSPACE_VIEW_HREFS: Readonly<Record<WorkspaceView, string>> = {
   favorites: '/?view=favorites',
   'weekly-updates': '/?view=weekly-updates',
   'cfp-tracking': '/?view=cfp-tracking',
+  relations: '/?view=relations',
 };
 
 /**

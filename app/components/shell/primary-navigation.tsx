@@ -4,7 +4,7 @@
  * Primary workspace navigation rendered as a desktop rail or a mobile tab bar.
  */
 
-import { CalendarDays, Megaphone, Search, Star, type LucideIcon } from 'lucide-react';
+import { CalendarDays, Megaphone, Network, Search, Star, type LucideIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
@@ -28,6 +28,7 @@ const PRIMARY_NAVIGATION_ITEMS: readonly PrimaryNavigationItem[] = [
   { view: 'favorites', icon: Star, label: '我的收藏', shortLabel: '收藏' },
   { view: 'weekly-updates', icon: CalendarDays, label: '每周更新', shortLabel: '周报' },
   { view: 'cfp-tracking', icon: Megaphone, label: '征稿追踪', shortLabel: '征稿' },
+  { view: 'relations', icon: Network, label: '文献关系图', shortLabel: '关系' },
 ];
 
 /**
@@ -91,7 +92,7 @@ export function TabNavigation() {
   const view = useCurrentWorkspaceView();
 
   return (
-    <nav aria-label="页面导航" className="col-span-4 grid grid-cols-4">
+    <nav aria-label="页面导航" className="col-span-5 grid grid-cols-5">
       {PRIMARY_NAVIGATION_ITEMS.map((item) => {
         const Icon = item.icon;
         const isCurrent = item.view === view;

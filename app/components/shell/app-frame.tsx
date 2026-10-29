@@ -136,7 +136,7 @@ function MobileTabBar() {
       data-slot="mobile-tab-bar"
       className="mobile-tab-safe-area fixed inset-x-0 bottom-0 z-40 border-t bg-background md:hidden"
     >
-      <div className="grid grid-cols-5">
+      <div className="grid grid-cols-6">
         <TabNavigation />
         <UserMenu placement="tab" />
       </div>
