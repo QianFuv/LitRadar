@@ -1182,6 +1182,72 @@
   },
   {
     "method": "GET",
+    "path": "/api/articles/{article_id}/related",
+    "operation": {
+      "tags": [
+        "index"
+      ],
+      "summary": "Return articles related to one article.",
+      "description": "# Arguments\n\n* `state` - Shared API state.\n* `headers` - Request headers.\n* `article_id` - Source article identifier.\n* `query` - Database selector and result limit.\n\n# Returns\n\nArticles ranked by FTS5 bm25 similarity to the source title over titles and abstracts, excluding the source.",
+      "operationId": "list_related_articles",
+      "parameters": [
+        {
+          "name": "article_id",
+          "in": "path",
+          "description": "Source article identifier.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "db",
+          "in": "query",
+          "description": "Database name or filename under `data/index`.",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Maximum related articles, from 1 to 30. Defaults to 10.",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Related articles, most similar first.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ArticleRecord"
+                }
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
     "path": "/api/articles/{article_id}/abstract",
     "operation": {
       "tags": [

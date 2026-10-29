@@ -30,7 +30,7 @@ func (handlers *indexHandlers) routes() []route {
 	for _, operation := range []struct{ path, id string }{
 		{"/api/meta/databases", "list_databases"}, {"/api/meta/areas", "list_areas"}, {"/api/meta/ratings", "list_journal_ratings"}, {"/api/meta/journals", "list_journal_options"}, {"/api/years", "list_years"},
 		{"/api/journals", "list_journals"}, {"/api/journals/{journal_id}", "get_journal"}, {"/api/issues", "list_issues"}, {"/api/issues/{issue_id}", "get_issue"},
-		{"/api/articles", "list_articles"}, {"/api/articles/{article_id}", "get_article"}, {"/api/weekly-updates", "get_weekly_updates"}, {"/api/weekly-updates/summary", "get_weekly_updates_summary"}, {"/api/weekly-updates/articles", "get_weekly_update_articles"},
+		{"/api/articles", "list_articles"}, {"/api/articles/{article_id}", "get_article"}, {"/api/articles/{article_id}/related", "list_related_articles"}, {"/api/weekly-updates", "get_weekly_updates"}, {"/api/weekly-updates/summary", "get_weekly_updates_summary"}, {"/api/weekly-updates/articles", "get_weekly_update_articles"},
 	} {
 		result = append(result, route{openapi.Operation{Method: "GET", Path: operation.path, Id: operation.id}, func(writer http.ResponseWriter, request *http.Request) {
 			handlers.handle(writer, request, operation.id)
@@ -86,7 +86,7 @@ func extractIndexRecord(request *http.Request, name string) (int64, *apiError) {
 		pathField = "journal_id"
 	case "get_issue":
 		pathField = "issue_id"
-	case "get_article":
+	case "get_article", "list_related_articles":
 		pathField = "article_id"
 	}
 
@@ -107,6 +107,8 @@ func indexQueryFields(name string) (map[string]queryKind, bool) {
 		fields = map[string]queryKind{"db": queryText, "area": queryText, "has_articles": queryBoolean, "year": queryInteger, "sort": queryText, "limit": queryInteger, "offset": queryInteger}
 	case "list_issues":
 		fields = map[string]queryKind{"db": queryText, "journal_id": queryInteger, "year": queryInteger, "sort": queryText, "limit": queryInteger, "offset": queryInteger}
+	case "list_related_articles":
+		fields = map[string]queryKind{"db": queryText, "limit": queryInteger}
 	}
 
 	return fields, isTyped
@@ -125,6 +127,12 @@ func extractIndexQuery(request *http.Request, name string) (typedQuery, *apiErro
 func (handlers *indexHandlers) indexWork(request *http.Request, name string, recordId int64, values typedQuery) (func() (any, error), *apiError) {
 	if work := handlers.indexMetadataWork(request.Context(), name, recordId, values.database()); work != nil {
 		return work, nil
+	}
+	if name == "list_related_articles" {
+		workContext, database, limit := request.Context(), values.database(), values.integerDefault("limit", 10)
+		return func() (any, error) {
+			return query.RelatedArticles(workContext, handlers.storage, database, recordId, limit)
+		}, nil
 	}
 	if name == "list_journals" || name == "list_issues" || name == "list_articles" {
 		return handlers.indexListWork(request, name, values)

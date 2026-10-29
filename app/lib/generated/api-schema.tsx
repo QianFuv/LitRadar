@@ -442,6 +442,35 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/articles/{article_id}/related': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Return articles related to one article.
+     * @description # Arguments
+     *
+     *     * `state` - Shared API state.
+     *     * `headers` - Request headers.
+     *     * `article_id` - Source article identifier.
+     *     * `query` - Database selector and result limit.
+     *
+     *     # Returns
+     *
+     *     Articles ranked by FTS5 bm25 similarity to the source title over titles and abstracts, excluding the source.
+     */
+    get: operations['list_related_articles'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/auth/change-password': {
     parameters: {
       query?: never;
@@ -4114,6 +4143,34 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+    };
+  };
+  list_related_articles: {
+    parameters: {
+      query?: {
+        /** @description Database name or filename under `data/index`. */
+        db?: string;
+        /** @description Maximum related articles, from 1 to 30. Defaults to 10. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Source article identifier. */
+        article_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Related articles, most similar first. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ArticleRecord'][];
+        };
       };
     };
   };
