@@ -283,10 +283,9 @@ async function administratorMutationJourney(
   const createdInviteResponse = await inviteResponse;
   expect(createdInviteResponse.ok()).toBe(true);
   const createdInvite = (await createdInviteResponse.json()) as { code: string };
-  const invitePrefix = `${createdInvite.code.slice(0, 8)}…`;
-  await expect(page.getByText(invitePrefix, { exact: true })).toBeVisible();
+  await expect(adminDialog.getByText(createdInvite.code, { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByText(invitePrefix, { exact: true })).toBeVisible();
+  await expect(adminDialog.getByText(createdInvite.code, { exact: true })).toBeVisible();
 
   await adminCategories.getByRole('button', { name: '公告', exact: true }).click();
   await expect(page).toHaveURL(/\/?\?admin=announcements$/);
@@ -388,22 +387,31 @@ async function durableManualPushJourney({ page }: { page: Page }): Promise<void>
   expect(((await persisted.json()) as ManualPushStatus).status).toBe('completed');
 }
 
-/** Verify rating unions/intersections, persisted URL state and reset through the real API. */
+/**
+ * Verify rating unions/intersections in the result list, persisted URL state and reset through
+ * the real API. Titles are checked inside the results region because the docked reader can list
+ * the same articles as related reading.
+ */
 async function journalRatingJourney({ page }: { page: Page }): Promise<void> {
   await login(page, MEMBER_USERNAME, MEMBER_PASSWORD);
   await page.goto('/');
-  await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
-  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  const results = page.getByRole('region', { name: '检索结果' });
+  await expect(results.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await expect(
+    results.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first(),
+  ).toBeVisible();
   const ratingPill = page.getByRole('button', { name: /^期刊评级/ });
   const ratingPanel = page.locator('[data-slot="popover-content"]');
   await ratingPill.click();
   await ratingPanel.getByRole('checkbox', { name: 'ABS 4*', exact: true }).check();
-  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
+  await expect(results.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
   await ratingPanel.getByRole('checkbox', { name: 'ABS 4', exact: true }).check();
-  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await expect(
+    results.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first(),
+  ).toBeVisible();
   await ratingPanel.getByRole('checkbox', { name: 'FMS A', exact: true }).check();
-  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
-  await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await expect(results.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
+  await expect(results.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
   await page.keyboard.press('Escape');
   const response = await page.request.get(
     '/api/articles?db=full-stack.sqlite&abs_rating=4&abs_rating=4%2A&fms_rating=A',
@@ -420,8 +428,10 @@ async function journalRatingJourney({ page }: { page: Page }): Promise<void> {
   await page.keyboard.press('Escape');
   await expect(page.getByText('未找到文章。', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '清除筛选', exact: true }).click();
-  await expect(page.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
-  await expect(page.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await expect(results.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
+  await expect(
+    results.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first(),
+  ).toBeVisible();
   expect(new URL(page.url()).searchParams.has('abs_rating')).toBe(false);
   expect(new URL(page.url()).searchParams.has('fms_rating')).toBe(false);
 }
