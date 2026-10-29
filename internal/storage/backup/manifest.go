@@ -13,6 +13,7 @@ import (
 
 	"github.com/QianFuv/LitRadar/internal/compat/jsonvalue"
 	"github.com/QianFuv/LitRadar/internal/storage/indexschema"
+	authmigration "github.com/QianFuv/LitRadar/internal/storage/migrations/auth"
 	storage "github.com/QianFuv/LitRadar/internal/storage/sqlite"
 )
 
@@ -355,7 +356,7 @@ func validateDatabaseComponent(ctx context.Context, item Component, filename str
 	}
 	maximum := int64(indexschema.Version)
 	if item.Kind == "auth_database" {
-		maximum = 20
+		maximum = int64(authmigration.SchemaVersion)
 	}
 	if *item.SchemaVersion < 0 || *item.SchemaVersion > maximum {
 		return failure("unsupported", "database schema version %d exceeds supported version %d", *item.SchemaVersion, maximum)

@@ -63,7 +63,7 @@ func TestUnversionedLegacyUsersPromoteOnlySmallestId(t *testing.T) {
 	connection := testConnection(t, filename)
 	mustExecute(t, connection, `CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT NOT NULL,salt TEXT NOT NULL,created_at REAL NOT NULL,updated_at REAL NOT NULL);
 INSERT INTO users VALUES(9,'earlier_created','hash','salt',1,1),(4,'smallest_id','hash','salt',2,2);`)
-	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{0, 20}) {
+	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{0, SchemaVersion}) {
 		t.Fatalf("%+v %v", summary, err)
 	}
 	if id := scalar[int](t, connection, "SELECT id FROM users WHERE is_admin=1"); id != 4 {
@@ -86,7 +86,7 @@ func TestExistingInviteLifecycleRequiresOriginalColumnOrder(t *testing.T) {
 }
 
 func TestMigrationNeverReconfiguresCurrentOrFutureDatabase(t *testing.T) {
-	for _, version := range []int{20, 21} {
+	for _, version := range []int{SchemaVersion, SchemaVersion + 1} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			filename := filepath.Join(t.TempDir(), "auth.sqlite")
 			connection := testConnection(t, filename)
@@ -97,11 +97,11 @@ func TestMigrationNeverReconfiguresCurrentOrFutureDatabase(t *testing.T) {
 				t.Fatal(err)
 			}
 			summary, err := Migrate(context.Background(), filename)
-			if version == 20 && (err != nil || summary != (Summary{20, 20})) {
+			if version == SchemaVersion && (err != nil || summary != (Summary{SchemaVersion, SchemaVersion})) {
 				t.Fatalf("%+v %v", summary, err)
 			}
 			var unsupported UnsupportedVersion
-			if version == 21 && (!errors.As(err, &unsupported) || unsupported.Found != 21) {
+			if version == SchemaVersion+1 && (!errors.As(err, &unsupported) || unsupported.Found != SchemaVersion+1) {
 				t.Fatal(err)
 			}
 			after, err := os.ReadFile(filename)
@@ -137,7 +137,7 @@ func TestConcurrentMigrationRechecksLockedVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if version := scalar[int](t, connection, "PRAGMA user_version"); version != 20 {
+	if version := scalar[int](t, connection, "PRAGMA user_version"); version != SchemaVersion {
 		t.Fatal(version)
 	}
 }
@@ -246,7 +246,7 @@ func TestSchedulerMigrationPreservesNonemptyHistoryAndManualSlots(t *testing.T) 
 		VALUES (7,42,'retained job',600,'unknown','worker-a',700.5,601.25,602.5,603.75,'ambiguous delivery');
 		INSERT INTO scheduled_task_runs(id,task_id,task_name,scheduled_for,status) VALUES (2000,42,'deleted job',900,'pending');
 		DELETE FROM scheduled_task_runs WHERE id=2000`)
-	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{19, 20}) {
+	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{19, SchemaVersion}) {
 		t.Fatalf("migration failed: %+v %v", summary, err)
 	}
 	assertRetainedSchedulerHistory(t, connection)
@@ -261,7 +261,7 @@ func TestSchedulerMigrationPreservesNonemptyHistoryAndManualSlots(t *testing.T) 
 	if count := scalar[int](t, connection, "SELECT count(*) FROM scheduled_task_runs"); count != 3 {
 		t.Fatalf("history or manual runs lost: %d", count)
 	}
-	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{20, 20}) {
+	if summary, err := Migrate(context.Background(), filename); err != nil || summary != (Summary{SchemaVersion, SchemaVersion}) {
 		t.Fatalf("repeat migration failed: %+v %v", summary, err)
 	}
 }
@@ -441,7 +441,7 @@ func TestProviderOrderFieldOrderIsStable(t *testing.T) {
 }
 
 func TestMalformedSchemaDoesNotPreemptVersionCheck(t *testing.T) {
-	for _, version := range []int{20, 21} {
+	for _, version := range []int{SchemaVersion, SchemaVersion + 1} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			filename := filepath.Join(t.TempDir(), "auth.sqlite")
 			connection := testConnection(t, filename)
@@ -452,11 +452,11 @@ func TestMalformedSchemaDoesNotPreemptVersionCheck(t *testing.T) {
 				t.Fatal(err)
 			}
 			summary, err := Migrate(context.Background(), filename)
-			if version == 20 && (err != nil || summary != (Summary{20, 20})) {
+			if version == SchemaVersion && (err != nil || summary != (Summary{SchemaVersion, SchemaVersion})) {
 				t.Fatalf("current short circuit: %+v %v", summary, err)
 			}
 			var unsupported UnsupportedVersion
-			if version == 21 && (!errors.As(err, &unsupported) || unsupported.Found != 21) {
+			if version == SchemaVersion+1 && (!errors.As(err, &unsupported) || unsupported.Found != SchemaVersion+1) {
 				t.Fatalf("future priority: %v", err)
 			}
 			after, err := os.ReadFile(filename)

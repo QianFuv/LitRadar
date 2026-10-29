@@ -140,6 +140,40 @@ func TestBackupAcceptsCurrentAndHistoricalContentTogether(t *testing.T) {
 	}
 }
 
+// TestBackupAuthSchemaVersionBoundary accepts the supported auth snapshot and rejects newer schemas.
+func TestBackupAuthSchemaVersionBoundary(t *testing.T) {
+	ctx := context.Background()
+	configuration := fixtureConfig(t)
+	options := optionsFor(t, configuration)
+	manifest, err := Create(ctx, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasCurrentAuth := false
+	for _, component := range manifest.Components {
+		if component.Kind == "auth_database" && component.SchemaVersion != nil && *component.SchemaVersion == int64(authmigration.SchemaVersion) {
+			hasCurrentAuth = true
+		}
+	}
+	if !hasCurrentAuth {
+		t.Fatal("current auth schema was omitted from backup")
+	}
+	if _, err := Verify(ctx, options.OutputDir); err != nil {
+		t.Fatal(err)
+	}
+	for index := range manifest.Components {
+		if manifest.Components[index].Kind == "auth_database" {
+			future := int64(authmigration.SchemaVersion + 1)
+			manifest.Components[index].SchemaVersion = &future
+		}
+	}
+	if err := writeManifest(options.OutputDir, manifest); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Verify(ctx, options.OutputDir)
+	requireFailure(t, err, "unsupported")
+}
+
 func TestVerifyRejectsInventoryTamperingAndRetainsHistoricalSchemaSupport(t *testing.T) {
 	ctx := context.Background()
 	configuration := fixtureConfig(t)

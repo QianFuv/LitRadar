@@ -1,6 +1,10 @@
 // Package auth preserves the complete versioned auth database schema.
 package auth
 
+const versionTwentyOneSql = `
+CREATE INDEX idx_access_tokens_expires ON access_tokens(expires_at);
+`
+
 const versionTwoSql = `
         CREATE TABLE scheduled_tasks_v2 (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
