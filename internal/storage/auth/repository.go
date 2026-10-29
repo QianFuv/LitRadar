@@ -286,11 +286,11 @@ func (repository *Repository) CredentialsById(ctx context.Context, user identity
 	return scanCredentials(repository.database.QueryRowContext(ctx, "SELECT id,username,password_hash,salt,is_admin,created_at,token_generation FROM users WHERE id=?", user))
 }
 
-// BootstrapRequired means there are no users, including non-administrator users.
+// BootstrapRequired stops at the first user, including non-administrator users.
 func (repository *Repository) BootstrapRequired(ctx context.Context) (bool, error) {
-	var count int64
-	err := repository.database.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count)
-	return count == 0, err
+	var hasUsers bool
+	err := repository.database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users)").Scan(&hasUsers)
+	return !hasUsers, err
 }
 
 // SetAdministrator preserves at least one administrator without revoking existing credentials.
