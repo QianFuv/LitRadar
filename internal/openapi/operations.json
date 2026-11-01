@@ -4347,5 +4347,448 @@
         }
       }
     }
+  },
+  {
+    "method": "GET",
+    "path": "/api/favorites/graphs",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "List saved relation graph summaries.",
+      "operationId": "list_relation_graph_favorites",
+      "parameters": [
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          }
+        },
+        {
+          "name": "cursor",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          },
+          "description": "Opaque owner-bound continuation cursor."
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful operation.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelationGraphFavoritePage"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid input or pagination cursor.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "401": {
+          "description": "Authentication required.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/favorites/graphs",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Save a relation graph snapshot.",
+      "operationId": "create_relation_graph_favorite",
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RelationGraphFavoriteCreate"
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Successful operation.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelationGraphFavorite"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid input or pagination cursor.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "401": {
+          "description": "Authentication required.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "413": {
+          "description": "Graph exceeds 2 MiB or request envelope exceeds 3 MiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "415": {
+          "description": "JSON content type required.",
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "422": {
+          "description": "Invalid request field types or missing required fields.",
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/favorites/graphs/{graph_id}",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Read an owned relation graph snapshot.",
+      "operationId": "get_relation_graph_favorite",
+      "parameters": [
+        {
+          "name": "graph_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful operation.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelationGraphFavorite"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid input or pagination cursor.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "401": {
+          "description": "Authentication required.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Graph not found or not owned.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/favorites/graphs/{graph_id}",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Update an owned relation graph title or snapshot.",
+      "operationId": "update_relation_graph_favorite",
+      "parameters": [
+        {
+          "name": "graph_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RelationGraphFavoriteUpdate"
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Successful operation.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelationGraphFavorite"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid input or pagination cursor.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "401": {
+          "description": "Authentication required.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Graph not found or not owned.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "413": {
+          "description": "Graph exceeds 2 MiB or request envelope exceeds 3 MiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "415": {
+          "description": "JSON content type required.",
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "422": {
+          "description": "Invalid request field types or missing required fields.",
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/favorites/graphs/{graph_id}",
+    "operation": {
+      "tags": [
+        "favorites"
+      ],
+      "summary": "Delete an owned relation graph snapshot.",
+      "operationId": "delete_relation_graph_favorite",
+      "parameters": [
+        {
+          "name": "graph_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful operation.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OkResponse"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid input or pagination cursor.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "401": {
+          "description": "Authentication required.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Graph not found or not owned.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
   }
 ]

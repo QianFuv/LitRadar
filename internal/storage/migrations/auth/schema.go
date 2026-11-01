@@ -742,3 +742,19 @@ CREATE TABLE cfp_seed_imports (
     notice_count INTEGER NOT NULL
 );
 `
+
+const versionTwentyTwoSql = `
+CREATE TABLE IF NOT EXISTS relation_graph_favorites (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    db_name TEXT NOT NULL,
+    root_article_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    node_count INTEGER NOT NULL,
+    graph TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_relation_graph_favorites_user_updated
+    ON relation_graph_favorites(user_id, updated_at DESC, id DESC);
+`

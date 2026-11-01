@@ -1140,6 +1140,43 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/favorites/graphs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List saved relation graph summaries. */
+    get: operations['list_relation_graph_favorites'];
+    put?: never;
+    /** Save a relation graph snapshot. */
+    post: operations['create_relation_graph_favorite'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/favorites/graphs/{graph_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read an owned relation graph snapshot. */
+    get: operations['get_relation_graph_favorite'];
+    /** Update an owned relation graph title or snapshot. */
+    put: operations['update_relation_graph_favorite'];
+    post?: never;
+    /** Delete an owned relation graph snapshot. */
+    delete: operations['delete_relation_graph_favorite'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/favorites/tracking': {
     parameters: {
       query?: never;
@@ -2957,6 +2994,64 @@ export interface components {
       /** @description Requested username. */
       username: string;
     };
+    RelationGraphFavorite: {
+      /** Format: double */
+      created_at: number;
+      db_name: string;
+      /** @description Verbatim JSON object snapshot, at most 2 MiB encoded. */
+      graph: {
+        [key: string]: unknown;
+      };
+      /** Format: int64 */
+      id: number;
+      node_count: number;
+      /** Format: int64 */
+      root_article_id: number;
+      title: string;
+      /** Format: double */
+      updated_at: number;
+    };
+    RelationGraphFavoriteCreate: {
+      db_name: string;
+      /** @description Verbatim JSON object snapshot, at most 2 MiB encoded. */
+      graph: {
+        [key: string]: unknown;
+      };
+      node_count: number;
+      /** Format: int64 */
+      root_article_id: number;
+      /** @description Trimmed graph title. */
+      title: string;
+    };
+    RelationGraphFavoritePage: {
+      items: components['schemas']['RelationGraphFavoriteSummary'][];
+      next_cursor: string | null;
+    };
+    RelationGraphFavoriteSummary: {
+      /** Format: double */
+      created_at: number;
+      db_name: string;
+      /** Format: int64 */
+      id: number;
+      node_count: number;
+      /** Format: int64 */
+      root_article_id: number;
+      title: string;
+      /** Format: double */
+      updated_at: number;
+    };
+    RelationGraphFavoriteUpdate:
+      | {
+          /** @description Verbatim JSON object snapshot, at most 2 MiB encoded. */
+          graph?: {
+            [key: string]: unknown;
+          };
+          node_count?: number;
+          /** @description Trimmed graph title. */
+          title?: string;
+        }
+      | unknown
+      | unknown;
     /** @description Individually manageable secret-pool item metadata. */
     RuntimeSecretItemInfo: {
       /** @description Human-readable prefix mask that never contains the complete secret. */
@@ -5162,6 +5257,299 @@ export interface operations {
       };
       /** @description Citation metadata could not be read safely. */
       500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
+  list_relation_graph_favorites: {
+    parameters: {
+      query?: {
+        /** @description Opaque owner-bound continuation cursor. */
+        cursor?: string;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful operation. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RelationGraphFavoritePage'];
+        };
+      };
+      /** @description Invalid input or pagination cursor. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Authentication required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
+  create_relation_graph_favorite: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RelationGraphFavoriteCreate'];
+      };
+    };
+    responses: {
+      /** @description Successful operation. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RelationGraphFavorite'];
+        };
+      };
+      /** @description Invalid input or pagination cursor. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+          'text/plain': string;
+        };
+      };
+      /** @description Authentication required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Graph exceeds 2 MiB or request envelope exceeds 3 MiB. */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+          'text/plain': string;
+        };
+      };
+      /** @description JSON content type required. */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+      /** @description Invalid request field types or missing required fields. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+    };
+  };
+  get_relation_graph_favorite: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        graph_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful operation. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RelationGraphFavorite'];
+        };
+      };
+      /** @description Invalid input or pagination cursor. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Authentication required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Graph not found or not owned. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
+  update_relation_graph_favorite: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        graph_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RelationGraphFavoriteUpdate'];
+      };
+    };
+    responses: {
+      /** @description Successful operation. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RelationGraphFavorite'];
+        };
+      };
+      /** @description Invalid input or pagination cursor. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+          'text/plain': string;
+        };
+      };
+      /** @description Authentication required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Graph not found or not owned. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Graph exceeds 2 MiB or request envelope exceeds 3 MiB. */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+          'text/plain': string;
+        };
+      };
+      /** @description JSON content type required. */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+      /** @description Invalid request field types or missing required fields. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+    };
+  };
+  delete_relation_graph_favorite: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        graph_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful operation. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OkResponse'];
+        };
+      };
+      /** @description Invalid input or pagination cursor. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Authentication required. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Graph not found or not owned. */
+      404: {
         headers: {
           [name: string]: unknown;
         };

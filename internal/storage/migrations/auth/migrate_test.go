@@ -577,3 +577,25 @@ func assertMigrationStringRoundTrip(t *testing.T, value string) {
 		t.Fatalf("separator escaped: %q", encoded)
 	}
 }
+
+func TestVersionTwentyTwoRelationGraphFavorites(t *testing.T) {
+	filename, connection := historicalDatabase(t, 21)
+	summary, err := Migrate(context.Background(), filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ToVersion != 22 {
+		t.Fatalf("version = %d", summary.ToVersion)
+	}
+	names, err := columns(context.Background(), connection, "relation_graph_favorites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{"id", "user_id", "db_name", "root_article_id", "title", "node_count", "graph", "created_at", "updated_at"}
+	if !reflect.DeepEqual(names, expected) {
+		t.Fatalf("columns = %v", names)
+	}
+	if scalar[int](t, connection, "SELECT count(*) FROM pragma_index_list('relation_graph_favorites') WHERE name='idx_relation_graph_favorites_user_updated'") != 1 {
+		t.Fatal("missing graph index")
+	}
+}

@@ -58,7 +58,7 @@ type Handler struct {
 	options  Options
 }
 
-// New composes all 86 concrete operations and verifies their OpenAPI bindings before serving.
+// New composes concrete operations and verifies their OpenAPI bindings before serving.
 func New(services Services, options Options) (*Handler, error) {
 	if err := validateApiServices(services); err != nil {
 		return nil, err
@@ -80,6 +80,7 @@ func New(services Services, options Options) (*Handler, error) {
 		authHandlers.routes(),
 		(&indexHandlers{services.Storage, authenticator, services.StoragePool, &weekly.Cache{}}).routes(),
 		(&favoriteHandlers{favoriteRepository, services.Storage, authenticator, services.StoragePool}).routes(),
+		(&favoriteHandlers{favoriteRepository, services.Storage, authenticator, services.StoragePool}).graphRoutes(),
 		(&publicHandlers{services.Storage, services.StoragePool, services.Scheduler}).routes(),
 		(&cnkiHandlers{sessions: sessions, authenticator: authenticator, pool: services.StoragePool, upstream: services.UpstreamPool, newClient: liveCnkiClient(options.ProviderProxy.ForProvider(sources.ZjlibProviderName))}).routes(),
 		(&adminHandlers{auth: authHandlers, storage: services.Storage, scheduler: services.Scheduler, settings: settingsRepository}).routes(),
@@ -126,6 +127,7 @@ func (handler *Handler) Close() error { return handler.mcp.Close() }
 func GenerateOpenAPI() ([]byte, error) {
 	groups := [][]route{
 		(&authHandlers{}).routes(), (&indexHandlers{}).routes(), (&favoriteHandlers{}).routes(),
+		(&favoriteHandlers{}).graphRoutes(),
 		(&publicHandlers{}).routes(), (&cnkiHandlers{}).routes(), (&adminHandlers{}).routes(),
 		(&cfpHandlers{}).routes(), (&articleHandlers{}).routes(), (&trackingHandlers{}).routes(),
 	}

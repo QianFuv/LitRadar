@@ -20,7 +20,7 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 
 | 数据库             | `PRAGMA user_version` | 升级策略                                                          |
 | ------------------ | --------------------: | ----------------------------------------------------------------- |
-| 认证/业务库        |                    21 | 版本化 migration                                                  |
+| 认证/业务库        |                    22 | 版本化 migration                                                  |
 | 内容索引库         |                    10 | 新建精确 v10；运行时读写精确 v6/v7/v8/v9/v10；精确 v4/v5 原子迁移到 v10 |
 | 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建             |
 | catalog 索引控制库 |                     5 | v0/v1/v2/v3/v4 安全事务迁移；可删除后按 v5 重建                   |
@@ -395,3 +395,22 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 包含创建时发现的全部 `data/index/*.sqlite` 文件，不按内容 schema 筛选；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v5 controls，`data/index-work` 的 Crossref 工作集也始终排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
 
 备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限，因此也能保留通过这些检查的历史数据库。它不执行内容结构预检或迁移；恢复后能否服务仍取决于上文的精确内容 schema、迁移或重建要求。
+
+### Relation graph favorites (auth schema v22)
+
+`relation_graph_favorites` stores independent, per-user graph snapshots without folders.
+
+| Column | SQLite type | Meaning |
+| --- | --- | --- |
+| id | INTEGER PRIMARY KEY | Snapshot identity |
+| user_id | INTEGER NOT NULL | Owning users(id); deletion cascades |
+| db_name | TEXT NOT NULL | Root article database |
+| root_article_id | INTEGER NOT NULL | Root article identity |
+| title | TEXT NOT NULL | Snapshot title |
+| node_count | INTEGER NOT NULL | Snapshot node count |
+| graph | TEXT NOT NULL | Opaque raw JSON object |
+| created_at | REAL NOT NULL | Fractional Unix seconds |
+| updated_at | REAL NOT NULL | Fractional Unix seconds |
+
+`idx_relation_graph_favorites_user_updated` indexes `(user_id, updated_at DESC, id DESC)`.
+Fresh databases run the same versioned migrations through v22.

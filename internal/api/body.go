@@ -70,6 +70,11 @@ var requestBodies = func() map[string]bodyType {
 
 // extractBody enforces optional-header admission before buffering and typed decoding.
 func extractBody(request *http.Request, kind bodyType, isOptional bool) (any, *apiError) {
+	return extractBodyWithLimit(request, kind, isOptional, 2*1024*1024)
+}
+
+// extractBodyWithLimit permits route-specific envelopes while retaining typed decoding.
+func extractBodyWithLimit(request *http.Request, kind bodyType, isOptional bool, limit int64) (any, *apiError) {
 	contentTypes, hasType := request.Header["Content-Type"]
 	if isOptional && !hasType {
 		return nil, nil
@@ -81,7 +86,7 @@ func extractBody(request *http.Request, kind bodyType, isOptional bool) (any, *a
 	if !isJsonContentType(contentType) {
 		return nil, &apiError{status: 415, detail: "Expected request with `Content-Type: application/json`", isPlain: true}
 	}
-	body, failure := bufferRequestBody(request)
+	body, failure := bufferRequestBodyLimit(request, limit)
 	if failure != nil {
 		return nil, failure
 	}
@@ -98,9 +103,13 @@ func extractBody(request *http.Request, kind bodyType, isOptional bool) (any, *a
 
 // bufferRequestBody preserves length-limit precedence over reader errors.
 func bufferRequestBody(request *http.Request) ([]byte, *apiError) {
-	const limit = 2 * 1024 * 1024
+	return bufferRequestBodyLimit(request, 2*1024*1024)
+}
+
+// bufferRequestBodyLimit bounds buffering before reporting reader failures.
+func bufferRequestBodyLimit(request *http.Request, limit int64) ([]byte, *apiError) {
 	body, err := io.ReadAll(io.LimitReader(request.Body, limit+1))
-	if len(body) > limit {
+	if int64(len(body)) > limit {
 		return nil, &apiError{status: 413, detail: "Failed to buffer the request body: length limit exceeded", isPlain: true}
 	}
 	if err != nil {
