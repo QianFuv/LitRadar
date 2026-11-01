@@ -446,7 +446,9 @@ async function rendersWeeklyFailures(): Promise<void> {
   renderWeeklyPage('?db=fixture.sqlite&journal=101');
 
   expect(await screen.findByRole('alert')).toHaveTextContent('weekly page unavailable');
-  expect(document.querySelector('[data-weekly-article-state="error"]')).not.toBeNull();
+  await waitFor(() =>
+    expect(document.querySelector('[data-weekly-article-state="error"]')).not.toBeNull(),
+  );
   expect(screen.getAllByRole('alert')).toHaveLength(1);
 }
 
