@@ -23,6 +23,7 @@ import { createPortal } from 'react-dom';
 
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
 import { UserAvatar } from '@/components/shell/user-avatar';
+import { keepRadixCloseFocus } from '@/components/ui/dropdown-menu';
 import { buildAdminCenterHref, parseAdminSection } from '@/lib/admin-center';
 import { useAuth, type LogoutRevocationWarning } from '@/lib/auth-context';
 import { buildSettingsCenterHref } from '@/lib/settings-center';
@@ -252,6 +253,7 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
             sideOffset={placement === 'rail' ? 14 : 6}
             collisionPadding={8}
             className={cn(MENU_CONTENT_CLASS, 'w-64 max-w-[calc(100vw-1rem)]')}
+            onCloseAutoFocus={keepRadixCloseFocus}
           >
             <DropdownMenuPrimitive.Label className="flex items-center gap-3 px-2 py-2">
               <UserAvatar username={user.username} size="lg" />

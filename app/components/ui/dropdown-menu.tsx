@@ -34,7 +34,17 @@ function DropdownMenuTrigger(props: React.ComponentProps<typeof DropdownMenuPrim
 }
 
 /**
+ * Leave close focus to Radix, which restores the trigger after the pointer's own focus change.
+ * Pass it to Animate UI menu content rendered outside `DropdownMenuContent`.
+ */
+export function keepRadixCloseFocus(): void {}
+
+/**
  * Render positioned menu content in a portal.
+ *
+ * Animate UI returns focus to the trigger as soon as the menu starts closing, before the outside
+ * pointer press moves focus to the page, and then blocks Radix's own restore; passing a close
+ * focus handler opts out of that early restore so Radix returns focus once the exit finishes.
  *
  * @param props - Radix content properties.
  * @returns Portaled menu content.
@@ -42,6 +52,7 @@ function DropdownMenuTrigger(props: React.ComponentProps<typeof DropdownMenuPrim
 function DropdownMenuContent({
   className,
   sideOffset = 6,
+  onCloseAutoFocus = keepRadixCloseFocus,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   return (
@@ -50,6 +61,7 @@ function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         collisionPadding={8}
+        onCloseAutoFocus={onCloseAutoFocus}
         className={cn(
           'bg-popover text-popover-foreground z-50 min-w-48 origin-(--radix-dropdown-menu-content-transform-origin) rounded-xl p-1.5 shadow-overlay outline-hidden',
           className,
