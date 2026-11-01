@@ -132,7 +132,7 @@ changed-script syntax checks, scoped Prettier and Git whitespace checks passed.
 The actionlint configuration adds the existing `ubuntu-26.04` hosted label to its
 older label catalog; workflow runners and permissions are unchanged.
 
-The local environment has pnpm 10.32.0; CI uses Node 26.11.1 and pnpm 12.10.1.
+Local development and CI now use pnpm 12.16.1; CI uses Node 26.11.1. The validation above predates this pnpm update.
 The complete native Go suites and frontend browser suites were not rerun locally;
 their retained scheduling/arguments and packaging contracts were tested instead.
 Docker Desktop's Linux engine was unavailable, so the real named-context image

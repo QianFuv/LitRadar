@@ -16,7 +16,7 @@ CI 与前端构建阶段使用：
 | 工具              | 版本                                                                                                   |
 | ----------------- | ------------------------------------------------------------------------------------------------------ |
 | Node.js           | 26.11.1                                                                                                |
-| pnpm              | 12.10.1                                                                                                |
+| pnpm              | 12.16.1                                                                                                |
 | Next.js           | 16.3.6                                                                                                 |
 | React / React DOM | 19.2.3                                                                                                 |
 | Motion for React  | 13.1.1                                                                                                 |
@@ -45,7 +45,7 @@ go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar serve \
 再在 `app/` 中运行：
 
 ```bash
-npm install --global pnpm@12.10.1
+npm install --global pnpm@12.16.1
 pnpm install --frozen-lockfile
 pnpm dev
 ```

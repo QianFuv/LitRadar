@@ -10,7 +10,7 @@ CI 和容器使用以下主版本：
 | ------- | ------------------------------------------------ |
 | Go      | 1.27.3，CGO_ENABLED=1，需 C/C++14 编译器及 CMake |
 | Node.js | 26.11.1                                          |
-| pnpm    | 12.10.1                                          |
+| pnpm    | 12.16.1                                          |
 | Docker  | 当前 Docker Engine / Docker Desktop 与 Compose   |
 
 Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
@@ -54,7 +54,7 @@ export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment
 
 ```bash
 cd app
-npm install --global pnpm@12.10.1
+npm install --global pnpm@12.16.1
 pnpm install --frozen-lockfile
 ```
 

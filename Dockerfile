@@ -17,10 +17,10 @@ RUN apt-get update \
     && printf '%s  /tmp/node.tar.xz\n' "$archive_sha256" | sha256sum --check --strict \
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
     && rm /tmp/node.tar.xz \
-    && npm install --global pnpm@12.10.1 --ignore-scripts --no-audit --no-fund \
+    && npm install --global pnpm@12.16.1 --ignore-scripts --no-audit --no-fund \
     && node /usr/local/lib/node_modules/pnpm/install.js \
     && test "$(node --version)" = v26.11.1 \
-    && test "$(pnpm --version)" = 12.10.1
+    && test "$(pnpm --version)" = 12.16.1
 
 
 FROM node-toolchain AS frontend-deps
