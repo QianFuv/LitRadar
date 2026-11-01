@@ -249,11 +249,7 @@ async function copiesArticleValuesAndUsesStableActionRoutes(): Promise<void> {
 
   await user.click(screen.getByRole('button', { name: '复制文章标题' }));
   expect(writeText).toHaveBeenLastCalledWith('Selectable title');
-  expect(
-    screen
-      .getByRole('button', { name: '复制文章标题' })
-      .querySelector('[data-copy-state="copied"]'),
-  ).not.toBeNull();
+  expect(screen.getByRole('button', { name: '复制文章标题' })).toHaveAttribute('data-copied');
   expect(screen.queryByText('文章标题已复制。')).not.toBeInTheDocument();
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
 
@@ -269,9 +265,7 @@ async function copiesArticleValuesAndUsesStableActionRoutes(): Promise<void> {
     ].join('\n'),
   );
   expect(screen.getByRole('button', { name: '已复制' })).toBeInTheDocument();
-  expect(
-    screen.getByRole('button', { name: '已复制' }).querySelector('[data-copy-state="copied"]'),
-  ).not.toBeNull();
+  expect(screen.getByRole('button', { name: '已复制' })).toHaveAttribute('data-copied');
   expect(document.querySelector('[data-article-access-state="ready"]')).not.toBeNull();
   expect(document.querySelector('[data-article-favorite-state="ready"]')).not.toBeNull();
   expect(screen.queryByText('文章信息已复制。')).not.toBeInTheDocument();

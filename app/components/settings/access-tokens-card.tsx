@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Key, KeyRound, Plus, Trash2 } from 'lucide-react';
+import { Check, Key, KeyRound, Plus, Trash2 } from 'lucide-react';
 
 import { createAccessToken, getAccessTokens, revokeAccessToken, type AccessToken } from '@/lib/api';
 import {
@@ -15,6 +15,7 @@ import {
   StatusPill,
 } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
+import { CopyButton } from '@/components/ui/copy-button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
@@ -27,14 +28,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  COLLAPSE_VARIANTS,
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  DISCLOSURE_VARIANTS,
   MotionDiv,
   MotionForm,
   MotionParagraph,
   MotionPresence,
-  useMotionTransition,
+  PANEL_VARIANTS,
+  REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import type {
   SettingsCopyFeedback,
@@ -137,8 +137,6 @@ function useAccessTokenViewState({
   const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
   const [tokenToRevoke, setTokenToRevoke] = useState<AccessToken | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
-  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const tokenNameCodePointCount = Array.from(tokenName).length;
   const tokenNameError =
     tokenNameCodePointCount > ACCESS_TOKEN_NAME_MAX_CODE_POINTS
@@ -179,8 +177,6 @@ function useAccessTokenViewState({
     setTokenToRevoke,
     dialogOpen,
     setDialogOpen,
-    feedbackTransition,
-    rowTransition,
     tokenNameCodePointCount,
     tokenNameError,
     tokens,
@@ -193,10 +189,10 @@ type AccessTokenViewState = ReturnType<typeof useAccessTokenViewState>;
 
 /** Retain the one-time plaintext token and scoped copy feedback. */
 function renderCreatedAccessToken(
-  state: Pick<AccessTokenViewState, 'copyFeedback' | 'handleCopy' | 'feedbackTransition'>,
+  state: Pick<AccessTokenViewState, 'copyFeedback' | 'handleCopy'>,
   newTokenValue: string,
 ) {
-  const { copyFeedback, handleCopy, feedbackTransition } = state;
+  const { copyFeedback, handleCopy } = state;
 
   return (
     <MotionDiv
@@ -205,9 +201,8 @@ function renderCreatedAccessToken(
       className="space-y-3"
       initial="hidden"
       animate="visible"
-      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-      variants={FADE_UP_VARIANTS}
-      transition={feedbackTransition}
+      exit="exit"
+      variants={PANEL_VARIANTS}
     >
       <p className="flex items-center gap-2 text-sm font-bold text-success-foreground">
         <span className="flex size-5 items-center justify-center rounded-full bg-success">
@@ -219,14 +214,13 @@ function renderCreatedAccessToken(
         <code className="min-w-0 flex-1 rounded-lg border border-dashed border-primary/50 bg-info px-3 py-2.5 text-xs leading-5 break-all text-info-foreground">
           {newTokenValue}
         </code>
-        <Button
+        <CopyButton
           variant="outline"
           className="h-auto w-11 shrink-0"
           aria-label="复制新访问令牌"
-          onClick={() => void handleCopy(newTokenValue, '访问令牌已复制。', 'token')}
-        >
-          <Copy className="h-4 w-4" />
-        </Button>
+          isCopied={copyFeedback?.scope === 'token' && copyFeedback.tone === 'success'}
+          onCopy={() => void handleCopy(newTokenValue, '访问令牌已复制。', 'token')}
+        />
       </div>
       <MotionPresence>
         {copyFeedback?.scope === 'token' && (
@@ -234,16 +228,11 @@ function renderCreatedAccessToken(
             key="token-copy-feedback"
             data-motion-feedback="token-copy"
             role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-            className={
-              copyFeedback.tone === 'error'
-                ? 'text-sm text-destructive'
-                : 'text-sm text-muted-foreground'
-            }
+            className={copyFeedback.tone === 'error' ? 'text-sm text-destructive' : 'sr-only'}
             initial="hidden"
             animate="visible"
             exit="exit"
-            variants={FADE_UP_VARIANTS}
-            transition={feedbackTransition}
+            variants={REVEAL_VARIANTS}
           >
             {copyFeedback.message}
           </MotionParagraph>
@@ -260,7 +249,6 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
     setTokenName,
     tokenTtl,
     setTokenTtl,
-    feedbackTransition,
     tokenNameCodePointCount,
     tokenNameError,
     createTokenMut,
@@ -279,9 +267,8 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
       className="space-y-4"
       initial="hidden"
       animate="visible"
-      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-      variants={FADE_UP_VARIANTS}
-      transition={feedbackTransition}
+      exit="exit"
+      variants={PANEL_VARIANTS}
     >
       <div className="space-y-2">
         <Label htmlFor="access-token-name">名称</Label>
@@ -337,8 +324,7 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
             initial="hidden"
             animate="visible"
             exit="exit"
-            variants={FADE_UP_VARIANTS}
-            transition={feedbackTransition}
+            variants={REVEAL_VARIANTS}
           >
             {creationError}
           </MotionParagraph>
@@ -357,12 +343,9 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
 
 /** Retain empty/list branches and directly keyed revocation rows. */
 function renderAccessTokenList(
-  state: Pick<
-    AccessTokenViewState,
-    'setTokenToRevoke' | 'feedbackTransition' | 'rowTransition' | 'tokens' | 'revokeMut'
-  >,
+  state: Pick<AccessTokenViewState, 'setTokenToRevoke' | 'tokens' | 'revokeMut'>,
 ) {
-  const { setTokenToRevoke, feedbackTransition, rowTransition, tokens, revokeMut } = state;
+  const { setTokenToRevoke, tokens, revokeMut } = state;
 
   const nowSeconds = Date.now() / 1000;
   return (
@@ -374,8 +357,7 @@ function renderAccessTokenList(
           initial="hidden"
           animate="visible"
           exit="exit"
-          variants={FADE_UP_VARIANTS}
-          transition={feedbackTransition}
+          variants={REVEAL_VARIANTS}
         >
           <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
             <KeyRound className="size-5" aria-hidden="true" />
@@ -397,9 +379,8 @@ function renderAccessTokenList(
               className="flex items-center gap-3 overflow-hidden px-4 py-3.5 sm:px-5"
               initial="hidden"
               animate="visible"
-              exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-              variants={COLLAPSE_VARIANTS}
-              transition={rowTransition}
+              exit="exit"
+              variants={DISCLOSURE_VARIANTS}
             >
               <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                 <Key className="size-4" aria-hidden="true" />

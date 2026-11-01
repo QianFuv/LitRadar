@@ -29,11 +29,11 @@ import { SearchBar } from '@/components/feature/search-bar';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  LIST_ITEM_VARIANTS,
   MotionDiv,
   MotionPresence,
-  useMotionTransition,
+  PANEL_VARIANTS,
+  REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
@@ -370,7 +370,6 @@ function useWeeklyViewState() {
   const searchQuery = weeklyQuery.trim();
   const [selectedDb, setSelectedDb] = useQueryState('db', parseAsString.withDefault(''));
   const [selectedJournalId, setSelectedJournalId] = useQueryState('journal', parseAsString);
-  const stateTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   const {
     data: weeklySummary,
@@ -545,7 +544,6 @@ function useWeeklyViewState() {
   return {
     user,
     searchQuery,
-    stateTransition,
     weeklySummary,
     weeklyErrorData,
     articleErrorData,
@@ -649,7 +647,6 @@ function getWeeklyJournalDescription(
 function renderWeeklyArticleResults(state: WeeklyViewState) {
   const {
     user,
-    stateTransition,
     effectiveSelectedDb,
     renderedArticles,
     prefetchIndex,
@@ -665,34 +662,43 @@ function renderWeeklyArticleResults(state: WeeklyViewState) {
   } = state;
   return (
     <>
-      {renderedArticles.map((article, index) => (
-        <ArticleDialogCard
-          key={article.article_id}
-          triggerRef={index === prefetchIndex ? prefetchRef : undefined}
-          article={article}
-          dbName={effectiveSelectedDb}
-          initialFolderIds={
-            favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
-          }
-          isFavoriteStatePending={
-            Boolean(user) && isFavoriteStatePending && !favoriteChecksByArticle[article.article_id]
-          }
-          isFavoriteStateUnavailable={
-            Boolean(favoriteStateError) && !favoriteChecksByArticle[article.article_id]
-          }
-        />
-      ))}
+      <MotionPresence>
+        {renderedArticles.map((article, index) => (
+          <MotionDiv
+            key={article.article_id}
+            variants={LIST_ITEM_VARIANTS}
+            initial="hidden"
+            animate="visible"
+          >
+            <ArticleDialogCard
+              triggerRef={index === prefetchIndex ? prefetchRef : undefined}
+              article={article}
+              dbName={effectiveSelectedDb}
+              initialFolderIds={
+                favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
+              }
+              isFavoriteStatePending={
+                Boolean(user) &&
+                isFavoriteStatePending &&
+                !favoriteChecksByArticle[article.article_id]
+              }
+              isFavoriteStateUnavailable={
+                Boolean(favoriteStateError) && !favoriteChecksByArticle[article.article_id]
+              }
+            />
+          </MotionDiv>
+        ))}
+      </MotionPresence>
       <MotionPresence>
         {isFetchingNextPage && (
           <MotionDiv
             key="weekly-next-page"
             aria-hidden="true"
             className="py-4 text-center text-xs text-muted-foreground"
-            variants={FADE_UP_VARIANTS}
+            variants={REVEAL_VARIANTS}
             initial="hidden"
             animate="visible"
-            exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
-            transition={stateTransition}
+            exit="exit"
           >
             正在加载更多文章…
           </MotionDiv>
@@ -712,17 +718,16 @@ function renderWeeklyArticleStates(state: WeeklyViewState) {
 
 /** Select the original keyed panel before returning it directly to MotionPresence. */
 function renderWeeklyArticlePanel(state: WeeklyViewState) {
-  const { searchQuery, stateTransition, articleErrorData, articleListKey, articleState } = state;
+  const { searchQuery, articleErrorData, articleListKey, articleState } = state;
   if (articleState === 'no-journal')
     return (
       <MotionDiv
         key="weekly-articles-no-journal"
         data-weekly-article-state="no-journal"
-        variants={FADE_UP_VARIANTS}
+        variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
-        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-        transition={stateTransition}
+        exit="exit"
       >
         <StateMessage
           isLive={false}
@@ -738,11 +743,10 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
         data-weekly-article-key={articleListKey}
         data-weekly-article-state="loading"
         aria-hidden="true"
-        variants={FADE_UP_VARIANTS}
+        variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
-        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-        transition={stateTransition}
+        exit="exit"
       >
         <ArticleListSkeleton count={4} />
       </MotionDiv>
@@ -753,11 +757,10 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
         key="weekly-articles-error"
         data-weekly-article-key={articleListKey}
         data-weekly-article-state="error"
-        variants={FADE_UP_VARIANTS}
+        variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
-        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-        transition={stateTransition}
+        exit="exit"
       >
         <StateMessage
           isLive={false}
@@ -775,11 +778,10 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
         key="weekly-articles-empty"
         data-weekly-article-key={articleListKey}
         data-weekly-article-state="empty"
-        variants={FADE_UP_VARIANTS}
+        variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
-        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-        transition={stateTransition}
+        exit="exit"
       >
         <StateMessage
           isLive={false}
@@ -794,11 +796,10 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
       data-weekly-article-key={articleListKey}
       data-weekly-article-state="results"
       className="min-w-0"
-      variants={FADE_UP_VARIANTS}
+      variants={PANEL_VARIANTS}
       initial="hidden"
       animate="visible"
-      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-      transition={stateTransition}
+      exit="exit"
     >
       {renderWeeklyArticleResults(state)}
     </MotionDiv>
@@ -807,19 +808,17 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
 
 /** Render the selected journal caption above the article rows. */
 function renderWeeklyJournalHeader(state: WeeklyViewState) {
-  const { stateTransition, effectiveSelectedDb, effectiveSelectedJournalId, selectedJournal } =
-    state;
+  const { effectiveSelectedDb, effectiveSelectedJournalId, selectedJournal } = state;
   return (
     <MotionPresence mode="wait">
       <MotionDiv
         key={`${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}`}
         data-weekly-journal={effectiveSelectedJournalId ?? 'none'}
         className="flex items-start justify-between gap-3 border-b bg-muted/60 px-4 py-2.5 sm:px-5"
-        variants={FADE_UP_VARIANTS}
+        variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
-        exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
-        transition={stateTransition}
+        exit="exit"
       >
         <div className="min-w-0">
           <h2 className="truncate text-[13px] font-bold">
@@ -839,7 +838,7 @@ function renderWeeklyJournalHeader(state: WeeklyViewState) {
 
 /** Render summary loading and errors before the complete ready workspace. */
 function renderWeeklyPresentation(state: WeeklyViewState) {
-  const { stateTransition, weeklySummary, weeklyErrorData, weeklyState } = state;
+  const { weeklySummary, weeklyErrorData, weeklyState } = state;
   return (
     <MotionPresence mode="wait">
       {weeklyState === 'loading' ? (
@@ -847,11 +846,10 @@ function renderWeeklyPresentation(state: WeeklyViewState) {
           key="weekly-loading"
           data-weekly-state="loading"
           aria-hidden="true"
-          variants={FADE_UP_VARIANTS}
+          variants={PANEL_VARIANTS}
           initial="hidden"
           animate="visible"
-          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-          transition={stateTransition}
+          exit="exit"
         >
           <Skeleton className="m-4 h-10 sm:mx-5" />
           <ArticleListSkeleton count={4} />
@@ -860,11 +858,10 @@ function renderWeeklyPresentation(state: WeeklyViewState) {
         <MotionDiv
           key="weekly-error"
           data-weekly-state="error"
-          variants={FADE_UP_VARIANTS}
+          variants={PANEL_VARIANTS}
           initial="hidden"
           animate="visible"
-          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-          transition={stateTransition}
+          exit="exit"
         >
           <StateMessage
             isLive={false}
@@ -880,11 +877,10 @@ function renderWeeklyPresentation(state: WeeklyViewState) {
           <MotionDiv
             key="weekly-ready"
             data-weekly-state="ready"
-            variants={FADE_UP_VARIANTS}
+            variants={PANEL_VARIANTS}
             initial="hidden"
             animate="visible"
-            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-            transition={stateTransition}
+            exit="exit"
           >
             <section className="min-w-0" aria-label="每周文章">
               {renderWeeklyJournalHeader(state)}

@@ -15,13 +15,7 @@ import {
 } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
-  MotionParagraph,
-  MotionPresence,
-  useMotionTransition,
-} from '@/components/ui/motion';
+import { MotionParagraph, MotionPresence, REVEAL_VARIANTS } from '@/components/ui/motion';
 
 /**
  * Render and manage the active user's password change form.
@@ -33,7 +27,6 @@ export function PasswordCard() {
   const [oldPwd, setOldPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
   const [pwdMsg, setPwdMsg] = useState<string | null>(null);
-  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
   const changePwdMut = useMutation({
     mutationFn: () => changePassword(oldPwd, newPwd),
     onSuccess: () => {
@@ -99,8 +92,7 @@ export function PasswordCard() {
                     initial="hidden"
                     animate="visible"
                     exit="exit"
-                    variants={FADE_UP_VARIANTS}
-                    transition={feedbackTransition}
+                    variants={REVEAL_VARIANTS}
                   >
                     {pwdMsg}
                   </MotionParagraph>

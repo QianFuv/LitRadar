@@ -16,6 +16,7 @@ import {
   CheckedArticleDetailPane,
 } from '@/components/feature/article-detail-dialog-content';
 import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
+import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { RelationCanvas } from '@/components/relations/relation-canvas';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { useIsMotionReduced } from '@/components/ui/motion';
 import { getArticle, getArticles, getRelatedArticles, type Article } from '@/lib/api';
 import { getArticleDisplayTitle } from '@/lib/article-title';
+import { useAuth } from '@/lib/auth-context';
 import {
   RELATION_CHILD_LIMIT,
   RELATION_NODE_LIMIT,
@@ -201,13 +203,15 @@ function RelationHeading({ subtitle, children }: { subtitle: string; children?: 
 }
 
 /**
- * Grow, show, and navigate the relation graph of one center article.
+ * Grow, show, and navigate the relation graph of one center article, batch-loading the favorite
+ * state of every node so selecting one shows its favorite control at once, as in article lists.
  *
  * @param props - Center article and database.
  * @returns Graph workspace with reader.
  */
 function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: string }) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const { fitView } = useReactFlow();
   const isDocked = useMediaQuery(READER_DOCK_MEDIA_QUERY);
   const isMotionReduced = useIsMotionReduced();
@@ -245,6 +249,12 @@ function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: st
     retry: false,
   });
   const currentGraph = graph ?? initialQuery.data ?? null;
+  const graphArticleIds = useMemo(
+    () =>
+      currentGraph ? Object.values(currentGraph.nodes).map((node) => node.article.article_id) : [],
+    [currentGraph],
+  );
+  useFavoriteChecks(graphArticleIds, dbName, user?.id);
 
   const focusBranch = useCallback(
     (nodeIds: string[]) => {

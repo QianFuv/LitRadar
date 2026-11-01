@@ -14,14 +14,14 @@ import { RadarMark } from '@/components/feature/reader-placeholder';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  COLLAPSE_VARIANTS,
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  DISCLOSURE_VARIANTS,
   MotionDiv,
   MotionForm,
   MotionPresence,
   MotionSpan,
-  useMotionTransition,
+  PANEL_VARIANTS,
+  REVEAL_VARIANTS,
+  SWAP_VARIANTS,
 } from '@/components/ui/motion';
 import { getInviteRequirement } from '@/lib/api';
 import { getAuthErrorMessage, type AuthFormMode } from '@/lib/auth-error';
@@ -166,8 +166,6 @@ function useLoginViewState() {
   const [inviteRequired, setInviteRequired] = useState(true);
   const [bootstrapRequired, setBootstrapRequired] = useState(false);
   const [isRecoveryComplete, setIsRecoveryComplete] = useState(false);
-  const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
-  const fastTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
   const authModeKey = isLogoutRecovery ? 'recovery' : mode;
   const title = getLoginTitle(isLogoutRecovery, mode);
   const description = getLoginDescription(isLogoutRecovery, mode);
@@ -243,8 +241,6 @@ function useLoginViewState() {
     inviteRequired,
     bootstrapRequired,
     isRecoveryComplete,
-    panelTransition,
-    fastTransition,
     authModeKey,
     title,
     description,
@@ -339,15 +335,7 @@ function renderLoginPassword(state: LoginViewState) {
 
 /** Retain conditional invite field and captured value. */
 function renderLoginInvite(state: LoginViewState) {
-  const {
-    isLogoutRecovery,
-    inviteCode,
-    setInviteCode,
-    error,
-    mode,
-    inviteRequired,
-    fastTransition,
-  } = state;
+  const { isLogoutRecovery, inviteCode, setInviteCode, error, mode, inviteRequired } = state;
 
   return (
     !isLogoutRecovery &&
@@ -357,10 +345,10 @@ function renderLoginInvite(state: LoginViewState) {
         key="invite-code"
         data-auth-conditional="invite-code"
         className="overflow-hidden"
-        variants={COLLAPSE_VARIANTS}
+        variants={DISCLOSURE_VARIANTS}
         initial="hidden"
         animate="visible"
-        transition={fastTransition}
+        exit="exit"
       >
         <div className="space-y-2">
           <Label htmlFor="invite-code">邀请码</Label>
@@ -385,12 +373,9 @@ function renderLoginInvite(state: LoginViewState) {
 
 /** Retain the registration bootstrap guard and exact command spacing. */
 function renderLoginBootstrap(
-  state: Pick<
-    LoginViewState,
-    'isLogoutRecovery' | 'mode' | 'bootstrapRequired' | 'panelTransition'
-  >,
+  state: Pick<LoginViewState, 'isLogoutRecovery' | 'mode' | 'bootstrapRequired'>,
 ) {
-  const { isLogoutRecovery, mode, bootstrapRequired, panelTransition } = state;
+  const { isLogoutRecovery, mode, bootstrapRequired } = state;
 
   return (
     !isLogoutRecovery &&
@@ -401,10 +386,10 @@ function renderLoginBootstrap(
         role="status"
         data-auth-feedback="bootstrap-required"
         className="rounded-md border border-warning-border bg-warning px-3 py-2 text-sm text-foreground"
-        variants={FADE_UP_VARIANTS}
+        variants={REVEAL_VARIANTS}
         initial="hidden"
         animate="visible"
-        transition={panelTransition}
+        exit="exit"
       >
         系统管理员尚未完成本机初始化。请先在服务器上运行{' '}
         <code>admin bootstrap --username NAME --password-stdin</code>
@@ -415,8 +400,8 @@ function renderLoginBootstrap(
 }
 
 /** Retain the immediate keyed authentication error and its semantic ID. */
-function renderLoginError(state: Pick<LoginViewState, 'error' | 'panelTransition'>) {
-  const { error, panelTransition } = state;
+function renderLoginError(state: Pick<LoginViewState, 'error'>) {
+  const { error } = state;
 
   return (
     error && (
@@ -426,10 +411,10 @@ function renderLoginError(state: Pick<LoginViewState, 'error' | 'panelTransition
         role="alert"
         data-auth-feedback="error"
         className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-        variants={FADE_UP_VARIANTS}
+        variants={REVEAL_VARIANTS}
         initial="hidden"
         animate="visible"
-        transition={panelTransition}
+        exit="exit"
       >
         {error}
       </MotionDiv>
@@ -439,12 +424,9 @@ function renderLoginError(state: Pick<LoginViewState, 'error' | 'panelTransition
 
 /** Retain warning identity, recovery link and request metadata. */
 function renderLoginLogoutWarning(
-  state: Pick<
-    LoginViewState,
-    'logoutWarning' | 'isLogoutRecovery' | 'isRecoveryComplete' | 'panelTransition'
-  >,
+  state: Pick<LoginViewState, 'logoutWarning' | 'isLogoutRecovery' | 'isRecoveryComplete'>,
 ) {
-  const { logoutWarning, isLogoutRecovery, isRecoveryComplete, panelTransition } = state;
+  const { logoutWarning, isLogoutRecovery, isRecoveryComplete } = state;
 
   return (
     logoutWarning &&
@@ -454,10 +436,9 @@ function renderLoginLogoutWarning(
         role="alert"
         data-auth-feedback="logout-warning"
         className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-foreground"
-        variants={FADE_UP_VARIANTS}
+        variants={REVEAL_VARIANTS}
         initial="hidden"
         animate="visible"
-        transition={panelTransition}
       >
         <p className="font-medium">服务端会话撤销未确认</p>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -485,8 +466,7 @@ function renderLoginLogoutWarning(
 
 /** Retain pending/bootstrap admission guards and keyed animated submit label. */
 function renderLoginSubmit(state: LoginViewState) {
-  const { isLogoutRecovery, isSubmitting, mode, bootstrapRequired, fastTransition, submitLabel } =
-    state;
+  const { isLogoutRecovery, isSubmitting, mode, bootstrapRequired, submitLabel } = state;
 
   return (
     <Button
@@ -500,11 +480,10 @@ function renderLoginSubmit(state: LoginViewState) {
           <MotionSpan
             key={submitLabel}
             className="col-start-1 row-start-1"
-            variants={FADE_UP_VARIANTS}
+            variants={SWAP_VARIANTS}
             initial="hidden"
             animate="visible"
-            exit={{ opacity: 0, y: -2 }}
-            transition={fastTransition}
+            exit="exit"
           >
             {submitLabel}
           </MotionSpan>
@@ -516,7 +495,7 @@ function renderLoginSubmit(state: LoginViewState) {
 
 /** Retain the stable auth-form element and input identity across mode switches. */
 function renderLoginForm(state: LoginViewState) {
-  const { isLogoutRecovery, username, setUsername, error, panelTransition, handleSubmit } = state;
+  const { isLogoutRecovery, username, setUsername, error, handleSubmit } = state;
 
   return (
     <MotionForm
@@ -526,11 +505,10 @@ function renderLoginForm(state: LoginViewState) {
       onSubmit={handleSubmit}
       className="space-y-4"
       aria-describedby={error ? 'login-error' : undefined}
-      variants={FADE_UP_VARIANTS}
+      variants={PANEL_VARIANTS}
       initial="hidden"
       animate="visible"
-      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-      transition={panelTransition}
+      exit="exit"
     >
       <div className="space-y-2">
         <Label htmlFor="username">用户名</Label>
@@ -550,9 +528,9 @@ function renderLoginForm(state: LoginViewState) {
         />
       </div>
       {renderLoginPassword(state)}
-      {renderLoginInvite(state)}
-      {renderLoginBootstrap(state)}
-      {renderLoginError(state)}
+      <MotionPresence>{renderLoginInvite(state)}</MotionPresence>
+      <MotionPresence>{renderLoginBootstrap(state)}</MotionPresence>
+      <MotionPresence mode="wait">{renderLoginError(state)}</MotionPresence>
       {renderLoginSubmit(state)}
     </MotionForm>
   );
@@ -560,12 +538,9 @@ function renderLoginForm(state: LoginViewState) {
 
 /** Retain the mode-keyed visual header and immediate accessible title. */
 function renderLoginHeader(
-  state: Pick<
-    LoginViewState,
-    'isLogoutRecovery' | 'fastTransition' | 'authModeKey' | 'title' | 'description'
-  >,
+  state: Pick<LoginViewState, 'isLogoutRecovery' | 'authModeKey' | 'title' | 'description'>,
 ) {
-  const { isLogoutRecovery, fastTransition, authModeKey, title, description } = state;
+  const { isLogoutRecovery, authModeKey, title, description } = state;
 
   return (
     <header className="mb-7">
@@ -576,11 +551,10 @@ function renderLoginHeader(
           key={authModeKey}
           aria-hidden="true"
           data-auth-header-mode={authModeKey}
-          variants={FADE_UP_VARIANTS}
+          variants={PANEL_VARIANTS}
           initial="hidden"
           animate="visible"
-          exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
-          transition={fastTransition}
+          exit="exit"
         >
           <p className="text-xs font-bold tracking-[0.18em] text-primary-text">
             {isLogoutRecovery ? '账户安全' : '欢迎使用 LitRadar'}
@@ -595,7 +569,7 @@ function renderLoginHeader(
 
 /** Retain recovery result, stable form and original mode-switch event order. */
 function renderLoginCardContent(state: LoginViewState) {
-  const { isLogoutRecovery, setError, mode, setMode, isRecoveryComplete, panelTransition } = state;
+  const { isLogoutRecovery, setError, mode, setMode, isRecoveryComplete } = state;
 
   return (
     <div>
@@ -606,11 +580,10 @@ function renderLoginCardContent(state: LoginViewState) {
             key="recovery-complete"
             data-auth-state="recovery-complete"
             className="space-y-4"
-            variants={FADE_UP_VARIANTS}
+            variants={PANEL_VARIANTS}
             initial="hidden"
             animate="visible"
-            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-            transition={panelTransition}
+            exit="exit"
           >
             <div
               role="status"

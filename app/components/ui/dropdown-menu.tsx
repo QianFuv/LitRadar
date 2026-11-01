@@ -4,7 +4,7 @@
  * Project-styled Radix dropdown menu primitives.
  */
 
-import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu';
+import * as DropdownMenuPrimitive from '@animate-ui/react/primitives/radix-ui/dropdown-menu';
 import * as React from 'react';
 
 import { cn } from '@/lib/utils';
@@ -51,7 +51,7 @@ function DropdownMenuContent({
         sideOffset={sideOffset}
         collisionPadding={8}
         className={cn(
-          'motion-popover bg-popover text-popover-foreground z-50 min-w-48 origin-(--radix-dropdown-menu-content-transform-origin) rounded-xl p-1.5 shadow-overlay outline-hidden',
+          'bg-popover text-popover-foreground z-50 min-w-48 origin-(--radix-dropdown-menu-content-transform-origin) rounded-xl p-1.5 shadow-overlay outline-hidden',
           className,
         )}
         {...props}

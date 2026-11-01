@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, Copy, Plus, Ticket } from 'lucide-react';
+import { Ban, Plus, Ticket } from 'lucide-react';
 
 import {
   adminCreateInviteCode,
@@ -15,17 +15,16 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
 import { SettingsGroup, StatusPill } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
+import { CopyButton } from '@/components/ui/copy-button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import {
-  COLLAPSE_VARIANTS,
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  DISCLOSURE_VARIANTS,
   MotionDiv,
   MotionParagraph,
   MotionPresence,
-  useMotionTransition,
+  REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import { cn } from '@/lib/utils';
 
@@ -60,7 +59,6 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
     maxUses,
     setMaxUses,
     isPolicyValid,
-    feedbackTransition,
     inviteCodesError,
     isLoading,
     createCodeMut,
@@ -142,8 +140,7 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
               initial="hidden"
               animate="visible"
               exit="exit"
-              variants={FADE_UP_VARIANTS}
-              transition={feedbackTransition}
+              variants={REVEAL_VARIANTS}
             >
               {createCodeMut.error.message}
             </MotionParagraph>
@@ -178,12 +175,11 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
     maxUsesValue >= 1 &&
     maxUsesValue <= 1000;
   const [copyFeedback, setCopyFeedback] = useState<{
+    code: string;
     message: string;
     tone: 'error' | 'success';
   } | null>(null);
   const [inviteCodeToRevoke, setInviteCodeToRevoke] = useState<AdminInviteCode | null>(null);
-  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
-  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const {
     data: inviteCodes,
     error: inviteCodesError,
@@ -226,9 +222,9 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
   const handleCopyInviteCode = async (code: string) => {
     try {
       await copyTextToClipboard(code);
-      setCopyFeedback({ message: '邀请码已复制。', tone: 'success' });
+      setCopyFeedback({ code, message: '邀请码已复制。', tone: 'success' });
     } catch {
-      setCopyFeedback({ message: '复制失败，请手动选择文本复制。', tone: 'error' });
+      setCopyFeedback({ code, message: '复制失败，请手动选择文本复制。', tone: 'error' });
     }
     setTimeout(() => setCopyFeedback(null), 3000);
   };
@@ -242,8 +238,6 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
     copyFeedback,
     inviteCodeToRevoke,
     setInviteCodeToRevoke,
-    feedbackTransition,
-    rowTransition,
     inviteRows,
     inviteCodesError,
     isLoading,
@@ -255,10 +249,8 @@ function useAdminInviteViewState({ isEnabled }: { isEnabled: boolean }) {
 type AdminInviteViewState = ReturnType<typeof useAdminInviteViewState>;
 
 /** Retain accessible clipboard outcomes and unchanged feedback timer ownership. */
-function renderAdminInviteCopyFeedback(
-  state: Pick<AdminInviteViewState, 'copyFeedback' | 'feedbackTransition'>,
-) {
-  const { copyFeedback, feedbackTransition } = state;
+function renderAdminInviteCopyFeedback(state: Pick<AdminInviteViewState, 'copyFeedback'>) {
+  const { copyFeedback } = state;
 
   return (
     <MotionPresence>
@@ -267,16 +259,11 @@ function renderAdminInviteCopyFeedback(
           key="invite-copy-feedback"
           data-motion-feedback="invite-copy"
           role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-          className={
-            copyFeedback.tone === 'error'
-              ? 'text-sm text-destructive'
-              : 'text-sm text-muted-foreground'
-          }
+          className={copyFeedback.tone === 'error' ? 'text-sm text-destructive' : 'sr-only'}
           initial="hidden"
           animate="visible"
           exit="exit"
-          variants={FADE_UP_VARIANTS}
-          transition={feedbackTransition}
+          variants={REVEAL_VARIANTS}
         >
           {copyFeedback.message}
         </MotionParagraph>
@@ -287,14 +274,8 @@ function renderAdminInviteCopyFeedback(
 
 /** Retain full-code copying, lifecycle metadata and revoke admission in one list. */
 function renderAdminInviteList(state: AdminInviteViewState) {
-  const {
-    setInviteCodeToRevoke,
-    feedbackTransition,
-    rowTransition,
-    inviteRows,
-    revokeCodeMut,
-    handleCopyInviteCode,
-  } = state;
+  const { copyFeedback, setInviteCodeToRevoke, inviteRows, revokeCodeMut, handleCopyInviteCode } =
+    state;
 
   return (
     <SettingsGroup>
@@ -306,8 +287,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
             initial="hidden"
             animate="visible"
             exit="exit"
-            variants={FADE_UP_VARIANTS}
-            transition={feedbackTransition}
+            variants={REVEAL_VARIANTS}
           >
             暂无邀请码
           </MotionDiv>
@@ -323,9 +303,8 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                 className="content-visibility-card flex flex-col gap-3 overflow-hidden px-4 py-4 sm:px-5 md:flex-row md:items-center md:gap-5"
                 initial="hidden"
                 animate="visible"
-                exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-                variants={COLLAPSE_VARIANTS}
-                transition={rowTransition}
+                exit="exit"
+                variants={DISCLOSURE_VARIANTS}
               >
                 <div className="flex min-w-0 flex-1 items-start gap-3">
                   <span
@@ -347,17 +326,19 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                       >
                         {inviteCode.code}
                       </code>
-                      <Button
+                      <CopyButton
                         variant="ghost"
                         size="icon"
                         className="size-7 shrink-0 text-muted-foreground"
+                        iconClassName="size-3.5"
                         title="复制"
                         aria-label="复制邀请码"
                         disabled={!isActive}
-                        onClick={() => void handleCopyInviteCode(inviteCode.code)}
-                      >
-                        <Copy className="size-3.5" />
-                      </Button>
+                        isCopied={
+                          copyFeedback?.tone === 'success' && copyFeedback.code === inviteCode.code
+                        }
+                        onCopy={() => void handleCopyInviteCode(inviteCode.code)}
+                      />
                     </div>
                     <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                       创建者 {inviteCode.created_by_name ?? '系统'} · 首位使用者{' '}

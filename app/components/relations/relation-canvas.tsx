@@ -44,7 +44,12 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import { useIsMotionReduced } from '@/components/ui/motion';
+import {
+  MotionDiv,
+  MotionPresence,
+  POPOVER_VARIANTS,
+  useIsMotionReduced,
+} from '@/components/ui/motion';
 import type { Article } from '@/lib/api';
 import { getArticleDisplayTitle } from '@/lib/article-title';
 import {
@@ -410,15 +415,20 @@ function RelationHoverCard({ article, anchor }: { article: Article; anchor: DOMR
   const authors = formatArticleAuthors(article.authors);
   const source = formatArticleSource(article);
   return createPortal(
-    <div
+    <MotionDiv
       aria-hidden="true"
       data-slot="relation-hover-card"
       data-state="open"
       data-side={isAbove ? 'top' : 'bottom'}
-      className="motion-popover pointer-events-none fixed z-50 rounded-xl bg-popover p-3.5 text-popover-foreground shadow-overlay"
+      className="pointer-events-none fixed z-50 rounded-xl bg-popover p-3.5 text-popover-foreground shadow-overlay"
+      variants={POPOVER_VARIANTS}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
       style={{
         width: HOVER_CARD_WIDTH,
         left,
+        transformOrigin: isAbove ? 'center bottom' : 'center top',
         ...(isAbove ? { bottom: window.innerHeight - anchor.top + 8 } : { top: anchor.bottom + 8 }),
       }}
     >
@@ -430,7 +440,7 @@ function RelationHoverCard({ article, anchor }: { article: Article; anchor: DOMR
           {article.abstract}
         </p>
       )}
-    </div>,
+    </MotionDiv>,
     document.body,
   );
 }
@@ -917,9 +927,15 @@ export function RelationCanvas({
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--border)" />
       </ReactFlow>
-      {preview && previewArticle && (
-        <RelationHoverCard article={previewArticle} anchor={preview.anchor} />
-      )}
+      <MotionPresence>
+        {preview && previewArticle && (
+          <RelationHoverCard
+            key={preview.nodeId}
+            article={previewArticle}
+            anchor={preview.anchor}
+          />
+        )}
+      </MotionPresence>
     </>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Copy, Loader2, QrCode, RefreshCw, ShieldCheck, Unlink } from 'lucide-react';
+import { CheckCircle2, Loader2, QrCode, RefreshCw, ShieldCheck, Unlink } from 'lucide-react';
 
 import {
   ApiError,
@@ -21,17 +21,16 @@ import {
   StatusPill,
 } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
+import { CopyButton } from '@/components/ui/copy-button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
-  COLLAPSE_VARIANTS,
-  FADE_UP_VARIANTS,
-  FADE_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  DISCLOSURE_VARIANTS,
   MotionDiv,
   MotionParagraph,
   MotionPresence,
   MotionSpan,
-  useMotionTransition,
+  REVEAL_VARIANTS,
+  SWAP_VARIANTS,
 } from '@/components/ui/motion';
 import type {
   SettingsCopyFeedback,
@@ -192,7 +191,7 @@ export function CnkiSettingsCard(props: {
   handleCopy: (value: string, successMessage: string, scope: SettingsCopyScope) => Promise<void>;
 }) {
   const state = useCnkiViewState(props);
-  const { cnkiMessage, feedbackTransition, isCnkiSessionError, cnkiSessionError } = state;
+  const { cnkiMessage, isCnkiSessionError, cnkiSessionError } = state;
   return (
     <SettingsSection aria-label="浙江图书馆 CNKI">
       <SettingsGroup>
@@ -233,8 +232,7 @@ export function CnkiSettingsCard(props: {
                   initial="hidden"
                   animate="visible"
                   exit="exit"
-                  variants={FADE_UP_VARIANTS}
-                  transition={feedbackTransition}
+                  variants={REVEAL_VARIANTS}
                 >
                   {cnkiMessage.text}
                 </MotionParagraph>
@@ -262,8 +260,6 @@ function useCnkiViewState({
   const [cnkiLogin, setCnkiLogin] = useState<CnkiLoginStartResponse | null>(null);
   const [cnkiMessage, setCnkiMessage] = useState<CnkiMessageState | null>(null);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
-  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
-  const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const cnkiSessionQueryKey = ['cnki-session', userId] as const;
   const currentCnkiSessionQueryKey = ['cnki-session', 'current'] as const;
   const {
@@ -329,8 +325,6 @@ function useCnkiViewState({
     setCnkiMessage,
     isClearConfirmOpen,
     setIsClearConfirmOpen,
-    feedbackTransition,
-    panelTransition,
     cnkiSession,
     isCnkiSessionLoading,
     isCnkiSessionError,
@@ -344,10 +338,8 @@ function useCnkiViewState({
 type CnkiViewState = ReturnType<typeof useCnkiViewState>;
 
 /** Retain the loading label and direct keyed status transition. */
-function renderCnkiStatus(
-  state: Pick<CnkiViewState, 'feedbackTransition' | 'cnkiSession' | 'isCnkiSessionLoading'>,
-) {
-  const { feedbackTransition, cnkiSession, isCnkiSessionLoading } = state;
+function renderCnkiStatus(state: Pick<CnkiViewState, 'cnkiSession' | 'isCnkiSessionLoading'>) {
+  const { cnkiSession, isCnkiSessionLoading } = state;
 
   return (
     <StatusPill
@@ -361,8 +353,7 @@ function renderCnkiStatus(
           initial="hidden"
           animate="visible"
           exit="exit"
-          variants={FADE_VARIANTS}
-          transition={feedbackTransition}
+          variants={SWAP_VARIANTS}
         >
           {isCnkiSessionLoading ? '检查中' : getCnkiStatusLabel(cnkiSession)}
         </MotionSpan>
@@ -397,14 +388,7 @@ function renderCnkiSessionMetadata(state: Pick<CnkiViewState, 'cnkiSession'>) {
 
 /** Retain the complete guarded QR panel and manual poll/copy actions. */
 function renderCnkiLoginChallenge(state: CnkiViewState) {
-  const {
-    copyFeedback,
-    handleCopy,
-    cnkiLogin,
-    feedbackTransition,
-    panelTransition,
-    pollCnkiLoginMut,
-  } = state;
+  const { copyFeedback, handleCopy, cnkiLogin, pollCnkiLoginMut } = state;
 
   return (
     <MotionPresence>
@@ -415,9 +399,8 @@ function renderCnkiLoginChallenge(state: CnkiViewState) {
           className="overflow-hidden bg-muted/40"
           initial="hidden"
           animate="visible"
-          exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-          variants={COLLAPSE_VARIANTS}
-          transition={panelTransition}
+          exit="exit"
+          variants={DISCLOSURE_VARIANTS}
         >
           <div className="flex flex-col gap-5 px-4 py-5 sm:flex-row sm:items-center sm:px-5">
             {isQrImageSource(cnkiLogin.qr_code) ? (
@@ -466,17 +449,17 @@ function renderCnkiLoginChallenge(state: CnkiViewState) {
                   )}
                   {pollCnkiLoginMut.isPending ? '确认并预热…' : '完成登录'}
                 </Button>
-                <Button
+                <CopyButton
                   variant="ghost"
                   size="sm"
                   aria-label="复制 CNKI 登录二维码内容"
-                  onClick={() =>
+                  isCopied={copyFeedback?.scope === 'cnkiQr' && copyFeedback.tone === 'success'}
+                  onCopy={() =>
                     void handleCopy(cnkiLogin.qr_code, 'CNKI 登录二维码内容已复制。', 'cnkiQr')
                   }
                 >
-                  <Copy className="h-4 w-4" />
                   复制
-                </Button>
+                </CopyButton>
               </div>
               <MotionPresence>
                 {copyFeedback?.scope === 'cnkiQr' && (
@@ -485,15 +468,12 @@ function renderCnkiLoginChallenge(state: CnkiViewState) {
                     data-motion-feedback="cnki-copy"
                     role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
                     className={
-                      copyFeedback.tone === 'error'
-                        ? 'text-sm text-destructive'
-                        : 'text-sm text-muted-foreground'
+                      copyFeedback.tone === 'error' ? 'text-sm text-destructive' : 'sr-only'
                     }
                     initial="hidden"
                     animate="visible"
                     exit="exit"
-                    variants={FADE_UP_VARIANTS}
-                    transition={feedbackTransition}
+                    variants={REVEAL_VARIANTS}
                   >
                     {copyFeedback.message}
                   </MotionParagraph>

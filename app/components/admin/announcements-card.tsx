@@ -34,13 +34,11 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import {
-  COLLAPSE_VARIANTS,
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  DISCLOSURE_VARIANTS,
   MotionDiv,
   MotionParagraph,
   MotionPresence,
-  useMotionTransition,
+  REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
@@ -134,8 +132,6 @@ function useAnnouncementsViewState() {
   const [editingAnnouncement, setEditingAnnouncement] = useState<AnnouncementInfo | null>(null);
   const [announcementToDelete, setAnnouncementToDelete] = useState<AnnouncementInfo | null>(null);
   const [form, setForm] = useState<AnnouncementFormState>(DEFAULT_FORM);
-  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
-  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   const {
     data: announcements = [],
@@ -221,8 +217,6 @@ function useAnnouncementsViewState() {
     setAnnouncementToDelete,
     form,
     setForm,
-    feedbackTransition,
-    rowTransition,
     announcements,
     error,
     isLoading,
@@ -244,7 +238,6 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
     editingAnnouncement,
     form,
     setForm,
-    feedbackTransition,
     saveMutation,
     mutationError,
     openCreateDialog,
@@ -331,8 +324,7 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
                 initial="hidden"
                 animate="visible"
                 exit="exit"
-                variants={FADE_UP_VARIANTS}
-                transition={feedbackTransition}
+                variants={REVEAL_VARIANTS}
               >
                 {mutationError}
               </MotionParagraph>
@@ -362,15 +354,8 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
 
 /** Retain empty feedback and directly keyed announcement controls. */
 function renderAnnouncementList(state: AnnouncementsViewState) {
-  const {
-    setAnnouncementToDelete,
-    feedbackTransition,
-    rowTransition,
-    announcements,
-    toggleMutation,
-    deleteMutation,
-    openEditDialog,
-  } = state;
+  const { setAnnouncementToDelete, announcements, toggleMutation, deleteMutation, openEditDialog } =
+    state;
 
   return (
     <MotionPresence>
@@ -381,8 +366,7 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
           initial="hidden"
           animate="visible"
           exit="exit"
-          variants={FADE_UP_VARIANTS}
-          transition={feedbackTransition}
+          variants={REVEAL_VARIANTS}
         >
           <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
             <Megaphone className="size-5" aria-hidden="true" />
@@ -400,9 +384,8 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
             )}
             initial="hidden"
             animate="visible"
-            exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-            variants={COLLAPSE_VARIANTS}
-            transition={rowTransition}
+            exit="exit"
+            variants={DISCLOSURE_VARIANTS}
           >
             <span
               aria-hidden="true"

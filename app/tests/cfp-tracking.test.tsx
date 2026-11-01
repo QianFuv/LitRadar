@@ -313,11 +313,12 @@ describe('CFP tracking', () => {
     renderCfp('?view=cfp-tracking&cfp_db=english_journals.sqlite');
     expect(await screen.findByText('投稿时间待确认')).toBeVisible();
     expect(screen.queryByText('征稿中')).toBeNull();
-    const summary = screen.getByText('查看原文时间说明');
-    await user.click(summary);
-    expect(summary.closest('details')).toHaveAttribute('open');
-    expect(summary.closest('details')).toHaveTextContent('October 1st 2026');
-    expect(summary.closest('details')).toHaveTextContent('November 1, 2026');
+    const trigger = screen.getByRole('button', { name: '查看原文时间说明' });
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    const timeline = document.getElementById(trigger.getAttribute('aria-controls') ?? '');
+    expect(timeline).toHaveTextContent('October 1st 2026');
+    expect(timeline).toHaveTextContent('November 1, 2026');
   });
 
   test('leaves an unadapted journal empty and does not show guessed calls or external links', async () => {

@@ -7,6 +7,12 @@
 import { ChevronRight, Plus, Trash2 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 
+import {
+  Root as Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@animate-ui/react/primitives/radix-ui/collapsible';
+
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -305,50 +311,52 @@ function SearchBuilderBody({
           </p>
         )}
 
-        <details className="group mt-4 border-t pt-3 text-xs text-muted-foreground">
-          <summary className="flex w-fit cursor-pointer list-none items-center gap-1 font-bold text-foreground/80 hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <Collapsible className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+          <CollapsibleTrigger className="group motion-control flex w-fit cursor-pointer items-center gap-1 font-bold text-foreground/80 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
             <ChevronRight
-              className="size-3.5 transition-transform group-open:rotate-90"
+              className="motion-chevron size-3.5 transition-transform group-data-[state=open]:rotate-90"
               aria-hidden="true"
             />
-            <span className="group-open:hidden">点击展开手写检索语法</span>
-            <span className="hidden group-open:inline">收起手写检索语法</span>
-          </summary>
-          <p className="mt-2">在搜索框中直接输入以下语法同样有效：</p>
-          <ul className="mt-2 grid gap-1 sm:grid-cols-2">
-            <li>
-              <code>a AND b</code> 同时包含
-            </li>
-            <li>
-              <code>a OR b</code> 任一包含
-            </li>
-            <li>
-              <code>a NOT b</code> 排除 b
-            </li>
-            <li>
-              <code>&quot;exact phrase&quot;</code> 精确短语
-            </li>
-            <li>
-              <code>bio*</code> 前缀匹配
-            </li>
-            <li>
-              <code>NEAR(gene therapy, 5)</code> 相距 5 词内
-            </li>
-            <li>
-              <code>title:diabetes</code> 标题
-            </li>
-            <li>
-              <code>authors:&quot;Smith&quot;</code> 作者
-            </li>
-            <li>
-              <code>journal_title:&quot;Nature&quot;</code> 期刊
-            </li>
-            <li>
-              <code>abstract_text:imaging</code> 摘要
-            </li>
-          </ul>
-          <p className="mt-2">运算符 AND / OR / NOT / NEAR 需要大写。</p>
-        </details>
+            <span className="group-data-[state=open]:hidden">点击展开手写检索语法</span>
+            <span className="hidden group-data-[state=open]:inline">收起手写检索语法</span>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <p className="pt-2">在搜索框中直接输入以下语法同样有效：</p>
+            <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+              <li>
+                <code>a AND b</code> 同时包含
+              </li>
+              <li>
+                <code>a OR b</code> 任一包含
+              </li>
+              <li>
+                <code>a NOT b</code> 排除 b
+              </li>
+              <li>
+                <code>&quot;exact phrase&quot;</code> 精确短语
+              </li>
+              <li>
+                <code>bio*</code> 前缀匹配
+              </li>
+              <li>
+                <code>NEAR(gene therapy, 5)</code> 相距 5 词内
+              </li>
+              <li>
+                <code>title:diabetes</code> 标题
+              </li>
+              <li>
+                <code>authors:&quot;Smith&quot;</code> 作者
+              </li>
+              <li>
+                <code>journal_title:&quot;Nature&quot;</code> 期刊
+              </li>
+              <li>
+                <code>abstract_text:imaging</code> 摘要
+              </li>
+            </ul>
+            <p className="mt-2">运算符 AND / OR / NOT / NEAR 需要大写。</p>
+          </CollapsibleContent>
+        </Collapsible>
       </div>
       <div className="flex items-center gap-2 border-t px-5 py-3 sm:px-6">
         <Button

@@ -22,12 +22,11 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
   MotionDiv,
   MotionPresence,
   MotionProvider,
-  useMotionTransition,
+  REVEAL_VARIANTS,
+  useIsMotionReduced,
 } from '@/components/ui/motion';
 
 type MotionLifecycleHarnessProps = {
@@ -53,30 +52,29 @@ const SECTIONED_BROWSER_SECTIONS = [
 ];
 
 /**
- * Render one removable element and expose its resolved transition duration.
+ * Render one removable element and expose the resolved reduced-motion preference.
  *
- * @returns Animated presence controls and duration probe.
+ * @returns Animated presence controls and preference probe.
  */
 function MotionLifecycleContent() {
   const [isVisible, setIsVisible] = useState(true);
-  const transition = useMotionTransition(MOTION_DURATION_SECONDS.fast, 'exit');
+  const isMotionReduced = useIsMotionReduced();
 
   return (
     <main>
       <button type="button" onClick={() => setIsVisible((current) => !current)}>
         切换动效内容
       </button>
-      <output aria-label="动效时长">{String(transition.duration)}</output>
+      <output aria-label="减少动态效果">{String(isMotionReduced)}</output>
       <MotionPresence>
         {isVisible && (
           <MotionDiv
             key="motion-item"
             data-testid="motion-item"
-            variants={FADE_UP_VARIANTS}
+            variants={REVEAL_VARIANTS}
             initial="hidden"
             animate="visible"
             exit="exit"
-            transition={transition}
           >
             动效内容
           </MotionDiv>
@@ -157,7 +155,7 @@ function SectionedDialogHarness() {
 }
 
 /**
- * Verify normal exits retain their node and reduced motion removes the delay.
+ * Verify exits retain their node, and reduced motion still fades it out instead of cutting.
  */
 async function respectsPresenceAndReducedMotion(): Promise<void> {
   const normalRender = render(<MotionLifecycleHarness reducedMotion="never" />);
@@ -175,9 +173,10 @@ async function respectsPresenceAndReducedMotion(): Promise<void> {
 
   normalRender.unmount();
   render(<MotionLifecycleHarness reducedMotion="always" />);
-  await expect.element(page.getByLabelText('动效时长')).toHaveTextContent('0');
+  await expect.element(page.getByLabelText('减少动态效果')).toHaveTextContent('true');
   await act(async () => page.getByRole('button', { name: '切换动效内容' }).click());
-  expect(screen.queryByTestId('motion-item')).toBeNull();
+  expect(screen.getByTestId('motion-item')).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByTestId('motion-item')).toBeNull());
 }
 
 /**
@@ -190,8 +189,8 @@ async function restoresDrawerFocusAfterExit(): Promise<void> {
   await act(async () => trigger.click());
   const dialog = screen.getByRole('dialog', { name: '移动侧栏' });
   expect(dialog).toHaveAttribute('data-motion-placement', 'left');
-  expect(dialog).toHaveClass('motion-drawer');
-  expect(window.getComputedStyle(dialog).animationName).toBe('motion-drawer-enter');
+  expect(dialog).toHaveAttribute('data-side', 'left');
+  expect(window.getComputedStyle(dialog).animationName).toBe('none');
 
   await act(async () => userEvent.keyboard('{Escape}'));
   await waitFor(() => expect(screen.queryByRole('dialog', { name: '移动侧栏' })).toBeNull());
@@ -232,7 +231,7 @@ async function transitionsSectionHeaderAndRestoresFocus(): Promise<void> {
 
 describe('application motion in Chromium', () => {
   test(
-    'preserves exit lifecycles and removes reduced-motion delay',
+    'preserves exit lifecycles and keeps fades under reduced motion',
     respectsPresenceAndReducedMotion,
   );
   test('restores drawer focus after the exit transition', restoresDrawerFocusAfterExit);

@@ -5,7 +5,7 @@
  */
 
 import * as React from 'react';
-import * as PopoverPrimitive from '@radix-ui/react-popover';
+import * as PopoverPrimitive from '@animate-ui/react/primitives/radix-ui/popover';
 
 import { cn } from '@/lib/utils';
 
@@ -47,7 +47,7 @@ function PopoverContent({
       align={align}
       sideOffset={sideOffset}
       className={cn(
-        'motion-popover bg-popover text-popover-foreground z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-xl p-4 shadow-overlay outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
+        'bg-popover text-popover-foreground z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-xl p-4 shadow-overlay outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
         className,
       )}
       {...props}

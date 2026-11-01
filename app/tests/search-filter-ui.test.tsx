@@ -489,7 +489,9 @@ async function selectsRatingsAndClearsThemWhenChangingDatabase(): Promise<void> 
   await waitFor(() => expect(readSelectedDatabase()).toBe('ccf.sqlite'));
   await waitFor(() => expect(screen.getByRole('button', { name: '期刊评级' })).toBeInTheDocument());
   ratingPanel = await openFilterPanel(user, /^期刊评级/);
-  expect(await within(ratingPanel).findByText('当前数据库暂无期刊评级信息。')).toBeVisible();
+  await waitFor(() =>
+    expect(within(ratingPanel).getByText('当前数据库暂无期刊评级信息。')).toBeVisible(),
+  );
   expect(
     within(ratingPanel).queryByRole('checkbox', { name: 'UTD UTD24' }),
   ).not.toBeInTheDocument();

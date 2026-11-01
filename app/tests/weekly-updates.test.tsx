@@ -253,10 +253,9 @@ async function loadsOneInitialBoundedPage(): Promise<void> {
   expect(screen.getByTestId('weekly-state-announcement')).toHaveAttribute('role', 'status');
   expect(screen.getAllByTestId('weekly-state-announcement')).toHaveLength(1);
   expect(within(articleState as HTMLElement).queryByRole('status')).toBeNull();
-  expect(screen.getAllByTestId('weekly-article')[0].parentElement).toHaveAttribute(
-    'data-weekly-article-state',
-    'results',
-  );
+  expect(
+    screen.getAllByTestId('weekly-article')[0].closest('[data-weekly-article-state]'),
+  ).toHaveAttribute('data-weekly-article-state', 'results');
   expect(weeklyViewMocks.useVisiblePageList).toHaveBeenLastCalledWith(
     expect.objectContaining({
       loadedPages: 1,
@@ -465,7 +464,7 @@ async function rendersEmptyWeeklySummary(): Promise<void> {
 
   expect(await screen.findByText('0 个数据库')).toBeInTheDocument();
   expect(screen.getByText('0 篇新文章')).toBeInTheDocument();
-  expect(screen.getByText('请选择一个期刊以查看新收录文章。')).toBeInTheDocument();
+  expect(await screen.findByText('请选择一个期刊以查看新收录文章。')).toBeInTheDocument();
   expect(document.querySelector('[data-weekly-article-state="no-journal"]')).not.toBeNull();
   expect(weeklyArticleRequestUrls).toHaveLength(0);
 }

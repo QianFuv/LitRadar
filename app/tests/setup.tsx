@@ -4,6 +4,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
+import { MotionGlobalConfig } from 'motion/react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 
 import { server } from '@/tests/mocks/server';
@@ -39,6 +40,65 @@ function installTestMediaQueries(): void {
 }
 
 /**
+ * Web Animation stand-in that completes at once, for code paths jsdom cannot animate.
+ */
+class FinishedTestAnimation extends EventTarget {
+  currentTime = 0;
+  effect = null;
+  finished = Promise.resolve(this);
+  id = '';
+  oncancel = null;
+  pending = false;
+  playState = 'finished';
+  playbackRate = 1;
+  ready = Promise.resolve(this);
+  replaceState = 'active';
+  startTime = 0;
+  timeline = null;
+  private finishHandler: ((event: Event) => void) | null = null;
+
+  get onfinish(): ((event: Event) => void) | null {
+    return this.finishHandler;
+  }
+
+  set onfinish(handler: ((event: Event) => void) | null) {
+    this.finishHandler = handler;
+    queueMicrotask(() => handler?.(new Event('finish')));
+  }
+
+  cancel(): void {}
+  commitStyles(): void {}
+  finish(): void {}
+  pause(): void {}
+  persist(): void {}
+  play(): void {}
+  reverse(): void {}
+  updatePlaybackRate(): void {}
+}
+
+/**
+ * Observer stand-in for jsdom, which does not implement layout observation.
+ */
+class StaticTestResizeObserver {
+  disconnect(): void {}
+  observe(): void {}
+  unobserve(): void {}
+}
+
+/**
+ * Install layout and animation APIs that jsdom lacks, and finish Motion animations at once.
+ */
+function installTestAnimationApis(): void {
+  MotionGlobalConfig.skipAnimations = true;
+  globalThis.ResizeObserver ??= StaticTestResizeObserver;
+  globalThis.SVGGeometryElement ??= class extends SVGElement {} as typeof SVGGeometryElement;
+  Element.prototype.getAnimations ??= () => [];
+  Element.prototype.animate ??= function animate() {
+    return new FinishedTestAnimation() as unknown as Animation;
+  };
+}
+
+/**
  * Start request interception and fail tests on unhandled network calls.
  */
 function startMockServer(): void {
@@ -62,7 +122,8 @@ function closeMockServer(): void {
   server.close();
 }
 
-beforeAll(installTestMediaQueries);
+installTestMediaQueries();
+installTestAnimationApis();
 beforeAll(startMockServer);
 afterEach(resetTestState);
 afterAll(closeMockServer);

@@ -11,13 +11,7 @@ import { SearchWorkspaceView } from '@/components/feature/search-workspace-view'
 import { CfpTrackingView } from '@/components/cfp/cfp-tracking-view';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import { RelationsWorkspaceView } from '@/components/relations/relations-workspace-view';
-import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
-  MotionDiv,
-  MotionPresence,
-  useMotionTransition,
-} from '@/components/ui/motion';
+import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { WeeklyUpdatesView } from '@/components/weekly/weekly-updates-view';
 import { useAuth } from '@/lib/auth-context';
 import { WORKSPACE_VIEW_PARSER } from '@/lib/workspace-view';
@@ -30,7 +24,6 @@ import { WORKSPACE_VIEW_PARSER } from '@/lib/workspace-view';
 export default function Home() {
   const { user } = useAuth();
   const [view] = useQueryState('view', WORKSPACE_VIEW_PARSER);
-  const transition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   let workspaceContent: ReactNode;
 
   if (view === 'favorites') {
@@ -51,11 +44,10 @@ export default function Home() {
         key={view}
         data-workspace-view={view}
         className="h-full min-h-0"
-        variants={FADE_UP_VARIANTS}
+        variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
-        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-        transition={transition}
+        exit="exit"
       >
         {workspaceContent}
       </MotionDiv>

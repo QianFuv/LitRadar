@@ -15,13 +15,7 @@ import {
 } from '@/components/settings/settings-section';
 import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-page';
 import { Button } from '@/components/ui/button';
-import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
-  MotionDiv,
-  MotionPresence,
-  useMotionTransition,
-} from '@/components/ui/motion';
+import { MotionDiv, MotionPresence, REVEAL_VARIANTS } from '@/components/ui/motion';
 
 type ManualPushCardProps = {
   model: TrackingPageViewModel['manualPush'];
@@ -34,9 +28,7 @@ type ManualPushCardProps = {
  * @returns Manual push card.
  */
 export function ManualPushCard({ model }: ManualPushCardProps) {
-  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
-
-  const state = { model, feedbackTransition };
+  const state = { model };
   return (
     <SettingsSection>
       <SettingsSectionHeader>
@@ -75,8 +67,7 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
               initial="hidden"
               animate="visible"
               exit="exit"
-              variants={FADE_UP_VARIANTS}
-              transition={feedbackTransition}
+              variants={REVEAL_VARIANTS}
             >
               {model.result}
             </MotionDiv>
@@ -144,6 +135,4 @@ function renderManualPushTrigger(state: ManualPushViewState) {
   );
 }
 
-type ManualPushViewState = ManualPushCardProps & {
-  feedbackTransition: ReturnType<typeof useMotionTransition>;
-};
+type ManualPushViewState = ManualPushCardProps & {};

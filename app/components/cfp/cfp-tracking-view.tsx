@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LIST_ITEM_VARIANTS, MotionDiv, MotionPresence } from '@/components/ui/motion';
 import { StateMessage } from '@/components/ui/state-message';
 import {
   ApiError,
@@ -248,7 +249,20 @@ function renderCfpNoticeContent(
       </div>
     );
   if (visibleNotices.length)
-    return visibleNotices.map((notice) => <CfpNoticeCard key={notice.id} notice={notice} />);
+    return (
+      <MotionPresence>
+        {visibleNotices.map((notice) => (
+          <MotionDiv
+            key={notice.id}
+            variants={LIST_ITEM_VARIANTS}
+            initial="hidden"
+            animate="visible"
+          >
+            <CfpNoticeCard notice={notice} />
+          </MotionDiv>
+        ))}
+      </MotionPresence>
+    );
   if (selected.sourceStatement)
     return (
       <div className="border-t pt-7">

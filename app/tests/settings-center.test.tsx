@@ -259,7 +259,7 @@ async function guardsUnsavedCrossCategoryNavigation(): Promise<void> {
   expect(navigationMocks.router.replace).not.toHaveBeenCalled();
 
   fireEvent.click(screen.getByRole('button', { name: '继续编辑' }));
-  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
   expect(screen.getByRole('switch', { name: '启用推荐' })).not.toBeChecked();
 
   await user.click(screen.getAllByRole('button', { name: '账号与安全' })[0]);

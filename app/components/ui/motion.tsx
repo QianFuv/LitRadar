@@ -1,134 +1,142 @@
 'use client';
 
 /**
- * Accessible application motion primitives and shared transition contracts.
+ * Application motion roles built on Animate UI's motion tokens and reduced-motion contract.
  */
 
+import { AnimatePresence, motion, type AnimatePresenceProps, type Variants } from 'motion/react';
 import {
-  AnimatePresence,
-  LazyMotion,
-  MotionConfig,
-  domAnimation,
-  m,
-  useReducedMotion,
-  type AnimatePresenceProps,
-  type Transition,
-  type Variants,
-} from 'motion/react';
-import { createContext, useContext, useMemo, type PropsWithChildren, type ReactNode } from 'react';
+  ReducedMotionConfig,
+  ReducedMotionContext,
+  blur,
+  scale,
+  spring,
+  transition,
+  useShouldReduceMotion,
+  type ReducedMotion,
+} from '@animate-ui/react/utils/motion';
+import type { PropsWithChildren, ReactNode } from 'react';
 
-export const MOTION_DURATION_SECONDS = {
-  fast: 0.12,
-  base: 0.18,
-  slow: 0.22,
-  exit: 0.14,
-} as const;
+const SHARP = 'blur(0px)';
 
-export const MOTION_EASING = {
-  enter: [0.16, 1, 0.3, 1],
-  exit: [0.4, 0, 1, 1],
-} as const;
-
-export const FADE_VARIANTS = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1 },
-  exit: { opacity: 0 },
+/**
+ * Two states of one short text or icon replacing each other in place (Animate UI rule B9, subtle level).
+ */
+export const SWAP_VARIANTS = {
+  hidden: { opacity: 0, filter: blur.icon },
+  visible: {
+    opacity: 1,
+    filter: SHARP,
+    transition: transition.swap,
+    transitionEnd: { filter: 'none' },
+  },
+  exit: { opacity: 0, filter: blur.icon, transition: transition.swap },
 } satisfies Variants;
 
-export const FADE_UP_VARIANTS = {
-  hidden: { opacity: 0, y: 6 },
-  visible: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -4 },
+/**
+ * Inline content arriving in a list or form: it rises 8px and fades in, then fades out in place.
+ */
+export const REVEAL_VARIANTS = {
+  hidden: { opacity: 0, y: 8 },
+  visible: { opacity: 1, y: 0, transition: { ...spring.reflow, opacity: transition.fade } },
+  exit: { opacity: 0, transition: transition.fade },
 } satisfies Variants;
 
-export const COLLAPSE_VARIANTS = {
-  hidden: { height: 0, opacity: 0 },
-  visible: { height: 'auto', opacity: 1 },
-  exit: { height: 0, opacity: 0 },
+/**
+ * Whole panels that take turns in one place: the previous one blurs away before the next one clears in.
+ */
+export const PANEL_VARIANTS = {
+  hidden: { opacity: 0, filter: blur.panel },
+  visible: {
+    opacity: 1,
+    filter: SHARP,
+    transition: transition.panelIn,
+    transitionEnd: { filter: 'none' },
+  },
+  exit: { opacity: 0, filter: blur.panel, pointerEvents: 'none', transition: transition.panelOut },
 } satisfies Variants;
-export const MotionDiv = m.div;
-export const MotionForm = m.form;
-export const MotionParagraph = m.p;
-export const MotionSection = m.section;
-export const MotionSpan = m.span;
 
-type MotionPhase = keyof typeof MOTION_EASING;
-type ReducedMotionPreference = 'always' | 'never' | 'user';
+/**
+ * Content that unfolds and pushes what follows, both ways on the disclosure timing.
+ */
+export const DISCLOSURE_VARIANTS = {
+  hidden: { height: 0, opacity: 0, filter: blur.disclosure, transition: transition.disclosure },
+  visible: {
+    height: 'auto',
+    opacity: 1,
+    filter: SHARP,
+    transition: transition.disclosure,
+    transitionEnd: { filter: 'none' },
+  },
+  exit: {
+    height: 0,
+    opacity: 0,
+    filter: blur.disclosure,
+    pointerEvents: 'none',
+    transition: transition.disclosure,
+  },
+} satisfies Variants;
+
+/**
+ * A hand-built anchored card growing out of its anchor; set `transformOrigin` on the element.
+ */
+export const POPOVER_VARIANTS = {
+  hidden: { opacity: 0, scale: scale.popover },
+  visible: { opacity: 1, scale: 1, transition: spring.pop },
+  exit: { opacity: 0, scale: scale.popover, transition: spring.pop },
+} satisfies Variants;
+
+/**
+ * A chip or tag popping in from half its size and shrinking back out.
+ */
+export const CHIP_VARIANTS = {
+  hidden: { opacity: 0, scale: scale.icon },
+  visible: { opacity: 1, scale: 1, transition: spring.pop },
+  exit: { opacity: 0, scale: scale.icon, pointerEvents: 'none', transition: transition.popOut },
+} satisfies Variants;
+
+/**
+ * A list item: rows appended to a list already on screen clear in like a tab panel, and rows the
+ * user removes fade out in place while shrinking slightly. Wrap the rows in `MotionPresence` so
+ * the rows of the first render stay still.
+ */
+export const LIST_ITEM_VARIANTS = {
+  hidden: { opacity: 0, filter: blur.panel },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    filter: SHARP,
+    transition: transition.panelIn,
+    transitionEnd: { filter: 'none' },
+  },
+  exit: { opacity: 0, scale: scale.toast, pointerEvents: 'none', transition: transition.fade },
+} satisfies Variants;
+
+export const MotionArticle = motion.article;
+export const MotionDiv = motion.div;
+export const MotionForm = motion.form;
+export const MotionParagraph = motion.p;
+export const MotionSection = motion.section;
+export const MotionSpan = motion.span;
 
 type MotionProviderProps = {
   children: ReactNode;
-  reducedMotion?: ReducedMotionPreference;
-};
-
-type MotionPreferenceContextValue = {
-  isMotionReduced: boolean;
+  reducedMotion?: ReducedMotion;
 };
 
 type MotionPresenceProps = PropsWithChildren<AnimatePresenceProps>;
 
-const MotionPreferenceContext = createContext<MotionPreferenceContextValue>({
-  isMotionReduced: false,
-});
-
-type MotionConfigurationProps = {
-  children: ReactNode;
-  isMotionReduced: boolean;
-};
-
 /**
- * Render the shared Motion contexts for one resolved preference.
+ * Apply Animate UI's reduced-motion contract to the application tree.
  *
- * @param props - Application children and the resolved reduced-motion state.
- * @returns Configured lazy Motion boundary.
- */
-function MotionConfiguration({ children, isMotionReduced }: MotionConfigurationProps) {
-  const preferenceValue = useMemo(() => ({ isMotionReduced }), [isMotionReduced]);
-
-  return (
-    <MotionPreferenceContext.Provider value={preferenceValue}>
-      <MotionConfig
-        reducedMotion={isMotionReduced ? 'always' : 'never'}
-        transition={
-          isMotionReduced
-            ? { duration: 0 }
-            : { duration: MOTION_DURATION_SECONDS.base, ease: MOTION_EASING.enter }
-        }
-      >
-        <LazyMotion features={domAnimation} strict>
-          {children}
-        </LazyMotion>
-      </MotionConfig>
-    </MotionPreferenceContext.Provider>
-  );
-}
-
-/**
- * Resolve the operating-system preference before configuring Motion.
- *
- * @param props - Application children.
- * @returns Motion boundary that follows the user media preference.
- */
-function UserMotionConfiguration({ children }: { children: ReactNode }) {
-  const isMotionReduced = useReducedMotion() ?? false;
-
-  return <MotionConfiguration isMotionReduced={isMotionReduced}>{children}</MotionConfiguration>;
-}
-
-/**
- * Provide the lazily loaded DOM animation feature set and user motion preference.
- *
- * @param props - Application children and an optional deterministic test override.
- * @returns Shared Motion configuration for the client application.
+ * @param props - Application children and an optional deterministic preference override.
+ * @returns Motion boundary that drops movement but keeps fades and blurs when motion is reduced.
  */
 export function MotionProvider({ children, reducedMotion = 'user' }: MotionProviderProps) {
-  if (reducedMotion === 'user') {
-    return <UserMotionConfiguration>{children}</UserMotionConfiguration>;
-  }
-
   return (
-    <MotionConfiguration isMotionReduced={reducedMotion === 'always'}>
-      {children}
-    </MotionConfiguration>
+    <ReducedMotionContext value={reducedMotion}>
+      <ReducedMotionConfig>{children}</ReducedMotionConfig>
+    </ReducedMotionContext>
   );
 }
 
@@ -138,37 +146,15 @@ export function MotionProvider({ children, reducedMotion = 'user' }: MotionProvi
  * @param props - Motion presence properties and keyed children.
  * @returns Presence boundary with hydration-safe initial behavior.
  */
-export function MotionPresence({ initial = false, mode, ...props }: MotionPresenceProps) {
-  const isMotionReduced = useIsMotionReduced();
-
-  return <AnimatePresence initial={initial} mode={isMotionReduced ? 'sync' : mode} {...props} />;
+export function MotionPresence({ initial = false, ...props }: MotionPresenceProps) {
+  return <AnimatePresence initial={initial} {...props} />;
 }
 
 /**
- * Read whether application motion is currently reduced.
+ * Read whether spatial motion is currently reduced.
  *
- * @returns True when spatial motion and transition delays must be removed.
+ * @returns True when movement must be skipped; fades and blurs still play.
  */
 export function useIsMotionReduced(): boolean {
-  return useContext(MotionPreferenceContext).isMotionReduced;
-}
-
-/**
- * Build a shared transition that becomes immediate under reduced motion.
- *
- * @param duration - Normal transition duration in seconds.
- * @param phase - Entry or exit easing phase.
- * @param delay - Optional normal-mode delay in seconds.
- * @returns Motion transition honoring the active reduced-motion preference.
- */
-export function useMotionTransition(
-  duration: number = MOTION_DURATION_SECONDS.base,
-  phase: MotionPhase = 'enter',
-  delay = 0,
-): Transition {
-  const isMotionReduced = useIsMotionReduced();
-
-  return isMotionReduced
-    ? { delay: 0, duration: 0 }
-    : { delay, duration, ease: MOTION_EASING[phase] };
+  return useShouldReduceMotion();
 }

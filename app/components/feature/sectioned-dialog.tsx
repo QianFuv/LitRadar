@@ -4,8 +4,9 @@
  * Shared responsive frame for query-driven sectioned dialogs.
  */
 
+import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import { ArrowLeft, X, type LucideIcon } from 'lucide-react';
-import { useRef, type ReactNode, type RefObject } from 'react';
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -15,13 +16,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
-  MotionDiv,
-  MotionPresence,
-  useMotionTransition,
-} from '@/components/ui/motion';
+import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { cn } from '@/lib/utils';
 
 /** One-shot marker used to return focus from a sectioned dialog to its persistent trigger. */
@@ -101,7 +96,8 @@ function resolveReturnFocusTarget(activeElement: HTMLElement | null): HTMLElemen
 }
 
 /**
- * Render section navigation as horizontal pills on phones and a vertical list on wider screens.
+ * Render section navigation as horizontal pills on phones and a vertical list on wider screens,
+ * with Animate UI's highlight sliding between the active categories.
  *
  * @param props - Section definitions, active state, selection action, and layout class.
  * @returns Accessible category navigation.
@@ -116,29 +112,37 @@ function SectionedDialogNavigation<SectionId extends string>({
 }: SectionedDialogNavigationProps<SectionId>) {
   return (
     <nav aria-label={label} className={className}>
-      {sections.map((section) => {
-        const Icon = section.icon;
-        const isActive = section.id === activeSection;
-        return (
-          <button
-            key={section.id}
-            type="button"
-            aria-current={isActive ? 'page' : undefined}
-            data-section-active={isActive ? 'true' : 'false'}
-            disabled={isDisabled}
-            className={cn(
-              'motion-control flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] whitespace-nowrap outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:h-10 md:w-full md:gap-3 md:rounded-lg md:px-3 md:text-sm',
-              isActive
-                ? 'bg-foreground font-bold text-background md:bg-accent md:text-foreground'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent-pressed',
-            )}
-            onClick={() => onSelect(section.id)}
-          >
-            <Icon className="size-4 shrink-0" aria-hidden="true" />
-            <span>{section.label}</span>
-          </button>
-        );
-      })}
+      <Highlight
+        controlledItems
+        value={activeSection}
+        click={false}
+        className="rounded-full bg-foreground md:rounded-lg md:bg-accent"
+      >
+        {sections.map((section) => {
+          const Icon = section.icon;
+          const isActive = section.id === activeSection;
+          return (
+            <HighlightItem key={section.id} value={section.id} className="shrink-0 md:w-full">
+              <button
+                type="button"
+                aria-current={isActive ? 'page' : undefined}
+                data-section-active={isActive ? 'true' : 'false'}
+                disabled={isDisabled}
+                className={cn(
+                  'motion-control flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] whitespace-nowrap outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:h-10 md:w-full md:gap-3 md:rounded-lg md:px-3 md:text-sm',
+                  isActive
+                    ? 'font-bold text-background md:text-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent-pressed',
+                )}
+                onClick={() => onSelect(section.id)}
+              >
+                <Icon className="size-4 shrink-0" aria-hidden="true" />
+                <span>{section.label}</span>
+              </button>
+            </HighlightItem>
+          );
+        })}
+      </Highlight>
     </nav>
   );
 }
@@ -171,8 +175,11 @@ export function SectionedDialogFrame<SectionId extends string>({
   sections,
 }: SectionedDialogFrameProps<SectionId>) {
   const activeDefinition = sections.find((section) => section.id === activeSection) ?? sections[0];
-  const headerTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
   const contentRef = useRef<HTMLDivElement>(null);
+  const isOpenRef = useRef(open);
+  useLayoutEffect(() => {
+    isOpenRef.current = open;
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -194,7 +201,7 @@ export function SectionedDialogFrame<SectionId extends string>({
           contentRef.current?.focus({ preventScroll: true });
         }}
         onCloseAutoFocus={(event) => {
-          if (open) {
+          if (isOpenRef.current) {
             event.preventDefault();
             return;
           }
@@ -283,11 +290,10 @@ export function SectionedDialogFrame<SectionId extends string>({
                   key={activeDefinition.id}
                   aria-hidden="true"
                   data-motion-section-header={activeDefinition.id}
-                  variants={FADE_UP_VARIANTS}
+                  variants={PANEL_VARIANTS}
                   initial="hidden"
                   animate="visible"
-                  exit={{ opacity: 0, pointerEvents: 'none', y: -3 }}
-                  transition={headerTransition}
+                  exit="exit"
                 >
                   <div className="text-2xl font-bold tracking-tight">{activeDefinition.label}</div>
                   <p className="mt-1.5 text-[13px] text-muted-foreground">

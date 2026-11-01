@@ -5,7 +5,7 @@
  */
 
 import * as React from 'react';
-import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
+import * as AlertDialogPrimitive from '@animate-ui/react/primitives/radix-ui/alert-dialog';
 
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -43,7 +43,7 @@ function AlertDialogOverlay({
   return (
     <AlertDialogPrimitive.Overlay
       data-slot="alert-dialog-overlay"
-      className={cn('motion-overlay fixed inset-0 z-50 bg-black/50', className)}
+      className={cn('fixed inset-0 z-50 bg-black/50', className)}
       {...props}
     />
   );
@@ -65,7 +65,7 @@ function AlertDialogContent({
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(
-          'motion-dialog bg-background fixed z-50 grid w-[calc(100%-2rem)] max-w-lg gap-4 rounded-lg border p-6 shadow-lg outline-none',
+          'dialog-centered bg-background fixed z-50 grid w-[calc(100%-2rem)] max-w-lg gap-4 rounded-lg border p-6 shadow-lg outline-none',
           className,
         )}
         {...props}

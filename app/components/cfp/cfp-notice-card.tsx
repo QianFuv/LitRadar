@@ -2,6 +2,12 @@
 
 import { ArrowUpRight, CalendarDays, ChevronDown } from 'lucide-react';
 
+import {
+  Root as Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@animate-ui/react/primitives/radix-ui/collapsible';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { CfpNoticeView, CfpState } from '@/lib/api';
@@ -210,18 +216,20 @@ export function CfpNoticeCard({ notice }: { notice: CfpNoticeView }) {
         )}
       </div>
       {notice.rawDateText && (
-        <details className="group border-t border-dashed py-4">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-medium leading-5 [&::-webkit-details-marker]:hidden">
+        <Collapsible className="border-t border-dashed py-4">
+          <CollapsibleTrigger className="group flex w-full cursor-pointer items-center justify-between gap-3 text-left text-xs font-medium leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring">
             查看原文时间说明
             <ChevronDown
-              className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+              className="motion-chevron size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
               aria-hidden="true"
             />
-          </summary>
-          <p className="mt-3 whitespace-pre-line text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
-            {notice.rawDateText}
-          </p>
-        </details>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <p className="pt-3 whitespace-pre-line text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+              {notice.rawDateText}
+            </p>
+          </CollapsibleContent>
+        </Collapsible>
       )}
       <CfpSourceFooter checkedOn={notice.checkedOn} sourceUrl={notice.sourceUrl} />
     </article>

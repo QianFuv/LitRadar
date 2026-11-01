@@ -3,14 +3,57 @@
  */
 
 import * as React from 'react';
-import { Slot } from '@radix-ui/react-slot';
+import {
+  Button as PressButton,
+  type ButtonProps as PressButtonProps,
+} from '@animate-ui/react/primitives/buttons/button';
+import { transition } from '@animate-ui/react/utils/motion';
 import { cva, type VariantProps } from 'class-variance-authority';
 
 import { cn } from '@/lib/utils';
 
+type ButtonSize = NonNullable<VariantProps<typeof buttonVariants>['size']>;
+
+/**
+ * Press depth per button size: Animate UI's 0.97 on regular buttons, deeper on small ones so
+ * the dip stays visible instead of shrinking a few tenths of a pixel.
+ */
+const BUTTON_TAP_SCALES: Record<ButtonSize, number> = {
+  default: 0.97,
+  lg: 0.97,
+  sm: 0.95,
+  xs: 0.9,
+  icon: 0.9,
+  'icon-xs': 0.9,
+  'icon-sm': 0.9,
+  'icon-lg': 0.9,
+};
+
+/** Front-loaded press tween without overshoot, so even quick clicks show the dip. */
+const BUTTON_PRESS_TRANSITION = transition.swap;
+
+/**
+ * Build the press motion shared by every button, replacing Animate UI's transform-string press.
+ *
+ * Animate UI animates a full `transform` string whose `scale(1)` start is never rendered, so the
+ * first press starts from `none` (read as `scale(0)`) and visibly collapses. The independent
+ * `scale` value always starts at 1; `MotionConfig` still drops it under reduced motion.
+ *
+ * @param hasPress - Whether the control is pressable right now.
+ * @param size - Button size that selects the press depth.
+ * @returns Motion properties to spread onto Animate UI's button primitive.
+ */
+function getButtonPressMotion(hasPress: boolean, size: ButtonSize | null = 'default') {
+  return {
+    initial: false,
+    whileTap: hasPress ? { scale: BUTTON_TAP_SCALES[size ?? 'default'] } : undefined,
+    transition: BUTTON_PRESS_TRANSITION,
+  } as const;
+}
+
 /** Build the supported visual and size variants for shared buttons. */
 const buttonVariants = cva(
-  "motion-control inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-[background-color,border-color,color,box-shadow,opacity,scale] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+  "motion-control inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-[background-color,border-color,color,box-shadow,opacity] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
   {
     variants: {
       variant: {
@@ -47,7 +90,7 @@ const buttonVariants = cva(
  * Render a shared button or pass its behavior to one child element.
  *
  * @param props - Native properties, styling, polymorphic mode, and optional static press behavior.
- * @returns Styled interactive control.
+ * @returns Styled interactive control that presses down on Animate UI's swap tween.
  */
 function Button({
   className,
@@ -55,27 +98,26 @@ function Button({
   size = 'default',
   asChild = false,
   static: isStatic = false,
+  disabled,
   ...props
 }: React.ComponentProps<'button'> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
     static?: boolean;
   }) {
-  const Comp = asChild ? Slot : 'button';
+  const hasPress = !isStatic && !disabled && variant !== 'link';
 
-  return (
-    <Comp
-      data-slot="button"
-      data-variant={variant}
-      data-size={size}
-      className={cn(
-        buttonVariants({ variant, size }),
-        !isStatic && variant !== 'link' && 'motion-safe:active:not-disabled:scale-[0.96]',
-        className,
-      )}
-      {...props}
-    />
-  );
+  const pressProps = {
+    ...props,
+    asChild,
+    ...getButtonPressMotion(hasPress, size),
+    'data-variant': variant,
+    'data-size': size,
+    className: cn(buttonVariants({ variant, size }), className),
+    disabled,
+  } as PressButtonProps;
+
+  return <PressButton {...pressProps} />;
 }
 
-export { Button, buttonVariants };
+export { Button, buttonVariants, getButtonPressMotion };

@@ -5,7 +5,7 @@
  */
 
 import * as React from 'react';
-import * as SelectPrimitive from '@radix-ui/react-select';
+import * as SelectPrimitive from '@animate-ui/react/primitives/radix-ui/select';
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -57,7 +57,7 @@ function SelectTrigger({
       {children}
       <SelectPrimitive.Icon asChild>
         <ChevronDownIcon
-          className="motion-chevron size-4 opacity-50 transition-transform group-data-[state=open]:rotate-180"
+          className="motion-chevron-menu size-4 opacity-50 transition-transform group-data-[state=open]:rotate-180"
           aria-hidden="true"
         />
       </SelectPrimitive.Icon>
@@ -83,7 +83,7 @@ function SelectContent({
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(
-          'motion-popover bg-popover text-popover-foreground relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-xl shadow-overlay',
+          'bg-popover text-popover-foreground relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-xl shadow-overlay',
           position === 'popper' &&
             'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
           className,

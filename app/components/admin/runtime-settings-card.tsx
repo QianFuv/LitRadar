@@ -26,13 +26,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
-  COLLAPSE_VARIANTS,
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  DISCLOSURE_VARIANTS,
   MotionDiv,
   MotionParagraph,
   MotionPresence,
-  useMotionTransition,
+  REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import {
   Select,
@@ -281,7 +279,6 @@ function RuntimePoolEditor({
   const [editorState, setEditorState] = useState<RuntimePoolEditorState>(() =>
     buildRuntimePoolEditorState(value),
   );
-  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const poolInputType = getPoolInputType(inputType);
   const shouldDisableSpellCheck = shouldDisableRuntimeSpellCheck(field, inputType);
 
@@ -339,9 +336,8 @@ function RuntimePoolEditor({
             className="flex items-center gap-2 overflow-hidden p-0.5"
             initial="hidden"
             animate="visible"
-            exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-            variants={COLLAPSE_VARIANTS}
-            transition={rowTransition}
+            exit="exit"
+            variants={DISCLOSURE_VARIANTS}
           >
             <Input
               id={index === 0 ? id : undefined}
@@ -407,8 +403,6 @@ function RuntimeSecretPoolEditor({
   onChange,
   onToggleRemoval,
 }: RuntimeSecretPoolEditorProps) {
-  const rowTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
-
   return (
     <div className="space-y-3">
       <div className="space-y-2">
@@ -420,8 +414,7 @@ function RuntimeSecretPoolEditor({
               initial="hidden"
               animate="visible"
               exit="exit"
-              variants={FADE_UP_VARIANTS}
-              transition={rowTransition}
+              variants={REVEAL_VARIANTS}
             >
               尚未保存密钥
             </MotionParagraph>
@@ -437,9 +430,8 @@ function RuntimeSecretPoolEditor({
                   }`}
                   initial="hidden"
                   animate="visible"
-                  exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-                  variants={COLLAPSE_VARIANTS}
-                  transition={rowTransition}
+                  exit="exit"
+                  variants={DISCLOSURE_VARIANTS}
                 >
                   <span
                     className={
@@ -541,7 +533,6 @@ function useRuntimeViewState() {
   const [secretPoolAdditions, setSecretPoolAdditions] = useState<RuntimeSettingsForm>({});
   const [secretPoolRemovals, setSecretPoolRemovals] = useState<RuntimeSecretPoolRemovals>({});
   const [saveFeedback, setSaveFeedback] = useState('');
-  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
 
   const {
     data: settings = EMPTY_RUNTIME_SETTINGS,
@@ -701,7 +692,6 @@ function useRuntimeViewState() {
     secretPoolAdditions,
     secretPoolRemovals,
     saveFeedback,
-    feedbackTransition,
     isLoading,
     providerSettings,
     genericSettingGroups,
@@ -905,10 +895,8 @@ function renderRuntimeProviderSettings(
 }
 
 /** Retain failure priority over save feedback and exact presence key. */
-function renderRuntimeFeedback(
-  state: Pick<RuntimeViewState, 'saveFeedback' | 'feedbackTransition' | 'mutationError'>,
-) {
-  const { saveFeedback, feedbackTransition, mutationError } = state;
+function renderRuntimeFeedback(state: Pick<RuntimeViewState, 'saveFeedback' | 'mutationError'>) {
+  const { saveFeedback, mutationError } = state;
 
   return (
     <MotionPresence>
@@ -921,8 +909,7 @@ function renderRuntimeFeedback(
           initial="hidden"
           animate="visible"
           exit="exit"
-          variants={FADE_UP_VARIANTS}
-          transition={feedbackTransition}
+          variants={REVEAL_VARIANTS}
         >
           {mutationError || saveFeedback}
         </MotionParagraph>

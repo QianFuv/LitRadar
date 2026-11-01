@@ -18,12 +18,7 @@ import {
   SectionedDialogFrame,
   type SectionedDialogSectionDefinition,
 } from '@/components/feature/sectioned-dialog';
-import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
-  MotionSection,
-  useMotionTransition,
-} from '@/components/ui/motion';
+import { MotionSection, PANEL_VARIANTS } from '@/components/ui/motion';
 import { buildAdminCenterHref, parseAdminSection, type AdminSectionId } from '@/lib/admin-center';
 import { useAuth } from '@/lib/auth-context';
 import { parseSettingsSection } from '@/lib/settings-center';
@@ -39,7 +34,6 @@ type AdminPanelProps = {
   children: ReactNode;
   isActive: boolean;
   label: string;
-  transition: ReturnType<typeof useMotionTransition>;
 };
 
 const ADMIN_SECTIONS = [
@@ -87,10 +81,10 @@ const ADMIN_SECTIONS = [
 /**
  * Mount administrator data on its first activation and retain visited panels across navigation.
  *
- * @param props - Stable panel content, active state, accessible label, and motion timing.
+ * @param props - Stable panel content, active state, and accessible label.
  * @returns Mounted tab panel with entry-only visual motion.
  */
-function AdminPanel({ children, isActive, label, transition }: AdminPanelProps) {
+function AdminPanel({ children, isActive, label }: AdminPanelProps) {
   const [hasVisited, setHasVisited] = useState(isActive);
   if (isActive && !hasVisited) {
     setHasVisited(true);
@@ -102,10 +96,9 @@ function AdminPanel({ children, isActive, label, transition }: AdminPanelProps) 
       data-admin-panel-state={isActive ? 'active' : 'inactive'}
       hidden={!isActive}
       className="[&>[data-slot=card]]:gap-0 [&>[data-slot=card]]:rounded-none [&>[data-slot=card]]:bg-transparent [&>[data-slot=card]]:py-0 [&>[data-slot=card]]:!shadow-none [&>[data-slot=card]>[data-slot=card-content]]:px-0 [&>[data-slot=card]>[data-slot=card-header]]:sr-only"
-      variants={FADE_UP_VARIANTS}
+      variants={PANEL_VARIANTS}
       initial={false}
       animate={isActive ? 'visible' : 'hidden'}
-      transition={transition}
     >
       {hasVisited ? children : null}
     </MotionSection>
@@ -159,7 +152,6 @@ export function AdminCenterDialog() {
     observedRequestedSection: requestedSection,
   });
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   if (requestedSection !== sessionState.observedRequestedSection) {
     setSessionState(synchronizeAdminCenterState(sessionState, requestedSection));
@@ -227,46 +219,22 @@ export function AdminCenterDialog() {
       returnFocusRef={returnFocusRef}
       sections={ADMIN_SECTIONS}
     >
-      <AdminPanel
-        isActive={activeSection === 'overview'}
-        label="概览面板"
-        transition={panelTransition}
-      >
+      <AdminPanel isActive={activeSection === 'overview'} label="概览面板">
         <AdminOverviewCard isEnabled />
       </AdminPanel>
-      <AdminPanel
-        isActive={activeSection === 'users'}
-        label="用户面板"
-        transition={panelTransition}
-      >
+      <AdminPanel isActive={activeSection === 'users'} label="用户面板">
         <AdminUsersCard currentUserId={user.id} isEnabled />
       </AdminPanel>
-      <AdminPanel
-        isActive={activeSection === 'invite-codes'}
-        label="邀请码面板"
-        transition={panelTransition}
-      >
+      <AdminPanel isActive={activeSection === 'invite-codes'} label="邀请码面板">
         <AdminInviteCodesCard isEnabled />
       </AdminPanel>
-      <AdminPanel
-        isActive={activeSection === 'runtime-settings'}
-        label="运行配置面板"
-        transition={panelTransition}
-      >
+      <AdminPanel isActive={activeSection === 'runtime-settings'} label="运行配置面板">
         <RuntimeSettingsCard />
       </AdminPanel>
-      <AdminPanel
-        isActive={activeSection === 'scheduled-tasks'}
-        label="计划任务面板"
-        transition={panelTransition}
-      >
+      <AdminPanel isActive={activeSection === 'scheduled-tasks'} label="计划任务面板">
         <ScheduledTasksCard isActive={isDialogOpen && activeSection === 'scheduled-tasks'} />
       </AdminPanel>
-      <AdminPanel
-        isActive={activeSection === 'announcements'}
-        label="公告面板"
-        transition={panelTransition}
-      >
+      <AdminPanel isActive={activeSection === 'announcements'} label="公告面板">
         <AnnouncementsCard />
       </AdminPanel>
     </SectionedDialogFrame>

@@ -19,12 +19,7 @@ import {
 import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-page';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  COLLAPSE_VARIANTS,
-  MOTION_DURATION_SECONDS,
-  MotionDiv,
-  useMotionTransition,
-} from '@/components/ui/motion';
+import { DISCLOSURE_VARIANTS, MotionDiv } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 
@@ -63,9 +58,8 @@ type DeliverySettingsSectionProps = {
 export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps) {
   const pushplus = model.delivery.pushplus;
   const isPushplus = model.delivery.method === 'pushplus';
-  const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
-  const state = { model, pushplus, isPushplus, panelTransition };
+  const state = { model, pushplus, isPushplus };
   return (
     <SettingsSection>
       <SettingsSectionHeader>
@@ -134,8 +128,7 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
           inert={!isPushplus ? true : undefined}
           initial={false}
           animate={isPushplus ? 'visible' : 'hidden'}
-          variants={COLLAPSE_VARIANTS}
-          transition={panelTransition}
+          variants={DISCLOSURE_VARIANTS}
           className="overflow-hidden"
           style={{ pointerEvents: isPushplus ? 'auto' : 'none' }}
         >
@@ -293,5 +286,4 @@ function renderPushplusSettings(state: DeliveryViewState) {
 type DeliveryViewState = DeliverySettingsSectionProps & {
   pushplus: DeliverySettingsSectionProps['model']['delivery']['pushplus'];
   isPushplus: boolean;
-  panelTransition: ReturnType<typeof useMotionTransition>;
 };

@@ -24,13 +24,7 @@ import {
   SectionedDialogFrame,
   type SectionedDialogSectionDefinition,
 } from '@/components/feature/sectioned-dialog';
-import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
-  MotionDiv,
-  MotionPresence,
-  useMotionTransition,
-} from '@/components/ui/motion';
+import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { UserAvatar } from '@/components/shell/user-avatar';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -262,7 +256,6 @@ function SettingsCenterSession({
   const trackingControllerRef = useRef<TrackingSettingsController | null>(null);
   const { copyFeedback, handleCopy } = useSettingsCopy();
   const { activeSection, isDialogOpen, isRestoringUrl, pendingTransition } = sessionState;
-  const contentTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
   const activeContentKey = isTrackingSettingsSection(activeSection)
     ? 'tracking-notifications'
     : activeSection;
@@ -393,11 +386,10 @@ function SettingsCenterSession({
           <MotionDiv
             key={activeContentKey}
             data-settings-content-key={activeContentKey}
-            variants={FADE_UP_VARIANTS}
+            variants={PANEL_VARIANTS}
             initial="hidden"
             animate="visible"
-            exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-            transition={contentTransition}
+            exit="exit"
           >
             <SettingsCategoryContent
               activeSection={activeSection}

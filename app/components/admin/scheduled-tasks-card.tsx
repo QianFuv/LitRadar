@@ -38,14 +38,12 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import {
-  COLLAPSE_VARIANTS,
-  FADE_UP_VARIANTS,
-  FADE_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  DISCLOSURE_VARIANTS,
   MotionDiv,
   MotionParagraph,
   MotionPresence,
-  useMotionTransition,
+  REVEAL_VARIANTS,
+  SWAP_VARIANTS,
 } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
@@ -347,8 +345,6 @@ function useSchedulerViewState(isActive: boolean) {
   const [taskToDelete, setTaskToDelete] = useState<ScheduledTaskInfo | null>(null);
   const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
   const [jobPreset, setJobPreset] = useState<JobPresetId>(DEFAULT_PRESET);
-  const feedbackTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
-  const panelTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   const {
     data: tasks = [],
@@ -471,8 +467,6 @@ function useSchedulerViewState(isActive: boolean) {
     setForm,
     jobPreset,
     setJobPreset,
-    feedbackTransition,
-    panelTransition,
     tasks,
     error,
     isLoading,
@@ -495,9 +489,9 @@ type SchedulerViewState = ReturnType<typeof useSchedulerViewState>;
 
 /** Keep hidden index arguments mounted with identical inert and motion guards. */
 function renderSchedulerIndexFields(
-  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'panelTransition' | 'isIndexJobPreset'>,
+  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'isIndexJobPreset'>,
 ) {
-  const { form, setForm, panelTransition, isIndexJobPreset } = state;
+  const { form, setForm, isIndexJobPreset } = state;
 
   return (
     <MotionDiv
@@ -506,8 +500,7 @@ function renderSchedulerIndexFields(
       inert={!isIndexJobPreset ? true : undefined}
       initial={false}
       animate={isIndexJobPreset ? 'visible' : 'hidden'}
-      variants={COLLAPSE_VARIANTS}
-      transition={panelTransition}
+      variants={DISCLOSURE_VARIANTS}
       className="overflow-hidden"
       style={{ pointerEvents: isIndexJobPreset ? 'auto' : 'none' }}
     >
@@ -536,9 +529,9 @@ function renderSchedulerIndexFields(
 
 /** Keep hidden delivery arguments mounted with identical inert and validation guards. */
 function renderSchedulerDeliveryFields(
-  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'panelTransition' | 'isIndexJobPreset'>,
+  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'isIndexJobPreset'>,
 ) {
-  const { form, setForm, panelTransition, isIndexJobPreset } = state;
+  const { form, setForm, isIndexJobPreset } = state;
 
   return (
     <MotionDiv
@@ -547,8 +540,7 @@ function renderSchedulerDeliveryFields(
       inert={isIndexJobPreset ? true : undefined}
       initial={false}
       animate={isIndexJobPreset ? 'hidden' : 'visible'}
-      variants={COLLAPSE_VARIANTS}
-      transition={panelTransition}
+      variants={DISCLOSURE_VARIANTS}
       className="overflow-hidden"
       style={{ pointerEvents: isIndexJobPreset ? 'none' : 'auto' }}
     >
@@ -603,7 +595,6 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
     setForm,
     jobPreset,
     setJobPreset,
-    feedbackTransition,
     saveMutation,
     mutationError,
     openCreateDialog,
@@ -765,8 +756,7 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
                 initial="hidden"
                 animate="visible"
                 exit="exit"
-                variants={FADE_UP_VARIANTS}
-                transition={feedbackTransition}
+                variants={REVEAL_VARIANTS}
               >
                 {mutationError}
               </MotionParagraph>
@@ -797,7 +787,6 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
 /** Retain loading-before-error state and direct keyed worker-status presence. */
 function renderSchedulerStatus(state: SchedulerViewState) {
   const {
-    feedbackTransition,
     schedulerStatus,
     schedulerStatusError,
     isSchedulerStatusLoading,
@@ -814,8 +803,7 @@ function renderSchedulerStatus(state: SchedulerViewState) {
           initial="hidden"
           animate="visible"
           exit="exit"
-          variants={FADE_VARIANTS}
-          transition={feedbackTransition}
+          variants={SWAP_VARIANTS}
         >
           {isSchedulerStatusLoading ? (
             <span className="text-muted-foreground">正在读取调度器状态…</span>
@@ -857,15 +845,7 @@ function renderSchedulerStatus(state: SchedulerViewState) {
 
 /** Retain directly keyed tasks, disabled legacy toggles and captured deletion targets. */
 function renderScheduledTaskList(state: SchedulerViewState) {
-  const {
-    setTaskToDelete,
-    feedbackTransition,
-    panelTransition,
-    tasks,
-    toggleMutation,
-    deleteMutation,
-    openEditDialog,
-  } = state;
+  const { setTaskToDelete, tasks, toggleMutation, deleteMutation, openEditDialog } = state;
 
   return (
     <MotionPresence>
@@ -876,8 +856,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
           initial="hidden"
           animate="visible"
           exit="exit"
-          variants={FADE_UP_VARIANTS}
-          transition={feedbackTransition}
+          variants={REVEAL_VARIANTS}
         >
           暂无定时任务
         </MotionParagraph>
@@ -889,9 +868,8 @@ function renderScheduledTaskList(state: SchedulerViewState) {
             className="overflow-hidden px-4 py-4 sm:px-5"
             initial="hidden"
             animate="visible"
-            exit={{ height: 0, opacity: 0, pointerEvents: 'none' }}
-            variants={COLLAPSE_VARIANTS}
-            transition={panelTransition}
+            exit="exit"
+            variants={DISCLOSURE_VARIANTS}
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
               <span

@@ -38,12 +38,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  LIST_ITEM_VARIANTS,
   MotionDiv,
   MotionParagraph,
   MotionPresence,
-  useMotionTransition,
+  PANEL_VARIANTS,
+  REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
@@ -74,8 +74,6 @@ type AnimatedFeedbackProps = {
  * @returns Animated visual feedback and its current semantic announcement.
  */
 function AnimatedFeedback({ feedback, scope }: AnimatedFeedbackProps) {
-  const transition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
-
   return (
     <>
       {feedback && (
@@ -98,11 +96,10 @@ function AnimatedFeedback({ feedback, scope }: AnimatedFeedbackProps) {
               'text-xs leading-5',
               feedback.tone === 'error' ? 'text-destructive' : 'text-success-foreground',
             )}
-            variants={FADE_UP_VARIANTS}
+            variants={REVEAL_VARIANTS}
             initial="hidden"
             animate="visible"
-            exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
-            transition={transition}
+            exit="exit"
           >
             {feedback.message}
           </MotionParagraph>
@@ -121,15 +118,11 @@ function AnimatedFeedback({ feedback, scope }: AnimatedFeedbackProps) {
 export function FavoritesPageContent({ userId }: { userId: number }) {
   const page = useFavoritesPage(userId);
   const [folderToDelete, setFolderToDelete] = useState<{ id: number; name: string } | null>(null);
-  const stateTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
-  const itemTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast, 'exit');
   const favoritesState = getFavoritesState(page);
   const state = {
     ...page,
     folderToDelete,
     setFolderToDelete,
-    stateTransition,
-    itemTransition,
     favoritesState,
   };
   const favoritesAnnouncementRole = favoritesState === 'error' ? 'alert' : 'status';
@@ -174,8 +167,6 @@ type FavoriteFolderTarget = { id: number; name: string };
 type FavoritesViewState = ReturnType<typeof useFavoritesPage> & {
   folderToDelete: FavoriteFolderTarget | null;
   setFolderToDelete: Dispatch<SetStateAction<FavoriteFolderTarget | null>>;
-  stateTransition: ReturnType<typeof useMotionTransition>;
-  itemTransition: ReturnType<typeof useMotionTransition>;
   favoritesState: FavoritesState;
 };
 /** Preserve folder loading, selection, article loading, failure and empty-result precedence. */
@@ -363,8 +354,7 @@ function renderFavoriteArticle(
   favorite: FavoriteArticleItem,
   index: number,
 ) {
-  const { prefetchIndex, prefetchRef, selectedKeySet, toggleFavoriteSelection, itemTransition } =
-    state;
+  const { prefetchIndex, prefetchRef, selectedKeySet, toggleFavoriteSelection } = state;
 
   const selectionKey = getFavoriteSelectionKey(
     favorite.folder_id,
@@ -377,10 +367,10 @@ function renderFavoriteArticle(
     <MotionDiv
       key={favorite.id}
       data-motion-favorite-key={favorite.id}
-      initial={false}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, pointerEvents: 'none', scale: 0.985 }}
-      transition={itemTransition}
+      variants={LIST_ITEM_VARIANTS}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
     >
       <ArticleDialogCard
         triggerRef={index === prefetchIndex ? prefetchRef : undefined}
@@ -758,7 +748,6 @@ function renderFavoritesArticlePanel(state: FavoritesViewState) {
     loadedPages,
     refetchFavorites,
     visiblePageCount,
-    stateTransition,
   } = state;
   if (isPendingFavorites)
     return (
@@ -766,11 +755,10 @@ function renderFavoritesArticlePanel(state: FavoritesViewState) {
         key="favorites-loading"
         data-favorites-state="loading"
         aria-hidden="true"
-        variants={FADE_UP_VARIANTS}
+        variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
-        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-        transition={stateTransition}
+        exit="exit"
       >
         <ArticleListSkeleton count={4} />
       </MotionDiv>
@@ -780,11 +768,10 @@ function renderFavoritesArticlePanel(state: FavoritesViewState) {
       <MotionDiv
         key="favorites-error"
         data-favorites-state="error"
-        variants={FADE_UP_VARIANTS}
+        variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
-        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-        transition={stateTransition}
+        exit="exit"
       >
         <StateMessage
           isLive={false}
@@ -804,11 +791,10 @@ function renderFavoritesArticlePanel(state: FavoritesViewState) {
       <MotionDiv
         key="favorites-empty"
         data-favorites-state="empty"
-        variants={FADE_UP_VARIANTS}
+        variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
-        exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-        transition={stateTransition}
+        exit="exit"
       >
         <StateMessage
           isLive={false}
@@ -821,11 +807,10 @@ function renderFavoritesArticlePanel(state: FavoritesViewState) {
     <MotionDiv
       key="favorites-results"
       data-favorites-state="results"
-      variants={FADE_UP_VARIANTS}
+      variants={PANEL_VARIANTS}
       initial="hidden"
       animate="visible"
-      exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-      transition={stateTransition}
+      exit="exit"
     >
       {renderFavoriteBulkActions(state)}
       {renderFavoriteArticles(state)}
@@ -836,11 +821,10 @@ function renderFavoritesArticlePanel(state: FavoritesViewState) {
             key="favorites-next-page"
             aria-hidden="true"
             className="space-y-2 px-4 py-4 sm:px-5"
-            variants={FADE_UP_VARIANTS}
+            variants={REVEAL_VARIANTS}
             initial="hidden"
             animate="visible"
-            exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
-            transition={stateTransition}
+            exit="exit"
           >
             <Skeleton className="h-4 w-11/12" />
             <Skeleton className="h-3 w-1/2" />
@@ -858,7 +842,7 @@ function renderFavoritesArticleStates(state: FavoritesViewState) {
 
 /** Retain selected-folder and no-folder panels with their original keys. */
 function renderFavoritesWorkspace(state: FavoritesViewState) {
-  const { isLoading, selectedFolder, stateTransition, favoritesState, setDialogOpen } = state;
+  const { isLoading, selectedFolder, favoritesState, setDialogOpen } = state;
 
   return (
     <MotionPresence mode="wait">
@@ -866,11 +850,10 @@ function renderFavoritesWorkspace(state: FavoritesViewState) {
         <MotionDiv
           key="favorites-no-folder"
           data-favorites-state={favoritesState}
-          variants={FADE_UP_VARIANTS}
+          variants={PANEL_VARIANTS}
           initial="hidden"
           animate="visible"
-          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-          transition={stateTransition}
+          exit="exit"
         >
           <StateMessage
             isLive={false}
@@ -890,11 +873,10 @@ function renderFavoritesWorkspace(state: FavoritesViewState) {
         <MotionDiv
           key={`favorites-folder-${selectedFolder.id}`}
           data-favorites-folder={selectedFolder.id}
-          variants={FADE_UP_VARIANTS}
+          variants={PANEL_VARIANTS}
           initial="hidden"
           animate="visible"
-          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-          transition={stateTransition}
+          exit="exit"
         >
           {renderFavoritesArticleStates(state)}
         </MotionDiv>

@@ -22,12 +22,7 @@ import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-p
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import {
-  MOTION_DURATION_SECONDS,
-  MotionPresence,
-  MotionSpan,
-  useMotionTransition,
-} from '@/components/ui/motion';
+import { CHIP_VARIANTS, MotionPresence, MotionSpan } from '@/components/ui/motion';
 import {
   Select,
   SelectContent,
@@ -55,7 +50,6 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
   const { backup, endpoints, primary, retryAttempts } = model.ai;
   const { directions, keywords } = model.preferences;
   const databaseSelection = model.databaseSelection;
-  const chipTransition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
 
   const state = {
     model,
@@ -66,7 +60,6 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
     directions,
     keywords,
     databaseSelection,
-    chipTransition,
   };
   return (
     <>
@@ -120,7 +113,6 @@ type PreferenceTagFieldProps = {
   onRemove: (item: string) => void;
   placeholder: string;
   removeLabelPrefix: string;
-  transition: ReturnType<typeof useMotionTransition>;
   value: string;
 };
 
@@ -141,7 +133,6 @@ function PreferenceTagField({
   onRemove,
   placeholder,
   removeLabelPrefix,
-  transition,
   value,
 }: PreferenceTagFieldProps) {
   return (
@@ -152,10 +143,10 @@ function PreferenceTagField({
             key={item}
             className="inline-flex"
             data-motion-preference-chip={`${chipKeyPrefix}-${item}`}
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, pointerEvents: 'none', scale: 0.96 }}
-            transition={transition}
+            variants={CHIP_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
           >
             <span className="inline-flex h-7 items-center gap-1 rounded-md bg-info pr-0.5 pl-2.5 text-[13px] font-bold text-info-foreground">
               {item}
@@ -203,10 +194,8 @@ function PreferenceTagField({
 }
 
 /** Retain the keyed keyword chips and original add/remove/input handlers. */
-function renderRecommendationKeywords(
-  state: Pick<RecommendationViewState, 'model' | 'keywords' | 'chipTransition'>,
-) {
-  const { model, keywords, chipTransition } = state;
+function renderRecommendationKeywords(state: Pick<RecommendationViewState, 'model' | 'keywords'>) {
+  const { model, keywords } = state;
 
   return (
     <SettingsRow
@@ -231,7 +220,6 @@ function renderRecommendationKeywords(
         }
         placeholder="输入关键词后回车添加"
         removeLabelPrefix="移除关键词"
-        transition={chipTransition}
         value={keywords.input}
       />
     </SettingsRow>
@@ -240,9 +228,9 @@ function renderRecommendationKeywords(
 
 /** Retain the keyed direction chips and original add/remove/input handlers. */
 function renderRecommendationDirections(
-  state: Pick<RecommendationViewState, 'model' | 'directions' | 'chipTransition'>,
+  state: Pick<RecommendationViewState, 'model' | 'directions'>,
 ) {
-  const { model, directions, chipTransition } = state;
+  const { model, directions } = state;
 
   return (
     <SettingsRow
@@ -267,7 +255,6 @@ function renderRecommendationDirections(
         }
         placeholder="输入研究方向后回车添加"
         removeLabelPrefix="移除研究方向"
-        transition={chipTransition}
         value={directions.input}
       />
     </SettingsRow>
@@ -800,5 +787,4 @@ type RecommendationViewState = RecommendationSettingsSectionProps & {
   directions: RecommendationSettingsSectionProps['model']['preferences']['directions'];
   keywords: RecommendationSettingsSectionProps['model']['preferences']['keywords'];
   databaseSelection: RecommendationSettingsSectionProps['model']['databaseSelection'];
-  chipTransition: ReturnType<typeof useMotionTransition>;
 };

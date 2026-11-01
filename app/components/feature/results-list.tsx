@@ -7,11 +7,11 @@ import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { ArticleListSkeleton } from '@/components/feature/article-list-card';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import {
-  FADE_UP_VARIANTS,
-  MOTION_DURATION_SECONDS,
+  LIST_ITEM_VARIANTS,
   MotionDiv,
   MotionPresence,
-  useMotionTransition,
+  PANEL_VARIANTS,
+  REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
@@ -90,7 +90,7 @@ function validateArticlePageCursor(
  */
 export function ResultsList() {
   const state = useResultsViewState();
-  const { stateTransition, favoriteStateError, retryFavoriteChecks } = state;
+  const { favoriteStateError, retryFavoriteChecks } = state;
   const { resultContent, resultAnnouncement, resultAnnouncementRole, resultState } =
     getResultsPresentation(state);
   return (
@@ -123,13 +123,12 @@ export function ResultsList() {
           data-testid={`results-state-${resultState}`}
           className="min-w-0"
           variants={{
-            ...FADE_UP_VARIANTS,
-            visible: { ...FADE_UP_VARIANTS.visible, pointerEvents: 'inherit' },
+            ...PANEL_VARIANTS,
+            visible: { ...PANEL_VARIANTS.visible, pointerEvents: 'inherit' },
           }}
           initial="hidden"
           animate="visible"
-          exit={{ opacity: 0, pointerEvents: 'none', y: -4 }}
-          transition={stateTransition}
+          exit="exit"
         >
           {resultContent}
         </MotionDiv>
@@ -141,7 +140,6 @@ export function ResultsList() {
 function useResultsViewState() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const stateTransition = useMotionTransition(MOTION_DURATION_SECONDS.base);
 
   const [q] = useQueryState('q', parseAsString);
   const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
@@ -240,7 +238,6 @@ function useResultsViewState() {
 
   return {
     user,
-    stateTransition,
     currentDb,
     isLoading,
     isError,
@@ -262,7 +259,6 @@ type ResultsViewState = ReturnType<typeof useResultsViewState>;
 function getResultsPresentation(state: ResultsViewState) {
   const {
     user,
-    stateTransition,
     currentDb,
     isLoading,
     isError,
@@ -315,26 +311,34 @@ function getResultsPresentation(state: ResultsViewState) {
       : `已加载 ${visibleArticles.length} 篇文章`;
     resultContent = (
       <>
-        {visibleArticles.map((article, index) => (
-          <HighlightedArticleCard
-            key={article.article_id}
-            triggerRef={index === prefetchIndex ? prefetchRef : undefined}
-            article={article}
-            dbName={currentDb}
-            highlightText={highlightText}
-            initialFolderIds={
-              favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
-            }
-            isFavoriteStatePending={
-              Boolean(user) &&
-              isFavoriteStatePending &&
-              !favoriteChecksByArticle[article.article_id]
-            }
-            isFavoriteStateUnavailable={
-              Boolean(favoriteStateError) && !favoriteChecksByArticle[article.article_id]
-            }
-          />
-        ))}
+        <MotionPresence>
+          {visibleArticles.map((article, index) => (
+            <MotionDiv
+              key={article.article_id}
+              variants={LIST_ITEM_VARIANTS}
+              initial="hidden"
+              animate="visible"
+            >
+              <HighlightedArticleCard
+                triggerRef={index === prefetchIndex ? prefetchRef : undefined}
+                article={article}
+                dbName={currentDb}
+                highlightText={highlightText}
+                initialFolderIds={
+                  favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
+                }
+                isFavoriteStatePending={
+                  Boolean(user) &&
+                  isFavoriteStatePending &&
+                  !favoriteChecksByArticle[article.article_id]
+                }
+                isFavoriteStateUnavailable={
+                  Boolean(favoriteStateError) && !favoriteChecksByArticle[article.article_id]
+                }
+              />
+            </MotionDiv>
+          ))}
+        </MotionPresence>
 
         <div ref={loadMoreRef} className="h-1" />
         <MotionPresence>
@@ -343,11 +347,10 @@ function getResultsPresentation(state: ResultsViewState) {
               key="next-page-loading"
               aria-hidden="true"
               className="space-y-2 px-4 py-4 sm:px-5"
-              variants={FADE_UP_VARIANTS}
+              variants={REVEAL_VARIANTS}
               initial="hidden"
               animate="visible"
-              exit={{ opacity: 0, pointerEvents: 'none', y: -2 }}
-              transition={stateTransition}
+              exit="exit"
             >
               <Skeleton className="h-4 w-11/12" />
               <Skeleton className="h-3 w-1/2" />

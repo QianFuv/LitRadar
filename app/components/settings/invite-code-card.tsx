@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Ban, Copy, RotateCcw, Ticket } from 'lucide-react';
+import { Ban, RotateCcw, Ticket } from 'lucide-react';
 
 import {
   generateInviteCode,
@@ -26,6 +26,7 @@ import type {
   SettingsCopyScope,
 } from '@/components/settings/use-settings-copy';
 import { Button } from '@/components/ui/button';
+import { CopyButton } from '@/components/ui/copy-button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/utils';
 
@@ -218,18 +219,19 @@ function renderCurrentInviteCode(
             {inviteCodeData.code}
           </code>
         </div>
-        <Button
+        <CopyButton
           variant="outline"
           className="h-auto w-12 shrink-0"
           aria-label="复制邀请码"
           disabled={!isActive}
-          onClick={() => void handleCopy(inviteCodeData.code, '邀请码已复制。', 'invite')}
-        >
-          <Copy className="size-4" />
-        </Button>
+          isCopied={state.copyFeedback?.scope === 'invite' && state.copyFeedback.tone === 'success'}
+          onCopy={() => void handleCopy(inviteCodeData.code, '邀请码已复制。', 'invite')}
+        />
       </div>
       {state.copyFeedback?.scope === 'invite' && (
-        <div className="px-4 py-2.5 sm:px-5">{renderInviteCopyFeedback(state)}</div>
+        <div className={state.copyFeedback.tone === 'error' ? 'px-4 py-2.5 sm:px-5' : 'sr-only'}>
+          {renderInviteCopyFeedback(state)}
+        </div>
       )}
       <dl className="grid grid-cols-1 divide-y text-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">

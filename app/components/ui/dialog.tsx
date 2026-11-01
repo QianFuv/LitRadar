@@ -1,11 +1,11 @@
 'use client';
 
 /**
- * Project-styled Radix Dialog primitives with placement-aware motion.
+ * Project-styled Animate UI Dialog primitives: centered dialogs tip forward, edge placements slide in.
  */
 
 import * as React from 'react';
-import * as DialogPrimitive from '@radix-ui/react-dialog';
+import * as DialogPrimitive from '@animate-ui/react/primitives/radix-ui/dialog';
 import { XIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -64,14 +64,27 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
-      className={cn('motion-overlay fixed inset-0 z-50 bg-black/40', className)}
+      className={cn('fixed inset-0 z-50 bg-black/40', className)}
       {...props}
     />
   );
 }
 
+type DialogPlacement = 'center' | 'left' | 'right' | 'bottom' | 'takeover';
+
 type DialogContentProps = React.ComponentProps<typeof DialogPrimitive.Content> & {
-  placement?: 'center' | 'left' | 'right' | 'bottom' | 'takeover';
+  placement?: DialogPlacement;
+};
+
+/**
+ * Screen edge each placement slides from; centered dialogs have none and tip forward instead.
+ */
+const PLACEMENT_SIDES: Record<DialogPlacement, 'left' | 'right' | 'bottom' | undefined> = {
+  center: undefined,
+  left: 'left',
+  right: 'right',
+  bottom: 'bottom',
+  takeover: 'bottom',
 };
 
 /**
@@ -92,18 +105,19 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         data-motion-placement={placement}
+        data-side={PLACEMENT_SIDES[placement]}
         className={cn(
           'bg-background fixed z-50 grid gap-4 overscroll-contain p-6 shadow-overlay outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
           placement === 'center' &&
-            'motion-dialog w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] rounded-2xl md:max-w-xl',
+            'dialog-centered w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] rounded-2xl md:max-w-xl',
           placement === 'left' &&
-            'motion-drawer inset-y-0 left-0 h-dvh w-80 max-w-[calc(100vw-2rem)] rounded-none',
+            'inset-y-0 left-0 h-dvh w-80 max-w-[calc(100vw-2rem)] rounded-none',
           placement === 'right' &&
-            'motion-sheet-right inset-y-0 right-0 h-dvh w-full max-w-full rounded-none p-0 md:w-[min(46rem,calc(100vw-5rem))]',
+            'inset-y-0 right-0 h-dvh w-full max-w-full rounded-none p-0 md:w-[min(46rem,calc(100vw-5rem))]',
           placement === 'bottom' &&
-            'motion-sheet-bottom inset-x-0 bottom-0 max-h-[85dvh] w-full rounded-t-2xl rounded-b-none p-0 pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))]',
+            'inset-x-0 bottom-0 max-h-[85dvh] w-full rounded-t-2xl rounded-b-none p-0 pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))]',
           placement === 'takeover' &&
-            'motion-takeover inset-0 h-dvh w-screen max-w-none rounded-none p-0 shadow-none',
+            'inset-0 h-dvh w-screen max-w-none rounded-none p-0 shadow-none',
           className,
         )}
         {...props}

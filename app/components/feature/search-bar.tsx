@@ -32,13 +32,7 @@ import {
   type SearchRewriteSuggestion,
 } from '@/lib/search-syntax';
 import { cn } from '@/lib/utils';
-import {
-  FADE_VARIANTS,
-  MOTION_DURATION_SECONDS,
-  MotionDiv,
-  MotionPresence,
-  useMotionTransition,
-} from '@/components/ui/motion';
+import { MotionDiv, MotionPresence, SWAP_VARIANTS } from '@/components/ui/motion';
 
 const SEARCH_HISTORY_KEY = 'litradar:v1:search_history';
 const LEGACY_SEARCH_HISTORY_KEY = 'search_history';
@@ -219,7 +213,6 @@ export function SearchBar({
     hasSyntaxAssist ? readStoredSearchBuilder() : null,
   );
   const inputRef = useRef<HTMLInputElement>(null);
-  const transition = useMotionTransition(MOTION_DURATION_SECONDS.fast);
 
   if (q !== previousQuery) {
     setPreviousQuery(q);
@@ -561,11 +554,10 @@ export function SearchBar({
                             <MotionDiv
                               key={option.query}
                               data-motion-history-key={option.query}
-                              variants={FADE_VARIANTS}
+                              variants={SWAP_VARIANTS}
                               initial="hidden"
                               animate="visible"
-                              exit={{ opacity: 0, pointerEvents: 'none' }}
-                              transition={transition}
+                              exit="exit"
                             >
                               {renderOptionButton(
                                 option,

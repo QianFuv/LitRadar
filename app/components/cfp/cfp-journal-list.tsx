@@ -92,7 +92,7 @@ export function CfpJournalList({
             >
               <ChevronDown
                 className={cn(
-                  'size-3.5 shrink-0 transition-transform',
+                  'motion-chevron size-3.5 shrink-0 transition-transform',
                   !isExpanded && '-rotate-90',
                 )}
                 aria-hidden="true"
