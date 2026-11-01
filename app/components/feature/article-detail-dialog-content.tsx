@@ -292,6 +292,29 @@ export function CheckedArticleDetailPane({
 }
 
 /**
+ * Render the narrow-screen article sheet with favorite membership loaded first, for views that
+ * show articles outside favorite-aware lists such as the relation graph.
+ *
+ * @param props - Article and database.
+ * @returns Article detail sheet content with accurate favorite state.
+ */
+export function CheckedArticleDetailDialogContent({
+  article,
+  dbName,
+}: {
+  article: Article;
+  dbName: string;
+}) {
+  return (
+    <RelatedArticleFavoriteState article={article} dbName={dbName}>
+      {(favoriteProps) => (
+        <ArticleDetailDialogContent article={article} dbName={dbName} {...favoriteProps} />
+      )}
+    </RelatedArticleFavoriteState>
+  );
+}
+
+/**
  * Render article details inside the docked side panel.
  *
  * @param props - Article detail configuration.

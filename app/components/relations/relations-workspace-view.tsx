@@ -11,11 +11,15 @@ import { ListTree, Loader2, Maximize, Minus, Network, Plus, RotateCcw, Search } 
 import { parseAsString, useQueryStates } from 'nuqs';
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 
-import { CheckedArticleDetailPane } from '@/components/feature/article-detail-dialog-content';
+import {
+  CheckedArticleDetailDialogContent,
+  CheckedArticleDetailPane,
+} from '@/components/feature/article-detail-dialog-content';
 import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { RelationCanvas } from '@/components/relations/relation-canvas';
 import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { useIsMotionReduced } from '@/components/ui/motion';
 import { getArticle, getArticles, getRelatedArticles, type Article } from '@/lib/api';
@@ -186,8 +190,8 @@ function RelationPicker({ onPick }: { onPick: (article: Article, dbName: string)
  */
 function RelationHeading({ subtitle, children }: { subtitle: string; children?: ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
+    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+      <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
         <h1 className="text-lg leading-7 font-bold">文献关系图</h1>
         <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
       </div>
@@ -355,7 +359,7 @@ function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: st
               role="radio"
               aria-checked={viewMode === mode}
               className={cn(
-                'motion-control flex h-7 items-center gap-1 rounded-md px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring',
+                'motion-control flex h-10 items-center gap-1 rounded-md px-3 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring md:h-7 md:px-2',
                 viewMode === mode
                   ? 'bg-foreground text-background'
                   : 'text-muted-foreground hover:text-foreground',
@@ -372,7 +376,7 @@ function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: st
             type="button"
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="size-11 md:size-8"
             aria-label="重新排列"
             title="重新排列"
             onClick={relayout}
@@ -385,7 +389,7 @@ function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: st
             type="button"
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="size-11 md:size-8"
             aria-label="适应窗口"
             title="适应窗口"
             onClick={() => void fitView({ duration: isMotionReduced ? 0 : 300, padding: 0.2 })}
@@ -447,30 +451,41 @@ function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: st
   }
 
   return (
-    <WorkspaceShell
-      listLabel="关系网络"
-      emphasis="list"
-      isListSelfScrolling
-      header={header}
-      readerPlaceholder={null}
-      reader={{
-        content: selectedArticle ? (
-          <CheckedArticleDetailPane
+    <>
+      <WorkspaceShell
+        listLabel="关系网络"
+        emphasis="list"
+        isListSelfScrolling
+        header={header}
+        readerPlaceholder={null}
+        reader={{
+          content: selectedArticle ? (
+            <CheckedArticleDetailPane
+              key={relationNodeId(selectedArticle)}
+              article={selectedArticle}
+              dbName={dbName}
+            />
+          ) : (
+            <ReaderPlaceholder title="选择一个节点" description="点击图中的文章查看详情。" />
+          ),
+          isSheetOpen: false,
+          onSheetOpenChange: () => undefined,
+          title: '文献详情',
+          description: '关系图中选中文章的详情',
+        }}
+      >
+        {body}
+      </WorkspaceShell>
+      {!isDocked && selectedArticle && (
+        <Dialog open={isSheetOpen} onOpenChange={setIsSheetOpen}>
+          <CheckedArticleDetailDialogContent
             key={relationNodeId(selectedArticle)}
             article={selectedArticle}
             dbName={dbName}
           />
-        ) : (
-          <ReaderPlaceholder title="选择一个节点" description="点击图中的文章查看详情。" />
-        ),
-        isSheetOpen,
-        onSheetOpenChange: setIsSheetOpen,
-        title: selectedArticle ? getArticleDisplayTitle(selectedArticle) : '文献详情',
-        description: '关系图中选中文章的详情',
-      }}
-    >
-      {body}
-    </WorkspaceShell>
+        </Dialog>
+      )}
+    </>
   );
 }
 

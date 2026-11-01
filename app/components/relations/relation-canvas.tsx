@@ -106,6 +106,13 @@ const FORCE = {
   reducedMotionTicks: 120,
 };
 
+/**
+ * Invisible tap area around the branch toggle. It reaches up and out to the right, away from the
+ * dot on its left and the title below, so a finger can hit the toggle on a zoomed-out canvas.
+ */
+const TOGGLE_HIT_AREA_CLASS_NAME =
+  "before:absolute before:-top-3 before:-right-4 before:-bottom-1 before:-left-1 before:content-['']";
+
 /** Invisible handle centred on the dot, so edges run from dot to dot. */
 const HANDLE_CLASS_NAME =
   '!pointer-events-none !size-px !min-h-0 !min-w-0 !border-0 !bg-transparent';
@@ -186,7 +193,8 @@ function NodeToggle({ data, dotCenter }: { data: ArticleNodeData; dotCenter: num
       aria-expanded={data.isExpanded}
       disabled={data.isLoading}
       className={cn(
-        'nodrag motion-control absolute flex size-4 -translate-y-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground outline-none transition-colors hover:border-foreground/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+        'nodrag motion-control absolute flex size-4 -translate-y-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground outline-none transition-colors hover:border-foreground/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-6 pointer-coarse:[&_svg]:size-4',
+        TOGGLE_HIT_AREA_CLASS_NAME,
         data.isExpanded && 'border-primary/60 text-primary',
       )}
       style={{ top: dotCenter, left: `calc(50% + ${data.isRoot ? 15 : 11}px)` }}

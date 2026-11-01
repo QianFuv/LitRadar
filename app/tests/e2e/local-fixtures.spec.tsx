@@ -2727,6 +2727,26 @@ async function relationGraphTest({ page }: { page: Page }): Promise<void> {
 test('explores article relations as an interactive graph', relationGraphTest);
 
 /**
+ * Serve relation-graph articles whose related lists branch into three children.
+ *
+ * @param page - Playwright browser page.
+ */
+async function serveRelationGraphApi(page: Page): Promise<void> {
+  await page.route('**/api/**', serveArticleSettingsApi);
+  await page.route(/\/api\/articles\/[^/?]+(\?.*)?$/, (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop() ?? '');
+    return fulfillJson(route, relationArticle(id));
+  });
+  await page.route('**/api/articles/*/related**', (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/')[3]);
+    return fulfillJson(
+      route,
+      ['1', '2', '3'].map((suffix) => relationArticle(`${id}.${suffix}`)),
+    );
+  });
+}
+
+/**
  * Keep docked toolbar labels fixed for a given reader width while access actions load, so the
  * relation action does not switch between its full and short label on every article.
  *
@@ -2767,6 +2787,43 @@ async function stableToolbarLabelsTest({ page }: { page: Page }): Promise<void> 
 }
 
 test('keeps docked toolbar labels stable while access actions load', stableToolbarLabelsTest);
+
+test.describe('mobile relation graph', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('expands branches by touch and opens the mobile article sheet', async ({ page }) => {
+    await serveRelationGraphApi(page);
+    await page.goto('/?view=relations&article=mobile&db=fixture');
+    await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(3);
+
+    for (const control of [
+      page.getByRole('radio', { name: '网络' }),
+      page.getByRole('radio', { name: '列表' }),
+      page.getByRole('button', { name: '重新排列' }),
+      page.getByRole('button', { name: '适应窗口' }),
+    ]) {
+      expect((await control.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(40);
+    }
+
+    const toggle = page.getByRole('button', { name: '展开相关文章：关系文章 mobile.1' });
+    await expect(toggle).toBeVisible();
+    const toggleBox = await toggle.boundingBox();
+    expect(toggleBox).not.toBeNull();
+    await page.touchscreen.tap(
+      toggleBox!.x + toggleBox!.width + 6,
+      toggleBox!.y + toggleBox!.height / 2 - 4,
+    );
+    await expect(page.getByRole('button', { name: /^相关文章：/ })).toHaveCount(6);
+
+    await page.getByRole('button', { name: /^中心文章：/ }).tap();
+    const sheet = page.getByRole('dialog');
+    await expect(sheet.getByRole('heading', { name: '关系文章 mobile' })).toBeVisible();
+    await expect(sheet.locator('[data-article-detail-variant="dialog"]')).toBeVisible();
+    await expect(sheet.locator('[data-slot="article-detail-toolbar"]')).toHaveCount(0);
+    await sheet.getByRole('button', { name: '关闭' }).tap();
+    await expect(sheet).toHaveCount(0);
+  });
+});
 
 /** Exercise modal-to-settings navigation with real touch events and normal exit animations. */
 async function mobileSettingsNavigationTest(page: Page, workspace: string): Promise<void> {
