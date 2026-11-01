@@ -4,14 +4,7 @@
  * Article metadata and responsive, accessible detail actions.
  */
 
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -78,6 +71,15 @@ type ArticleCopyTarget = 'title' | 'info';
 type ArticleDetailVariant = 'dialog' | 'pane';
 
 const ARTICLE_ACTION_BUTTON_CLASS_NAME = 'size-11 p-0 md:h-9 md:w-auto md:px-2.5';
+
+/**
+ * Docked toolbar actions switch to short labels by the toolbar's own width instead of measuring
+ * overflow, so the labels do not flip when access actions load after an article opens. The
+ * breakpoint fits the full labels of favorite, copy, abstract, full-text, login, and relation
+ * actions.
+ */
+const PANE_ACTIONS_CLASS_NAME =
+  'flex-1 flex-nowrap @max-[43rem]:[&_[data-action-label]]:hidden @max-[43rem]:[&_[data-action-short]]:inline';
 
 /** Short forms of the default access labels used when the docked toolbar is narrow. */
 const ACCESS_SHORT_LABELS: Record<string, string> = {
@@ -327,9 +329,7 @@ export function ArticleDetailPane(props: ArticleDetailDialogContentProps) {
 function ArticlePaneView(props: ArticleDetailDialogContentProps & ArticleTrailProps) {
   const state = useArticleDetailViewState(props);
   const articleRef = useRef<HTMLElement>(null);
-  const toolbarRef = useRef<HTMLDivElement>(null);
   const isRelated = Boolean(props.onBack);
-  useCompactToolbar(toolbarRef);
   useEffect(() => {
     if (isRelated) articleRef.current?.scrollIntoView?.({ block: 'start' });
   }, [isRelated]);
@@ -363,9 +363,8 @@ function ArticlePaneView(props: ArticleDetailDialogContentProps & ArticleTrailPr
           </nav>
         )}
         <div
-          ref={toolbarRef}
           data-slot="article-detail-toolbar"
-          className="flex h-14 items-center overflow-x-auto border-b px-4 2xl:px-6 [&[data-compact]_[data-action-label]]:hidden [&[data-compact]_[data-action-short]]:inline"
+          className="@container flex h-14 items-center overflow-x-auto border-b px-4 2xl:px-6"
         >
           {renderArticleActions(state, 'pane')}
         </div>
@@ -544,7 +543,7 @@ function renderArticleMetadata(
 }
 
 /**
- * Render an action label with a shorter form the docked toolbar switches to when space is tight.
+ * Render an action label with a shorter form the docked toolbar switches to when it is narrow.
  *
  * @param label - Full label.
  * @param shortLabel - Short label shown in a compact toolbar.
@@ -573,34 +572,6 @@ function shortenAccessLabel(label: string): string {
   return ACCESS_SHORT_LABELS[label] ?? label;
 }
 
-/**
- * Switch action labels to their short forms while full labels would overflow the toolbar.
- *
- * Labels are restored before each measurement, which runs on resize and on content changes such
- * as access actions loading or the favorite label switching.
- *
- * @param toolbarRef - Toolbar whose full labels carry `data-action-label`.
- */
-function useCompactToolbar(toolbarRef: RefObject<HTMLElement | null>) {
-  useLayoutEffect(() => {
-    const toolbar = toolbarRef.current;
-    if (!toolbar || typeof ResizeObserver === 'undefined') return;
-    const update = () => {
-      toolbar.removeAttribute('data-compact');
-      if (toolbar.scrollWidth > toolbar.clientWidth) toolbar.setAttribute('data-compact', '');
-    };
-    update();
-    const resizeObserver = new ResizeObserver(update);
-    resizeObserver.observe(toolbar);
-    const mutationObserver = new MutationObserver(update);
-    mutationObserver.observe(toolbar, { childList: true, subtree: true, characterData: true });
-    return () => {
-      resizeObserver.disconnect();
-      mutationObserver.disconnect();
-    };
-  }, [toolbarRef]);
-}
-
 /** Render the favorite, copy, access, and caller-provided article actions as one toolbar group. */
 function renderArticleActions(state: ArticleDetailViewState, variant: ArticleDetailVariant) {
   return (
@@ -609,7 +580,7 @@ function renderArticleActions(state: ArticleDetailViewState, variant: ArticleDet
       aria-label="文章操作"
       className={cn(
         'flex items-center gap-x-0.5 gap-y-1 [&_[data-variant]]:bg-transparent [&_[data-variant]]:!shadow-none [&_[data-variant]:hover]:bg-accent',
-        variant === 'pane' ? 'flex-1 flex-nowrap' : 'min-w-0 flex-wrap',
+        variant === 'pane' ? PANE_ACTIONS_CLASS_NAME : 'min-w-0 flex-wrap',
       )}
     >
       {renderArticleFavoriteAction(state)}

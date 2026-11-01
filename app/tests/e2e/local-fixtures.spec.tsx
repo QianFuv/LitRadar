@@ -2726,6 +2726,48 @@ async function relationGraphTest({ page }: { page: Page }): Promise<void> {
 
 test('explores article relations as an interactive graph', relationGraphTest);
 
+/**
+ * Keep docked toolbar labels fixed for a given reader width while access actions load, so the
+ * relation action does not switch between its full and short label on every article.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function stableToolbarLabelsTest({ page }: { page: Page }): Promise<void> {
+  let releaseAccess = () => {};
+  await page.route('**/api/**', async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith('/access')) {
+      await new Promise<void>((resolve) => {
+        releaseAccess = resolve;
+      });
+    }
+    await serveArticleSettingsApi(route);
+  });
+  for (const { width, label } of [
+    { width: 1280, label: '关系' },
+    { width: 1920, label: '关系图' },
+  ]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/?q=graph');
+    await page
+      .getByRole('button', { name: /^查看文章详情：/ })
+      .first()
+      .click();
+    const readingDesk = page.getByRole('region', { name: '阅读台' });
+    const relationAction = readingDesk.getByRole('link', { name: '查看关系图' });
+    await expect(readingDesk.getByRole('button', { name: '加载访问' })).toBeVisible();
+    await expect.poll(() => relationAction.innerText()).toBe(label);
+    releaseAccess();
+    await expect(readingDesk.getByRole('link', { name: '去设置登录' })).toBeVisible();
+    await expect.poll(() => relationAction.innerText()).toBe(label);
+    const toolbar = readingDesk.locator('[data-slot="article-detail-toolbar"]');
+    expect(await toolbar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+  }
+}
+
+test('keeps docked toolbar labels stable while access actions load', stableToolbarLabelsTest);
+
 /** Exercise modal-to-settings navigation with real touch events and normal exit animations. */
 async function mobileSettingsNavigationTest(page: Page, workspace: string): Promise<void> {
   await page.route('**/api/**', serveArticleSettingsApi);
