@@ -12,6 +12,7 @@ import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { ArticleListSkeleton } from '@/components/feature/article-list-card';
 import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
+import { FavoriteKindSwitch } from '@/components/favorites/favorite-kind-switch';
 import {
   getFavoriteSelectionKey,
   useFavoritesPage,
@@ -201,6 +202,7 @@ function renderFavoritesHeader(state: FavoritesViewState) {
           <span className="hidden sm:inline">新建</span>
         </Button>
       </div>
+      <FavoriteKindSwitch />
       {renderFolderTabs(state)}
       {selectedFolder && renderFolderToolbar(state, selectedFolder)}
     </div>

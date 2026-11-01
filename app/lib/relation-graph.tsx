@@ -114,6 +114,26 @@ export function buildRelationHref(article: Pick<Article, 'article_id'>, dbName: 
 }
 
 /**
+ * Build the relation-graph workspace URL that reopens a saved graph.
+ *
+ * @param favorite - Saved graph database, root article, and id.
+ * @returns Workspace URL carrying the saved graph id.
+ */
+export function buildSavedRelationHref(favorite: {
+  db_name: string;
+  id: number;
+  root_article_id: number;
+}): string {
+  const params = new URLSearchParams({
+    view: 'relations',
+    db: favorite.db_name,
+    article: String(favorite.root_article_id),
+    saved: String(favorite.id),
+  });
+  return `/?${params.toString()}`;
+}
+
+/**
  * Return the graph key of an article.
  *
  * @param article - Article.
@@ -988,13 +1008,66 @@ export function listRelationNodes(graph: RelationGraph): RelationNode[] {
   return ordered;
 }
 
+/**
+ * Summarize what the reader deliberately shaped in a graph: its articles, expanded branches,
+ * cross links, and the nodes they dragged into place. Free node positions are left out because
+ * the force layout settles them slightly differently every time a graph is shown.
+ *
+ * @param graph - Relation graph.
+ * @returns Stable text that differs exactly when the reader changed the graph.
+ */
+export function relationGraphSignature(graph: RelationGraph): string {
+  const pinned = [...graph.pinnedIds].sort().map((id) => {
+    const position = graph.positions[id];
+    return `${id}@${Math.round(position?.x ?? 0)},${Math.round(position?.y ?? 0)}`;
+  });
+  return JSON.stringify({
+    nodes: Object.keys(graph.nodes).sort(),
+    expanded: [...graph.expandedIds].sort(),
+    crossLinks: graph.crossLinks.map(([source, target]) => `${source}>${target}`).sort(),
+    pinned,
+  });
+}
+
 const RELATION_GRAPH_STORAGE_KEY = 'litradar:v1:relation_graph';
 
 /** Last relation graph of the browser session. */
 export type StoredRelationGraph = {
   dbName: string;
   graph: RelationGraph;
+  /** Saved-graph favorite the graph belongs to, so a reload keeps offering update and reset. */
+  savedId?: number | null;
 };
+
+/**
+ * Accept an untrusted graph snapshot (session storage or a saved favorite) when its root node
+ * exists, filling optional fields and laying it out again when positions are missing.
+ *
+ * @param value - Parsed snapshot of unknown shape.
+ * @returns Usable graph, or null when the snapshot cannot be shown.
+ */
+export function normalizeRelationGraph(value: unknown): RelationGraph | null {
+  const graph = value as Partial<RelationGraph> | null;
+  if (
+    !graph ||
+    typeof graph !== 'object' ||
+    typeof graph.rootId !== 'string' ||
+    !graph.nodes?.[graph.rootId] ||
+    !graph.childIds ||
+    !Array.isArray(graph.expandedIds) ||
+    !Array.isArray(graph.crossLinks)
+  ) {
+    return null;
+  }
+  const normalized: RelationGraph = {
+    ...(graph as RelationGraph),
+    positions: graph.positions ?? {},
+    pinnedIds: Array.isArray(graph.pinnedIds) ? graph.pinnedIds : [],
+    layoutRevision: typeof graph.layoutRevision === 'number' ? graph.layoutRevision : 0,
+  };
+  const hasPositions = Object.keys(normalized.nodes).every((id) => normalized.positions[id]);
+  return hasPositions ? normalized : relayoutRelationGraph(normalized);
+}
 
 /**
  * Read the last relation graph of this browser session, laying it out again when it was stored
@@ -1009,17 +1082,15 @@ export function readStoredRelationGraph(): StoredRelationGraph | null {
   try {
     const raw = window.sessionStorage.getItem(RELATION_GRAPH_STORAGE_KEY);
     const stored = raw ? (JSON.parse(raw) as StoredRelationGraph) : null;
-    const graph = stored?.graph;
-    if (typeof stored?.dbName !== 'string' || !graph?.nodes?.[graph.rootId]) {
+    const graph = normalizeRelationGraph(stored?.graph);
+    if (typeof stored?.dbName !== 'string' || !graph) {
       return null;
     }
-    const hasPositions = Object.keys(graph.nodes).every((id) => graph.positions?.[id]);
-    const normalized: RelationGraph = {
-      ...graph,
-      pinnedIds: Array.isArray(graph.pinnedIds) ? graph.pinnedIds : [],
-      layoutRevision: typeof graph.layoutRevision === 'number' ? graph.layoutRevision : 0,
+    return {
+      dbName: stored.dbName,
+      graph,
+      savedId: typeof stored.savedId === 'number' ? stored.savedId : null,
     };
-    return { ...stored, graph: hasPositions ? normalized : relayoutRelationGraph(normalized) };
   } catch {
     return null;
   }

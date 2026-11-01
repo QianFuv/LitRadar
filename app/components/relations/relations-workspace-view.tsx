@@ -8,7 +8,7 @@
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ListTree, Loader2, Maximize, Minus, Network, Plus, RotateCcw, Search } from 'lucide-react';
-import { parseAsString, useQueryStates } from 'nuqs';
+import { parseAsInteger, parseAsString, useQueryStates } from 'nuqs';
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 
 import {
@@ -19,11 +19,22 @@ import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { RelationCanvas } from '@/components/relations/relation-canvas';
+import {
+  RelationGraphFavoriteControls,
+  relationGraphFavoriteKey,
+} from '@/components/relations/relation-graph-favorite-controls';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { useIsMotionReduced } from '@/components/ui/motion';
-import { getArticle, getArticles, getRelatedArticles, type Article } from '@/lib/api';
+import {
+  getArticle,
+  getArticles,
+  getRelatedArticles,
+  getRelationGraphFavorite,
+  type Article,
+  type RelationGraphFavorite,
+} from '@/lib/api';
 import { getArticleDisplayTitle } from '@/lib/article-title';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -33,6 +44,7 @@ import {
   createRelationGraph,
   expandRelationNode,
   listRelationNodes,
+  normalizeRelationGraph,
   readStoredRelationGraph,
   relationPathContext,
   relationNodeId,
@@ -46,8 +58,12 @@ import { useSelectedDatabase } from '@/lib/selected-database';
 import { READER_DOCK_MEDIA_QUERY, useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
 
-/** URL state of the workspace: center article and its database. */
-const RELATION_QUERY_PARSERS = { article: parseAsString, db: parseAsString };
+/** URL state of the workspace: center article, its database, and an opened saved graph. */
+const RELATION_QUERY_PARSERS = {
+  article: parseAsString,
+  db: parseAsString,
+  saved: parseAsInteger,
+};
 
 /** Related lists are shared with the article reader and change only when the index updates. */
 const RELATED_STALE_TIME_MS = 10 * 60 * 1000;
@@ -55,18 +71,30 @@ const RELATED_STALE_TIME_MS = 10 * 60 * 1000;
 type RelationViewMode = 'graph' | 'list';
 
 /**
- * Render the relation workspace, restoring the session's last graph when no article is chosen.
+ * Render the relation workspace, restoring the session's last graph when no article is chosen
+ * and loading a saved graph when the URL names one.
  *
  * @returns Relation-graph workspace.
  */
 export function RelationsWorkspaceView() {
-  const [{ article: articleId, db: dbName }, setParams] = useQueryStates(RELATION_QUERY_PARSERS);
+  const [{ article: articleId, db: dbName, saved: savedId }, setParams] =
+    useQueryStates(RELATION_QUERY_PARSERS);
   const [stored] = useState(readStoredRelationGraph);
   const isRestoring = (!articleId || !dbName) && stored !== null;
+  const savedQuery = useQuery({
+    queryKey: relationGraphFavoriteKey(savedId),
+    queryFn: ({ signal }) => getRelationGraphFavorite(savedId as number, signal),
+    enabled: savedId !== null && Boolean(articleId && dbName),
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  });
 
   useEffect(() => {
     if (isRestoring && stored) {
-      void setParams({ article: stored.graph.rootId, db: stored.dbName }, { history: 'replace' });
+      void setParams(
+        { article: stored.graph.rootId, db: stored.dbName, saved: stored.savedId ?? null },
+        { history: 'replace' },
+      );
     }
   }, [isRestoring, setParams, stored]);
 
@@ -79,11 +107,56 @@ export function RelationsWorkspaceView() {
       />
     );
   }
+  if (savedId !== null && savedQuery.isPending) {
+    return null;
+  }
+  const savedFavorite =
+    savedQuery.data &&
+    savedQuery.data.db_name === dbName &&
+    String(savedQuery.data.root_article_id) === articleId
+      ? savedQuery.data
+      : null;
   return (
     <ReactFlowProvider>
-      <RelationExplorer key={`${dbName}\u0000${articleId}`} articleId={articleId} dbName={dbName} />
+      <RelationExplorer
+        key={`${dbName}\u0000${articleId}\u0000${savedId ?? ''}`}
+        articleId={articleId}
+        dbName={dbName}
+        savedFavorite={savedFavorite}
+        isSavedFavoriteMissing={savedId !== null && savedFavorite === null}
+      />
     </ReactFlowProvider>
   );
+}
+
+/**
+ * Choose the graph a new explorer starts from: this session's graph when it matches the center
+ * article and saved favorite (it may hold unsaved changes), otherwise the saved snapshot.
+ *
+ * @param dbName - Database of the center article.
+ * @param articleId - Center article id.
+ * @param savedFavorite - Saved graph named by the URL, if any.
+ * @returns Starting graph (null to build a fresh one) and the favorite it belongs to.
+ */
+function resolveInitialRelationGraph(
+  dbName: string,
+  articleId: string,
+  savedFavorite: RelationGraphFavorite | null,
+): { graph: RelationGraph | null; savedId: number | null } {
+  const stored = readStoredRelationGraph();
+  const storedMatches = stored && stored.dbName === dbName && stored.graph.rootId === articleId;
+  if (savedFavorite) {
+    if (storedMatches && stored.savedId === savedFavorite.id) {
+      return { graph: stored.graph, savedId: savedFavorite.id };
+    }
+    const snapshot = normalizeRelationGraph(savedFavorite.graph);
+    return snapshot
+      ? { graph: snapshot, savedId: savedFavorite.id }
+      : { graph: null, savedId: null };
+  }
+  return storedMatches
+    ? { graph: stored.graph, savedId: stored.savedId ?? null }
+    : { graph: null, savedId: null };
 }
 
 /**
@@ -209,20 +282,29 @@ function RelationHeading({ subtitle, children }: { subtitle: string; children?: 
  * @param props - Center article and database.
  * @returns Graph workspace with reader.
  */
-function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: string }) {
+function RelationExplorer({
+  articleId,
+  dbName,
+  savedFavorite,
+  isSavedFavoriteMissing,
+}: {
+  articleId: string;
+  dbName: string;
+  savedFavorite: RelationGraphFavorite | null;
+  isSavedFavoriteMissing: boolean;
+}) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const { fitView } = useReactFlow();
   const isDocked = useMediaQuery(READER_DOCK_MEDIA_QUERY);
   const isMotionReduced = useIsMotionReduced();
-  const [graph, setGraph] = useState<RelationGraph | null>(() => {
-    const stored = readStoredRelationGraph();
-    return stored && stored.dbName === dbName && stored.graph.rootId === articleId
-      ? stored.graph
-      : null;
-  });
+  const [initial] = useState(() => resolveInitialRelationGraph(dbName, articleId, savedFavorite));
+  const [graph, setGraph] = useState<RelationGraph | null>(initial.graph);
+  const [savedGraphId, setSavedGraphId] = useState<number | null>(initial.savedId);
   const [loadingIds, setLoadingIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(
+    isSavedFavoriteMissing ? '收藏的关系图不存在或已被删除，已显示新的关系图。' : null,
+  );
   const [selectedId, setSelectedId] = useState<string | null>(articleId);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [viewMode, setViewMode] = useState<RelationViewMode>('graph');
@@ -296,9 +378,9 @@ function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: st
 
   useEffect(() => {
     if (currentGraph) {
-      storeRelationGraph({ dbName, graph: currentGraph });
+      storeRelationGraph({ dbName, graph: currentGraph, savedId: savedGraphId });
     }
-  }, [dbName, currentGraph]);
+  }, [dbName, currentGraph, savedGraphId]);
 
   const select = useCallback(
     (nodeId: string) => {
@@ -334,6 +416,19 @@ function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: st
       });
     },
     [currentGraph],
+  );
+
+  const resetToSaved = useCallback(
+    (saved: RelationGraph) => {
+      setFailure(null);
+      setGraph({
+        ...saved,
+        layoutRevision: Math.max(saved.layoutRevision, currentGraph?.layoutRevision ?? 0) + 1,
+      });
+      setSelectedId((current) => (current && saved.nodes[current] ? current : saved.rootId));
+      focusBranch(Object.keys(saved.nodes));
+    },
+    [currentGraph, focusBranch],
   );
 
   const relayout = useCallback(() => {
@@ -406,6 +501,17 @@ function RelationExplorer({ articleId, dbName }: { articleId: string; dbName: st
           >
             <Maximize className="size-4" aria-hidden="true" />
           </Button>
+        )}
+        {user && currentGraph && root && (
+          <RelationGraphFavoriteControls
+            dbName={dbName}
+            graph={currentGraph}
+            rootTitle={getArticleDisplayTitle(root)}
+            savedId={savedGraphId}
+            onError={setFailure}
+            onReset={resetToSaved}
+            onSavedIdChange={setSavedGraphId}
+          />
         )}
       </RelationHeading>
       {failure && (

@@ -13,14 +13,19 @@ import {
   RELATION_NODE_LIMIT,
   RELATION_ROOT_RADIUS,
   buildRelationHref,
+  buildSavedRelationHref,
   collapseRelationNode,
   computeRelationSectors,
   createRelationGraph,
   expandRelationNode,
   listRelationNodes,
+  normalizeRelationGraph,
+  readStoredRelationGraph,
+  relationGraphSignature,
   relationPathContext,
   relayoutRelationGraph,
   routeRelationCrossLink,
+  storeRelationGraph,
   storeRelationPositions,
   type RelationGraph,
 } from '@/lib/relation-graph';
@@ -424,6 +429,70 @@ function buildsWorkspaceHref(): void {
   );
 }
 
+/** A saved graph reopens through a URL that carries its favorite id. */
+function buildsSavedGraphHref(): void {
+  expect(
+    buildSavedRelationHref({ db_name: 'chinese_journals.sqlite', id: 7, root_article_id: 42 }),
+  ).toBe('/?view=relations&db=chinese_journals.sqlite&article=42&saved=7');
+}
+
+/** Saved snapshots are untrusted: unusable ones are rejected and missing fields are filled. */
+function normalizesSavedSnapshots(): void {
+  const graph = expandRelationNode(
+    createRelationGraph(article('root')),
+    'root',
+    ['a', 'b'].map(article),
+  );
+
+  expect(normalizeRelationGraph(null)).toBeNull();
+  expect(normalizeRelationGraph([graph])).toBeNull();
+  expect(normalizeRelationGraph({ ...graph, rootId: 'missing' })).toBeNull();
+  expect(normalizeRelationGraph({ ...graph, expandedIds: undefined })).toBeNull();
+
+  const legacy: Partial<RelationGraph> = JSON.parse(JSON.stringify(graph));
+  delete legacy.pinnedIds;
+  delete legacy.layoutRevision;
+  const restored = normalizeRelationGraph(legacy);
+  expect(restored?.pinnedIds).toEqual([]);
+  expect(restored?.layoutRevision).toBe(0);
+  expect(restored?.positions).toEqual(graph.positions);
+
+  const relaidOut = normalizeRelationGraph({ ...graph, positions: {} });
+  expect(Object.keys(relaidOut?.positions ?? {}).sort()).toEqual(['a', 'b', 'root']);
+}
+
+/** The session copy remembers which saved favorite the graph belongs to. */
+function remembersSavedFavoriteInSession(): void {
+  const graph = createRelationGraph(article('root'));
+  storeRelationGraph({ dbName: 'fixture.sqlite', graph, savedId: 9 });
+  expect(readStoredRelationGraph()).toMatchObject({ dbName: 'fixture.sqlite', savedId: 9 });
+
+  storeRelationGraph({ dbName: 'fixture.sqlite', graph });
+  expect(readStoredRelationGraph()?.savedId).toBeNull();
+  window.sessionStorage.clear();
+}
+
+/** Only deliberate changes alter the signature; free layout drift does not. */
+function signsDeliberateChangesOnly(): void {
+  const graph = expandRelationNode(
+    createRelationGraph(article('root')),
+    'root',
+    ['a', 'b'].map(article),
+  );
+  const signature = relationGraphSignature(graph);
+  const drifted = { ...graph, positions: { ...graph.positions, a: { x: 999, y: 999 } } };
+
+  expect(relationGraphSignature(drifted)).toBe(signature);
+  expect(relationGraphSignature(expandRelationNode(graph, 'a', [article('c')]))).not.toBe(
+    signature,
+  );
+  expect(relationGraphSignature(collapseRelationNode(graph, 'root'))).not.toBe(signature);
+  const dragged = storeRelationPositions(graph, { a: { x: 10, y: 20 } }, 'a');
+  expect(relationGraphSignature(dragged)).not.toBe(signature);
+  const draggedAgain = storeRelationPositions(dragged, { a: { x: 40, y: 20 } }, 'a');
+  expect(relationGraphSignature(draggedAgain)).not.toBe(relationGraphSignature(dragged));
+}
+
 describe('relation graph', () => {
   test('grows branches without duplicating articles', growsBranchesWithoutDuplicates);
   test('collapses a whole branch', collapsesWholeBranch);
@@ -439,4 +508,8 @@ describe('relation graph', () => {
   test('routes cross links around the graph', routesCrossLinksAroundTheGraph);
   test('keeps upper levels in view after expanding', keepsUpperLevelsInView);
   test('builds the workspace href', buildsWorkspaceHref);
+  test('builds the saved graph href', buildsSavedGraphHref);
+  test('normalizes saved snapshots', normalizesSavedSnapshots);
+  test('remembers the saved favorite in the session', remembersSavedFavoriteInSession);
+  test('signs deliberate changes only', signsDeliberateChangesOnly);
 });

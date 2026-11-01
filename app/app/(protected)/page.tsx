@@ -9,7 +9,7 @@ import type { ReactNode } from 'react';
 
 import { SearchWorkspaceView } from '@/components/feature/search-workspace-view';
 import { CfpTrackingView } from '@/components/cfp/cfp-tracking-view';
-import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
+import { FavoritesWorkspace } from '@/components/favorites/favorites-workspace';
 import { RelationsWorkspaceView } from '@/components/relations/relations-workspace-view';
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { WeeklyUpdatesView } from '@/components/weekly/weekly-updates-view';
@@ -27,7 +27,7 @@ export default function Home() {
   let workspaceContent: ReactNode;
 
   if (view === 'favorites') {
-    workspaceContent = user ? <FavoritesPageContent userId={user.id} /> : null;
+    workspaceContent = user ? <FavoritesWorkspace userId={user.id} /> : null;
   } else if (view === 'weekly-updates') {
     workspaceContent = <WeeklyUpdatesView />;
   } else if (view === 'cfp-tracking') {

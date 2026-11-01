@@ -12,6 +12,10 @@ import type {
   FavoriteCheck,
   FavoriteItem,
   Folder,
+  RelationGraphFavorite,
+  RelationGraphFavoriteCreate,
+  RelationGraphFavoritePage,
+  RelationGraphFavoriteUpdate,
 } from '@/lib/api/types';
 
 const CITATION_EXPORT_EXTENSIONS: Record<CitationFormat, string> = {
@@ -274,5 +278,94 @@ export async function setTrackingFolder(folderId: number): Promise<void> {
       body: JSON.stringify({ folder_id: folderId }),
     },
     '设置追踪文件夹失败',
+  );
+}
+
+/**
+ * Fetch one cursor page of the current user's saved relation graphs, newest change first.
+ *
+ * @param limit - Page size.
+ * @param cursor - Opaque cursor from the previous page, or null for the first page.
+ * @param signal - Optional abort signal.
+ * @returns Saved graph summaries and the next cursor.
+ */
+export function getRelationGraphFavoritePage(
+  limit: number,
+  cursor: string | null = null,
+  signal?: AbortSignal,
+): Promise<RelationGraphFavoritePage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor !== null) {
+    params.set('cursor', cursor);
+  }
+  return requestJson<RelationGraphFavoritePage>(
+    buildApiUrl('/api/favorites/graphs', params),
+    { signal },
+    '获取收藏的关系图失败',
+  );
+}
+
+/**
+ * Fetch one saved relation graph with its snapshot.
+ *
+ * @param graphId - Saved graph id.
+ * @param signal - Optional abort signal.
+ * @returns Saved graph.
+ */
+export function getRelationGraphFavorite(
+  graphId: number,
+  signal?: AbortSignal,
+): Promise<RelationGraphFavorite> {
+  return requestJson<RelationGraphFavorite>(
+    buildApiUrl(`/api/favorites/graphs/${graphId}`),
+    { signal },
+    '获取收藏的关系图失败',
+  );
+}
+
+/**
+ * Save a relation graph snapshot as a new favorite.
+ *
+ * @param input - Title, database, root article, node count, and snapshot.
+ * @returns Saved graph.
+ */
+export function createRelationGraphFavorite(
+  input: RelationGraphFavoriteCreate,
+): Promise<RelationGraphFavorite> {
+  return requestJson<RelationGraphFavorite>(
+    buildApiUrl('/api/favorites/graphs'),
+    { method: 'POST', body: JSON.stringify(input) },
+    '收藏关系图失败',
+  );
+}
+
+/**
+ * Rename a saved relation graph or replace its snapshot.
+ *
+ * @param graphId - Saved graph id.
+ * @param input - New title, or a new snapshot with its node count, or both.
+ * @returns Updated saved graph.
+ */
+export function updateRelationGraphFavorite(
+  graphId: number,
+  input: RelationGraphFavoriteUpdate,
+): Promise<RelationGraphFavorite> {
+  return requestJson<RelationGraphFavorite>(
+    buildApiUrl(`/api/favorites/graphs/${graphId}`),
+    { method: 'PUT', body: JSON.stringify(input) },
+    '更新收藏的关系图失败',
+  );
+}
+
+/**
+ * Delete a saved relation graph.
+ *
+ * @param graphId - Saved graph id.
+ */
+export async function deleteRelationGraphFavorite(graphId: number): Promise<void> {
+  await requestJson<unknown>(
+    buildApiUrl(`/api/favorites/graphs/${graphId}`),
+    { method: 'DELETE' },
+    '删除收藏的关系图失败',
   );
 }
