@@ -20,6 +20,7 @@ import {
   listRelationNodes,
   relationPathContext,
   relayoutRelationGraph,
+  routeRelationCrossLink,
   storeRelationPositions,
   type RelationGraph,
 } from '@/lib/relation-graph';
@@ -257,6 +258,152 @@ function keepsSlotsAcrossSectorEdges(): void {
   expect(next[firstChild].start).toBeCloseTo(next.b.start);
 }
 
+/**
+ * Check whether two sectors around the root touch, allowing for the wrap at a full turn.
+ *
+ * @param first - First sector.
+ * @param second - Second sector.
+ * @returns True when one sector ends where the other starts.
+ */
+function areSectorsAdjacent(
+  first: { start: number; end: number },
+  second: { start: number; end: number },
+): boolean {
+  const touches = (end: number, start: number) => Math.abs(angleDifference(end, start)) < 1e-6;
+  return touches(first.end, second.start) || touches(second.end, first.start);
+}
+
+/**
+ * Build a graph whose opposite first-level branches a and c are cross-linked through a's first
+ * child, keeping the positions they had before the link appeared.
+ *
+ * @returns Graph with a cross link from c to a1.
+ */
+function buildCrossLinkedGraph(): RelationGraph {
+  let graph = createRelationGraph(article('root'));
+  graph = expandRelationNode(graph, 'root', ['a', 'b', 'c', 'd'].map(article));
+  graph = expandRelationNode(graph, 'a', ['a1', 'a2', 'a3'].map(article));
+  graph = expandRelationNode(graph, 'c', [article('c1')]);
+  return { ...graph, crossLinks: [['c', 'a1']] };
+}
+
+/**
+ * List first-level nodes in their angular order around the root.
+ *
+ * @param graph - Relation graph.
+ * @returns First-level node ids sorted by angle.
+ */
+function listFirstLevelByAngle(graph: RelationGraph): string[] {
+  return [...graph.childIds[graph.rootId]].sort(
+    (first, second) => angleBetween(graph, 'root', first) - angleBetween(graph, 'root', second),
+  );
+}
+
+/** Cross-linked branches move next to each other and the linked child turns toward its partner. */
+function ordersCrossLinkedBranchesTogether(): void {
+  const graph = buildCrossLinkedGraph();
+  const plain = computeRelationSectors({ ...graph, crossLinks: [] }, graph.positions);
+  expect(areSectorsAdjacent(plain.a, plain.c)).toBe(false);
+
+  const sectors = computeRelationSectors(graph, graph.positions);
+
+  expect(areSectorsAdjacent(sectors.a, sectors.c)).toBe(true);
+  const middleOfA = (sectors.a.start + sectors.a.end) / 2;
+  const middleOfC = (sectors.c.start + sectors.c.end) / 2;
+  const facingEdge = angleDifference(middleOfC, middleOfA) < 0 ? sectors.a.start : sectors.a.end;
+  const a1Edge = angleDifference(middleOfC, middleOfA) < 0 ? sectors.a1.start : sectors.a1.end;
+  expect(Math.abs(angleDifference(a1Edge, facingEdge))).toBeLessThan(1e-6);
+
+  const settled: RelationGraph['positions'] = { ...graph.positions };
+  for (const [id, sector] of Object.entries(sectors)) {
+    const radius = Math.hypot(graph.positions[id].x, graph.positions[id].y);
+    const middle = (sector.start + sector.end) / 2;
+    settled[id] = { x: radius * Math.cos(middle), y: radius * Math.sin(middle) };
+  }
+  const again = computeRelationSectors(graph, settled);
+  for (const id of Object.keys(sectors)) {
+    expect(Math.abs(angleDifference(again[id].start, sectors[id].start))).toBeLessThan(1e-6);
+  }
+}
+
+/** A branch holding a fixed node keeps the reader's order even when cross links pull on it. */
+function keepsFixedBranchesInPlace(): void {
+  const graph = buildCrossLinkedGraph();
+
+  const pinned = computeRelationSectors(graph, graph.positions, ['b']);
+  const dragged = computeRelationSectors({ ...graph, pinnedIds: ['a2'] }, graph.positions);
+
+  expect(areSectorsAdjacent(pinned.a, pinned.c)).toBe(false);
+  expect(areSectorsAdjacent(dragged.a, dragged.c)).toBe(false);
+}
+
+/** Expanding into a cross link turns the linked branches next to each other in one step. */
+function arrangesBranchesWhenCrossLinksAppear(): void {
+  let graph = createRelationGraph(article('root'));
+  graph = expandRelationNode(graph, 'root', ['a', 'b', 'c', 'd'].map(article));
+  graph = expandRelationNode(graph, 'a', ['a1', 'a2', 'a3'].map(article));
+  const before = listFirstLevelByAngle(graph);
+  expect(Math.abs(before.indexOf('a') - before.indexOf('c'))).toBe(2);
+  const branchShape = Math.hypot(
+    graph.positions.a1.x - graph.positions.a.x,
+    graph.positions.a1.y - graph.positions.a.y,
+  );
+
+  const linked = expandRelationNode(graph, 'c', [article('c1'), article('a1')]);
+
+  const after = listFirstLevelByAngle(linked);
+  expect([1, 3]).toContain(Math.abs(after.indexOf('a') - after.indexOf('c')));
+  expect(linked.layoutRevision).toBe(graph.layoutRevision + 1);
+  expect(
+    Math.hypot(
+      linked.positions.a1.x - linked.positions.a.x,
+      linked.positions.a1.y - linked.positions.a.y,
+    ),
+  ).toBeCloseTo(branchShape);
+
+  const pinned = expandRelationNode({ ...graph, pinnedIds: ['b'] }, 'c', [article('a1')]);
+  expect(pinned.positions.a).toEqual(graph.positions.a);
+  expect(pinned.layoutRevision).toBe(graph.layoutRevision);
+}
+
+/**
+ * Cross links that would cut across tree edges run on a circle outside the nodes they pass;
+ * links that cross nothing, touch the root, or join nearly aligned nodes stay direct.
+ */
+function routesCrossLinksAroundTheGraph(): void {
+  const center = { x: 0, y: 0 };
+  const source = { x: 200, y: 0 };
+  const target = { x: 0, y: 200 };
+  const passed = { x: 300 * Math.SQRT1_2, y: 300 * Math.SQRT1_2 };
+  const behind = { x: -500, y: 0 };
+  const points = [center, source, target, passed, behind];
+  const treeEdges = [
+    [center, source],
+    [center, target],
+    [center, passed],
+    [center, behind],
+  ] as const;
+
+  const ring = routeRelationCrossLink([source, target], center, points, treeEdges);
+
+  expect(ring).not.toBeNull();
+  expect(ring!.radius).toBeGreaterThan(300);
+  expect(ring!.radius).toBeLessThan(500);
+  expect(ring!.startAngle).toBeCloseTo(0);
+  expect(ring!.sweep).toBeCloseTo(Math.PI / 2);
+  expect(
+    routeRelationCrossLink([source, target], center, points, treeEdges.slice(0, 2)),
+  ).toBeNull();
+  expect(routeRelationCrossLink([source, center], center, points, treeEdges)).toBeNull();
+  const childOfSource = { x: 100, y: -50 };
+  expect(
+    routeRelationCrossLink([{ x: 200, y: -0.5 }, target], center, points, [
+      [source, childOfSource],
+    ]),
+  ).toBeNull();
+  expect(routeRelationCrossLink([source, { x: 220, y: 10 }], center, points, treeEdges)).toBeNull();
+}
+
 /** Expanding a deeper node keeps the whole first level and every ancestor's children in view. */
 function keepsUpperLevelsInView(): void {
   let graph = createRelationGraph(article('root'));
@@ -286,6 +433,10 @@ describe('relation graph', () => {
   test('stores settled positions and pins', storesSettledPositionsAndPins);
   test('allocates disjoint sectors in angular order', allocatesDisjointSectors);
   test('keeps child slots across sector edges', keepsSlotsAcrossSectorEdges);
+  test('orders cross-linked branches together', ordersCrossLinkedBranchesTogether);
+  test('keeps fixed branches in place', keepsFixedBranchesInPlace);
+  test('arranges branches when cross links appear', arrangesBranchesWhenCrossLinksAppear);
+  test('routes cross links around the graph', routesCrossLinksAroundTheGraph);
   test('keeps upper levels in view after expanding', keepsUpperLevelsInView);
   test('builds the workspace href', buildsWorkspaceHref);
 });

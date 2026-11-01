@@ -51,6 +51,7 @@ import {
   computeRelationSectors,
   relationAngleOffset,
   listRelationNodes,
+  routeRelationCrossLink,
   type RelationGraph,
   type RelationPoint,
 } from '@/lib/relation-graph';
@@ -78,6 +79,9 @@ const NODE_DRAG_THRESHOLD = 4;
 
 /** How far an edge bows away from the straight line, relative to its length. */
 const EDGE_BEND = 0.16;
+
+/** Largest radius, in flow coordinates, of the rounded corners where a routed cross link turns. */
+const CROSS_LINK_CORNER = 36;
 
 /** Force simulation tuning: spring lengths and strengths, repulsion, spacing, damping, and cooling. */
 const FORCE = {
@@ -307,19 +311,89 @@ const ArticleNode = memo(
  * @returns Curved edge path.
  */
 function CurvedEdge({ id, sourceX, sourceY, targetX, targetY, style }: EdgeProps) {
-  const controlX = (sourceX + targetX) / 2 - (targetY - sourceY) * EDGE_BEND;
-  const controlY = (sourceY + targetY) / 2 + (targetX - sourceX) * EDGE_BEND;
   return (
     <BaseEdge
       id={id}
-      path={`M ${sourceX},${sourceY} Q ${controlX},${controlY} ${targetX},${targetY}`}
+      path={buildCurvedPath({ x: sourceX, y: sourceY }, { x: targetX, y: targetY })}
       style={style}
     />
   );
 }
 
+/** Current root, node, and tree-edge positions that a cross link routes around. */
+type CrossLinkEdgeData = {
+  center: RelationPoint;
+  points: RelationPoint[];
+  treeEdges: Array<[RelationPoint, RelationPoint]>;
+};
+
+/**
+ * Return the control point of the gentle arc between two dots, bowing to the same side for every
+ * edge.
+ *
+ * @param source - Source dot.
+ * @param target - Target dot.
+ * @returns Quadratic curve control point.
+ */
+function curveControl(source: RelationPoint, target: RelationPoint): RelationPoint {
+  return {
+    x: (source.x + target.x) / 2 - (target.y - source.y) * EDGE_BEND,
+    y: (source.y + target.y) / 2 + (target.x - source.x) * EDGE_BEND,
+  };
+}
+
+/**
+ * Build the path of the gentle arc between two dots.
+ *
+ * @param source - Source dot.
+ * @param target - Target dot.
+ * @returns SVG path.
+ */
+function buildCurvedPath(source: RelationPoint, target: RelationPoint): string {
+  const control = curveControl(source, target);
+  return `M ${source.x},${source.y} Q ${control.x},${control.y} ${target.x},${target.y}`;
+}
+
+/**
+ * Render a cross link as the plain arc unless that arc would cut across tree edges; then it leaves
+ * its dot outward, follows a circle around the root outside every node it passes, and turns back
+ * in to the other dot.
+ *
+ * @param props - React Flow edge props with layout access.
+ * @returns Routed edge path.
+ */
+function CrossLinkEdge({ id, sourceX, sourceY, targetX, targetY, style, data }: EdgeProps) {
+  const source = { x: sourceX, y: sourceY };
+  const target = { x: targetX, y: targetY };
+  const layout = data as CrossLinkEdgeData | undefined;
+  const control = curveControl(source, target);
+  const directPath = [
+    source,
+    { x: (source.x + 2 * control.x + target.x) / 4, y: (source.y + 2 * control.y + target.y) / 4 },
+    target,
+  ];
+  const ring =
+    layout && routeRelationCrossLink(directPath, layout.center, layout.points, layout.treeEdges);
+  if (!layout || !ring) {
+    return <BaseEdge id={id} path={buildCurvedPath(source, target)} style={style} />;
+  }
+  const direction = Math.sign(ring.sweep);
+  const corner = Math.min(Math.abs(ring.sweep) / 4, CROSS_LINK_CORNER / ring.radius);
+  const pointAt = (angle: number) =>
+    `${layout.center.x + ring.radius * Math.cos(angle)},${layout.center.y + ring.radius * Math.sin(angle)}`;
+  const endAngle = ring.startAngle + ring.sweep;
+  const sweepFlag = direction > 0 ? 1 : 0;
+  const path = [
+    `M ${sourceX},${sourceY}`,
+    `Q ${pointAt(ring.startAngle)} ${pointAt(ring.startAngle + direction * corner)}`,
+    `A ${ring.radius} ${ring.radius} 0 0 ${sweepFlag} ${pointAt(endAngle - direction * corner)}`,
+    `Q ${pointAt(endAngle)} ${targetX},${targetY}`,
+  ].join(' ');
+  return <BaseEdge id={id} path={path} style={style} />;
+}
+
 const NODE_TYPES = { article: ArticleNode };
-const EDGE_TYPES = { curved: CurvedEdge };
+const EDGE_TYPES = { curved: CurvedEdge, crossLink: CrossLinkEdge };
 
 /**
  * Render the hover card of an article next to its node, below it when there is room.
@@ -434,7 +508,8 @@ function forceSectors(
     if (!center) {
       return;
     }
-    const sectors = computeRelationSectors(graph, positions);
+    const fixedIds = nodes.filter((node) => node.fx != null).map((node) => node.id);
+    const sectors = computeRelationSectors(graph, positions, fixedIds);
     for (const node of nodes) {
       const sector = sectors[node.id];
       if (!sector || node.fx != null) {
@@ -737,6 +812,21 @@ export function RelationCanvas({
     [nodeEntries, positions, graph.positions],
   );
 
+  const crossLinkLayout = useMemo<CrossLinkEdgeData>(() => {
+    const pointOf = (id: string) => positions[id] ?? graph.positions[id] ?? { x: 0, y: 0 };
+    const treeEdges: Array<[RelationPoint, RelationPoint]> = [];
+    for (const node of Object.values(graph.nodes)) {
+      if (node.parentId !== null) {
+        treeEdges.push([pointOf(node.parentId), pointOf(node.id)]);
+      }
+    }
+    return {
+      center: pointOf(graph.rootId),
+      points: Object.keys(graph.nodes).map(pointOf),
+      treeEdges,
+    };
+  }, [graph.nodes, graph.positions, graph.rootId, positions]);
+
   const edges = useMemo(() => {
     const highlight = (first: string, second: string) =>
       selectedId !== null && (first === selectedId || second === selectedId);
@@ -764,7 +854,8 @@ export function RelationCanvas({
         id: `cross:${source}:${target}`,
         source,
         target,
-        type: 'curved',
+        type: 'crossLink',
+        data: crossLinkLayout,
         focusable: false,
         style: {
           stroke: isHighlighted ? 'var(--primary)' : 'var(--input-hover)',
@@ -774,7 +865,7 @@ export function RelationCanvas({
       });
     }
     return flowEdges;
-  }, [graph.nodes, graph.crossLinks, selectedId]);
+  }, [graph.nodes, graph.crossLinks, selectedId, crossLinkLayout]);
 
   const previewArticle =
     preview && preview.graph === graph ? graph.nodes[preview.nodeId]?.article : undefined;
