@@ -886,6 +886,7 @@ export function RelationCanvas({
         nodes={nodes}
         edges={edges}
         nodeTypes={NODE_TYPES}
+        proOptions={{ hideAttribution: true }}
         edgeTypes={EDGE_TYPES}
         fitView
         fitViewOptions={{ padding: 0.12, maxZoom: 1 }}
