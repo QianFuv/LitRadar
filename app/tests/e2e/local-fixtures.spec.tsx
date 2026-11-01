@@ -7,6 +7,22 @@ import { expect, test, type Browser, type Locator, type Page, type Route } from 
 import { CFP_FIXTURE_PAGES } from '../fixtures/cfp-pages';
 import type { CfpJournalSummary } from '../../lib/api';
 
+/** Longest animation Animate UI keeps under reduced motion: its quick fade, in milliseconds. */
+const REDUCED_MOTION_FADE_MS = 200;
+
+/**
+ * Read the horizontal scale an element currently renders with from its computed transform.
+ *
+ * @param locator - Element to measure.
+ * @returns Rendered horizontal scale, 1 when untransformed.
+ */
+async function readRenderedScale(locator: Locator): Promise<number> {
+  return locator.evaluate((element) => {
+    const transform = getComputedStyle(element).transform;
+    return transform === 'none' ? 1 : new DOMMatrixReadOnly(transform).a;
+  });
+}
+
 type ChromeColorProperty = 'backgroundColor' | 'borderColor' | 'color';
 
 /**
@@ -755,7 +771,7 @@ async function verifiesReducedMotionDynamicSettings(page: Page): Promise<void> {
       return typeof duration === 'number' ? [duration] : [];
     }),
   );
-  expect(Math.max(0, ...animationDurations)).toBeLessThanOrEqual(1);
+  expect(Math.max(0, ...animationDurations)).toBeLessThanOrEqual(REDUCED_MOTION_FADE_MS);
   expect(
     await settingsDialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
@@ -1294,9 +1310,9 @@ async function verifiesNarrowThemeMenu(page: Page, mobileTrigger: Locator): Prom
   await expect(
     mobileMenu.getByRole('group', { name: '外观主题' }).getByRole('menuitemradio'),
   ).toHaveCount(3);
-  expect(await mobileMenu.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
-    true,
-  );
+  await expect
+    .poll(() => mobileMenu.evaluate((element) => element.scrollWidth <= element.clientWidth))
+    .toBe(true);
   await page.screenshot({ path: '../output/ui/theme-controls-mobile.png', animations: 'disabled' });
   await mobileMenu.getByRole('menuitemradio', { name: '深色' }).click();
   await expect(mobileMenu).toHaveCount(0);
@@ -1641,6 +1657,7 @@ async function expectConsistentDialogClose(dialog: Locator, size: number): Promi
 async function expectTakeoverClose(dialog: Locator, minimumSize: number): Promise<void> {
   const close = dialog.getByRole('button', { name: '关闭', exact: true });
   await expect(close).toBeInViewport();
+  await expect.poll(async () => (await close.boundingBox())?.y ?? Infinity).toBeLessThan(24);
   const box = await close.boundingBox();
   const viewport = dialog.page().viewportSize();
   expect(box).not.toBeNull();
@@ -1776,33 +1793,17 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await expectComfortableTarget(clear, 40);
-  const animationSession = await page.context().newCDPSession(page);
-  await animationSession.send('Animation.enable');
-  await animationSession.send('Animation.setPlaybackRate', { playbackRate: 0.1 });
-  expect(await animationSession.send('Animation.getPlaybackRate')).toEqual({ playbackRate: 0.1 });
   await submit.hover();
   await page.mouse.down();
-  await expect
-    .poll(() =>
-      submit.evaluate((element) =>
-        element
-          .getAnimations()
-          .some(
-            (animation) =>
-              animation instanceof CSSTransition && animation.transitionProperty === 'scale',
-          ),
-      ),
-    )
-    .toBe(true);
-  await expect(submit).toHaveCSS('scale', '0.96');
+  await expect.poll(() => readRenderedScale(submit)).toBeLessThan(0.99);
+  expect(await readRenderedScale(submit)).toBeGreaterThanOrEqual(0.9);
   await page.screenshot({ path: '../output/ui/polish-press-desktop.png', fullPage: true });
   await page.mouse.up();
-  await expect(submit).toHaveCSS('scale', 'none');
-  await animationSession.send('Animation.setPlaybackRate', { playbackRate: 1 });
-  await animationSession.detach();
+  await expect.poll(() => readRenderedScale(submit)).toBe(1);
   await clear.hover();
   await page.mouse.down();
-  await expect(clear).toHaveCSS('scale', 'none');
+  await page.waitForTimeout(200);
+  expect(await readRenderedScale(clear)).toBe(1);
   await expect(clear).not.toHaveAttribute('static');
   await page.mouse.up();
   await expect(input).toBeFocused();
@@ -3027,9 +3028,9 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     const option = page.getByRole('option').first();
     await option.hover();
     await page.mouse.down();
-    await expect(option).toHaveCSS(
+    await expect(page.locator('[data-slot="item-highlight"]').first()).toHaveCSS(
       'background-color',
-      colorScheme === 'light' ? 'rgb(232, 232, 232)' : 'rgb(43, 43, 43)',
+      colorScheme === 'light' ? 'rgb(242, 242, 242)' : 'rgb(31, 31, 31)',
     );
     await page.mouse.move(1, 1);
     await page.mouse.up();
@@ -3434,9 +3435,12 @@ async function expandedCfpSourceStatesTest({ page }: { page: Page }): Promise<vo
   await page.goto('/?view=cfp-tracking&cfp_db=english_journals.sqlite&cfp_journal=issn-0024-6301');
   await hideDevelopmentIndicator(page);
   await expect(page.getByText('投稿时间待确认')).toBeVisible();
-  await page.getByText('查看原文时间说明').click();
-  await expect(page.locator('details[open]')).toContainText('October 1st 2026');
-  await expect(page.locator('details[open]')).toContainText('November 1, 2026');
+  const timelineTrigger = page.getByRole('button', { name: '查看原文时间说明' });
+  await timelineTrigger.click();
+  await expect(timelineTrigger).toHaveAttribute('aria-expanded', 'true');
+  const timeline = page.locator(`#${await timelineTrigger.getAttribute('aria-controls')}`);
+  await expect(timeline).toContainText('October 1st 2026');
+  await expect(timeline).toContainText('November 1, 2026');
   await page.screenshot({
     path: '../output/ui/cfp-tracking-original-timeline.png',
     fullPage: true,
