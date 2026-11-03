@@ -10,6 +10,7 @@ import { XIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { RevealScope } from '@/components/ui/reveal';
 
 /**
  * Render the Dialog state root.
@@ -102,42 +103,44 @@ function DialogContent({
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
-      <DialogPrimitive.Content
-        data-slot="dialog-content"
-        data-motion-placement={placement}
-        data-side={PLACEMENT_SIDES[placement]}
-        className={cn(
-          'bg-background fixed z-50 grid gap-4 overscroll-contain p-6 shadow-overlay outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-          placement === 'center' &&
-            'dialog-centered w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] rounded-2xl md:max-w-xl',
-          placement === 'left' &&
-            'inset-y-0 left-0 h-dvh w-80 max-w-[calc(100vw-2rem)] rounded-none',
-          placement === 'right' &&
-            'inset-y-0 right-0 h-dvh w-full max-w-full rounded-none p-0 md:w-[min(46rem,calc(100vw-5rem))]',
-          placement === 'bottom' &&
-            'inset-x-0 bottom-0 max-h-[85dvh] w-full rounded-t-2xl rounded-b-none p-0 pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))]',
-          placement === 'takeover' &&
-            'inset-0 h-dvh w-screen max-w-none rounded-none p-0 shadow-none',
-          className,
-        )}
-        {...props}
-      >
-        {children}
-        {placement === 'center' && (
-          <DialogPrimitive.Close data-slot="dialog-close" asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              static
-              aria-label="关闭"
-              className="absolute right-4 top-4 z-10 size-11 text-muted-foreground hover:text-foreground md:size-10"
-            >
-              <XIcon className="size-4" strokeWidth={1.5} aria-hidden="true" />
-            </Button>
-          </DialogPrimitive.Close>
-        )}
-      </DialogPrimitive.Content>
+      <RevealScope>
+        <DialogPrimitive.Content
+          data-slot="dialog-content"
+          data-motion-placement={placement}
+          data-side={PLACEMENT_SIDES[placement]}
+          className={cn(
+            'bg-background fixed z-50 grid gap-4 overscroll-contain p-6 shadow-overlay outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+            placement === 'center' &&
+              'dialog-centered w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] rounded-2xl md:max-w-xl',
+            placement === 'left' &&
+              'inset-y-0 left-0 h-dvh w-80 max-w-[calc(100vw-2rem)] rounded-none',
+            placement === 'right' &&
+              'inset-y-0 right-0 h-dvh w-full max-w-full rounded-none p-0 md:w-[min(46rem,calc(100vw-5rem))]',
+            placement === 'bottom' &&
+              'inset-x-0 bottom-0 max-h-[85dvh] w-full rounded-t-2xl rounded-b-none p-0 pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))]',
+            placement === 'takeover' &&
+              'inset-0 h-dvh w-screen max-w-none rounded-none p-0 shadow-none',
+            className,
+          )}
+          {...props}
+        >
+          {children}
+          {placement === 'center' && (
+            <DialogPrimitive.Close data-slot="dialog-close" asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                static
+                aria-label="关闭"
+                className="absolute right-4 top-4 z-10 size-11 text-muted-foreground hover:text-foreground md:size-10"
+              >
+                <XIcon className="size-4" strokeWidth={1.5} aria-hidden="true" />
+              </Button>
+            </DialogPrimitive.Close>
+          )}
+        </DialogPrimitive.Content>
+      </RevealScope>
     </DialogPortal>
   );
 }

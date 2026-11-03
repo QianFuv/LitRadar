@@ -8,6 +8,7 @@ import * as DropdownMenuPrimitive from '@animate-ui/react/primitives/radix-ui/dr
 import * as React from 'react';
 
 import { cn } from '@/lib/utils';
+import { RevealScope } from '@/components/ui/reveal';
 
 /** Shared menu-item styles for dropdown menus. */
 const DROPDOWN_MENU_ITEM_CLASS =
@@ -57,17 +58,19 @@ function DropdownMenuContent({
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   return (
     <DropdownMenuPrimitive.Portal>
-      <DropdownMenuPrimitive.Content
-        data-slot="dropdown-menu-content"
-        sideOffset={sideOffset}
-        collisionPadding={8}
-        onCloseAutoFocus={onCloseAutoFocus}
-        className={cn(
-          'bg-popover text-popover-foreground z-50 min-w-48 origin-(--radix-dropdown-menu-content-transform-origin) rounded-xl p-1.5 shadow-overlay outline-hidden',
-          className,
-        )}
-        {...props}
-      />
+      <RevealScope>
+        <DropdownMenuPrimitive.Content
+          data-slot="dropdown-menu-content"
+          sideOffset={sideOffset}
+          collisionPadding={8}
+          onCloseAutoFocus={onCloseAutoFocus}
+          className={cn(
+            'bg-popover text-popover-foreground z-50 min-w-48 origin-(--radix-dropdown-menu-content-transform-origin) rounded-xl p-1.5 shadow-overlay outline-hidden',
+            className,
+          )}
+          {...props}
+        />
+      </RevealScope>
     </DropdownMenuPrimitive.Portal>
   );
 }

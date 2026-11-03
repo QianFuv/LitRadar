@@ -10,6 +10,7 @@ import { ThemeProvider } from 'next-themes';
 import { useEffect, useState } from 'react';
 
 import { MotionProvider } from '@/components/ui/motion';
+import { RevealScope } from '@/components/ui/reveal';
 import { AuthProvider } from '@/lib/auth-context';
 import { reportClientError } from '@/lib/client-logger';
 
@@ -76,7 +77,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       <MotionProvider>
         <NuqsAdapter>
           <QueryClientProvider client={queryClient}>
-            <AuthProvider>{children}</AuthProvider>
+            <AuthProvider>
+              <RevealScope>{children}</RevealScope>
+            </AuthProvider>
           </QueryClientProvider>
         </NuqsAdapter>
       </MotionProvider>

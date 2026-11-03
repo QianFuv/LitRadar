@@ -9,6 +9,7 @@ import * as AlertDialogPrimitive from '@animate-ui/react/primitives/radix-ui/ale
 
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { RevealScope } from '@/components/ui/reveal';
 
 /**
  * Render the AlertDialog state root.
@@ -62,14 +63,16 @@ function AlertDialogContent({
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
-      <AlertDialogPrimitive.Content
-        data-slot="alert-dialog-content"
-        className={cn(
-          'dialog-centered bg-background fixed z-50 grid w-[calc(100%-2rem)] max-w-lg gap-4 rounded-lg border p-6 shadow-lg outline-none',
-          className,
-        )}
-        {...props}
-      />
+      <RevealScope>
+        <AlertDialogPrimitive.Content
+          data-slot="alert-dialog-content"
+          className={cn(
+            'dialog-centered bg-background fixed z-50 grid w-[calc(100%-2rem)] max-w-lg gap-4 rounded-lg border p-6 shadow-lg outline-none',
+            className,
+          )}
+          {...props}
+        />
+      </RevealScope>
     </AlertDialogPortal>
   );
 }

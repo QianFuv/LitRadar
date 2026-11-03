@@ -8,6 +8,7 @@ import * as React from 'react';
 import * as PopoverPrimitive from '@animate-ui/react/primitives/radix-ui/popover';
 
 import { cn } from '@/lib/utils';
+import { RevealScope } from '@/components/ui/reveal';
 
 /**
  * Render the Popover state root.
@@ -54,7 +55,11 @@ function PopoverContent({
     />
   );
 
-  return <PopoverPrimitive.Portal>{content}</PopoverPrimitive.Portal>;
+  return (
+    <PopoverPrimitive.Portal>
+      <RevealScope>{content}</RevealScope>
+    </PopoverPrimitive.Portal>
+  );
 }
 
 /**
