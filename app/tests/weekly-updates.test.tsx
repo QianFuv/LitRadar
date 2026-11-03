@@ -244,7 +244,7 @@ async function loadsOneInitialBoundedPage(): Promise<void> {
   expect(request.searchParams.get('cursor')).toBeNull();
   expect(screen.getByRole('combobox', { name: '搜索文章' })).toHaveValue('');
   expect(screen.getByRole('region', { name: '本周文章' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '期刊：Fixture Journal' })).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: '期刊：Fixture Journal' })).toBeInTheDocument();
   expect(document.getElementById('results-scroll-container')).toBeInTheDocument();
   expect(document.querySelector('[data-weekly-state="ready"]')).not.toBeNull();
   expect(document.querySelector('[data-weekly-journal="101"]')).not.toBeNull();
@@ -303,12 +303,10 @@ async function resetsForJournalSelection(): Promise<void> {
   renderWeeklyPage('?db=fixture.sqlite&journal=101');
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: /^期刊：/ }));
-  await user.click(
-    within(await screen.findByRole('dialog', { name: '期刊' })).getByRole('button', {
-      name: /Second Fixture Journal/,
-    }),
-  );
+  screen.getByRole('combobox', { name: /^期刊：/ }).focus();
+  await user.keyboard('{ArrowDown}');
+  await screen.findByRole('option', { name: /Second Fixture Journal/ });
+  await user.keyboard('{ArrowDown}{Enter}');
 
   expect(await screen.findByText('Second journal article')).toBeInTheDocument();
   expect(document.querySelector('[data-weekly-journal="102"]')).not.toBeNull();
@@ -507,12 +505,10 @@ async function abortsObsoleteWeeklyRequests(): Promise<void> {
   const view = renderWeeklyPage('?db=fixture.sqlite&journal=101');
   try {
     await waitFor(() => expect(signals).toHaveLength(1));
-    await user.click(await screen.findByRole('button', { name: /^期刊：/ }));
-    await user.click(
-      within(await screen.findByRole('dialog', { name: '期刊' })).getByRole('button', {
-        name: /Second Fixture Journal/,
-      }),
-    );
+    (await screen.findByRole('combobox', { name: /^期刊：/ })).focus();
+    await user.keyboard('{ArrowDown}');
+    await screen.findByRole('option', { name: /Second Fixture Journal/ });
+    await user.keyboard('{ArrowDown}{Enter}');
     await waitFor(() => expect(signals).toHaveLength(2));
     expect(signals[0].aborted).toBe(true);
     expect(signals[1].aborted).toBe(false);

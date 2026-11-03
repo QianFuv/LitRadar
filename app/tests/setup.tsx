@@ -86,11 +86,28 @@ class StaticTestResizeObserver {
 }
 
 /**
+ * Visibility observer stand-in for jsdom, which never reports elements as intersecting.
+ */
+class StaticTestIntersectionObserver {
+  readonly root = null;
+  readonly rootMargin = '0px';
+  readonly thresholds = [0];
+  disconnect(): void {}
+  observe(): void {}
+  takeRecords(): IntersectionObserverEntry[] {
+    return [];
+  }
+  unobserve(): void {}
+}
+
+/**
  * Install layout and animation APIs that jsdom lacks, and finish Motion animations at once.
  */
 function installTestAnimationApis(): void {
   MotionGlobalConfig.skipAnimations = true;
   globalThis.ResizeObserver ??= StaticTestResizeObserver;
+  globalThis.IntersectionObserver ??=
+    StaticTestIntersectionObserver as unknown as typeof IntersectionObserver;
   globalThis.SVGGeometryElement ??= class extends SVGElement {} as typeof SVGGeometryElement;
   Element.prototype.getAnimations ??= () => [];
   Element.prototype.animate ??= function animate() {

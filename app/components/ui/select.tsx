@@ -77,8 +77,12 @@ function SelectContent({
   children,
   position = 'item-aligned',
   align = 'center',
+  viewportClassName,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Content>) {
+}: React.ComponentProps<typeof SelectPrimitive.Content> & {
+  /** Extra classes for the scrolling option viewport. */
+  viewportClassName?: string;
+}) {
   return (
     <SelectPrimitive.Portal>
       <RevealScope>
@@ -98,6 +102,7 @@ function SelectContent({
           <SelectPrimitive.Viewport
             className={cn(
               'p-1',
+              viewportClassName,
               position === 'popper' &&
                 'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)] scroll-my-1',
             )}
@@ -114,14 +119,18 @@ function SelectContent({
 /**
  * Render one selectable option and its checked indicator.
  *
- * @param props - Radix Select item properties and visible label.
+ * @param props - Radix Select item properties, visible label, and optional trailing detail.
  * @returns Styled Select item.
  */
 function SelectItem({
   className,
   children,
+  detail,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Item>) {
+}: React.ComponentProps<typeof SelectPrimitive.Item> & {
+  /** Trailing detail such as a count, kept out of the selected value text. */
+  detail?: React.ReactNode;
+}) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
@@ -140,6 +149,12 @@ function SelectItem({
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {detail !== undefined && (
+        <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+          <span className="sr-only"> · </span>
+          {detail}
+        </span>
+      )}
     </SelectPrimitive.Item>
   );
 }

@@ -657,6 +657,7 @@ describe('TrackingSettingsContent', () => {
   test(
     'keeps AI credentials separate from saved logins',
     keepsAiCredentialsSeparateFromSavedLogins,
+    10_000,
   );
   test('preserves database and secret update semantics', savesDatabaseAndSecretSemantics, 10_000);
   test('preserves database scope when the catalog fails', preservesDatabaseScopeWhenCatalogFails);

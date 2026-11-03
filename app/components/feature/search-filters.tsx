@@ -5,15 +5,40 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { Check, Search, X } from 'lucide-react';
+import { ChevronDown, X } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { parseAsArrayOf, parseAsString, useQueryState } from 'nuqs';
 import { useEffect, useMemo, useState } from 'react';
 
-import { DatabasePill, FilterFacet, FilterOptionRow } from '@/components/feature/filter-pill';
+import {
+  DatabasePill,
+  FilterFacet,
+  FilterPanelHeader,
+  FilterPillLabel,
+  getFilterPillClassName,
+  getFilterPillText,
+} from '@/components/feature/filter-pill';
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+} from '@/components/ui/combobox';
+import {
+  MultiSelect,
+  MultiSelectContent,
+  MultiSelectGroup,
+  MultiSelectGroupLabel,
+  MultiSelectItem,
+  MultiSelectList,
+  MultiSelectTrigger,
+  MultiSelectValue,
+} from '@/components/ui/multi-select';
+import { RadioGroup, RadioGroupCard } from '@/components/ui/radio-group';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -101,7 +126,7 @@ export function SearchFilters({ className }: { className?: string }) {
       role="group"
       aria-label="筛选条件"
       className={cn(
-        'scrollbar-none fade-x-edges -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5 md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:[mask-image:none]',
+        'scrollbar-none fade-x-edges -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5 md:mx-0 md:px-0',
         className,
       )}
     >
@@ -109,7 +134,7 @@ export function SearchFilters({ className }: { className?: string }) {
       <span className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
       <TimeFacet state={state} />
       {renderRatingFacet(state)}
-      {renderJournalFacet(state)}
+      <JournalFacet state={state} />
       <AreaFacet state={state} />
       {appliedFilterCount > 0 && (
         <button
@@ -197,13 +222,9 @@ function useSearchFilterState() {
     void setRatings(null);
   };
 
-  /** Update one rating group without discarding other journal or area selections. */
-  const handleRatingChange = (key: JournalRatingKey, value: string, isChecked: boolean) => {
-    void setRatings((current) => ({
-      [key]: isChecked
-        ? [...new Set([...current[key], value])].sort()
-        : current[key].filter((item) => item !== value),
-    }));
+  /** Replace every rating group at once without touching journal or area selections. */
+  const handleRatingsChange = (next: Record<JournalRatingKey, string[]>) => {
+    void setRatings(next);
   };
 
   const handleClearTimeFilters = () => {
@@ -221,22 +242,12 @@ function useSearchFilterState() {
   const monthValues = getFilterMonthValues(yearBounds, monthRange);
   const { defaultStartMonth, defaultEndMonth } = monthValues;
 
-  const handleAreaChange = (value: string, checked: boolean) => {
-    setAreas((current) => {
-      if (checked) {
-        return current.includes(value) ? current : [...current, value];
-      }
-      return current.filter((item) => item !== value);
-    });
+  const handleAreasChange = (values: string[]) => {
+    void setAreas(values);
   };
 
-  const handleJournalChange = (value: string, checked: boolean) => {
-    setJournalIds((current) => {
-      if (checked) {
-        return current.includes(value) ? current : [...current, value];
-      }
-      return current.filter((item) => item !== value);
-    });
+  const handleJournalsChange = (ids: string[]) => {
+    void setJournalIds(ids);
   };
 
   const handleMonthRangeCommit = (startMonth: string, endMonth: string) => {
@@ -262,26 +273,6 @@ function useSearchFilterState() {
     const [startMonth, endMonth] = buildRecentMonthRange(yearCount, yearBounds.min, yearBounds.max);
     setMonthRange(buildMonthRange(startMonth, endMonth));
   };
-
-  const [journalSearch, setJournalSearch] = useState('');
-
-  const filteredJournalOptions = useMemo(() => {
-    if (!journalOptions) {
-      return [];
-    }
-    const query = journalSearch.trim().toLowerCase();
-    const matchedOptions = query
-      ? journalOptions.filter((option) => (option.title ?? '').toLowerCase().includes(query))
-      : journalOptions;
-    if (journalIds.length === 0) {
-      return matchedOptions;
-    }
-    const selectedIds = new Set(journalIds);
-    return [
-      ...matchedOptions.filter((option) => selectedIds.has(String(option.journal_id))),
-      ...matchedOptions.filter((option) => !selectedIds.has(String(option.journal_id))),
-    ];
-  }, [journalIds, journalOptions, journalSearch]);
 
   const journalLabelMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -322,19 +313,17 @@ function useSearchFilterState() {
     handleDatabaseChange,
     handleClearAll,
     handleClearRatings,
-    handleRatingChange,
+    handleRatingsChange,
     handleClearTimeFilters,
     yearBounds,
     ...monthValues,
-    handleAreaChange,
+    handleAreasChange,
     handleClearAreas: () => setAreas([]),
-    handleJournalChange,
+    handleJournalsChange,
     handleClearJournals: () => setJournalIds([]),
     handleMonthRangeCommit,
     handleRecentMonthRange,
-    journalSearch,
-    setJournalSearch,
-    filteredJournalOptions,
+    journalLabelMap,
     selectedJournalLabels,
   };
 }
@@ -402,15 +391,36 @@ function TimeFacet({ state }: { state: SearchFilterState }) {
     : activeRecentYears
       ? `近 ${activeRecentYears} 年`
       : (formatMonthRangeLabel(monthRange) ?? '自定义范围');
+  const selectedChoice = isCustom
+    ? 'custom'
+    : activeRecentYears
+      ? `recent-${activeRecentYears}`
+      : 'all';
   const choices = [
-    { key: 'all', label: '不限', isChecked: isUnbounded && !isCustomRequested },
+    { key: 'all', label: '不限' },
     ...RECENT_YEAR_OPTIONS.map((yearCount) => ({
       key: `recent-${yearCount}`,
       label: `近 ${yearCount} 年`,
-      isChecked: !isCustomRequested && activeRecentYears === yearCount,
     })),
-    { key: 'custom', label: '自定义范围', isChecked: isCustom },
+    { key: 'custom', label: '自定义范围' },
   ];
+
+  /**
+   * Apply one preset, or reveal the custom range controls.
+   *
+   * @param choice - Selected preset key.
+   */
+  const handleChoice = (choice: string) => {
+    if (choice === 'all') {
+      setIsCustomRequested(false);
+      handleClearTimeFilters();
+    } else if (choice === 'custom') {
+      setIsCustomRequested(true);
+    } else {
+      setIsCustomRequested(false);
+      handleRecentMonthRange(Number(choice.replace('recent-', '')));
+    }
+  };
 
   return (
     <FilterFacet
@@ -431,35 +441,18 @@ function TimeFacet({ state }: { state: SearchFilterState }) {
           <p className="px-2.5 py-3 text-sm text-muted-foreground">暂无可用发表年份</p>
         ) : (
           <div className="space-y-2">
-            <div role="radiogroup" aria-label="发表时间" className="grid grid-cols-2 gap-1.5 p-1">
+            <RadioGroup
+              aria-label="发表时间"
+              value={selectedChoice}
+              onValueChange={handleChoice}
+              className="grid grid-cols-2 gap-1.5 p-1"
+            >
               {choices.map((choice) => (
-                <button
-                  key={choice.key}
-                  type="button"
-                  role="radio"
-                  aria-checked={choice.isChecked}
-                  className={cn(
-                    'motion-control flex h-10 items-center justify-between gap-2 rounded-lg px-3 text-left text-[13px] shadow-[inset_0_0_0_1px_var(--border)] outline-none transition-[background-color,box-shadow] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring md:h-9',
-                    choice.isChecked &&
-                      'bg-info font-bold text-info-foreground shadow-[inset_0_0_0_1px_var(--primary)] hover:bg-info',
-                  )}
-                  onClick={() => {
-                    if (choice.key === 'all') {
-                      setIsCustomRequested(false);
-                      handleClearTimeFilters();
-                    } else if (choice.key === 'custom') {
-                      setIsCustomRequested(true);
-                    } else {
-                      setIsCustomRequested(false);
-                      handleRecentMonthRange(Number(choice.key.replace('recent-', '')));
-                    }
-                  }}
-                >
+                <RadioGroupCard key={choice.key} value={choice.key} className="h-10 md:h-9">
                   {choice.label}
-                  {choice.isChecked && <Check className="size-3.5" aria-hidden="true" />}
-                </button>
+                </RadioGroupCard>
               ))}
-            </div>
+            </RadioGroup>
             {isCustom && (
               <div className="space-y-2 rounded-lg bg-muted p-3">
                 <p className="text-xs text-muted-foreground">起始</p>
@@ -515,7 +508,7 @@ function TimeFacet({ state }: { state: SearchFilterState }) {
   );
 }
 
-/** Render rating systems as grouped checkbox grids. */
+/** Render rating systems as one grouped multi-select. */
 function renderRatingFacet(state: SearchFilterState) {
   const {
     ratings,
@@ -523,241 +516,302 @@ function renderRatingFacet(state: SearchFilterState) {
     isLoadingRatings,
     isRatingError,
     refetchRatings,
-    handleRatingChange,
+    handleRatingsChange,
     ratingSelectionCount,
     handleClearRatings,
   } = state;
   const hasRatings = JOURNAL_RATING_SYSTEMS.some(
     ({ key }) => (ratingOptions?.[key].length ?? 0) > 0,
   );
+  const isActive = ratingSelectionCount > 0;
+  const { visibleText, accessibleName } = getFilterPillText(
+    '期刊评级',
+    isActive,
+    `评级 · ${ratingSelectionCount}`,
+    `已选 ${ratingSelectionCount} 项`,
+  );
 
   return (
-    <FilterFacet
-      label="期刊评级"
-      summary={`评级 · ${ratingSelectionCount}`}
-      accessibleSummary={`已选 ${ratingSelectionCount} 项`}
-      description="同一体系可多选，不同体系共同筛选。"
-      isActive={ratingSelectionCount > 0}
-      onClear={handleClearRatings}
-      contentClassName="w-[22rem]"
+    <MultiSelect
+      multiple
+      value={encodeRatingSelection(ratings)}
+      onValueChange={(values: string[]) => handleRatingsChange(decodeRatingSelection(values))}
     >
-      <RevealItem isReady={!isLoadingRatings} placeholder={<Skeleton className="m-2 h-24" />}>
-        {isRatingError ? (
-          <div
-            className="flex items-center justify-between px-2.5 py-2 text-xs text-muted-foreground"
-            role="status"
-          >
-            无法加载期刊评级
-            <Button variant="ghost" size="sm" onClick={() => void refetchRatings()}>
-              重试
-            </Button>
-          </div>
-        ) : hasRatings ? (
-          <div className="max-h-[min(60vh,26rem)] space-y-3 overflow-y-auto p-1">
-            {JOURNAL_RATING_SYSTEMS.map(({ key, label }) => {
-              const options = ratingOptions?.[key] ?? [];
-              return options.length > 0 ? (
-                <fieldset key={key}>
-                  <legend className="px-1.5 pb-1 text-xs font-bold text-muted-foreground">
-                    {label}
-                  </legend>
-                  <div className="grid grid-cols-2 gap-x-1">
+      <MultiSelectTrigger
+        aria-label={accessibleName}
+        title={accessibleName}
+        data-active={isActive ? 'true' : 'false'}
+        className={getFilterPillClassName(isActive)}
+      >
+        <span className="min-w-0 truncate">
+          <MultiSelectValue>{() => visibleText}</MultiSelectValue>
+        </span>
+        <ChevronDown className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
+      </MultiSelectTrigger>
+      <MultiSelectContent aria-label="期刊评级" className="w-[22rem] max-w-[calc(100vw-2rem)]">
+        <FilterPanelHeader
+          label="期刊评级"
+          description="同一体系可多选，不同体系共同筛选。"
+          isActive={isActive}
+          onClear={handleClearRatings}
+        />
+        <RevealItem
+          isReady={!isLoadingRatings}
+          className="flex min-h-0 flex-col"
+          placeholder={<Skeleton className="m-2 h-24" />}
+        >
+          {isRatingError ? (
+            <div
+              className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground"
+              role="status"
+            >
+              无法加载期刊评级
+              <Button variant="ghost" size="sm" onClick={() => void refetchRatings()}>
+                重试
+              </Button>
+            </div>
+          ) : hasRatings ? (
+            <MultiSelectList className="max-h-[min(60vh,26rem)]">
+              {JOURNAL_RATING_SYSTEMS.map(({ key, label }) => {
+                const options = ratingOptions?.[key] ?? [];
+                return options.length > 0 ? (
+                  <MultiSelectGroup key={key}>
+                    <MultiSelectGroupLabel>{label}</MultiSelectGroupLabel>
                     {options.map((option) => (
-                      <FilterOptionRow
+                      <MultiSelectItem
                         key={option.value}
-                        id={`rating-${key}-${option.value}`}
-                        ariaLabel={`${label} ${option.value}`}
-                        label={option.value}
-                        count={option.count}
-                        isChecked={ratings[key].includes(option.value)}
-                        onCheckedChange={(isChecked) =>
-                          handleRatingChange(key, option.value, isChecked)
-                        }
-                      />
+                        value={encodeRatingValue(key, option.value)}
+                        aria-label={`${label} ${option.value}`}
+                        detail={option.count}
+                      >
+                        {option.value}
+                      </MultiSelectItem>
                     ))}
-                  </div>
-                </fieldset>
-              ) : null;
-            })}
-          </div>
-        ) : (
-          <p className="px-2.5 py-3 text-xs text-muted-foreground">当前数据库暂无期刊评级信息。</p>
-        )}
-      </RevealItem>
-    </FilterFacet>
+                  </MultiSelectGroup>
+                ) : null;
+              })}
+            </MultiSelectList>
+          ) : (
+            <p className="px-4 py-3 text-xs text-muted-foreground">当前数据库暂无期刊评级信息。</p>
+          )}
+        </RevealItem>
+      </MultiSelectContent>
+    </MultiSelect>
   );
 }
 
-/** Render the searchable journal checklist. */
-function renderJournalFacet(state: SearchFilterState) {
+/** Shared empty option list for closed pickers. */
+const NO_OPTION_IDS: string[] = [];
+
+/**
+ * Render the searchable journal multi-select; options are only built while it is open.
+ *
+ * @param props - Search filter state.
+ * @returns Journal filter pill.
+ */
+function JournalFacet({ state }: { state: SearchFilterState }) {
   const {
     journalIds,
     journalOptions,
     loadingJournals,
-    handleJournalChange,
+    handleJournalsChange,
     handleClearJournals,
-    journalSearch,
-    setJournalSearch,
-    filteredJournalOptions,
+    journalLabelMap,
     selectedJournalLabels,
   } = state;
-  const summary =
+  const [isOpen, setIsOpen] = useState(false);
+  const orderedJournalIds = useMemo(() => {
+    if (!isOpen || !journalOptions) {
+      return NO_OPTION_IDS;
+    }
+    const ids = journalOptions.map((option) => String(option.journal_id));
+    const selectedIds = new Set(journalIds);
+    return [
+      ...ids.filter((id) => selectedIds.has(id)),
+      ...ids.filter((id) => !selectedIds.has(id)),
+    ];
+  }, [isOpen, journalIds, journalOptions]);
+  const isActive = journalIds.length > 0;
+  const { visibleText, accessibleName } = getFilterPillText(
+    '期刊',
+    isActive,
     selectedJournalLabels.length === 1
       ? selectedJournalLabels[0]
-      : `期刊 · ${selectedJournalLabels.length}`;
+      : `期刊 · ${selectedJournalLabels.length}`,
+    selectedJournalLabels.length === 1 ? undefined : `已选 ${selectedJournalLabels.length} 本`,
+  );
 
   return (
-    <FilterFacet
-      label="期刊"
-      summary={summary}
-      accessibleSummary={
-        selectedJournalLabels.length === 1 ? undefined : `已选 ${selectedJournalLabels.length} 本`
-      }
-      description={`在 ${journalOptions?.length ?? 0} 本期刊中选择。`}
-      isActive={journalIds.length > 0}
-      onClear={handleClearJournals}
-      contentClassName="w-[24rem]"
+    <Combobox
+      multiple
+      open={isOpen}
+      onOpenChange={setIsOpen}
+      items={orderedJournalIds}
+      value={journalIds}
+      onValueChange={(ids: string[]) => handleJournalsChange(ids)}
+      itemToStringLabel={(id: string) => journalLabelMap.get(id) ?? id}
     >
-      <RevealItem isReady={!loadingJournals} placeholder={<Skeleton className="m-2 h-24" />}>
-        {
-          <div className="space-y-2">
-            <div className="relative px-1 pt-1">
-              <Search
-                className="pointer-events-none absolute top-1/2 left-3.5 mt-0.5 size-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <Input
-                aria-label="搜索期刊"
-                name="journal_search"
-                autoComplete="off"
-                spellCheck={false}
-                value={journalSearch}
-                onChange={(event) => setJournalSearch(event.target.value)}
-                placeholder="搜索期刊"
-                className="h-9 pl-9"
-              />
-            </div>
-            <JournalOptionList
-              filteredJournalOptions={filteredJournalOptions}
-              journalIds={journalIds}
-              handleJournalChange={handleJournalChange}
-            />
-          </div>
-        }
-      </RevealItem>
-    </FilterFacet>
+      <ComboboxTrigger
+        aria-label={accessibleName}
+        title={accessibleName}
+        data-active={isActive ? 'true' : 'false'}
+        className={getFilterPillClassName(isActive)}
+      >
+        <FilterPillLabel text={visibleText} />
+      </ComboboxTrigger>
+      <ComboboxContent aria-label="期刊" className="w-[24rem] max-w-[calc(100vw-2rem)]">
+        <FilterPanelHeader
+          label="期刊"
+          description={`在 ${journalOptions?.length ?? 0} 本期刊中选择。`}
+          isActive={isActive}
+          onClear={handleClearJournals}
+        />
+        <RevealItem
+          isReady={!loadingJournals}
+          className="flex min-h-0 flex-col"
+          placeholder={<Skeleton className="m-2 h-24" />}
+        >
+          <ComboboxInput aria-label="搜索期刊" name="journal_search" placeholder="搜索期刊" />
+          <ComboboxEmpty>未找到期刊。</ComboboxEmpty>
+          <ComboboxList data-slot="journal-options" className="max-h-[min(50vh,18rem)]">
+            {(id: string) => (
+              <ComboboxItem key={id} value={id} title={journalLabelMap.get(id) ?? id}>
+                {journalLabelMap.get(id) ?? id}
+              </ComboboxItem>
+            )}
+          </ComboboxList>
+        </RevealItem>
+      </ComboboxContent>
+    </Combobox>
   );
 }
 
 /**
- * Construct journal option rows only while the journal panel is mounted.
+ * Match one research area by its raw value or display name.
  *
- * @param props - Filtered options, selected identifiers, and change handler.
- * @returns Scrollable journal checklist.
+ * @param area - Area value.
+ * @param query - Search text.
+ * @returns Whether the area matches.
  */
-function JournalOptionList({
-  filteredJournalOptions,
-  journalIds,
-  handleJournalChange,
-}: Pick<SearchFilterState, 'filteredJournalOptions' | 'journalIds' | 'handleJournalChange'>) {
-  const selectedJournalIds = new Set(journalIds);
-
+function matchesArea(area: string, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
   return (
-    <ScrollArea className="h-[min(50vh,18rem)] touch-pan-y">
-      <div data-slot="journal-options" className="py-1 pr-3 pl-1">
-        {filteredJournalOptions.map((option) => {
-          const id = String(option.journal_id);
-          return (
-            <FilterOptionRow
-              key={id}
-              id={`journal-${id}`}
-              title={option.title ?? id}
-              label={option.title ?? id}
-              isChecked={selectedJournalIds.has(id)}
-              onCheckedChange={(isChecked) => handleJournalChange(id, isChecked)}
-            />
-          );
-        })}
-        {filteredJournalOptions.length === 0 && (
-          <p className="px-2.5 py-3 text-xs text-muted-foreground">未找到期刊。</p>
-        )}
-      </div>
-    </ScrollArea>
+    !normalizedQuery ||
+    area.toLowerCase().includes(normalizedQuery) ||
+    getAreaDisplayName(area).toLowerCase().includes(normalizedQuery)
   );
 }
 
 /**
- * Render research areas with an inline filter for long lists.
+ * Render research areas as a multi-select that offers search for long lists.
  *
  * @param props - Search filter state.
  * @returns Area filter pill.
  */
 function AreaFacet({ state }: { state: SearchFilterState }) {
-  const { areas, areaOptions, loadingAreas, handleAreaChange, handleClearAreas } = state;
-  const [areaSearch, setAreaSearch] = useState('');
-  const selectedAreas = new Set(areas);
-  const query = areaSearch.trim().toLowerCase();
-  const options = (areaOptions ?? []).filter(
-    (option) =>
-      !query ||
-      option.value.toLowerCase().includes(query) ||
-      getAreaDisplayName(option.value).toLowerCase().includes(query),
+  const { areas, areaOptions, loadingAreas, handleAreasChange, handleClearAreas } = state;
+  const areaCounts = useMemo(
+    () => new Map((areaOptions ?? []).map((option) => [option.value, option.count])),
+    [areaOptions],
   );
-  const summary = areas.length === 1 ? getAreaDisplayName(areas[0]) : `领域 · ${areas.length}`;
+  const areaValues = useMemo(
+    () => (areaOptions ?? []).map((option) => option.value),
+    [areaOptions],
+  );
+  const isActive = areas.length > 0;
+  const { visibleText, accessibleName } = getFilterPillText(
+    '领域',
+    isActive,
+    areas.length === 1 ? getAreaDisplayName(areas[0]) : `领域 · ${areas.length}`,
+    areas.length === 1 ? undefined : `已选 ${areas.length} 个`,
+  );
 
   return (
-    <FilterFacet
-      label="领域"
-      summary={summary}
-      accessibleSummary={areas.length === 1 ? undefined : `已选 ${areas.length} 个`}
-      description="可多选，满足任一领域即显示。"
-      isActive={areas.length > 0}
-      onClear={handleClearAreas}
-      contentClassName="w-[22rem]"
+    <Combobox
+      multiple
+      items={areaValues}
+      value={areas}
+      onValueChange={(values: string[]) => handleAreasChange(values)}
+      itemToStringLabel={getAreaDisplayName}
+      filter={matchesArea}
     >
-      <RevealItem isReady={!loadingAreas} placeholder={<Skeleton className="m-2 h-24" />}>
-        {
-          <div className="space-y-2">
-            {(areaOptions?.length ?? 0) > 10 && (
-              <div className="relative px-1 pt-1">
-                <Search
-                  className="pointer-events-none absolute top-1/2 left-3.5 mt-0.5 size-4 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <Input
-                  aria-label="搜索领域"
-                  autoComplete="off"
-                  value={areaSearch}
-                  onChange={(event) => setAreaSearch(event.target.value)}
-                  placeholder="搜索领域"
-                  className="h-9 pl-9"
-                />
-              </div>
+      <ComboboxTrigger
+        aria-label={accessibleName}
+        title={accessibleName}
+        data-active={isActive ? 'true' : 'false'}
+        className={getFilterPillClassName(isActive)}
+      >
+        <FilterPillLabel text={visibleText} />
+      </ComboboxTrigger>
+      <ComboboxContent aria-label="领域" className="w-[22rem] max-w-[calc(100vw-2rem)]">
+        <FilterPanelHeader
+          label="领域"
+          description="可多选，满足任一领域即显示。"
+          isActive={isActive}
+          onClear={handleClearAreas}
+        />
+        <RevealItem
+          isReady={!loadingAreas}
+          className="flex min-h-0 flex-col"
+          placeholder={<Skeleton className="m-2 h-24" />}
+        >
+          {areaValues.length > 10 && <ComboboxInput aria-label="搜索领域" placeholder="搜索领域" />}
+          <ComboboxEmpty>未找到领域。</ComboboxEmpty>
+          <ComboboxList data-slot="area-options" className="max-h-[min(55vh,22rem)]">
+            {(area: string) => (
+              <ComboboxItem key={area} value={area} title={area} detail={areaCounts.get(area)}>
+                {getAreaDisplayName(area)}
+              </ComboboxItem>
             )}
-            <div
-              data-slot="area-options"
-              className="max-h-[min(55vh,22rem)] overflow-y-auto overscroll-contain py-1 pr-3 pl-1"
-            >
-              {options.map((option) => (
-                <FilterOptionRow
-                  key={option.value}
-                  id={`area-${option.value}`}
-                  title={option.value}
-                  label={getAreaDisplayName(option.value)}
-                  count={option.count}
-                  isChecked={selectedAreas.has(option.value)}
-                  onCheckedChange={(isChecked) => handleAreaChange(option.value, isChecked)}
-                />
-              ))}
-              {options.length === 0 && (
-                <p className="px-2.5 py-3 text-xs text-muted-foreground">未找到领域。</p>
-              )}
-            </div>
-          </div>
-        }
-      </RevealItem>
-    </FilterFacet>
+          </ComboboxList>
+        </RevealItem>
+      </ComboboxContent>
+    </Combobox>
   );
+}
+
+/**
+ * Encode one rating grade as a select value.
+ *
+ * @param key - Rating system.
+ * @param value - Grade within the system.
+ * @returns Combined select value.
+ */
+function encodeRatingValue(key: JournalRatingKey, value: string): string {
+  return `${key}:${value}`;
+}
+
+/**
+ * Encode every selected rating grade as select values.
+ *
+ * @param ratings - Selected grades per rating system.
+ * @returns Combined select values.
+ */
+function encodeRatingSelection(ratings: Record<JournalRatingKey, string[]>): string[] {
+  return JOURNAL_RATING_SYSTEMS.flatMap(({ key }) =>
+    ratings[key].map((value) => encodeRatingValue(key, value)),
+  );
+}
+
+/**
+ * Decode select values back into sorted grades per rating system.
+ *
+ * @param values - Combined select values.
+ * @returns Selected grades per rating system.
+ */
+function decodeRatingSelection(values: readonly string[]): Record<JournalRatingKey, string[]> {
+  return Object.fromEntries(
+    JOURNAL_RATING_SYSTEMS.map(({ key }) => [
+      key,
+      [
+        ...new Set(
+          values
+            .filter((value) => value.startsWith(`${key}:`))
+            .map((value) => value.slice(key.length + 1)),
+        ),
+      ].sort(),
+    ]),
+  ) as Record<JournalRatingKey, string[]>;
 }
 
 /** Derive month defaults and segment values for the current year bounds. */

@@ -1,22 +1,14 @@
 'use client';
 
 /**
- * Shared filter pills: popover or bottom-sheet facets, option rows, and database pills.
+ * Shared filter pills: pill styles and labels, panel headers, popover facets, and database pills.
  */
 
+import { SwappingText } from '@animate-ui/react/primitives/texts/swapping';
 import { ChevronDown, Database } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
@@ -25,76 +17,89 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { POPOVER_MEDIA_QUERY, useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
 
-/** Neutral filter pill styles. */
+/** Neutral filter pill styles, open for both Radix (`data-state`) and Base UI (`data-popup-open`). */
 const FILTER_PILL_CLASS =
-  'motion-control inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full bg-background px-3.5 md:h-8 md:px-3 text-[13px] whitespace-nowrap text-foreground/85 shadow-[inset_0_0_0_1px_var(--border)] outline-none transition-[background-color,color,box-shadow] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent';
+  'motion-control inline-flex h-11 max-w-[15rem] shrink-0 items-center gap-1.5 rounded-full bg-background px-3.5 md:h-8 md:px-3 text-[13px] whitespace-nowrap text-foreground/85 shadow-[inset_0_0_0_1px_var(--border)] outline-none transition-[background-color,color,box-shadow] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent data-[popup-open]:bg-accent';
 
 /** Applied filter pill styles. */
 const FILTER_PILL_ACTIVE_CLASS =
-  'bg-info font-bold text-info-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--primary)_35%,transparent)] hover:bg-info data-[state=open]:bg-info';
+  'bg-info font-bold text-info-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--primary)_35%,transparent)] hover:bg-info data-[state=open]:bg-info data-[popup-open]:bg-info';
 
-type FilterFacetProps = {
-  accessibleSummary?: string;
-  children: ReactNode;
-  contentClassName?: string;
+/**
+ * Build the class list of one filter pill trigger.
+ *
+ * @param isActive - Whether the filter currently narrows results.
+ * @returns Pill class list.
+ */
+export function getFilterPillClassName(isActive: boolean): string {
+  return cn(FILTER_PILL_CLASS, isActive && FILTER_PILL_ACTIVE_CLASS);
+}
+
+/**
+ * Render a pill's visible text, letting changed characters swap in place.
+ *
+ * @param props - Text to show.
+ * @returns Truncating pill label.
+ */
+export function FilterPillLabel({ text }: { text: string }) {
+  return (
+    <>
+      <span className="min-w-0 truncate">
+        <SwappingText text={text} />
+      </span>
+      <ChevronDown className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
+    </>
+  );
+}
+
+/**
+ * Build the visible text and accessible name of one filter pill.
+ *
+ * @param label - Facet name.
+ * @param isActive - Whether the filter currently narrows results.
+ * @param summary - Short visible summary of the selection.
+ * @param accessibleSummary - Spoken summary when it differs from the visible one.
+ * @returns Visible text and accessible name.
+ */
+export function getFilterPillText(
+  label: string,
+  isActive: boolean,
+  summary?: string,
+  accessibleSummary?: string,
+): { visibleText: string; accessibleName: string } {
+  const spokenSummary = accessibleSummary ?? summary;
+  return {
+    visibleText: isActive && summary ? summary : label,
+    accessibleName: isActive && spokenSummary ? `${label}：${spokenSummary}` : label,
+  };
+}
+
+type FilterPanelHeaderProps = {
   description: string;
   isActive: boolean;
   label: string;
   onClear?: () => void;
-  onOpenChange?: (open: boolean) => void;
-  open?: boolean;
-  summary?: string;
-  tone?: 'filter' | 'selection';
 };
 
 /**
- * Render one filter pill whose panel opens as a popover on wide screens and a sheet on phones.
+ * Render a filter panel's title, description, and clear action.
  *
- * @param props - Pill label and summary, panel copy, clear action, and panel content.
- * @returns Filter pill with its panel.
+ * @param props - Facet name, description, applied state, and clear action.
+ * @returns Panel header.
  */
-export function FilterFacet({
-  accessibleSummary,
-  children,
-  contentClassName,
+export function FilterPanelHeader({
   description,
   isActive,
   label,
   onClear,
-  onOpenChange,
-  open,
-  summary,
-  tone = 'filter',
-}: FilterFacetProps) {
-  const isPopover = useMediaQuery(POPOVER_MEDIA_QUERY);
-  const visibleText = isActive && summary ? summary : label;
-  const spokenSummary = accessibleSummary ?? summary;
-  const accessibleName = isActive && spokenSummary ? `${label}：${spokenSummary}` : label;
-  const trigger = (
-    <button
-      type="button"
-      aria-label={accessibleName}
-      title={accessibleName}
-      data-active={isActive ? 'true' : 'false'}
-      className={cn(
-        FILTER_PILL_CLASS,
-        isActive && tone === 'filter' && FILTER_PILL_ACTIVE_CLASS,
-        isActive && tone === 'selection' && 'font-bold text-foreground',
-        'max-w-[15rem]',
-      )}
-    >
-      <span className="truncate">{visibleText}</span>
-      <ChevronDown className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
-    </button>
-  );
-  const header = (titleNode: ReactNode, descriptionNode: ReactNode) => (
-    <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
+}: FilterPanelHeaderProps) {
+  return (
+    <div className="flex shrink-0 items-start justify-between gap-3 border-b px-4 py-3">
       <div className="min-w-0">
-        {titleNode}
-        {descriptionNode}
+        <p className="text-sm font-bold">{label}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
       </div>
       {isActive && onClear && (
         <Button
@@ -109,91 +114,70 @@ export function FilterFacet({
       )}
     </div>
   );
-
-  if (isPopover) {
-    return (
-      <Popover open={open} onOpenChange={onOpenChange}>
-        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-        <PopoverContent
-          align="start"
-          sideOffset={6}
-          aria-label={label}
-          className={cn('w-80 max-w-[calc(100vw-2rem)] p-0', contentClassName)}
-        >
-          {header(
-            <p className="text-sm font-bold">{label}</p>,
-            <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>,
-          )}
-          <div className="p-2">{children}</div>
-        </PopoverContent>
-      </Popover>
-    );
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent placement="bottom" className="flex flex-col gap-0 overflow-hidden">
-        <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-border" aria-hidden="true" />
-        {header(
-          <DialogTitle className="text-base">{label}</DialogTitle>,
-          <DialogDescription className="mt-0.5 text-xs">{description}</DialogDescription>,
-        )}
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">{children}</div>
-        <div className="shrink-0 border-t px-4 py-3">
-          <DialogClose asChild>
-            <Button type="button" className="h-11 w-full rounded-xl">
-              完成
-            </Button>
-          </DialogClose>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
-type FilterOptionRowProps = {
-  ariaLabel?: string;
-  count?: number;
-  id: string;
-  isChecked: boolean;
-  label: ReactNode;
-  onCheckedChange: (isChecked: boolean) => void;
-  title?: string;
+type FilterFacetProps = {
+  accessibleSummary?: string;
+  children: ReactNode;
+  contentClassName?: string;
+  description: string;
+  isActive: boolean;
+  label: string;
+  onClear?: () => void;
+  summary?: string;
 };
 
 /**
- * Render one checkbox option inside a filter panel.
+ * Render one filter pill whose free-form panel opens as a popover.
  *
- * @param props - Input identity, label, checked state, optional count, and change handler.
- * @returns Filter option row.
+ * @param props - Pill label and summary, panel copy, clear action, and panel content.
+ * @returns Filter pill with its popover panel.
  */
-export function FilterOptionRow({
-  ariaLabel,
-  count,
-  id,
-  isChecked,
+export function FilterFacet({
+  accessibleSummary,
+  children,
+  contentClassName,
+  description,
+  isActive,
   label,
-  onCheckedChange,
-  title,
-}: FilterOptionRowProps) {
+  onClear,
+  summary,
+}: FilterFacetProps) {
+  const { visibleText, accessibleName } = getFilterPillText(
+    label,
+    isActive,
+    summary,
+    accessibleSummary,
+  );
+
   return (
-    <label
-      htmlFor={id}
-      title={title}
-      className="motion-control content-visibility-filter-row flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 text-[13px] leading-5 transition-colors hover:bg-accent md:min-h-9"
-    >
-      <Checkbox
-        id={id}
-        aria-label={ariaLabel}
-        checked={isChecked}
-        onCheckedChange={(checked) => onCheckedChange(checked === true)}
-      />
-      <span className={cn('min-w-0 flex-1 break-words', isChecked && 'font-bold')}>{label}</span>
-      {count !== undefined && (
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count}</span>
-      )}
-    </label>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={accessibleName}
+          title={accessibleName}
+          data-active={isActive ? 'true' : 'false'}
+          className={getFilterPillClassName(isActive)}
+        >
+          <FilterPillLabel text={visibleText} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        aria-label={label}
+        className={cn('w-80 max-w-[calc(100vw-2rem)] p-0', contentClassName)}
+      >
+        <FilterPanelHeader
+          description={description}
+          isActive={isActive}
+          label={label}
+          onClear={onClear}
+        />
+        <div className="p-2">{children}</div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

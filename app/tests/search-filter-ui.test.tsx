@@ -244,6 +244,26 @@ function yearsResponse(): Response {
 }
 
 /**
+ * Find one filter pill by its accessible name.
+ *
+ * @param name - Accessible pill name or pattern.
+ * @returns Pill trigger.
+ */
+function findFilterPill(name: string | RegExp): Promise<HTMLElement> {
+  return screen.findByLabelText(name, { selector: 'button' });
+}
+
+/**
+ * Get one rendered filter pill by its accessible name.
+ *
+ * @param name - Accessible pill name or pattern.
+ * @returns Pill trigger.
+ */
+function getFilterPill(name: string | RegExp): HTMLElement {
+  return screen.getByLabelText(name, { selector: 'button' });
+}
+
+/**
  * Open one filter pill and return its panel.
  *
  * @param user - User-event session.
@@ -255,18 +275,25 @@ async function openFilterPanel(
   name: RegExp,
 ): Promise<HTMLElement> {
   await screen.findByRole('combobox', { name: '检索数据库' });
-  await user.click(await screen.findByRole('button', { name }));
-  return screen.findByRole('dialog');
+  await user.click(await findFilterPill(name));
+  return waitFor(() => {
+    const panel = screen.queryByRole('dialog') ?? screen.queryByRole('listbox');
+    if (!panel) throw new Error('Filter panel did not open');
+    return panel.closest<HTMLElement>('[data-base-ui-portal]') ?? panel;
+  });
 }
 
 /**
- * Close the currently open filter panel with its completion action.
+ * Close the currently open filter panel.
  *
  * @param user - User-event session.
  */
 async function closeFilterPanel(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '完成' }));
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  await user.keyboard('{Escape}');
+  await waitFor(() => {
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
 }
 
 /**
@@ -312,24 +339,25 @@ async function summarizesAndClearsAppliedFilters(): Promise<void> {
   );
 
   await screen.findByRole('combobox', { name: '检索数据库' });
-  expect(await screen.findByRole('button', { name: '领域：信息系统' })).toBeInTheDocument();
-  expect(await screen.findByRole('button', { name: '期刊：Journal One' })).toBeInTheDocument();
-  expect(
-    await screen.findByRole('button', { name: '发表时间：2024年01月 - 2024年12月' }),
-  ).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '期刊评级：已选 3 项' })).toBeInTheDocument();
+  expect(await findFilterPill('领域：信息系统')).toBeInTheDocument();
+  expect(await findFilterPill('期刊：Journal One')).toBeInTheDocument();
+  expect(await findFilterPill('发表时间：2024年01月 - 2024年12月')).toBeInTheDocument();
+  expect(getFilterPill('期刊评级：已选 3 项')).toBeInTheDocument();
 
   const ratingPanel = await openFilterPanel(user, /^期刊评级/);
-  await user.click(within(ratingPanel).getByRole('checkbox', { name: 'ABS 4' }));
-  expect(within(ratingPanel).getByRole('checkbox', { name: 'ABS 4*' })).toBeChecked();
+  await user.click(within(ratingPanel).getByRole('option', { name: 'ABS 4' }));
+  expect(within(ratingPanel).getByRole('option', { name: 'ABS 4*' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
   await closeFilterPanel(user);
-  expect(await screen.findByRole('button', { name: '期刊评级：已选 2 项' })).toBeInTheDocument();
+  expect(await findFilterPill('期刊评级：已选 2 项')).toBeInTheDocument();
 
   await user.click(screen.getByTitle('清空全部筛选'));
-  await waitFor(() => expect(screen.getByRole('button', { name: '领域' })).toBeInTheDocument());
-  expect(screen.getByRole('button', { name: '期刊' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '发表时间' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '期刊评级' })).toBeInTheDocument();
+  await waitFor(() => expect(getFilterPill('领域')).toBeInTheDocument());
+  expect(getFilterPill('期刊')).toBeInTheDocument();
+  expect(getFilterPill('发表时间')).toBeInTheDocument();
+  expect(getFilterPill('期刊评级')).toBeInTheDocument();
   expect(screen.queryByTitle('清空全部筛选')).not.toBeInTheDocument();
   expect(screen.getByTestId('retained-query')).toHaveTextContent('systems');
   expect(readSelectedDatabase()).toBe('fixture.sqlite');
@@ -414,7 +442,7 @@ async function rendersRecentRangeShortcuts(): Promise<void> {
   await user.click(within(timePanel).getByRole('radio', { name: '自定义范围' }));
   expect(within(timePanel).getByRole('combobox', { name: '起始年份' })).toBeInTheDocument();
   await closeFilterPanel(user);
-  expect(screen.getByRole('button', { name: '发表时间：近 3 年' })).toBeInTheDocument();
+  expect(getFilterPill('发表时间：近 3 年')).toBeInTheDocument();
 }
 
 /** Verify rating unions, intersections, reset scopes and database-specific choices. */
@@ -461,40 +489,47 @@ async function selectsRatingsAndClearsThemWhenChangingDatabase(): Promise<void> 
     </ThemeProvider>,
   );
   let ratingPanel = await openFilterPanel(user, /^期刊评级/);
-  await user.click(await within(ratingPanel).findByRole('checkbox', { name: 'ABS 4' }));
-  await user.click(within(ratingPanel).getByRole('checkbox', { name: 'ABS 4*' }));
-  await user.click(within(ratingPanel).getByRole('checkbox', { name: 'FMS A' }));
-  await user.click(within(ratingPanel).getByRole('checkbox', { name: 'FMS 中国 T1' }));
-  expect(within(ratingPanel).getByRole('checkbox', { name: 'ABS 4' })).toBeChecked();
-  expect(within(ratingPanel).getByRole('checkbox', { name: 'ABS 4*' })).toBeChecked();
+  await user.click(await within(ratingPanel).findByRole('option', { name: 'ABS 4' }));
+  await user.click(within(ratingPanel).getByRole('option', { name: 'ABS 4*' }));
+  await user.click(within(ratingPanel).getByRole('option', { name: 'FMS A' }));
+  await user.click(within(ratingPanel).getByRole('option', { name: 'FMS 中国 T1' }));
+  expect(within(ratingPanel).getByRole('option', { name: 'ABS 4' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  expect(within(ratingPanel).getByRole('option', { name: 'ABS 4*' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
   await closeFilterPanel(user);
-  expect(await screen.findByRole('button', { name: '期刊评级：已选 4 项' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '领域：Medicine' })).toBeInTheDocument();
-  expect(await screen.findByRole('button', { name: '期刊：Journal One' })).toBeInTheDocument();
+  expect(await findFilterPill('期刊评级：已选 4 项')).toBeInTheDocument();
+  expect(getFilterPill('领域：Medicine')).toBeInTheDocument();
+  expect(await findFilterPill('期刊：Journal One')).toBeInTheDocument();
   expect(screen.getByTestId('retained-query')).toHaveTextContent('retained');
 
   ratingPanel = await openFilterPanel(user, /^期刊评级/);
   await user.click(within(ratingPanel).getByRole('button', { name: '清除' }));
   await waitFor(() =>
-    expect(within(ratingPanel).getByRole('checkbox', { name: 'ABS 4' })).not.toBeChecked(),
+    expect(within(ratingPanel).getByRole('option', { name: 'ABS 4' })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    ),
   );
-  await user.click(within(ratingPanel).getByRole('checkbox', { name: 'UTD UTD24' }));
+  await user.click(within(ratingPanel).getByRole('option', { name: 'UTD UTD24' }));
   await closeFilterPanel(user);
-  expect(screen.getByRole('button', { name: '领域：Medicine' })).toBeInTheDocument();
+  expect(getFilterPill('领域：Medicine')).toBeInTheDocument();
   expect(screen.getByTestId('retained-query')).toHaveTextContent('retained');
 
   screen.getByRole('combobox', { name: '检索数据库' }).focus();
   await user.keyboard('{ArrowDown}');
   await user.keyboard('{End}{Enter}');
   await waitFor(() => expect(readSelectedDatabase()).toBe('ccf.sqlite'));
-  await waitFor(() => expect(screen.getByRole('button', { name: '期刊评级' })).toBeInTheDocument());
+  await waitFor(() => expect(getFilterPill('期刊评级')).toBeInTheDocument());
   ratingPanel = await openFilterPanel(user, /^期刊评级/);
   await waitFor(() =>
     expect(within(ratingPanel).getByText('当前数据库暂无期刊评级信息。')).toBeVisible(),
   );
-  expect(
-    within(ratingPanel).queryByRole('checkbox', { name: 'UTD UTD24' }),
-  ).not.toBeInTheDocument();
+  expect(within(ratingPanel).queryByRole('option', { name: 'UTD UTD24' })).not.toBeInTheDocument();
   expect(requestedDatabases).toContain('fixture.sqlite');
   expect(requestedDatabases).toContain('ccf.sqlite');
 }
@@ -570,22 +605,24 @@ async function defersClosedJournalOptions(): Promise<void> {
   const user = userEvent.setup();
   const journalPanel = await openFilterPanel(user, /^期刊$/);
   expect(
-    await within(journalPanel).findByRole('checkbox', { name: 'Journal 99' }),
+    await within(journalPanel).findByRole('option', { name: 'Journal 99' }),
   ).toBeInTheDocument();
   expect(mapOptions).toHaveBeenCalled();
-  await user.type(within(journalPanel).getByRole('textbox', { name: '搜索期刊' }), 'Journal 99');
-  expect(
-    within(journalPanel).queryByRole('checkbox', { name: 'Journal 0' }),
-  ).not.toBeInTheDocument();
-  await user.click(within(journalPanel).getByRole('checkbox', { name: 'Journal 99' }));
-  expect(within(journalPanel).getByRole('checkbox', { name: 'Journal 99' })).toBeChecked();
+  await user.type(within(journalPanel).getByRole('combobox', { name: '搜索期刊' }), 'Journal 99');
+  expect(within(journalPanel).queryByRole('option', { name: 'Journal 0' })).not.toBeInTheDocument();
+  await user.click(within(journalPanel).getByRole('option', { name: 'Journal 99' }));
+  expect(within(journalPanel).getByRole('option', { name: 'Journal 99' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
   await user.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   const reopenedPanel = await openFilterPanel(user, /^期刊：Journal 99/);
-  expect(await within(reopenedPanel).findByRole('checkbox', { name: 'Journal 99' })).toBeChecked();
-  expect(within(reopenedPanel).getByRole('textbox', { name: '搜索期刊' })).toHaveValue(
-    'Journal 99',
+  expect(await within(reopenedPanel).findByRole('option', { name: 'Journal 99' })).toHaveAttribute(
+    'aria-selected',
+    'true',
   );
+  expect(within(reopenedPanel).getByRole('combobox', { name: '搜索期刊' })).toHaveValue('');
 }
 
 /** Keep large filter selections on indexed membership checks while preserving order and toggles. */
@@ -634,13 +671,31 @@ async function indexesSelectedJournalMembership(): Promise<void> {
       </AuthProvider>,
     );
     await openFilterPanel(user, /^期刊：已选 100 本/);
-    await waitFor(() => expect(document.getElementById('journal-199')).toBeChecked());
-    expect(document.getElementById('journal-0')).not.toBeChecked();
-    expect(document.querySelector('[id^="journal-"]')).toHaveAccessibleName('Journal 1');
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'Journal 199' })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      ),
+    );
+    expect(screen.getByRole('option', { name: 'Journal 0' })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    );
+    expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Journal 1');
     await closeFilterPanel(user);
     await openFilterPanel(user, /^领域：已选 40 个/);
-    await waitFor(() => expect(document.getElementById('area-PerfArea1')).toBeChecked());
-    expect(document.getElementById('area-PerfArea0')).not.toBeChecked();
+    await waitFor(
+      () =>
+        expect(screen.getByRole('option', { name: /^PerfArea1\s*·/ })).toHaveAttribute(
+          'aria-selected',
+          'true',
+        ),
+      { timeout: 10_000 },
+    );
+    expect(screen.getByRole('option', { name: /^PerfArea0\s*·/ })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    );
     expect(
       includes.mock.contexts.filter(
         (values) =>
@@ -652,15 +707,24 @@ async function indexesSelectedJournalMembership(): Promise<void> {
   } finally {
     includes.mockRestore();
   }
-  await user.click(document.getElementById('area-PerfArea1')!);
-  expect(document.getElementById('area-PerfArea1')).not.toBeChecked();
+  await user.click(screen.getByRole('option', { name: /^PerfArea1\s*·/ }));
+  expect(screen.getByRole('option', { name: /^PerfArea1\s*·/ })).toHaveAttribute(
+    'aria-selected',
+    'false',
+  );
   await closeFilterPanel(user);
   await openFilterPanel(user, /^期刊：已选 100 本/);
-  await user.click(document.getElementById('journal-199')!);
-  expect(document.getElementById('journal-199')).not.toBeChecked();
-  await user.click(document.getElementById('journal-0')!);
-  expect(document.getElementById('journal-0')).toBeChecked();
-  expect(document.querySelector('[id^="journal-"]')).toHaveAccessibleName('Journal 0');
+  await user.click(screen.getByRole('option', { name: 'Journal 199' }));
+  expect(screen.getByRole('option', { name: 'Journal 199' })).toHaveAttribute(
+    'aria-selected',
+    'false',
+  );
+  await user.click(screen.getByRole('option', { name: 'Journal 0' }));
+  expect(screen.getByRole('option', { name: 'Journal 0' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  expect(screen.getAllByRole('option')[0]).toHaveAccessibleName('Journal 0');
 }
 
 describe('search and filter UI', () => {

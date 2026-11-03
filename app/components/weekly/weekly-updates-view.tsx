@@ -4,9 +4,9 @@
  * Weekly article updates rendered inside the shared article workspace.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
-import { Check, FileText, Layers } from 'lucide-react';
+import { FileText, Layers } from 'lucide-react';
 import { parseAsString, useQueryState } from 'nuqs';
 
 import {
@@ -23,7 +23,14 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { ArticleListSkeleton } from '@/components/feature/article-list-card';
-import { DatabasePill, FilterFacet } from '@/components/feature/filter-pill';
+import { DatabasePill, getFilterPillClassName } from '@/components/feature/filter-pill';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
 import { SearchBar } from '@/components/feature/search-bar';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
@@ -195,56 +202,49 @@ function WeeklyJournalFacet({
   effectiveSelectedJournalId,
   onSelectJournal,
 }: WeeklyJournalFacetProps) {
-  const [isOpen, setIsOpen] = useState(false);
   const selectedJournal =
     journals.find((journal) => journal.journal_id === effectiveSelectedJournalId) ?? null;
+  const accessibleName = selectedJournal ? `期刊：${getJournalLabel(selectedJournal)}` : '期刊';
 
   return (
-    <FilterFacet
-      label="期刊"
-      tone="selection"
-      summary={selectedJournal ? getJournalLabel(selectedJournal) : undefined}
-      description={`本周有 ${journals.length} 本期刊更新。`}
-      isActive={selectedJournal !== null}
-      open={isOpen}
-      onOpenChange={setIsOpen}
-      contentClassName="w-[24rem]"
+    <Select
+      value={selectedJournal ? String(selectedJournal.journal_id) : ''}
+      onValueChange={(value) => {
+        const journal = journals.find((candidate) => String(candidate.journal_id) === value);
+        if (journal) onSelectJournal(journal.journal_id);
+      }}
+      disabled={journals.length === 0}
     >
-      <div
-        data-slot="weekly-journal-options"
-        className="max-h-[min(60vh,24rem)] overflow-y-auto overscroll-contain py-1 pr-3 pl-1"
-      >
-        {journals.length === 0 && (
-          <p className="px-2.5 py-3 text-sm text-muted-foreground">当前时间窗口内没有新增期刊。</p>
+      <SelectTrigger
+        aria-label={accessibleName}
+        title={accessibleName}
+        size="sm"
+        className={cn(
+          getFilterPillClassName(false),
+          'h-11 data-[size=sm]:h-11 md:data-[size=sm]:h-8 !shadow-[inset_0_0_0_1px_var(--border)]',
+          selectedJournal && 'font-bold text-foreground',
         )}
-        {journals.map((journal) => {
-          const isActive = effectiveSelectedJournalId === journal.journal_id;
-          return (
-            <button
-              key={journal.journal_id}
-              type="button"
-              aria-pressed={isActive}
-              onClick={() => {
-                onSelectJournal(journal.journal_id);
-                setIsOpen(false);
-              }}
-              className={cn(
-                'motion-control flex min-h-10 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset md:min-h-9',
-                isActive && 'bg-info font-bold text-info-foreground hover:bg-info',
-              )}
-            >
-              <span className="line-clamp-2 min-w-0 flex-1 break-words">
-                {getJournalLabel(journal)}
-              </span>
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                {journal.new_article_count}
-              </span>
-              {isActive && <Check className="size-3.5 shrink-0" aria-hidden="true" />}
-            </button>
-          );
-        })}
-      </div>
-    </FilterFacet>
+      >
+        <SelectValue placeholder="期刊" />
+      </SelectTrigger>
+      <SelectContent
+        position="popper"
+        align="start"
+        aria-label={`本周有 ${journals.length} 本期刊更新`}
+        className="max-h-[min(60vh,24rem)] w-[24rem] max-w-[calc(100vw-2rem)]"
+        viewportClassName="pr-3"
+      >
+        {journals.map((journal) => (
+          <SelectItem
+            key={journal.journal_id}
+            value={String(journal.journal_id)}
+            detail={journal.new_article_count}
+          >
+            {getJournalLabel(journal)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

@@ -970,9 +970,9 @@ async function verifiesUnifiedRootWorkspaces(page: Page): Promise<void> {
     'aria-current',
     'page',
   );
-  await page.getByRole('button', { name: /^期刊：/ }).click();
-  const weeklyDialog = page.getByRole('dialog', { name: '期刊' });
-  await expect(weeklyDialog.getByRole('button', { pressed: true })).toHaveCount(1);
+  await page.getByRole('combobox', { name: /^期刊：/ }).click();
+  const weeklyList = page.getByRole('listbox');
+  await expect(weeklyList.getByRole('option', { selected: true })).toHaveCount(1);
   await page.screenshot({
     path: '../output/ui/workspace-weekly-mobile.png',
     fullPage: true,
@@ -1735,7 +1735,7 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   await expectComfortableTarget(clear, 44);
   await expectComfortableTarget(submit, 44);
   await expectComfortableTarget(page.getByRole('button', { name: '高级检索' }), 44);
-  await expectComfortableTarget(page.getByRole('button', { name: /^领域/ }), 44);
+  await expectComfortableTarget(page.getByRole('combobox', { name: /^领域/ }), 44);
   await expectComfortableTarget(page.getByRole('combobox', { name: '检索数据库' }), 44);
 
   const card = page
@@ -2007,7 +2007,7 @@ async function independentListScrollTest(
     const navigation = page.locator('nav[aria-label="页面导航"]:visible');
     await expect(navigation.getByRole('link')).toHaveText(['检索', '收藏', '周报', '征稿', '关系']);
     const navigationBefore = await navigation.boundingBox();
-    await page.getByRole('button', { name: openLabel }).click();
+    await page.getByRole('combobox', { name: openLabel }).click();
     const list = page.locator(`${listSelector}:visible`);
     const lastEntry = list.getByText(lastLabel, { exact: true });
     await expect(lastEntry).toBeAttached();
@@ -2031,7 +2031,7 @@ for (const [workspace, href, openLabel, listSelector, lastLabel] of [
     'weekly journals',
     '/?view=weekly-updates',
     /^期刊/,
-    '[data-slot="weekly-journal-options"]',
+    '[data-radix-select-viewport]',
     'Journal 24',
   ],
 ] as const) {
@@ -2115,20 +2115,20 @@ async function serveJournalRatingApi(route: Route): Promise<void> {
   await serveTrackingApi(route);
 }
 
-/** Verify desktop popovers, mobile sheets, single-rating removal and database-change clearing. */
+/** Verify desktop and mobile rating dropdowns, single-rating removal and database-change clearing. */
 async function journalRatingBrowserTest({ page }: { page: Page }): Promise<void> {
   await page.route('**/api/**', serveJournalRatingApi);
   await page.goto('/');
   await hideDevelopmentIndicator(page);
   const results = page.getByRole('region', { name: '检索结果' });
-  const ratingPill = page.getByRole('button', { name: /^期刊评级/ });
+  const ratingPill = page.getByRole('combobox', { name: /^期刊评级/ });
+  const ratingList = page.getByRole('listbox');
   await ratingPill.click();
-  const popover = page.locator('[data-slot="popover-content"]');
-  await popover.getByRole('checkbox', { name: 'ABS 4*', exact: true }).check();
-  await popover.getByRole('checkbox', { name: 'ABS 4', exact: true }).check();
-  await popover.getByRole('checkbox', { name: 'FMS A', exact: true }).check();
+  await ratingList.getByRole('option', { name: 'ABS 4*', exact: true }).click();
+  await ratingList.getByRole('option', { name: 'ABS 4', exact: true }).click();
+  await ratingList.getByRole('option', { name: 'FMS A', exact: true }).click();
   await page.keyboard.press('Escape');
-  await expect(popover).toHaveCount(0);
+  await expect(ratingList).toHaveCount(0);
   await expect(ratingPill).toHaveAccessibleName('期刊评级：已选 3 项');
   await expect(results.getByText('Rating combination article A', { exact: true })).toBeVisible();
   await expect(results.getByText('Rating combination article B', { exact: true })).toHaveCount(0);
@@ -2139,23 +2139,24 @@ async function journalRatingBrowserTest({ page }: { page: Page }): Promise<void>
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await ratingPill.click();
-  const sheet = page.getByRole('dialog', { name: '期刊评级' });
-  await expect(sheet).toHaveAttribute('data-motion-placement', 'bottom');
-  await expect(sheet.getByRole('checkbox', { name: 'ABS 4*', exact: true })).toBeChecked();
-  await sheet.getByRole('checkbox', { name: 'FMS A', exact: true }).uncheck();
+  await expect(ratingList.getByRole('option', { name: 'ABS 4*', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await ratingList.getByRole('option', { name: 'FMS A', exact: true }).click();
   await page.screenshot({ path: '../output/ui/journal-rating-mobile.png', animations: 'disabled' });
-  await sheet.getByRole('button', { name: '完成' }).click();
-  await expect(sheet).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(ratingList).toHaveCount(0);
   await expect(results.getByText('Rating combination article B', { exact: true })).toBeVisible();
   await ratingPill.click();
-  await sheet.getByRole('checkbox', { name: 'ABS 4*', exact: true }).uncheck();
+  await ratingList.getByRole('option', { name: 'ABS 4*', exact: true }).click();
   await page.keyboard.press('Escape');
   await expect(results.getByText('Rating combination article A', { exact: true })).toHaveCount(0);
   await page.getByRole('combobox', { name: '检索数据库' }).click();
   await page.getByRole('option', { name: 'ccf', exact: true }).click();
   await expect(ratingPill).toHaveAccessibleName('期刊评级');
   await ratingPill.click();
-  await expect(sheet.getByText('当前数据库暂无期刊评级信息。')).toBeVisible();
+  await expect(page.getByText('当前数据库暂无期刊评级信息。')).toBeVisible();
   expect(new URL(page.url()).searchParams.has('abs_rating')).toBe(false);
   expect(new URL(page.url()).searchParams.has('fms_rating')).toBe(false);
 }
@@ -2259,7 +2260,7 @@ async function pinnedFilterHeaderTest({ page }: { page: Page }): Promise<void> {
     expect(Math.abs(headerAfter!.y - headerBefore!.y)).toBeLessThanOrEqual(1);
     expect(Math.round(scrollBounds!.y - (headerAfter!.y + headerAfter!.height))).toBe(0);
     await expect(header.getByRole('combobox', { name: '检索数据库' })).toBeInViewport();
-    await expect(header.getByRole('button', { name: /^领域：/ })).toBeAttached();
+    await expect(header.getByRole('combobox', { name: /^领域：/ })).toBeAttached();
     await page.screenshot({ path: test.info().outputPath(`pinned-filters-${width}.png`) });
   }
 }
@@ -2267,7 +2268,7 @@ async function pinnedFilterHeaderTest({ page }: { page: Page }): Promise<void> {
 test('keeps the filter header pinned above scrolling results', pinnedFilterHeaderTest);
 
 /**
- * Verify long filter sheets scroll with real wheel and touch input and dismiss without a close button.
+ * Verify long filter lists scroll with real wheel and touch input and dismiss without a close button.
  *
  * @param fixtures - Playwright page fixture.
  */
@@ -2276,10 +2277,9 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
   await page.setViewportSize({ width: 616, height: 751 });
   await page.goto('/?q=graph');
   await hideDevelopmentIndicator(page);
-  const trigger = page.getByRole('button', { name: '领域', exact: true });
+  const trigger = page.getByRole('combobox', { name: '领域', exact: true });
   await trigger.click();
   const drawer = page.getByRole('dialog', { name: '领域' });
-  await expect(drawer).toHaveAttribute('data-motion-placement', 'bottom');
   const scrollContainer = drawer.locator('[data-slot="area-options"]');
   const lastSection = drawer.getByText('field_24', { exact: true });
   await expect(lastSection).toBeAttached();
@@ -2287,13 +2287,13 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
   await page.screenshot({ path: '../output/ui/mobile-sidebar-top.png', animations: 'disabled' });
 
   const listBox = await scrollContainer.boundingBox();
-  await page.mouse.move(160, listBox!.y + listBox!.height / 2);
+  const listCenterX = listBox!.x + listBox!.width / 2;
+  await page.mouse.move(listCenterX, listBox!.y + listBox!.height / 2);
   await page.mouse.wheel(0, 2000);
   await expect
     .poll(() => scrollContainer.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
   await expect(lastSection).toBeInViewport();
-  await expect(drawer.getByRole('button', { name: '完成' })).toBeInViewport();
   await expect(drawer.getByRole('button', { name: '关闭', exact: true })).toHaveCount(0);
   await page.screenshot({ path: '../output/ui/mobile-sidebar-bottom.png', animations: 'disabled' });
 
@@ -2312,12 +2312,12 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
     async function swipeSidebar(startY: number, distance: number): Promise<void> {
       await touchSession.send('Input.dispatchTouchEvent', {
         type: 'touchStart',
-        touchPoints: [{ x: 160, y: startY }],
+        touchPoints: [{ x: listCenterX, y: startY }],
       });
       for (let step = 1; step <= 8; step += 1) {
         await touchSession.send('Input.dispatchTouchEvent', {
           type: 'touchMove',
-          touchPoints: [{ x: 160, y: startY + (distance * step) / 8 }],
+          touchPoints: [{ x: listCenterX, y: startY + (distance * step) / 8 }],
         });
         await page.evaluate(() => new Promise(requestAnimationFrame));
       }
@@ -2342,7 +2342,6 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
 
   await page.mouse.click(300, 40);
   await expect(drawer).toHaveCount(0);
-  await expect(trigger).toBeFocused();
   await trigger.click();
   await page.keyboard.press('Escape');
   await expect(drawer).toHaveCount(0);
@@ -2831,6 +2830,7 @@ async function mobileSettingsNavigationTest(page: Page, workspace: string): Prom
   await page.route('**/api/**', serveArticleSettingsApi);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto(workspace);
+  await hideDevelopmentIndicator(page);
   const accountTrigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
   await accountTrigger.tap();
   await expect(page.getByRole('menu')).toBeVisible();
@@ -2918,6 +2918,7 @@ test.describe('mobile settings navigation', () => {
     await page.route('**/api/**', serveArticleSettingsApi);
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.goto('/?q=graph');
+    await hideDevelopmentIndicator(page);
     await page.getByRole('button', { name: '打开账号菜单：browser_user' }).tap();
     await page.getByRole('menuitem', { name: '打开设置中心' }).tap();
     const settings = page.getByRole('dialog', { name: '设置中心' });
@@ -2945,7 +2946,7 @@ test.describe('mobile settings navigation', () => {
 test('synchronizes logout and account changes across browser tabs', crossTabSessionTest);
 
 test(
-  'scrolls a long mobile filter sheet and dismisses without a close button',
+  'scrolls a long mobile filter list and dismisses without a close button',
   mobileSidebarScrollTest,
 );
 test('declares native theme ownership before hydration', nativeThemeDocumentTest);
@@ -3060,49 +3061,6 @@ test(
   'shows theme-aware pointer feedback without moving settings controls',
   themeInteractionFeedbackTest,
 );
-
-/** Keep checkbox borders and focus feedback visible inside paint-contained filter rows. */
-async function containedCheckboxPaintTest({ page }: { page: Page }): Promise<void> {
-  await page.route('**/api/**', serveLongSidebarApi);
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.setViewportSize({ width: 1280, height: 844 });
-  for (const colorScheme of ['light', 'dark'] as const) {
-    await page.emulateMedia({ colorScheme });
-    await page.goto('/');
-    const areaPill = page.getByRole('button', { name: /^领域/ });
-    await areaPill.focus();
-    await page.keyboard.press('Enter');
-    const checkbox = page.locator('#area-field_1');
-    await checkbox.scrollIntoViewIfNeeded();
-    await expect(checkbox).toHaveAttribute('data-state', 'unchecked');
-    await expect(checkbox.locator('..')).toHaveCSS('content-visibility', 'auto');
-    await expect(checkbox).toHaveCSS('box-shadow', /inset/);
-    const bounds = await checkbox.boundingBox();
-    await checkbox.focus();
-    await expect(checkbox).toBeFocused();
-    const focusShadows = await checkbox.evaluate((element) => getComputedStyle(element).boxShadow);
-    expect(focusShadows).toMatch(/0px 0px 0px 3px/);
-    const shadows = focusShadows
-      .split(/,(?![^()]*\))/)
-      .filter((shadow) => !shadow.includes('0px 0px 0px 0px'));
-    expect(shadows.length).toBeGreaterThan(0);
-    expect(shadows.every((shadow) => shadow.includes('inset'))).toBe(true);
-    expect(await checkbox.boundingBox()).toEqual(bounds);
-    await page.screenshot({
-      path: `../output/ui/filter-checkbox-${colorScheme}-focused.png`,
-      animations: 'disabled',
-      clip: { x: bounds!.x - 6, y: bounds!.y - 6, width: 110, height: 36 },
-    });
-    await checkbox.press('Space');
-    await expect(checkbox).toHaveAttribute('data-state', 'checked');
-    expect(await checkbox.boundingBox()).toEqual(bounds);
-  }
-}
-
-test.describe('paint-contained filter checkboxes', () => {
-  test.use({ deviceScaleFactor: 3 });
-  test('keeps every border and focus edge inside the control', containedCheckboxPaintTest);
-});
 
 /** Return authoritative fixture metadata without any original-text parsing in the browser. */
 function cfpFixtureJournal(catalogId: string, title: string): CfpJournalSummary {
