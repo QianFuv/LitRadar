@@ -24,17 +24,6 @@ type StripGlide = {
 const STRIP_GLIDES = new WeakMap<HTMLElement, StripGlide>();
 
 /**
- * Report whether the user asked the system to reduce motion.
- *
- * @returns Whether motion should be reduced.
- */
-function prefersReducedMotion(): boolean {
-  return typeof window.matchMedia === 'function'
-    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    : false;
-}
-
-/**
  * Move a strip one frame closer to its glide target, scheduling the next frame until it arrives.
  *
  * @param element - Gliding strip.
@@ -80,10 +69,6 @@ export function scrollStripOnWheel(element: HTMLElement, event: WheelEvent): boo
   if (target === origin) return false;
 
   event.preventDefault();
-  if (prefersReducedMotion()) {
-    element.scrollLeft = target;
-    return true;
-  }
   const activeGlide = glide ?? { target, frame: null };
   activeGlide.target = target;
   STRIP_GLIDES.set(element, activeGlide);

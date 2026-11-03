@@ -29,7 +29,6 @@ import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { RevealItem } from '@/components/ui/reveal';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { useIsMotionReduced } from '@/components/ui/motion';
 import {
   getArticle,
   getArticles,
@@ -311,7 +310,6 @@ function RelationExplorer({
   const { user } = useAuth();
   const { fitView } = useReactFlow();
   const isDocked = useMediaQuery(READER_DOCK_MEDIA_QUERY);
-  const isMotionReduced = useIsMotionReduced();
   const [initial] = useState(() => resolveInitialRelationGraph(dbName, articleId, savedFavorite));
   const [graph, setGraph] = useState<RelationGraph | null>(initial.graph);
   const [savedGraphId, setSavedGraphId] = useState<number | null>(initial.savedId);
@@ -358,14 +356,14 @@ function RelationExplorer({
         window.requestAnimationFrame(() => {
           void fitView({
             nodes: nodeIds.map((id) => ({ id })),
-            duration: isMotionReduced ? 0 : 300,
+            duration: 300,
             padding: 0.15,
             maxZoom: 1,
           });
         }),
       );
     },
-    [fitView, isMotionReduced],
+    [fitView],
   );
 
   const expand = useCallback(
@@ -509,7 +507,7 @@ function RelationExplorer({
               size="icon"
               className="size-11 md:size-8"
               aria-label="适应窗口"
-              onClick={() => void fitView({ duration: isMotionReduced ? 0 : 300, padding: 0.2 })}
+              onClick={() => void fitView({ duration: 300, padding: 0.2 })}
             >
               <Maximize className="size-4" aria-hidden="true" />
             </Button>

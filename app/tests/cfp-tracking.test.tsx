@@ -126,7 +126,7 @@ const originalMatchMedia = window.matchMedia;
  */
 function dockedMediaQuery(query: string): MediaQueryList {
   return {
-    matches: query === READER_DOCK_MEDIA_QUERY || query === '(prefers-reduced-motion: reduce)',
+    matches: query === READER_DOCK_MEDIA_QUERY,
     media: query,
     onchange: null,
     addEventListener: () => undefined,

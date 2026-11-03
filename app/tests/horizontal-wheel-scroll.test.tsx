@@ -18,18 +18,6 @@ function flushFrames(): void {
 }
 
 /**
- * Report a reduced-motion preference to the strip scroller.
- *
- * @param isReduced - Whether the system asks for reduced motion.
- */
-function setReducedMotion(isReduced: boolean): void {
-  vi.stubGlobal(
-    'matchMedia',
-    vi.fn(() => ({ matches: isReduced })),
-  );
-}
-
-/**
  * Build a strip with fixed scroll geometry.
  *
  * @param scrollLeft - Current horizontal offset.
@@ -86,15 +74,6 @@ function releasesAtTheEdge(): void {
   expect(atEdge.defaultPrevented).toBe(false);
 }
 
-/** Jump straight to the target when the system asks for reduced motion. */
-function jumpsUnderReducedMotion(): void {
-  setReducedMotion(true);
-  const element = strip(0);
-  scrollStripOnWheel(element, wheel({ deltaY: 120 }));
-  expect(element.scrollLeft).toBe(120);
-  expect(pendingFrames).toHaveLength(0);
-}
-
 /** Leave horizontal gestures, pinch zoom, and strips without overflow to the browser. */
 function ignoresOtherInput(): void {
   const horizontal = wheel({ deltaX: 80, deltaY: 10 });
@@ -128,7 +107,6 @@ beforeEach(() => {
     'requestAnimationFrame',
     vi.fn((callback: FrameRequestCallback) => pendingFrames.push(callback)),
   );
-  setReducedMotion(false);
 });
 
 afterEach(() => {
@@ -139,7 +117,6 @@ describe('horizontal wheel scrolling', () => {
   test('glides right on a downward wheel', glidesRightOnWheelDown);
   test('accumulates quick wheel ticks', accumulatesQuickTicks);
   test('releases the wheel at the edge', releasesAtTheEdge);
-  test('jumps under reduced motion', jumpsUnderReducedMotion);
   test('ignores horizontal gestures, zoom, and strips without overflow', ignoresOtherInput);
   test('converts line deltas to pixels', convertsLineDeltas);
   test('attaches one listener per strip', attachesOnce);

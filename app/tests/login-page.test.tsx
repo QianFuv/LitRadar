@@ -33,13 +33,13 @@ const loginPageMocks = vi.hoisted(() => ({
 }));
 
 /**
- * Render the authentication page with deterministic reduced motion.
+ * Render the authentication page inside the application motion provider.
  *
  * @returns Testing Library render controls for the wrapped page.
  */
 function renderLoginClient(): RenderResult {
   return render(
-    <MotionProvider reducedMotion="always">
+    <MotionProvider>
       <LoginClient />
     </MotionProvider>,
   );
@@ -94,7 +94,7 @@ async function hidesFormUntilAuthenticationSettles(): Promise<void> {
   loginPageMocks.auth.loading = false;
   loginPageMocks.auth.user = { id: 7, username: 'signed_in', is_admin: false };
   view.rerender(
-    <MotionProvider reducedMotion="always">
+    <MotionProvider>
       <LoginClient />
     </MotionProvider>,
   );

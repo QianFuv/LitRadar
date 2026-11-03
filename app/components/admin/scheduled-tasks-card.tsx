@@ -824,7 +824,7 @@ function renderSchedulerStatus(state: SchedulerViewState) {
                 <div className="flex items-center gap-3">
                   <span aria-hidden="true" className="relative flex size-3">
                     {healthyWorkerCount > 0 && (
-                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:hidden" />
+                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                     )}
                     <span
                       className={cn(

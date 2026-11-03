@@ -10,14 +10,14 @@ import { afterAll, afterEach, beforeAll } from 'vitest';
 import { server } from '@/tests/mocks/server';
 
 /**
- * Create a static media-query result with reduced motion enabled for unit tests.
+ * Create a static media-query result that never matches, for unit tests.
  *
  * @param query - Browser media query string.
  * @returns Standards-shaped immutable media-query result.
  */
 function createTestMediaQueryList(query: string): MediaQueryList {
   return {
-    matches: query === '(prefers-reduced-motion: reduce)',
+    matches: false,
     media: query,
     onchange: null,
     addEventListener: () => undefined,
@@ -29,7 +29,7 @@ function createTestMediaQueryList(query: string): MediaQueryList {
 }
 
 /**
- * Install deterministic reduced-motion media-query behavior for jsdom.
+ * Install deterministic media-query behavior for jsdom.
  */
 function installTestMediaQueries(): void {
   Object.defineProperty(window, 'matchMedia', {

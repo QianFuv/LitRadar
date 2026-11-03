@@ -89,9 +89,6 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
           [data-recovery-action]:active { --recovery-action-background: #435db1; }
           [data-recovery-action='secondary']:active { --recovery-action-background: #313131; }
           [data-recovery-action]:focus-visible { outline: 3px solid #9eb1ff; outline-offset: 2px; }
-          @media (prefers-reduced-motion: reduce) {
-            [data-recovery-action] { transition: none; }
-          }
         `}</style>
       </head>
       <body style={GLOBAL_BODY_STYLE}>

@@ -1,5 +1,5 @@
 /**
- * Real Chromium motion lifecycle, reduced-mode, and drawer focus coverage.
+ * Real Chromium motion lifecycle and drawer focus coverage.
  */
 
 import '@/app/globals.css';
@@ -21,17 +21,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import {
-  MotionDiv,
-  MotionPresence,
-  MotionProvider,
-  REVEAL_VARIANTS,
-  useIsMotionReduced,
-} from '@/components/ui/motion';
-
-type MotionLifecycleHarnessProps = {
-  reducedMotion: 'always' | 'never';
-};
+import { MotionDiv, MotionPresence, MotionProvider, REVEAL_VARIANTS } from '@/components/ui/motion';
 
 const SECTIONED_BROWSER_SECTIONS = [
   {
@@ -52,20 +42,18 @@ const SECTIONED_BROWSER_SECTIONS = [
 ];
 
 /**
- * Render one removable element and expose the resolved reduced-motion preference.
+ * Render one removable element.
  *
- * @returns Animated presence controls and preference probe.
+ * @returns Animated presence controls.
  */
 function MotionLifecycleContent() {
   const [isVisible, setIsVisible] = useState(true);
-  const isMotionReduced = useIsMotionReduced();
 
   return (
     <main>
       <button type="button" onClick={() => setIsVisible((current) => !current)}>
         切换动效内容
       </button>
-      <output aria-label="减少动态效果">{String(isMotionReduced)}</output>
       <MotionPresence>
         {isVisible && (
           <MotionDiv
@@ -85,14 +73,13 @@ function MotionLifecycleContent() {
 }
 
 /**
- * Apply one explicit motion preference around the lifecycle harness.
+ * Wrap the lifecycle harness in the application motion provider.
  *
- * @param props - Deterministic reduced-motion preference.
  * @returns Configured motion lifecycle harness.
  */
-function MotionLifecycleHarness({ reducedMotion }: MotionLifecycleHarnessProps) {
+function MotionLifecycleHarness() {
   return (
-    <MotionProvider reducedMotion={reducedMotion}>
+    <MotionProvider>
       <MotionLifecycleContent />
     </MotionProvider>
   );
@@ -155,10 +142,10 @@ function SectionedDialogHarness() {
 }
 
 /**
- * Verify exits retain their node, and reduced motion still fades it out instead of cutting.
+ * Verify exits retain their node until their animation finishes.
  */
-async function respectsPresenceAndReducedMotion(): Promise<void> {
-  const normalRender = render(<MotionLifecycleHarness reducedMotion="never" />);
+async function preservesExitLifecycles(): Promise<void> {
+  render(<MotionLifecycleHarness />);
   const normalTrigger = page.getByRole('button', { name: '切换动效内容' });
 
   await act(async () => normalTrigger.click());
@@ -168,13 +155,6 @@ async function respectsPresenceAndReducedMotion(): Promise<void> {
   await waitFor(() => expect(screen.getAllByTestId('motion-item')).toHaveLength(1));
 
   await act(async () => normalTrigger.click());
-  expect(screen.getByTestId('motion-item')).toBeInTheDocument();
-  await waitFor(() => expect(screen.queryByTestId('motion-item')).toBeNull());
-
-  normalRender.unmount();
-  render(<MotionLifecycleHarness reducedMotion="always" />);
-  await expect.element(page.getByLabelText('减少动态效果')).toHaveTextContent('true');
-  await act(async () => page.getByRole('button', { name: '切换动效内容' }).click());
   expect(screen.getByTestId('motion-item')).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByTestId('motion-item')).toBeNull());
 }
@@ -200,7 +180,7 @@ async function restoresDrawerFocusAfterExit(): Promise<void> {
 /** Verify section headers retain a real exit and closing restores the persistent trigger. */
 async function transitionsSectionHeaderAndRestoresFocus(): Promise<void> {
   render(
-    <MotionProvider reducedMotion="never">
+    <MotionProvider>
       <SectionedDialogHarness />
     </MotionProvider>,
   );
@@ -230,10 +210,7 @@ async function transitionsSectionHeaderAndRestoresFocus(): Promise<void> {
 }
 
 describe('application motion in Chromium', () => {
-  test(
-    'preserves exit lifecycles and keeps fades under reduced motion',
-    respectsPresenceAndReducedMotion,
-  );
+  test('preserves exit lifecycles', preservesExitLifecycles);
   test('restores drawer focus after the exit transition', restoresDrawerFocusAfterExit);
   test(
     'transitions section headers and restores dialog focus',

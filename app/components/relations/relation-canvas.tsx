@@ -44,12 +44,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import {
-  MotionDiv,
-  MotionPresence,
-  POPOVER_VARIANTS,
-  useIsMotionReduced,
-} from '@/components/ui/motion';
+import { MotionDiv, MotionPresence, POPOVER_VARIANTS } from '@/components/ui/motion';
 import type { Article } from '@/lib/api';
 import { getArticleDisplayTitle } from '@/lib/article-title';
 import {
@@ -112,7 +107,6 @@ const FORCE = {
   dragAlphaTarget: 0.3,
   growAlpha: 0.5,
   settleAlpha: 0.15,
-  reducedMotionTicks: 120,
 };
 
 /**
@@ -636,7 +630,6 @@ export function RelationCanvas({
   onToggle,
   onPositionsSettle,
 }: RelationCanvasProps) {
-  const isMotionReduced = useIsMotionReduced();
   const [preview, setPreview] = useState<HoverPreview | null>(null);
   const [positions, setPositions] = useState<Record<string, RelationPoint>>(graph.positions);
   const previewTimerRef = useRef<number | null>(null);
@@ -713,22 +706,12 @@ export function RelationCanvas({
     simulation.nodes([...simulationNodes.values()]);
     simulation.force<ForceLink<SimulationNode, SimulationLink>>('link')?.links(links);
     const alpha = isFirstSync || isRelayout || hasNewNodes ? FORCE.growAlpha : FORCE.settleAlpha;
-    if (isMotionReduced) {
-      simulation.stop();
-      simulation.alpha(alpha);
-      simulation.tick(FORCE.reducedMotionTicks);
-      window.requestAnimationFrame(() => {
-        setPositions(readSimulationPositions());
-        reportSettled();
-      });
-    } else {
-      simulation.alpha(alpha).restart();
-    }
+    simulation.alpha(alpha).restart();
   });
 
   useEffect(() => {
     syncSimulation();
-  }, [graph.nodes, graph.crossLinks, graph.pinnedIds, graph.layoutRevision, isMotionReduced]);
+  }, [graph.nodes, graph.crossLinks, graph.pinnedIds, graph.layoutRevision]);
 
   useEffect(() => () => void simulationRef.current?.stop(), []);
 

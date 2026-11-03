@@ -37,7 +37,7 @@ const BUTTON_PRESS_TRANSITION = transition.swap;
  *
  * Animate UI animates a full `transform` string whose `scale(1)` start is never rendered, so the
  * first press starts from `none` (read as `scale(0)`) and visibly collapses. The independent
- * `scale` value always starts at 1; `MotionConfig` still drops it under reduced motion.
+ * `scale` value always starts at 1.
  *
  * @param hasPress - Whether the control is pressable right now.
  * @param size - Button size that selects the press depth.

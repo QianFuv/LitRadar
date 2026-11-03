@@ -329,24 +329,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-
-  .animate-spin,
-  .animate-pulse,
-  .animate-ping,
-  .radar-sweep {
-    animation: none;
-  }
-
-  .motion-chevron,
-  .motion-chevron-menu {
-    transition-property: none;
-  }
-}
-
 *::-webkit-scrollbar {
   width: 6px;
   height: 6px;

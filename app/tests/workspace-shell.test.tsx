@@ -63,7 +63,7 @@ function enableDockedReader(): void {
     configurable: true,
     writable: true,
     value: (query: string): MediaQueryList => ({
-      matches: query === READER_DOCK_MEDIA_QUERY || query === '(prefers-reduced-motion: reduce)',
+      matches: query === READER_DOCK_MEDIA_QUERY,
       media: query,
       onchange: null,
       addEventListener: () => undefined,

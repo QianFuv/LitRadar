@@ -7,9 +7,6 @@ import { expect, test, type Browser, type Locator, type Page, type Route } from 
 import { CFP_FIXTURE_PAGES } from '../fixtures/cfp-pages';
 import type { CfpJournalSummary } from '../../lib/api';
 
-/** Longest animation Animate UI keeps under reduced motion: its quick fade, in milliseconds. */
-const REDUCED_MOTION_FADE_MS = 200;
-
 /**
  * Read the horizontal scale an element currently renders with from its computed transform.
  *
@@ -734,13 +731,13 @@ async function verifiesAggregatedSettingsCenter(page: Page): Promise<void> {
 }
 
 /**
- * Verify reduced-motion delivery toggles remain immediate, non-focusable, and state preserving.
+ * Verify hidden delivery panels stay non-focusable and keep their entered values across switches.
  *
  * @param page - Playwright browser page.
  */
-async function verifiesReducedMotionDynamicSettings(page: Page): Promise<void> {
+async function verifiesDynamicSettings(page: Page): Promise<void> {
   await page.route('**/api/**', serveTrackingApi);
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  await page.emulateMedia({ colorScheme: 'dark' });
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/?view=favorites&folder=4&settings=notifications');
   await hideDevelopmentIndicator(page);
@@ -765,19 +762,12 @@ async function verifiesReducedMotionDynamicSettings(page: Page): Promise<void> {
   await deliveryMethods.getByRole('radio', { name: 'PushPlus 外部推送' }).click();
   await expect(deliveryPanel).not.toHaveAttribute('inert');
   await expect(pushplusToken).toHaveValue('browser-pushplus-token');
-  const animationDurations = await deliveryPanel.evaluate((element) =>
-    element.getAnimations({ subtree: true }).flatMap((animation) => {
-      const duration = animation.effect?.getTiming().duration;
-      return typeof duration === 'number' ? [duration] : [];
-    }),
-  );
-  expect(Math.max(0, ...animationDurations)).toBeLessThanOrEqual(REDUCED_MOTION_FADE_MS);
   expect(
     await settingsDialog.evaluate((element) => element.scrollWidth <= element.clientWidth),
   ).toBe(true);
   await page.screenshot({ path: '../output/ui/settings-dynamic-dark-desktop.png', fullPage: true });
 
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(settingsDialog).toHaveCSS('width', '390px');
   expect(
@@ -1405,12 +1395,12 @@ async function aggregatedSettingsCenterTest({ page }: { page: Page }): Promise<v
 }
 
 /**
- * Run the reduced-motion dynamic settings browser test.
+ * Run the dynamic delivery settings browser test.
  *
  * @param fixtures - Playwright page fixture.
  */
-async function reducedMotionDynamicSettingsTest({ page }: { page: Page }): Promise<void> {
-  await verifiesReducedMotionDynamicSettings(page);
+async function dynamicSettingsTest({ page }: { page: Page }): Promise<void> {
+  await verifiesDynamicSettings(page);
 }
 
 /**
@@ -1546,7 +1536,7 @@ async function articleTitleWrappingTest(page: Page, titleText: string): Promise<
     }
     await serveInterfacePolishApi(route);
   });
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  await page.emulateMedia({ colorScheme: 'dark' });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/');
   await hideDevelopmentIndicator(page);
@@ -1724,7 +1714,7 @@ async function expectReadableControlText(control: Locator): Promise<void> {
  */
 async function interfacePolishControlsTest({ page }: { page: Page }): Promise<void> {
   await page.route('**/api/**', serveInterfacePolishApi);
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?q=graph');
   await hideDevelopmentIndicator(page);
@@ -1809,8 +1799,6 @@ async function interfacePolishControlsTest({ page }: { page: Page }): Promise<vo
   await expect(input).toBeFocused();
   await expect(input).toHaveValue('');
   await expect(page).toHaveURL('/?q=graph');
-
-  await page.emulateMedia({ reducedMotion: 'reduce' });
   await submit.hover();
   await page.mouse.down();
   await expect(submit).toHaveCSS('scale', 'none');
@@ -1958,20 +1946,27 @@ async function serveLongSidebarApi(route: Route): Promise<void> {
 
 /** Keep outer focus rings and trailing counts inside the sidebar scroll viewport. */
 async function expectSidebarScrollClearance(list: Locator): Promise<void> {
-  const clearance = await list.evaluate((element) => {
-    const viewport = element.getBoundingClientRect();
-    const left = viewport.left + element.clientLeft;
-    const right = left + element.clientWidth;
-    const children = Array.from(element.children)
-      .map((child) => child.getBoundingClientRect())
-      .filter((child) => child.width > 0 && child.height > 0);
-    return {
-      childCount: children.length,
-      left: Math.min(...children.map((child) => child.left - left)),
-      right: Math.min(...children.map((child) => right - child.right)),
-      hasHorizontalOverflow: element.scrollWidth > element.clientWidth,
-    };
-  });
+  const measureClearance = () =>
+    list.evaluate((element) => {
+      const viewport = element.getBoundingClientRect();
+      const left = viewport.left + element.clientLeft;
+      const right = left + element.clientWidth;
+      const children = Array.from(element.children)
+        .map((child) => child.getBoundingClientRect())
+        .filter((child) => child.width > 0 && child.height > 0);
+      return {
+        childCount: children.length,
+        left: Math.min(...children.map((child) => child.left - left)),
+        right: Math.min(...children.map((child) => right - child.right)),
+        hasHorizontalOverflow: element.scrollWidth > element.clientWidth,
+      };
+    });
+  await expect
+    .poll(async () => (await measureClearance()).right, {
+      message: 'let the popup finish opening before measuring',
+    })
+    .toBeGreaterThanOrEqual(8);
+  const clearance = await measureClearance();
   expect(clearance.childCount).toBeGreaterThan(0);
   expect(clearance.left, 'leave room for the outer 3px focus ring').toBeGreaterThanOrEqual(3);
   expect(clearance.right, 'keep counts and actions away from the scrollbar').toBeGreaterThanOrEqual(
@@ -1997,7 +1992,7 @@ async function independentListScrollTest(
   lastLabel: string,
 ): Promise<void> {
   await page.route('**/api/**', serveLongSidebarApi);
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.emulateMedia({ colorScheme: 'light' });
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto(href);
@@ -2043,7 +2038,7 @@ for (const [workspace, href, openLabel, listSelector, lastLabel] of [
 /** Keep page navigation and the list header fixed while many folder tabs scroll horizontally. */
 test('scrolls many favorite folder tabs horizontally without moving the page', async ({ page }) => {
   await page.route('**/api/**', serveLongSidebarApi);
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.emulateMedia({ colorScheme: 'light' });
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/?view=favorites');
@@ -2165,7 +2160,6 @@ test('combines journal ratings across desktop and mobile filters', journalRating
 
 /** Verify fresh and cached database switches reset scrolling and keep cards clickable. */
 async function databaseSwitchArticleClickTest({ page }: { page: Page }): Promise<void> {
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/api/meta/databases') {
@@ -2240,7 +2234,6 @@ test('keeps article cards clickable after database switches', databaseSwitchArti
 
 /** Verify the search and filter header stays pinned directly above scrolling results. */
 async function pinnedFilterHeaderTest({ page }: { page: Page }): Promise<void> {
-  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.route('**/api/**', serveTrackingApi);
   await page.goto('/?q=graph&area=Economics');
   const scrollContainer = page.locator('#results-scroll-container');
@@ -2862,7 +2855,6 @@ test.describe('mobile relation graph', () => {
 /** Exercise modal-to-settings navigation with real touch events and normal exit animations. */
 async function mobileSettingsNavigationTest(page: Page, workspace: string): Promise<void> {
   await page.route('**/api/**', serveArticleSettingsApi);
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.goto(workspace);
   await hideDevelopmentIndicator(page);
   const accountTrigger = page.getByRole('button', { name: '打开账号菜单：browser_user' });
@@ -2917,7 +2909,6 @@ test.describe('mobile settings navigation', () => {
       }
       await serveInterfacePolishApi(route);
     });
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.goto('/?q=graph');
     await page
       .getByRole('button', { name: /^查看文章详情：/ })
@@ -2950,7 +2941,6 @@ test.describe('mobile settings navigation', () => {
     page,
   }) => {
     await page.route('**/api/**', serveArticleSettingsApi);
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.goto('/?q=graph');
     await hideDevelopmentIndicator(page);
     await page.getByRole('button', { name: '打开账号菜单：browser_user' }).tap();
@@ -2995,7 +2985,7 @@ test(
   'supports the aggregated settings center across desktop and mobile',
   aggregatedSettingsCenterTest,
 );
-test('preserves dynamic settings under reduced motion', reducedMotionDynamicSettingsTest);
+test('preserves dynamic settings across delivery switches', dynamicSettingsTest);
 test('supports the administrator center across desktop and mobile', administratorCenterTest);
 test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);
@@ -3005,7 +2995,6 @@ test('polishes stable and semantic favorite feedback', interfacePolishFavoriteTe
 /** Verify color feedback without moving controls or changing category selection. */
 async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<void> {
   await page.route('**/api/**', serveTrackingApi);
-  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 1280, height: 900 });
 
   for (const colorScheme of ['light', 'dark'] as const) {
@@ -3194,7 +3183,7 @@ async function cfpTrackingPageTest({ page }: { page: Page }): Promise<void> {
   await page.clock.setFixedTime(new Date('2026-09-15T12:00:00Z'));
   await page.route('**/api/**', serveCfpApi);
   await page.setViewportSize({ width: 1500, height: 1000 });
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/?view=cfp-tracking&cfp_journal=issn-1949-3045');
   await hideDevelopmentIndicator(page);
   await expect(
@@ -3363,7 +3352,7 @@ async function cfpFullTextScrollTest({ page }: { page: Page }): Promise<void> {
     await serveCfpApi(route);
   });
   await page.setViewportSize({ width: 1500, height: 1000 });
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/?view=cfp-tracking&cfp_journal=issn-1949-3045');
   await hideDevelopmentIndicator(page);
   const scopeRegion = page.locator('[data-slot="cfp-scope"] [role="region"]');
@@ -3429,7 +3418,7 @@ async function expandedCfpSourceStatesTest({ page }: { page: Page }): Promise<vo
   await page.clock.setFixedTime(new Date('2026-09-15T12:00:00Z'));
   await page.route('**/api/**', serveExpandedCfpApi);
   await page.setViewportSize({ width: 1500, height: 1000 });
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/?view=cfp-tracking&cfp_db=english_journals.sqlite&cfp_journal=issn-0024-6301');
   await hideDevelopmentIndicator(page);
   await expect(page.getByText('投稿时间待确认')).toBeVisible();
@@ -3506,7 +3495,7 @@ async function cfpGroupedSidebarTest({ page }: { page: Page }): Promise<void> {
     await serveCfpApi(route);
   });
   await page.setViewportSize({ width: 1500, height: 900 });
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/?view=cfp-tracking');
   await hideDevelopmentIndicator(page);
   await expect(

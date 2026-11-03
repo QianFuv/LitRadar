@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Application motion roles built on Animate UI's motion tokens and reduced-motion contract.
+ * Application motion roles built on Animate UI's motion tokens.
  */
 
 import {
@@ -18,10 +18,8 @@ import {
   scale,
   spring,
   transition,
-  useShouldReduceMotion,
-  type ReducedMotion,
 } from '@animate-ui/react/utils/motion';
-import type { ComponentType, PropsWithChildren, ReactNode } from 'react';
+import type { PropsWithChildren, ReactNode } from 'react';
 
 const SHARP = 'blur(0px)';
 
@@ -118,75 +116,25 @@ export const LIST_ITEM_VARIANTS = {
   exit: { opacity: 0, scale: scale.toast, pointerEvents: 'none', transition: transition.fade },
 } satisfies Variants;
 
-/**
- * Reduced-motion disclosure: the height snaps because unfolding is spatial movement, which
- * Motion's reduced-motion setting leaves running for non-transform values; the fade stays on
- * Animate UI's quick fade (rule A1).
- */
-const REDUCED_DISCLOSURE_TRANSITION = { ...transition.fade, height: { duration: 0 } };
-
-const REDUCED_DISCLOSURE_VARIANTS = {
-  hidden: { ...DISCLOSURE_VARIANTS.hidden, transition: REDUCED_DISCLOSURE_TRANSITION },
-  visible: { ...DISCLOSURE_VARIANTS.visible, transition: REDUCED_DISCLOSURE_TRANSITION },
-  exit: { ...DISCLOSURE_VARIANTS.exit, transition: REDUCED_DISCLOSURE_TRANSITION },
-} satisfies Variants;
-
-/** Reduced-motion replacements for roles whose movement Motion cannot drop on its own. */
-const REDUCED_VARIANTS = new Map<Variants, Variants>([
-  [DISCLOSURE_VARIANTS, REDUCED_DISCLOSURE_VARIANTS],
-]);
-
-/**
- * Wrap a motion element so roles with non-transform movement switch to their reduced variants
- * while motion is reduced.
- *
- * @param Component - Motion element to wrap.
- * @returns Motion element that honors the reduced-motion contract for every role.
- */
-function withReducedVariants<Props extends { variants?: Variants }>(
-  Component: ComponentType<Props>,
-) {
-  /**
-   * Render the motion element with the variants that match the reduced-motion preference.
-   *
-   * @param props - Motion element properties.
-   * @returns Motion element.
-   */
-  function ReducedAwareMotion(props: Props) {
-    const shouldReduceMotion = useShouldReduceMotion();
-    const variants =
-      shouldReduceMotion && props.variants
-        ? (REDUCED_VARIANTS.get(props.variants) ?? props.variants)
-        : props.variants;
-    return <Component {...props} variants={variants} />;
-  }
-  return ReducedAwareMotion;
-}
-
-export const MotionArticle = withReducedVariants(motion.article);
-export const MotionDiv = withReducedVariants(motion.div);
-export const MotionForm = withReducedVariants(motion.form);
-export const MotionListItem = withReducedVariants(motion.li);
-export const MotionParagraph = withReducedVariants(motion.p);
-export const MotionSection = withReducedVariants(motion.section);
-export const MotionSpan = withReducedVariants(motion.span);
-
-type MotionProviderProps = {
-  children: ReactNode;
-  reducedMotion?: ReducedMotion;
-};
+export const MotionArticle = motion.article;
+export const MotionDiv = motion.div;
+export const MotionForm = motion.form;
+export const MotionListItem = motion.li;
+export const MotionParagraph = motion.p;
+export const MotionSection = motion.section;
+export const MotionSpan = motion.span;
 
 type MotionPresenceProps = PropsWithChildren<AnimatePresenceProps>;
 
 /**
- * Apply Animate UI's reduced-motion contract to the application tree.
+ * Play every motion at full strength, ignoring the operating system's reduced-motion preference.
  *
- * @param props - Application children and an optional deterministic preference override.
- * @returns Motion boundary that drops movement but keeps fades and blurs when motion is reduced.
+ * @param props - Application children.
+ * @returns Motion boundary that keeps Animate UI and Motion animations running.
  */
-export function MotionProvider({ children, reducedMotion = 'user' }: MotionProviderProps) {
+export function MotionProvider({ children }: { children: ReactNode }) {
   return (
-    <ReducedMotionContext value={reducedMotion}>
+    <ReducedMotionContext value="never">
       <ReducedMotionConfig>{children}</ReducedMotionConfig>
     </ReducedMotionContext>
   );
@@ -215,13 +163,4 @@ export function MotionPresence({ initial = false, ...props }: MotionPresenceProp
  */
 export function PresenceBoundary({ children }: { children: ReactNode }) {
   return <PresenceContext value={null}>{children}</PresenceContext>;
-}
-
-/**
- * Read whether spatial motion is currently reduced.
- *
- * @returns True when movement must be skipped; fades and blurs still play.
- */
-export function useIsMotionReduced(): boolean {
-  return useShouldReduceMotion();
 }

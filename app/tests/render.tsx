@@ -48,7 +48,7 @@ export function renderWithQuery(
    */
   function Wrapper({ children }: { children: ReactNode }) {
     return (
-      <MotionProvider reducedMotion="always">
+      <MotionProvider>
         <QueryClientProvider client={queryClient}>
           <RevealScope>{children}</RevealScope>
         </QueryClientProvider>
