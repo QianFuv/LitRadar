@@ -15,8 +15,8 @@ type GlobalErrorProps = {
 
 const GLOBAL_BODY_STYLE: CSSProperties = {
   alignItems: 'center',
-  background: '#111111',
-  color: '#eeeeee',
+  background: '#141414',
+  color: '#f5f5f5',
   colorScheme: 'dark',
   display: 'flex',
   fontFamily: 'ui-sans-serif, system-ui, sans-serif',
@@ -27,8 +27,8 @@ const GLOBAL_BODY_STYLE: CSSProperties = {
 };
 
 const GLOBAL_CARD_STYLE: CSSProperties = {
-  background: '#191919',
-  border: '1px solid #3a3a3a',
+  background: '#1b1b1b',
+  border: '1px solid #242424',
   borderRadius: '12px',
   boxSizing: 'border-box',
   maxWidth: '448px',
@@ -44,8 +44,8 @@ const GLOBAL_ACTIONS_STYLE: CSSProperties = {
 };
 
 const GLOBAL_BUTTON_STYLE: CSSProperties = {
-  background: 'var(--recovery-action-background, #2563eb)',
-  border: '1px solid #2563eb',
+  background: 'var(--recovery-action-background, #346bf1)',
+  border: '1px solid #346bf1',
   borderRadius: '6px',
   color: '#ffffff',
   cursor: 'pointer',
@@ -57,8 +57,8 @@ const GLOBAL_BUTTON_STYLE: CSSProperties = {
 const GLOBAL_SECONDARY_BUTTON_STYLE: CSSProperties = {
   ...GLOBAL_BUTTON_STYLE,
   background: 'var(--recovery-action-background, transparent)',
-  borderColor: '#484848',
-  color: '#eeeeee',
+  borderColor: '#2a2a2a',
+  color: '#f5f5f5',
 };
 
 /**

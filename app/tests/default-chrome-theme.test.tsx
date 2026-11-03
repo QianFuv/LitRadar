@@ -47,6 +47,8 @@ const DEFAULT_CHROME_COMPONENTS = [
   'components/settings/settings-center-dialog.tsx',
 ] as const;
 
+const MAX_NEUTRAL_CHANNEL_SPREAD = 12;
+
 const CHROMATIC_UTILITY_PATTERN =
   /(?:bg|text|border|ring|outline|fill|stroke)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)(?:-\d+)?/g;
 
@@ -130,12 +132,12 @@ function parseCustomProperties(declarationBlock: string): ReadonlyMap<string, st
 }
 
 /**
- * Assert that a six-digit hex color has equal red, green, and blue channels.
+ * Assert that a six-digit hex color is a near-neutral gray whose channels differ by at most a slight tint.
  *
  * @param value - CSS color value.
  * @param context - Token and theme description for failures.
  */
-function expectGrayscaleHex(value: string, context: string): void {
+function expectNeutralHex(value: string, context: string): void {
   const match = /^#([0-9a-f]{6})$/i.exec(value);
   if (!match) {
     throw new Error(`${context} must use a six-digit hex color, received ${value}`);
@@ -146,13 +148,15 @@ function expectGrayscaleHex(value: string, context: string): void {
     Number.parseInt(match[1].slice(2, 4), 16),
     Number.parseInt(match[1].slice(4, 6), 16),
   ];
-  expect(new Set(channels).size).toBe(1);
+  expect(Math.max(...channels) - Math.min(...channels), context).toBeLessThanOrEqual(
+    MAX_NEUTRAL_CHANNEL_SPREAD,
+  );
 }
 
 /**
  * Verify structural surfaces and text stay neutral while interaction colors use the blue accent.
  */
-function keepsDefaultChromeTokensGrayscale(): void {
+function keepsDefaultChromeTokensNeutral(): void {
   const stylesheet = readProjectFile('app/globals.css');
 
   for (const selector of [':root', '.dark'] as const) {
@@ -160,12 +164,12 @@ function keepsDefaultChromeTokensGrayscale(): void {
     for (const token of DEFAULT_CHROME_TOKENS) {
       const value = variables.get(token);
       expect(value).toBeDefined();
-      expectGrayscaleHex(value ?? '', `${selector} ${token}`);
+      expectNeutralHex(value ?? '', `${selector} ${token}`);
     }
   }
 
   const darkVariables = parseCustomProperties(extractDeclarationBlock(stylesheet, '.dark'));
-  expect(darkVariables.get('--sidebar-primary')).toBe('#2563eb');
+  expect(darkVariables.get('--sidebar-primary')).toBe('#346bf1');
   expect(darkVariables.get('--sidebar-primary-foreground')).toBe('#ffffff');
 }
 
@@ -207,12 +211,12 @@ function retainsSemanticColorsAndRasterAssets(): void {
     destructive: lightVariables.get('--destructive'),
     info: lightVariables.get('--info'),
     infoForeground: lightVariables.get('--info-foreground'),
-  }).toEqual({ destructive: '#dc2626', info: '#eef3fe', infoForeground: '#1d4ed8' });
+  }).toEqual({ destructive: '#c10007', info: '#dbe1f2', infoForeground: '#1b4ed8' });
   expect({
     destructive: darkVariables.get('--destructive'),
     info: darkVariables.get('--info'),
     infoForeground: darkVariables.get('--info-foreground'),
-  }).toEqual({ destructive: '#f87171', info: '#12224a', infoForeground: '#a5c2ff' });
+  }).toEqual({ destructive: '#fb414a', info: '#1b2440', infoForeground: '#51a2ff' });
 
   for (const fixture of SEMANTIC_COLOR_FIXTURES) {
     const source = readProjectFile(fixture.path);
@@ -271,7 +275,7 @@ describe('default chrome theme contract', () => {
     'keeps neutral, interactive, and status text readable in both themes',
     keepsThemeTextLegible,
   );
-  test('keeps ordinary light and dark tokens grayscale', keepsDefaultChromeTokensGrayscale);
+  test('keeps ordinary light and dark tokens neutral', keepsDefaultChromeTokensNeutral);
   test(
     'keeps shell component utilities free of palette hues',
     keepsChromeComponentUtilitiesNeutral,

@@ -145,9 +145,9 @@ export function GeneralSettingsSection() {
 function ThemeMiniature({ scheme }: { scheme: 'light' | 'dark' }) {
   const isDark = scheme === 'dark';
   return (
-    <span className={cn('flex h-full w-full', isDark ? 'bg-[#0a0a0a]' : 'bg-[#f4f4f4]')}>
-      <span className="flex w-[16%] flex-col items-center gap-1.5 bg-[#111] pt-2.5">
-        <i className="size-2 rounded-[3px] bg-[#2563eb]" />
+    <span className={cn('flex h-full w-full', isDark ? 'bg-[#141414]' : 'bg-[#f6f6f6]')}>
+      <span className="flex w-[16%] flex-col items-center gap-1.5 bg-[#1c1c1c] pt-2.5">
+        <i className="size-2 rounded-[3px] bg-[#346bf1]" />
         <i className="h-1 w-3 rounded-full bg-white/40" />
         <i className="h-1 w-3 rounded-full bg-white/20" />
         <i className="h-1 w-3 rounded-full bg-white/20" />
@@ -159,13 +159,13 @@ function ThemeMiniature({ scheme }: { scheme: 'light' | 'dark' }) {
               key={index}
               className={cn(
                 'flex flex-col gap-1 rounded-[3px] p-1.5',
-                isDark ? 'bg-[#1a1a1a]' : 'bg-white',
+                isDark ? 'bg-[#1b1b1b]' : 'bg-[#fbfbfb]',
               )}
             >
               <i
                 className={cn(
                   'h-1 rounded-full',
-                  index === 0 ? 'w-4/5 bg-[#2563eb]' : 'w-3/4',
+                  index === 0 ? 'w-4/5 bg-[#346bf1]' : 'w-3/4',
                   index !== 0 && (isDark ? 'bg-white/50' : 'bg-black/45'),
                 )}
               />
@@ -176,7 +176,7 @@ function ThemeMiniature({ scheme }: { scheme: 'light' | 'dark' }) {
         <span
           className={cn(
             'flex flex-[2] flex-col gap-1 rounded-[3px] p-1.5',
-            isDark ? 'bg-[#1a1a1a]' : 'bg-white',
+            isDark ? 'bg-[#1b1b1b]' : 'bg-[#fbfbfb]',
           )}
         >
           <i className={cn('h-1.5 w-4/5 rounded-full', isDark ? 'bg-white/60' : 'bg-black/55')} />
