@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { parseAsString, useQueryState } from 'nuqs';
 import { Database } from 'lucide-react';
-import { Search } from '@/components/ui/animated-icons';
+import { Search, Megaphone } from '@/components/ui/animated-icons';
 
 import { CfpNoticeCard, CfpSourceFooter } from '@/components/cfp/cfp-notice-card';
 import {
@@ -308,7 +308,10 @@ function renderCfpNotices(
   return (
     <section aria-label="征稿需求" className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <h2 className="text-sm font-bold">征稿需求</h2>
+        <h2 className="flex items-center gap-2 text-sm font-bold">
+          <Megaphone animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+          征稿需求
+        </h2>
         <label className="flex min-h-9 shrink-0 cursor-pointer items-center gap-2 text-xs leading-5 text-muted-foreground">
           <Checkbox
             checked={shouldShowClosed}

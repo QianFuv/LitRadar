@@ -2,7 +2,15 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Database, Shield, Ticket } from 'lucide-react';
-import { BellRing, Folder, Key, Star, Users } from '@/components/ui/animated-icons';
+import {
+  BellRing,
+  Folder,
+  Key,
+  Star,
+  Users,
+  Layers,
+  type AnimatedIcon,
+} from '@/components/ui/animated-icons';
 
 import { adminGetStats } from '@/lib/api';
 import { StatusPill } from '@/components/settings/settings-section';
@@ -52,10 +60,21 @@ function StatCard({
  * @param props - Group title and statistic tiles.
  * @returns Statistic tile grid.
  */
-function StatGroup({ title, children }: { title: string; children: React.ReactNode }) {
+function StatGroup({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: AnimatedIcon;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-bold">{title}</h3>
+      <h3 className="flex items-center gap-2 text-sm font-bold">
+        <Icon animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+        {title}
+      </h3>
       <dl className="-mx-4 grid grid-cols-2 gap-px border-y bg-border sm:-mx-5 lg:grid-cols-4">
         {children}
       </dl>
@@ -122,7 +141,7 @@ function renderAuthStatistics(state: Pick<OverviewViewState, 'authStats'>) {
   const { authStats } = state;
   return (
     <>
-      <StatGroup title="账号与访问">
+      <StatGroup icon={Users} title="账号与访问">
         <StatCard
           label="用户总数"
           value={getAuthStatisticValue(authStats?.total_users)}
@@ -144,7 +163,7 @@ function renderAuthStatistics(state: Pick<OverviewViewState, 'authStats'>) {
           icon={<BellRing />}
         />
       </StatGroup>
-      <StatGroup title="收藏与邀请">
+      <StatGroup icon={Star} title="收藏与邀请">
         <StatCard
           label="收藏夹"
           value={getAuthStatisticValue(authStats?.total_folders)}
@@ -196,7 +215,10 @@ function renderIndexStatistics(state: Pick<OverviewViewState, 'indexStats'>) {
     indexStats && (
       <section className="space-y-3">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-          <h3 className="text-sm font-bold">索引数据库</h3>
+          <h3 className="flex items-center gap-2 text-sm font-bold">
+            <Layers animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+            索引数据库
+          </h3>
           <p className="text-xs text-muted-foreground tabular-nums">
             共 {NUMBER_FORMATTER.format(indexStats.total_articles)} 篇文章，
             {NUMBER_FORMATTER.format(indexStats.total_journals)} 本期刊
@@ -241,7 +263,10 @@ function renderPushStatistics(state: Pick<OverviewViewState, 'pushStats'>) {
     pushStats &&
     pushStats.length > 0 && (
       <section className="space-y-3">
-        <h3 className="text-sm font-bold">推送状态</h3>
+        <h3 className="flex items-center gap-2 text-sm font-bold">
+          <BellRing animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+          推送状态
+        </h3>
         <ul className="-mx-4 divide-y border-y sm:-mx-5">
           {pushStats.map((ps) => (
             <li

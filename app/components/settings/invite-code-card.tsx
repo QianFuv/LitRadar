@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Ban, Ticket } from 'lucide-react';
-import { RotateCcw } from '@/components/ui/animated-icons';
+import { RotateCcw, Gift } from '@/components/ui/animated-icons';
 
 import {
   generateInviteCode,
@@ -74,7 +74,7 @@ export function InviteCodeCard(props: {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <SettingsSectionTitle>邀请码</SettingsSectionTitle>
+        <SettingsSectionTitle icon={Gift}>邀请码</SettingsSectionTitle>
         <SettingsSectionDescription>
           邀请码默认有效 7 天且可注册 1 次，可随时轮换或永久撤销
         </SettingsSectionDescription>

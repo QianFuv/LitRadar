@@ -4,7 +4,7 @@
  * Manual tracking-push section.
  */
 
-import { Download, ShieldCheck, X } from '@/components/ui/animated-icons';
+import { Download, ShieldCheck, X, SendHorizontal } from '@/components/ui/animated-icons';
 
 import {
   SettingsGroup,
@@ -32,7 +32,7 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <SettingsSectionTitle>手动推送</SettingsSectionTitle>
+        <SettingsSectionTitle icon={SendHorizontal}>手动推送</SettingsSectionTitle>
         <SettingsSectionDescription>{model.description}</SettingsSectionDescription>
       </SettingsSectionHeader>
       <SettingsGroup>

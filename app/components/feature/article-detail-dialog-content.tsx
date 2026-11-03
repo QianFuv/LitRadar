@@ -17,7 +17,7 @@ import {
   Settings,
   TriangleAlert,
 } from 'lucide-react';
-import { ArrowLeft, X } from '@/components/ui/animated-icons';
+import { ArrowLeft, X, FileText, BookOpen } from '@/components/ui/animated-icons';
 
 import {
   getArticleActionUrlForDatabase,
@@ -449,7 +449,10 @@ function renderArticleDetailBody(
 
       <section className="mt-8">
         <h3 className="flex items-center gap-3 text-[11px] font-bold tracking-[0.16em] text-muted-foreground after:h-px after:flex-1 after:bg-border">
-          摘要
+          <span className="flex items-center gap-1.5">
+            <FileText animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+            摘要
+          </span>
         </h3>
         <p className="mt-4 text-pretty text-[15px] leading-[1.95] text-foreground/85 [overflow-wrap:anywhere]">
           {article.abstract || '暂无摘要。'}
@@ -563,7 +566,10 @@ function renderArticleMetadata(
   return (
     <section className="mt-8">
       <h3 className="flex items-center gap-3 text-[11px] font-bold tracking-[0.16em] text-muted-foreground after:h-px after:flex-1 after:bg-border">
-        文献信息
+        <span className="flex items-center gap-1.5">
+          <BookOpen animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+          文献信息
+        </span>
       </h3>
       <dl className="mt-2 divide-y divide-border/70 text-[13px] leading-6">
         {rows.map((row) => (

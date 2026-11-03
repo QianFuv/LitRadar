@@ -86,7 +86,7 @@ export function AccessTokensCard(props: {
       <SettingsSectionHeader>
         <div className="flex w-full items-end justify-between gap-4">
           <div className="min-w-0">
-            <SettingsSectionTitle>访问令牌</SettingsSectionTitle>
+            <SettingsSectionTitle icon={Key}>访问令牌</SettingsSectionTitle>
             <SettingsSectionDescription>
               创建访问令牌，用于接口访问或第三方集成
             </SettingsSectionDescription>

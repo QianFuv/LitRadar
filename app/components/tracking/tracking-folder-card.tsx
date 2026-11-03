@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { Folder } from '@/components/ui/animated-icons';
 
 type TrackingFolderCardProps = {
   model: TrackingPageViewModel['folder'];
@@ -48,7 +49,7 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <SettingsSectionTitle>追踪文件夹</SettingsSectionTitle>
+        <SettingsSectionTitle icon={Folder}>追踪文件夹</SettingsSectionTitle>
         <SettingsSectionDescription>
           设置追踪文件夹后，每周推送的新文章将自动收藏到该文件夹中
         </SettingsSectionDescription>

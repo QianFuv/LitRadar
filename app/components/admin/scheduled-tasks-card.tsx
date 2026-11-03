@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Clock3, Pencil, Plus, Trash2 } from '@/components/ui/animated-icons';
+import { AlertTriangle, Clock3, Pencil, Plus, Trash2, Clock } from '@/components/ui/animated-icons';
 
 import {
   adminCreateScheduledTask,
@@ -975,7 +975,10 @@ function renderRecentSchedulerRuns(
     <RevealItem isReady={!isSchedulerStatusLoading} placeholder={null}>
       {schedulerStatus && (
         <section className="space-y-3 pt-7">
-          <h3 className="px-1 text-sm font-bold">最近调度运行</h3>
+          <h3 className="flex items-center gap-2 px-1 text-sm font-bold">
+            <Clock animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+            最近调度运行
+          </h3>
           {schedulerStatus.recent_runs.length === 0 ? (
             <p className="px-1 text-sm text-muted-foreground">暂无调度运行记录</p>
           ) : (

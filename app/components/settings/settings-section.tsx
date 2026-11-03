@@ -7,6 +7,7 @@
 
 import type { ComponentProps, ReactNode } from 'react';
 
+import type { AnimatedIcon } from '@/components/ui/animated-icons';
 import { cn } from '@/lib/utils';
 
 /**
@@ -42,18 +43,27 @@ export function SettingsSectionHeader({ className, ...props }: ComponentProps<'h
 }
 
 /**
- * Render an accessible caption for one settings section.
+ * Render an accessible caption for one settings section, optionally led by an icon that plays once
+ * when the title scrolls into view.
  *
- * @param props - Native heading properties.
+ * @param props - Native heading properties and an optional leading icon.
  * @returns Settings section title.
  */
-export function SettingsSectionTitle({ className, ...props }: ComponentProps<'h3'>) {
+export function SettingsSectionTitle({
+  className,
+  icon: Icon,
+  children,
+  ...props
+}: ComponentProps<'h3'> & { icon?: AnimatedIcon }) {
   return (
     <h3
       data-slot="settings-section-title"
-      className={cn('text-sm leading-6 font-bold', className)}
+      className={cn('text-sm leading-6 font-bold', Icon && 'flex items-center gap-2', className)}
       {...props}
-    />
+    >
+      {Icon && <Icon animateOnView className="size-3.5 shrink-0" aria-hidden="true" />}
+      {children}
+    </h3>
   );
 }
 

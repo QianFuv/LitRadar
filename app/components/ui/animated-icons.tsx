@@ -64,6 +64,12 @@ import {
   Users as StillUsers,
   Wand2 as StillWand2,
   X as StillX,
+  BookOpen as StillBookOpen,
+  CircleQuestionMark as StillCircleQuestionMark,
+  Gift as StillGift,
+  Link as StillLinkIcon,
+  SendHorizontal as StillSendHorizontal,
+  SunMoon as StillSunMoon,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -72,6 +78,7 @@ import { ArrowLeft as AnimatedArrowLeft } from '@/components/animate-ui/icons/ar
 import { ArrowUp as AnimatedArrowUp } from '@/components/animate-ui/icons/arrow-up';
 import { Bell as AnimatedBell } from '@/components/animate-ui/icons/bell';
 import { BellRing as AnimatedBellRing } from '@/components/animate-ui/icons/bell-ring';
+import { BookOpen as AnimatedBookOpen } from '@/components/animate-ui/icons/book-open';
 import { Bookmark as AnimatedBookmark } from '@/components/animate-ui/icons/bookmark';
 import { BookmarkCheck as AnimatedBookmarkCheck } from '@/components/animate-ui/icons/bookmark-check';
 import { Bot as AnimatedBot } from '@/components/animate-ui/icons/bot';
@@ -82,6 +89,7 @@ import { ChevronRight as AnimatedChevronRight } from '@/components/animate-ui/ic
 import { ChevronUp as AnimatedChevronUp } from '@/components/animate-ui/icons/chevron-up';
 import { CircleAlert as AnimatedCircleAlert } from '@/components/animate-ui/icons/circle-alert';
 import { CircleCheck as AnimatedCircleCheck } from '@/components/animate-ui/icons/circle-check';
+import { CircleQuestionMark as AnimatedCircleQuestionMark } from '@/components/animate-ui/icons/circle-question-mark';
 import { Clock as AnimatedClock } from '@/components/animate-ui/icons/clock';
 import { Clock3 as AnimatedClock3 } from '@/components/animate-ui/icons/clock-3';
 import { Copy as AnimatedCopy } from '@/components/animate-ui/icons/copy';
@@ -91,9 +99,11 @@ import { Eye as AnimatedEye } from '@/components/animate-ui/icons/eye';
 import { EyeOff as AnimatedEyeOff } from '@/components/animate-ui/icons/eye-off';
 import { FileText as AnimatedFileText } from '@/components/animate-ui/icons/file-text';
 import { Folder as AnimatedFolder } from '@/components/animate-ui/icons/folder';
+import { Gift as AnimatedGift } from '@/components/animate-ui/icons/gift';
 import { Key as AnimatedKey } from '@/components/animate-ui/icons/key';
 import { KeyRound as AnimatedKeyRound } from '@/components/animate-ui/icons/key-round';
 import { Layers as AnimatedLayers } from '@/components/animate-ui/icons/layers';
+import { Link as AnimatedLink } from '@/components/animate-ui/icons/link';
 import { Maximize as AnimatedMaximize } from '@/components/animate-ui/icons/maximize';
 import { Megaphone as AnimatedMegaphone } from '@/components/animate-ui/icons/megaphone';
 import { Minus as AnimatedMinus } from '@/components/animate-ui/icons/minus';
@@ -104,9 +114,11 @@ import { RotateCcw as AnimatedRotateCcw } from '@/components/animate-ui/icons/ro
 import { Save as AnimatedSave } from '@/components/animate-ui/icons/save';
 import { Search as AnimatedSearch } from '@/components/animate-ui/icons/search';
 import { Send as AnimatedSend } from '@/components/animate-ui/icons/send';
+import { SendHorizontal as AnimatedSendHorizontal } from '@/components/animate-ui/icons/send-horizontal';
 import { ShieldCheck as AnimatedShieldCheck } from '@/components/animate-ui/icons/shield-check';
 import { SlidersHorizontal as AnimatedSlidersHorizontal } from '@/components/animate-ui/icons/sliders-horizontal';
 import { Star as AnimatedStar } from '@/components/animate-ui/icons/star';
+import { SunMoon as AnimatedSunMoon } from '@/components/animate-ui/icons/sun-moon';
 import { Trash2 as AnimatedTrash2 } from '@/components/animate-ui/icons/trash-2';
 import { TriangleAlert as AnimatedTriangleAlert } from '@/components/animate-ui/icons/triangle-alert';
 import { Users as AnimatedUsers } from '@/components/animate-ui/icons/users';
@@ -127,6 +139,9 @@ export type AppIconProps = { className?: string; strokeWidth?: number } & AriaAt
 
 /** An icon component usable in navigation and section definitions. */
 export type AppIcon = ComponentType<AppIconProps>;
+
+/** An animated icon that can play on its own when it scrolls into view. */
+export type AnimatedIcon = ComponentType<AppIconProps & { animateOnView?: boolean }>;
 
 /**
  * Bind an Animate UI icon to the surrounding control: it plays while the control is hovered or
@@ -266,6 +281,7 @@ export const ArrowLeft = withIconTrigger(StillArrowLeft, AnimatedArrowLeft);
 export const ArrowUp = withIconTrigger(StillArrowUp, AnimatedArrowUp);
 export const Bell = withIconTrigger(StillBell, AnimatedBell);
 export const BellRing = withIconTrigger(StillBellRing, AnimatedBellRing);
+export const BookOpen = withIconTrigger(StillBookOpen, AnimatedBookOpen);
 export const Bookmark = withIconTrigger(StillBookmark, AnimatedBookmark);
 export const BookmarkCheck = withIconTrigger(StillBookmarkCheck, AnimatedBookmarkCheck);
 export const Bot = withIconTrigger(StillBot, AnimatedBot);
@@ -275,6 +291,10 @@ export const CheckCircle2 = withIconTrigger(StillCheckCircle2, AnimatedCircleChe
 export const ChevronDown = withIconTrigger(StillChevronDown, AnimatedChevronDown);
 export const ChevronRight = withIconTrigger(StillChevronRight, AnimatedChevronRight);
 export const ChevronUp = withIconTrigger(StillChevronUp, AnimatedChevronUp);
+export const CircleQuestionMark = withIconTrigger(
+  StillCircleQuestionMark,
+  AnimatedCircleQuestionMark,
+);
 export const Clock = withIconTrigger(StillClock, AnimatedClock);
 export const Clock3 = withIconTrigger(StillClock3, AnimatedClock3);
 export const Copy = withIconTrigger(StillCopy, AnimatedCopy);
@@ -283,9 +303,11 @@ export const Eye = withIconTrigger(StillEye, AnimatedEye);
 export const EyeOff = withIconTrigger(StillEyeOff, AnimatedEyeOff);
 export const FileText = withIconTrigger(StillFileText, AnimatedFileText);
 export const Folder = withIconTrigger(StillFolder, AnimatedFolder);
+export const Gift = withIconTrigger(StillGift, AnimatedGift);
 export const Key = withIconTrigger(StillKey, AnimatedKey);
 export const KeyRound = withIconTrigger(StillKeyRound, AnimatedKeyRound);
 export const Layers = withIconTrigger(StillLayers, AnimatedLayers);
+export const LinkIcon = withIconTrigger(StillLinkIcon, AnimatedLink);
 export const Maximize = withIconTrigger(StillMaximize, AnimatedMaximize);
 export const Megaphone = withIconTrigger(StillMegaphone, AnimatedMegaphone);
 export const Minus = withIconTrigger(StillMinus, AnimatedMinus);
@@ -297,9 +319,11 @@ export const RotateCcw = withIconTrigger(StillRotateCcw, AnimatedRotateCcw);
 export const Save = withIconTrigger(StillSave, AnimatedSave);
 export const Search = withIconTrigger(StillSearch, AnimatedSearch);
 export const Send = withIconTrigger(StillSend, AnimatedSend);
+export const SendHorizontal = withIconTrigger(StillSendHorizontal, AnimatedSendHorizontal);
 export const ShieldCheck = withIconTrigger(StillShieldCheck, AnimatedShieldCheck);
 export const SlidersHorizontal = withIconTrigger(StillSlidersHorizontal, AnimatedSlidersHorizontal);
 export const Star = withIconTrigger(StillStar, AnimatedStar);
+export const SunMoon = withIconTrigger(StillSunMoon, AnimatedSunMoon);
 export const Trash2 = withIconTrigger(StillTrash2, AnimatedTrash2);
 export const Users = withIconTrigger(StillUsers, AnimatedUsers);
 export const Wand2 = withIconTrigger(StillWand2, AnimatedWandSparkles);

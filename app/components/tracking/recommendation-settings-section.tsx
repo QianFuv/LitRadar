@@ -5,7 +5,7 @@
  */
 
 import { Database, LifeBuoy } from 'lucide-react';
-import { Bot, Plus, X } from '@/components/ui/animated-icons';
+import { Bot, Plus, X, Layers } from '@/components/ui/animated-icons';
 import type { ReactNode } from 'react';
 
 import {
@@ -67,7 +67,7 @@ export function RecommendationSettingsSection({ model }: RecommendationSettingsS
     <>
       <SettingsSection>
         <SettingsSectionHeader>
-          <SettingsSectionTitle>AI 推荐配置</SettingsSectionTitle>
+          <SettingsSectionTitle icon={Bot}>AI 推荐配置</SettingsSectionTitle>
           <SettingsSectionDescription>
             只有在启用推荐、填写关键词或研究方向、且至少有一套可用 AI 配置时，系统才会推送文章
           </SettingsSectionDescription>
@@ -733,7 +733,9 @@ function renderRecommendationDatabases(state: Pick<RecommendationViewState, 'dat
   return (
     <SettingsSection role="group" aria-labelledby="push-databases-label">
       <SettingsSectionHeader>
-        <SettingsSectionTitle id="push-databases-label">推送数据库</SettingsSectionTitle>
+        <SettingsSectionTitle icon={Layers} id="push-databases-label">
+          推送数据库
+        </SettingsSectionTitle>
         <SettingsSectionDescription>
           手动推送和自动推送都会按这里的数据库范围执行；不限制时表示全部数据库。
         </SettingsSectionDescription>

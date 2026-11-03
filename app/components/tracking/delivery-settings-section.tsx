@@ -65,7 +65,7 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <SettingsSectionTitle>推送方式</SettingsSectionTitle>
+        <SettingsSectionTitle icon={Send}>推送方式</SettingsSectionTitle>
         <SettingsSectionDescription>
           选择自动推荐的投递位置，并在需要时配置 PushPlus 外部通知。
         </SettingsSectionDescription>

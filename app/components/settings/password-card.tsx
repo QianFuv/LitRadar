@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MotionParagraph, MotionPresence, REVEAL_VARIANTS } from '@/components/ui/motion';
+import { KeyRound } from '@/components/ui/animated-icons';
 
 /**
  * Render and manage the active user's password change form.
@@ -39,7 +40,7 @@ export function PasswordCard() {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <SettingsSectionTitle>修改密码</SettingsSectionTitle>
+        <SettingsSectionTitle icon={KeyRound}>修改密码</SettingsSectionTitle>
         <SettingsSectionDescription>
           修改成功后需要重新登录，新密码至少 12 位。
         </SettingsSectionDescription>

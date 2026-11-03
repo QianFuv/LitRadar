@@ -11,6 +11,7 @@ import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getRelatedArticles, type Article } from '@/lib/api';
 import { getArticleDisplayTitle } from '@/lib/article-title';
+import { LinkIcon } from '@/components/ui/animated-icons';
 
 /** Number of related articles requested from the backend. */
 const RELATED_ARTICLE_LIMIT = 6;
@@ -47,7 +48,10 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
   return (
     <section ref={ref} aria-label="相关文章" className="mt-8">
       <h3 className="flex items-center gap-3 text-[11px] font-bold tracking-[0.16em] text-muted-foreground after:h-px after:flex-1 after:bg-border">
-        相关文章
+        <span className="flex items-center gap-1.5">
+          <LinkIcon animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+          相关文章
+        </span>
       </h3>
       <RevealItem
         isReady={!relatedQuery.isLoading}

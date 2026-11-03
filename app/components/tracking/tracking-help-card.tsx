@@ -3,7 +3,7 @@
  */
 
 import { FolderHeart, Tags } from 'lucide-react';
-import { Bot, Send } from '@/components/ui/animated-icons';
+import { Bot, Send, CircleQuestionMark } from '@/components/ui/animated-icons';
 
 import {
   SettingsSection,
@@ -39,7 +39,7 @@ export function TrackingHelpCard() {
   return (
     <SettingsSection>
       <SettingsSectionHeader className="sr-only">
-        <SettingsSectionTitle>文献追踪说明</SettingsSectionTitle>
+        <SettingsSectionTitle icon={CircleQuestionMark}>文献追踪说明</SettingsSectionTitle>
       </SettingsSectionHeader>
       <ol className="-mx-4 grid grid-cols-2 gap-px border-y bg-border sm:-mx-5 sm:grid-cols-4">
         {TRACKING_STEPS.map((step, index) => {

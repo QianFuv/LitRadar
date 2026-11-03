@@ -4,7 +4,7 @@
  * Theme preference controls for the general settings category.
  */
 
-import { Check } from '@/components/ui/animated-icons';
+import { Check, SunMoon } from '@/components/ui/animated-icons';
 import { useTheme } from 'next-themes';
 import { useSyncExternalStore } from 'react';
 
@@ -77,7 +77,7 @@ export function GeneralSettingsSection() {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <SettingsSectionTitle>外观</SettingsSectionTitle>
+        <SettingsSectionTitle icon={SunMoon}>外观</SettingsSectionTitle>
         <SettingsSectionDescription>
           选择 LitRadar 的界面主题。该偏好会保存在当前浏览器中。
         </SettingsSectionDescription>
