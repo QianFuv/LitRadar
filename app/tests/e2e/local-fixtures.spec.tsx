@@ -1648,11 +1648,15 @@ async function expectTakeoverClose(dialog: Locator, minimumSize: number): Promis
   const close = dialog.getByRole('button', { name: '关闭', exact: true });
   await expect(close).toBeInViewport();
   await expect.poll(async () => (await close.boundingBox())?.y ?? Infinity).toBeLessThan(24);
+  await expect
+    .poll(async () => {
+      const settled = await close.boundingBox();
+      return Math.min(settled?.width ?? 0, settled?.height ?? 0);
+    })
+    .toBeGreaterThanOrEqual(minimumSize);
   const box = await close.boundingBox();
   const viewport = dialog.page().viewportSize();
   expect(box).not.toBeNull();
-  expect(box!.width).toBeGreaterThanOrEqual(minimumSize);
-  expect(box!.height).toBeGreaterThanOrEqual(minimumSize);
   expect(box!.y).toBeLessThan(24);
   expect(box!.x + box!.width).toBeLessThanOrEqual(viewport?.width ?? Infinity);
 }
