@@ -400,19 +400,20 @@ async function journalRatingJourney({ page }: { page: Page }): Promise<void> {
   await expect(
     results.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first(),
   ).toBeVisible();
-  const ratingPill = page.getByRole('button', { name: /^期刊评级/ });
-  const ratingPanel = page.locator('[data-slot="popover-content"]');
+  const ratingPill = page.getByRole('combobox', { name: /^期刊评级/ });
+  const ratingList = page.getByRole('listbox');
   await ratingPill.click();
-  await ratingPanel.getByRole('checkbox', { name: 'ABS 4*', exact: true }).check();
+  await ratingList.getByRole('option', { name: 'ABS 4*', exact: true }).click();
   await expect(results.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
-  await ratingPanel.getByRole('checkbox', { name: 'ABS 4', exact: true }).check();
+  await ratingList.getByRole('option', { name: 'ABS 4', exact: true }).click();
   await expect(
     results.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true }).first(),
   ).toBeVisible();
-  await ratingPanel.getByRole('checkbox', { name: 'FMS A', exact: true }).check();
+  await ratingList.getByRole('option', { name: 'FMS A', exact: true }).click();
   await expect(results.getByText(SECOND_RATED_ARTICLE_TITLE, { exact: true })).toHaveCount(0);
   await expect(results.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
   await page.keyboard.press('Escape');
+  await expect(ratingList).toHaveCount(0);
   const response = await page.request.get(
     '/api/articles?db=full-stack.sqlite&abs_rating=4&abs_rating=4%2A&fms_rating=A',
   );
@@ -423,9 +424,13 @@ async function journalRatingJourney({ page }: { page: Page }): Promise<void> {
   await page.reload();
   await expect(ratingPill).toHaveAccessibleName('期刊评级：已选 3 项');
   await ratingPill.click();
-  await expect(ratingPanel.getByRole('checkbox', { name: 'FMS A', exact: true })).toBeChecked();
-  await ratingPanel.getByRole('checkbox', { name: 'ABS 4*', exact: true }).uncheck();
+  await expect(ratingList.getByRole('option', { name: 'FMS A', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await ratingList.getByRole('option', { name: 'ABS 4*', exact: true }).click();
   await page.keyboard.press('Escape');
+  await expect(ratingList).toHaveCount(0);
   await expect(page.getByText('未找到文章。', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '清除筛选', exact: true }).click();
   await expect(results.getByText(ARTICLE_TITLE, { exact: true }).first()).toBeVisible();
