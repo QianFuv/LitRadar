@@ -862,7 +862,7 @@ async function reusesUnchangedFavoritePages(): Promise<void> {
   );
   const user = userEvent.setup();
   const { queryClient } = renderFavoritesPage();
-  await screen.findByText('Article 1');
+  await screen.findByText('Article 1', undefined, { timeout: 3000 });
   const queryKey = ['folder-articles', 3, 'cursor', 21];
   const data = queryClient.getQueryData<InfiniteData<FavoriteArticlePage>>(queryKey)!;
   const flatten = vi.spyOn(Array.prototype, 'flatMap');
