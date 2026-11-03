@@ -4,11 +4,11 @@
  * Shared filter pills: pill styles and labels, panel headers, popover facets, and database pills.
  */
 
-import { SwappingText } from '@animate-ui/react/primitives/texts/swapping';
 import { ChevronDown, Database } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { MotionPresence, MotionSpan, SWAP_VARIANTS } from '@/components/ui/motion';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
@@ -38,7 +38,7 @@ export function getFilterPillClassName(isActive: boolean): string {
 }
 
 /**
- * Render a pill's visible text, letting changed characters swap in place.
+ * Render a pill's visible text, swapping the whole label in place when it changes.
  *
  * @param props - Text to show.
  * @returns Truncating pill label.
@@ -46,9 +46,18 @@ export function getFilterPillClassName(isActive: boolean): string {
 export function FilterPillLabel({ text }: { text: string }) {
   return (
     <>
-      <span className="min-w-0 truncate">
-        <SwappingText text={text} />
-      </span>
+      <MotionPresence mode="wait">
+        <MotionSpan
+          key={text}
+          className="min-w-0 truncate"
+          variants={SWAP_VARIANTS}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+        >
+          {text}
+        </MotionSpan>
+      </MotionPresence>
       <ChevronDown className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
     </>
   );
