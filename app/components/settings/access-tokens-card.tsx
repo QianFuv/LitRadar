@@ -42,7 +42,7 @@ import type {
 } from '@/components/settings/use-settings-copy';
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 const TTL_OPTIONS = [
   { label: '7天', value: 7 * 86400 },
@@ -296,31 +296,25 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
       </div>
       <div className="space-y-2">
         <div className="text-sm font-medium">有效期</div>
-        <div
-          className="grid grid-cols-4 gap-1 rounded-lg bg-muted p-1"
-          role="group"
+        <ToggleGroup
+          type="single"
           aria-label="访问令牌有效期"
+          className="grid w-full grid-cols-4 gap-1 border-0 bg-muted p-1"
+          value={String(tokenTtl)}
+          onValueChange={(value) => {
+            if (value) setTokenTtl(Number(value));
+          }}
         >
-          {TTL_OPTIONS.map((opt) => {
-            const isSelected = tokenTtl === opt.value;
-            return (
-              <button
-                type="button"
-                key={opt.value}
-                aria-pressed={isSelected}
-                className={cn(
-                  'motion-control h-9 rounded-md text-sm outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring',
-                  isSelected
-                    ? 'bg-background font-bold text-foreground shadow-paper'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-                onClick={() => setTokenTtl(opt.value)}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
+          {TTL_OPTIONS.map((opt) => (
+            <ToggleGroupItem
+              key={opt.value}
+              value={String(opt.value)}
+              className="h-9 justify-center text-sm md:h-9 data-[state=on]:bg-background data-[state=on]:font-bold data-[state=on]:text-foreground data-[state=on]:shadow-paper data-[state=on]:hover:text-foreground"
+            >
+              {opt.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       </div>
       <MotionPresence>
         {creationError && (

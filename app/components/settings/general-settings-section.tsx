@@ -16,6 +16,7 @@ import {
   SettingsSectionTitle,
 } from '@/components/settings/settings-section';
 import { RevealItem } from '@/components/ui/reveal';
+import { RadioGroup, RadioGroupIndicator, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
 
 type ThemePreference = 'system' | 'light' | 'dark';
@@ -90,18 +91,20 @@ export function GeneralSettingsSection() {
             </p>
           }
         >
-          <div className="grid grid-cols-3 gap-3 sm:gap-4" role="radiogroup" aria-label="外观主题">
+          <RadioGroup
+            className="grid grid-cols-3 gap-3 sm:gap-4"
+            aria-label="外观主题"
+            value={selectedTheme}
+            onValueChange={setTheme}
+          >
             {THEME_OPTIONS.map((option) => {
               const isSelected = selectedTheme === option.value;
               return (
-                <button
+                <RadioGroupItem
                   key={option.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={isSelected}
+                  value={option.value}
                   aria-label={option.label}
                   className="group flex flex-col gap-2.5 rounded-xl text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                  onClick={() => setTheme(option.value)}
                 >
                   <span
                     className={cn(
@@ -121,7 +124,9 @@ export function GeneralSettingsSection() {
                         isSelected && 'border-primary bg-primary text-primary-foreground',
                       )}
                     >
-                      {isSelected && <Check className="size-2.5" strokeWidth={3} />}
+                      <RadioGroupIndicator className="flex items-center justify-center">
+                        <Check className="size-2.5" strokeWidth={3} />
+                      </RadioGroupIndicator>
                     </span>
                     <span className="min-w-0">
                       <span className="block text-sm leading-5 font-bold">{option.label}</span>
@@ -130,10 +135,10 @@ export function GeneralSettingsSection() {
                       </span>
                     </span>
                   </span>
-                </button>
+                </RadioGroupItem>
               );
             })}
-          </div>
+          </RadioGroup>
         </RevealItem>
       </SettingsSectionContent>
     </SettingsSection>

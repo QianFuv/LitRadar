@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   Select,
   SelectContent,
@@ -191,35 +192,33 @@ function SearchBuilderBody({
                     检索
                   </span>
                 ) : (
-                  <div
-                    role="radiogroup"
+                  <ToggleGroup
+                    type="single"
                     aria-label={`第 ${position} 个条件的连接方式`}
-                    className="inline-flex h-9 w-fit items-center gap-0.5 rounded-lg bg-muted p-0.5"
+                    className="inline-flex h-9 gap-0.5 border-0 bg-muted"
+                    value={condition.connector}
+                    onValueChange={(connector) => {
+                      if (connector) {
+                        updateCondition(condition.id, {
+                          connector: connector as typeof condition.connector,
+                        });
+                      }
+                    }}
                   >
-                    {SEARCH_BUILDER_CONNECTORS.map((connector) => {
-                      const isSelected = condition.connector === connector.value;
-                      return (
-                        <button
-                          key={connector.value}
-                          type="button"
-                          role="radio"
-                          aria-checked={isSelected}
-                          className={cn(
-                            'motion-control h-8 rounded-md px-2.5 text-[13px] whitespace-nowrap outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring',
-                            isSelected
-                              ? 'bg-background font-bold shadow-[0_0_0_1px_var(--border)]'
-                              : 'text-muted-foreground hover:text-foreground',
-                            isSelected && connector.value === 'NOT' && 'text-destructive',
-                          )}
-                          onClick={() =>
-                            updateCondition(condition.id, { connector: connector.value })
-                          }
-                        >
-                          {connector.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                    {SEARCH_BUILDER_CONNECTORS.map((connector) => (
+                      <ToggleGroupItem
+                        key={connector.value}
+                        value={connector.value}
+                        className={cn(
+                          'h-8 px-2.5 text-[13px] whitespace-nowrap md:h-8 md:px-2.5 data-[state=on]:bg-background data-[state=on]:font-bold data-[state=on]:text-foreground data-[state=on]:shadow-[0_0_0_1px_var(--border)] data-[state=on]:hover:text-foreground',
+                          connector.value === 'NOT' &&
+                            'data-[state=on]:text-destructive data-[state=on]:hover:text-destructive',
+                        )}
+                      >
+                        {connector.label}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
                 )}
                 <Button
                   type="button"

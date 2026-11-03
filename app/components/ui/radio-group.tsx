@@ -51,4 +51,24 @@ function RadioGroupCard({
   );
 }
 
-export { RadioGroup, RadioGroupCard };
+/**
+ * Render one choice with no styling of its own, for choices that compose their own layout.
+ *
+ * @param props - Radix radio item properties.
+ * @returns Selectable choice.
+ */
+function RadioGroupItem(props: React.ComponentProps<typeof RadioGroupPrimitive.Item>) {
+  return <RadioGroupPrimitive.Item data-slot="radio-group-item" {...props} />;
+}
+
+/**
+ * Render the animated mark shown inside the selected choice.
+ *
+ * @param props - Radix radio indicator properties.
+ * @returns Selection indicator.
+ */
+function RadioGroupIndicator(props: React.ComponentProps<typeof RadioGroupPrimitive.Indicator>) {
+  return <RadioGroupPrimitive.Indicator data-slot="radio-group-indicator" {...props} />;
+}
+
+export { RadioGroup, RadioGroupCard, RadioGroupIndicator, RadioGroupItem };

@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DISCLOSURE_VARIANTS, MotionDiv } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
+import { RadioGroup, RadioGroupIndicator, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
 
 type DeliveryOption = {
@@ -69,16 +70,24 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
         </SettingsSectionDescription>
       </SettingsSectionHeader>
       <SettingsSectionContent className="space-y-4">
-        <div role="radiogroup" aria-label="推送方式" className="grid gap-3 sm:grid-cols-2">
+        <RadioGroup
+          aria-label="推送方式"
+          className="grid gap-3 sm:grid-cols-2"
+          value={model.delivery.method}
+          onValueChange={(method) =>
+            model.updateSettings((current) => ({
+              ...current,
+              delivery_method: method as typeof current.delivery_method,
+            }))
+          }
+        >
           {DELIVERY_OPTIONS.map((option) => {
             const Icon = option.icon;
             const isSelected = model.delivery.method === option.value;
             return (
-              <button
+              <RadioGroupItem
                 key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={isSelected}
+                value={option.value}
                 aria-label={option.label}
                 className={cn(
                   'motion-control relative flex items-start gap-3 rounded-xl border bg-background p-4 text-left transition-[border-color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
@@ -86,12 +95,6 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
                     ? 'border-primary shadow-[0_0_0_1px_var(--primary)]'
                     : 'hover:border-foreground/30',
                 )}
-                onClick={() =>
-                  model.updateSettings((current) => ({
-                    ...current,
-                    delivery_method: option.value,
-                  }))
-                }
               >
                 <span
                   aria-hidden="true"
@@ -114,13 +117,15 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
                   aria-hidden="true"
                   className={cn(
                     'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
-                    isSelected && 'border-[5px] border-primary',
+                    isSelected && 'border-primary',
                   )}
-                />
-              </button>
+                >
+                  <RadioGroupIndicator className="size-2 rounded-full bg-primary" />
+                </span>
+              </RadioGroupItem>
             );
           })}
-        </div>
+        </RadioGroup>
 
         <MotionDiv
           data-motion-delivery-panel="pushplus"

@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { RevealItem } from '@/components/ui/reveal';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useIsMotionReduced } from '@/components/ui/motion';
 import {
   getArticle,
@@ -464,31 +465,27 @@ function RelationExplorer({
             : '正在读取中心文章…'
         }
       >
-        <div role="radiogroup" aria-label="显示方式" className="mr-1 flex rounded-lg border p-0.5">
+        <ToggleGroup
+          type="single"
+          aria-label="显示方式"
+          className="mr-1"
+          value={viewMode}
+          onValueChange={(mode) => {
+            if (mode) setViewMode(mode as typeof viewMode);
+          }}
+        >
           {(
             [
               ['graph', '网络', Network],
               ['list', '列表', ListTree],
             ] as const
           ).map(([mode, label, Icon]) => (
-            <button
-              key={mode}
-              type="button"
-              role="radio"
-              aria-checked={viewMode === mode}
-              className={cn(
-                'motion-control flex h-10 items-center gap-1 rounded-md px-3 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring md:h-7 md:px-2',
-                viewMode === mode
-                  ? 'bg-foreground text-background'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-              onClick={() => setViewMode(mode)}
-            >
+            <ToggleGroupItem key={mode} value={mode} className="md:px-2">
               <Icon className="size-3.5" aria-hidden="true" />
               {label}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
         {viewMode === 'graph' && (
           <Button
             type="button"
