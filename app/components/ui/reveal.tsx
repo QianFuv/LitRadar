@@ -20,12 +20,23 @@ import {
   type ReactNode,
 } from 'react';
 
+import type { Variants } from 'motion/react';
+
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 
 /** Longest time a block that is still loading may hold back the ready blocks after it. */
 export const REVEAL_WAIT_LIMIT_MS = 1500;
 
 type RevealPhase = 'unresolved' | 'placeholder' | 'content';
+
+/**
+ * Panel motion for revealed content; `visible` re-enables pointer events so content that returns
+ * while its exit is still running stays clickable.
+ */
+const CONTENT_VARIANTS = {
+  ...PANEL_VARIANTS,
+  visible: { ...PANEL_VARIANTS.visible, pointerEvents: 'inherit' },
+} satisfies Variants;
 
 type RevealEntry = {
   getElement: () => HTMLElement | null;
@@ -205,9 +216,7 @@ type RevealItemProps = {
  * Swap one block's placeholder for its content in reading order within the current surface.
  *
  * Content that is already available when the surface mounts shows without animation; later swaps
- * use the panel blur-fade. Each return to content mounts a fresh element, so content that comes
- * back while its previous element is still leaving never inherits that exit's blocked pointer
- * events.
+ * use the panel blur-fade.
  *
  * @param props - Readiness, placeholder, content, and element classes.
  * @returns Animated placeholder or content element.
@@ -248,21 +257,15 @@ export function RevealItem({
     if (element) elementRef.current = element;
   };
   const isShowingContent = phase === 'content' && isReady;
-  const [contentGeneration, setContentGeneration] = useState(0);
-  const [wasShowingContent, setWasShowingContent] = useState(isShowingContent);
-  if (isShowingContent !== wasShowingContent) {
-    setWasShowingContent(isShowingContent);
-    if (isShowingContent) setContentGeneration((generation) => generation + 1);
-  }
 
   return (
     <MotionPresence key={phase === 'unresolved' ? 'unresolved' : 'resolved'} mode="wait">
       {isShowingContent ? (
         <MotionDiv
-          key={`content-${contentGeneration}`}
+          key="content"
           ref={trackElement}
           className={className}
-          variants={PANEL_VARIANTS}
+          variants={CONTENT_VARIANTS}
           initial="hidden"
           animate="visible"
           exit="exit"
