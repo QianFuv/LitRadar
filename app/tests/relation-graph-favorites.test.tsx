@@ -130,10 +130,11 @@ async function flagsUpdatesAndResetsChangedGraph(): Promise<void> {
   const trigger = await screen.findByRole('button', {
     name: '已收藏的关系图操作（有未保存的改动）',
   });
-  expect(trigger).toHaveAttribute(
-    'title',
-    '已收藏：以「Article 1」为中心的关系图（有未保存的改动）',
+  await user.hover(trigger);
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(
+    /^已收藏：以「Article 1」为中心的关系图（有未保存的改动）$/,
   );
+  await user.unhover(trigger);
   expect(screen.getByTestId('relation-graph-unsaved-dot')).toBeInTheDocument();
 
   await user.click(trigger);
@@ -170,10 +171,10 @@ async function ignoresLayoutDrift(): Promise<void> {
   server.use(http.get(`${GRAPHS_URL}/5`, () => HttpResponse.json(savedGraph(5, saved))));
   renderControls(drifted, 5);
 
+  await userEvent.setup().hover(await screen.findByRole('button', { name: '已收藏的关系图操作' }));
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: '已收藏的关系图操作' })).toHaveAttribute(
-      'title',
-      '已收藏：以「Article 1」为中心的关系图',
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      /^已收藏：以「Article 1」为中心的关系图$/,
     ),
   );
   expect(screen.queryByTestId('relation-graph-unsaved-dot')).not.toBeInTheDocument();

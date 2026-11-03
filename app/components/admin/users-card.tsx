@@ -9,6 +9,7 @@ import { AdminListHeader } from '@/components/admin/admin-list-header';
 import { SettingsGroup, StatusPill } from '@/components/settings/settings-section';
 import { UserAvatar } from '@/components/shell/user-avatar';
 import { Button } from '@/components/ui/button';
+import { IconTooltip } from '@/components/ui/tooltip';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -182,58 +183,61 @@ export function AdminUsersCard({
                     </div>
                   </dl>
                   <div className="flex items-center justify-end gap-1 border-t pt-3 md:border-0 md:pt-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-9"
-                      title={u.is_admin ? '取消管理员' : '设为管理员'}
-                      aria-label={
-                        u.is_admin ? `取消 ${u.username} 的管理员` : `设为 ${u.username} 为管理员`
-                      }
-                      disabled={toggleAdminMut.isPending || u.id === currentUserId}
-                      onClick={() =>
-                        toggleAdminMut.mutate({
-                          userId: u.id,
-                          isAdmin: !u.is_admin,
-                        })
-                      }
-                    >
-                      {u.is_admin ? (
-                        <ShieldOff className="size-4" />
-                      ) : (
-                        <Shield className="size-4" />
-                      )}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-9"
-                      title="重置密码"
-                      aria-label={`重置 ${u.username} 的密码`}
-                      onClick={() => {
-                        resetPwMut.reset();
-                        setResetPwUserId(u.id);
-                        setResetPwValue('');
-                        setResetDialogOpen(true);
-                      }}
-                    >
-                      <KeyRound className="size-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="删除用户"
-                      aria-label={`删除用户 ${u.username}`}
-                      disabled={u.id === currentUserId}
-                      className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => {
-                        deleteUserMut.reset();
-                        setDeleteUserId(u.id);
-                        setDeleteDialogOpen(true);
-                      }}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+                    <IconTooltip label={u.is_admin ? '取消管理员' : '设为管理员'}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-9"
+                        aria-label={
+                          u.is_admin ? `取消 ${u.username} 的管理员` : `设为 ${u.username} 为管理员`
+                        }
+                        disabled={toggleAdminMut.isPending || u.id === currentUserId}
+                        onClick={() =>
+                          toggleAdminMut.mutate({
+                            userId: u.id,
+                            isAdmin: !u.is_admin,
+                          })
+                        }
+                      >
+                        {u.is_admin ? (
+                          <ShieldOff className="size-4" />
+                        ) : (
+                          <Shield className="size-4" />
+                        )}
+                      </Button>
+                    </IconTooltip>
+                    <IconTooltip label="重置密码">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-9"
+                        aria-label={`重置 ${u.username} 的密码`}
+                        onClick={() => {
+                          resetPwMut.reset();
+                          setResetPwUserId(u.id);
+                          setResetPwValue('');
+                          setResetDialogOpen(true);
+                        }}
+                      >
+                        <KeyRound className="size-4" />
+                      </Button>
+                    </IconTooltip>
+                    <IconTooltip label="删除用户">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`删除用户 ${u.username}`}
+                        disabled={u.id === currentUserId}
+                        className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => {
+                          deleteUserMut.reset();
+                          setDeleteUserId(u.id);
+                          setDeleteDialogOpen(true);
+                        }}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </IconTooltip>
                   </div>
                 </div>
               ))}

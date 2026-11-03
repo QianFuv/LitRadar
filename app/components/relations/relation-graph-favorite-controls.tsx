@@ -11,6 +11,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { IconTooltip } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogContent,
@@ -261,52 +262,54 @@ function RelationGraphFavoriteButtons({
   return (
     <>
       {savedId === null ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-11 md:size-8"
-          aria-label="收藏关系图"
-          title="收藏关系图"
-          disabled={isBusy}
-          onClick={favorite.create}
-        >
-          {isBusy ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Bookmark className="size-4" aria-hidden="true" />
-          )}
-        </Button>
+        <IconTooltip label="收藏关系图">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-11 md:size-8"
+            aria-label="收藏关系图"
+            disabled={isBusy}
+            onClick={favorite.create}
+          >
+            {isBusy ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Bookmark className="size-4" aria-hidden="true" />
+            )}
+          </Button>
+        </IconTooltip>
       ) : (
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="relative size-11 text-primary-text md:size-8"
-              aria-label={isDirty ? '已收藏的关系图操作（有未保存的改动）' : '已收藏的关系图操作'}
-              title={
-                savedTitle
-                  ? `已收藏：${savedTitle}${isDirty ? '（有未保存的改动）' : ''}`
-                  : '已收藏'
-              }
-              disabled={isBusy}
-            >
-              {isBusy ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <BookmarkCheck className="size-4" aria-hidden="true" />
-              )}
-              {isDirty && (
-                <span
-                  aria-hidden="true"
-                  data-testid="relation-graph-unsaved-dot"
-                  className="absolute top-1.5 right-1.5 size-2 rounded-full bg-warning-foreground ring-2 ring-background md:top-1 md:right-1"
-                />
-              )}
-            </Button>
-          </DropdownMenuTrigger>
+          <IconTooltip
+            label={
+              savedTitle ? `已收藏：${savedTitle}${isDirty ? '（有未保存的改动）' : ''}` : '已收藏'
+            }
+          >
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="relative size-11 text-primary-text md:size-8"
+                aria-label={isDirty ? '已收藏的关系图操作（有未保存的改动）' : '已收藏的关系图操作'}
+                disabled={isBusy}
+              >
+                {isBusy ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <BookmarkCheck className="size-4" aria-hidden="true" />
+                )}
+                {isDirty && (
+                  <span
+                    aria-hidden="true"
+                    data-testid="relation-graph-unsaved-dot"
+                    className="absolute top-1.5 right-1.5 size-2 rounded-full bg-warning-foreground ring-2 ring-background md:top-1 md:right-1"
+                  />
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+          </IconTooltip>
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuLabel className="truncate">
               {savedTitle ?? '已收藏的关系图'}

@@ -24,6 +24,7 @@ import {
   relationGraphFavoriteKey,
 } from '@/components/relations/relation-graph-favorite-controls';
 import { Button } from '@/components/ui/button';
+import { IconTooltip } from '@/components/ui/tooltip';
 import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { RevealItem } from '@/components/ui/reveal';
@@ -487,30 +488,32 @@ function RelationExplorer({
           ))}
         </ToggleGroup>
         {viewMode === 'graph' && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-11 md:size-8"
-            aria-label="重新排列"
-            title="重新排列"
-            onClick={relayout}
-          >
-            <RotateCcw className="size-4" aria-hidden="true" />
-          </Button>
+          <IconTooltip label="重新排列">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-11 md:size-8"
+              aria-label="重新排列"
+              onClick={relayout}
+            >
+              <RotateCcw className="size-4" aria-hidden="true" />
+            </Button>
+          </IconTooltip>
         )}
         {viewMode === 'graph' && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-11 md:size-8"
-            aria-label="适应窗口"
-            title="适应窗口"
-            onClick={() => void fitView({ duration: isMotionReduced ? 0 : 300, padding: 0.2 })}
-          >
-            <Maximize className="size-4" aria-hidden="true" />
-          </Button>
+          <IconTooltip label="适应窗口">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-11 md:size-8"
+              aria-label="适应窗口"
+              onClick={() => void fitView({ duration: isMotionReduced ? 0 : 300, padding: 0.2 })}
+            >
+              <Maximize className="size-4" aria-hidden="true" />
+            </Button>
+          </IconTooltip>
         )}
         <RevealItem isReady={Boolean(currentGraph && root)} placeholder={null}>
           {user && currentGraph && root && (

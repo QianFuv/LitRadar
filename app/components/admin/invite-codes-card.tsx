@@ -15,6 +15,7 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
 import { SettingsGroup, StatusPill } from '@/components/settings/settings-section';
 import { Button } from '@/components/ui/button';
+import { IconTooltip } from '@/components/ui/tooltip';
 import { CopyButton } from '@/components/ui/copy-button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -333,19 +334,21 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                       >
                         {inviteCode.code}
                       </code>
-                      <CopyButton
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 shrink-0 text-muted-foreground"
-                        iconClassName="size-3.5"
-                        title="复制"
-                        aria-label="复制邀请码"
-                        disabled={!isActive}
-                        isCopied={
-                          copyFeedback?.tone === 'success' && copyFeedback.code === inviteCode.code
-                        }
-                        onCopy={() => void handleCopyInviteCode(inviteCode.code)}
-                      />
+                      <IconTooltip label="复制">
+                        <CopyButton
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 shrink-0 text-muted-foreground"
+                          iconClassName="size-3.5"
+                          aria-label="复制邀请码"
+                          disabled={!isActive}
+                          isCopied={
+                            copyFeedback?.tone === 'success' &&
+                            copyFeedback.code === inviteCode.code
+                          }
+                          onCopy={() => void handleCopyInviteCode(inviteCode.code)}
+                        />
+                      </IconTooltip>
                     </div>
                     <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                       创建者 {inviteCode.created_by_name ?? '系统'} · 首位使用者{' '}
@@ -369,20 +372,21 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                   </StatusPill>
                   <div className="ml-auto w-9 md:ml-0">
                     {inviteCode.revoked_at === null && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                        title="撤销邀请码"
-                        aria-label={`撤销邀请码 ${inviteCode.code}`}
-                        disabled={revokeCodeMut.isPending}
-                        onClick={() => {
-                          revokeCodeMut.reset();
-                          setInviteCodeToRevoke(inviteCode);
-                        }}
-                      >
-                        <Ban className="size-4" />
-                      </Button>
+                      <IconTooltip label="撤销邀请码">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          aria-label={`撤销邀请码 ${inviteCode.code}`}
+                          disabled={revokeCodeMut.isPending}
+                          onClick={() => {
+                            revokeCodeMut.reset();
+                            setInviteCodeToRevoke(inviteCode);
+                          }}
+                        >
+                          <Ban className="size-4" />
+                        </Button>
+                      </IconTooltip>
                     )}
                   </div>
                 </div>
