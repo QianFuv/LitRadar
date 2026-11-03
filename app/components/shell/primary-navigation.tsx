@@ -5,6 +5,7 @@
  */
 
 import { CalendarDays, Megaphone, Network, Search, Star, type LucideIcon } from 'lucide-react';
+import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
@@ -51,34 +52,38 @@ export function RailNavigation() {
 
   return (
     <nav aria-label="页面导航" className="flex flex-col items-center gap-1.5">
-      {PRIMARY_NAVIGATION_ITEMS.map((item) => {
-        const Icon = item.icon;
-        const isCurrent = item.view === view;
+      <Highlight controlledItems value={view} click={false} className="rounded-xl bg-rail-hover">
+        {PRIMARY_NAVIGATION_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const isCurrent = item.view === view;
 
-        return (
-          <Link
-            key={item.view}
-            href={getWorkspaceViewHref(item.view)}
-            prefetch={false}
-            aria-label={item.label}
-            aria-current={isCurrent ? 'page' : undefined}
-            title={item.label}
-            className={cn(
-              'motion-control relative flex w-12 flex-col items-center gap-1 rounded-xl py-2 text-rail-foreground outline-none transition-[background-color,color] hover:bg-rail-hover hover:text-rail-active focus-visible:ring-2 focus-visible:ring-ring',
-              isCurrent && 'bg-rail-hover text-rail-active',
-            )}
-          >
-            {isCurrent && (
-              <span
-                aria-hidden="true"
-                className="absolute top-1/2 -left-2 h-6 w-[3px] -translate-y-1/2 rounded-r-full bg-primary"
-              />
-            )}
-            <Icon className="size-5" strokeWidth={isCurrent ? 2.1 : 1.7} aria-hidden="true" />
-            <span className="text-[10px] leading-none">{item.shortLabel}</span>
-          </Link>
-        );
-      })}
+          return (
+            <HighlightItem key={item.view} value={item.view}>
+              <Link
+                key={item.view}
+                href={getWorkspaceViewHref(item.view)}
+                prefetch={false}
+                aria-label={item.label}
+                aria-current={isCurrent ? 'page' : undefined}
+                title={item.label}
+                className={cn(
+                  'motion-control relative flex w-12 flex-col items-center gap-1 rounded-xl py-2 text-rail-foreground outline-none transition-[background-color,color] hover:bg-rail-hover hover:text-rail-active focus-visible:ring-2 focus-visible:ring-ring',
+                  isCurrent && 'text-rail-active',
+                )}
+              >
+                {isCurrent && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-1/2 -left-2 h-6 w-[3px] -translate-y-1/2 rounded-r-full bg-primary"
+                  />
+                )}
+                <Icon className="size-5" strokeWidth={isCurrent ? 2.1 : 1.7} aria-hidden="true" />
+                <span className="text-[10px] leading-none">{item.shortLabel}</span>
+              </Link>
+            </HighlightItem>
+          );
+        })}
+      </Highlight>
     </nav>
   );
 }
@@ -93,29 +98,38 @@ export function TabNavigation() {
 
   return (
     <nav aria-label="页面导航" className="col-span-5 grid grid-cols-5">
-      {PRIMARY_NAVIGATION_ITEMS.map((item) => {
-        const Icon = item.icon;
-        const isCurrent = item.view === view;
+      <Highlight
+        controlledItems
+        value={view}
+        click={false}
+        className="inset-x-2 inset-y-1.5 rounded-xl bg-accent"
+      >
+        {PRIMARY_NAVIGATION_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const isCurrent = item.view === view;
 
-        return (
-          <Link
-            key={item.view}
-            href={getWorkspaceViewHref(item.view)}
-            prefetch={false}
-            aria-label={item.label}
-            aria-current={isCurrent ? 'page' : undefined}
-            className={cn(
-              'motion-control flex h-14 flex-col items-center justify-center gap-1 text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-              isCurrent && 'text-primary-text',
-            )}
-          >
-            <Icon className="size-5" strokeWidth={isCurrent ? 2.1 : 1.7} aria-hidden="true" />
-            <span className={cn('text-[11px] leading-none', isCurrent && 'font-bold')}>
-              {item.shortLabel}
-            </span>
-          </Link>
-        );
-      })}
+          return (
+            <HighlightItem key={item.view} value={item.view}>
+              <Link
+                key={item.view}
+                href={getWorkspaceViewHref(item.view)}
+                prefetch={false}
+                aria-label={item.label}
+                aria-current={isCurrent ? 'page' : undefined}
+                className={cn(
+                  'motion-control flex h-14 flex-col items-center justify-center gap-1 text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                  isCurrent && 'text-primary-text',
+                )}
+              >
+                <Icon className="size-5" strokeWidth={isCurrent ? 2.1 : 1.7} aria-hidden="true" />
+                <span className={cn('text-[11px] leading-none', isCurrent && 'font-bold')}>
+                  {item.shortLabel}
+                </span>
+              </Link>
+            </HighlightItem>
+          );
+        })}
+      </Highlight>
     </nav>
   );
 }

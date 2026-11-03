@@ -55,6 +55,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { RevealItem } from '@/components/ui/reveal';
+import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { cn } from '@/lib/utils';
@@ -236,46 +237,54 @@ function renderFolderTabs(state: FavoritesViewState) {
           data-slot="favorite-folder-tabs"
           className="scrollbar-none fade-x-edges -mx-4 -my-1 flex gap-1.5 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5"
         >
-          {folders.map((folder) => {
-            const isActive = activeFolderId === folder.id;
-            return (
-              <button
-                key={folder.id}
-                type="button"
-                data-motion-folder-key={folder.id}
-                aria-pressed={isActive}
-                aria-label={folder.name}
-                title={folder.is_tracking ? `${folder.name}（追踪文件夹）` : folder.name}
-                onClick={() => handleSelectFolder(folder.id)}
-                className={cn(
-                  'motion-control inline-flex h-11 max-w-[13rem] shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] md:h-8 md:px-3 outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring',
-                  isActive
-                    ? 'bg-foreground font-bold text-background'
-                    : 'bg-background text-foreground/80 shadow-[inset_0_0_0_1px_var(--border)] hover:bg-accent',
-                )}
-              >
-                {folder.is_tracking && (
-                  <Radar
+          <Highlight
+            controlledItems
+            value={activeFolderId === null ? null : String(activeFolderId)}
+            click={false}
+            className="rounded-full bg-foreground"
+          >
+            {folders.map((folder) => {
+              const isActive = activeFolderId === folder.id;
+              return (
+                <HighlightItem key={folder.id} value={String(folder.id)} className="shrink-0">
+                  <button
+                    type="button"
+                    data-motion-folder-key={folder.id}
+                    aria-pressed={isActive}
+                    aria-label={folder.name}
+                    title={folder.is_tracking ? `${folder.name}（追踪文件夹）` : folder.name}
+                    onClick={() => handleSelectFolder(folder.id)}
                     className={cn(
-                      'size-3.5 shrink-0',
-                      isActive ? 'text-background' : 'text-primary-text',
+                      'motion-control inline-flex h-11 max-w-[13rem] shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] md:h-8 md:px-3 outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring',
+                      isActive
+                        ? 'font-bold text-background'
+                        : 'bg-background text-foreground/80 shadow-[inset_0_0_0_1px_var(--border)] hover:bg-accent',
                     )}
-                    aria-hidden="true"
-                  />
-                )}
-                <span className="truncate">{folder.name}</span>
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    'shrink-0 text-[11px] tabular-nums',
-                    isActive ? 'text-background/70' : 'text-muted-foreground',
-                  )}
-                >
-                  {folder.article_count}
-                </span>
-              </button>
-            );
-          })}
+                  >
+                    {folder.is_tracking && (
+                      <Radar
+                        className={cn(
+                          'size-3.5 shrink-0',
+                          isActive ? 'text-background' : 'text-primary-text',
+                        )}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <span className="truncate">{folder.name}</span>
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'shrink-0 text-[11px] tabular-nums',
+                        isActive ? 'text-background/70' : 'text-muted-foreground',
+                      )}
+                    >
+                      {folder.article_count}
+                    </span>
+                  </button>
+                </HighlightItem>
+              );
+            })}
+          </Highlight>
         </div>
       )}
     </RevealItem>
