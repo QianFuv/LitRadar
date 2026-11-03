@@ -31,6 +31,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
 import { RevealItem } from '@/components/ui/reveal';
+import { LoadingText } from '@/components/ui/loading-text';
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
   active: '可用',
@@ -151,7 +152,7 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
           className="space-y-4"
           placeholder={
             <p role="status" className="text-sm text-muted-foreground">
-              加载中…
+              <LoadingText text="加载中…" />
             </p>
           }
         >

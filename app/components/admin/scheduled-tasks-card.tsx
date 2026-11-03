@@ -48,6 +48,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { RevealItem } from '@/components/ui/reveal';
+import { LoadingText } from '@/components/ui/loading-text';
 
 type TaskFormState = {
   coalesce: boolean;
@@ -328,7 +329,7 @@ export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } =
           isReady={!isLoading}
           placeholder={
             <p role="status" className="text-sm text-muted-foreground">
-              加载中…
+              <LoadingText text="加载中…" />
             </p>
           }
         >
@@ -802,7 +803,7 @@ function renderSchedulerStatus(state: SchedulerViewState) {
     <div aria-label="调度器状态" className="overflow-hidden border-y py-4 text-sm">
       <RevealItem
         isReady={!isSchedulerStatusLoading}
-        placeholder={<span className="text-muted-foreground">正在读取调度器状态…</span>}
+        placeholder={<LoadingText text="正在读取调度器状态…" />}
       >
         <MotionPresence mode="wait">
           <MotionDiv
@@ -814,7 +815,7 @@ function renderSchedulerStatus(state: SchedulerViewState) {
             variants={SWAP_VARIANTS}
           >
             {isSchedulerStatusLoading ? (
-              <span className="text-muted-foreground">正在读取调度器状态…</span>
+              <LoadingText text="正在读取调度器状态…" />
             ) : schedulerStatusError instanceof Error ? (
               <span role="alert" className="text-destructive">
                 {schedulerStatusError.message}

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { RevealItem } from '@/components/ui/reveal';
+import { LoadingText } from '@/components/ui/loading-text';
 
 /**
  * Format a Unix timestamp for administrator tables.
@@ -124,7 +125,7 @@ export function AdminUsersCard({
             className="space-y-4"
             placeholder={
               <p role="status" className="text-sm text-muted-foreground">
-                加载中…
+                <LoadingText text="加载中…" />
               </p>
             }
           >

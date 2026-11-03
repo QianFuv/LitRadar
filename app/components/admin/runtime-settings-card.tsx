@@ -42,6 +42,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { LoadingText } from '@/components/ui/loading-text';
 
 type RuntimeSettingsForm = Record<string, string>;
 type RuntimeSecretPoolRemovals = Record<string, Set<string>>;
@@ -509,7 +510,7 @@ export function RuntimeSettingsCard() {
           isReady={!isLoading}
           placeholder={
             <div role="status" className="text-sm text-muted-foreground">
-              加载中…
+              <LoadingText text="加载中…" />
             </div>
           }
         >
@@ -888,7 +889,7 @@ function renderRuntimeProviderSettings(
         isReady={!isProviderCatalogLoading}
         placeholder={
           <div role="status" className="text-sm text-muted-foreground">
-            正在加载 Provider 能力目录…
+            <LoadingText text="正在加载 Provider 能力目录…" />
           </div>
         }
       >

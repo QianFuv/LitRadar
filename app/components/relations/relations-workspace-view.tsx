@@ -60,6 +60,7 @@ import {
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { READER_DOCK_MEDIA_QUERY, useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
+import { LoadingText } from '@/components/ui/loading-text';
 
 /** URL state of the workspace: center article, its database, and an opened saved graph. */
 const RELATION_QUERY_PARSERS = {
@@ -224,7 +225,7 @@ function RelationPicker({ onPick }: { onPick: (article: Article, dbName: string)
         </form>
         {resultsQuery.isFetching && (
           <p role="status" className="mt-4 text-sm text-muted-foreground">
-            正在检索…
+            <LoadingText text="正在检索…" />
           </p>
         )}
         {resultsQuery.isError && (
@@ -608,7 +609,7 @@ function RelationExplorer({
               className="flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground"
             >
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              正在构建关系图…
+              <LoadingText text="正在构建关系图…" />
             </p>
           }
         >

@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { LoadingText } from '@/components/ui/loading-text';
 
 const DEFAULT_AI_ENDPOINT_VALUE = '__default__';
 const FIELD_WIDTH_CLASS = 'w-full sm:w-72';
@@ -652,7 +653,7 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
   if (databaseSelection.query.isPending)
     return (
       <SettingsGroupBody role="status" className="text-sm text-muted-foreground">
-        正在加载数据库列表…
+        <LoadingText text="正在加载数据库列表…" />
       </SettingsGroupBody>
     );
   if (databaseSelection.query.isError)

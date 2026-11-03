@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Progress } from '@/components/ui/progress';
 import { SlidingNumber } from '@animate-ui/react/primitives/texts/sliding-number';
 import { RevealItem } from '@/components/ui/reveal';
+import { LoadingText } from '@/components/ui/loading-text';
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('zh-CN');
 
@@ -103,7 +104,7 @@ export function AdminOverviewCard(props: { isEnabled: boolean }) {
           className="space-y-10"
           placeholder={
             <div className="text-muted-foreground" role="status">
-              加载中…
+              <LoadingText text="加载中…" />
             </div>
           }
         >

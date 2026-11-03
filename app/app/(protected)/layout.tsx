@@ -6,6 +6,7 @@ import { AdminCenterDialog } from '@/components/admin/admin-center-dialog';
 import { SettingsCenterDialog } from '@/components/settings/settings-center-dialog';
 import { AppFrame } from '@/components/shell/app-frame';
 import { useAuth } from '@/lib/auth-context';
+import { LoadingText } from '@/components/ui/loading-text';
 
 /**
  * Render the protected layout loading state.
@@ -15,8 +16,8 @@ import { useAuth } from '@/lib/auth-context';
 function ProtectedLayoutFallback() {
   return (
     <main id="main-content" className="flex h-dvh items-center justify-center">
-      <div role="status" className="animate-pulse text-muted-foreground">
-        加载中…
+      <div role="status" className="text-muted-foreground">
+        <LoadingText text="加载中…" />
       </div>
     </main>
   );

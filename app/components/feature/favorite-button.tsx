@@ -24,6 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { RevealItem } from '@/components/ui/reveal';
 import { readFreshFavoriteCheck } from '@/components/feature/use-favorite-checks';
 import { cn } from '@/lib/utils';
+import { LoadingText } from '@/components/ui/loading-text';
 
 /**
  * Render per-folder favorite membership controls for an authenticated user.
@@ -410,7 +411,7 @@ function FavoriteLookup({ state }: { state: FavoriteButtonViewState }) {
       className="space-y-1"
       placeholder={
         <div role="status" className="px-2 py-2 text-xs text-muted-foreground">
-          加载中…
+          <LoadingText text="加载中…" />
         </div>
       }
     >

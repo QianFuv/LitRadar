@@ -43,6 +43,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { RevealItem } from '@/components/ui/reveal';
+import { LoadingText } from '@/components/ui/loading-text';
 
 type AnnouncementFormState = {
   enabled: boolean;
@@ -120,7 +121,7 @@ export function AnnouncementsCard() {
           placeholderClassName=""
           placeholder={
             <p role="status" className="text-sm text-muted-foreground">
-              加载中…
+              <LoadingText text="加载中…" />
             </p>
           }
         >

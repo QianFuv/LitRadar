@@ -19,6 +19,7 @@ import { RevealItem } from '@/components/ui/reveal';
 import { RadioGroup, RadioGroupIndicator, RadioGroupItem } from '@/components/ui/radio-group';
 import { getFocusedOrigin, revealThemeChange, type ScreenPoint } from '@/lib/theme-transition';
 import { cn } from '@/lib/utils';
+import { LoadingText } from '@/components/ui/loading-text';
 
 type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -110,7 +111,7 @@ export function GeneralSettingsSection() {
           isReady={isMounted}
           placeholder={
             <p role="status" className="text-sm text-muted-foreground">
-              正在读取主题偏好…
+              <LoadingText text="正在读取主题偏好…" />
             </p>
           }
         >

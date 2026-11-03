@@ -49,6 +49,7 @@ import { StateMessage } from '@/components/ui/state-message';
 import { Button } from '@/components/ui/button';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import { cn } from '@/lib/utils';
+import { LoadingText } from '@/components/ui/loading-text';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
@@ -728,7 +729,7 @@ function renderWeeklyArticleResults(state: WeeklyViewState) {
             animate="visible"
             exit="exit"
           >
-            正在加载更多文章…
+            <LoadingText text="正在加载更多文章…" />
           </MotionDiv>
         )}
       </MotionPresence>

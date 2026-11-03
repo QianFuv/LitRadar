@@ -27,6 +27,7 @@ import {
 import { getInviteRequirement } from '@/lib/api';
 import { getAuthErrorMessage, type AuthFormMode } from '@/lib/auth-error';
 import { useAuth } from '@/lib/auth-context';
+import { LoadingText } from '@/components/ui/loading-text';
 
 const LOGIN_RETURN_ORIGIN = 'https://litradar.invalid';
 
@@ -267,7 +268,7 @@ function renderLoginPage(state: LoginViewState) {
               role="status"
               className="rounded-xl bg-muted px-5 py-4 text-sm text-muted-foreground"
             >
-              正在检查登录状态…
+              <LoadingText text="正在检查登录状态…" />
             </div>
           </div>
         </div>
