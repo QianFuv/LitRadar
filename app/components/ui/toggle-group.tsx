@@ -7,6 +7,7 @@
 import * as React from 'react';
 import * as ToggleGroupPrimitive from '@animate-ui/react/primitives/radix-ui/toggle-group';
 
+import { PresenceBoundary } from '@/components/ui/motion';
 import { cn } from '@/lib/utils';
 
 /**
@@ -39,14 +40,16 @@ function ToggleGroupItem({
   ...props
 }: React.ComponentProps<typeof ToggleGroupPrimitive.Item>) {
   return (
-    <ToggleGroupPrimitive.Item
-      data-slot="toggle-group-item"
-      className={cn(
-        'motion-control flex h-10 items-center gap-1 rounded-md px-3 text-xs text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-foreground data-[state=on]:text-background data-[state=on]:hover:text-background md:h-7 md:px-2.5',
-        className,
-      )}
-      {...props}
-    />
+    <PresenceBoundary>
+      <ToggleGroupPrimitive.Item
+        data-slot="toggle-group-item"
+        className={cn(
+          'motion-control flex h-10 items-center gap-1 rounded-md px-3 text-xs text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-foreground data-[state=on]:text-background data-[state=on]:hover:text-background md:h-7 md:px-2.5',
+          className,
+        )}
+        {...props}
+      />
+    </PresenceBoundary>
   );
 }
 

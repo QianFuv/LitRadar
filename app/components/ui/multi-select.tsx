@@ -8,6 +8,7 @@ import * as React from 'react';
 import { Select as SelectPrimitive } from '@animate-ui/react/primitives/base-ui/select';
 import { CheckIcon } from 'lucide-react';
 
+import { PresenceBoundary } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';
 import { cn } from '@/lib/utils';
 
@@ -50,11 +51,13 @@ function MultiSelectContent({
         alignItemWithTrigger={false}
         className="z-50"
       >
-        <RevealScope>
-          <SelectPrimitive.Popup className={cn(LIST_POPUP_CLASS, className)} {...props}>
-            {children}
-          </SelectPrimitive.Popup>
-        </RevealScope>
+        <PresenceBoundary>
+          <RevealScope>
+            <SelectPrimitive.Popup className={cn(LIST_POPUP_CLASS, className)} {...props}>
+              {children}
+            </SelectPrimitive.Popup>
+          </RevealScope>
+        </PresenceBoundary>
       </SelectPrimitive.Positioner>
     </SelectPrimitive.Portal>
   );

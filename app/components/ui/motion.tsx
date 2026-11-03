@@ -4,7 +4,13 @@
  * Application motion roles built on Animate UI's motion tokens and reduced-motion contract.
  */
 
-import { AnimatePresence, motion, type AnimatePresenceProps, type Variants } from 'motion/react';
+import {
+  AnimatePresence,
+  PresenceContext,
+  motion,
+  type AnimatePresenceProps,
+  type Variants,
+} from 'motion/react';
 import {
   ReducedMotionConfig,
   ReducedMotionContext,
@@ -193,6 +199,21 @@ export function MotionProvider({ children, reducedMotion = 'user' }: MotionProvi
  */
 export function MotionPresence({ initial = false, ...props }: MotionPresenceProps) {
   return <AnimatePresence initial={initial} {...props} />;
+}
+
+/**
+ * Start a fresh motion subtree that ignores any enclosing presence.
+ *
+ * A `MotionPresence` keeps telling everything mounted under it to skip its `initial` state until
+ * the presence itself re-renders, so popups and pressable controls that mount later would jump
+ * straight to their resting state: menus lose their entrance and Animate UI presses start from an
+ * unrendered transform. Wrapping such islands restores their own `initial`.
+ *
+ * @param props - Subtree that animates independently of its surroundings.
+ * @returns Subtree outside every enclosing presence.
+ */
+export function PresenceBoundary({ children }: { children: ReactNode }) {
+  return <PresenceContext value={null}>{children}</PresenceContext>;
 }
 
 /**

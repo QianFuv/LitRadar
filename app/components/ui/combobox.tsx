@@ -10,6 +10,7 @@ import { Combobox as ComboboxPrimitive } from '@animate-ui/react/primitives/base
 import { CheckIcon, Search } from 'lucide-react';
 
 import { LIST_ITEM_CLASS, LIST_POPUP_CLASS } from '@/components/ui/multi-select';
+import { PresenceBoundary } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';
 import { cn } from '@/lib/utils';
 
@@ -38,11 +39,13 @@ function ComboboxContent({
   return (
     <ComboboxPrimitive.Portal>
       <ComboboxPrimitive.Positioner align={align} sideOffset={sideOffset} className="z-50">
-        <RevealScope>
-          <ComboboxPrimitive.Popup className={cn(LIST_POPUP_CLASS, className)} {...props}>
-            {children}
-          </ComboboxPrimitive.Popup>
-        </RevealScope>
+        <PresenceBoundary>
+          <RevealScope>
+            <ComboboxPrimitive.Popup className={cn(LIST_POPUP_CLASS, className)} {...props}>
+              {children}
+            </ComboboxPrimitive.Popup>
+          </RevealScope>
+        </PresenceBoundary>
       </ComboboxPrimitive.Positioner>
     </ComboboxPrimitive.Portal>
   );
