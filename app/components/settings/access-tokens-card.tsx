@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Key, KeyRound, Plus, Trash2 } from 'lucide-react';
+import { Check, Key, KeyRound, Plus, Trash2 } from '@/components/ui/animated-icons';
 
 import { createAccessToken, getAccessTokens, revokeAccessToken, type AccessToken } from '@/lib/api';
 import {

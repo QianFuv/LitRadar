@@ -3,7 +3,7 @@
 /** Collapsible journal groups with independent scrolling and server-owned availability. */
 
 import { useId, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown } from '@/components/ui/animated-icons';
 
 import { READER_ITEM_ATTRIBUTE } from '@/components/feature/article-reader-context';
 import type { CfpJournalSummary } from '@/lib/api';

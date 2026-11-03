@@ -4,7 +4,7 @@
  * Visual advanced-search builder: add, edit, and remove conditions without writing syntax.
  */
 
-import { ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { ChevronRight, Plus, Trash2 } from '@/components/ui/animated-icons';
 import { useState, type FormEvent } from 'react';
 
 import {

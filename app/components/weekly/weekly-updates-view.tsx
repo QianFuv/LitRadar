@@ -6,7 +6,7 @@
 
 import { useMemo } from 'react';
 import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
-import { FileText, Layers } from 'lucide-react';
+import { FileText, Layers } from '@/components/ui/animated-icons';
 import { parseAsString, useQueryState } from 'nuqs';
 
 import {

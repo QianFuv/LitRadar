@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * Shared button styles and polymorphic control primitive.
  */
@@ -10,6 +12,7 @@ import {
 import { transition } from '@animate-ui/react/utils/motion';
 import { cva, type VariantProps } from 'class-variance-authority';
 
+import { IconTriggerProvider, useIconTrigger } from '@/components/ui/animated-icons';
 import { cn } from '@/lib/utils';
 
 type ButtonSize = NonNullable<VariantProps<typeof buttonVariants>['size']>;
@@ -90,7 +93,8 @@ const buttonVariants = cva(
  * Render a shared button or pass its behavior to one child element.
  *
  * @param props - Native properties, styling, polymorphic mode, and optional static press behavior.
- * @returns Styled interactive control that presses down on Animate UI's swap tween.
+ * @returns Styled interactive control that presses down on Animate UI's swap tween and plays its
+ * animated icons while hovered or pressed.
  */
 function Button({
   className,
@@ -106,9 +110,11 @@ function Button({
     static?: boolean;
   }) {
   const hasPress = !isStatic && !disabled && variant !== 'link';
+  const { isTriggered, triggerHandlers } = useIconTrigger(props);
 
   const pressProps = {
     ...props,
+    ...triggerHandlers,
     asChild,
     ...getButtonPressMotion(hasPress, size),
     'data-variant': variant,
@@ -117,7 +123,11 @@ function Button({
     disabled,
   } as PressButtonProps;
 
-  return <PressButton {...pressProps} />;
+  return (
+    <IconTriggerProvider isTriggered={isTriggered}>
+      <PressButton {...pressProps} />
+    </IconTriggerProvider>
+  );
 }
 
 export { Button, buttonVariants, getButtonPressMotion };

@@ -4,7 +4,8 @@
  * Public authentication surface for login, registration, and logout recovery.
  */
 
-import { Eye, EyeOff, Megaphone, Radar, Search } from 'lucide-react';
+import { Radar } from 'lucide-react';
+import { Eye, EyeOff, Megaphone, Search } from '@/components/ui/animated-icons';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';

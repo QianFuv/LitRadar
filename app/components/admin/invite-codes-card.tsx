@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, Plus, Ticket } from 'lucide-react';
+import { Ban, Ticket } from 'lucide-react';
+import { Plus } from '@/components/ui/animated-icons';
 
 import {
   adminCreateInviteCode,

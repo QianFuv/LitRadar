@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Loader2, QrCode, RefreshCw, ShieldCheck, Unlink } from 'lucide-react';
+import { Loader2, QrCode, Unlink } from 'lucide-react';
+import { CheckCircle2, RefreshCw, ShieldCheck } from '@/components/ui/animated-icons';
 
 import {
   ApiError,

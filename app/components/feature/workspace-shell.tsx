@@ -4,7 +4,7 @@
  * Two-pane reading workspace: a list column beside a docked reading desk.
  */
 
-import { X } from 'lucide-react';
+import { X } from '@/components/ui/animated-icons';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {

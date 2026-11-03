@@ -4,7 +4,8 @@
  * Recommendation preferences, database scope, and AI configuration.
  */
 
-import { Bot, Database, LifeBuoy, Plus, X } from 'lucide-react';
+import { Database, LifeBuoy } from 'lucide-react';
+import { Bot, Plus, X } from '@/components/ui/animated-icons';
 import type { ReactNode } from 'react';
 
 import {

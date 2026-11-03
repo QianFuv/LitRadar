@@ -1,6 +1,7 @@
 /** Source-language notice presentation with separate reading and timeline regions. */
 
-import { ArrowUpRight, CalendarDays, ChevronDown } from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
+import { CalendarDays, ChevronDown } from '@/components/ui/animated-icons';
 
 import {
   Root as Collapsible,

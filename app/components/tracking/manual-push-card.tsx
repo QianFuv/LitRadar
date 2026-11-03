@@ -4,7 +4,7 @@
  * Manual tracking-push section.
  */
 
-import { Download, ShieldCheck, X } from 'lucide-react';
+import { Download, ShieldCheck, X } from '@/components/ui/animated-icons';
 
 import {
   SettingsGroup,

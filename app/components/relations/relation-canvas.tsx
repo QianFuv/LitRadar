@@ -30,7 +30,8 @@ import {
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3-force';
-import { Loader2, Minus, Plus } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { Minus, Plus } from '@/components/ui/animated-icons';
 import {
   memo,
   useCallback,

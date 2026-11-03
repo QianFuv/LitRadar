@@ -5,7 +5,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { parseAsString, useQueryState } from 'nuqs';
-import { Database, Search } from 'lucide-react';
+import { Database } from 'lucide-react';
+import { Search } from '@/components/ui/animated-icons';
 
 import { CfpNoticeCard, CfpSourceFooter } from '@/components/cfp/cfp-notice-card';
 import {

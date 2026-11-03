@@ -8,6 +8,7 @@ import * as DropdownMenuPrimitive from '@animate-ui/react/primitives/radix-ui/dr
 import * as React from 'react';
 
 import { cn } from '@/lib/utils';
+import { IconTriggerProvider, useIconTrigger } from '@/components/ui/animated-icons';
 import { RevealScope } from '@/components/ui/reveal';
 
 /** Shared menu-item styles for dropdown menus. */
@@ -79,24 +80,28 @@ function DropdownMenuContent({
  * Render one selectable menu item.
  *
  * @param props - Radix item properties and destructive tone.
- * @returns Menu item.
+ * @returns Menu item that plays its animated icons while hovered or pressed.
  */
 function DropdownMenuItem({
   className,
   isDestructive = false,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & { isDestructive?: boolean }) {
+  const { isTriggered, triggerHandlers } = useIconTrigger(props);
   return (
-    <DropdownMenuPrimitive.Item
-      data-slot="dropdown-menu-item"
-      className={cn(
-        DROPDOWN_MENU_ITEM_CLASS,
-        isDestructive &&
-          'text-destructive focus:bg-destructive/10 focus:text-destructive data-[highlighted]:bg-destructive/10 [&_svg:not([class*=text-])]:text-destructive',
-        className,
-      )}
-      {...props}
-    />
+    <IconTriggerProvider isTriggered={isTriggered}>
+      <DropdownMenuPrimitive.Item
+        data-slot="dropdown-menu-item"
+        className={cn(
+          DROPDOWN_MENU_ITEM_CLASS,
+          isDestructive &&
+            'text-destructive focus:bg-destructive/10 focus:text-destructive data-[highlighted]:bg-destructive/10 [&_svg:not([class*=text-])]:text-destructive',
+          className,
+        )}
+        {...props}
+        {...triggerHandlers}
+      />
+    </IconTriggerProvider>
   );
 }
 

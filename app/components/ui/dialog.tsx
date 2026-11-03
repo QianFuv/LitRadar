@@ -6,7 +6,7 @@
 
 import * as React from 'react';
 import * as DialogPrimitive from '@animate-ui/react/primitives/radix-ui/dialog';
-import { XIcon } from 'lucide-react';
+import { X as XIcon } from '@/components/ui/animated-icons';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';

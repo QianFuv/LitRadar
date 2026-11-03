@@ -4,7 +4,8 @@
  * URL-backed switch between article favorites and saved relation graphs.
  */
 
-import { FileText, Network } from 'lucide-react';
+import { Network } from 'lucide-react';
+import { FileText } from '@/components/ui/animated-icons';
 import { parseAsStringLiteral, useQueryState } from 'nuqs';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';

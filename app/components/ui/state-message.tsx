@@ -2,7 +2,13 @@
  * Compact semantic state messages for workspace loading outcomes and feedback.
  */
 
-import { AlertCircle, AlertTriangle, CheckCircle2, SearchX, type LucideIcon } from 'lucide-react';
+import { SearchX } from 'lucide-react';
+import {
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  type AppIcon,
+} from '@/components/ui/animated-icons';
 import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -19,7 +25,7 @@ type StateMessageProps = {
   tone?: StateMessageTone;
 };
 
-const STATE_MESSAGE_ICONS: Readonly<Record<StateMessageTone, LucideIcon>> = {
+const STATE_MESSAGE_ICONS: Readonly<Record<StateMessageTone, AppIcon>> = {
   danger: AlertCircle,
   neutral: SearchX,
   success: CheckCircle2,

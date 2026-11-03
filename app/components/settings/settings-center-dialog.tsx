@@ -4,7 +4,8 @@
  * Query-driven aggregated settings dialog for every authenticated route.
  */
 
-import { Bell, Database, KeyRound, Radar, Settings2, ShieldCheck } from 'lucide-react';
+import { Database, Radar, Settings2 } from 'lucide-react';
+import { Bell, KeyRound, ShieldCheck } from '@/components/ui/animated-icons';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 

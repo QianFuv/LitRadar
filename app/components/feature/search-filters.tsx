@@ -5,7 +5,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, X } from 'lucide-react';
+import { ChevronDown, X } from '@/components/ui/animated-icons';
 import { usePathname, useRouter } from 'next/navigation';
 import { parseAsArrayOf, parseAsString, useQueryState } from 'nuqs';
 import { useEffect, useMemo, useState } from 'react';

@@ -6,7 +6,7 @@
 
 import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import { ScrollFade } from '@animate-ui/react/primitives/effects/scroll-fade';
-import { ArrowLeft, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, X, type AppIcon } from '@/components/ui/animated-icons';
 import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -27,14 +27,14 @@ export const SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE = 'data-sectioned-dialog-re
 /** One navigable category rendered by a sectioned dialog. */
 export type SectionedDialogSectionDefinition<SectionId extends string> = {
   description: string;
-  icon: LucideIcon;
+  icon: AppIcon;
   id: SectionId;
   label: string;
 };
 
 type SectionedDialogFrameProps<SectionId extends string> = {
   activeSection: SectionId;
-  centerIcon: LucideIcon;
+  centerIcon: AppIcon;
   /** Optional content pinned to the bottom of the desktop category sidebar. */
   sidebarFooter?: ReactNode;
   /** Content column width: `narrow` for forms, `wide` for tables and dashboards. */

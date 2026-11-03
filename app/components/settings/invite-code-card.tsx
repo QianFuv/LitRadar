@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Ban, RotateCcw, Ticket } from 'lucide-react';
+import { Ban, Ticket } from 'lucide-react';
+import { RotateCcw } from '@/components/ui/animated-icons';
 
 import {
   generateInviteCode,

@@ -6,7 +6,7 @@
 
 import { useRef, useState, type MouseEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Star } from 'lucide-react';
+import { Star } from '@/components/ui/animated-icons';
 
 import { useAuth } from '@/lib/auth-context';
 import {

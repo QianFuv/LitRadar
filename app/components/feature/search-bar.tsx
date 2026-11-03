@@ -6,7 +6,7 @@
 
 import { useQueryState, parseAsString } from 'nuqs';
 import { Input } from '@/components/ui/input';
-import { Search, X, Clock, SlidersHorizontal, Wand2 } from 'lucide-react';
+import { Search, X, Clock, SlidersHorizontal, Wand2 } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { SearchBuilderDialog } from '@/components/feature/search-builder-dialog';

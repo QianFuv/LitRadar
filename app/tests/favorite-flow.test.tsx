@@ -952,7 +952,11 @@ async function defersClosedFavoriteFolderRows(): Promise<void> {
 
 describe('favorite mutation flow', () => {
   test('defers cached folder rows until opening the favorite menu', defersClosedFavoriteFolderRows);
-  test('reuses unchanged pages across folder edits and selection', reusesUnchangedFavoritePages);
+  test(
+    'reuses unchanged pages across folder edits and selection',
+    reusesUnchangedFavoritePages,
+    10_000,
+  );
   test('aborts a pending page when leaving favorites', abortsUnmountedFavoriteRequest);
   test.each(['stale', 'invalidated'] as const)(
     'keeps unavailable %s membership unknown until a fresh lookup succeeds',

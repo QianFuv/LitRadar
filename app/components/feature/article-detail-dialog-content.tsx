@@ -13,12 +13,11 @@ import {
   ExternalLink,
   FileDown,
   Loader2,
-  ArrowLeft,
   Network,
   Settings,
   TriangleAlert,
-  X,
 } from 'lucide-react';
+import { ArrowLeft, X } from '@/components/ui/animated-icons';
 
 import {
   getArticleActionUrlForDatabase,

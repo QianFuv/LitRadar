@@ -4,7 +4,7 @@
  * Theme preference controls for the general settings category.
  */
 
-import { Check } from 'lucide-react';
+import { Check } from '@/components/ui/animated-icons';
 import { useTheme } from 'next-themes';
 import { useSyncExternalStore } from 'react';
 

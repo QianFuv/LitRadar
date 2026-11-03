@@ -4,7 +4,8 @@
  * Authenticated application frame: desktop navigation rail, main region, and mobile tab bar.
  */
 
-import { Settings2, Shield, type LucideIcon } from 'lucide-react';
+import { Settings2, Shield } from 'lucide-react';
+import type { AppIcon } from '@/components/ui/animated-icons';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -43,7 +44,7 @@ function RailShortcut({
   label,
 }: {
   href: string;
-  icon: LucideIcon;
+  icon: AppIcon;
   isCurrent: boolean;
   label: string;
 }) {

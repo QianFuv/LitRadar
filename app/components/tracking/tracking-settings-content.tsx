@@ -4,7 +4,7 @@
  * Shared tracking-settings session rendered by the tracking and notification categories.
  */
 
-import { Save } from 'lucide-react';
+import { Save } from '@/components/ui/animated-icons';
 import { useEffect, useMemo } from 'react';
 
 import { DeliverySettingsSection } from '@/components/tracking/delivery-settings-section';

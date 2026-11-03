@@ -4,7 +4,8 @@
  * Query-driven administrator dialog for authenticated administrators.
  */
 
-import { BellRing, Clock3, DatabaseZap, Shield, Ticket, Users } from 'lucide-react';
+import { DatabaseZap, Shield, Ticket } from 'lucide-react';
+import { BellRing, Clock3, Users } from '@/components/ui/animated-icons';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 

@@ -5,7 +5,8 @@
  */
 
 import { useState, type Dispatch, type SetStateAction } from 'react';
-import { Download, FolderPlus, MoreHorizontal, Pencil, Radar, Trash2 } from 'lucide-react';
+import { FolderPlus, Radar } from 'lucide-react';
+import { Download, MoreHorizontal, Pencil, Trash2 } from '@/components/ui/animated-icons';
 
 import type { CitationFormat, FavoriteArticleItem } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';

@@ -7,7 +7,8 @@
 
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ListTree, Loader2, Maximize, Minus, Network, Plus, RotateCcw, Search } from 'lucide-react';
+import { ListTree, Loader2, Network } from 'lucide-react';
+import { Maximize, Minus, Plus, RotateCcw, Search } from '@/components/ui/animated-icons';
 import { parseAsInteger, parseAsString, useQueryStates } from 'nuqs';
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 

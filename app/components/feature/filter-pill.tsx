@@ -4,7 +4,8 @@
  * Shared filter pills: pill styles and labels, panel headers, popover facets, and database pills.
  */
 
-import { ChevronDown, Database } from 'lucide-react';
+import { Database } from 'lucide-react';
+import { ChevronDown } from '@/components/ui/animated-icons';
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';

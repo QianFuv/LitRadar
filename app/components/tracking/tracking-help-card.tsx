@@ -2,7 +2,8 @@
  * Static tracking workflow overview.
  */
 
-import { Bot, FolderHeart, Send, Tags } from 'lucide-react';
+import { FolderHeart, Tags } from 'lucide-react';
+import { Bot, Send } from '@/components/ui/animated-icons';
 
 import {
   SettingsSection,

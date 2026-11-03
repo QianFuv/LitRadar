@@ -4,7 +4,14 @@
  * Primary workspace navigation rendered as a desktop rail or a mobile tab bar.
  */
 
-import { CalendarDays, Megaphone, Network, Search, Star, type LucideIcon } from 'lucide-react';
+import { Network } from 'lucide-react';
+import {
+  CalendarDays,
+  Megaphone,
+  Search,
+  Star,
+  type AppIcon,
+} from '@/components/ui/animated-icons';
 import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -17,7 +24,7 @@ import {
 } from '@/lib/workspace-view';
 
 type PrimaryNavigationItem = {
-  icon: LucideIcon;
+  icon: AppIcon;
   label: string;
   shortLabel: string;
   view: WorkspaceView;

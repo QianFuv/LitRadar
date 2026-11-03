@@ -1,7 +1,8 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { BellRing, Database, Folder, Key, Shield, Star, Ticket, Users } from 'lucide-react';
+import { Database, Shield, Ticket } from 'lucide-react';
+import { BellRing, Folder, Key, Star, Users } from '@/components/ui/animated-icons';
 
 import { adminGetStats } from '@/lib/api';
 import { StatusPill } from '@/components/settings/settings-section';

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BellRing, Megaphone, Pencil, Plus, Trash2 } from 'lucide-react';
+import { BellRing, Megaphone, Pencil, Plus, Trash2 } from '@/components/ui/animated-icons';
 
 import {
   adminCreateAnnouncement,

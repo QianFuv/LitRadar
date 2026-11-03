@@ -6,7 +6,8 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bookmark, BookmarkCheck, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { Bookmark, BookmarkCheck } from '@/components/ui/animated-icons';
 import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 

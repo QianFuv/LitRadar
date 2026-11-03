@@ -5,16 +5,8 @@
  */
 
 import * as DropdownMenuPrimitive from '@animate-ui/react/primitives/radix-ui/dropdown-menu';
-import {
-  AlertTriangle,
-  LogOut,
-  Monitor,
-  Moon,
-  Settings2,
-  Shield,
-  Sun,
-  type LucideIcon,
-} from 'lucide-react';
+import { LogOut, Monitor, Moon, Settings2, Shield, Sun } from 'lucide-react';
+import { AlertTriangle, type AppIcon } from '@/components/ui/animated-icons';
 import { useTheme } from 'next-themes';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -36,7 +28,7 @@ type UserMenuProps = {
 };
 
 type ThemeItem = {
-  icon: LucideIcon;
+  icon: AppIcon;
   label: string;
   value: ThemePreference;
 };

@@ -5,7 +5,8 @@
 'use client';
 
 import { useMemo } from 'react';
-import { ArrowDown, ArrowUp, Database, Plus, Trash2 } from 'lucide-react';
+import { Database } from 'lucide-react';
+import { ArrowDown, ArrowUp, Plus, Trash2 } from '@/components/ui/animated-icons';
 
 import {
   type IndexProviderRoutes,

@@ -4,7 +4,8 @@
  * Delivery method and PushPlus configuration for tracking notifications.
  */
 
-import { FolderInput, Send, type LucideIcon } from 'lucide-react';
+import { FolderInput } from 'lucide-react';
+import { Send, type AppIcon } from '@/components/ui/animated-icons';
 
 import {
   SettingsGroup,
@@ -26,7 +27,7 @@ import { cn } from '@/lib/utils';
 
 type DeliveryOption = {
   description: string;
-  icon: LucideIcon;
+  icon: AppIcon;
   label: string;
   value: 'folder' | 'pushplus';
 };

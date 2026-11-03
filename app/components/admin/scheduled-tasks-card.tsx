@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Clock3, Pencil, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Clock3, Pencil, Plus, Trash2 } from '@/components/ui/animated-icons';
 
 import {
   adminCreateScheduledTask,

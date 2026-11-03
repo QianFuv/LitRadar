@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Shield, ShieldOff, Trash2, Users } from 'lucide-react';
+import { Shield, ShieldOff } from 'lucide-react';
+import { KeyRound, Trash2, Users } from '@/components/ui/animated-icons';
 
 import { adminDeleteUser, adminGetUsers, adminResetPassword, adminSetAdmin } from '@/lib/api';
 import { AdminListHeader } from '@/components/admin/admin-list-header';

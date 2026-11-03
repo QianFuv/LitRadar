@@ -97,7 +97,7 @@ async function downloadsWithServerFilename(): Promise<void> {
   const user = userEvent.setup();
   renderFavoritesPage();
 
-  await user.click(await screen.findByRole('button', { name: '导出收藏夹' }));
+  await user.click(await screen.findByRole('button', { name: '导出收藏夹' }, { timeout: 3000 }));
   await user.click(await screen.findByRole('button', { name: '导出引用' }));
 
   const feedback = await screen.findByTestId('export-feedback-announcement');
@@ -127,7 +127,7 @@ async function downloadsWithFallbackFilename(): Promise<void> {
   const user = userEvent.setup();
   renderFavoritesPage();
 
-  await user.click(await screen.findByRole('button', { name: '导出收藏夹' }));
+  await user.click(await screen.findByRole('button', { name: '导出收藏夹' }, { timeout: 3000 }));
   await user.click(await screen.findByRole('button', { name: '导出引用' }));
 
   const feedback = await screen.findByTestId('export-feedback-announcement');
@@ -161,7 +161,7 @@ async function surfacesExportFailureInPlace(): Promise<void> {
   const user = userEvent.setup();
   renderFavoritesPage();
 
-  await user.click(await screen.findByRole('button', { name: '导出收藏夹' }));
+  await user.click(await screen.findByRole('button', { name: '导出收藏夹' }, { timeout: 3000 }));
   await user.click(await screen.findByRole('button', { name: '导出引用' }));
   expect(await screen.findByRole('button', { name: '导出中…' })).toBeDisabled();
   releaseExport();

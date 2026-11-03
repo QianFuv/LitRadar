@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DatabaseZap, Plus, Save, Trash2 } from 'lucide-react';
+import { DatabaseZap } from 'lucide-react';
+import { Plus, Save, Trash2 } from '@/components/ui/animated-icons';
 
 import {
   adminGetProviderCatalog,

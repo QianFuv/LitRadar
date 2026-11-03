@@ -5,7 +5,8 @@
  */
 
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { MoreHorizontal, Network } from 'lucide-react';
+import { Network } from 'lucide-react';
+import { MoreHorizontal } from '@/components/ui/animated-icons';
 import Link from 'next/link';
 import { useState } from 'react';
 
