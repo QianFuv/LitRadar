@@ -1950,27 +1950,25 @@ async function serveLongSidebarApi(route: Route): Promise<void> {
 
 /** Keep outer focus rings and trailing counts inside the sidebar scroll viewport. */
 async function expectSidebarScrollClearance(list: Locator): Promise<void> {
-  const measureClearance = () =>
-    list.evaluate((element) => {
-      const viewport = element.getBoundingClientRect();
-      const left = viewport.left + element.clientLeft;
-      const right = left + element.clientWidth;
-      const children = Array.from(element.children)
-        .map((child) => child.getBoundingClientRect())
-        .filter((child) => child.width > 0 && child.height > 0);
-      return {
-        childCount: children.length,
-        left: Math.min(...children.map((child) => child.left - left)),
-        right: Math.min(...children.map((child) => right - child.right)),
-        hasHorizontalOverflow: element.scrollWidth > element.clientWidth,
-      };
-    });
-  await expect
-    .poll(async () => (await measureClearance()).right, {
-      message: 'let the popup finish opening before measuring',
-    })
-    .toBeGreaterThanOrEqual(8);
-  const clearance = await measureClearance();
+  const clearance = await list.evaluate((element) => {
+    const isListOffsetParent = (child: HTMLElement) => child.offsetParent === element;
+    const innerLeft = element.offsetLeft + element.clientLeft;
+    const children = Array.from(element.children)
+      .filter((child): child is HTMLElement => child instanceof HTMLElement)
+      .filter((child) => child.offsetWidth > 0 && child.offsetHeight > 0)
+      .map((child) => {
+        const start = isListOffsetParent(child)
+          ? child.offsetLeft - element.clientLeft
+          : child.offsetLeft - innerLeft;
+        return { left: start, right: element.clientWidth - start - child.offsetWidth };
+      });
+    return {
+      childCount: children.length,
+      left: Math.min(...children.map((child) => child.left)),
+      right: Math.min(...children.map((child) => child.right)),
+      hasHorizontalOverflow: element.scrollWidth > element.clientWidth,
+    };
+  });
   expect(clearance.childCount).toBeGreaterThan(0);
   expect(clearance.left, 'leave room for the outer 3px focus ring').toBeGreaterThanOrEqual(3);
   expect(clearance.right, 'keep counts and actions away from the scrollbar').toBeGreaterThanOrEqual(
