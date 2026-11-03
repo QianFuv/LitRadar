@@ -507,7 +507,7 @@ async function abortsObsoleteWeeklyRequests(): Promise<void> {
   const view = renderWeeklyPage('?db=fixture.sqlite&journal=101');
   try {
     await waitFor(() => expect(signals).toHaveLength(1));
-    await user.click(screen.getByRole('button', { name: /^期刊：/ }));
+    await user.click(await screen.findByRole('button', { name: /^期刊：/ }));
     await user.click(
       within(await screen.findByRole('dialog', { name: '期刊' })).getByRole('button', {
         name: /Second Fixture Journal/,

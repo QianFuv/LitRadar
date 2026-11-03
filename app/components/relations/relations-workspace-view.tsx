@@ -26,6 +26,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { RevealItem } from '@/components/ui/reveal';
 import { useIsMotionReduced } from '@/components/ui/motion';
 import {
   getArticle,
@@ -263,12 +264,23 @@ function RelationPicker({ onPick }: { onPick: (article: Article, dbName: string)
  * @param props - Context line and optional controls.
  * @returns Header block.
  */
-function RelationHeading({ subtitle, children }: { subtitle: string; children?: ReactNode }) {
+function RelationHeading({
+  subtitle,
+  isSubtitleReady = true,
+  children,
+}: {
+  subtitle: string;
+  isSubtitleReady?: boolean;
+  children?: ReactNode;
+}) {
+  const subtitleElement = <p className="truncate text-xs text-muted-foreground">{subtitle}</p>;
   return (
     <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
       <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
         <h1 className="text-lg leading-7 font-bold">文献关系图</h1>
-        <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
+        <RevealItem isReady={isSubtitleReady} placeholder={subtitleElement}>
+          {subtitleElement}
+        </RevealItem>
       </div>
       {children && <div className="flex shrink-0 items-center gap-1">{children}</div>}
     </div>
@@ -445,6 +457,7 @@ function RelationExplorer({
   const header = (
     <div className="space-y-2">
       <RelationHeading
+        isSubtitleReady={Boolean(root) || initialQuery.isError}
         subtitle={
           root
             ? `以「${getArticleDisplayTitle(root)}」为中心 · ${nodeCount} 篇`
@@ -502,17 +515,19 @@ function RelationExplorer({
             <Maximize className="size-4" aria-hidden="true" />
           </Button>
         )}
-        {user && currentGraph && root && (
-          <RelationGraphFavoriteControls
-            dbName={dbName}
-            graph={currentGraph}
-            rootTitle={getArticleDisplayTitle(root)}
-            savedId={savedGraphId}
-            onError={setFailure}
-            onReset={resetToSaved}
-            onSavedIdChange={setSavedGraphId}
-          />
-        )}
+        <RevealItem isReady={Boolean(currentGraph && root)} placeholder={null}>
+          {user && currentGraph && root && (
+            <RelationGraphFavoriteControls
+              dbName={dbName}
+              graph={currentGraph}
+              rootTitle={getArticleDisplayTitle(root)}
+              savedId={savedGraphId}
+              onError={setFailure}
+              onReset={resetToSaved}
+              onSavedIdChange={setSavedGraphId}
+            />
+          )}
+        </RevealItem>
       </RelationHeading>
       {failure && (
         <p role="alert" className="text-xs text-destructive">
@@ -535,12 +550,7 @@ function RelationExplorer({
       </p>
     );
   } else if (currentGraph === null) {
-    body = (
-      <p role="status" className="flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-        正在构建关系图…
-      </p>
-    );
+    body = null;
   } else if (viewMode === 'graph') {
     body = (
       <div data-slot="relation-canvas" className="min-h-0 flex-1">
@@ -590,7 +600,21 @@ function RelationExplorer({
           description: '关系图中选中文章的详情',
         }}
       >
-        {body}
+        <RevealItem
+          isReady={currentGraph !== null || initialQuery.isError}
+          className="flex min-h-0 flex-1 flex-col"
+          placeholder={
+            <p
+              role="status"
+              className="flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground"
+            >
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              正在构建关系图…
+            </p>
+          }
+        >
+          {body}
+        </RevealItem>
       </WorkspaceShell>
       {!isDocked && selectedArticle && (
         <Dialog open={isSheetOpen} onOpenChange={setIsSheetOpen}>

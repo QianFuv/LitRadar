@@ -13,6 +13,7 @@ import {
   PANEL_VARIANTS,
   REVEAL_VARIANTS,
 } from '@/components/ui/motion';
+import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { Button } from '@/components/ui/button';
@@ -117,22 +118,32 @@ export function ResultsList() {
           </Button>
         </div>
       )}
-      <MotionPresence mode="wait">
-        <MotionDiv
-          key={resultState}
-          data-testid={`results-state-${resultState}`}
-          className="min-w-0"
-          variants={{
-            ...PANEL_VARIANTS,
-            visible: { ...PANEL_VARIANTS.visible, pointerEvents: 'inherit' },
-          }}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
-        >
-          {resultContent}
-        </MotionDiv>
-      </MotionPresence>
+      <RevealItem
+        isReady={resultState !== 'loading'}
+        className="min-w-0"
+        placeholder={
+          <div data-testid="results-state-loading">
+            <ArticleListSkeleton />
+          </div>
+        }
+      >
+        <MotionPresence mode="wait">
+          <MotionDiv
+            key={resultState}
+            data-testid={`results-state-${resultState}`}
+            className="min-w-0"
+            variants={{
+              ...PANEL_VARIANTS,
+              visible: { ...PANEL_VARIANTS.visible, pointerEvents: 'inherit' },
+            }}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+          >
+            {resultContent}
+          </MotionDiv>
+        </MotionPresence>
+      </RevealItem>
     </div>
   );
 }
@@ -293,7 +304,7 @@ function getResultsPresentation(state: ResultsViewState) {
   } else if (isLoading) {
     resultState = 'loading';
     resultAnnouncement = '正在加载搜索结果';
-    resultContent = <ArticleListSkeleton />;
+    resultContent = null;
   } else if (visibleArticles.length === 0) {
     resultState = 'empty';
     resultAnnouncement = '未找到文章。请尝试调整搜索词、数据库或筛选条件。';

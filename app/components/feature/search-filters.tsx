@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getAreas, getDatabases, getJournalOptions, getJournalRatings, getYears } from '@/lib/api';
 import { getAreaDisplayName } from '@/lib/area-labels';
@@ -344,16 +345,19 @@ type SearchFilterState = ReturnType<typeof useSearchFilterState>;
 function renderDatabaseFacet(state: SearchFilterState) {
   const { databases, loadingDatabases, activeDb, handleDatabaseChange } = state;
 
-  if (loadingDatabases) {
-    return <Skeleton className="h-11 w-40 shrink-0 rounded-full md:h-8" />;
-  }
   return (
-    <DatabasePill
-      ariaLabel="检索数据库"
-      databases={databases ?? []}
-      value={activeDb}
-      onChange={handleDatabaseChange}
-    />
+    <RevealItem
+      isReady={!loadingDatabases}
+      className="shrink-0"
+      placeholder={<Skeleton className="h-11 w-40 rounded-full md:h-8" />}
+    >
+      <DatabasePill
+        ariaLabel="检索数据库"
+        databases={databases ?? []}
+        value={activeDb}
+        onChange={handleDatabaseChange}
+      />
+    </RevealItem>
   );
 }
 
@@ -419,85 +423,94 @@ function TimeFacet({ state }: { state: SearchFilterState }) {
         handleClearTimeFilters();
       }}
     >
-      {!user || loadingYears ? (
-        <Skeleton className="m-2 h-24" />
-      ) : !yearBounds ? (
-        <p className="px-2.5 py-3 text-sm text-muted-foreground">暂无可用发表年份</p>
-      ) : (
-        <div className="space-y-2">
-          <div role="radiogroup" aria-label="发表时间" className="grid grid-cols-2 gap-1.5 p-1">
-            {choices.map((choice) => (
-              <button
-                key={choice.key}
-                type="button"
-                role="radio"
-                aria-checked={choice.isChecked}
-                className={cn(
-                  'motion-control flex h-10 items-center justify-between gap-2 rounded-lg px-3 text-left text-[13px] shadow-[inset_0_0_0_1px_var(--border)] outline-none transition-[background-color,box-shadow] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring md:h-9',
-                  choice.isChecked &&
-                    'bg-info font-bold text-info-foreground shadow-[inset_0_0_0_1px_var(--primary)] hover:bg-info',
-                )}
-                onClick={() => {
-                  if (choice.key === 'all') {
-                    setIsCustomRequested(false);
-                    handleClearTimeFilters();
-                  } else if (choice.key === 'custom') {
-                    setIsCustomRequested(true);
-                  } else {
-                    setIsCustomRequested(false);
-                    handleRecentMonthRange(Number(choice.key.replace('recent-', '')));
-                  }
-                }}
-              >
-                {choice.label}
-                {choice.isChecked && <Check className="size-3.5" aria-hidden="true" />}
-              </button>
-            ))}
-          </div>
-          {isCustom && (
-            <div className="space-y-2 rounded-lg bg-muted p-3">
-              <p className="text-xs text-muted-foreground">起始</p>
-              <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-2">
-                <DateSegmentSelect
-                  ariaLabel="起始年份"
-                  value={selectedStartYearValue}
-                  options={yearOptions}
-                  onChange={(value) =>
-                    handleMonthRangeCommit(`${value}-${selectedStartMonthValue}`, selectedEndMonth)
-                  }
-                />
-                <DateSegmentSelect
-                  ariaLabel="起始月份"
-                  value={selectedStartMonthValue}
-                  options={MONTH_OPTIONS}
-                  onChange={(value) =>
-                    handleMonthRangeCommit(`${selectedStartYearValue}-${value}`, selectedEndMonth)
-                  }
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">结束</p>
-              <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-2">
-                <DateSegmentSelect
-                  ariaLabel="结束年份"
-                  value={selectedEndYearValue}
-                  options={yearOptions}
-                  onChange={(value) =>
-                    handleMonthRangeCommit(selectedStartMonth, `${value}-${selectedEndMonthValue}`)
-                  }
-                />
-                <DateSegmentSelect
-                  ariaLabel="结束月份"
-                  value={selectedEndMonthValue}
-                  options={MONTH_OPTIONS}
-                  onChange={(value) =>
-                    handleMonthRangeCommit(selectedStartMonth, `${selectedEndYearValue}-${value}`)
-                  }
-                />
-              </div>
+      <RevealItem
+        isReady={Boolean(user) && !loadingYears}
+        placeholder={<Skeleton className="m-2 h-24" />}
+      >
+        {!yearBounds ? (
+          <p className="px-2.5 py-3 text-sm text-muted-foreground">暂无可用发表年份</p>
+        ) : (
+          <div className="space-y-2">
+            <div role="radiogroup" aria-label="发表时间" className="grid grid-cols-2 gap-1.5 p-1">
+              {choices.map((choice) => (
+                <button
+                  key={choice.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={choice.isChecked}
+                  className={cn(
+                    'motion-control flex h-10 items-center justify-between gap-2 rounded-lg px-3 text-left text-[13px] shadow-[inset_0_0_0_1px_var(--border)] outline-none transition-[background-color,box-shadow] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring md:h-9',
+                    choice.isChecked &&
+                      'bg-info font-bold text-info-foreground shadow-[inset_0_0_0_1px_var(--primary)] hover:bg-info',
+                  )}
+                  onClick={() => {
+                    if (choice.key === 'all') {
+                      setIsCustomRequested(false);
+                      handleClearTimeFilters();
+                    } else if (choice.key === 'custom') {
+                      setIsCustomRequested(true);
+                    } else {
+                      setIsCustomRequested(false);
+                      handleRecentMonthRange(Number(choice.key.replace('recent-', '')));
+                    }
+                  }}
+                >
+                  {choice.label}
+                  {choice.isChecked && <Check className="size-3.5" aria-hidden="true" />}
+                </button>
+              ))}
             </div>
-          )}
-        </div>
-      )}
+            {isCustom && (
+              <div className="space-y-2 rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground">起始</p>
+                <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-2">
+                  <DateSegmentSelect
+                    ariaLabel="起始年份"
+                    value={selectedStartYearValue}
+                    options={yearOptions}
+                    onChange={(value) =>
+                      handleMonthRangeCommit(
+                        `${value}-${selectedStartMonthValue}`,
+                        selectedEndMonth,
+                      )
+                    }
+                  />
+                  <DateSegmentSelect
+                    ariaLabel="起始月份"
+                    value={selectedStartMonthValue}
+                    options={MONTH_OPTIONS}
+                    onChange={(value) =>
+                      handleMonthRangeCommit(`${selectedStartYearValue}-${value}`, selectedEndMonth)
+                    }
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">结束</p>
+                <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-2">
+                  <DateSegmentSelect
+                    ariaLabel="结束年份"
+                    value={selectedEndYearValue}
+                    options={yearOptions}
+                    onChange={(value) =>
+                      handleMonthRangeCommit(
+                        selectedStartMonth,
+                        `${value}-${selectedEndMonthValue}`,
+                      )
+                    }
+                  />
+                  <DateSegmentSelect
+                    ariaLabel="结束月份"
+                    value={selectedEndMonthValue}
+                    options={MONTH_OPTIONS}
+                    onChange={(value) =>
+                      handleMonthRangeCommit(selectedStartMonth, `${selectedEndYearValue}-${value}`)
+                    }
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </RevealItem>
     </FilterFacet>
   );
 }
@@ -528,49 +541,49 @@ function renderRatingFacet(state: SearchFilterState) {
       onClear={handleClearRatings}
       contentClassName="w-[22rem]"
     >
-      {isLoadingRatings ? (
-        <Skeleton className="m-2 h-24" />
-      ) : isRatingError ? (
-        <div
-          className="flex items-center justify-between px-2.5 py-2 text-xs text-muted-foreground"
-          role="status"
-        >
-          无法加载期刊评级
-          <Button variant="ghost" size="sm" onClick={() => void refetchRatings()}>
-            重试
-          </Button>
-        </div>
-      ) : hasRatings ? (
-        <div className="max-h-[min(60vh,26rem)] space-y-3 overflow-y-auto p-1">
-          {JOURNAL_RATING_SYSTEMS.map(({ key, label }) => {
-            const options = ratingOptions?.[key] ?? [];
-            return options.length > 0 ? (
-              <fieldset key={key}>
-                <legend className="px-1.5 pb-1 text-xs font-bold text-muted-foreground">
-                  {label}
-                </legend>
-                <div className="grid grid-cols-2 gap-x-1">
-                  {options.map((option) => (
-                    <FilterOptionRow
-                      key={option.value}
-                      id={`rating-${key}-${option.value}`}
-                      ariaLabel={`${label} ${option.value}`}
-                      label={option.value}
-                      count={option.count}
-                      isChecked={ratings[key].includes(option.value)}
-                      onCheckedChange={(isChecked) =>
-                        handleRatingChange(key, option.value, isChecked)
-                      }
-                    />
-                  ))}
-                </div>
-              </fieldset>
-            ) : null;
-          })}
-        </div>
-      ) : (
-        <p className="px-2.5 py-3 text-xs text-muted-foreground">当前数据库暂无期刊评级信息。</p>
-      )}
+      <RevealItem isReady={!isLoadingRatings} placeholder={<Skeleton className="m-2 h-24" />}>
+        {isRatingError ? (
+          <div
+            className="flex items-center justify-between px-2.5 py-2 text-xs text-muted-foreground"
+            role="status"
+          >
+            无法加载期刊评级
+            <Button variant="ghost" size="sm" onClick={() => void refetchRatings()}>
+              重试
+            </Button>
+          </div>
+        ) : hasRatings ? (
+          <div className="max-h-[min(60vh,26rem)] space-y-3 overflow-y-auto p-1">
+            {JOURNAL_RATING_SYSTEMS.map(({ key, label }) => {
+              const options = ratingOptions?.[key] ?? [];
+              return options.length > 0 ? (
+                <fieldset key={key}>
+                  <legend className="px-1.5 pb-1 text-xs font-bold text-muted-foreground">
+                    {label}
+                  </legend>
+                  <div className="grid grid-cols-2 gap-x-1">
+                    {options.map((option) => (
+                      <FilterOptionRow
+                        key={option.value}
+                        id={`rating-${key}-${option.value}`}
+                        ariaLabel={`${label} ${option.value}`}
+                        label={option.value}
+                        count={option.count}
+                        isChecked={ratings[key].includes(option.value)}
+                        onCheckedChange={(isChecked) =>
+                          handleRatingChange(key, option.value, isChecked)
+                        }
+                      />
+                    ))}
+                  </div>
+                </fieldset>
+              ) : null;
+            })}
+          </div>
+        ) : (
+          <p className="px-2.5 py-3 text-xs text-muted-foreground">当前数据库暂无期刊评级信息。</p>
+        )}
+      </RevealItem>
     </FilterFacet>
   );
 }
@@ -605,33 +618,33 @@ function renderJournalFacet(state: SearchFilterState) {
       onClear={handleClearJournals}
       contentClassName="w-[24rem]"
     >
-      {loadingJournals ? (
-        <Skeleton className="m-2 h-24" />
-      ) : (
-        <div className="space-y-2">
-          <div className="relative px-1 pt-1">
-            <Search
-              className="pointer-events-none absolute top-1/2 left-3.5 mt-0.5 size-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <Input
-              aria-label="搜索期刊"
-              name="journal_search"
-              autoComplete="off"
-              spellCheck={false}
-              value={journalSearch}
-              onChange={(event) => setJournalSearch(event.target.value)}
-              placeholder="搜索期刊"
-              className="h-9 pl-9"
+      <RevealItem isReady={!loadingJournals} placeholder={<Skeleton className="m-2 h-24" />}>
+        {
+          <div className="space-y-2">
+            <div className="relative px-1 pt-1">
+              <Search
+                className="pointer-events-none absolute top-1/2 left-3.5 mt-0.5 size-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                aria-label="搜索期刊"
+                name="journal_search"
+                autoComplete="off"
+                spellCheck={false}
+                value={journalSearch}
+                onChange={(event) => setJournalSearch(event.target.value)}
+                placeholder="搜索期刊"
+                className="h-9 pl-9"
+              />
+            </div>
+            <JournalOptionList
+              filteredJournalOptions={filteredJournalOptions}
+              journalIds={journalIds}
+              handleJournalChange={handleJournalChange}
             />
           </div>
-          <JournalOptionList
-            filteredJournalOptions={filteredJournalOptions}
-            journalIds={journalIds}
-            handleJournalChange={handleJournalChange}
-          />
-        </div>
-      )}
+        }
+      </RevealItem>
     </FilterFacet>
   );
 }
@@ -702,47 +715,47 @@ function AreaFacet({ state }: { state: SearchFilterState }) {
       onClear={handleClearAreas}
       contentClassName="w-[22rem]"
     >
-      {loadingAreas ? (
-        <Skeleton className="m-2 h-24" />
-      ) : (
-        <div className="space-y-2">
-          {(areaOptions?.length ?? 0) > 10 && (
-            <div className="relative px-1 pt-1">
-              <Search
-                className="pointer-events-none absolute top-1/2 left-3.5 mt-0.5 size-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <Input
-                aria-label="搜索领域"
-                autoComplete="off"
-                value={areaSearch}
-                onChange={(event) => setAreaSearch(event.target.value)}
-                placeholder="搜索领域"
-                className="h-9 pl-9"
-              />
-            </div>
-          )}
-          <div
-            data-slot="area-options"
-            className="max-h-[min(55vh,22rem)] overflow-y-auto overscroll-contain py-1 pr-3 pl-1"
-          >
-            {options.map((option) => (
-              <FilterOptionRow
-                key={option.value}
-                id={`area-${option.value}`}
-                title={option.value}
-                label={getAreaDisplayName(option.value)}
-                count={option.count}
-                isChecked={selectedAreas.has(option.value)}
-                onCheckedChange={(isChecked) => handleAreaChange(option.value, isChecked)}
-              />
-            ))}
-            {options.length === 0 && (
-              <p className="px-2.5 py-3 text-xs text-muted-foreground">未找到领域。</p>
+      <RevealItem isReady={!loadingAreas} placeholder={<Skeleton className="m-2 h-24" />}>
+        {
+          <div className="space-y-2">
+            {(areaOptions?.length ?? 0) > 10 && (
+              <div className="relative px-1 pt-1">
+                <Search
+                  className="pointer-events-none absolute top-1/2 left-3.5 mt-0.5 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <Input
+                  aria-label="搜索领域"
+                  autoComplete="off"
+                  value={areaSearch}
+                  onChange={(event) => setAreaSearch(event.target.value)}
+                  placeholder="搜索领域"
+                  className="h-9 pl-9"
+                />
+              </div>
             )}
+            <div
+              data-slot="area-options"
+              className="max-h-[min(55vh,22rem)] overflow-y-auto overscroll-contain py-1 pr-3 pl-1"
+            >
+              {options.map((option) => (
+                <FilterOptionRow
+                  key={option.value}
+                  id={`area-${option.value}`}
+                  title={option.value}
+                  label={getAreaDisplayName(option.value)}
+                  count={option.count}
+                  isChecked={selectedAreas.has(option.value)}
+                  onCheckedChange={(isChecked) => handleAreaChange(option.value, isChecked)}
+                />
+              ))}
+              {options.length === 0 && (
+                <p className="px-2.5 py-3 text-xs text-muted-foreground">未找到领域。</p>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        }
+      </RevealItem>
     </FilterFacet>
   );
 }

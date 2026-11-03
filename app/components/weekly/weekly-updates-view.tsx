@@ -35,6 +35,7 @@ import {
   PANEL_VARIANTS,
   REVEAL_VARIANTS,
 } from '@/components/ui/motion';
+import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { Button } from '@/components/ui/button';
@@ -289,43 +290,66 @@ export function WeeklyUpdatesView() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 className="text-lg leading-7 font-bold">期刊每周更新</h1>
-              <p className="text-xs tabular-nums text-muted-foreground">
-                {weeklySummary
-                  ? `统计窗口 ${formatDate(weeklySummary.window_start)} – ${formatDate(weeklySummary.window_end)}`
-                  : '正在读取统计窗口…'}
-              </p>
-            </div>
-            {weeklySummary && (
-              <div
-                data-weekly-summary-key={weeklySummary.window_end}
-                className="flex shrink-0 flex-col items-end gap-0.5 text-[11px] leading-4 text-muted-foreground"
+              <RevealItem
+                isReady={weeklyState !== 'loading'}
+                placeholder={<p className="text-xs text-muted-foreground">正在读取统计窗口…</p>}
               >
-                <span className="inline-flex items-center gap-1">
-                  <Layers className="size-3" aria-hidden="true" />
-                  {totalDatabases} 个数据库
-                </span>
-                <span className="inline-flex items-center gap-1 font-bold text-foreground">
-                  <FileText className="size-3" aria-hidden="true" />
-                  {totalArticles} 篇新文章
-                </span>
-              </div>
-            )}
+                <p className="text-xs tabular-nums text-muted-foreground">
+                  {weeklySummary
+                    ? `统计窗口 ${formatDate(weeklySummary.window_start)} – ${formatDate(weeklySummary.window_end)}`
+                    : '正在读取统计窗口…'}
+                </p>
+              </RevealItem>
+            </div>
+            <RevealItem
+              isReady={weeklyState !== 'loading'}
+              className="shrink-0"
+              placeholder={<Skeleton className="h-8 w-20" />}
+            >
+              {weeklySummary && (
+                <div
+                  data-weekly-summary-key={weeklySummary.window_end}
+                  className="flex flex-col items-end gap-0.5 text-[11px] leading-4 text-muted-foreground"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <Layers className="size-3" aria-hidden="true" />
+                    {totalDatabases} 个数据库
+                  </span>
+                  <span className="inline-flex items-center gap-1 font-bold text-foreground">
+                    <FileText className="size-3" aria-hidden="true" />
+                    {totalArticles} 篇新文章
+                  </span>
+                </div>
+              )}
+            </RevealItem>
           </div>
           <SearchBar queryParam="weekly_q" placeholder="在本周新文章中检索…" />
           <div className="scrollbar-none -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5">
-            {availableDatabases.length > 0 && (
-              <DatabasePill
-                ariaLabel="周报数据库"
-                databases={availableDatabases}
-                value={effectiveSelectedDb}
-                onChange={handleDatabaseChange}
+            <RevealItem
+              isReady={weeklyState !== 'loading'}
+              className="shrink-0"
+              placeholder={<Skeleton className="h-11 w-40 rounded-full md:h-8" />}
+            >
+              {availableDatabases.length > 0 && (
+                <DatabasePill
+                  ariaLabel="周报数据库"
+                  databases={availableDatabases}
+                  value={effectiveSelectedDb}
+                  onChange={handleDatabaseChange}
+                />
+              )}
+            </RevealItem>
+            <RevealItem
+              isReady={weeklyState !== 'loading'}
+              className="shrink-0"
+              placeholder={<Skeleton className="h-11 w-32 rounded-full md:h-8" />}
+            >
+              <WeeklyJournalFacet
+                journals={journals}
+                effectiveSelectedJournalId={effectiveSelectedJournalId}
+                onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
               />
-            )}
-            <WeeklyJournalFacet
-              journals={journals}
-              effectiveSelectedJournalId={effectiveSelectedJournalId}
-              onSelectJournal={(journalId) => void setSelectedJournalId(journalId)}
-            />
+            </RevealItem>
           </div>
         </div>
       }
@@ -713,7 +737,22 @@ function renderWeeklyArticleResults(state: WeeklyViewState) {
 
 /** Render the complete keyed article presence subtree with its original state precedence. */
 function renderWeeklyArticleStates(state: WeeklyViewState) {
-  return <MotionPresence mode="wait">{renderWeeklyArticlePanel(state)}</MotionPresence>;
+  return (
+    <RevealItem
+      isReady={state.articleState !== 'loading'}
+      placeholder={
+        <div
+          data-weekly-article-key={state.articleListKey}
+          data-weekly-article-state="loading"
+          aria-hidden="true"
+        >
+          <ArticleListSkeleton count={4} />
+        </div>
+      }
+    >
+      <MotionPresence mode="wait">{renderWeeklyArticlePanel(state)}</MotionPresence>
+    </RevealItem>
+  );
 }
 
 /** Select the original keyed panel before returning it directly to MotionPresence. */
@@ -736,21 +775,7 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
         />
       </MotionDiv>
     );
-  if (articleState === 'loading')
-    return (
-      <MotionDiv
-        key="weekly-articles-loading"
-        data-weekly-article-key={articleListKey}
-        data-weekly-article-state="loading"
-        aria-hidden="true"
-        variants={PANEL_VARIANTS}
-        initial="hidden"
-        animate="visible"
-        exit="exit"
-      >
-        <ArticleListSkeleton count={4} />
-      </MotionDiv>
-    );
+  if (articleState === 'loading') return null;
   if (articleState === 'error')
     return (
       <MotionDiv
@@ -840,57 +865,54 @@ function renderWeeklyJournalHeader(state: WeeklyViewState) {
 function renderWeeklyPresentation(state: WeeklyViewState) {
   const { weeklySummary, weeklyErrorData, weeklyState } = state;
   return (
-    <MotionPresence mode="wait">
-      {weeklyState === 'loading' ? (
-        <MotionDiv
-          key="weekly-loading"
-          data-weekly-state="loading"
-          aria-hidden="true"
-          variants={PANEL_VARIANTS}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
-        >
+    <RevealItem
+      isReady={weeklyState !== 'loading'}
+      placeholder={
+        <div data-weekly-state="loading" aria-hidden="true">
           <Skeleton className="m-4 h-10 sm:mx-5" />
           <ArticleListSkeleton count={4} />
-        </MotionDiv>
-      ) : weeklyState === 'error' ? (
-        <MotionDiv
-          key="weekly-error"
-          data-weekly-state="error"
-          variants={PANEL_VARIANTS}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
-        >
-          <StateMessage
-            isLive={false}
-            tone="danger"
-            title="加载每周更新失败"
-            description={
-              weeklyErrorData instanceof Error ? weeklyErrorData.message : '请稍后重试。'
-            }
-          />
-        </MotionDiv>
-      ) : (
-        weeklySummary && (
+        </div>
+      }
+    >
+      <MotionPresence mode="wait">
+        {weeklyState === 'error' ? (
           <MotionDiv
-            key="weekly-ready"
-            data-weekly-state="ready"
+            key="weekly-error"
+            data-weekly-state="error"
             variants={PANEL_VARIANTS}
             initial="hidden"
             animate="visible"
             exit="exit"
           >
-            <section className="min-w-0" aria-label="每周文章">
-              {renderWeeklyJournalHeader(state)}
-
-              {renderWeeklyArticleStates(state)}
-            </section>
+            <StateMessage
+              isLive={false}
+              tone="danger"
+              title="加载每周更新失败"
+              description={
+                weeklyErrorData instanceof Error ? weeklyErrorData.message : '请稍后重试。'
+              }
+            />
           </MotionDiv>
-        )
-      )}
-    </MotionPresence>
+        ) : (
+          weeklySummary && (
+            <MotionDiv
+              key="weekly-ready"
+              data-weekly-state="ready"
+              variants={PANEL_VARIANTS}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+            >
+              <section className="min-w-0" aria-label="每周文章">
+                {renderWeeklyJournalHeader(state)}
+
+                {renderWeeklyArticleStates(state)}
+              </section>
+            </MotionDiv>
+          )
+        )}
+      </MotionPresence>
+    </RevealItem>
   );
 }
 

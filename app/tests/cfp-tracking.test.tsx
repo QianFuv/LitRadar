@@ -104,6 +104,18 @@ function renderCfp(searchParams = '?view=cfp-tracking') {
   );
 }
 
+/**
+ * Resolve a queried element once its panel entrance has finished and it is visible.
+ *
+ * @param query - Pending Testing Library query.
+ * @returns The visible element.
+ */
+async function findVisible(query: Promise<HTMLElement>): Promise<HTMLElement> {
+  const element = await query;
+  await waitFor(() => expect(element).toBeVisible());
+  return element;
+}
+
 const originalMatchMedia = window.matchMedia;
 
 /**
@@ -166,7 +178,7 @@ async function reusesUnchangedNoticePages(): Promise<void> {
     `?view=cfp-tracking&cfp_db=${DATABASES[0]}&cfp_journal=issn-1949-3045`,
   );
   const title = noticePage('issn-1949-3045', false).items[0].title;
-  await screen.findByRole('heading', { name: title });
+  await screen.findByRole('heading', { name: title }, { timeout: 3000 });
   const queryKey = ['cfp', 'notices', DATABASES[0], 'issn-1949-3045', false];
   const data = queryClient.getQueryData<InfiniteData<CfpNoticePage>>(queryKey)!;
   const flatten = vi.spyOn(data.pages, 'flatMap');
@@ -186,7 +198,7 @@ async function reusesUnchangedNoticePages(): Promise<void> {
       })),
     });
   });
-  expect(await screen.findByRole('heading', { name: `${title} updated` })).toBeVisible();
+  await findVisible(screen.findByRole('heading', { name: `${title} updated` }));
   expect(screen.queryByRole('heading', { name: title })).toBeNull();
 }
 
@@ -239,13 +251,13 @@ describe('CFP tracking', () => {
 
   test('shows structured requirements for a maintained journal with no articles', async () => {
     renderCfp();
-    expect(
-      await screen.findByRole(
+    await findVisible(
+      screen.findByRole(
         'heading',
         { name: /When Affective Computing Meets Multimodal/ },
         { timeout: 3000 },
       ),
-    ).toBeVisible();
+    );
     expect(screen.getByText('2026/12/30')).toBeVisible();
     expect(screen.getByText('论文截止')).toBeVisible();
     expect(screen.getByRole('region', { name: '投稿要求' })).toBeVisible();
@@ -255,11 +267,11 @@ describe('CFP tracking', () => {
 
   test('renders English source excerpts when browsing the English database', async () => {
     renderCfp('?view=cfp-tracking&cfp_db=english_journals.sqlite');
-    expect(
-      await screen.findByRole('heading', {
+    await findVisible(
+      screen.findByRole('heading', {
         name: 'Call for Papers | Journal of Marketing: Special Issue on Organic Marketing Theory',
       }),
-    ).toBeVisible();
+    );
     expect(screen.getByText(/What is material is that the theory/)).toBeVisible();
     expect(screen.getByText(/All submissions will go through Journal of Marketing/)).toBeVisible();
     expect(screen.queryByText('营销领域原创理论')).toBeNull();
@@ -268,11 +280,12 @@ describe('CFP tracking', () => {
   test('leaves unavailable excerpts absent while keeping a confirmed call and its dates', async () => {
     mockSingleJournal('issn-0022-2380', 'Journal of Management Studies');
     renderCfp('?view=cfp-tracking&cfp_db=english_journals.sqlite');
-    const heading = await screen.findByRole('heading', {
-      name: 'Special Issue Call for Papers: The Dark Sides of Digital Communication',
-    });
+    const heading = await findVisible(
+      screen.findByRole('heading', {
+        name: 'Special Issue Call for Papers: The Dark Sides of Digital Communication',
+      }),
+    );
     const card = within(heading.closest('article')!);
-    expect(heading).toBeVisible();
     expect(card.queryByRole('region', { name: '投稿范围' })).toBeNull();
     expect(card.queryByRole('region', { name: '投稿要求' })).toBeNull();
     expect(card.getByRole('link', { name: '查看征稿原文' })).toBeVisible();
@@ -281,14 +294,16 @@ describe('CFP tracking', () => {
   test('shows invitation restrictions for newly adapted collection calls', async () => {
     mockSingleJournal('issn-0001-5903', 'Acta Informatica');
     renderCfp();
-    const heading = await screen.findByRole('heading', { name: 'By Invite Only - RF70' });
+    const heading = await findVisible(
+      screen.findByRole('heading', { name: 'By Invite Only - RF70' }),
+    );
     expect(within(heading.closest('article')!).getByText('仅限受邀投稿')).toBeVisible();
   });
 
   test('shows a verified empty source without implying that regular submissions are closed', async () => {
     mockSingleJournal('issn-1067-5027', 'Journal of the American Medical Informatics Association');
     renderCfp('?view=cfp-tracking&cfp_db=english_journals.sqlite');
-    expect(await screen.findByRole('heading', { name: '暂无已收录的征稿公告' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: '暂无已收录的征稿公告' }));
     expect(screen.getByText(/General submissions are still open/)).toBeVisible();
     expect(screen.queryByRole('heading', { name: '暂未适配' })).toBeNull();
     expect(screen.getByRole('link', { name: '查看期刊说明' })).toHaveAttribute('target', '_blank');
@@ -299,11 +314,11 @@ describe('CFP tracking', () => {
     const user = userEvent.setup();
     mockSingleJournal('issn-1004-3306', '保险研究');
     renderCfp('?view=cfp-tracking&cfp_db=chinese_journals.sqlite');
-    expect(await screen.findByRole('heading', { name: '暂无已收录的进行中征稿' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: '暂无已收录的进行中征稿' }));
     await user.click(screen.getByRole('checkbox', { name: '显示已结束及历史' }));
-    expect(
-      await screen.findByRole('heading', { name: '“保险在普惠金融中的作用”选题讨论会征稿启事' }),
-    ).toBeVisible();
+    await findVisible(
+      screen.findByRole('heading', { name: '“保险在普惠金融中的作用”选题讨论会征稿启事' }),
+    );
     expect(screen.getByText('已结束')).toBeVisible();
   });
 
@@ -311,7 +326,7 @@ describe('CFP tracking', () => {
     const user = userEvent.setup();
     mockSingleJournal('issn-0024-6301', 'Long Range Planning');
     renderCfp('?view=cfp-tracking&cfp_db=english_journals.sqlite');
-    expect(await screen.findByText('投稿时间待确认')).toBeVisible();
+    await findVisible(screen.findByText('投稿时间待确认'));
     expect(screen.queryByText('征稿中')).toBeNull();
     const trigger = screen.getByRole('button', { name: '查看原文时间说明' });
     await user.click(trigger);
@@ -326,7 +341,7 @@ describe('CFP tracking', () => {
     renderCfp();
     await user.click(await screen.findByRole('button', { name: /^暂未适配/ }));
     await user.click(await screen.findByRole('button', { name: /未适配示例期刊/ }));
-    expect(await screen.findByRole('heading', { name: '暂未适配' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: '暂未适配' }));
     expect(document.querySelectorAll('[data-slot="cfp-notice"]')).toHaveLength(0);
     expect(screen.queryByRole('link', { name: '查看征稿原文' })).toBeNull();
   });
@@ -334,7 +349,7 @@ describe('CFP tracking', () => {
   test('uses database-scoped journal selection without changing article-search preferences', async () => {
     window.localStorage.setItem(SELECTED_DATABASE_KEY, 'article-search.sqlite');
     renderCfp('?view=cfp-tracking&cfp_db=chinese_journals.sqlite&cfp_journal=issn-1949-3045');
-    expect(await screen.findByRole('heading', { name: '审计与经济研究' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: '审计与经济研究' }));
     expect(
       screen.queryByRole('heading', { name: /When Affective Computing Meets Multimodal/ }),
     ).toBeNull();
@@ -358,7 +373,7 @@ describe('CFP tracking', () => {
       ),
     );
     renderCfp();
-    expect(await screen.findByRole('heading', { name: '加载征稿期刊失败' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: '加载征稿期刊失败' }));
     expect(screen.queryByRole('heading', { name: '暂未适配' })).toBeNull();
     expect(screen.getByRole('button', { name: '重试' })).toBeVisible();
   });
@@ -367,7 +382,7 @@ describe('CFP tracking', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2100-01-01T12:00:00Z'));
     renderCfp();
-    expect(await screen.findByText('征稿中')).toBeVisible();
+    await findVisible(screen.findByText('征稿中'));
   });
 
   test('loads more original notices and uses server totals instead of loaded item counts', async () => {
@@ -395,9 +410,9 @@ describe('CFP tracking', () => {
       }),
     );
     renderCfp();
-    expect(await screen.findByText('17 条已收录征稿')).toBeVisible();
+    await findVisible(screen.findByText('17 条已收录征稿'));
     await user.click(screen.getByRole('button', { name: '加载更多征稿' }));
-    expect(await screen.findByRole('heading', { name: 'Second original notice' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: 'Second original notice' }));
     expect(document.querySelectorAll('[data-slot="cfp-notice"]')).toHaveLength(2);
     expect(requests).toEqual([null, 'next-page']);
   });
@@ -436,7 +451,7 @@ describe('CFP tracking', () => {
     );
     renderCfp();
     await user.click(await screen.findByRole('button', { name: '加载更多征稿' }));
-    expect(await screen.findByRole('heading', { name: 'New server snapshot' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: 'New server snapshot' }));
     expect(screen.queryByRole('heading', { name: 'Old server snapshot' })).toBeNull();
     expect(requests).toEqual([null, 'stale-page', null]);
   });
@@ -449,7 +464,7 @@ describe('CFP tracking', () => {
       ),
     );
     renderCfp();
-    expect(await screen.findByRole('heading', { name: '加载征稿需求失败' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: '加载征稿需求失败' }));
     expect(document.querySelectorAll('[data-slot="cfp-notice"]')).toHaveLength(0);
     await user.click(screen.getByRole('button', { name: /^暂未适配/ }));
     expect(screen.getByRole('button', { name: /未适配示例期刊/ })).toBeVisible();
@@ -492,7 +507,7 @@ describe('CFP tracking', () => {
     await user.click(await screen.findByRole('button', { name: '加载更多征稿' }));
     await screen.findByRole('heading', { name: 'Second current response' });
     await user.click(screen.getByRole('checkbox', { name: '显示已结束及历史' }));
-    expect(await screen.findByRole('heading', { name: 'Historical response' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: 'Historical response' }));
     expect(screen.queryByRole('heading', { name: 'Second current response' })).toBeNull();
     expect(requests).toEqual([
       [false, null],
@@ -522,9 +537,9 @@ describe('CFP tracking', () => {
     );
     renderCfp();
     await started;
-    await user.click(screen.getByRole('button', { name: /^暂未适配/ }));
+    await user.click(await screen.findByRole('button', { name: /^暂未适配/ }));
     await user.click(screen.getByRole('button', { name: /未适配示例期刊/ }));
-    expect(await screen.findByRole('heading', { name: '暂未适配' })).toBeVisible();
+    await findVisible(screen.findByRole('heading', { name: '暂未适配' }));
     releaseResponse();
     await waitFor(() => expect(didFinish).toBe(true));
     expect(

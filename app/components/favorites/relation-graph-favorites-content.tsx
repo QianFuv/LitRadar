@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import {
@@ -131,7 +132,18 @@ export function RelationGraphFavoritesContent() {
           />
         }
       >
-        {renderRelationGraphFavoriteList(pagesQuery, favorites, startRename, setDeleteTarget)}
+        <RevealItem
+          isReady={!pagesQuery.isPending}
+          placeholder={
+            <div role="status" className="space-y-3 px-4 py-4 sm:px-5">
+              <span className="sr-only">正在加载收藏的关系图</span>
+              <Skeleton className="h-14 w-full" />
+              <Skeleton className="h-14 w-full" />
+            </div>
+          }
+        >
+          {renderRelationGraphFavoriteList(pagesQuery, favorites, startRename, setDeleteTarget)}
+        </RevealItem>
       </WorkspaceShell>
       <Dialog
         open={renameTarget !== null}
@@ -215,15 +227,7 @@ function renderRelationGraphFavoriteList(
   onRename: (favorite: RelationGraphFavoriteSummary) => void,
   onDelete: (favorite: RelationGraphFavoriteSummary) => void,
 ) {
-  if (pagesQuery.isPending) {
-    return (
-      <div role="status" className="space-y-3 px-4 py-4 sm:px-5">
-        <span className="sr-only">正在加载收藏的关系图</span>
-        <Skeleton className="h-14 w-full" />
-        <Skeleton className="h-14 w-full" />
-      </div>
-    );
-  }
+  if (pagesQuery.isPending) return null;
   if (pagesQuery.isError) {
     return (
       <StateMessage

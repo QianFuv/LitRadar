@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LIST_ITEM_VARIANTS, MotionDiv, MotionPresence } from '@/components/ui/motion';
 import { StateMessage } from '@/components/ui/state-message';
@@ -67,7 +68,19 @@ export function CfpTrackingView() {
       reader={{
         content: (
           <div className="mx-auto w-full max-w-[44rem] space-y-6 px-5 pt-7 pb-14 sm:px-8 xl:pt-10">
-            {renderCfpWorkspace(state)}
+            <RevealItem
+              isReady={!state.isLoading}
+              className="space-y-6"
+              placeholder={
+                <div role="status" className="space-y-4">
+                  <span className="sr-only">正在加载征稿期刊</span>
+                  <Skeleton className="h-36 w-full rounded-2xl" />
+                  <Skeleton className="h-72 w-full rounded-2xl" />
+                </div>
+              }
+            >
+              {renderCfpWorkspace(state)}
+            </RevealItem>
           </div>
         ),
         description: '期刊征稿需求与时间安排',
@@ -241,13 +254,7 @@ function renderCfpNoticeContent(
   selected: NonNullable<CfpViewState['selected']>,
 ) {
   const { noticesQuery, visibleNotices } = state;
-  if (noticesQuery.isLoading)
-    return (
-      <div role="status">
-        <span className="sr-only">正在加载征稿需求</span>
-        <Skeleton className="h-72 w-full" />
-      </div>
-    );
+  if (noticesQuery.isLoading) return null;
   if (visibleNotices.length)
     return (
       <MotionPresence>
@@ -309,7 +316,18 @@ function renderCfpNotices(
           显示已结束及历史
         </label>
       </div>
-      {renderCfpNoticeContent(state, selected)}
+      <RevealItem
+        isReady={!noticesQuery.isLoading}
+        className="space-y-2"
+        placeholder={
+          <div role="status">
+            <span className="sr-only">正在加载征稿需求</span>
+            <Skeleton className="h-72 w-full" />
+          </div>
+        }
+      >
+        {renderCfpNoticeContent(state, selected)}
+      </RevealItem>
       {noticesQuery.hasNextPage && !noticesQuery.isError && (
         <Button
           variant="outline"
@@ -392,14 +410,7 @@ function renderCfpJournalHeader(
 /** Retain metadata loading, error, missing journal and selected workspace priority. */
 function renderCfpWorkspace(state: CfpViewState) {
   const { selected, isLoading, error } = state;
-  if (isLoading)
-    return (
-      <div role="status" className="space-y-4">
-        <span className="sr-only">正在加载征稿期刊</span>
-        <Skeleton className="h-36 w-full rounded-2xl" />
-        <Skeleton className="h-72 w-full rounded-2xl" />
-      </div>
-    );
+  if (isLoading) return null;
   if (error)
     return (
       <ReaderPlaceholder
@@ -428,6 +439,7 @@ function renderCfpHeader(state: CfpViewState) {
     database,
     journals,
     handleDatabaseChange,
+    isLoading,
   } = state;
 
   return (
@@ -437,9 +449,11 @@ function renderCfpHeader(state: CfpViewState) {
         <p className="text-xs text-muted-foreground">按期刊发现征稿主题与投稿要求</p>
       </div>
       <div className="flex items-center justify-between gap-3">
-        {databasesQuery.isLoading ? (
-          <Skeleton className="h-8 w-36 rounded-full" />
-        ) : (
+        <RevealItem
+          isReady={!databasesQuery.isLoading}
+          className="min-w-0"
+          placeholder={<Skeleton className="h-8 w-36 rounded-full" />}
+        >
           <DatabasePill
             ariaLabel="征稿数据库"
             databases={databases}
@@ -448,10 +462,16 @@ function renderCfpHeader(state: CfpViewState) {
             formatLabel={formatCfpDatabase}
             isDisabled={databases.length === 0}
           />
-        )}
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-          {journals.length} 本期刊
-        </span>
+        </RevealItem>
+        <RevealItem
+          isReady={!isLoading}
+          className="shrink-0"
+          placeholder={<Skeleton className="h-4 w-16" />}
+        >
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {journals.length} 本期刊
+          </span>
+        </RevealItem>
       </div>
       <div className="relative">
         <Search
@@ -487,37 +507,43 @@ function renderCfpJournalPanel(state: CfpViewState, onOpenReader: () => void) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col px-2 pt-2 pb-[calc(4.5rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] md:pb-2">
-      {isLoading ? (
-        <div className="space-y-2 p-2" aria-hidden="true">
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
-        </div>
-      ) : error ? (
-        <StateMessage
-          isLive={false}
-          tone="danger"
-          title="加载征稿期刊失败"
-          description={error instanceof Error ? error.message : '请稍后重试。'}
-          action={
-            <Button variant="outline" size="sm" onClick={handleRetry}>
-              重试
-            </Button>
-          }
-        />
-      ) : (
-        <CfpJournalList
-          key={`${database}:${Boolean(journalSearch.trim())}`}
-          groups={filteredGroups}
-          selectedCatalogId={selected?.catalogId}
-          isSearching={Boolean(journalSearch.trim())}
-          onIntent={handleJournalIntent}
-          onSelect={(catalogId) => {
-            void setSelectedCatalogId(catalogId);
-            onOpenReader();
-          }}
-        />
-      )}
+      <RevealItem
+        isReady={!isLoading}
+        className="flex min-h-0 flex-1 flex-col"
+        placeholder={
+          <div className="space-y-2 p-2" aria-hidden="true">
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+          </div>
+        }
+      >
+        {error ? (
+          <StateMessage
+            isLive={false}
+            tone="danger"
+            title="加载征稿期刊失败"
+            description={error instanceof Error ? error.message : '请稍后重试。'}
+            action={
+              <Button variant="outline" size="sm" onClick={handleRetry}>
+                重试
+              </Button>
+            }
+          />
+        ) : (
+          <CfpJournalList
+            key={`${database}:${Boolean(journalSearch.trim())}`}
+            groups={filteredGroups}
+            selectedCatalogId={selected?.catalogId}
+            isSearching={Boolean(journalSearch.trim())}
+            onIntent={handleJournalIntent}
+            onSelect={(catalogId) => {
+              void setSelectedCatalogId(catalogId);
+              onOpenReader();
+            }}
+          />
+        )}
+      </RevealItem>
     </div>
   );
 }

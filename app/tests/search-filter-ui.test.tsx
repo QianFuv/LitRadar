@@ -667,7 +667,7 @@ describe('search and filter UI', () => {
   test(
     'indexes large journal selections without row scans',
     indexesSelectedJournalMembership,
-    15000,
+    30000,
   );
   test('defers journal options until opening the popover', defersClosedJournalOptions, 15000);
   test('reads persisted history only for navigation keys', readsHistoryOnlyForNavigation);

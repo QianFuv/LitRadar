@@ -7,6 +7,7 @@ import { render, type RenderOptions, type RenderResult } from '@testing-library/
 import type { ReactElement, ReactNode } from 'react';
 
 import { MotionProvider } from '@/components/ui/motion';
+import { RevealScope } from '@/components/ui/reveal';
 
 export interface QueryRenderResult extends RenderResult {
   queryClient: QueryClient;
@@ -48,7 +49,9 @@ export function renderWithQuery(
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <MotionProvider reducedMotion="always">
-        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        <QueryClientProvider client={queryClient}>
+          <RevealScope>{children}</RevealScope>
+        </QueryClientProvider>
       </MotionProvider>
     );
   }

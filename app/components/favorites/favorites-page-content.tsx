@@ -54,6 +54,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { cn } from '@/lib/utils';
@@ -204,7 +205,9 @@ function renderFavoritesHeader(state: FavoritesViewState) {
       </div>
       <FavoriteKindSwitch />
       {renderFolderTabs(state)}
-      {selectedFolder && renderFolderToolbar(state, selectedFolder)}
+      <RevealItem isReady={!state.isLoading} placeholder={null}>
+        {selectedFolder && renderFolderToolbar(state, selectedFolder)}
+      </RevealItem>
     </div>
   );
 }
@@ -213,66 +216,69 @@ function renderFavoritesHeader(state: FavoritesViewState) {
 function renderFolderTabs(state: FavoritesViewState) {
   const { folders, isLoading, activeFolderId, handleSelectFolder } = state;
 
-  if (isLoading) {
-    return (
-      <div aria-hidden="true" className="flex gap-2">
-        <Skeleton className="h-8 w-24 rounded-full" />
-        <Skeleton className="h-8 w-32 rounded-full" />
-        <Skeleton className="h-8 w-20 rounded-full" />
-      </div>
-    );
-  }
-  if (folders.length === 0) {
-    return <p className="text-xs text-muted-foreground">暂无收藏夹，点击「新建」创建第一个。</p>;
-  }
   return (
-    <div
-      role="group"
-      aria-label="收藏夹"
-      data-slot="favorite-folder-tabs"
-      className="scrollbar-none fade-x-edges -mx-4 -my-1 flex gap-1.5 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5"
+    <RevealItem
+      isReady={!isLoading}
+      placeholder={
+        <div aria-hidden="true" className="flex gap-2">
+          <Skeleton className="h-8 w-24 rounded-full" />
+          <Skeleton className="h-8 w-32 rounded-full" />
+          <Skeleton className="h-8 w-20 rounded-full" />
+        </div>
+      }
     >
-      {folders.map((folder) => {
-        const isActive = activeFolderId === folder.id;
-        return (
-          <button
-            key={folder.id}
-            type="button"
-            data-motion-folder-key={folder.id}
-            aria-pressed={isActive}
-            aria-label={folder.name}
-            title={folder.is_tracking ? `${folder.name}（追踪文件夹）` : folder.name}
-            onClick={() => handleSelectFolder(folder.id)}
-            className={cn(
-              'motion-control inline-flex h-11 max-w-[13rem] shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] md:h-8 md:px-3 outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring',
-              isActive
-                ? 'bg-foreground font-bold text-background'
-                : 'bg-background text-foreground/80 shadow-[inset_0_0_0_1px_var(--border)] hover:bg-accent',
-            )}
-          >
-            {folder.is_tracking && (
-              <Radar
+      {folders.length === 0 ? (
+        <p className="text-xs text-muted-foreground">暂无收藏夹，点击「新建」创建第一个。</p>
+      ) : (
+        <div
+          role="group"
+          aria-label="收藏夹"
+          data-slot="favorite-folder-tabs"
+          className="scrollbar-none fade-x-edges -mx-4 -my-1 flex gap-1.5 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5"
+        >
+          {folders.map((folder) => {
+            const isActive = activeFolderId === folder.id;
+            return (
+              <button
+                key={folder.id}
+                type="button"
+                data-motion-folder-key={folder.id}
+                aria-pressed={isActive}
+                aria-label={folder.name}
+                title={folder.is_tracking ? `${folder.name}（追踪文件夹）` : folder.name}
+                onClick={() => handleSelectFolder(folder.id)}
                 className={cn(
-                  'size-3.5 shrink-0',
-                  isActive ? 'text-background' : 'text-primary-text',
+                  'motion-control inline-flex h-11 max-w-[13rem] shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] md:h-8 md:px-3 outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring',
+                  isActive
+                    ? 'bg-foreground font-bold text-background'
+                    : 'bg-background text-foreground/80 shadow-[inset_0_0_0_1px_var(--border)] hover:bg-accent',
                 )}
-                aria-hidden="true"
-              />
-            )}
-            <span className="truncate">{folder.name}</span>
-            <span
-              aria-hidden="true"
-              className={cn(
-                'shrink-0 text-[11px] tabular-nums',
-                isActive ? 'text-background/70' : 'text-muted-foreground',
-              )}
-            >
-              {folder.article_count}
-            </span>
-          </button>
-        );
-      })}
-    </div>
+              >
+                {folder.is_tracking && (
+                  <Radar
+                    className={cn(
+                      'size-3.5 shrink-0',
+                      isActive ? 'text-background' : 'text-primary-text',
+                    )}
+                    aria-hidden="true"
+                  />
+                )}
+                <span className="truncate">{folder.name}</span>
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'shrink-0 text-[11px] tabular-nums',
+                    isActive ? 'text-background/70' : 'text-muted-foreground',
+                  )}
+                >
+                  {folder.article_count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </RevealItem>
   );
 }
 
@@ -751,20 +757,7 @@ function renderFavoritesArticlePanel(state: FavoritesViewState) {
     refetchFavorites,
     visiblePageCount,
   } = state;
-  if (isPendingFavorites)
-    return (
-      <MotionDiv
-        key="favorites-loading"
-        data-favorites-state="loading"
-        aria-hidden="true"
-        variants={PANEL_VARIANTS}
-        initial="hidden"
-        animate="visible"
-        exit="exit"
-      >
-        <ArticleListSkeleton count={4} />
-      </MotionDiv>
-    );
+  if (isPendingFavorites) return null;
   if (isFavoritesError)
     return (
       <MotionDiv
@@ -839,7 +832,18 @@ function renderFavoritesArticlePanel(state: FavoritesViewState) {
 
 /** Retain the complete article-state animation owner. */
 function renderFavoritesArticleStates(state: FavoritesViewState) {
-  return <MotionPresence mode="wait">{renderFavoritesArticlePanel(state)}</MotionPresence>;
+  return (
+    <RevealItem
+      isReady={!state.isPendingFavorites}
+      placeholder={
+        <div data-favorites-state="loading" aria-hidden="true">
+          <ArticleListSkeleton count={4} />
+        </div>
+      }
+    >
+      <MotionPresence mode="wait">{renderFavoritesArticlePanel(state)}</MotionPresence>
+    </RevealItem>
+  );
 }
 
 /** Retain selected-folder and no-folder panels with their original keys. */
@@ -847,43 +851,54 @@ function renderFavoritesWorkspace(state: FavoritesViewState) {
   const { isLoading, selectedFolder, favoritesState, setDialogOpen } = state;
 
   return (
-    <MotionPresence mode="wait">
-      {!selectedFolder ? (
-        <MotionDiv
-          key="favorites-no-folder"
-          data-favorites-state={favoritesState}
-          variants={PANEL_VARIANTS}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
-        >
+    <RevealItem
+      isReady={!isLoading}
+      placeholder={
+        <div data-favorites-state="folders-loading">
           <StateMessage
             isLive={false}
-            title={isLoading ? '正在加载收藏夹' : '选择一个收藏夹'}
-            description={isLoading ? '收藏夹加载完成后即可查看文章。' : '从上方选择或新建收藏夹。'}
-            action={
-              isLoading ? undefined : (
+            title="正在加载收藏夹"
+            description="收藏夹加载完成后即可查看文章。"
+          />
+        </div>
+      }
+    >
+      <MotionPresence mode="wait">
+        {!selectedFolder ? (
+          <MotionDiv
+            key="favorites-no-folder"
+            data-favorites-state={favoritesState}
+            variants={PANEL_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+          >
+            <StateMessage
+              isLive={false}
+              title="选择一个收藏夹"
+              description="从上方选择或新建收藏夹。"
+              action={
                 <Button variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
                   <FolderPlus aria-hidden="true" />
                   新建收藏夹
                 </Button>
-              )
-            }
-          />
-        </MotionDiv>
-      ) : (
-        <MotionDiv
-          key={`favorites-folder-${selectedFolder.id}`}
-          data-favorites-folder={selectedFolder.id}
-          variants={PANEL_VARIANTS}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
-        >
-          {renderFavoritesArticleStates(state)}
-        </MotionDiv>
-      )}
-    </MotionPresence>
+              }
+            />
+          </MotionDiv>
+        ) : (
+          <MotionDiv
+            key={`favorites-folder-${selectedFolder.id}`}
+            data-favorites-folder={selectedFolder.id}
+            variants={PANEL_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+          >
+            {renderFavoritesArticleStates(state)}
+          </MotionDiv>
+        )}
+      </MotionPresence>
+    </RevealItem>
   );
 }
 
