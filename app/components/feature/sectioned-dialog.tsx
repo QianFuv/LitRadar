@@ -6,8 +6,20 @@
 
 import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import { ScrollFade } from '@animate-ui/react/primitives/effects/scroll-fade';
-import { ArrowLeft, X, type AppIcon } from '@/components/ui/animated-icons';
-import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
+import {
+  ArrowLeft,
+  IconTriggerProvider,
+  useIconTrigger,
+  X,
+  type AppIcon,
+} from '@/components/ui/animated-icons';
+import {
+  useLayoutEffect,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -98,6 +110,30 @@ function resolveReturnFocusTarget(activeElement: HTMLElement | null): HTMLElemen
 }
 
 /**
+ * Render one category button whose icon plays on hover, on touch, and when it becomes active.
+ *
+ * @param props - Button properties and whether the category is active.
+ * @returns Category button that drives its animated icon.
+ */
+function SectionNavigationButton({
+  isActive,
+  ...props
+}: ComponentProps<'button'> & { isActive: boolean }) {
+  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLButtonElement>(props, isActive);
+  return (
+    <IconTriggerProvider isTriggered={isTriggered}>
+      <button
+        type="button"
+        {...props}
+        {...triggerHandlers}
+        aria-current={isActive ? 'page' : undefined}
+        data-section-active={isActive ? 'true' : 'false'}
+      />
+    </IconTriggerProvider>
+  );
+}
+
+/**
  * Render section navigation as horizontal pills on phones and a vertical list on wider screens,
  * with Animate UI's highlight sliding between the active categories.
  *
@@ -126,10 +162,8 @@ function SectionedDialogNavigation<SectionId extends string>({
             const isActive = section.id === activeSection;
             return (
               <HighlightItem key={section.id} value={section.id} className="shrink-0 md:w-full">
-                <button
-                  type="button"
-                  aria-current={isActive ? 'page' : undefined}
-                  data-section-active={isActive ? 'true' : 'false'}
+                <SectionNavigationButton
+                  isActive={isActive}
                   disabled={isDisabled}
                   className={cn(
                     'motion-control flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] whitespace-nowrap outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:h-10 md:w-full md:gap-3 md:rounded-lg md:px-3 md:text-sm',
@@ -141,7 +175,7 @@ function SectionedDialogNavigation<SectionId extends string>({
                 >
                   <Icon className="size-4 shrink-0" aria-hidden="true" />
                   <span>{section.label}</span>
-                </button>
+                </SectionNavigationButton>
               </HighlightItem>
             );
           })}

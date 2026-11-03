@@ -5,7 +5,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
-import { Search } from '@/components/ui/animated-icons';
+import { IconTriggerProvider, Search, useIconTrigger } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -66,9 +66,37 @@ function animatesOnItsOwnRequest(): void {
   expect(container.querySelector('svg')).not.toHaveClass('lucide-search');
 }
 
+/**
+ * Render a navigation item that drives its icon through the trigger hook.
+ *
+ * @param props - Whether the item is the current one.
+ * @returns Navigation item with an animated icon.
+ */
+function NavigationItem({ isCurrent }: { isCurrent: boolean }) {
+  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>({}, isCurrent);
+  return (
+    <IconTriggerProvider isTriggered={isTriggered}>
+      <a href="#search" aria-label="检索" {...triggerHandlers}>
+        <Search className="size-5" aria-hidden="true" />
+      </a>
+    </IconTriggerProvider>
+  );
+}
+
+/** Stay still for the item that is current on first render, then play when another becomes current. */
+function playsWhenBecomingCurrent(): void {
+  const { container, rerender } = render(<NavigationItem isCurrent />);
+  expect(container.querySelector('svg')).toHaveClass('lucide-search');
+  rerender(<NavigationItem isCurrent={false} />);
+  expect(container.querySelector('svg')).toHaveClass('lucide-search');
+  rerender(<NavigationItem isCurrent />);
+  expect(container.querySelector('svg')).not.toHaveClass('lucide-search');
+}
+
 describe('animated icons', () => {
   test('render still until their control is triggered', rendersStillUntilTriggered);
   test('swap in on mouse hover', swapsInOnMouseHover);
   test('swap in on a touch press', swapsInOnTouchPress);
   test('animate on their own request', animatesOnItsOwnRequest);
+  test('play when a navigation item becomes current', playsWhenBecomingCurrent);
 });

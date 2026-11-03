@@ -10,11 +10,14 @@ import {
   Megaphone,
   Search,
   Star,
+  IconTriggerProvider,
+  useIconTrigger,
   type AppIcon,
 } from '@/components/ui/animated-icons';
 import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import type { ComponentProps } from 'react';
 
 import { cn } from '@/lib/utils';
 import {
@@ -50,6 +53,24 @@ function useCurrentWorkspaceView(): WorkspaceView {
 }
 
 /**
+ * Render one workspace link whose icon plays on hover, on touch, and when it becomes current.
+ *
+ * @param props - Link properties and whether the link is the current workspace.
+ * @returns Navigation link that drives its animated icon.
+ */
+function NavigationItemLink({
+  isCurrent,
+  ...props
+}: ComponentProps<typeof Link> & { isCurrent: boolean }) {
+  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>(props, isCurrent);
+  return (
+    <IconTriggerProvider isTriggered={isTriggered}>
+      <Link {...props} {...triggerHandlers} aria-current={isCurrent ? 'page' : undefined} />
+    </IconTriggerProvider>
+  );
+}
+
+/**
  * Render the vertical workspace navigation used inside the desktop rail.
  *
  * @returns Accessible rail navigation.
@@ -66,12 +87,12 @@ export function RailNavigation() {
 
           return (
             <HighlightItem key={item.view} value={item.view}>
-              <Link
+              <NavigationItemLink
                 key={item.view}
                 href={getWorkspaceViewHref(item.view)}
                 prefetch={false}
                 aria-label={item.label}
-                aria-current={isCurrent ? 'page' : undefined}
+                isCurrent={isCurrent}
                 title={item.label}
                 className={cn(
                   'motion-control relative flex w-12 flex-col items-center gap-1 rounded-xl py-2 text-rail-foreground outline-none transition-[background-color,color] hover:bg-rail-hover hover:text-rail-active focus-visible:ring-2 focus-visible:ring-ring',
@@ -86,7 +107,7 @@ export function RailNavigation() {
                 )}
                 <Icon className="size-5" strokeWidth={isCurrent ? 2.1 : 1.7} aria-hidden="true" />
                 <span className="text-[10px] leading-none">{item.shortLabel}</span>
-              </Link>
+              </NavigationItemLink>
             </HighlightItem>
           );
         })}
@@ -117,12 +138,12 @@ export function TabNavigation() {
 
           return (
             <HighlightItem key={item.view} value={item.view}>
-              <Link
+              <NavigationItemLink
                 key={item.view}
                 href={getWorkspaceViewHref(item.view)}
                 prefetch={false}
                 aria-label={item.label}
-                aria-current={isCurrent ? 'page' : undefined}
+                isCurrent={isCurrent}
                 className={cn(
                   'motion-control flex h-14 flex-col items-center justify-center gap-1 text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                   isCurrent && 'text-primary-text',
@@ -132,7 +153,7 @@ export function TabNavigation() {
                 <span className={cn('text-[11px] leading-none', isCurrent && 'font-bold')}>
                   {item.shortLabel}
                 </span>
-              </Link>
+              </NavigationItemLink>
             </HighlightItem>
           );
         })}

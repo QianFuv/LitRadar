@@ -9,6 +9,7 @@
 import {
   createContext,
   use,
+  useEffect,
   useState,
   type AriaAttributes,
   type ComponentType,
@@ -115,6 +116,9 @@ import { X as AnimatedX } from '@/components/animate-ui/icons/x';
 /** Pixel size lucide-react icons render at when no size class applies. */
 const LUCIDE_DEFAULT_SIZE = 24;
 
+/** How long a navigation item counts as triggered after it becomes current, in milliseconds. */
+const CURRENT_PULSE_MS = 120;
+
 /** Whether the control around an icon is currently hovered or pressed. */
 const IconTriggerContext = createContext(false);
 
@@ -191,36 +195,52 @@ type IconTriggerHandlers<Target extends Element> = {
 
 /**
  * Track whether a control is hovered by a mouse or pressed by touch, keeping the control's own
- * pointer handlers.
+ * pointer handlers. Navigation items also pass whether they are current: their icon plays once
+ * each time the item becomes current after mounting.
  *
  * @param handlers - Pointer handlers the control already has.
+ * @param isCurrent - Whether the control is the current navigation item.
  * @returns Trigger state and merged pointer handlers to spread onto the control.
  */
-export function useIconTrigger<Target extends Element>(handlers: IconTriggerHandlers<Target>) {
-  const [isTriggered, setIsTriggered] = useState(false);
+export function useIconTrigger<Target extends Element>(
+  handlers: IconTriggerHandlers<Target>,
+  isCurrent = false,
+) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [wasCurrent, setWasCurrent] = useState(isCurrent);
+  const [isPulsing, setIsPulsing] = useState(false);
+  if (isCurrent !== wasCurrent) {
+    setWasCurrent(isCurrent);
+    setIsPulsing(isCurrent);
+  }
+  useEffect(() => {
+    if (!isPulsing) return;
+    const timer = window.setTimeout(() => setIsPulsing(false), CURRENT_PULSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [isPulsing]);
   const triggerHandlers = {
     onPointerEnter: (event: PointerEvent<Target>) => {
       handlers.onPointerEnter?.(event);
-      if (event.pointerType !== 'touch') setIsTriggered(true);
+      if (event.pointerType !== 'touch') setIsHovered(true);
     },
     onPointerLeave: (event: PointerEvent<Target>) => {
       handlers.onPointerLeave?.(event);
-      setIsTriggered(false);
+      setIsHovered(false);
     },
     onPointerDown: (event: PointerEvent<Target>) => {
       handlers.onPointerDown?.(event);
-      if (event.pointerType === 'touch') setIsTriggered(true);
+      if (event.pointerType === 'touch') setIsHovered(true);
     },
     onPointerUp: (event: PointerEvent<Target>) => {
       handlers.onPointerUp?.(event);
-      if (event.pointerType === 'touch') setIsTriggered(false);
+      if (event.pointerType === 'touch') setIsHovered(false);
     },
     onPointerCancel: (event: PointerEvent<Target>) => {
       handlers.onPointerCancel?.(event);
-      setIsTriggered(false);
+      setIsHovered(false);
     },
   };
-  return { isTriggered, triggerHandlers };
+  return { isTriggered: isHovered || isPulsing, triggerHandlers };
 }
 
 /**
