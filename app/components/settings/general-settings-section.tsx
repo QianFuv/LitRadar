@@ -6,7 +6,7 @@
 
 import { Check, SunMoon } from '@/components/ui/animated-icons';
 import { useTheme } from 'next-themes';
-import { useSyncExternalStore } from 'react';
+import { useRef, useSyncExternalStore, type PointerEvent } from 'react';
 
 import {
   SettingsSection,
@@ -17,6 +17,7 @@ import {
 } from '@/components/settings/settings-section';
 import { RevealItem } from '@/components/ui/reveal';
 import { RadioGroup, RadioGroupIndicator, RadioGroupItem } from '@/components/ui/radio-group';
+import { getFocusedOrigin, revealThemeChange, type ScreenPoint } from '@/lib/theme-transition';
 import { cn } from '@/lib/utils';
 
 type ThemePreference = 'system' | 'light' | 'dark';
@@ -61,12 +62,34 @@ function getServerEnvironmentSnapshot(): boolean {
 }
 
 /**
- * Render the system, light, and dark theme preferences.
+ * Render the system, light, and dark theme preferences. A new theme is revealed as a circle
+ * growing from where it was picked: the pointer position, or the focused option for keyboards.
  *
  * @returns General settings theme section.
  */
 export function GeneralSettingsSection() {
   const { setTheme, theme } = useTheme();
+  const pointerOriginRef = useRef<ScreenPoint | null>(null);
+
+  /**
+   * Remember where a pointer pressed the theme options.
+   *
+   * @param event - Pointer press inside the theme options.
+   */
+  function handleThemePointerDown(event: PointerEvent<HTMLDivElement>): void {
+    pointerOriginRef.current = { x: event.clientX, y: event.clientY };
+  }
+
+  /**
+   * Reveal the selected theme from where it was picked.
+   *
+   * @param value - Selected next-themes preference.
+   */
+  function handleThemeChange(value: string): void {
+    const origin = pointerOriginRef.current ?? getFocusedOrigin();
+    pointerOriginRef.current = null;
+    revealThemeChange(() => setTheme(value), origin);
+  }
   const isMounted = useSyncExternalStore(
     subscribeToClientEnvironment,
     getClientEnvironmentSnapshot,
@@ -95,7 +118,8 @@ export function GeneralSettingsSection() {
             className="grid grid-cols-3 gap-3 sm:gap-4"
             aria-label="外观主题"
             value={selectedTheme}
-            onValueChange={setTheme}
+            onValueChange={handleThemeChange}
+            onPointerDown={handleThemePointerDown}
           >
             {THEME_OPTIONS.map((option) => {
               const isSelected = selectedTheme === option.value;

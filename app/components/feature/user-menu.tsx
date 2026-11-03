@@ -20,6 +20,7 @@ import { buildAdminCenterHref, parseAdminSection } from '@/lib/admin-center';
 import { useAuth, type LogoutRevocationWarning } from '@/lib/auth-context';
 import { buildSettingsCenterHref } from '@/lib/settings-center';
 import { cn } from '@/lib/utils';
+import { getFocusedOrigin, revealThemeChange } from '@/lib/theme-transition';
 
 type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -190,12 +191,12 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
   }
 
   /**
-   * Persist the selected application theme.
+   * Persist the selected application theme, revealing it from the chosen menu item.
    *
    * @param value - Selected next-themes preference.
    */
   function handleThemeChange(value: string): void {
-    setTheme(value);
+    revealThemeChange(() => setTheme(value), getFocusedOrigin());
   }
 
   const state = {
