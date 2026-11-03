@@ -166,6 +166,7 @@ function withReducedVariants<Props extends { variants?: Variants }>(
 export const MotionArticle = withReducedVariants(motion.article);
 export const MotionDiv = withReducedVariants(motion.div);
 export const MotionForm = withReducedVariants(motion.form);
+export const MotionListItem = withReducedVariants(motion.li);
 export const MotionParagraph = withReducedVariants(motion.p);
 export const MotionSection = withReducedVariants(motion.section);
 export const MotionSpan = withReducedVariants(motion.span);

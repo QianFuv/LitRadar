@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { DISCLOSURE_VARIANTS, MotionListItem, MotionPresence } from '@/components/ui/motion';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   Select,
@@ -179,118 +180,128 @@ function SearchBuilderBody({
           </p>
         )}
         <ol className="divide-y" aria-label="检索条件">
-          {conditions.map((condition, index) => {
-            const position = index + 1;
-            return (
-              <li
-                key={condition.id}
-                data-search-condition={condition.id}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 py-3 sm:grid-cols-[8rem_7.5rem_8.75rem_minmax(0,1fr)_auto]"
-              >
-                {index === 0 && condition.connector !== 'NOT' ? (
-                  <span className="flex h-9 items-center text-xs font-bold text-muted-foreground">
-                    检索
-                  </span>
-                ) : (
-                  <ToggleGroup
-                    type="single"
-                    aria-label={`第 ${position} 个条件的连接方式`}
-                    className="inline-flex h-9 gap-0.5 border-0 bg-muted"
-                    value={condition.connector}
-                    onValueChange={(connector) => {
-                      if (connector) {
-                        updateCondition(condition.id, {
-                          connector: connector as typeof condition.connector,
-                        });
-                      }
-                    }}
-                  >
-                    {SEARCH_BUILDER_CONNECTORS.map((connector) => (
-                      <ToggleGroupItem
-                        key={connector.value}
-                        value={connector.value}
-                        className={cn(
-                          'h-8 px-2.5 text-[13px] whitespace-nowrap md:h-8 md:px-2.5 data-[state=on]:bg-background data-[state=on]:font-bold data-[state=on]:text-foreground data-[state=on]:shadow-[0_0_0_1px_var(--border)] data-[state=on]:hover:text-foreground',
-                          connector.value === 'NOT' &&
-                            'data-[state=on]:text-destructive data-[state=on]:hover:text-destructive',
-                        )}
-                      >
-                        {connector.label}
-                      </ToggleGroupItem>
-                    ))}
-                  </ToggleGroup>
-                )}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-11 justify-self-end text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:order-last sm:size-9"
-                  aria-label={`删除第 ${position} 个条件`}
-                  onClick={() => removeCondition(condition.id)}
+          <MotionPresence>
+            {conditions.map((condition, index) => {
+              const position = index + 1;
+              return (
+                <MotionListItem
+                  key={condition.id}
+                  data-search-condition={condition.id}
+                  className="overflow-hidden"
+                  variants={DISCLOSURE_VARIANTS}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
                 >
-                  <Trash2 className="size-4" aria-hidden="true" />
-                </Button>
-                <div className="col-span-2 grid grid-cols-2 gap-2 sm:contents">
-                  <Select
-                    value={condition.field}
-                    onValueChange={(value) =>
-                      updateCondition(condition.id, {
-                        field: value as SearchBuilderCondition['field'],
-                      })
-                    }
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      aria-label={`第 ${position} 个条件的字段`}
-                      className="w-full"
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 py-3 sm:grid-cols-[8rem_7.5rem_8.75rem_minmax(0,1fr)_auto]">
+                    {index === 0 && condition.connector !== 'NOT' ? (
+                      <span className="flex h-9 items-center text-xs font-bold text-muted-foreground">
+                        检索
+                      </span>
+                    ) : (
+                      <ToggleGroup
+                        type="single"
+                        aria-label={`第 ${position} 个条件的连接方式`}
+                        className="inline-flex h-9 gap-0.5 border-0 bg-muted"
+                        value={condition.connector}
+                        onValueChange={(connector) => {
+                          if (connector) {
+                            updateCondition(condition.id, {
+                              connector: connector as typeof condition.connector,
+                            });
+                          }
+                        }}
+                      >
+                        {SEARCH_BUILDER_CONNECTORS.map((connector) => (
+                          <ToggleGroupItem
+                            key={connector.value}
+                            value={connector.value}
+                            className={cn(
+                              'h-8 px-2.5 text-[13px] whitespace-nowrap md:h-8 md:px-2.5 data-[state=on]:bg-background data-[state=on]:font-bold data-[state=on]:text-foreground data-[state=on]:shadow-[0_0_0_1px_var(--border)] data-[state=on]:hover:text-foreground',
+                              connector.value === 'NOT' &&
+                                'data-[state=on]:text-destructive data-[state=on]:hover:text-destructive',
+                            )}
+                          >
+                            {connector.label}
+                          </ToggleGroupItem>
+                        ))}
+                      </ToggleGroup>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-11 justify-self-end text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:order-last sm:size-9"
+                      aria-label={`删除第 ${position} 个条件`}
+                      onClick={() => removeCondition(condition.id)}
                     >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SEARCH_BUILDER_FIELDS.map((field) => (
-                        <SelectItem key={field.value} value={field.value}>
-                          {field.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={condition.match}
-                    onValueChange={(value) =>
-                      updateCondition(condition.id, {
-                        match: value as SearchBuilderCondition['match'],
-                      })
-                    }
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      aria-label={`第 ${position} 个条件的匹配方式`}
-                      className="w-full"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SEARCH_BUILDER_MATCHES.map((match) => (
-                        <SelectItem key={match.value} value={match.value}>
-                          {match.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Input
-                  aria-label={`第 ${position} 个条件的检索词`}
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder={index === 0 ? '例如：graph neural network' : '输入检索词'}
-                  value={condition.value}
-                  autoFocus={index === 0 && !condition.value}
-                  onChange={(event) => updateCondition(condition.id, { value: event.target.value })}
-                  className="col-span-2 h-11 sm:col-span-1 sm:h-9"
-                />
-              </li>
-            );
-          })}
+                      <Trash2 className="size-4" aria-hidden="true" />
+                    </Button>
+                    <div className="col-span-2 grid grid-cols-2 gap-2 sm:contents">
+                      <Select
+                        value={condition.field}
+                        onValueChange={(value) =>
+                          updateCondition(condition.id, {
+                            field: value as SearchBuilderCondition['field'],
+                          })
+                        }
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          aria-label={`第 ${position} 个条件的字段`}
+                          className="w-full"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SEARCH_BUILDER_FIELDS.map((field) => (
+                            <SelectItem key={field.value} value={field.value}>
+                              {field.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={condition.match}
+                        onValueChange={(value) =>
+                          updateCondition(condition.id, {
+                            match: value as SearchBuilderCondition['match'],
+                          })
+                        }
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          aria-label={`第 ${position} 个条件的匹配方式`}
+                          className="w-full"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SEARCH_BUILDER_MATCHES.map((match) => (
+                            <SelectItem key={match.value} value={match.value}>
+                              {match.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Input
+                      aria-label={`第 ${position} 个条件的检索词`}
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder={index === 0 ? '例如：graph neural network' : '输入检索词'}
+                      value={condition.value}
+                      autoFocus={index === 0 && !condition.value}
+                      onChange={(event) =>
+                        updateCondition(condition.id, { value: event.target.value })
+                      }
+                      className="col-span-2 h-11 sm:col-span-1 sm:h-9"
+                    />
+                  </div>
+                </MotionListItem>
+              );
+            })}
+          </MotionPresence>
         </ol>
         <Button
           type="button"
