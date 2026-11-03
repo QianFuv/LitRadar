@@ -6,6 +6,7 @@ import { BellRing, Database, Folder, Key, Shield, Star, Ticket, Users } from 'lu
 import { adminGetStats } from '@/lib/api';
 import { StatusPill } from '@/components/settings/settings-section';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
 import { RevealItem } from '@/components/ui/reveal';
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('zh-CN');
@@ -215,15 +216,7 @@ function renderIndexStatistics(state: Pick<OverviewViewState, 'indexStats'>) {
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span
-                    aria-hidden="true"
-                    className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
-                  >
-                    <span
-                      className="block h-full rounded-full bg-primary"
-                      style={{ width: `${share * 100}%` }}
-                    />
-                  </span>
+                  <Progress aria-hidden="true" className="flex-1" value={share * 100} />
                   <span className="w-12 text-right text-xs text-muted-foreground tabular-nums">
                     {Math.round(share * 100)}%
                   </span>

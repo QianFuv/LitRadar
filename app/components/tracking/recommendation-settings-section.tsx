@@ -22,6 +22,7 @@ import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-p
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 import { CHIP_VARIANTS, MotionPresence, MotionSpan } from '@/components/ui/motion';
 import {
   Select,
@@ -710,18 +711,15 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
             ? `全部数据库（${databaseSelection.available.length} 个）`
             : `已选 ${selectedCount} / ${databaseSelection.available.length} 个数据库`}
         </span>
-        <span aria-hidden="true" className="flex h-1.5 w-20 overflow-hidden rounded-full bg-muted">
-          <span
-            className="h-full rounded-full bg-primary"
-            style={{
-              width: `${
-                databaseSelection.allSelected
-                  ? 100
-                  : (selectedCount / databaseSelection.available.length) * 100
-              }%`,
-            }}
-          />
-        </span>
+        <Progress
+          aria-hidden="true"
+          className="w-20"
+          value={
+            databaseSelection.allSelected
+              ? 100
+              : (selectedCount / databaseSelection.available.length) * 100
+          }
+        />
       </div>
     </>
   );

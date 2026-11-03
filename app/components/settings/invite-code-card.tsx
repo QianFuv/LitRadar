@@ -31,6 +31,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { Progress } from '@/components/ui/progress';
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
   active: '可用',
@@ -261,15 +262,11 @@ function renderCurrentInviteCode(
             <span className="tabular-nums">
               已使用 {inviteCodeData.use_count}/{inviteCodeData.max_uses} 次
             </span>
-            <span
+            <Progress
               aria-hidden="true"
-              className="hidden h-1.5 w-16 overflow-hidden rounded-full bg-muted sm:block"
-            >
-              <span
-                className="block h-full rounded-full bg-primary"
-                style={{ width: `${usageRatio * 100}%` }}
-              />
-            </span>
+              className="hidden w-16 sm:block"
+              value={usageRatio * 100}
+            />
           </dd>
         </div>
         <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">

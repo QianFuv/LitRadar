@@ -27,6 +27,7 @@ import {
   REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import { cn } from '@/lib/utils';
+import { Progress } from '@/components/ui/progress';
 import { RevealItem } from '@/components/ui/reveal';
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
@@ -358,15 +359,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                     <p className="text-xs text-muted-foreground tabular-nums">
                       已使用 {inviteCode.use_count}/{inviteCode.max_uses}
                     </p>
-                    <span
-                      aria-hidden="true"
-                      className="mt-1 block h-1.5 overflow-hidden rounded-full bg-muted"
-                    >
-                      <span
-                        className="block h-full rounded-full bg-primary"
-                        style={{ width: `${usageRatio * 100}%` }}
-                      />
-                    </span>
+                    <Progress aria-hidden="true" className="mt-1" value={usageRatio * 100} />
                   </div>
                   <StatusPill
                     tone={isActive ? 'success' : 'neutral'}
