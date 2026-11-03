@@ -20,23 +20,12 @@ import {
   type ReactNode,
 } from 'react';
 
-import type { Variants } from 'motion/react';
-
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 
 /** Longest time a block that is still loading may hold back the ready blocks after it. */
 export const REVEAL_WAIT_LIMIT_MS = 1500;
 
 type RevealPhase = 'unresolved' | 'placeholder' | 'content';
-
-/**
- * Panel motion for revealed content; `visible` re-enables pointer events so content that returns
- * while its exit is still running stays clickable.
- */
-const CONTENT_VARIANTS = {
-  ...PANEL_VARIANTS,
-  visible: { ...PANEL_VARIANTS.visible, pointerEvents: 'inherit' },
-} satisfies Variants;
 
 type RevealEntry = {
   getElement: () => HTMLElement | null;
@@ -216,7 +205,8 @@ type RevealItemProps = {
  * Swap one block's placeholder for its content in reading order within the current surface.
  *
  * Content that is already available when the surface mounts shows without animation; later swaps
- * use the panel blur-fade.
+ * remove the outgoing element at once and blur-fade the incoming one in, so a swap never waits on
+ * an exit animation.
  *
  * @param props - Readiness, placeholder, content, and element classes.
  * @returns Animated placeholder or content element.
@@ -259,16 +249,15 @@ export function RevealItem({
   const isShowingContent = phase === 'content' && isReady;
 
   return (
-    <MotionPresence key={phase === 'unresolved' ? 'unresolved' : 'resolved'} mode="wait">
+    <MotionPresence key={phase === 'unresolved' ? 'unresolved' : 'resolved'}>
       {isShowingContent ? (
         <MotionDiv
           key="content"
           ref={trackElement}
           className={className}
-          variants={CONTENT_VARIANTS}
+          variants={PANEL_VARIANTS}
           initial="hidden"
           animate="visible"
-          exit="exit"
         >
           {children}
         </MotionDiv>
@@ -280,7 +269,6 @@ export function RevealItem({
           variants={PANEL_VARIANTS}
           initial="hidden"
           animate="visible"
-          exit="exit"
         >
           {placeholder}
         </MotionDiv>
