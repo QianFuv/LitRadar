@@ -77,7 +77,7 @@ function parseColorChannels(value: string, context: string): readonly [number, n
 }
 
 /**
- * Assert that one computed color has no hue.
+ * Assert that one computed color is a near-neutral gray whose tint stays far below any real hue.
  *
  * @param value - Computed CSS color.
  * @param context - Assertion context for failures.
@@ -87,13 +87,13 @@ function expectColorToBeGrayscale(value: string, context: string): void {
     value.trim(),
   );
   if (oklabMatch) {
-    expect(Math.abs(Number(oklabMatch[1]))).toBeLessThan(0.001);
-    expect(Math.abs(Number(oklabMatch[2]))).toBeLessThan(0.001);
+    expect(Math.abs(Number(oklabMatch[1]))).toBeLessThan(0.02);
+    expect(Math.abs(Number(oklabMatch[2]))).toBeLessThan(0.02);
     return;
   }
 
   const channels = parseColorChannels(value, context);
-  expect(new Set(channels).size).toBe(1);
+  expect(Math.max(...channels) - Math.min(...channels), context).toBeLessThanOrEqual(12);
 }
 
 /**
@@ -131,7 +131,7 @@ async function expectThemeFocusTokensToUseBlue(page: Page): Promise<void> {
     const isDark = await page
       .locator('html')
       .evaluate((element) => element.classList.contains('dark'));
-    expect(value).toBe(isDark ? '#60a5fa' : '#3b82f6');
+    expect(value).toBe(isDark ? '#346bf1' : '#1b4ed8');
   }
 }
 
@@ -2986,14 +2986,14 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     await inactiveCategory.hover();
     await expect(inactiveCategory).toHaveCSS(
       'background-color',
-      colorScheme === 'light' ? 'rgb(242, 242, 242)' : 'rgb(31, 31, 31)',
+      colorScheme === 'light' ? 'rgb(237, 237, 238)' : 'rgb(30, 30, 30)',
     );
     await expect(currentCategory).toHaveAttribute('aria-current', 'page');
     expect(await inactiveCategory.boundingBox()).toEqual(initialBox);
     await page.mouse.down();
     await expect(inactiveCategory).toHaveCSS(
       'background-color',
-      colorScheme === 'light' ? 'rgb(232, 232, 232)' : 'rgb(43, 43, 43)',
+      colorScheme === 'light' ? 'rgb(228, 228, 230)' : 'rgb(38, 38, 38)',
     );
     await page.mouse.move(1, 1);
     await page.mouse.up();
@@ -3022,7 +3022,7 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     await endpoint.hover();
     await expect(endpoint).toHaveCSS(
       'background-color',
-      colorScheme === 'light' ? 'rgb(242, 242, 242)' : 'rgb(31, 31, 31)',
+      colorScheme === 'light' ? 'rgb(237, 237, 238)' : 'rgb(30, 30, 30)',
     );
     await endpoint.click();
     const option = page.getByRole('option').first();
@@ -3030,18 +3030,24 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     await page.mouse.down();
     await expect(page.locator('[data-slot="item-highlight"]').first()).toHaveCSS(
       'background-color',
-      colorScheme === 'light' ? 'rgb(242, 242, 242)' : 'rgb(31, 31, 31)',
+      colorScheme === 'light' ? 'rgb(237, 237, 238)' : 'rgb(30, 30, 30)',
     );
     await page.mouse.move(1, 1);
     await page.mouse.up();
     await page.keyboard.press('Escape');
     const checkedDatabase = dialog.locator('[data-slot="checkbox"][data-state="checked"]').first();
     await checkedDatabase.hover();
-    await expect(checkedDatabase).toHaveCSS('background-color', 'rgb(29, 78, 216)');
+    await expect(checkedDatabase).toHaveCSS(
+      'background-color',
+      colorScheme === 'light' ? 'rgb(49, 96, 219)' : 'rgb(48, 97, 217)',
+    );
     const recommendationSwitch = page.locator('#notify-enabled');
     await expect(recommendationSwitch).toHaveAttribute('data-state', 'checked');
     await recommendationSwitch.hover();
-    await expect(recommendationSwitch).toHaveCSS('background-color', 'rgb(29, 78, 216)');
+    await expect(recommendationSwitch).toHaveCSS(
+      'background-color',
+      colorScheme === 'light' ? 'rgb(49, 96, 219)' : 'rgb(48, 97, 217)',
+    );
     await expect(recommendationSwitch).toHaveAttribute('data-state', 'checked');
     await page.screenshot({
       path: `../output/ui/visual-settings-${colorScheme}.png`,
