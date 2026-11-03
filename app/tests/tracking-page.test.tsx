@@ -155,8 +155,8 @@ async function rendersSectionsWithSharedTextareas(): Promise<void> {
   expect(backupPrompt).toHaveClass('shadow-vercel-ring');
 
   rerender(<TrackingSettingsContent userId={51} section="notifications" />);
-  expect(screen.getByRole('heading', { name: '推送方式' })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: '手动推送' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: '推送方式' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: '手动推送' })).toBeInTheDocument();
 }
 
 /** Verify AI secrets avoid saved-login reuse while preserving explicit key replacement. */
@@ -172,7 +172,7 @@ async function keepsAiCredentialsSeparateFromSavedLogins(): Promise<void> {
     expect(keyField).toHaveAttribute('autocomplete', 'new-password');
     expect(keyField).toHaveValue('');
   }
-  const saveButton = screen.getByRole('button', { name: '保存更改' });
+  const saveButton = await screen.findByRole('button', { name: '保存更改' });
   expect(saveButton).toBeDisabled();
   expect(screen.getByRole('button', { name: '取消更改' })).toBeDisabled();
 
@@ -291,7 +291,7 @@ async function preservesDraftAcrossCategories(): Promise<void> {
   expect(screen.getByRole('button', { name: '取消更改' })).toBeEnabled();
 
   rerender(<TrackingSettingsContent userId={51} section="tracking" />);
-  expect(screen.getByRole('switch', { name: '启用推荐' })).not.toBeChecked();
+  expect(await screen.findByRole('switch', { name: '启用推荐' })).not.toBeChecked();
 }
 
 /**
@@ -361,7 +361,7 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
   await user.keyboard('{Control>}a{/Control}5');
 
   rerender(<TrackingSettingsContent userId={51} section="notifications" />);
-  const deliveryMethods = screen.getByRole('radiogroup', { name: '推送方式' });
+  const deliveryMethods = await screen.findByRole('radiogroup', { name: '推送方式' });
   const deliveryPanel = document.querySelector('[data-motion-delivery-panel="pushplus"]');
   expect(deliveryPanel).toHaveAttribute('inert');
   expect(deliveryPanel).toHaveAttribute('aria-hidden', 'true');
@@ -584,7 +584,7 @@ async function requiresExplicitUnavailableDatabaseCorrection(): Promise<void> {
   const save = screen.getByRole('button', { name: '保存更改' });
   expect(save).toBeDisabled();
   expect(alpha).not.toBeChecked();
-  expect(screen.getByText('retired.sqlite')).toBeInTheDocument();
+  expect(await screen.findByText('retired.sqlite')).toBeInTheDocument();
   await user.click(save);
   expect(savedSettingsPayload).toBeNull();
   await user.click(alpha);
@@ -632,7 +632,7 @@ async function recoversUnavailableChoiceWithEmptyCatalog(): Promise<void> {
   expect(await screen.findByRole('alert')).toHaveTextContent('推送数据库已不可用');
   expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled();
   view.rerender(<TrackingSettingsContent userId={51} section="tracking" />);
-  expect(screen.getByText('retired.sqlite')).toBeInTheDocument();
+  expect(await screen.findByText('retired.sqlite')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '设为全部数据库' }));
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '保存更改' }));
@@ -652,7 +652,7 @@ describe('TrackingSettingsContent', () => {
     'preserves the last database until explicit all selection',
     preservesLastDatabaseUntilExplicitAllSelection,
   );
-  test('blocks tracking edits during a pending save', blocksTrackingEditsWhileSaving);
+  test('blocks tracking edits during a pending save', blocksTrackingEditsWhileSaving, 10_000);
   test('renders named sections with shared textareas', rendersSectionsWithSharedTextareas);
   test(
     'keeps AI credentials separate from saved logins',

@@ -7,6 +7,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 
+import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getRelatedArticles, type Article } from '@/lib/api';
 import { getArticleDisplayTitle } from '@/lib/article-title';
@@ -48,42 +49,47 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
       <h3 className="flex items-center gap-3 text-[11px] font-bold tracking-[0.16em] text-muted-foreground after:h-px after:flex-1 after:bg-border">
         相关文章
       </h3>
-      {relatedQuery.isError ? (
-        <p className="mt-3 text-[13px] text-muted-foreground">暂时无法加载相关文章。</p>
-      ) : !relatedQuery.isSuccess && relatedQuery.fetchStatus === 'idle' ? (
-        <div aria-hidden="true" className="h-16" />
-      ) : !relatedQuery.isSuccess ? (
-        <div role="status" className="mt-3 space-y-3">
-          <span className="sr-only">正在查找相关文章</span>
-          {[0, 1, 2].map((index) => (
-            <div key={index} className="space-y-1.5">
-              <Skeleton className="h-4 w-11/12" />
-              <Skeleton className="h-3 w-1/2" />
-            </div>
-          ))}
-        </div>
-      ) : related.length === 0 ? (
-        <p className="mt-3 text-[13px] text-muted-foreground">暂未找到相关文章。</p>
-      ) : (
-        <ul className="mt-1 divide-y divide-border/70">
-          {related.map((candidate) => (
-            <li key={String(candidate.article_id)}>
-              <button
-                type="button"
-                className="motion-control -mx-2 block w-[calc(100%+1rem)] rounded-md px-2 py-3 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => onOpen(candidate)}
-              >
-                <span className="line-clamp-2 text-[13.5px] leading-[1.5] font-bold">
-                  {getArticleDisplayTitle(candidate)}
-                </span>
-                <span className="mt-1 block truncate text-xs text-muted-foreground">
-                  {[candidate.journal_title, candidate.date].filter(Boolean).join(' · ')}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <RevealItem
+        isReady={!relatedQuery.isLoading}
+        placeholder={
+          <div role="status" className="mt-3 space-y-3">
+            <span className="sr-only">正在查找相关文章</span>
+            {[0, 1, 2].map((index) => (
+              <div key={index} className="space-y-1.5">
+                <Skeleton className="h-4 w-11/12" />
+                <Skeleton className="h-3 w-1/2" />
+              </div>
+            ))}
+          </div>
+        }
+      >
+        {relatedQuery.isError ? (
+          <p className="mt-3 text-[13px] text-muted-foreground">暂时无法加载相关文章。</p>
+        ) : !relatedQuery.isSuccess ? (
+          <div aria-hidden="true" className="h-16" />
+        ) : related.length === 0 ? (
+          <p className="mt-3 text-[13px] text-muted-foreground">暂未找到相关文章。</p>
+        ) : (
+          <ul className="mt-1 divide-y divide-border/70">
+            {related.map((candidate) => (
+              <li key={String(candidate.article_id)}>
+                <button
+                  type="button"
+                  className="motion-control -mx-2 block w-[calc(100%+1rem)] rounded-md px-2 py-3 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => onOpen(candidate)}
+                >
+                  <span className="line-clamp-2 text-[13.5px] leading-[1.5] font-bold">
+                    {getArticleDisplayTitle(candidate)}
+                  </span>
+                  <span className="mt-1 block truncate text-xs text-muted-foreground">
+                    {[candidate.journal_title, candidate.date].filter(Boolean).join(' · ')}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </RevealItem>
     </section>
   );
 }

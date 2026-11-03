@@ -110,7 +110,7 @@ async function rendersSettingsCards(): Promise<void> {
 
   expect(screen.getByText('fixture_user')).toBeInTheDocument();
   expect(await screen.findByText('未配置')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '生成邀请码' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: '生成邀请码' })).toBeInTheDocument();
   expect(await screen.findByText('暂无访问令牌')).toBeInTheDocument();
   expect(document.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4);
   expect(document.querySelector('[data-slot="card"]')).toBeNull();

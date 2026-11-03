@@ -164,7 +164,7 @@ async function updatesAndDeletesTask(): Promise<void> {
 
   expect(await screen.findByText('健康 worker：1/1')).toBeInTheDocument();
   expect(screen.getByText(/成功/)).toBeInTheDocument();
-  expect(screen.getByText(/未运行/)).toBeInTheDocument();
+  expect(await screen.findByText(/未运行/)).toBeInTheDocument();
 
   await user.click(await screen.findByRole('switch', { name: '停用定时任务 Weekly index' }));
   await waitFor(() => expect(taskPatch).toEqual({ enabled: false }));
@@ -619,10 +619,12 @@ describe('administrator mutation flow', () => {
   test(
     'reuses invite history dates while editing creation limits',
     reusesInviteDatesDuringFormEdits,
+    10_000,
   );
   test(
     'pauses inactive scheduler queries and retains editor drafts',
     pausesInactiveSchedulerQueries,
+    10_000,
   );
   test('updates and deletes a scheduled task', updatesAndDeletesTask);
   test(

@@ -28,6 +28,8 @@ import type {
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { RevealItem } from '@/components/ui/reveal';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
@@ -60,6 +62,7 @@ export function InviteCodeCard(props: {
   const state = useInviteViewState(props);
   const {
     inviteCodeData,
+    isInviteCodeLoading,
     generateInviteMut,
     rotateInviteMut,
     revokeInviteMut,
@@ -75,33 +78,38 @@ export function InviteCodeCard(props: {
         </SettingsSectionDescription>
       </SettingsSectionHeader>
       <SettingsSectionContent>
-        {inviteCodeData ? (
-          renderCurrentInviteCode(state, inviteCodeData)
-        ) : (
-          <SettingsGroup>
-            <SettingsRow
-              leading={
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-info text-primary">
-                  <Ticket className="size-5" aria-hidden="true" />
-                </span>
-              }
-              title="还没有邀请码"
-              description="生成后即可分享给同事注册 LitRadar"
-            >
-              <Button
-                size="sm"
-                onClick={() => {
-                  rotateInviteMut.reset();
-                  revokeInviteMut.reset();
-                  generateInviteMut.mutate();
-                }}
-                disabled={isMutating}
+        <RevealItem
+          isReady={!isInviteCodeLoading}
+          placeholder={<Skeleton className="h-16 w-full rounded-xl" />}
+        >
+          {inviteCodeData ? (
+            renderCurrentInviteCode(state, inviteCodeData)
+          ) : (
+            <SettingsGroup>
+              <SettingsRow
+                leading={
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-info text-primary">
+                    <Ticket className="size-5" aria-hidden="true" />
+                  </span>
+                }
+                title="还没有邀请码"
+                description="生成后即可分享给同事注册 LitRadar"
               >
-                生成邀请码
-              </Button>
-            </SettingsRow>
-          </SettingsGroup>
-        )}
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    rotateInviteMut.reset();
+                    revokeInviteMut.reset();
+                    generateInviteMut.mutate();
+                  }}
+                  disabled={isMutating}
+                >
+                  生成邀请码
+                </Button>
+              </SettingsRow>
+            </SettingsGroup>
+          )}
+        </RevealItem>
         {mutationError && (
           <p role="alert" className="mt-2 px-1 text-sm text-destructive">
             {mutationError instanceof Error ? mutationError.message : '邀请码操作失败'}
@@ -121,7 +129,11 @@ function useInviteViewState({
   handleCopy: (value: string, successMessage: string, scope: SettingsCopyScope) => Promise<void>;
 }) {
   const [isRevokeOpen, setIsRevokeOpen] = useState(false);
-  const { data: inviteCodeData, refetch: refetchInviteCode } = useQuery({
+  const {
+    data: inviteCodeData,
+    isPending: isInviteCodeLoading,
+    refetch: refetchInviteCode,
+  } = useQuery({
     queryKey: ['invite-code'],
     queryFn: () => getInviteCode(),
     enabled: true,
@@ -151,6 +163,7 @@ function useInviteViewState({
     isRevokeOpen,
     setIsRevokeOpen,
     inviteCodeData,
+    isInviteCodeLoading,
     generateInviteMut,
     rotateInviteMut,
     revokeInviteMut,

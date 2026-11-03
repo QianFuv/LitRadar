@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { RevealItem } from '@/components/ui/reveal';
 
 /**
  * Format a Unix timestamp for administrator tables.
@@ -104,11 +105,6 @@ export function AdminUsersCard({
           <CardDescription>查看和管理所有用户账号</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {isUsersLoading && (
-            <p role="status" className="text-sm text-muted-foreground">
-              加载中…
-            </p>
-          )}
           {usersError instanceof Error && (
             <p role="alert" className="text-sm text-destructive">
               {usersError.message}
@@ -121,114 +117,128 @@ export function AdminUsersCard({
                 : '更新管理员状态失败'}
             </p>
           )}
-          {users && (
-            <AdminListHeader
-              summary={`共 ${users.length} 位用户 · ${users.filter((entry) => entry.is_admin).length} 位管理员`}
-            />
-          )}
-          <SettingsGroup>
-            {userRows.map(({ user: u, registrationDate }) => (
-              <div
-                key={u.id}
-                className="content-visibility-card flex flex-col gap-3 px-4 py-4 sm:px-5 md:flex-row md:items-center md:gap-6"
-              >
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <UserAvatar
-                    username={u.username}
-                    className={u.is_admin ? undefined : 'bg-muted text-foreground'}
-                  />
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-sm font-bold">{u.username}</span>
-                      {u.is_admin ? (
-                        <StatusPill tone="info">管理员</StatusPill>
-                      ) : (
-                        <StatusPill>用户</StatusPill>
-                      )}
-                      {u.id === currentUserId && (
-                        <span className="text-xs text-muted-foreground">（你）</span>
-                      )}
+          <RevealItem
+            isReady={!isUsersLoading}
+            className="space-y-4"
+            placeholder={
+              <p role="status" className="text-sm text-muted-foreground">
+                加载中…
+              </p>
+            }
+          >
+            {users && (
+              <AdminListHeader
+                summary={`共 ${users.length} 位用户 · ${users.filter((entry) => entry.is_admin).length} 位管理员`}
+              />
+            )}
+            <SettingsGroup>
+              {userRows.map(({ user: u, registrationDate }) => (
+                <div
+                  key={u.id}
+                  className="content-visibility-card flex flex-col gap-3 px-4 py-4 sm:px-5 md:flex-row md:items-center md:gap-6"
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <UserAvatar
+                      username={u.username}
+                      className={u.is_admin ? undefined : 'bg-muted text-foreground'}
+                    />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-bold">{u.username}</span>
+                        {u.is_admin ? (
+                          <StatusPill tone="info">管理员</StatusPill>
+                        ) : (
+                          <StatusPill>用户</StatusPill>
+                        )}
+                        {u.id === currentUserId && (
+                          <span className="text-xs text-muted-foreground">（你）</span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+                        #{u.id} · <span>注册时间: {registrationDate}</span>
+                      </div>
                     </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground tabular-nums">
-                      #{u.id} · <span>注册时间: {registrationDate}</span>
+                  </div>
+                  <dl className="grid grid-cols-3 gap-2 text-xs md:flex md:gap-6">
+                    <div className="rounded-lg bg-muted/60 px-3 py-2 md:bg-transparent md:p-0 md:text-right">
+                      <dt className="text-muted-foreground">收藏夹</dt>
+                      <dd className="text-sm font-bold tabular-nums">{u.folder_count}</dd>
                     </div>
-                  </div>
-                </div>
-                <dl className="grid grid-cols-3 gap-2 text-xs md:flex md:gap-6">
-                  <div className="rounded-lg bg-muted/60 px-3 py-2 md:bg-transparent md:p-0 md:text-right">
-                    <dt className="text-muted-foreground">收藏夹</dt>
-                    <dd className="text-sm font-bold tabular-nums">{u.folder_count}</dd>
-                  </div>
-                  <div className="rounded-lg bg-muted/60 px-3 py-2 md:bg-transparent md:p-0 md:text-right">
-                    <dt className="text-muted-foreground">收藏</dt>
-                    <dd className="text-sm font-bold tabular-nums">{u.favorite_count}</dd>
-                  </div>
-                  <div className="rounded-lg bg-muted/60 px-3 py-2 md:w-14 md:bg-transparent md:p-0 md:text-right">
-                    <dt className="text-muted-foreground">推送</dt>
-                    <dd
-                      className={
-                        u.notify_enabled
-                          ? 'text-sm font-bold text-primary'
-                          : 'text-sm text-muted-foreground'
+                    <div className="rounded-lg bg-muted/60 px-3 py-2 md:bg-transparent md:p-0 md:text-right">
+                      <dt className="text-muted-foreground">收藏</dt>
+                      <dd className="text-sm font-bold tabular-nums">{u.favorite_count}</dd>
+                    </div>
+                    <div className="rounded-lg bg-muted/60 px-3 py-2 md:w-14 md:bg-transparent md:p-0 md:text-right">
+                      <dt className="text-muted-foreground">推送</dt>
+                      <dd
+                        className={
+                          u.notify_enabled
+                            ? 'text-sm font-bold text-primary'
+                            : 'text-sm text-muted-foreground'
+                        }
+                      >
+                        {u.notify_enabled ? '已订阅' : '未订阅'}
+                      </dd>
+                    </div>
+                  </dl>
+                  <div className="flex items-center justify-end gap-1 border-t pt-3 md:border-0 md:pt-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-9"
+                      title={u.is_admin ? '取消管理员' : '设为管理员'}
+                      aria-label={
+                        u.is_admin ? `取消 ${u.username} 的管理员` : `设为 ${u.username} 为管理员`
+                      }
+                      disabled={toggleAdminMut.isPending || u.id === currentUserId}
+                      onClick={() =>
+                        toggleAdminMut.mutate({
+                          userId: u.id,
+                          isAdmin: !u.is_admin,
+                        })
                       }
                     >
-                      {u.notify_enabled ? '已订阅' : '未订阅'}
-                    </dd>
+                      {u.is_admin ? (
+                        <ShieldOff className="size-4" />
+                      ) : (
+                        <Shield className="size-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-9"
+                      title="重置密码"
+                      aria-label={`重置 ${u.username} 的密码`}
+                      onClick={() => {
+                        resetPwMut.reset();
+                        setResetPwUserId(u.id);
+                        setResetPwValue('');
+                        setResetDialogOpen(true);
+                      }}
+                    >
+                      <KeyRound className="size-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="删除用户"
+                      aria-label={`删除用户 ${u.username}`}
+                      disabled={u.id === currentUserId}
+                      className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => {
+                        deleteUserMut.reset();
+                        setDeleteUserId(u.id);
+                        setDeleteDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
                   </div>
-                </dl>
-                <div className="flex items-center justify-end gap-1 border-t pt-3 md:border-0 md:pt-0">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-9"
-                    title={u.is_admin ? '取消管理员' : '设为管理员'}
-                    aria-label={
-                      u.is_admin ? `取消 ${u.username} 的管理员` : `设为 ${u.username} 为管理员`
-                    }
-                    disabled={toggleAdminMut.isPending || u.id === currentUserId}
-                    onClick={() =>
-                      toggleAdminMut.mutate({
-                        userId: u.id,
-                        isAdmin: !u.is_admin,
-                      })
-                    }
-                  >
-                    {u.is_admin ? <ShieldOff className="size-4" /> : <Shield className="size-4" />}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-9"
-                    title="重置密码"
-                    aria-label={`重置 ${u.username} 的密码`}
-                    onClick={() => {
-                      resetPwMut.reset();
-                      setResetPwUserId(u.id);
-                      setResetPwValue('');
-                      setResetDialogOpen(true);
-                    }}
-                  >
-                    <KeyRound className="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    title="删除用户"
-                    aria-label={`删除用户 ${u.username}`}
-                    disabled={u.id === currentUserId}
-                    className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => {
-                      deleteUserMut.reset();
-                      setDeleteUserId(u.id);
-                      setDeleteDialogOpen(true);
-                    }}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
                 </div>
-              </div>
-            ))}
-          </SettingsGroup>
+              ))}
+            </SettingsGroup>
+          </RevealItem>
         </CardContent>
       </Card>
 

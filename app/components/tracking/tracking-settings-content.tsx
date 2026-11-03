@@ -14,6 +14,9 @@ import { TrackingFolderCard } from '@/components/tracking/tracking-folder-card';
 import { TrackingHelpCard } from '@/components/tracking/tracking-help-card';
 import { useTrackingPage } from '@/components/tracking/use-tracking-page';
 import { Button } from '@/components/ui/button';
+import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
+import { RevealItem } from '@/components/ui/reveal';
+import { Skeleton } from '@/components/ui/skeleton';
 
 export type TrackingSettingsSectionId = 'tracking' | 'notifications';
 
@@ -77,10 +80,37 @@ export function TrackingSettingsContent({
         className="m-0 min-w-0 flex-1 border-0 p-0"
         disabled={recommendation.save.mutation.isPending}
       >
-        {renderTrackingCategory(state)}
+        <MotionPresence mode="wait">
+          <MotionDiv
+            key={section}
+            variants={PANEL_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+          >
+            {renderTrackingCategory(state)}
+          </MotionDiv>
+        </MotionPresence>
       </fieldset>
 
-      {!isInitialLoading && !isInitialError && renderTrackingSaveBar(state)}
+      <RevealItem isReady={!isInitialLoading} placeholder={null}>
+        {!isInitialError && renderTrackingSaveBar(state)}
+      </RevealItem>
+    </div>
+  );
+}
+
+/**
+ * Render the loading placeholder of one tracking block.
+ *
+ * @param heightClassName - Height of the block being loaded.
+ * @returns Status placeholder with a skeleton of the block.
+ */
+function renderTrackingBlockPlaceholder(heightClassName: string) {
+  return (
+    <div role="status" className="py-4">
+      <span className="sr-only">正在加载已保存的推荐配置…</span>
+      <Skeleton className={`${heightClassName} w-full rounded-xl`} />
     </div>
   );
 }
@@ -88,12 +118,6 @@ export function TrackingSettingsContent({
 /** Retain draft-aware initial loading/error and category content precedence. */
 function renderTrackingCategory(state: TrackingSettingsViewState) {
   const { section, trackingPage, recommendation, isInitialLoading, isInitialError } = state;
-  if (isInitialLoading)
-    return (
-      <div role="status" className="rounded-md border px-3 py-4 text-sm text-muted-foreground">
-        正在加载已保存的推荐配置…
-      </div>
-    );
   if (isInitialError)
     return (
       <div
@@ -109,14 +133,35 @@ function renderTrackingCategory(state: TrackingSettingsViewState) {
     return (
       <>
         <TrackingHelpCard />
-        <TrackingFolderCard model={trackingPage.folder} />
-        <RecommendationSettingsSection model={recommendation} />
+        <RevealItem
+          isReady={!trackingPage.folder.isLoading && !trackingPage.isStatusLoading}
+          placeholder={renderTrackingBlockPlaceholder('h-32')}
+        >
+          <TrackingFolderCard model={trackingPage.folder} />
+        </RevealItem>
+        <RevealItem
+          isReady={
+            !isInitialLoading &&
+            !recommendation.databaseSelection.query.isPending &&
+            !recommendation.ai.endpoints.query.isPending
+          }
+          placeholder={renderTrackingBlockPlaceholder('h-96')}
+        >
+          <RecommendationSettingsSection model={recommendation} />
+        </RevealItem>
       </>
     );
   return (
     <>
-      <DeliverySettingsSection model={recommendation} />
-      <ManualPushCard model={trackingPage.manualPush} />
+      <RevealItem isReady={!isInitialLoading} placeholder={renderTrackingBlockPlaceholder('h-64')}>
+        <DeliverySettingsSection model={recommendation} />
+      </RevealItem>
+      <RevealItem
+        isReady={!trackingPage.manualPush.isLoading && !trackingPage.isStatusLoading}
+        placeholder={renderTrackingBlockPlaceholder('h-32')}
+      >
+        <ManualPushCard model={trackingPage.manualPush} />
+      </RevealItem>
     </>
   );
 }

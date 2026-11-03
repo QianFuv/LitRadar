@@ -27,6 +27,7 @@ import {
   REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import { cn } from '@/lib/utils';
+import { RevealItem } from '@/components/ui/reveal';
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
   active: '可用',
@@ -120,11 +121,6 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
             </div>
           </div>
         </SettingsGroup>
-        {isLoading && (
-          <p role="status" className="text-sm text-muted-foreground">
-            加载中…
-          </p>
-        )}
         {inviteCodesError instanceof Error && (
           <p role="alert" className="text-sm text-destructive">
             {inviteCodesError.message}
@@ -147,14 +143,24 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
           )}
         </MotionPresence>
         {renderAdminInviteCopyFeedback(state)}
-        {state.inviteRows.length > 0 && (
-          <AdminListHeader
-            summary={`共 ${state.inviteRows.length} 个邀请码 · ${
-              state.inviteRows.filter(({ inviteCode }) => inviteCode.status === 'active').length
-            } 个可用`}
-          />
-        )}
-        {renderAdminInviteList(state)}
+        <RevealItem
+          isReady={!isLoading}
+          className="space-y-4"
+          placeholder={
+            <p role="status" className="text-sm text-muted-foreground">
+              加载中…
+            </p>
+          }
+        >
+          {state.inviteRows.length > 0 && (
+            <AdminListHeader
+              summary={`共 ${state.inviteRows.length} 个邀请码 · ${
+                state.inviteRows.filter(({ inviteCode }) => inviteCode.status === 'active').length
+              } 个可用`}
+            />
+          )}
+          {renderAdminInviteList(state)}
+        </RevealItem>
         {renderAdminInviteRevocation(state)}
       </CardContent>
     </Card>

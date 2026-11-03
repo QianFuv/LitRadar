@@ -40,6 +40,8 @@ import type {
   SettingsCopyFeedback,
   SettingsCopyScope,
 } from '@/components/settings/use-settings-copy';
+import { RevealItem } from '@/components/ui/reveal';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 const TTL_OPTIONS = [
@@ -117,7 +119,12 @@ export function AccessTokensCard(props: {
         </div>
       </SettingsSectionHeader>
       <SettingsSectionContent>
-        <SettingsGroup>{renderAccessTokenList(state)}</SettingsGroup>
+        <RevealItem
+          isReady={!state.isTokensLoading}
+          placeholder={<Skeleton className="h-16 w-full rounded-xl" />}
+        >
+          <SettingsGroup>{renderAccessTokenList(state)}</SettingsGroup>
+        </RevealItem>
         {renderAccessTokenRevocation(state)}
       </SettingsSectionContent>
     </SettingsSection>
@@ -142,7 +149,7 @@ function useAccessTokenViewState({
     tokenNameCodePointCount > ACCESS_TOKEN_NAME_MAX_CODE_POINTS
       ? ACCESS_TOKEN_NAME_LENGTH_DETAIL
       : null;
-  const { data: tokens = [] } = useQuery({
+  const { data: tokens = [], isPending: isTokensLoading } = useQuery({
     queryKey: ['access-tokens'],
     queryFn: () => getAccessTokens(),
     enabled: true,
@@ -167,6 +174,7 @@ function useAccessTokenViewState({
   return {
     copyFeedback,
     handleCopy,
+    isTokensLoading,
     tokenName,
     setTokenName,
     tokenTtl,

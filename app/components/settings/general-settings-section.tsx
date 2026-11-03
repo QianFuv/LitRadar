@@ -15,6 +15,7 @@ import {
   SettingsSectionHeader,
   SettingsSectionTitle,
 } from '@/components/settings/settings-section';
+import { RevealItem } from '@/components/ui/reveal';
 import { cn } from '@/lib/utils';
 
 type ThemePreference = 'system' | 'light' | 'dark';
@@ -81,7 +82,14 @@ export function GeneralSettingsSection() {
         </SettingsSectionDescription>
       </SettingsSectionHeader>
       <SettingsSectionContent>
-        {isMounted ? (
+        <RevealItem
+          isReady={isMounted}
+          placeholder={
+            <p role="status" className="text-sm text-muted-foreground">
+              正在读取主题偏好…
+            </p>
+          }
+        >
           <div className="grid grid-cols-3 gap-3 sm:gap-4" role="radiogroup" aria-label="外观主题">
             {THEME_OPTIONS.map((option) => {
               const isSelected = selectedTheme === option.value;
@@ -126,11 +134,7 @@ export function GeneralSettingsSection() {
               );
             })}
           </div>
-        ) : (
-          <p role="status" className="text-sm text-muted-foreground">
-            正在读取主题偏好…
-          </p>
-        )}
+        </RevealItem>
       </SettingsSectionContent>
     </SettingsSection>
   );

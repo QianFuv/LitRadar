@@ -6,6 +6,7 @@ import { BellRing, Database, Folder, Key, Shield, Star, Ticket, Users } from 'lu
 import { adminGetStats } from '@/lib/api';
 import { StatusPill } from '@/components/settings/settings-section';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { RevealItem } from '@/components/ui/reveal';
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('zh-CN');
 
@@ -73,23 +74,25 @@ export function AdminOverviewCard(props: { isEnabled: boolean }) {
         <CardDescription>全局统计信息</CardDescription>
       </CardHeader>
       <CardContent>
-        {statsLoading ? (
-          <div className="text-muted-foreground" role="status">
-            加载中…
-          </div>
-        ) : (
-          <div className="space-y-10">
-            {renderIndexHero(state)}
+        <RevealItem
+          isReady={!statsLoading}
+          className="space-y-10"
+          placeholder={
+            <div className="text-muted-foreground" role="status">
+              加载中…
+            </div>
+          }
+        >
+          {renderIndexHero(state)}
 
-            {renderAuthStatistics(state)}
+          {renderAuthStatistics(state)}
 
-            {/* Index stats */}
-            {renderIndexStatistics(state)}
+          {/* Index stats */}
+          {renderIndexStatistics(state)}
 
-            {/* Push stats */}
-            {renderPushStatistics(state)}
-          </div>
-        )}
+          {/* Push stats */}
+          {renderPushStatistics(state)}
+        </RevealItem>
       </CardContent>
     </Card>
   );

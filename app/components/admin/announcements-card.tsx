@@ -42,6 +42,7 @@ import {
 } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
+import { RevealItem } from '@/components/ui/reveal';
 
 type AnnouncementFormState = {
   enabled: boolean;
@@ -113,13 +114,18 @@ export function AnnouncementsCard() {
           </p>
         )}
 
-        {isLoading ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            加载中…
-          </p>
-        ) : (
-          <div className="border-t">{renderAnnouncementList(state)}</div>
-        )}
+        <RevealItem
+          isReady={!isLoading}
+          className="border-t"
+          placeholderClassName=""
+          placeholder={
+            <p role="status" className="text-sm text-muted-foreground">
+              加载中…
+            </p>
+          }
+        >
+          {renderAnnouncementList(state)}
+        </RevealItem>
         {renderAnnouncementDeletion(state)}
       </CardContent>
     </Card>

@@ -72,7 +72,7 @@ export function useTrackingPage(userId: number) {
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [databaseSelectionNotice, setDatabaseSelectionNotice] = useState<string | null>(null);
 
-  const { data: status } = useQuery({
+  const { data: status, isPending: isStatusLoading } = useQuery({
     queryKey: ['tracking-status'],
     queryFn: () => getTrackingStatus(),
     enabled: true,
@@ -85,7 +85,7 @@ export function useTrackingPage(userId: number) {
   });
   const availableDatabases = databasesQuery.data ?? EMPTY_DATABASES;
 
-  const { data: folders = [] } = useQuery({
+  const { data: folders = [], isPending: isFoldersLoading } = useQuery({
     queryKey: ['folders', userId],
     queryFn: () => getFolders(),
     enabled: true,
@@ -339,6 +339,7 @@ export function useTrackingPage(userId: number) {
     folder: {
       createAndSetMutation: createAndSetMut,
       folders,
+      isLoading: isFoldersLoading,
       name: newFolderName,
       setName: setNewFolderName,
       setTrackingMutation: setTrackMut,
@@ -346,6 +347,7 @@ export function useTrackingPage(userId: number) {
     },
     discardSettings,
     hasUnsavedSettings,
+    isStatusLoading,
     manualPush: {
       acknowledgeUnknownMutation: acknowledgeUnknownPushMut,
       cancelMutation: cancelPushMut,

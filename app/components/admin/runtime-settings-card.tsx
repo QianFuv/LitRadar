@@ -25,6 +25,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { RevealItem } from '@/components/ui/reveal';
 import {
   DISCLOSURE_VARIANTS,
   MotionDiv,
@@ -503,11 +504,14 @@ export function RuntimeSettingsCard() {
         <CardDescription>管理后端共享运行配置</CardDescription>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div role="status" className="text-sm text-muted-foreground">
-            加载中…
-          </div>
-        ) : (
+        <RevealItem
+          isReady={!isLoading}
+          placeholder={
+            <div role="status" className="text-sm text-muted-foreground">
+              加载中…
+            </div>
+          }
+        >
           <fieldset
             className="m-0 min-w-0 space-y-10 border-0 p-0"
             disabled={saveMutation.isPending}
@@ -516,7 +520,7 @@ export function RuntimeSettingsCard() {
 
             {renderRuntimeProviderSettings(state)}
           </fieldset>
-        )}
+        </RevealItem>
         <div className="sticky bottom-0 z-10 mt-10 flex flex-col gap-3 border-t bg-background py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-h-5 flex-1">{renderRuntimeFeedback(state)}</div>
           {renderRuntimeSaveAction(state)}
@@ -878,19 +882,25 @@ function renderRuntimeProviderSettings(
     state;
 
   return (
-    providerSettings.length > 0 &&
-    (isProviderCatalogLoading ? (
-      <div role="status" className="text-sm text-muted-foreground">
-        正在加载 Provider 能力目录…
-      </div>
-    ) : providerCatalog ? (
-      <ProviderConfigurationEditor
-        settings={providerSettings}
-        values={form}
-        catalog={providerCatalog}
-        onChange={updateFormValue}
-      />
-    ) : null)
+    providerSettings.length > 0 && (
+      <RevealItem
+        isReady={!isProviderCatalogLoading}
+        placeholder={
+          <div role="status" className="text-sm text-muted-foreground">
+            正在加载 Provider 能力目录…
+          </div>
+        }
+      >
+        {providerCatalog && (
+          <ProviderConfigurationEditor
+            settings={providerSettings}
+            values={form}
+            catalog={providerCatalog}
+            onChange={updateFormValue}
+          />
+        )}
+      </RevealItem>
+    )
   );
 }
 

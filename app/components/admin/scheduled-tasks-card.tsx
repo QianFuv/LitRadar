@@ -47,6 +47,7 @@ import {
 } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
+import { RevealItem } from '@/components/ui/reveal';
 
 type TaskFormState = {
   coalesce: boolean;
@@ -323,13 +324,16 @@ export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } =
           </p>
         )}
 
-        {isLoading ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            加载中…
-          </p>
-        ) : (
+        <RevealItem
+          isReady={!isLoading}
+          placeholder={
+            <p role="status" className="text-sm text-muted-foreground">
+              加载中…
+            </p>
+          }
+        >
           <SettingsGroup>{renderScheduledTaskList(state)}</SettingsGroup>
-        )}
+        </RevealItem>
 
         {renderRecentSchedulerRuns(state)}
         {renderScheduledTaskDeletion(state)}
@@ -796,49 +800,54 @@ function renderSchedulerStatus(state: SchedulerViewState) {
 
   return (
     <div aria-label="调度器状态" className="overflow-hidden border-y py-4 text-sm">
-      <MotionPresence mode="wait">
-        <MotionDiv
-          key={schedulerStatusKey}
-          data-motion-scheduler-state={schedulerStatusKey}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
-          variants={SWAP_VARIANTS}
-        >
-          {isSchedulerStatusLoading ? (
-            <span className="text-muted-foreground">正在读取调度器状态…</span>
-          ) : schedulerStatusError instanceof Error ? (
-            <span role="alert" className="text-destructive">
-              {schedulerStatusError.message}
-            </span>
-          ) : (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <span aria-hidden="true" className="relative flex size-3">
-                  {healthyWorkerCount > 0 && (
-                    <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:hidden" />
-                  )}
-                  <span
-                    className={cn(
-                      'relative inline-flex size-3 rounded-full',
-                      healthyWorkerCount > 0 ? 'bg-emerald-400' : 'bg-red-400',
-                    )}
-                  />
-                </span>
-                <div>
-                  <p className="text-xs text-muted-foreground">调度器</p>
-                  <p className="font-bold tabular-nums">
-                    健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs text-muted-foreground tabular-nums">
-                最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
+      <RevealItem
+        isReady={!isSchedulerStatusLoading}
+        placeholder={<span className="text-muted-foreground">正在读取调度器状态…</span>}
+      >
+        <MotionPresence mode="wait">
+          <MotionDiv
+            key={schedulerStatusKey}
+            data-motion-scheduler-state={schedulerStatusKey}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={SWAP_VARIANTS}
+          >
+            {isSchedulerStatusLoading ? (
+              <span className="text-muted-foreground">正在读取调度器状态…</span>
+            ) : schedulerStatusError instanceof Error ? (
+              <span role="alert" className="text-destructive">
+                {schedulerStatusError.message}
               </span>
-            </div>
-          )}
-        </MotionDiv>
-      </MotionPresence>
+            ) : (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <span aria-hidden="true" className="relative flex size-3">
+                    {healthyWorkerCount > 0 && (
+                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:hidden" />
+                    )}
+                    <span
+                      className={cn(
+                        'relative inline-flex size-3 rounded-full',
+                        healthyWorkerCount > 0 ? 'bg-emerald-400' : 'bg-red-400',
+                      )}
+                    />
+                  </span>
+                  <div>
+                    <p className="text-xs text-muted-foreground">调度器</p>
+                    <p className="font-bold tabular-nums">
+                      健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
+                </span>
+              </div>
+            )}
+          </MotionDiv>
+        </MotionPresence>
+      </RevealItem>
     </div>
   );
 }
@@ -957,36 +966,40 @@ function renderScheduledTaskList(state: SchedulerViewState) {
 }
 
 /** Retain the first five server-ordered runs and empty-record feedback. */
-function renderRecentSchedulerRuns(state: Pick<SchedulerViewState, 'schedulerStatus'>) {
-  const { schedulerStatus } = state;
+function renderRecentSchedulerRuns(
+  state: Pick<SchedulerViewState, 'schedulerStatus' | 'isSchedulerStatusLoading'>,
+) {
+  const { schedulerStatus, isSchedulerStatusLoading } = state;
 
   return (
-    schedulerStatus && (
-      <section className="space-y-3 pt-7">
-        <h3 className="px-1 text-sm font-bold">最近调度运行</h3>
-        {schedulerStatus.recent_runs.length === 0 ? (
-          <p className="px-1 text-sm text-muted-foreground">暂无调度运行记录</p>
-        ) : (
-          <ol className="relative space-y-0 pl-4 before:absolute before:top-2 before:bottom-2 before:left-[5px] before:w-px before:bg-border">
-            {schedulerStatus.recent_runs.slice(0, 5).map((run) => (
-              <li key={run.id} className="relative flex items-center gap-3 py-2 pl-3 text-sm">
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    'absolute top-1/2 -left-4 size-[11px] -translate-y-1/2 rounded-full border-2 border-background',
-                    SCHEDULER_STATE_DOT_CLASSES[getSchedulerStateTone(run.status)],
-                  )}
-                />
-                <span className="min-w-0 flex-1 truncate">{run.task_name}</span>
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {formatSchedulerState(run.status)} · {formatDateTime(run.scheduled_for)}
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
-    )
+    <RevealItem isReady={!isSchedulerStatusLoading} placeholder={null}>
+      {schedulerStatus && (
+        <section className="space-y-3 pt-7">
+          <h3 className="px-1 text-sm font-bold">最近调度运行</h3>
+          {schedulerStatus.recent_runs.length === 0 ? (
+            <p className="px-1 text-sm text-muted-foreground">暂无调度运行记录</p>
+          ) : (
+            <ol className="relative space-y-0 pl-4 before:absolute before:top-2 before:bottom-2 before:left-[5px] before:w-px before:bg-border">
+              {schedulerStatus.recent_runs.slice(0, 5).map((run) => (
+                <li key={run.id} className="relative flex items-center gap-3 py-2 pl-3 text-sm">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'absolute top-1/2 -left-4 size-[11px] -translate-y-1/2 rounded-full border-2 border-background',
+                      SCHEDULER_STATE_DOT_CLASSES[getSchedulerStateTone(run.status)],
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{run.task_name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {formatSchedulerState(run.status)} · {formatDateTime(run.scheduled_for)}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+    </RevealItem>
   );
 }
 
