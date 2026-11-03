@@ -7,6 +7,7 @@ import { adminGetStats } from '@/lib/api';
 import { StatusPill } from '@/components/settings/settings-section';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { SlidingNumber } from '@animate-ui/react/primitives/texts/sliding-number';
 import { RevealItem } from '@/components/ui/reveal';
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('zh-CN');
@@ -37,7 +38,9 @@ function StatCard({
           {icon}
         </span>
       </div>
-      <dd className="text-[28px] leading-none font-bold text-foreground tabular-nums">{value}</dd>
+      <dd className="text-[28px] leading-none font-bold text-foreground tabular-nums">
+        {typeof value === 'number' ? <SlidingNumber number={value} /> : value}
+      </dd>
     </div>
   );
 }

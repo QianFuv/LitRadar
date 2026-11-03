@@ -38,6 +38,7 @@ import {
   MultiSelectValue,
 } from '@/components/ui/multi-select';
 import { RadioGroup, RadioGroupCard } from '@/components/ui/radio-group';
+import { ScrollFade } from '@animate-ui/react/primitives/effects/scroll-fade';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -122,32 +123,34 @@ export function SearchFilters({ className }: { className?: string }) {
   const { appliedFilterCount, handleClearAll } = state;
 
   return (
-    <div
-      role="group"
-      aria-label="筛选条件"
-      className={cn(
-        'scrollbar-none fade-x-edges -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5 md:mx-0 md:px-0',
-        className,
-      )}
-    >
-      {renderDatabaseFacet(state)}
-      <span className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
-      <TimeFacet state={state} />
-      {renderRatingFacet(state)}
-      <JournalFacet state={state} />
-      <AreaFacet state={state} />
-      {appliedFilterCount > 0 && (
-        <button
-          type="button"
-          title="清空全部筛选"
-          className="motion-control inline-flex h-11 shrink-0 items-center gap-1 rounded-full px-2.5 text-[13px] md:h-8 text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={handleClearAll}
-        >
-          <X className="size-3.5" aria-hidden="true" />
-          清除筛选
-        </button>
-      )}
-    </div>
+    <ScrollFade orientation="horizontal" shrink={0} asChild>
+      <div
+        role="group"
+        aria-label="筛选条件"
+        className={cn(
+          'scrollbar-none -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5 md:mx-0 md:px-0',
+          className,
+        )}
+      >
+        {renderDatabaseFacet(state)}
+        <span className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+        <TimeFacet state={state} />
+        {renderRatingFacet(state)}
+        <JournalFacet state={state} />
+        <AreaFacet state={state} />
+        {appliedFilterCount > 0 && (
+          <button
+            type="button"
+            title="清空全部筛选"
+            className="motion-control inline-flex h-11 shrink-0 items-center gap-1 rounded-full px-2.5 text-[13px] md:h-8 text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={handleClearAll}
+          >
+            <X className="size-3.5" aria-hidden="true" />
+            清除筛选
+          </button>
+        )}
+      </div>
+    </ScrollFade>
   );
 }
 

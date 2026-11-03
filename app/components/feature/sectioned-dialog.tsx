@@ -5,6 +5,7 @@
  */
 
 import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
+import { ScrollFade } from '@animate-ui/react/primitives/effects/scroll-fade';
 import { ArrowLeft, X, type LucideIcon } from 'lucide-react';
 import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 
@@ -111,39 +112,41 @@ function SectionedDialogNavigation<SectionId extends string>({
   sections,
 }: SectionedDialogNavigationProps<SectionId>) {
   return (
-    <nav aria-label={label} className={className}>
-      <Highlight
-        controlledItems
-        value={activeSection}
-        click={false}
-        className="rounded-full bg-foreground md:rounded-lg md:bg-accent"
-      >
-        {sections.map((section) => {
-          const Icon = section.icon;
-          const isActive = section.id === activeSection;
-          return (
-            <HighlightItem key={section.id} value={section.id} className="shrink-0 md:w-full">
-              <button
-                type="button"
-                aria-current={isActive ? 'page' : undefined}
-                data-section-active={isActive ? 'true' : 'false'}
-                disabled={isDisabled}
-                className={cn(
-                  'motion-control flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] whitespace-nowrap outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:h-10 md:w-full md:gap-3 md:rounded-lg md:px-3 md:text-sm',
-                  isActive
-                    ? 'font-bold text-background md:text-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent-pressed',
-                )}
-                onClick={() => onSelect(section.id)}
-              >
-                <Icon className="size-4 shrink-0" aria-hidden="true" />
-                <span>{section.label}</span>
-              </button>
-            </HighlightItem>
-          );
-        })}
-      </Highlight>
-    </nav>
+    <ScrollFade orientation="horizontal" shrink={0} asChild>
+      <nav aria-label={label} className={className}>
+        <Highlight
+          controlledItems
+          value={activeSection}
+          click={false}
+          className="rounded-full bg-foreground md:rounded-lg md:bg-accent"
+        >
+          {sections.map((section) => {
+            const Icon = section.icon;
+            const isActive = section.id === activeSection;
+            return (
+              <HighlightItem key={section.id} value={section.id} className="shrink-0 md:w-full">
+                <button
+                  type="button"
+                  aria-current={isActive ? 'page' : undefined}
+                  data-section-active={isActive ? 'true' : 'false'}
+                  disabled={isDisabled}
+                  className={cn(
+                    'motion-control flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] whitespace-nowrap outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:h-10 md:w-full md:gap-3 md:rounded-lg md:px-3 md:text-sm',
+                    isActive
+                      ? 'font-bold text-background md:text-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent-pressed',
+                  )}
+                  onClick={() => onSelect(section.id)}
+                >
+                  <Icon className="size-4 shrink-0" aria-hidden="true" />
+                  <span>{section.label}</span>
+                </button>
+              </HighlightItem>
+            );
+          })}
+        </Highlight>
+      </nav>
+    </ScrollFade>
   );
 }
 
@@ -261,7 +264,7 @@ export function SectionedDialogFrame<SectionId extends string>({
           <div className="relative mt-3 md:mt-0" data-mobile-overflow-cue="true">
             <SectionedDialogNavigation
               activeSection={activeSection}
-              className="scrollbar-none fade-x-edges flex gap-1.5 overflow-x-auto px-4 md:flex-col md:gap-1 md:overflow-visible md:px-3 md:[mask-image:none]"
+              className="scrollbar-none flex gap-1.5 overflow-x-auto px-4 md:flex-col md:gap-1 md:overflow-visible md:px-3 md:[mask-image:none]"
               isDisabled={isNavigationDisabled}
               label={navigationLabel}
               onSelect={onSelectSection}

@@ -309,10 +309,6 @@
   display: none;
 }
 
-.fade-x-edges {
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-}
-
 .workspace-bottom-space {
   padding-bottom: calc(5.5rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
 }
