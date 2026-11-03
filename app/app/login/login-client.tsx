@@ -9,7 +9,9 @@ import { Eye, EyeOff, Megaphone, Search } from '@/components/ui/animated-icons';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type ComponentType, type FormEvent } from 'react';
+import { Shine } from '@animate-ui/react/primitives/effects/shine';
+import { SplittingText } from '@animate-ui/react/primitives/texts/splitting';
 import { Button } from '@/components/ui/button';
 import { RadarMark } from '@/components/feature/reader-placeholder';
 import { Input } from '@/components/ui/input';
@@ -54,11 +56,39 @@ function AuthBrand() {
   );
 }
 
-const AUTH_FEATURES = [
+/** Showcase headline lines, each revealed character by character. */
+const HEADLINE_LINES = ['让新文献', '主动出现在你的雷达上'] as const;
+
+/** Delay between two headline characters, in seconds. */
+const HEADLINE_STAGGER_S = 0.05;
+
+/** Each headline character rises out of a soft blur. */
+const HEADLINE_CHARACTER_FROM = { opacity: 0, y: 12, filter: 'blur(6px)' };
+const HEADLINE_CHARACTER_TO = { opacity: 1, y: 0, filter: 'blur(0px)' };
+
+/** When the feature icons start playing, after the headline has landed, in milliseconds. */
+const FEATURE_ICON_DELAY_MS = 900;
+
+/** Delay between two feature icons, in milliseconds. */
+const FEATURE_ICON_STAGGER_MS = 180;
+
+type ShowcaseIcon = ComponentType<{ className?: string; animateOnView?: boolean; delay?: number }>;
+
+/**
+ * Draw lucide's radar, which has no Animate UI counterpart, still among the animated icons.
+ *
+ * @param props - Icon classes; animation props are ignored.
+ * @returns Still radar icon.
+ */
+function StillRadarIcon({ className }: { className?: string }) {
+  return <Radar className={className} />;
+}
+
+const AUTH_FEATURES: readonly { icon: ShowcaseIcon; title: string; description: string }[] = [
   { icon: Search, title: '全文检索', description: '按期刊评级、领域与时间快速收窄文献范围' },
-  { icon: Radar, title: '持续追踪', description: '每周新文章按你的研究方向自动推送入库' },
+  { icon: StillRadarIcon, title: '持续追踪', description: '每周新文章按你的研究方向自动推送入库' },
   { icon: Megaphone, title: '征稿日程', description: '集中查看目标期刊的专题征稿与截止时间' },
-] as const;
+];
 
 /**
  * Render the dark brand panel shown beside the form on wide screens.
@@ -87,17 +117,29 @@ function AuthShowcase() {
       <RadarMark className="pointer-events-none absolute -right-24 top-1/2 size-[34rem] -translate-y-1/2 text-rail-foreground/50" />
       <div className="relative max-w-md">
         <p className="text-[32px] leading-[1.3] font-bold tracking-tight">
-          让新文献
-          <br />
-          主动出现在你的雷达上
+          {HEADLINE_LINES.map((line, index) => (
+            <SplittingText
+              key={line}
+              text={line}
+              className="block"
+              stagger={HEADLINE_STAGGER_S}
+              delay={HEADLINE_LINES.slice(0, index).join('').length * HEADLINE_STAGGER_S * 1000}
+              initial={HEADLINE_CHARACTER_FROM}
+              animate={HEADLINE_CHARACTER_TO}
+            />
+          ))}
         </p>
         <ul className="mt-10 space-y-5">
-          {AUTH_FEATURES.map((feature) => {
+          {AUTH_FEATURES.map((feature, index) => {
             const Icon = feature.icon;
             return (
               <li key={feature.title} className="flex items-start gap-4">
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-rail-hover">
-                  <Icon className="size-4" />
+                  <Icon
+                    className="size-4"
+                    animateOnView
+                    delay={FEATURE_ICON_DELAY_MS + index * FEATURE_ICON_STAGGER_MS}
+                  />
                 </span>
                 <span>
                   <span className="block text-sm font-bold">{feature.title}</span>
@@ -466,32 +508,34 @@ function renderLoginLogoutWarning(
   );
 }
 
-/** Retain pending/bootstrap admission guards and keyed animated submit label. */
+/** Retain pending/bootstrap admission guards and keyed animated submit label; a sheen sweeps across on hover. */
 function renderLoginSubmit(state: LoginViewState) {
   const { isLogoutRecovery, isSubmitting, mode, bootstrapRequired, submitLabel } = state;
 
   return (
-    <Button
-      type="submit"
-      aria-label={submitLabel}
-      className="w-full"
-      disabled={isSubmitting || (!isLogoutRecovery && mode === 'register' && bootstrapRequired)}
-    >
-      <span className="grid" aria-hidden="true">
-        <MotionPresence>
-          <MotionSpan
-            key={submitLabel}
-            className="col-start-1 row-start-1"
-            variants={SWAP_VARIANTS}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-          >
-            {submitLabel}
-          </MotionSpan>
-        </MotionPresence>
-      </span>
-    </Button>
+    <Shine asChild enableOnHover color="var(--primary-foreground)" opacity={0.28}>
+      <Button
+        type="submit"
+        aria-label={submitLabel}
+        className="w-full"
+        disabled={isSubmitting || (!isLogoutRecovery && mode === 'register' && bootstrapRequired)}
+      >
+        <span className="grid" aria-hidden="true">
+          <MotionPresence>
+            <MotionSpan
+              key={submitLabel}
+              className="col-start-1 row-start-1"
+              variants={SWAP_VARIANTS}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+            >
+              {submitLabel}
+            </MotionSpan>
+          </MotionPresence>
+        </span>
+      </Button>
+    </Shine>
   );
 }
 
