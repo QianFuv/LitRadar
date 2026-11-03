@@ -529,7 +529,7 @@ async function pausesInactiveSchedulerQueries(): Promise<void> {
     await vi.waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
     expect([taskRequests, statusRequests]).toEqual([0, 0]);
     view.rerender(<ScheduledTasksCard isActive />);
-    await screen.findByText('健康 worker：1/1');
+    await vi.waitFor(() => expect(screen.getByText('健康 worker：1/1')).toBeInTheDocument());
     await vi.waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
     expect([taskRequests, statusRequests]).toEqual([1, 1]);
     const user = userEvent.setup();
