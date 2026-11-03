@@ -43,6 +43,7 @@ import {
   REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import { RevealItem } from '@/components/ui/reveal';
+import { attachHorizontalWheelScroll } from '@/lib/horizontal-wheel-scroll';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { Button } from '@/components/ui/button';
@@ -324,7 +325,10 @@ export function WeeklyUpdatesView() {
             </RevealItem>
           </div>
           <SearchBar queryParam="weekly_q" placeholder="在本周新文章中检索…" />
-          <div className="scrollbar-none -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5">
+          <div
+            ref={attachHorizontalWheelScroll}
+            className="scrollbar-none -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5"
+          >
             <RevealItem
               isReady={weeklyState !== 'loading'}
               className="shrink-0"

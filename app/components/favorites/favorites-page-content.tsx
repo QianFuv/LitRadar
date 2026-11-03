@@ -55,6 +55,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { RevealItem } from '@/components/ui/reveal';
+import { attachHorizontalWheelScroll } from '@/lib/horizontal-wheel-scroll';
 import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/highlight';
 import { ScrollFade } from '@animate-ui/react/primitives/effects/scroll-fade';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -234,6 +235,7 @@ function renderFolderTabs(state: FavoritesViewState) {
       ) : (
         <ScrollFade orientation="horizontal" shrink={0} asChild>
           <div
+            ref={attachHorizontalWheelScroll}
             role="group"
             aria-label="收藏夹"
             data-slot="favorite-folder-tabs"

@@ -34,6 +34,7 @@ import { useAuth } from '@/lib/auth-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RevealItem } from '@/components/ui/reveal';
+import { attachHorizontalWheelScroll } from '@/lib/horizontal-wheel-scroll';
 import { CopyButton } from '@/components/ui/copy-button';
 import { DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -397,6 +398,7 @@ function ArticlePaneView(props: ArticleDetailDialogContentProps & ArticleTrailPr
           )}
           <div
             data-slot="article-detail-toolbar"
+            ref={attachHorizontalWheelScroll}
             className="@container flex h-14 items-center overflow-x-auto border-b px-4 2xl:px-6"
           >
             {renderArticleActions(state, 'pane')}

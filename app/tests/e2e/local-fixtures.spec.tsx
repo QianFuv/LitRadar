@@ -2267,6 +2267,40 @@ async function pinnedFilterHeaderTest({ page }: { page: Page }): Promise<void> {
 
 test('keeps the filter header pinned above scrolling results', pinnedFilterHeaderTest);
 
+/** Verify a vertical mouse wheel glides the overflowing one-line filter row sideways. */
+async function filterRowWheelScrollTest({ page }: { page: Page }): Promise<void> {
+  await page.route('**/api/**', serveTrackingApi);
+  await page.setViewportSize({ width: 600, height: 844 });
+  await page.goto('/?q=graph&area=Economics');
+  await hideDevelopmentIndicator(page);
+  const row = page.getByRole('group', { name: '筛选条件' });
+  await expect(row.getByRole('combobox', { name: /^领域：/ })).toBeVisible();
+  const overflow = await row.evaluate((element) => element.scrollWidth - element.clientWidth);
+  expect(overflow, 'the row overflows at this width').toBeGreaterThan(0);
+  const box = await row.boundingBox();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  const positions = row.evaluate(
+    (element) =>
+      new Promise<number[]>((resolve) => {
+        const seen: number[] = [];
+        const startedAt = performance.now();
+        const sample = () => {
+          seen.push(Math.round(element.scrollLeft));
+          if (performance.now() - startedAt < 500) requestAnimationFrame(sample);
+          else resolve(seen);
+        };
+        requestAnimationFrame(sample);
+      }),
+  );
+  await page.mouse.wheel(0, 240);
+  const distinctPositions = new Set(await positions);
+  expect(distinctPositions.size, 'the row glides through intermediate offsets').toBeGreaterThan(3);
+  await expect.poll(() => row.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+}
+
+test('scrolls the filter row sideways with a vertical wheel', filterRowWheelScrollTest);
+
 /**
  * Verify long filter lists scroll with real wheel and touch input and dismiss without a close button.
  *

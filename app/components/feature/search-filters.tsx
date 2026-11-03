@@ -38,6 +38,7 @@ import {
   MultiSelectValue,
 } from '@/components/ui/multi-select';
 import { RadioGroup, RadioGroupCard } from '@/components/ui/radio-group';
+import { attachHorizontalWheelScroll } from '@/lib/horizontal-wheel-scroll';
 import { ScrollFade } from '@animate-ui/react/primitives/effects/scroll-fade';
 import { Button } from '@/components/ui/button';
 import {
@@ -125,6 +126,7 @@ export function SearchFilters({ className }: { className?: string }) {
   return (
     <ScrollFade orientation="horizontal" shrink={0} asChild>
       <div
+        ref={attachHorizontalWheelScroll}
         role="group"
         aria-label="筛选条件"
         className={cn(

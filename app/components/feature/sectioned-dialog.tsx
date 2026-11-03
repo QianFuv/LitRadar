@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { cn } from '@/lib/utils';
+import { attachHorizontalWheelScroll } from '@/lib/horizontal-wheel-scroll';
 
 /** One-shot marker used to return focus from a sectioned dialog to its persistent trigger. */
 export const SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE = 'data-sectioned-dialog-return-focus';
@@ -113,7 +114,7 @@ function SectionedDialogNavigation<SectionId extends string>({
 }: SectionedDialogNavigationProps<SectionId>) {
   return (
     <ScrollFade orientation="horizontal" shrink={0} asChild>
-      <nav aria-label={label} className={className}>
+      <nav ref={attachHorizontalWheelScroll} aria-label={label} className={className}>
         <Highlight
           controlledItems
           value={activeSection}
