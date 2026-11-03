@@ -1950,7 +1950,8 @@ async function serveLongSidebarApi(route: Route): Promise<void> {
 
 /** Keep outer focus rings and trailing counts inside the sidebar scroll viewport. */
 async function expectSidebarScrollClearance(list: Locator): Promise<void> {
-  const clearance = await list.evaluate((element) => {
+  const clearance = await list.evaluate((listElement) => {
+    const element = listElement as HTMLElement;
     const isListOffsetParent = (child: HTMLElement) => child.offsetParent === element;
     const innerLeft = element.offsetLeft + element.clientLeft;
     const children = Array.from(element.children)
