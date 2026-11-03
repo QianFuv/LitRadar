@@ -101,6 +101,21 @@ class StaticTestIntersectionObserver {
 }
 
 /**
+ * Identity transform stand-in for jsdom, which lacks `DOMMatrix`; Animate UI's toast swipe reads
+ * the current transform when a pointer presses a toast.
+ */
+class IdentityTestDOMMatrix {
+  readonly a = 1;
+  readonly b = 0;
+  readonly c = 0;
+  readonly d = 1;
+  readonly e = 0;
+  readonly f = 0;
+  readonly m41 = 0;
+  readonly m42 = 0;
+}
+
+/**
  * Install layout and animation APIs that jsdom lacks, and finish Motion animations at once.
  */
 function installTestAnimationApis(): void {
@@ -109,6 +124,7 @@ function installTestAnimationApis(): void {
   globalThis.IntersectionObserver ??=
     StaticTestIntersectionObserver as unknown as typeof IntersectionObserver;
   globalThis.SVGGeometryElement ??= class extends SVGElement {} as typeof SVGGeometryElement;
+  globalThis.DOMMatrix ??= IdentityTestDOMMatrix as unknown as typeof DOMMatrix;
   Element.prototype.getAnimations ??= () => [];
   Element.prototype.animate ??= function animate() {
     return new FinishedTestAnimation() as unknown as Animation;

@@ -4,7 +4,7 @@
  * Search composition rendered inside the shared reading workspace.
  */
 
-import { AnnouncementsDialog } from '@/components/announcements-dialog';
+import { AnnouncementToasts } from '@/components/announcement-toasts';
 import { ReaderPlaceholder } from '@/components/feature/reader-placeholder';
 import { ResultsList } from '@/components/feature/results-list';
 import { SearchBar } from '@/components/feature/search-bar';
@@ -35,7 +35,7 @@ export function SearchWorkspaceView() {
         />
       }
     >
-      <AnnouncementsDialog />
+      <AnnouncementToasts />
       <ResultsList />
     </WorkspaceShell>
   );

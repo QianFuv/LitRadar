@@ -87,17 +87,23 @@ async function login(page: Page, username: string, password: string): Promise<vo
  * Permanently dismiss seeded announcements when the search workspace presents them.
  *
  * @param page - Playwright page.
- * @returns Promise resolved after any visible announcement closes.
+ * @returns Promise resolved after every visible announcement toast closes.
  */
 async function dismissVisibleAnnouncements(page: Page): Promise<void> {
-  const announcementDialog = page.getByRole('dialog', { name: '系统公告' });
-  const didAppear = await announcementDialog
+  const dismissButtons = page
+    .getByRole('region', { name: '系统公告' })
+    .locator('button', { hasText: '永久关闭' });
+  const didAppear = await dismissButtons
+    .first()
     .waitFor({ state: 'visible', timeout: 5_000 })
     .then(() => true)
     .catch(() => false);
-  if (didAppear) {
-    await announcementDialog.getByRole('button', { name: '永久关闭' }).click();
-    await expect(announcementDialog).toHaveCount(0);
+  if (!didAppear) {
+    return;
+  }
+  for (let remaining = await dismissButtons.count(); remaining > 0; remaining -= 1) {
+    await dismissButtons.first().click();
+    await expect(dismissButtons).toHaveCount(remaining - 1);
   }
 }
 
