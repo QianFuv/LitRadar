@@ -33,6 +33,7 @@ import { RelatedArticles } from '@/components/feature/related-articles';
 import { useAuth } from '@/lib/auth-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RevealItem } from '@/components/ui/reveal';
 import { CopyButton } from '@/components/ui/copy-button';
 import { DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -851,6 +852,7 @@ function renderArticleFulltextAction(state: ArticleDetailViewState) {
 function renderArticleAccessActions(state: ArticleDetailViewState, variant: ArticleDetailVariant) {
   const {
     isAccessQueryEnabled,
+    isAccessPending,
     isAccessFetching,
     isAccessError,
     accessError,
@@ -863,45 +865,54 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
   const rowClassName = cn('flex gap-1 md:gap-2', variant === 'pane' ? 'flex-nowrap' : 'flex-wrap');
 
   return (
-    <div className={rowClassName}>
-      {renderArticleAbstractAction(state)}
-      <MotionPresence mode="wait">
-        <MotionDiv
-          key={accessState}
-          data-article-access-state={accessState}
-          className={rowClassName}
-          variants={SWAP_VARIANTS}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
-        >
+    <RevealItem
+      isReady={!(isAccessQueryEnabled && isAccessPending)}
+      placeholder={
+        <div data-article-access-state="loading" className={rowClassName}>
           {renderArticleAccessLoading(state)}
-          {isAccessQueryEnabled && !isAccessFetching && isAccessError && (
-            <Button
-              variant="outline"
-              size="sm"
-              className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
-              aria-label="访问状态失败"
-              disabled
-              title={accessError instanceof Error ? accessError.message : '访问状态不可用'}
-            >
-              <CircleAlert className="h-4 w-4 text-destructive" aria-hidden="true" />
-              {renderActionLabel('访问状态失败', '访问失败')}
-            </Button>
-          )}
-          {renderArticleFulltextAction(state)}
-          {canShowAccessActions &&
-            fulltextAction?.requires_login &&
-            (variant === 'dialog' ? (
-              <DialogClose asChild>
-                {renderDataSourceSettingsLink(dataSourceSettingsHref)}
-              </DialogClose>
-            ) : (
-              renderDataSourceSettingsLink(dataSourceSettingsHref)
-            ))}
-        </MotionDiv>
-      </MotionPresence>
-    </div>
+        </div>
+      }
+    >
+      <div className={rowClassName}>
+        {renderArticleAbstractAction(state)}
+        <MotionPresence mode="wait">
+          <MotionDiv
+            key={accessState}
+            data-article-access-state={accessState}
+            className={rowClassName}
+            variants={SWAP_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+          >
+            {renderArticleAccessLoading(state)}
+            {isAccessQueryEnabled && !isAccessFetching && isAccessError && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={ARTICLE_ACTION_BUTTON_CLASS_NAME}
+                aria-label="访问状态失败"
+                disabled
+                title={accessError instanceof Error ? accessError.message : '访问状态不可用'}
+              >
+                <CircleAlert className="h-4 w-4 text-destructive" aria-hidden="true" />
+                {renderActionLabel('访问状态失败', '访问失败')}
+              </Button>
+            )}
+            {renderArticleFulltextAction(state)}
+            {canShowAccessActions &&
+              fulltextAction?.requires_login &&
+              (variant === 'dialog' ? (
+                <DialogClose asChild>
+                  {renderDataSourceSettingsLink(dataSourceSettingsHref)}
+                </DialogClose>
+              ) : (
+                renderDataSourceSettingsLink(dataSourceSettingsHref)
+              ))}
+          </MotionDiv>
+        </MotionPresence>
+      </div>
+    </RevealItem>
   );
 }
 
@@ -929,16 +940,10 @@ function renderArticleFavoriteAction(state: ArticleDetailViewState) {
   } = state;
 
   return (
-    <MotionPresence mode="wait">
-      <MotionDiv
-        key={isFavoriteStatePending ? 'favorite-loading' : 'favorite-ready'}
-        data-article-favorite-state={isFavoriteStatePending ? 'loading' : 'ready'}
-        variants={SWAP_VARIANTS}
-        initial="hidden"
-        animate="visible"
-        exit="exit"
-      >
-        {isFavoriteStatePending ? (
+    <RevealItem
+      isReady={!isFavoriteStatePending}
+      placeholder={
+        <div data-article-favorite-state="loading">
           <Button
             variant="outline"
             size="sm"
@@ -949,17 +954,19 @@ function renderArticleFavoriteAction(state: ArticleDetailViewState) {
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             {renderActionLabel('加载收藏…', '加载…')}
           </Button>
-        ) : (
-          <FavoriteButton
-            articleId={article.article_id}
-            dbName={dbName}
-            initialFolderIds={initialFolderIds}
-            isFavoriteStateUnavailable={isFavoriteStateUnavailable}
-            toggleFolderId={favoriteToggleFolderId}
-          />
-        )}
-      </MotionDiv>
-    </MotionPresence>
+        </div>
+      }
+    >
+      <div data-article-favorite-state="ready">
+        <FavoriteButton
+          articleId={article.article_id}
+          dbName={dbName}
+          initialFolderIds={initialFolderIds}
+          isFavoriteStateUnavailable={isFavoriteStateUnavailable}
+          toggleFolderId={favoriteToggleFolderId}
+        />
+      </div>
+    </RevealItem>
   );
 }
 

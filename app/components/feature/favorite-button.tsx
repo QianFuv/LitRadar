@@ -21,6 +21,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RevealItem } from '@/components/ui/reveal';
 import { readFreshFavoriteCheck } from '@/components/feature/use-favorite-checks';
 import { cn } from '@/lib/utils';
 
@@ -401,15 +402,26 @@ function renderFavoriteFolderButton(state: FavoriteButtonViewState, folder: Fold
 
 /** Render lookup states and folder rows only while the Popover mounts its content. */
 function FavoriteLookup({ state }: { state: FavoriteButtonViewState }) {
-  const {
-    checks,
-    isCheckingFavorite,
-    refetchChecks,
-    folders,
-    isFoldersPending,
-    refetchFolders,
-    lookupError,
-  } = state;
+  const { checks, isCheckingFavorite, isFoldersPending, lookupError } = state;
+  const isLookupPending = isFoldersPending || (isCheckingFavorite && checks === undefined);
+  return (
+    <RevealItem
+      isReady={Boolean(lookupError) || !isLookupPending}
+      className="space-y-1"
+      placeholder={
+        <div role="status" className="px-2 py-2 text-xs text-muted-foreground">
+          加载中…
+        </div>
+      }
+    >
+      <FavoriteLookupContent state={state} />
+    </RevealItem>
+  );
+}
+
+/** Render lookup failures, the empty state, or folder rows once the lookup has settled. */
+function FavoriteLookupContent({ state }: { state: FavoriteButtonViewState }) {
+  const { refetchChecks, folders, refetchFolders, lookupError } = state;
   if (lookupError)
     return (
       <div role="alert" className="space-y-2 px-2 py-2 text-xs text-destructive">
@@ -424,12 +436,6 @@ function FavoriteLookup({ state }: { state: FavoriteButtonViewState }) {
         >
           重试收藏状态
         </Button>
-      </div>
-    );
-  if (isFoldersPending || (isCheckingFavorite && checks === undefined))
-    return (
-      <div role="status" className="px-2 py-2 text-xs text-muted-foreground">
-        加载中…
       </div>
     );
   if (folders.length === 0)
