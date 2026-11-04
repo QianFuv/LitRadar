@@ -14,7 +14,7 @@ import { WeeklyUpdatesView } from '@/components/weekly/weekly-updates-view';
 import { SELECTED_DATABASE_KEY, readSelectedDatabase } from '@/lib/api';
 import type { WeeklyArticlePage, WeeklyUpdatesSummaryResponse } from '@/lib/api';
 import { server } from '@/tests/mocks/server';
-import { renderWithQuery, type QueryRenderResult } from '@/tests/render';
+import { renderWithQuery, type QueryRenderResult, openSelectFromKeyboard } from '@/tests/render';
 
 type VisiblePageOptions = {
   loadedPages: number;
@@ -279,7 +279,7 @@ async function resetsForDatabaseSelection(): Promise<void> {
     .find((element) => element.getAttribute('data-slot') === 'select-trigger');
   expect(databaseSelect).toBeDefined();
   (databaseSelect as HTMLElement).focus();
-  await user.keyboard('{ArrowDown}');
+  await openSelectFromKeyboard(user);
   expect(await screen.findByRole('option', { name: 'other' })).toBeInTheDocument();
   await user.keyboard('{ArrowDown}{Enter}');
 
@@ -304,7 +304,7 @@ async function resetsForJournalSelection(): Promise<void> {
 
   expect(await screen.findByText('Weekly first')).toBeInTheDocument();
   screen.getByRole('combobox', { name: /^期刊：/ }).focus();
-  await user.keyboard('{ArrowDown}');
+  await openSelectFromKeyboard(user);
   await screen.findByRole('option', { name: /Second Fixture Journal/ });
   await user.keyboard('{ArrowDown}{Enter}');
 
@@ -506,7 +506,7 @@ async function abortsObsoleteWeeklyRequests(): Promise<void> {
   try {
     await waitFor(() => expect(signals).toHaveLength(1));
     (await screen.findByRole('combobox', { name: /^期刊：/ })).focus();
-    await user.keyboard('{ArrowDown}');
+    await openSelectFromKeyboard(user);
     await screen.findByRole('option', { name: /Second Fixture Journal/ });
     await user.keyboard('{ArrowDown}{Enter}');
     await waitFor(() => expect(signals).toHaveLength(2));

@@ -3,8 +3,10 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, type RenderOptions, type RenderResult } from '@testing-library/react';
+import { render, waitFor, type RenderOptions, type RenderResult } from '@testing-library/react';
+import type { UserEvent } from '@testing-library/user-event';
 import type { ReactElement, ReactNode } from 'react';
+import { expect } from 'vitest';
 
 import { MotionProvider } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';
@@ -57,4 +59,15 @@ export function renderWithQuery(
   }
 
   return { ...render(element, { ...options, wrapper: Wrapper }), queryClient };
+}
+
+/**
+ * Open the focused Select from the keyboard and wait until its checked option holds focus, which
+ * happens once the list has positioned itself below the trigger.
+ *
+ * @param user - User event session driving the keyboard.
+ */
+export async function openSelectFromKeyboard(user: UserEvent): Promise<void> {
+  await user.keyboard('{ArrowDown}');
+  await waitFor(() => expect(document.activeElement).toHaveAttribute('role', 'option'));
 }

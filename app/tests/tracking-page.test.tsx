@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { TrackingSettingsContent } from '@/components/tracking/tracking-settings-content';
 import { idleManualPushStatusResponse } from '@/tests/mocks/handlers/tracking';
 import { server } from '@/tests/mocks/server';
-import { renderWithQuery } from '@/tests/render';
+import { renderWithQuery, openSelectFromKeyboard } from '@/tests/render';
 
 const NOTIFICATION_SETTINGS_FIXTURE = {
   id: 5,
@@ -344,14 +344,14 @@ async function savesCompleteRecommendationAndDeliverySettings(): Promise<void> {
   }
   const primaryEndpoint = screen.getByRole('combobox', { name: 'Base URL' });
   primaryEndpoint.focus();
-  await user.keyboard('{ArrowDown}');
+  await openSelectFromKeyboard(user);
   expect(
     await screen.findByRole('option', { name: 'https://new-primary.example/v1/' }),
   ).toBeInTheDocument();
   await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
   const backupEndpoint = screen.getByRole('combobox', { name: 'Backup Base URL' });
   backupEndpoint.focus();
-  await user.keyboard('{ArrowDown}');
+  await openSelectFromKeyboard(user);
   expect(
     await screen.findByRole('option', { name: 'https://new-backup.example/v1/' }),
   ).toBeInTheDocument();
@@ -478,7 +478,7 @@ async function selectsAndCreatesTrackingFolders(): Promise<void> {
   expect(await screen.findByText('当前追踪: Tracking')).toBeInTheDocument();
   const folderSelect = screen.getAllByRole('combobox')[0];
   folderSelect.focus();
-  await user.keyboard('{ArrowDown}');
+  await openSelectFromKeyboard(user);
   expect(await screen.findByRole('option', { name: 'Archive (0)' })).toBeInTheDocument();
   await user.keyboard('{ArrowDown}{Enter}');
   await waitFor(() => expect(setPayloads).toEqual([{ folder_id: 5 }]));
@@ -517,7 +517,8 @@ async function reportsTrackingFolderFailure(): Promise<void> {
 
   const folderSelect = (await screen.findAllByRole('combobox'))[0];
   folderSelect.focus();
-  await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+  await openSelectFromKeyboard(user);
+  await user.keyboard('{ArrowDown}{Enter}');
   expect(await screen.findByRole('alert')).toHaveTextContent('Tracking folder unavailable');
   expect(screen.getByText('当前追踪: Tracking')).toBeInTheDocument();
 }
