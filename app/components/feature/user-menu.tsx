@@ -352,6 +352,15 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
   );
 }
 
+/**
+ * Keep the account menu open after a theme choice so the user can compare or switch back.
+ *
+ * @param event - Radix menu item selection event.
+ */
+function keepMenuOpenOnSelect(event: Event): void {
+  event.preventDefault();
+}
+
 /** Retain hydration-gated theme choices and exact Radix radio structure. */
 function renderUserThemeControls(state: UserMenuViewState) {
   const { isMounted, selectedTheme, handleThemeChange } = state;
@@ -380,6 +389,7 @@ function renderUserThemeControls(state: UserMenuViewState) {
                 key={item.value}
                 value={item.value}
                 textValue={item.label}
+                onSelect={keepMenuOpenOnSelect}
                 aria-label={item.label}
                 title={item.label}
                 className="motion-control flex size-11 shrink-0 cursor-default items-center justify-center rounded-md text-muted-foreground outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-accent data-[highlighted]:text-foreground data-[state=checked]:bg-accent data-[state=checked]:text-foreground md:size-9"

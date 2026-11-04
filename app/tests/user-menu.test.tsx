@@ -194,7 +194,7 @@ async function marksCurrentTabSettingsInitiator(): Promise<void> {
 }
 
 /**
- * Verify all supported theme choices call next-themes with stable values.
+ * Verify all supported theme choices call next-themes with stable values and keep the menu open.
  */
 async function selectsThemePreferences(): Promise<void> {
   const user = userEvent.setup();
@@ -208,14 +208,15 @@ async function selectsThemePreferences(): Promise<void> {
   );
   fireEvent.click(await screen.findByRole('menuitemradio', { name: '深色' }));
   expect(userMenuMocks.setTheme).toHaveBeenLastCalledWith('dark');
+  expect(screen.getByRole('menu')).toBeInTheDocument();
 
-  await user.click(trigger);
-  fireEvent.click(await screen.findByRole('menuitemradio', { name: '浅色' }));
+  fireEvent.click(screen.getByRole('menuitemradio', { name: '浅色' }));
   expect(userMenuMocks.setTheme).toHaveBeenLastCalledWith('light');
+  expect(screen.getByRole('menu')).toBeInTheDocument();
 
-  await user.click(trigger);
-  fireEvent.click(await screen.findByRole('menuitemradio', { name: '跟随系统' }));
+  fireEvent.click(screen.getByRole('menuitemradio', { name: '跟随系统' }));
   expect(userMenuMocks.setTheme).toHaveBeenLastCalledWith('system');
+  expect(screen.getByRole('menu')).toBeInTheDocument();
 }
 
 /**

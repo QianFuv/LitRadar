@@ -1005,7 +1005,7 @@ async function verifiesDesktopNavigation(
 }
 
 /**
- * Verify account actions and persistent theme controls
+ * Verify account actions and theme controls that keep the menu open between choices
  *
  * @param page - Playwright browser page.
  * @param trigger - trigger retained from the preceding assertion phase.
@@ -1036,13 +1036,15 @@ async function verifiesAccountThemeControls(page: Page, trigger: Locator): Promi
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('dark');
   await expect(page.locator('html')).toHaveClass(/dark/);
 
-  await trigger.click();
+  await expect(page.getByRole('menu')).toBeVisible();
   await expect(page.getByRole('menuitemradio', { name: '深色' })).toHaveAttribute(
     'aria-checked',
     'true',
   );
   await page.getByRole('menuitemradio', { name: '跟随系统' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('system');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
 }
 
 /**
@@ -1094,6 +1096,8 @@ async function verifiesLightAndSystemTheme(
   await page.getByRole('menuitemradio', { name: '浅色' }).click();
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem('theme'))).toBe('light');
   await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
   await expectElementChromeToBeGrayscale(currentNavigationLink, [
     'backgroundColor',
     'borderColor',
@@ -1305,8 +1309,8 @@ async function verifiesNarrowThemeMenu(page: Page, mobileTrigger: Locator): Prom
     .toBe(true);
   await page.screenshot({ path: '../output/ui/theme-controls-mobile.png', animations: 'disabled' });
   await mobileMenu.getByRole('menuitemradio', { name: '深色' }).click();
-  await expect(mobileMenu).toHaveCount(0);
   await expect(page.locator('html')).toHaveClass(/dark/);
+  await expect(mobileMenu).toBeVisible();
 }
 
 /**
