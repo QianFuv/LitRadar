@@ -6,7 +6,7 @@
 
 import * as React from 'react';
 import * as RadioGroupPrimitive from '@animate-ui/react/primitives/radix-ui/radio-group';
-import { Check } from '@/components/ui/animated-icons';
+import { Check } from 'lucide-react';
 
 import { PresenceBoundary } from '@/components/ui/motion';
 import { cn } from '@/lib/utils';
@@ -47,7 +47,7 @@ function RadioGroupCard({
       >
         {children}
         <RadioGroupPrimitive.Indicator className="flex size-3.5 shrink-0 items-center justify-center">
-          <Check animateOnView className="size-3.5" aria-hidden="true" />
+          <Check className="size-3.5" aria-hidden="true" />
         </RadioGroupPrimitive.Indicator>
       </RadioGroupPrimitive.Item>
     </PresenceBoundary>

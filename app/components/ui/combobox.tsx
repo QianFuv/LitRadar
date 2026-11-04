@@ -7,8 +7,7 @@
 
 import * as React from 'react';
 import { Combobox as ComboboxPrimitive } from '@animate-ui/react/primitives/base-ui/combobox';
-import { Search } from 'lucide-react';
-import { Check } from '@/components/ui/animated-icons';
+import { CheckIcon, Search } from 'lucide-react';
 
 import { LIST_ITEM_CLASS, LIST_POPUP_CLASS } from '@/components/ui/multi-select';
 import { PresenceBoundary } from '@/components/ui/motion';
@@ -135,7 +134,7 @@ function ComboboxItem({ className, children, detail, ...props }: ComboboxItemPro
   return (
     <ComboboxPrimitive.Item className={cn(LIST_ITEM_CLASS, className)} {...props}>
       <ComboboxPrimitive.ItemIndicator className="flex size-4 shrink-0 items-center justify-center">
-        <Check animateOnView className="size-4" aria-hidden="true" />
+        <CheckIcon className="size-4" aria-hidden="true" />
       </ComboboxPrimitive.ItemIndicator>
       <span className="min-w-0 flex-1 break-words">{children}</span>
       {detail !== undefined && (
