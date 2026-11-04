@@ -309,7 +309,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
               <MotionDiv
                 key={inviteCode.id}
                 data-motion-invite-key={inviteCode.id}
-                className="content-visibility-card flex flex-col gap-3 overflow-hidden px-4 py-4 sm:px-5 md:flex-row md:items-center md:gap-5"
+                className="flex flex-col gap-3 overflow-hidden px-4 py-4 sm:px-5 md:flex-row md:items-center md:gap-5"
                 initial="hidden"
                 animate="visible"
                 exit="exit"

@@ -1408,6 +1408,64 @@ async function dynamicSettingsTest({ page }: { page: Page }): Promise<void> {
 }
 
 /**
+ * Verify a newly generated invite code unfolds straight to its own height instead of overshooting
+ * to a reserved placeholder size and snapping back.
+ *
+ * @param fixtures - Playwright page fixture.
+ */
+async function inviteRowUnfoldTest({ page }: { page: Page }): Promise<void> {
+  const inviteCodes: unknown[] = [];
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    if (new URL(request.url()).pathname !== '/api/admin/invite-codes') {
+      await serveAdministratorApi(route);
+      return;
+    }
+    if (request.method() === 'POST') {
+      const created = {
+        id: 42,
+        code: 'INVITE-42',
+        created_by: 1,
+        created_by_name: 'admin',
+        used_by: null,
+        used_by_name: null,
+        used_at: null,
+        status: 'active',
+        expires_at: 2_200_000_000,
+        revoked_at: null,
+        max_uses: 1,
+        use_count: 0,
+        created_at: 1_900_000_000,
+      };
+      inviteCodes.push(created);
+      await fulfillJson(route, created);
+      return;
+    }
+    await fulfillJson(route, inviteCodes);
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?q=graph&admin=invite-codes');
+  await hideDevelopmentIndicator(page);
+  const generateButton = page.getByRole('button', { name: '生成邀请码' });
+  await expect(generateButton).toBeEnabled();
+
+  await generateButton.click();
+  const unfoldHeights = await page.evaluate(async () => {
+    const heights: number[] = [];
+    const start = performance.now();
+    while (performance.now() - start < 1200) {
+      const row = document.querySelector('[data-motion-invite-key]');
+      if (row) heights.push(row.getBoundingClientRect().height);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    return heights;
+  });
+  const settledHeight = unfoldHeights.at(-1) ?? 0;
+  expect(settledHeight).toBeGreaterThan(0);
+  expect(Math.max(...unfoldHeights)).toBeLessThanOrEqual(settledHeight + 1);
+}
+
+/**
  * Run the administrator-center browser test.
  *
  * @param fixtures - Playwright page fixture.
@@ -2994,6 +3052,7 @@ test(
 );
 test('preserves dynamic settings across delivery switches', dynamicSettingsTest);
 test('supports the administrator center across desktop and mobile', administratorCenterTest);
+test('unfolds a new invite code row without overshooting', inviteRowUnfoldTest);
 test('supports three deep-linkable root workspaces', unifiedRootWorkspacesTest);
 test('supports accessible navigation and theme selection', userMenuNavigationTest);
 test('polishes search targets and restrained control feedback', interfacePolishControlsTest);
