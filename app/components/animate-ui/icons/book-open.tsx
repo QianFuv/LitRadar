@@ -149,30 +149,10 @@ function IconComponent({ size, ...props }: BookOpenProps) {
         initial="initial"
         animate={controls}
       />
-      <motion.path
-        d="M6 8h2"
-        variants={variants.lineL1}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M6 12h2"
-        variants={variants.lineL2}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M16 8h2"
-        variants={variants.lineR1}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M16 12h2"
-        variants={variants.lineR2}
-        initial="initial"
-        animate={controls}
-      />
+      <motion.path d="M6 8h2" variants={variants.lineL1} initial="initial" animate={controls} />
+      <motion.path d="M6 12h2" variants={variants.lineL2} initial="initial" animate={controls} />
+      <motion.path d="M16 8h2" variants={variants.lineR1} initial="initial" animate={controls} />
+      <motion.path d="M16 12h2" variants={variants.lineR2} initial="initial" animate={controls} />
     </motion.svg>
   );
 }

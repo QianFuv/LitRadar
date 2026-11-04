@@ -77,10 +77,4 @@ function Bell(props: BellProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Bell,
-  Bell as BellIcon,
-  type BellProps,
-  type BellProps as BellIconProps,
-};
+export { animations, Bell, Bell as BellIcon, type BellProps, type BellProps as BellIconProps };

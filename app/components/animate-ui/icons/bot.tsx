@@ -115,12 +115,7 @@ function IconComponent({ size, ...props }: BotProps) {
       strokeLinejoin="round"
       {...props}
     >
-      <motion.path
-        d="M12 8V4H8"
-        variants={variants.path1}
-        initial="initial"
-        animate={controls}
-      />
+      <motion.path d="M12 8V4H8" variants={variants.path1} initial="initial" animate={controls} />
       <motion.rect
         width={16}
         height={12}
@@ -131,30 +126,10 @@ function IconComponent({ size, ...props }: BotProps) {
         initial="initial"
         animate={controls}
       />
-      <motion.path
-        d="M2 14h2"
-        variants={variants.path2}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M20 14h2"
-        variants={variants.path3}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M15 13v2"
-        variants={variants.path4}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M9 13v2"
-        variants={variants.path5}
-        initial="initial"
-        animate={controls}
-      />
+      <motion.path d="M2 14h2" variants={variants.path2} initial="initial" animate={controls} />
+      <motion.path d="M20 14h2" variants={variants.path3} initial="initial" animate={controls} />
+      <motion.path d="M15 13v2" variants={variants.path4} initial="initial" animate={controls} />
+      <motion.path d="M9 13v2" variants={variants.path5} initial="initial" animate={controls} />
     </motion.svg>
   );
 }
@@ -163,10 +138,4 @@ function Bot(props: BotProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Bot,
-  Bot as BotIcon,
-  type BotProps,
-  type BotProps as BotIconProps,
-};
+export { animations, Bot, Bot as BotIcon, type BotProps, type BotProps as BotIconProps };

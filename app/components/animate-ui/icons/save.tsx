@@ -54,10 +54,4 @@ function Save(props: SaveProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Save,
-  Save as SaveIcon,
-  type SaveProps,
-  type SaveProps as SaveIconProps,
-};
+export { animations, Save, Save as SaveIcon, type SaveProps, type SaveProps as SaveIconProps };

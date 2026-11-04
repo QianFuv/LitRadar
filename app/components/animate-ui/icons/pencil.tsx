@@ -51,12 +51,7 @@ function IconComponent({ size, ...props }: PencilProps) {
           initial="initial"
           animate={controls}
         />
-        <motion.path
-          d="m15 5 4 4"
-          variants={variants.path2}
-          initial="initial"
-          animate={controls}
-        />
+        <motion.path d="m15 5 4 4" variants={variants.path2} initial="initial" animate={controls} />
       </motion.g>
     </motion.svg>
   );

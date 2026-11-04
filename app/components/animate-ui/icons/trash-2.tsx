@@ -93,12 +93,7 @@ function IconComponent({ size, ...props }: Trash2Props) {
           initial="initial"
           animate={controls}
         />
-        <motion.path
-          d="M3 6h18"
-          variants={variants.path2}
-          initial="initial"
-          animate={controls}
-        />
+        <motion.path d="M3 6h18" variants={variants.path2} initial="initial" animate={controls} />
       </motion.g>
       <motion.path
         d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"

@@ -72,24 +72,9 @@ function IconComponent({ size, ...props }: FileTextProps) {
         initial="initial"
         animate={controls}
       />
-      <motion.path
-        d="M8 9h2"
-        variants={variants.line1}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M8 13h8"
-        variants={variants.line2}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M8 17h8"
-        variants={variants.line3}
-        initial="initial"
-        animate={controls}
-      />
+      <motion.path d="M8 9h2" variants={variants.line1} initial="initial" animate={controls} />
+      <motion.path d="M8 13h8" variants={variants.line2} initial="initial" animate={controls} />
+      <motion.path d="M8 17h8" variants={variants.line3} initial="initial" animate={controls} />
     </motion.svg>
   );
 }

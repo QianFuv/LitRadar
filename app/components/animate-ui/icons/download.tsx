@@ -62,12 +62,7 @@ function IconComponent({ size, ...props }: DownloadProps) {
       {...props}
     >
       <motion.g variants={variants.group} initial="initial" animate={controls}>
-        <motion.path
-          d="M12 15V3"
-          variants={variants.path1}
-          initial="initial"
-          animate={controls}
-        />
+        <motion.path d="M12 15V3" variants={variants.path1} initial="initial" animate={controls} />
         <motion.path
           d="m7 10 5 5 5-5"
           variants={variants.path2}

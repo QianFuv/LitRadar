@@ -124,12 +124,7 @@ function IconComponent({ size, ...props }: ArrowDownProps) {
       {...props}
     >
       <motion.g variants={variants.group} initial="initial" animate={controls}>
-        <motion.path
-          d="M12 5v14"
-          variants={variants.path1}
-          initial="initial"
-          animate={controls}
-        />
+        <motion.path d="M12 5v14" variants={variants.path1} initial="initial" animate={controls} />
         <motion.path
           d="m19 12-7 7-7-7"
           variants={variants.path2}

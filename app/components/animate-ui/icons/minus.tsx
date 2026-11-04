@@ -59,18 +59,8 @@ function IconComponent({ size, ...props }: MinusProps) {
       {...props}
     >
       <motion.g variants={variants.path1} initial="initial" animate={controls}>
-        <motion.path
-          d="M12 12H5"
-          variants={variants.left}
-          initial="initial"
-          animate={controls}
-        />
-        <motion.path
-          d="M12 12h7"
-          variants={variants.right}
-          initial="initial"
-          animate={controls}
-        />
+        <motion.path d="M12 12H5" variants={variants.left} initial="initial" animate={controls} />
+        <motion.path d="M12 12h7" variants={variants.right} initial="initial" animate={controls} />
       </motion.g>
     </motion.svg>
   );

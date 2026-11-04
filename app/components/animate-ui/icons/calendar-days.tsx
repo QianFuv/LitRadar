@@ -80,42 +80,12 @@ function IconComponent({ size, ...props }: CalendarDaysProps) {
       <path d="M16 2v3" />
       <rect x={3} y={3} width={18} height={18} rx={2} />
       <path d="M3 9h18" />
-      <motion.path
-        d="M8 13h.01"
-        variants={variants.day1}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M12 13h.01"
-        variants={variants.day2}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M16 13h.01"
-        variants={variants.day3}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M8 17h.01"
-        variants={variants.day4}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M12 17h.01"
-        variants={variants.day5}
-        initial="initial"
-        animate={controls}
-      />
-      <motion.path
-        d="M16 17h.01"
-        variants={variants.day6}
-        initial="initial"
-        animate={controls}
-      />
+      <motion.path d="M8 13h.01" variants={variants.day1} initial="initial" animate={controls} />
+      <motion.path d="M12 13h.01" variants={variants.day2} initial="initial" animate={controls} />
+      <motion.path d="M16 13h.01" variants={variants.day3} initial="initial" animate={controls} />
+      <motion.path d="M8 17h.01" variants={variants.day4} initial="initial" animate={controls} />
+      <motion.path d="M12 17h.01" variants={variants.day5} initial="initial" animate={controls} />
+      <motion.path d="M16 17h.01" variants={variants.day6} initial="initial" animate={controls} />
     </motion.svg>
   );
 }

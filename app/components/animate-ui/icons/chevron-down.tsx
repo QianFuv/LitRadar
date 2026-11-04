@@ -55,12 +55,7 @@ function IconComponent({ size, ...props }: ChevronDownProps) {
       strokeLinejoin="round"
       {...props}
     >
-      <motion.path
-        d="m6 9 6 6 6-6"
-        variants={variants.path}
-        initial="initial"
-        animate={controls}
-      />
+      <motion.path d="m6 9 6 6 6-6" variants={variants.path} initial="initial" animate={controls} />
     </motion.svg>
   );
 }

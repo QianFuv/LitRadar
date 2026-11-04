@@ -69,12 +69,7 @@ function IconComponent({ size, ...props }: RotateCcwProps) {
         initial="initial"
         animate={controls}
       />
-      <motion.path
-        d="M3 3v5h5"
-        variants={variants.path2}
-        initial="initial"
-        animate={controls}
-      />
+      <motion.path d="M3 3v5h5" variants={variants.path2} initial="initial" animate={controls} />
     </motion.svg>
   );
 }

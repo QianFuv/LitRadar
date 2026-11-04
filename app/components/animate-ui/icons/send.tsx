@@ -83,10 +83,4 @@ function Send(props: SendProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Send,
-  Send as SendIcon,
-  type SendProps,
-  type SendProps as SendIconProps,
-};
+export { animations, Send, Send as SendIcon, type SendProps, type SendProps as SendIconProps };

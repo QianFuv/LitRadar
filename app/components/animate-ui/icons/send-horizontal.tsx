@@ -61,12 +61,7 @@ function IconComponent({ size, ...props }: SendHorizontalProps) {
           initial="initial"
           animate={controls}
         />
-        <motion.path
-          d="M6,12h16"
-          variants={variants.path2}
-          initial="initial"
-          animate={controls}
-        />
+        <motion.path d="M6,12h16" variants={variants.path2} initial="initial" animate={controls} />
       </motion.g>
     </motion.svg>
   );

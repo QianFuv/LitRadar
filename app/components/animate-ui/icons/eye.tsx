@@ -78,10 +78,4 @@ function Eye(props: EyeProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Eye,
-  Eye as EyeIcon,
-  type EyeProps,
-  type EyeProps as EyeIconProps,
-};
+export { animations, Eye, Eye as EyeIcon, type EyeProps, type EyeProps as EyeIconProps };

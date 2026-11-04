@@ -118,10 +118,4 @@ function Plus(props: PlusProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Plus,
-  Plus as PlusIcon,
-  type PlusProps,
-  type PlusProps as PlusIconProps,
-};
+export { animations, Plus, Plus as PlusIcon, type PlusProps, type PlusProps as PlusIconProps };

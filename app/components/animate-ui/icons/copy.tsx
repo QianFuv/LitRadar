@@ -149,10 +149,4 @@ function Copy(props: CopyProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Copy,
-  Copy as CopyIcon,
-  type CopyProps,
-  type CopyProps as CopyIconProps,
-};
+export { animations, Copy, Copy as CopyIcon, type CopyProps, type CopyProps as CopyIconProps };

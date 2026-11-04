@@ -122,12 +122,7 @@ function IconComponent({ size, ...props }: GiftProps) {
         initial="initial"
         animate={controls}
       />
-      <motion.path
-        d="M12 11v10"
-        variants={variants.ribbon}
-        initial="initial"
-        animate={controls}
-      />
+      <motion.path d="M12 11v10" variants={variants.ribbon} initial="initial" animate={controls} />
       <motion.g variants={variants.group} initial="initial" animate={controls}>
         <motion.rect
           x={3}
@@ -160,10 +155,4 @@ function Gift(props: GiftProps) {
   return <IconWrapper icon={IconComponent} {...props} />;
 }
 
-export {
-  animations,
-  Gift,
-  Gift as GiftIcon,
-  type GiftProps,
-  type GiftProps as GiftIconProps,
-};
+export { animations, Gift, Gift as GiftIcon, type GiftProps, type GiftProps as GiftIconProps };
