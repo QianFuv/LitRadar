@@ -5,12 +5,26 @@
  */
 
 import * as DropdownMenuPrimitive from '@animate-ui/react/primitives/radix-ui/dropdown-menu';
-import { LogOut, Monitor, Moon, Settings2, Shield, Sun } from 'lucide-react';
-import { AlertTriangle, type AppIcon } from '@/components/ui/animated-icons';
+import { Monitor, Settings2, Shield } from 'lucide-react';
+import {
+  AlertTriangle,
+  IconTriggerProvider,
+  LogOut,
+  Moon,
+  Sun,
+  useIconTrigger,
+  type AppIcon,
+} from '@/components/ui/animated-icons';
 import { useTheme } from 'next-themes';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { useRef, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react';
+import {
+  useRef,
+  useSyncExternalStore,
+  type ComponentProps,
+  type CSSProperties,
+  type MouseEvent,
+} from 'react';
 import { createPortal } from 'react-dom';
 
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
@@ -139,6 +153,36 @@ function FixedLogoutRevocationNotice({
 }
 
 /**
+ * Render an account menu item whose icon plays while it is hovered or tapped.
+ *
+ * @param props - Radix menu item properties.
+ * @returns Account menu item.
+ */
+function UserMenuItem(props: ComponentProps<typeof DropdownMenuPrimitive.Item>) {
+  const { isTriggered, triggerHandlers } = useIconTrigger(props);
+  return (
+    <IconTriggerProvider isTriggered={isTriggered}>
+      <DropdownMenuPrimitive.Item {...props} {...triggerHandlers} />
+    </IconTriggerProvider>
+  );
+}
+
+/**
+ * Render a theme choice whose icon plays while it is hovered or tapped.
+ *
+ * @param props - Radix radio item properties.
+ * @returns Theme radio item.
+ */
+function ThemeRadioItem(props: ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) {
+  const { isTriggered, triggerHandlers } = useIconTrigger(props);
+  return (
+    <IconTriggerProvider isTriggered={isTriggered}>
+      <DropdownMenuPrimitive.RadioItem {...props} {...triggerHandlers} />
+    </IconTriggerProvider>
+  );
+}
+
+/**
  * Render the authenticated account trigger and account-only menu.
  *
  * @param props - Rail or mobile tab-bar placement.
@@ -260,7 +304,7 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
 
             <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
 
-            <DropdownMenuPrimitive.Item asChild>
+            <UserMenuItem asChild>
               <Link
                 href={settingsHref}
                 prefetch={false}
@@ -270,12 +314,12 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
                 <Settings2 />
                 <span>打开设置中心</span>
               </Link>
-            </DropdownMenuPrimitive.Item>
+            </UserMenuItem>
 
             {renderUserThemeControls(state)}
 
             {user.is_admin && (
-              <DropdownMenuPrimitive.Item asChild>
+              <UserMenuItem asChild>
                 <Link
                   href={adminHref}
                   prefetch={false}
@@ -286,12 +330,12 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
                   <Shield />
                   <span>管理面板</span>
                 </Link>
-              </DropdownMenuPrimitive.Item>
+              </UserMenuItem>
             )}
 
             <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
 
-            <DropdownMenuPrimitive.Item
+            <UserMenuItem
               className={cn(
                 MENU_ITEM_CLASS,
                 'text-destructive focus:bg-destructive/10 focus:text-destructive',
@@ -300,7 +344,7 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
             >
               <LogOut className="text-destructive" />
               <span>退出登录</span>
-            </DropdownMenuPrimitive.Item>
+            </UserMenuItem>
           </DropdownMenuPrimitive.Content>
         </DropdownMenuPrimitive.Portal>
       </DropdownMenuPrimitive.Root>
@@ -313,7 +357,10 @@ function renderUserThemeControls(state: UserMenuViewState) {
   const { isMounted, selectedTheme, handleThemeChange } = state;
 
   return (
-    <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+    <div
+      data-slot="user-menu-theme-label"
+      className="flex items-center justify-between gap-2 px-2 py-1.5"
+    >
       <span className="flex shrink-0 items-center gap-2 text-sm">
         <Monitor className="size-4 text-muted-foreground" aria-hidden="true" />
         <span>外观主题</span>
@@ -329,7 +376,7 @@ function renderUserThemeControls(state: UserMenuViewState) {
             const Icon = item.icon;
 
             return (
-              <DropdownMenuPrimitive.RadioItem
+              <ThemeRadioItem
                 key={item.value}
                 value={item.value}
                 textValue={item.label}
@@ -338,7 +385,7 @@ function renderUserThemeControls(state: UserMenuViewState) {
                 className="motion-control flex size-11 shrink-0 cursor-default items-center justify-center rounded-md text-muted-foreground outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-accent data-[highlighted]:text-foreground data-[state=checked]:bg-accent data-[state=checked]:text-foreground md:size-9"
               >
                 <Icon className="size-4" aria-hidden="true" />
-              </DropdownMenuPrimitive.RadioItem>
+              </ThemeRadioItem>
             );
           })}
         </DropdownMenuPrimitive.RadioGroup>

@@ -38,6 +38,7 @@ import {
   Clock as StillClock,
   Clock3 as StillClock3,
   Copy as StillCopy,
+  ExternalLink as StillExternalLink,
   Download as StillDownload,
   Eye as StillEye,
   EyeOff as StillEyeOff,
@@ -46,9 +47,11 @@ import {
   Key as StillKey,
   KeyRound as StillKeyRound,
   Layers as StillLayers,
+  LogOut as StillLogOut,
   Maximize as StillMaximize,
   Megaphone as StillMegaphone,
   Minus as StillMinus,
+  Moon as StillMoon,
   MoreHorizontal as StillMoreHorizontal,
   Pencil as StillPencil,
   Plus as StillPlus,
@@ -57,6 +60,7 @@ import {
   Save as StillSave,
   Search as StillSearch,
   Send as StillSend,
+  Settings as StillSettings,
   ShieldCheck as StillShieldCheck,
   SlidersHorizontal as StillSlidersHorizontal,
   Star as StillStar,
@@ -70,6 +74,7 @@ import {
   Link as StillLinkIcon,
   SendHorizontal as StillSendHorizontal,
   SunMoon as StillSunMoon,
+  Sun as StillSun,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -119,6 +124,11 @@ import { ShieldCheck as AnimatedShieldCheck } from '@/components/animate-ui/icon
 import { SlidersHorizontal as AnimatedSlidersHorizontal } from '@/components/animate-ui/icons/sliders-horizontal';
 import { Star as AnimatedStar } from '@/components/animate-ui/icons/star';
 import { SunMoon as AnimatedSunMoon } from '@/components/animate-ui/icons/sun-moon';
+import { ExternalLink as AnimatedExternalLink } from '@/components/animate-ui/icons/external-link';
+import { LogOut as AnimatedLogOut } from '@/components/animate-ui/icons/log-out';
+import { Moon as AnimatedMoon } from '@/components/animate-ui/icons/moon';
+import { Settings as AnimatedSettings } from '@/components/animate-ui/icons/settings';
+import { Sun as AnimatedSun } from '@/components/animate-ui/icons/sun';
 import { Trash2 as AnimatedTrash2 } from '@/components/animate-ui/icons/trash-2';
 import { TriangleAlert as AnimatedTriangleAlert } from '@/components/animate-ui/icons/triangle-alert';
 import { Users as AnimatedUsers } from '@/components/animate-ui/icons/users';
@@ -299,6 +309,7 @@ export const Clock = withIconTrigger(StillClock, AnimatedClock);
 export const Clock3 = withIconTrigger(StillClock3, AnimatedClock3);
 export const Copy = withIconTrigger(StillCopy, AnimatedCopy);
 export const Download = withIconTrigger(StillDownload, AnimatedDownload);
+export const ExternalLink = withIconTrigger(StillExternalLink, AnimatedExternalLink);
 export const Eye = withIconTrigger(StillEye, AnimatedEye);
 export const EyeOff = withIconTrigger(StillEyeOff, AnimatedEyeOff);
 export const FileText = withIconTrigger(StillFileText, AnimatedFileText);
@@ -308,9 +319,11 @@ export const Key = withIconTrigger(StillKey, AnimatedKey);
 export const KeyRound = withIconTrigger(StillKeyRound, AnimatedKeyRound);
 export const Layers = withIconTrigger(StillLayers, AnimatedLayers);
 export const LinkIcon = withIconTrigger(StillLinkIcon, AnimatedLink);
+export const LogOut = withIconTrigger(StillLogOut, AnimatedLogOut);
 export const Maximize = withIconTrigger(StillMaximize, AnimatedMaximize);
 export const Megaphone = withIconTrigger(StillMegaphone, AnimatedMegaphone);
 export const Minus = withIconTrigger(StillMinus, AnimatedMinus);
+export const Moon = withIconTrigger(StillMoon, AnimatedMoon);
 export const MoreHorizontal = withIconTrigger(StillMoreHorizontal, AnimatedEllipsis);
 export const Pencil = withIconTrigger(StillPencil, AnimatedPencil);
 export const Plus = withIconTrigger(StillPlus, AnimatedPlus);
@@ -319,10 +332,12 @@ export const RotateCcw = withIconTrigger(StillRotateCcw, AnimatedRotateCcw);
 export const Save = withIconTrigger(StillSave, AnimatedSave);
 export const Search = withIconTrigger(StillSearch, AnimatedSearch);
 export const Send = withIconTrigger(StillSend, AnimatedSend);
+export const Settings = withIconTrigger(StillSettings, AnimatedSettings);
 export const SendHorizontal = withIconTrigger(StillSendHorizontal, AnimatedSendHorizontal);
 export const ShieldCheck = withIconTrigger(StillShieldCheck, AnimatedShieldCheck);
 export const SlidersHorizontal = withIconTrigger(StillSlidersHorizontal, AnimatedSlidersHorizontal);
 export const Star = withIconTrigger(StillStar, AnimatedStar);
+export const Sun = withIconTrigger(StillSun, AnimatedSun);
 export const SunMoon = withIconTrigger(StillSunMoon, AnimatedSunMoon);
 export const Trash2 = withIconTrigger(StillTrash2, AnimatedTrash2);
 export const Users = withIconTrigger(StillUsers, AnimatedUsers);

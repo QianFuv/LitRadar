@@ -8,16 +8,15 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
+import { CircleAlert, FileDown, Loader2, Network, TriangleAlert } from 'lucide-react';
 import {
-  CircleAlert,
+  ArrowLeft,
+  BookOpen,
   ExternalLink,
-  FileDown,
-  Loader2,
-  Network,
+  FileText,
   Settings,
-  TriangleAlert,
-} from 'lucide-react';
-import { ArrowLeft, X, FileText, BookOpen } from '@/components/ui/animated-icons';
+  X,
+} from '@/components/ui/animated-icons';
 
 import {
   getArticleActionUrlForDatabase,
