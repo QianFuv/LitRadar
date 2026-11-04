@@ -59,6 +59,21 @@ function respectsPrefixBoundaries(): void {
 }
 
 /**
+ * Verify highlights split words where the index tokenizer does: ASCII letters and digits form
+ * separate tokens, and `_`, hyphens and CJK characters are tokens of their own.
+ */
+function followsIndexTokenBoundaries(): void {
+  expect(collectHighlights('XGB_F EMD-XGB-ELM XGB2 2XGB XGBoost AXGB', 'xgb')).toEqual([
+    'XGB',
+    'XGB',
+    'XGB',
+    'XGB',
+  ]);
+  expect(collectHighlights('in2023 20231 2023年 12023', '2023')).toEqual(['2023', '2023']);
+  expect(collectHighlights('XGBoost xgb_tree', 'xgb*')).toEqual(['XGB', 'xgb']);
+}
+
+/**
  * Verify longer phrases win before overlapping shorter terms.
  */
 function matchesLongestTermsFirst(): void {
@@ -98,6 +113,7 @@ describe('FTS highlight parsing', () => {
   test('extracts NEAR operands without syntax tokens', extractsNearOperands);
   test('ignores field selectors, punctuation, and boolean operators', ignoresFtsSyntax);
   test('matches prefix terms only at token starts', respectsPrefixBoundaries);
+  test('splits words at index tokenizer boundaries', followsIndexTokenBoundaries);
   test('matches longer phrases before overlapping terms', matchesLongestTermsFirst);
   test('applies CJK length rules and removes duplicates', filtersShortAndDuplicateTerms);
   test('handles malformed input without throwing', handlesMalformedInput);

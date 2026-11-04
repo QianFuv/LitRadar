@@ -54,7 +54,7 @@ const CHROMATIC_UTILITY_PATTERN =
 
 const SEMANTIC_COLOR_FIXTURES = [
   {
-    path: 'components/feature/results-list.tsx',
+    path: 'lib/fts-highlight.tsx',
     utilities: ['text-info-foreground', 'bg-info'],
   },
   {

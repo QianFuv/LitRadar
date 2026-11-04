@@ -158,6 +158,36 @@ async function opensAndClosesAccessibleDialog(): Promise<void> {
   }
 }
 
+/**
+ * Verify the opened details mark the search terms in the title and abstract, as the list does.
+ */
+async function highlightsSearchTermsInDetails(): Promise<void> {
+  registerArticleDialogHandlers();
+  const previousSearchParams = navigationMocks.searchParams;
+  navigationMocks.searchParams = new URLSearchParams('q=xgb');
+  try {
+    const user = userEvent.setup();
+    await renderArticleCard({
+      ...SAFE_ARTICLE,
+      title: 'EMD-XGB-ELM forecasting',
+      abstract: 'Compared with XGBoost, the XGB_F model is stable.',
+    });
+    await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    const highlights = Array.from(dialog.querySelectorAll('span.bg-info'), (mark) => [
+      mark.closest('[data-slot="article-detail-title"]') ? 'title' : 'abstract',
+      mark.textContent,
+    ]);
+    expect(highlights).toEqual([
+      ['title', 'XGB'],
+      ['abstract', 'XGB'],
+    ]);
+  } finally {
+    navigationMocks.searchParams = previousSearchParams;
+  }
+}
+
 /** Verify the row metadata lists ordered authors before the journal metadata. */
 async function showsAuthorsBeforeJournal(): Promise<void> {
   registerArticleDialogHandlers();
@@ -490,6 +520,7 @@ async function cancelsArticleAccessAfterClosing(): Promise<void> {
 describe('article dialog workflow', () => {
   test('cancels pending access requests when details close', cancelsArticleAccessAfterClosing);
   test('shows ordered authors before the journal in the card subtitle', showsAuthorsBeforeJournal);
+  test('highlights search terms in the opened details', highlightsSearchTermsInDetails);
   test.each<{ authors: Article['authors'] }>([
     { authors: undefined },
     { authors: null },

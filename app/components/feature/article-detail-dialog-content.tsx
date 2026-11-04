@@ -46,6 +46,7 @@ import {
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { getDoiUrl } from '@/lib/citation';
 import { getArticleDisplayTitle, hasArticleTitle } from '@/lib/article-title';
+import { useFtsHighlighter } from '@/lib/fts-highlight';
 import { JOURNAL_RATING_SYSTEMS } from '@/lib/journal-ratings';
 import { buildRelationHref } from '@/lib/relation-graph';
 import { buildSettingsCenterHref } from '@/lib/settings-center';
@@ -454,7 +455,7 @@ function renderArticleDetailBody(
           </span>
         </h3>
         <p className="mt-4 text-pretty text-[15px] leading-[1.95] text-foreground/85 [overflow-wrap:anywhere]">
-          {article.abstract || '暂无摘要。'}
+          {article.abstract ? state.highlightText(article.abstract) : '暂无摘要。'}
         </p>
       </section>
 
@@ -672,6 +673,7 @@ function useArticleDetailViewState({
 }: ArticleDetailDialogContentProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const highlightText = useFtsHighlighter(searchParams.get('q'));
   const [copyStatus, setCopyStatus] = useState<ArticleCopyTarget | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -792,6 +794,7 @@ function useArticleDetailViewState({
     canShowAccessActions,
     accessState,
     dataSourceSettingsHref,
+    highlightText,
   };
 }
 
@@ -1000,7 +1003,7 @@ function renderArticleInfoCopy(state: ArticleDetailViewState) {
 
 /** Retain source-title copying, accessible copy error and visual feedback ownership. */
 function renderArticleDetailHeader(state: ArticleDetailViewState, variant: ArticleDetailVariant) {
-  const { article, copyStatus, copyError, canCopyTitle, handleCopyTitle } = state;
+  const { article, copyStatus, copyError, canCopyTitle, handleCopyTitle, highlightText } = state;
   const TitleElement = variant === 'dialog' ? DialogTitle : 'h2';
   const DescriptionElement = variant === 'dialog' ? DialogDescription : 'p';
 
@@ -1018,7 +1021,7 @@ function renderArticleDetailHeader(state: ArticleDetailViewState, variant: Artic
             : 'text-xl leading-[1.4] tracking-[-0.01em] md:text-[22px]',
         )}
       >
-        {getArticleDisplayTitle(article)}
+        {highlightText(getArticleDisplayTitle(article))}
         <CopyButton
           variant="ghost"
           size="icon-sm"

@@ -17,11 +17,11 @@ import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { Button } from '@/components/ui/button';
-import { useCallback, useMemo, type ComponentProps, type ReactNode } from 'react';
+import { useMemo, type ComponentProps, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { getMonthRangeDateBounds } from '@/lib/article-filters';
-import { createFtsHighlightPattern, parseFtsHighlightTerms } from '@/lib/fts-highlight';
+import { useFtsHighlighter } from '@/lib/fts-highlight';
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
 import { appendJournalRatingParams, useJournalRatingFilters } from '@/lib/journal-ratings';
@@ -212,37 +212,7 @@ function useResultsViewState() {
     retryFavoriteChecks,
   } = useFavoriteChecks(visibleArticleIds, currentDb, user?.id);
 
-  const highlightTerms = useMemo(() => parseFtsHighlightTerms(q), [q]);
-
-  const highlightPattern = useMemo(
-    () => createFtsHighlightPattern(highlightTerms),
-    [highlightTerms],
-  );
-
-  const highlightText = useCallback(
-    (text: string | null | undefined) => {
-      if (!text) return null;
-      if (!highlightPattern) return text;
-
-      try {
-        return text.split(highlightPattern).map((part, index) =>
-          index % 2 === 1 ? (
-            <span
-              key={index}
-              className="rounded-[3px] bg-info px-0.5 font-bold text-info-foreground"
-            >
-              {part}
-            </span>
-          ) : (
-            part
-          ),
-        );
-      } catch {
-        return text;
-      }
-    },
-    [highlightPattern],
-  );
+  const highlightText = useFtsHighlighter(q);
 
   const prefetchThreshold = 25;
   const prefetchIndex = Math.max(0, visibleArticles.length - prefetchThreshold);

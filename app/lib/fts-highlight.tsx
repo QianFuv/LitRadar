@@ -2,6 +2,8 @@
  * Parse FTS query operands for safe visual highlighting without rewriting the query.
  */
 
+import { useCallback, useMemo, type ReactNode } from 'react';
+
 /**
  * Describes how one extracted FTS operand should match article text.
  */
@@ -35,14 +37,15 @@ const FTS_SYMBOLS = new Set(['(', ')', '{', '}', ':', ',', '*']);
 /** Finds the next Unicode word token at a fixed query offset. */
 const WORD_TOKEN_PATTERN = /[\p{L}\p{N}_]+/uy;
 
-/** Identifies CJK values that retain substring highlight behavior. */
+/** Identifies CJK values, which need fewer characters before they are highlighted. */
 const CJK_PATTERN = /[\u3400-\u9fff]/u;
 
-/** Identifies one Unicode word character for boundary construction. */
-const WORD_CHARACTER_PATTERN = /^[\p{L}\p{N}_]$/u;
-
-/** Unicode word class used inside generated regular expression lookarounds. */
-const WORD_CHARACTER_CLASS = '[\\p{L}\\p{N}_]';
+/**
+ * Character runs the index tokenizer keeps together as one token. It splits ASCII letters from
+ * ASCII digits and makes every other non-space character, including `_`, CJK and accented
+ * letters, a token of its own.
+ */
+const INDEX_TOKEN_RUN_CLASSES = ['[A-Za-z]', '[0-9]'] as const;
 
 /** Escapes regular expression syntax in an extracted operand. */
 const REGEX_SPECIAL_CHARACTER_PATTERN = /[.*+?^${}()|[\]\\]/g;
@@ -312,24 +315,33 @@ function escapeHighlightValue(value: string): string {
 }
 
 /**
- * Build one exact or prefix alternative with Unicode-aware token boundaries.
+ * Find the run of characters the index tokenizer would join to one edge of a term.
+ *
+ * @param character - First or last character of the term.
+ * @returns Regular expression source of that run, or null when the character is a token alone.
+ */
+function findTokenRunSource(character: string | undefined): string | null {
+  return (
+    INDEX_TOKEN_RUN_CLASSES.find((runClass) =>
+      new RegExp(`^${runClass}$`, 'u').test(character ?? ''),
+    ) ?? null
+  );
+}
+
+/**
+ * Build one exact or prefix alternative bounded where the index tokenizer splits tokens, so a
+ * highlight marks exactly the text the search matched.
  *
  * @param term - Extracted highlight term.
  * @returns Regular expression source for the term.
  */
 function buildHighlightAlternative(term: FtsHighlightTerm): string {
-  const escapedValue = escapeHighlightValue(term.value);
-  if (CJK_PATTERN.test(term.value)) {
-    return escapedValue;
-  }
-
   const characters = Array.from(term.value);
-  const hasLeadingBoundary = WORD_CHARACTER_PATTERN.test(characters[0] ?? '');
-  const hasTrailingBoundary = WORD_CHARACTER_PATTERN.test(characters.at(-1) ?? '');
-  const prefix = hasLeadingBoundary ? `(?<!${WORD_CHARACTER_CLASS})` : '';
-  const suffix =
-    term.matchMode === 'exact' && hasTrailingBoundary ? `(?!${WORD_CHARACTER_CLASS})` : '';
-  return `${prefix}${escapedValue}${suffix}`;
+  const leadingRun = findTokenRunSource(characters[0]);
+  const trailingRun = findTokenRunSource(characters.at(-1));
+  const prefix = leadingRun ? `(?<!${leadingRun})` : '';
+  const suffix = term.matchMode === 'exact' && trailingRun ? `(?!${trailingRun})` : '';
+  return `${prefix}${escapeHighlightValue(term.value)}${suffix}`;
 }
 
 /**
@@ -373,4 +385,37 @@ export function createFtsHighlightPattern(terms: readonly FtsHighlightTerm[]): R
   } catch {
     return null;
   }
+}
+
+/**
+ * Build a renderer that marks the operands of an FTS query inside article text.
+ *
+ * @param query - FTS query submitted to article search.
+ * @returns Function rendering text with its matches highlighted.
+ */
+export function useFtsHighlighter(
+  query: string | null | undefined,
+): (text: string | null | undefined) => ReactNode {
+  const highlightPattern = useMemo(
+    () => createFtsHighlightPattern(parseFtsHighlightTerms(query)),
+    [query],
+  );
+
+  return useCallback(
+    (text: string | null | undefined) => {
+      if (!text) return null;
+      if (!highlightPattern) return text;
+
+      return text.split(highlightPattern).map((part, index) =>
+        index % 2 === 1 ? (
+          <span key={index} className="rounded-[3px] bg-info px-0.5 font-bold text-info-foreground">
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      );
+    },
+    [highlightPattern],
+  );
 }
