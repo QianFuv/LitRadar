@@ -139,3 +139,160 @@ func articleAliasOwner(t *testing.T, connection *Connection, article domain.Arti
 	}
 	return owner
 }
+
+// legacyAliasFixture reproduces independent bibliographic and DOI records for one publication.
+func legacyAliasFixture(t *testing.T, change func(*domain.ArticleDraft, *domain.ArticleDraft)) (*Connection, domain.JournalCatalogEntry, domain.ProviderBatch, int64, int64) {
+	t.Helper()
+	connection, err := OpenContent(context.Background(), filepath.Join(t.TempDir(), "legacy-aliases.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { connection.Close() })
+	catalog, _ := contentInput(t)
+	legacy := domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: "Iterated Learning in Dynamic Social Networks", PublicationYear: new(int64(2019)), Date: new("2019-01-01"), Volume: new("20"), IssueNumber: new("29"), StartPage: new("1"), EndPage: new("28")}
+	strong := domain.ArticleDraft{CatalogId: catalog.CatalogId, Title: "Iterated learning in dynamic social networks", PublicationYear: new(int64(2019)), Date: new("2019-01-01"), Doi: new("10.5555/3322706.3322735")}
+	if change != nil {
+		change(&legacy, &strong)
+	}
+	incoming := legacy
+	incoming.Doi = strong.Doi
+	incoming.Pmid = nil
+	incoming.AbstractText = new("Newly available publication metadata")
+	for _, article := range []domain.ArticleDraft{legacy, strong} {
+		batch := domain.BatchFromArticles(catalog, []domain.ArticleDraft{article}, domain.ProviderProgress{State: domain.Complete})
+		if _, err := WriteContentBatch(context.Background(), connection.Conn, catalog, batch, "seed", "epoch"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := ArticleIdentityKeys(legacy)[len(ArticleIdentityKeys(legacy))-1]
+	var weakId int64
+	if err := connection.QueryRowContext(context.Background(), identityLookupSql, key.Kind, key.Value).Scan(&weakId); err != nil {
+		t.Fatal(err)
+	}
+	batch := domain.BatchFromArticles(catalog, []domain.ArticleDraft{incoming}, domain.ProviderProgress{State: domain.Complete})
+	return connection, catalog, batch, weakId, articleAliasOwner(t, connection, strong)
+}
+
+// TestLegacyBibliographicAliasPreservesBothIdentities permits exact DOI enrichment without reassigning aliases.
+func TestLegacyBibliographicAliasPreservesBothIdentities(t *testing.T) {
+	for _, scenario := range []string{"exact-title", "math-label-spacing"} {
+		t.Run(scenario, func(t *testing.T) {
+			connection, catalog, batch, weakId, strongId := legacyAliasFixture(t, func(legacy, strong *domain.ArticleDraft) {
+				if scenario == "math-label-spacing" {
+					legacy.Title = "An error bound for L 1 -norm support vector machine coefficients"
+					strong.Title = "An error bound for L1-norm support vector machine coefficients"
+				}
+			})
+			writer, err := prepareWriter(context.Background(), connection.Conn, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer writer.close()
+			legacyBefore, _, err := writer.loadArticle(weakId)
+			if err != nil {
+				t.Fatal(err)
+			}
+			aliasesBefore := selectedSnapshot(t, connection.Conn, []string{"article_identity_keys"})
+			outcome, err := WriteContentBatch(context.Background(), connection.Conn, catalog, batch, "enrich", "epoch")
+			if err != nil || outcome.ArticlesChanged != 1 || outcome.IdentityAliasesAdded != 0 || outcome.ChangeEventsEmitted != 2 {
+				t.Fatal("exact legacy publication prevented DOI enrichment", outcome, err)
+			}
+			legacyAfter, _, err := writer.loadArticle(weakId)
+			if err != nil || !reflect.DeepEqual(legacyBefore, legacyAfter) {
+				t.Fatal("legacy article identity or metadata changed", err)
+			}
+			strong, _, err := writer.loadArticle(strongId)
+			if err != nil || strong == nil || !reflect.DeepEqual(strong.AbstractText, batch.Articles[0].AbstractText) || !reflect.DeepEqual(strong.Volume, batch.Articles[0].Volume) {
+				t.Fatal("DOI owner was not refreshed", strong, err)
+			}
+			var count int
+			if err := connection.QueryRowContext(context.Background(), "SELECT count(*) FROM articles").Scan(&count); err != nil || count != 2 {
+				t.Fatal("historical IDs were not preserved", count, err)
+			}
+			if !reflect.DeepEqual(aliasesBefore, selectedSnapshot(t, connection.Conn, []string{"article_identity_keys"})) {
+				t.Fatal("legacy alias ownership changed")
+			}
+			outcome, err = WriteContentBatch(context.Background(), connection.Conn, catalog, batch, "enrich", "epoch")
+			if err != nil || outcome.ArticlesChanged != 0 || outcome.IdentityAliasesAdded != 0 || outcome.ChangeEventsEmitted != 0 {
+				t.Fatal("legacy enrichment replay was not idempotent", outcome, err)
+			}
+		})
+	}
+}
+
+// TestLegacyBibliographicAliasRejectsConflicts keeps contradictory publication evidence atomic.
+func TestLegacyBibliographicAliasRejectsConflicts(t *testing.T) {
+	for _, scenario := range []string{"legacy-doi", "legacy-pmid", "historical-doi", "historical-pmid", "strong-historical-doi", "strong-historical-pmid", "strong-title", "math-label-value", "ordinary-word-spacing", "strong-year", "strong-volume", "strong-issue", "strong-page", "strong-end-page", "legacy-title", "legacy-year", "legacy-page", "strong-pmid", "late-owner"} {
+		t.Run(scenario, func(t *testing.T) {
+			connection, catalog, batch, weakId, strongId := legacyAliasFixture(t, func(legacy, strong *domain.ArticleDraft) {
+				switch scenario {
+				case "legacy-doi":
+					legacy.Doi = new("10.1234/unrelated")
+				case "legacy-pmid":
+					legacy.Pmid = new("42")
+				case "strong-title":
+					strong.Title = "An unrelated publication"
+				case "math-label-value":
+					legacy.Title, strong.Title = "An error bound for L 1 -norm coefficients", "An error bound for L2-norm coefficients"
+				case "ordinary-word-spacing":
+					strong.Title = "Iteratedlearning in dynamic social networks"
+				case "strong-year":
+					strong.PublicationYear, strong.Date = new(int64(2020)), new("2020-01-01")
+				case "strong-volume":
+					strong.Volume = new("21")
+				case "strong-issue":
+					strong.IssueNumber = new("30")
+				case "strong-page":
+					strong.StartPage = new("2")
+				case "strong-end-page":
+					strong.EndPage = new("29")
+				case "strong-pmid":
+					strong.Pmid = new("42")
+				}
+			})
+			if strings.Contains(scenario, "historical-") {
+				kind, value := "doi", "10.1234/historical"
+				if strings.HasSuffix(scenario, "pmid") {
+					kind, value = "pmid", "42"
+				}
+				owner := weakId
+				if strings.HasPrefix(scenario, "strong-") {
+					owner = strongId
+				}
+				if _, err := connection.ExecContext(context.Background(), "INSERT INTO article_identity_keys VALUES(?,?,?)", kind, value, owner); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if strings.HasPrefix(scenario, "legacy-") && scenario != "legacy-doi" && scenario != "legacy-pmid" {
+				statement := "UPDATE articles SET title='An unrelated publication' WHERE article_id=?"
+				if scenario == "legacy-year" {
+					statement = "UPDATE articles SET publication_year=2020,date='2020-01-01' WHERE article_id=?"
+				} else if scenario == "legacy-page" {
+					statement = "UPDATE articles SET start_page='2' WHERE article_id=?"
+				}
+				if _, err := connection.ExecContext(context.Background(), statement, weakId); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "strong-pmid" {
+				batch.Articles[0].Pmid = new("43")
+			}
+			if scenario == "late-owner" {
+				trigger := "CREATE TRIGGER move_legacy_alias AFTER UPDATE ON articles WHEN NEW.article_id=" + strconv.FormatInt(strongId, 10) + " BEGIN UPDATE article_identity_keys SET article_id=NEW.article_id WHERE identity_kind='bibliographic' AND article_id=" + strconv.FormatInt(weakId, 10) + "; END"
+				if _, err := connection.ExecContext(context.Background(), trigger); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := selectedSnapshot(t, connection.Conn, []string{"journals", "issues", "articles", "article_listing", "article_search", "article_identity_keys", "article_change_events"})
+			outcome, err := WriteContentBatch(context.Background(), connection.Conn, catalog, batch, "conflict", "epoch")
+			var conflict *IdentityConflict
+			if !errors.As(err, &conflict) || outcome != (ContentWriteOutcome{}) {
+				t.Fatal("contradictory identity was accepted", outcome, err)
+			}
+			after := selectedSnapshot(t, connection.Conn, []string{"journals", "issues", "articles", "article_listing", "article_search", "article_identity_keys", "article_change_events"})
+			if !reflect.DeepEqual(before, after) {
+				t.Fatal("identity conflict leaked writes")
+			}
+		})
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -180,7 +181,7 @@ func (writer *contentWriter) writeArticle(catalog domain.JournalCatalogEntry, jo
 	if err != nil {
 		return err
 	}
-	resolution, err := resolveArticleIdentity(incoming, aliases)
+	resolution, preservedAlias, err := writer.resolveStoredArticleIdentity(article, incoming, aliases)
 	if err != nil {
 		return err
 	}
@@ -202,7 +203,84 @@ func (writer *contentWriter) writeArticle(catalog domain.JournalCatalogEntry, jo
 			return err
 		}
 	}
-	return writer.claimArticleAliases(incoming, aliases, merged, resolution.ArticleId, outcome)
+	return writer.claimArticleAliases(incoming, aliases, merged, resolution.ArticleId, preservedAlias, outcome)
+}
+
+// resolveStoredArticleIdentity preserves an exact legacy duplicate's weak alias without merging IDs.
+func (writer *contentWriter) resolveStoredArticleIdentity(article domain.ArticleDraft, keys []ArticleIdentityKey, aliases map[ArticleIdentityKey]int64) (ArticleIdentityResolution, *ArticleIdentityKey, error) {
+	resolution, err := resolveArticleIdentity(keys, aliases)
+	var conflict *IdentityConflict
+	if !errors.As(err, &conflict) {
+		return resolution, nil, err
+	}
+	var doiKey, weakKey ArticleIdentityKey
+	for _, key := range keys {
+		if key.Kind == "doi" {
+			doiKey = key
+		} else if key.Kind == "bibliographic" {
+			weakKey = key
+		}
+	}
+	strongId, hasDoi := aliases[doiKey]
+	weakId, hasWeak := aliases[weakKey]
+	if !hasDoi || !hasWeak || strongId == weakId {
+		return ArticleIdentityResolution{}, nil, err
+	}
+	for key, owner := range aliases {
+		if key != weakKey && owner != strongId {
+			return ArticleIdentityResolution{}, nil, err
+		}
+	}
+	strong, _, loadError := writer.loadArticle(strongId)
+	if loadError != nil {
+		return ArticleIdentityResolution{}, nil, loadError
+	}
+	weak, _, loadError := writer.loadArticle(weakId)
+	if loadError != nil {
+		return ArticleIdentityResolution{}, nil, loadError
+	}
+	if !matchesLegacyPublication(strong, article) || !matchesLegacyPublication(weak, article) || weak.Doi != nil || weak.Pmid != nil || strong.Doi == nil || !reflect.DeepEqual(domain.NormalizeDoi(*strong.Doi), ptr(doiKey.Value)) || !reflect.DeepEqual(bibliographicFingerprint(*weak), ptr(weakKey.Value)) {
+		return ArticleIdentityResolution{}, nil, err
+	}
+	if strong.Pmid != nil && article.Pmid != nil && !reflect.DeepEqual(domain.NormalizePmid(*strong.Pmid), domain.NormalizePmid(*article.Pmid)) {
+		return ArticleIdentityResolution{}, nil, err
+	}
+	pmid := firstValue(article.Pmid, strong.Pmid)
+	var hasStrongConflict bool
+	loadError = writer.connection.QueryRowContext(writer.ctx, `SELECT EXISTS(
+        SELECT 1 FROM article_identity_keys WHERE
+        (article_id=?1 AND identity_kind IN ('doi','pmid')) OR
+        (article_id=?2 AND ((identity_kind='doi' AND identity_value<>?3) OR
+                           (identity_kind='pmid' AND identity_value<>?4))))`, weakId, strongId, doiKey.Value, optionalString(pmid)).Scan(&hasStrongConflict)
+	if loadError != nil {
+		return ArticleIdentityResolution{}, nil, loadError
+	}
+	if hasStrongConflict {
+		return ArticleIdentityResolution{}, nil, err
+	}
+	return ArticleIdentityResolution{strongId, true, doiKey}, &weakKey, nil
+}
+
+// matchesLegacyPublication requires exact publication evidence and rejects populated field contradictions.
+func matchesLegacyPublication(stored *domain.ArticleDraft, incoming domain.ArticleDraft) bool {
+	if stored == nil || stored.CatalogId != incoming.CatalogId || legacyPublicationTitle(stored.Title) != legacyPublicationTitle(incoming.Title) || stored.PublicationYear == nil || incoming.PublicationYear == nil || *stored.PublicationYear != *incoming.PublicationYear {
+		return false
+	}
+	storedFields := []*string{stored.Volume, stored.IssueNumber, stored.StartPage, stored.EndPage}
+	incomingFields := []*string{incoming.Volume, incoming.IssueNumber, incoming.StartPage, incoming.EndPage}
+	for position, field := range storedFields {
+		if field != nil && (incomingFields[position] == nil || domain.NormalizeBibliographicLabel(*field) != domain.NormalizeBibliographicLabel(*incomingFields[position])) {
+			return false
+		}
+	}
+	return true
+}
+
+var legacyMathLabelSpacing = regexp.MustCompile(`\b([a-z]) ([0-9]+)\b`)
+
+// legacyPublicationTitle normalizes isolated mathematical labels such as L 1 and L1.
+func legacyPublicationTitle(title string) string {
+	return legacyMathLabelSpacing.ReplaceAllString(domain.NormalizeBibliographicText(title), "${1}${2}")
 }
 
 func (writer *contentWriter) upsertArticle(id, journal int64, issue *int64, article domain.ArticleDraft) error {
@@ -282,11 +360,15 @@ func (writer *contentWriter) lookupIdentityAliases(incoming []ArticleIdentityKey
 }
 
 // claimArticleAliases rechecks every owner while reusing existence known within the immediate transaction.
-func (writer *contentWriter) claimArticleAliases(incoming []ArticleIdentityKey, knownAliases map[ArticleIdentityKey]int64, merged domain.ArticleDraft, id int64, outcome *ContentWriteOutcome) error {
+func (writer *contentWriter) claimArticleAliases(incoming []ArticleIdentityKey, knownAliases map[ArticleIdentityKey]int64, merged domain.ArticleDraft, id int64, preservedAlias *ArticleIdentityKey, outcome *ContentWriteOutcome) error {
 	keys := append(incoming, ArticleIdentityKeys(merged)...)
 	sortIdentityKeys(keys)
 	keys = slices.Compact(keys)
 	for _, key := range keys {
+		claimId := id
+		if preservedAlias != nil && key == *preservedAlias {
+			claimId = knownAliases[key]
+		}
 		var owner, wasInserted sqlite.Integer
 		if _, hasKnownOwner := knownAliases[key]; hasKnownOwner {
 			if writer.statements[existingIdentityClaimSql] == nil {
@@ -296,19 +378,19 @@ func (writer *contentWriter) claimArticleAliases(incoming []ArticleIdentityKey, 
 				}
 				writer.statements[existingIdentityClaimSql] = prepared
 			}
-			if err := writer.queryRow(existingIdentityClaimSql, key.Kind, key.Value, id).Scan(&owner); err != nil {
+			if err := writer.queryRow(existingIdentityClaimSql, key.Kind, key.Value, claimId).Scan(&owner); err != nil {
 				return err
 			}
 		} else {
-			if err := writer.queryRow(identityClaimSql, key.Kind, key.Value, id).Scan(&owner, &wasInserted); err != nil {
+			if err := writer.queryRow(identityClaimSql, key.Kind, key.Value, claimId).Scan(&owner, &wasInserted); err != nil {
 				return err
 			}
 		}
 		if wasInserted != 0 {
 			outcome.IdentityAliasesAdded++
 		}
-		if int64(owner) != id {
-			return &IdentityConflict{[]int64{int64(owner), id}}
+		if int64(owner) != claimId {
+			return &IdentityConflict{[]int64{int64(owner), claimId}}
 		}
 	}
 	return nil
