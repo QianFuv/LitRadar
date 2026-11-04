@@ -5,6 +5,7 @@
  */
 
 import * as DropdownMenuPrimitive from '@animate-ui/react/primitives/radix-ui/dropdown-menu';
+import { DropdownMenu as RadixDropdownMenu } from 'radix-ui';
 import {
   AlertTriangle,
   IconTriggerProvider,
@@ -155,31 +156,34 @@ function FixedLogoutRevocationNotice({
 }
 
 /**
- * Render an account menu item whose icon plays while it is hovered or tapped.
+ * Render an account menu item whose icon plays while it is hovered or tapped. It uses the plain
+ * Radix item, so hover paints the item's own background instead of a highlight sliding between
+ * items.
  *
  * @param props - Radix menu item properties.
  * @returns Account menu item.
  */
-function UserMenuItem(props: ComponentProps<typeof DropdownMenuPrimitive.Item>) {
+function UserMenuItem(props: ComponentProps<typeof RadixDropdownMenu.Item>) {
   const { isTriggered, triggerHandlers } = useIconTrigger(props);
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <DropdownMenuPrimitive.Item {...props} {...triggerHandlers} />
+      <RadixDropdownMenu.Item {...props} {...triggerHandlers} />
     </IconTriggerProvider>
   );
 }
 
 /**
- * Render a theme choice whose icon plays while it is hovered or tapped.
+ * Render a theme choice whose icon plays while it is hovered or tapped, painted like
+ * `UserMenuItem`.
  *
  * @param props - Radix radio item properties.
  * @returns Theme radio item.
  */
-function ThemeRadioItem(props: ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) {
+function ThemeRadioItem(props: ComponentProps<typeof RadixDropdownMenu.RadioItem>) {
   const { isTriggered, triggerHandlers } = useIconTrigger(props);
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <DropdownMenuPrimitive.RadioItem {...props} {...triggerHandlers} />
+      <RadixDropdownMenu.RadioItem {...props} {...triggerHandlers} />
     </IconTriggerProvider>
   );
 }
@@ -377,7 +381,7 @@ function renderUserThemeControls(state: UserMenuViewState) {
         <span>外观主题</span>
       </span>
       {isMounted && (
-        <DropdownMenuPrimitive.RadioGroup
+        <RadixDropdownMenu.RadioGroup
           aria-label="外观主题"
           value={selectedTheme}
           onValueChange={handleThemeChange}
@@ -400,7 +404,7 @@ function renderUserThemeControls(state: UserMenuViewState) {
               </ThemeRadioItem>
             );
           })}
-        </DropdownMenuPrimitive.RadioGroup>
+        </RadixDropdownMenu.RadioGroup>
       )}
     </div>
   );
