@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, QrCode, Unlink } from 'lucide-react';
-import { CheckCircle2, RefreshCw, ShieldCheck } from '@/components/ui/animated-icons';
+import { Loader2, QrCode } from 'lucide-react';
+import { CheckCircle2, RefreshCw, ShieldCheck, Unlink2 } from '@/components/ui/animated-icons';
 
 import {
   ApiError,
@@ -514,7 +514,7 @@ function renderCnkiSessionActions(state: CnkiViewState) {
           }}
           disabled={clearCnkiSessionMut.isPending}
         >
-          <Unlink className="size-4" />
+          <Unlink2 className="size-4" />
           清除
         </Button>
       )}

@@ -4,8 +4,7 @@
  * Recommendation preferences, database scope, and AI configuration.
  */
 
-import { Database, LifeBuoy } from 'lucide-react';
-import { Bot, Plus, X, Layers } from '@/components/ui/animated-icons';
+import { Bot, Layers, Plus, RefreshCw, X } from '@/components/ui/animated-icons';
 import type { ReactNode } from 'react';
 
 import {
@@ -455,7 +454,7 @@ function renderBackupAiSettings(
   return (
     <SettingsSection>
       <AiSectionHeader
-        icon={<LifeBuoy />}
+        icon={<RefreshCw />}
         title="备用 AI 配置"
         description="当主配置连续失败后，系统会自动切换到这套备用配置重试。"
       />
@@ -695,7 +694,7 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
             key={databaseName}
             className="motion-control content-visibility-row flex cursor-pointer items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-accent/60 focus-within:bg-accent/60 sm:px-5"
           >
-            <Database className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Layers className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span className="min-w-0 flex-1 break-all">{databaseName}</span>
             <Checkbox
               checked={isChecked}

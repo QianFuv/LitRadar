@@ -1,7 +1,6 @@
 /** Source-language notice presentation with separate reading and timeline regions. */
 
-import { ArrowUpRight } from 'lucide-react';
-import { CalendarDays, ChevronDown } from '@/components/ui/animated-icons';
+import { CalendarDays, ChevronDown, ExternalLink } from '@/components/ui/animated-icons';
 
 import {
   Root as Collapsible,
@@ -72,7 +71,7 @@ export function CfpSourceFooter({
         >
           <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
             {label}
-            <ArrowUpRight className="size-3.5" aria-hidden="true" />
+            <ExternalLink className="size-3.5" aria-hidden="true" />
           </a>
         </Button>
       )}

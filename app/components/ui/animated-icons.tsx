@@ -73,6 +73,12 @@ import {
   Gift as StillGift,
   Link as StillLinkIcon,
   SendHorizontal as StillSendHorizontal,
+  Share2 as StillShare2,
+  CircleX as StillCircleX,
+  List as StillList,
+  SlidersVertical as StillSlidersVertical,
+  Tag as StillTag,
+  Unlink2 as StillUnlink2,
   SunMoon as StillSunMoon,
   Sun as StillSun,
   type LucideIcon,
@@ -129,6 +135,12 @@ import { LogOut as AnimatedLogOut } from '@/components/animate-ui/icons/log-out'
 import { Moon as AnimatedMoon } from '@/components/animate-ui/icons/moon';
 import { Settings as AnimatedSettings } from '@/components/animate-ui/icons/settings';
 import { Sun as AnimatedSun } from '@/components/animate-ui/icons/sun';
+import { Share2 as AnimatedShare2 } from '@/components/animate-ui/icons/share-2';
+import { CircleX as AnimatedCircleX } from '@/components/animate-ui/icons/circle-x';
+import { List as AnimatedList } from '@/components/animate-ui/icons/list';
+import { SlidersVertical as AnimatedSlidersVertical } from '@/components/animate-ui/icons/sliders-vertical';
+import { Tag as AnimatedTag } from '@/components/animate-ui/icons/tag';
+import { Unlink2 as AnimatedUnlink2 } from '@/components/animate-ui/icons/unlink-2';
 import { Trash2 as AnimatedTrash2 } from '@/components/animate-ui/icons/trash-2';
 import { TriangleAlert as AnimatedTriangleAlert } from '@/components/animate-ui/icons/triangle-alert';
 import { Users as AnimatedUsers } from '@/components/animate-ui/icons/users';
@@ -305,6 +317,7 @@ export const CircleQuestionMark = withIconTrigger(
   StillCircleQuestionMark,
   AnimatedCircleQuestionMark,
 );
+export const CircleX = withIconTrigger(StillCircleX, AnimatedCircleX);
 export const Clock = withIconTrigger(StillClock, AnimatedClock);
 export const Clock3 = withIconTrigger(StillClock3, AnimatedClock3);
 export const Copy = withIconTrigger(StillCopy, AnimatedCopy);
@@ -319,6 +332,7 @@ export const Key = withIconTrigger(StillKey, AnimatedKey);
 export const KeyRound = withIconTrigger(StillKeyRound, AnimatedKeyRound);
 export const Layers = withIconTrigger(StillLayers, AnimatedLayers);
 export const LinkIcon = withIconTrigger(StillLinkIcon, AnimatedLink);
+export const List = withIconTrigger(StillList, AnimatedList);
 export const LogOut = withIconTrigger(StillLogOut, AnimatedLogOut);
 export const Maximize = withIconTrigger(StillMaximize, AnimatedMaximize);
 export const Megaphone = withIconTrigger(StillMegaphone, AnimatedMegaphone);
@@ -334,12 +348,16 @@ export const Search = withIconTrigger(StillSearch, AnimatedSearch);
 export const Send = withIconTrigger(StillSend, AnimatedSend);
 export const Settings = withIconTrigger(StillSettings, AnimatedSettings);
 export const SendHorizontal = withIconTrigger(StillSendHorizontal, AnimatedSendHorizontal);
+export const Share2 = withIconTrigger(StillShare2, AnimatedShare2);
 export const ShieldCheck = withIconTrigger(StillShieldCheck, AnimatedShieldCheck);
 export const SlidersHorizontal = withIconTrigger(StillSlidersHorizontal, AnimatedSlidersHorizontal);
+export const SlidersVertical = withIconTrigger(StillSlidersVertical, AnimatedSlidersVertical);
 export const Star = withIconTrigger(StillStar, AnimatedStar);
 export const Sun = withIconTrigger(StillSun, AnimatedSun);
 export const SunMoon = withIconTrigger(StillSunMoon, AnimatedSunMoon);
+export const Tag = withIconTrigger(StillTag, AnimatedTag);
 export const Trash2 = withIconTrigger(StillTrash2, AnimatedTrash2);
+export const Unlink2 = withIconTrigger(StillUnlink2, AnimatedUnlink2);
 export const Users = withIconTrigger(StillUsers, AnimatedUsers);
 export const Wand2 = withIconTrigger(StillWand2, AnimatedWandSparkles);
 export const X = withIconTrigger(StillX, AnimatedX);

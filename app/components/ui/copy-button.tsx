@@ -10,9 +10,9 @@ import {
   type CopyButtonProps as AnimateCopyButtonProps,
 } from '@animate-ui/react/primitives/buttons/copy';
 import type { VariantProps } from 'class-variance-authority';
-import { Check, Copy } from 'lucide-react';
 import type { ComponentProps, MouseEvent, ReactNode } from 'react';
 
+import { Check, Copy, IconTriggerProvider, useIconTrigger } from '@/components/ui/animated-icons';
 import { buttonVariants, getButtonPressMotion } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -44,8 +44,10 @@ export function CopyButton({
   variant = 'default',
   ...props
 }: CopyButtonProps) {
+  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLButtonElement>(props);
   const copyProps = {
     ...props,
+    ...triggerHandlers,
     content: '',
     copied: isCopied,
     disabled,
@@ -70,5 +72,9 @@ export function CopyButton({
     },
   } as AnimateCopyButtonProps;
 
-  return <AnimateCopyButton {...copyProps} />;
+  return (
+    <IconTriggerProvider isTriggered={isTriggered}>
+      <AnimateCopyButton {...copyProps} />
+    </IconTriggerProvider>
+  );
 }

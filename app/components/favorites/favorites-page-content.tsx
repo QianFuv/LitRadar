@@ -5,8 +5,8 @@
  */
 
 import { useState, type Dispatch, type SetStateAction } from 'react';
-import { FolderPlus, Radar } from 'lucide-react';
-import { Download, MoreHorizontal, Pencil, Trash2 } from '@/components/ui/animated-icons';
+import { Radar } from 'lucide-react';
+import { Download, MoreHorizontal, Pencil, Plus, Trash2 } from '@/components/ui/animated-icons';
 
 import type { CitationFormat, FavoriteArticleItem } from '@/lib/api';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
@@ -203,7 +203,7 @@ function renderFavoritesHeader(state: FavoritesViewState) {
           aria-label="新建收藏夹"
           onClick={() => setDialogOpen(true)}
         >
-          <FolderPlus aria-hidden="true" />
+          <Plus aria-hidden="true" />
           <span className="hidden sm:inline">新建</span>
         </Button>
       </div>
@@ -894,7 +894,7 @@ function renderFavoritesWorkspace(state: FavoritesViewState) {
               description="从上方选择或新建收藏夹。"
               action={
                 <Button variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
-                  <FolderPlus aria-hidden="true" />
+                  <Plus aria-hidden="true" />
                   新建收藏夹
                 </Button>
               }

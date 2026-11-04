@@ -4,8 +4,13 @@
  * Authenticated application frame: desktop navigation rail, main region, and mobile tab bar.
  */
 
-import { Settings2, Shield } from 'lucide-react';
-import type { AppIcon } from '@/components/ui/animated-icons';
+import {
+  IconTriggerProvider,
+  Settings,
+  ShieldCheck,
+  useIconTrigger,
+  type AppIcon,
+} from '@/components/ui/animated-icons';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -48,21 +53,25 @@ function RailShortcut({
   isCurrent: boolean;
   label: string;
 }) {
+  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>({}, isCurrent);
   return (
-    <Link
-      href={href}
-      prefetch={false}
-      aria-label={label}
-      aria-current={isCurrent ? 'page' : undefined}
-      title={label}
-      onClick={markReturnFocus}
-      className={cn(
-        'motion-control flex size-10 items-center justify-center rounded-xl text-rail-foreground outline-none transition-[background-color,color] hover:bg-rail-hover hover:text-rail-active focus-visible:ring-2 focus-visible:ring-ring',
-        isCurrent && 'bg-rail-hover text-rail-active',
-      )}
-    >
-      <Icon className="size-5" strokeWidth={1.7} aria-hidden="true" />
-    </Link>
+    <IconTriggerProvider isTriggered={isTriggered}>
+      <Link
+        {...triggerHandlers}
+        href={href}
+        prefetch={false}
+        aria-label={label}
+        aria-current={isCurrent ? 'page' : undefined}
+        title={label}
+        onClick={markReturnFocus}
+        className={cn(
+          'motion-control flex size-10 items-center justify-center rounded-xl text-rail-foreground outline-none transition-[background-color,color] hover:bg-rail-hover hover:text-rail-active focus-visible:ring-2 focus-visible:ring-ring',
+          isCurrent && 'bg-rail-hover text-rail-active',
+        )}
+      >
+        <Icon className="size-5" strokeWidth={1.7} aria-hidden="true" />
+      </Link>
+    </IconTriggerProvider>
   );
 }
 
@@ -106,14 +115,14 @@ function AppRail() {
       <div className="mt-auto flex flex-col items-center gap-1.5">
         <RailShortcut
           href={buildSettingsCenterHref(pathname, searchParams, 'general')}
-          icon={Settings2}
+          icon={Settings}
           isCurrent={isSettingsOpen}
           label="设置中心"
         />
         {user?.is_admin && (
           <RailShortcut
             href={buildAdminCenterHref(pathname, searchParams, 'overview')}
-            icon={Shield}
+            icon={ShieldCheck}
             isCurrent={isAdminOpen}
             label="管理面板"
           />

@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Ban, Ticket } from 'lucide-react';
-import { RotateCcw, Gift } from '@/components/ui/animated-icons';
+import { CircleX, Gift, RotateCcw } from '@/components/ui/animated-icons';
 
 import {
   generateInviteCode,
@@ -91,7 +90,7 @@ export function InviteCodeCard(props: {
               <SettingsRow
                 leading={
                   <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-info text-primary">
-                    <Ticket className="size-5" aria-hidden="true" />
+                    <Gift className="size-5" aria-hidden="true" />
                   </span>
                 }
                 title="还没有邀请码"
@@ -289,7 +288,7 @@ function renderCurrentInviteCode(
               setIsRevokeOpen(true);
             }}
           >
-            <Ban className="size-4" />
+            <CircleX className="size-4" />
             撤销邀请码
           </Button>
         )}

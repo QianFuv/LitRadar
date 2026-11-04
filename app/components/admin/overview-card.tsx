@@ -1,14 +1,15 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Database, Shield, Ticket } from 'lucide-react';
 import {
   BellRing,
   Folder,
+  Gift,
   Key,
+  Layers,
+  ShieldCheck,
   Star,
   Users,
-  Layers,
   type AnimatedIcon,
 } from '@/components/ui/animated-icons';
 
@@ -151,7 +152,7 @@ function renderAuthStatistics(state: Pick<OverviewViewState, 'authStats'>) {
         <StatCard
           label="管理员"
           value={getAuthStatisticValue(authStats?.admin_count)}
-          icon={<Shield />}
+          icon={<ShieldCheck />}
         />
         <StatCard
           label="活跃令牌"
@@ -178,12 +179,12 @@ function renderAuthStatistics(state: Pick<OverviewViewState, 'authStats'>) {
         <StatCard
           label="邀请码 (未使用)"
           value={getAuthStatisticValue(authStats?.unused_invite_codes)}
-          icon={<Ticket />}
+          icon={<Gift />}
         />
         <StatCard
           label="邀请码 (已使用)"
           value={getAuthStatisticValue(authStats?.used_invite_codes)}
-          icon={<Ticket />}
+          icon={<Gift />}
         />
       </StatGroup>
     </>
@@ -233,7 +234,7 @@ function renderIndexStatistics(state: Pick<OverviewViewState, 'indexStats'>) {
               <li key={db.db_name} className="space-y-2.5 px-5 py-4 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
                   <span className="flex min-w-0 items-center gap-2 font-bold">
-                    <Database className="size-4 shrink-0 text-muted-foreground" />
+                    <Layers className="size-4 shrink-0 text-muted-foreground" />
                     <span className="break-all">{db.db_name}</span>
                   </span>
                   <span className="text-xs text-muted-foreground tabular-nums">

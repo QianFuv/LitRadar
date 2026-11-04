@@ -4,8 +4,7 @@
  * URL-backed switch between article favorites and saved relation graphs.
  */
 
-import { Network } from 'lucide-react';
-import { FileText } from '@/components/ui/animated-icons';
+import { FileText, Share2 } from '@/components/ui/animated-icons';
 import { parseAsStringLiteral, useQueryState } from 'nuqs';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -20,7 +19,7 @@ const FAVORITE_KIND_PARSER = parseAsStringLiteral(FAVORITE_KINDS).withDefault('a
 
 const FAVORITE_KIND_OPTIONS = [
   { kind: 'articles', label: '文章', icon: FileText },
-  { kind: 'graphs', label: '关系图', icon: Network },
+  { kind: 'graphs', label: '关系图', icon: Share2 },
 ] as const;
 
 /**

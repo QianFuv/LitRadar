@@ -4,8 +4,7 @@
  * Shared filter pills: pill styles and labels, panel headers, popover facets, and database pills.
  */
 
-import { Database } from 'lucide-react';
-import { ChevronDown } from '@/components/ui/animated-icons';
+import { ChevronDown, Layers } from '@/components/ui/animated-icons';
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -203,7 +202,7 @@ type DatabasePillProps = {
 /**
  * Remove the storage suffix from a database file name.
  *
- * @param database - Database file name.
+ * @param database - Layers file name.
  * @returns Display label.
  */
 function formatDatabaseFileName(database: string): string {
@@ -214,7 +213,7 @@ function formatDatabaseFileName(database: string): string {
  * Render the current database as a dark context pill backed by an accessible select.
  *
  * @param props - Accessible label, options, label formatter, and change handler.
- * @returns Database select pill.
+ * @returns Layers select pill.
  */
 export function DatabasePill({
   ariaLabel,
@@ -231,7 +230,7 @@ export function DatabasePill({
         size="sm"
         className="h-11 max-w-[16rem] shrink-0 gap-1.5 rounded-full bg-foreground px-3.5 text-[13px] font-bold data-[size=sm]:h-11 md:px-3 md:data-[size=sm]:h-8 text-background !shadow-none hover:bg-foreground/85 active:bg-foreground/80 [&_svg:not([class*='text-'])]:text-background/70"
       >
-        <Database className="size-3.5" aria-hidden="true" />
+        <Layers className="size-3.5" aria-hidden="true" />
         <SelectValue placeholder="选择数据库" />
       </SelectTrigger>
       <SelectContent position="popper" align="start">

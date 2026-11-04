@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Shield, ShieldOff } from 'lucide-react';
-import { KeyRound, Trash2, Users } from '@/components/ui/animated-icons';
+import { ShieldOff } from 'lucide-react';
+import { KeyRound, ShieldCheck, Trash2, Users } from '@/components/ui/animated-icons';
 
 import { adminDeleteUser, adminGetUsers, adminResetPassword, adminSetAdmin } from '@/lib/api';
 import { AdminListHeader } from '@/components/admin/admin-list-header';
@@ -204,7 +204,7 @@ export function AdminUsersCard({
                         {u.is_admin ? (
                           <ShieldOff className="size-4" />
                         ) : (
-                          <Shield className="size-4" />
+                          <ShieldCheck className="size-4" />
                         )}
                       </Button>
                     </IconTooltip>

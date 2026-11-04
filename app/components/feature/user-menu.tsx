@@ -5,13 +5,15 @@
  */
 
 import * as DropdownMenuPrimitive from '@animate-ui/react/primitives/radix-ui/dropdown-menu';
-import { Monitor, Settings2, Shield } from 'lucide-react';
 import {
   AlertTriangle,
   IconTriggerProvider,
   LogOut,
   Moon,
+  Settings,
+  ShieldCheck,
   Sun,
+  SunMoon,
   useIconTrigger,
   type AppIcon,
 } from '@/components/ui/animated-icons';
@@ -49,7 +51,7 @@ type ThemeItem = {
 };
 
 const THEME_ITEMS: readonly ThemeItem[] = [
-  { icon: Monitor, label: '跟随系统', value: 'system' },
+  { icon: SunMoon, label: '跟随系统', value: 'system' },
   { icon: Sun, label: '浅色', value: 'light' },
   { icon: Moon, label: '深色', value: 'dark' },
 ];
@@ -311,7 +313,7 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
                 className={MENU_ITEM_CLASS}
                 onClick={handleSectionedDialogOpen}
               >
-                <Settings2 />
+                <Settings />
                 <span>打开设置中心</span>
               </Link>
             </UserMenuItem>
@@ -327,7 +329,7 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
                   className={cn(MENU_ITEM_CLASS, isAdminOpen && 'bg-accent')}
                   onClick={handleSectionedDialogOpen}
                 >
-                  <Shield />
+                  <ShieldCheck />
                   <span>管理面板</span>
                 </Link>
               </UserMenuItem>
@@ -371,7 +373,7 @@ function renderUserThemeControls(state: UserMenuViewState) {
       className="flex items-center justify-between gap-2 px-2 py-1.5"
     >
       <span className="flex shrink-0 items-center gap-2 text-sm">
-        <Monitor className="size-4 text-muted-foreground" aria-hidden="true" />
+        <SunMoon className="size-4 text-muted-foreground" aria-hidden="true" />
         <span>外观主题</span>
       </span>
       {isMounted && (

@@ -2,8 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, Ticket } from 'lucide-react';
-import { Plus } from '@/components/ui/animated-icons';
+import { CircleX, Gift, Plus } from '@/components/ui/animated-icons';
 
 import {
   adminCreateInviteCode,
@@ -72,7 +71,7 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Ticket className="h-5 w-5" />
+          <Gift className="h-5 w-5" />
           邀请码管理
         </CardTitle>
         <CardDescription>创建有期限和使用次数上限的邀请码，并保留撤销历史</CardDescription>
@@ -82,7 +81,7 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
           <div className="flex flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-end lg:justify-between">
             <div className="flex items-center gap-3">
               <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-                <Ticket className="size-5" aria-hidden="true" />
+                <Gift className="size-5" aria-hidden="true" />
               </span>
               <div>
                 <p className="text-sm font-bold">生成新邀请码</p>
@@ -324,7 +323,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                       isActive ? 'bg-info text-primary' : 'bg-muted text-muted-foreground',
                     )}
                   >
-                    <Ticket className="size-4" />
+                    <Gift className="size-4" />
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1">
@@ -386,7 +385,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                             setInviteCodeToRevoke(inviteCode);
                           }}
                         >
-                          <Ban className="size-4" />
+                          <CircleX className="size-4" />
                         </Button>
                       </IconTooltip>
                     )}

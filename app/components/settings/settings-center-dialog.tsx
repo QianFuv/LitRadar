@@ -4,8 +4,8 @@
  * Query-driven aggregated settings dialog for every authenticated route.
  */
 
-import { Database, Radar, Settings2 } from 'lucide-react';
-import { Bell, KeyRound, ShieldCheck } from '@/components/ui/animated-icons';
+import { Radar } from 'lucide-react';
+import { Bell, KeyRound, Layers, Settings, ShieldCheck } from '@/components/ui/animated-icons';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -80,7 +80,7 @@ type SettingsCategoryContentProps = {
 const SETTINGS_SECTIONS = [
   {
     description: '主题与界面偏好',
-    icon: Settings2,
+    icon: Settings,
     id: 'general',
     label: '常规',
   },
@@ -98,7 +98,7 @@ const SETTINGS_SECTIONS = [
   },
   {
     description: '中文数据库全文访问',
-    icon: Database,
+    icon: Layers,
     id: 'data-sources',
     label: '数据源',
   },
@@ -354,7 +354,7 @@ function SettingsCenterSession({
     <>
       <SectionedDialogFrame
         activeSection={activeSection}
-        centerIcon={Settings2}
+        centerIcon={Settings}
         sidebarFooter={
           <div className="flex min-w-0 items-center gap-3">
             <UserAvatar username={username} size="md" />

@@ -6,7 +6,8 @@
 
 import * as React from 'react';
 import * as SelectPrimitive from '@animate-ui/react/primitives/radix-ui/select';
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
+import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
+import { Check } from '@/components/ui/animated-icons';
 
 import { cn } from '@/lib/utils';
 import { RevealScope } from '@/components/ui/reveal';
@@ -145,7 +146,7 @@ function SelectItem({
         className="absolute right-2 flex size-3.5 items-center justify-center"
       >
         <SelectPrimitive.ItemIndicator>
-          <CheckIcon className="size-4" />
+          <Check animateOnView className="size-4" />
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>

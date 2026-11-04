@@ -5,8 +5,7 @@
  */
 
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Network } from 'lucide-react';
-import { MoreHorizontal } from '@/components/ui/animated-icons';
+import { MoreHorizontal, Share2 } from '@/components/ui/animated-icons';
 import Link from 'next/link';
 import { useState } from 'react';
 
@@ -258,7 +257,7 @@ function renderRelationGraphFavoriteList(
               aria-hidden="true"
               className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-muted-foreground"
             >
-              <Network className="size-4" />
+              <Share2 className="size-4" />
             </span>
             <div className="min-w-0 flex-1">
               <Link

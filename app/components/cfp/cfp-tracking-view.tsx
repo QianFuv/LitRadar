@@ -1,12 +1,11 @@
 'use client';
 
-/** Database and journal navigation over original notices evaluated by the backend. */
+/** Layers and journal navigation over original notices evaluated by the backend. */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { parseAsString, useQueryState } from 'nuqs';
-import { Database } from 'lucide-react';
-import { Search, Megaphone } from '@/components/ui/animated-icons';
+import { Layers, Megaphone, Search } from '@/components/ui/animated-icons';
 
 import { CfpNoticeCard, CfpSourceFooter } from '@/components/cfp/cfp-notice-card';
 import {
@@ -44,7 +43,7 @@ const DATABASE_LABELS: Readonly<Record<string, string>> = {
 /**
  * Format a CFP database file name for display.
  *
- * @param name - Database file name.
+ * @param name - Layers file name.
  * @returns Human-readable database label.
  */
 function formatCfpDatabase(name: string): string {
@@ -390,7 +389,7 @@ function renderCfpJournalHeader(
   return (
     <section className="pb-2">
       <div className="mb-3 flex items-center gap-2 text-xs leading-5 text-muted-foreground">
-        <Database className="size-3.5 shrink-0" aria-hidden="true" />
+        <Layers className="size-3.5 shrink-0" aria-hidden="true" />
         <span>{formatCfpDatabase(database)}</span>
       </div>
       <h2 className="text-[24px] leading-[1.35] font-bold tracking-[-0.01em] [overflow-wrap:anywhere]">

@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DatabaseZap } from 'lucide-react';
-import { Plus, Save, Trash2 } from '@/components/ui/animated-icons';
+import { Plus, Save, SlidersVertical, Trash2 } from '@/components/ui/animated-icons';
 
 import {
   adminGetProviderCatalog,
@@ -500,7 +499,7 @@ export function RuntimeSettingsCard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <DatabaseZap className="h-5 w-5" />
+          <SlidersVertical className="h-5 w-5" />
           运行配置
         </CardTitle>
         <CardDescription>管理后端共享运行配置</CardDescription>

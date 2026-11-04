@@ -5,8 +5,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Database } from 'lucide-react';
-import { ArrowDown, ArrowUp, Plus, Trash2 } from '@/components/ui/animated-icons';
+import { ArrowDown, ArrowUp, Layers, Plus, Trash2 } from '@/components/ui/animated-icons';
 
 import {
   type IndexProviderRoutes,
@@ -705,7 +704,7 @@ export function ProviderConfigurationEditor({
                       aria-hidden="true"
                       className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-foreground text-background"
                     >
-                      <Database className="size-4" />
+                      <Layers className="size-4" />
                     </span>
                     <div className="min-w-0">
                       <h4

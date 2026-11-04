@@ -7,8 +7,16 @@
 
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ListTree, Loader2, Network } from 'lucide-react';
-import { Maximize, Minus, Plus, RotateCcw, Search } from '@/components/ui/animated-icons';
+import { Loader2 } from 'lucide-react';
+import {
+  List,
+  Maximize,
+  Minus,
+  Plus,
+  RotateCcw,
+  Search,
+  Share2,
+} from '@/components/ui/animated-icons';
 import { parseAsInteger, parseAsString, useQueryStates } from 'nuqs';
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 
@@ -477,8 +485,8 @@ function RelationExplorer({
         >
           {(
             [
-              ['graph', '网络', Network],
-              ['list', '列表', ListTree],
+              ['graph', '网络', Share2],
+              ['list', '列表', List],
             ] as const
           ).map(([mode, label, Icon]) => (
             <ToggleGroupItem key={mode} value={mode} className="md:px-2">

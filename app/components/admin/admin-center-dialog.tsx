@@ -4,8 +4,14 @@
  * Query-driven administrator dialog for authenticated administrators.
  */
 
-import { DatabaseZap, Shield, Ticket } from 'lucide-react';
-import { BellRing, Clock3, Users } from '@/components/ui/animated-icons';
+import {
+  BellRing,
+  Clock3,
+  Gift,
+  ShieldCheck,
+  SlidersVertical,
+  Users,
+} from '@/components/ui/animated-icons';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -40,7 +46,7 @@ type AdminPanelProps = {
 const ADMIN_SECTIONS = [
   {
     description: '系统统计与服务状态',
-    icon: Shield,
+    icon: ShieldCheck,
     id: 'overview',
     label: '概览',
   },
@@ -52,13 +58,13 @@ const ADMIN_SECTIONS = [
   },
   {
     description: '注册邀请码创建与回收',
-    icon: Ticket,
+    icon: Gift,
     id: 'invite-codes',
     label: '邀请码',
   },
   {
     description: 'Provider、来源与服务配置',
-    icon: DatabaseZap,
+    icon: SlidersVertical,
     id: 'runtime-settings',
     label: '运行配置',
   },
@@ -197,7 +203,7 @@ export function AdminCenterDialog() {
   return (
     <SectionedDialogFrame
       activeSection={activeSection}
-      centerIcon={Shield}
+      centerIcon={ShieldCheck}
       contentWidth="wide"
       centerSubtitle="用户、邀请、运行配置、计划任务与公告"
       centerTitle="管理面板"

@@ -4,8 +4,7 @@
  * Delivery method and PushPlus configuration for tracking notifications.
  */
 
-import { FolderInput } from 'lucide-react';
-import { Send, type AppIcon } from '@/components/ui/animated-icons';
+import { Folder, Send, type AppIcon } from '@/components/ui/animated-icons';
 
 import {
   SettingsGroup,
@@ -35,7 +34,7 @@ type DeliveryOption = {
 const DELIVERY_OPTIONS: readonly DeliveryOption[] = [
   {
     description: '推荐文章直接收藏到追踪文件夹，在「我的收藏」查看',
-    icon: FolderInput,
+    icon: Folder,
     label: '追踪文件夹推送',
     value: 'folder',
   },

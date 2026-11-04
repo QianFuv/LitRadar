@@ -4,11 +4,11 @@
  * Primary workspace navigation rendered as a desktop rail or a mobile tab bar.
  */
 
-import { Network } from 'lucide-react';
 import {
   CalendarDays,
   Megaphone,
   Search,
+  Share2,
   Star,
   IconTriggerProvider,
   useIconTrigger,
@@ -39,7 +39,7 @@ const PRIMARY_NAVIGATION_ITEMS: readonly PrimaryNavigationItem[] = [
   { view: 'favorites', icon: Star, label: '我的收藏', shortLabel: '收藏' },
   { view: 'weekly-updates', icon: CalendarDays, label: '每周更新', shortLabel: '周报' },
   { view: 'cfp-tracking', icon: Megaphone, label: '征稿追踪', shortLabel: '征稿' },
-  { view: 'relations', icon: Network, label: '文献关系图', shortLabel: '关系' },
+  { view: 'relations', icon: Share2, label: '文献关系图', shortLabel: '关系' },
 ];
 
 /**

@@ -8,13 +8,17 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { CircleAlert, FileDown, Loader2, Network, TriangleAlert } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import {
+  AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
+  Download,
   ExternalLink,
   FileText,
   Settings,
+  Share2,
   X,
 } from '@/components/ui/animated-icons';
 
@@ -498,7 +502,7 @@ function renderRetractionNotice(article: ArticleDetailDialogArticle) {
       aria-label="撤稿提醒"
       className="mt-4 flex gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3.5 py-3 text-[13px] leading-6"
     >
-      <TriangleAlert className="mt-1 size-4 shrink-0 text-destructive" aria-hidden="true" />
+      <AlertTriangle className="mt-1 size-4 shrink-0 text-destructive" aria-hidden="true" />
       <div className="min-w-0">
         <p className="font-bold text-destructive">此文章已被撤稿</p>
         <p className="text-muted-foreground">
@@ -654,7 +658,7 @@ function renderArticleRelationAction(state: ArticleDetailViewState, variant: Art
         aria-label="查看关系图"
         title="查看关系图"
       >
-        <Network className="h-4 w-4" aria-hidden="true" />
+        <Share2 className="h-4 w-4" aria-hidden="true" />
         {renderActionLabel('关系图', '关系')}
       </Link>
     </Button>
@@ -846,7 +850,7 @@ function renderArticleFulltextAction(state: ArticleDetailViewState) {
           aria-label={fulltextAction?.label ?? '获取全文'}
           title={fulltextAction?.label ?? '获取全文'}
         >
-          <FileDown className="h-4 w-4" aria-hidden="true" />
+          <Download className="h-4 w-4" aria-hidden="true" />
           {renderActionLabel(
             fulltextAction?.label ?? '获取全文',
             shortenAccessLabel(fulltextAction?.label ?? '获取全文'),
@@ -904,7 +908,7 @@ function renderArticleAccessActions(state: ArticleDetailViewState, variant: Arti
                 disabled
                 title={accessError instanceof Error ? accessError.message : '访问状态不可用'}
               >
-                <CircleAlert className="h-4 w-4 text-destructive" aria-hidden="true" />
+                <AlertCircle className="h-4 w-4 text-destructive" aria-hidden="true" />
                 {renderActionLabel('访问状态失败', '访问失败')}
               </Button>
             )}

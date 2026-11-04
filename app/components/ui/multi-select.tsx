@@ -6,7 +6,7 @@
 
 import * as React from 'react';
 import { Select as SelectPrimitive } from '@animate-ui/react/primitives/base-ui/select';
-import { CheckIcon } from 'lucide-react';
+import { Check } from '@/components/ui/animated-icons';
 
 import { PresenceBoundary } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';
@@ -117,7 +117,7 @@ function MultiSelectItem({ className, children, detail, ...props }: MultiSelectI
   return (
     <SelectPrimitive.Item className={cn(LIST_ITEM_CLASS, className)} {...props}>
       <SelectPrimitive.ItemIndicator className="flex size-4 shrink-0 items-center justify-center">
-        <CheckIcon className="size-4" aria-hidden="true" />
+        <Check animateOnView className="size-4" aria-hidden="true" />
       </SelectPrimitive.ItemIndicator>
       <SelectPrimitive.ItemText className="min-w-0 flex-1 break-words">
         {children}

@@ -4,8 +4,6 @@
  * Tracking-folder selection and creation section.
  */
 
-import { FolderHeart, FolderPlus } from 'lucide-react';
-
 import {
   SettingsGroup,
   SettingsRow,
@@ -26,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { Folder } from '@/components/ui/animated-icons';
+import { Folder, Plus } from '@/components/ui/animated-icons';
 
 type TrackingFolderCardProps = {
   model: TrackingPageViewModel['folder'];
@@ -67,7 +65,7 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
                     : 'bg-muted text-muted-foreground',
                 )}
               >
-                <FolderHeart className="size-5" />
+                <Folder className="size-5" />
               </span>
             }
             title="当前文件夹"
@@ -115,7 +113,7 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
                 disabled={!model.name.trim() || model.createAndSetMutation.isPending}
                 onClick={() => model.createAndSetMutation.mutate(model.name.trim())}
               >
-                <FolderPlus className="size-4" />
+                <Plus className="size-4" />
                 创建并设为追踪
               </Button>
             </div>

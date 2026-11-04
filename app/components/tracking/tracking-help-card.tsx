@@ -2,8 +2,7 @@
  * Static tracking workflow overview.
  */
 
-import { FolderHeart, Tags } from 'lucide-react';
-import { Bot, Send, CircleQuestionMark } from '@/components/ui/animated-icons';
+import { Bot, CircleQuestionMark, Folder, Send, Tag } from '@/components/ui/animated-icons';
 
 import {
   SettingsSection,
@@ -13,11 +12,11 @@ import {
 
 const TRACKING_STEPS = [
   {
-    icon: FolderHeart,
+    icon: Folder,
     title: '选择追踪文件夹',
     detail: '创建或选择一个收藏夹，设为「追踪文件夹」',
   },
-  { icon: Tags, title: '描述兴趣', detail: '配置关键词、研究方向' },
+  { icon: Tag, title: '描述兴趣', detail: '配置关键词、研究方向' },
   {
     icon: Bot,
     title: '连接 AI',
