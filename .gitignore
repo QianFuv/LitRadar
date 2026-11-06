@@ -12,10 +12,13 @@
 /data/push/subscriptions.json
 /data/push_state
 /data/auth.sqlite
+/data/auth.sqlite-shm
+/data/auth.sqlite-wal
 /docs/plan/
 /docs/report/
 /output/
 /app/out/
+/app/.vitest-attachments/
 /internal/webassets/export/
 /secrets/
 /.playwright-cli/
