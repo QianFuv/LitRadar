@@ -3243,6 +3243,7 @@
           "source_access",
           "provider_routing",
           "server_security",
+          "single_sign_on",
           "observability"
         ]
       },
