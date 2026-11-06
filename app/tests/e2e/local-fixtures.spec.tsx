@@ -184,7 +184,14 @@ async function serveBootstrapApi(route: Route): Promise<void> {
 async function serveTrackingMetadata(route: Route, requestUrl: URL): Promise<boolean> {
   const pathname = requestUrl.pathname;
   if (pathname === '/api/auth/me') {
-    await fulfillJson(route, { id: 41, username: 'browser_user', is_admin: false });
+    await fulfillJson(route, {
+      id: 41,
+      username: 'browser_user',
+      is_admin: false,
+      email: null,
+      auth_kind: 'local',
+      is_oidc_linked: false,
+    });
     return true;
   }
   if (pathname === '/api/tracking/status') {
@@ -439,7 +446,14 @@ async function serveTrackingApi(route: Route): Promise<void> {
 async function serveAdministratorApi(route: Route): Promise<void> {
   const pathname = new URL(route.request().url()).pathname;
   if (pathname === '/api/auth/me') {
-    await fulfillJson(route, { id: 42, username: 'browser_admin', is_admin: true });
+    await fulfillJson(route, {
+      id: 42,
+      username: 'browser_admin',
+      is_admin: true,
+      email: null,
+      auth_kind: 'local',
+      is_oidc_linked: false,
+    });
     return;
   }
   if (pathname === '/api/admin/stats') {
@@ -2462,9 +2476,23 @@ async function crossTabSessionTest({
     if (pathname === '/api/auth/me') {
       const cookie = route.request().headers().cookie ?? '';
       if (cookie.includes('litradar_review_session=second')) {
-        await fulfillJson(route, { id: 55, username: 'browser_second', is_admin: false });
+        await fulfillJson(route, {
+          id: 55,
+          username: 'browser_second',
+          is_admin: false,
+          email: null,
+          auth_kind: 'local',
+          is_oidc_linked: false,
+        });
       } else if (cookie.includes('litradar_review_session=first')) {
-        await fulfillJson(route, { id: 41, username: 'browser_user', is_admin: false });
+        await fulfillJson(route, {
+          id: 41,
+          username: 'browser_user',
+          is_admin: false,
+          email: null,
+          auth_kind: 'local',
+          is_oidc_linked: false,
+        });
       } else {
         await fulfillJson(route, { detail: 'Authentication required' }, 401);
       }
@@ -2488,7 +2516,14 @@ async function crossTabSessionTest({
           isLogin
             ? {
                 expires_at: Date.now() / 1000 + 3600,
-                user: { id: 55, username: 'browser_second', is_admin: false },
+                user: {
+                  id: 55,
+                  username: 'browser_second',
+                  is_admin: false,
+                  email: null,
+                  auth_kind: 'local',
+                  is_oidc_linked: false,
+                },
               }
             : { ok: true },
         ),
