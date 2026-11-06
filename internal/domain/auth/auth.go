@@ -16,7 +16,16 @@ const MaximumTokenTtl int64 = 31536000
 const ActiveTokenLimit = 50
 const ReservedTokenName = "login"
 
+// UnusablePasswordHash cannot be interpreted as a valid password credential.
+const UnusablePasswordHash = "!oidc"
+
 var (
+	ErrEmail               = errors.New("Email must be at most 254 bytes with one @ and no whitespace or control characters")
+	ErrEmailExists         = errors.New("Email already exists")
+	ErrManagedEmail        = errors.New("Email is managed by the identity provider")
+	ErrOidcPassword        = errors.New("Password login is not available for single sign-on accounts")
+	ErrAccountConflict     = errors.New("account_conflict")
+	ErrExpiredSession      = errors.New("expired_session")
 	ErrCredentials         = errors.New("Invalid username or password")
 	ErrUsername            = errors.New("Username must be 3-32 alphanumeric or underscore characters")
 	ErrPasswordShort       = errors.New("Password must be at least 12 characters")
@@ -40,9 +49,12 @@ var (
 
 // User is the public identity projection. Its formatting hides the account name.
 type User struct {
-	Id       identity.Id `json:"id"`
-	Username string      `json:"username"`
-	IsAdmin  bool        `json:"is_admin"`
+	Email        *string     `json:"email"`
+	AuthKind     string      `json:"auth_kind"`
+	IsOidcLinked bool        `json:"is_oidc_linked"`
+	Id           identity.Id `json:"id"`
+	Username     string      `json:"username"`
+	IsAdmin      bool        `json:"is_admin"`
 }
 
 func (user User) String() string {

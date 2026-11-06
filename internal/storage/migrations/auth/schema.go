@@ -758,3 +758,19 @@ CREATE TABLE IF NOT EXISTS relation_graph_favorites (
 CREATE INDEX IF NOT EXISTS idx_relation_graph_favorites_user_updated
     ON relation_graph_favorites(user_id, updated_at DESC, id DESC);
 `
+
+const versionTwentyThreeSql = `
+ALTER TABLE users ADD COLUMN email TEXT;
+CREATE UNIQUE INDEX idx_users_email ON users(email) WHERE email IS NOT NULL;
+ALTER TABLE users ADD COLUMN auth_kind TEXT NOT NULL DEFAULT 'local' CHECK (auth_kind IN ('local','oidc'));
+CREATE TABLE user_identities (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ issuer TEXT NOT NULL,
+ subject TEXT NOT NULL,
+ created_at REAL NOT NULL,
+ last_login_at REAL NOT NULL,
+ UNIQUE(issuer,subject),
+ UNIQUE(user_id,issuer)
+);
+`

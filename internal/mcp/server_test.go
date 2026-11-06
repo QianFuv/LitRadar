@@ -158,7 +158,7 @@ func authenticatedToolActors(t *testing.T, ctx context.Context, service *auth.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader, err := service.Register(ctx, "fixture_reader", "fixture password long", &invite.Code, nil)
+	reader, err := service.Register(ctx, "fixture_reader", "fixture password long", &invite.Code, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

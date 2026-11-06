@@ -15,7 +15,7 @@ import (
 	"github.com/QianFuv/LitRadar/internal/platform/cryptography"
 )
 
-var authRequestTypes = map[string]string{"register": "RegisterRequest", "login": "LoginRequest", "change_password": "ChangePasswordRequest", "create_token": "TokenCreateRequest"}
+var authRequestTypes = map[string]string{"register": "RegisterRequest", "update_email": "EmailUpdateRequest", "login": "LoginRequest", "change_password": "ChangePasswordRequest", "create_token": "TokenCreateRequest"}
 
 // handleBody decodes before auditing and dispatches authentication phases.
 func (handlers *authHandlers) handleBody(writer http.ResponseWriter, request *http.Request, name, bodyName string) {
@@ -27,6 +27,9 @@ func (handlers *authHandlers) handleBody(writer http.ResponseWriter, request *ht
 	request = beginAuthAudit(request)
 	body := decoded.(map[string]any)
 	action := name
+	if name == "update_email" {
+		action = "email_change"
+	}
 	if name == "change_password" {
 		action = "password_change"
 	}
@@ -120,7 +123,11 @@ func (handlers *authHandlers) registerAuthUser(writer http.ResponseWriter, reque
 	}
 	event.OccurredAt = currentTimestamp()
 	user, err := runAuth(request, handlers.kdfPool, func() (domain.User, error) {
-		return handlers.service.Register(ctx, username, password, inviteCode, event)
+		var email *string
+		if value, ok := body["email"].(string); ok {
+			email = &value
+		}
+		return handlers.service.Register(ctx, username, password, inviteCode, event, email)
 	})
 	if err != nil {
 		reject("registration_failed", err)
@@ -174,6 +181,21 @@ func (handlers *authHandlers) authCredentialBody(writer http.ResponseWriter, req
 	event.ActorId = &actor
 	event.OccurredAt = currentTimestamp()
 
+	if name == "update_email" {
+		event.Action = "email_change"
+		var email *string
+		if value, ok := body["email"].(string); ok {
+			email = &value
+		}
+		user, failure := runAuth(request, handlers.pool, func() (domain.User, error) {
+			return handlers.service.UpdateEmail(ctx, current.authorization.User.Id, email, event)
+		})
+		if failure != nil {
+			reject("operation_failed", failure)
+			return nil, false
+		}
+		return publicUser(user), true
+	}
 	if name == "create_token" {
 		return handlers.createAuthToken(writer, request, ctx, current, body, event)
 	}

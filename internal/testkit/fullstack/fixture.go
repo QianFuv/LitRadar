@@ -257,7 +257,7 @@ func seedFixtureAccounts(ctx context.Context, repository *authstorage.Repository
 	if err != nil {
 		return err
 	}
-	member, err := service.Register(ctx, "fullstack_member", "FullStackMember!2026", &invite.Code, nil)
+	member, err := service.Register(ctx, "fullstack_member", "FullStackMember!2026", &invite.Code, nil, nil)
 	if err != nil {
 		return err
 	}

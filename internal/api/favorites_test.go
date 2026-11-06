@@ -127,7 +127,7 @@ func assertFavoriteOwnerIsolation(t *testing.T, auth *authHandlers, handlers *fa
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := auth.service.Register(context.Background(), "other_user", "long enough password", &invite.Code, nil)
+	foreign, err := auth.service.Register(context.Background(), "other_user", "long enough password", &invite.Code, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

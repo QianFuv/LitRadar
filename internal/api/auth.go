@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/QianFuv/LitRadar/internal/auth"
@@ -24,13 +25,16 @@ func beginAuthAudit(request *http.Request) *http.Request {
 func currentTimestamp() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
 type userResponse struct {
-	Id       int64  `json:"id"`
-	Username string `json:"username"`
-	IsAdmin  bool   `json:"is_admin"`
+	Email        *string `json:"email"`
+	AuthKind     string  `json:"auth_kind"`
+	IsOidcLinked bool    `json:"is_oidc_linked"`
+	Id           int64   `json:"id"`
+	Username     string  `json:"username"`
+	IsAdmin      bool    `json:"is_admin"`
 }
 
 func publicUser(user domain.User) userResponse {
-	return userResponse{int64(user.Id), user.Username, user.IsAdmin}
+	return userResponse{Id: int64(user.Id), Username: user.Username, IsAdmin: user.IsAdmin, Email: user.Email, AuthKind: user.AuthKind, IsOidcLinked: user.IsOidcLinked}
 }
 
 func logAuth(request *http.Request, event domain.AuditEvent, reason string) {
@@ -60,6 +64,8 @@ func requestId(request *http.Request) string {
 
 type authHandlers struct {
 	service        *auth.Service
+	oidc           *auth.Oidc
+	oidcPool       *executor.Pool
 	repository     *storage.Repository
 	authenticator  *Authenticator
 	pool           *executor.Pool
@@ -72,6 +78,12 @@ type authHandlers struct {
 func (handlers *authHandlers) routes() []route {
 	routes := []route{}
 	for _, operation := range []openapi.Operation{
+		{Method: "PUT", Path: "/api/auth/email", Id: "update_email"},
+		{Method: "GET", Path: "/api/auth/providers", Id: "get_auth_providers"},
+		{Method: "GET", Path: "/api/auth/oidc/login", Id: "oidc_login"},
+		{Method: "GET", Path: "/api/auth/oidc/callback", Id: "oidc_callback"},
+		{Method: "POST", Path: "/api/auth/oidc/link", Id: "oidc_link"},
+		{Method: "DELETE", Path: "/api/auth/oidc/link", Id: "oidc_unlink"},
 		{Method: "POST", Path: "/api/auth/register", Id: "register"},
 		{Method: "POST", Path: "/api/auth/login", Id: "login"},
 		{Method: "POST", Path: "/api/auth/change-password", Id: "change_password"},
@@ -88,7 +100,9 @@ func (handlers *authHandlers) routes() []route {
 		{Method: "GET", Path: "/api/auth/invite-required", Id: "check_invite_required"},
 	} {
 		routes = append(routes, route{operation, func(writer http.ResponseWriter, request *http.Request) {
-			if kind, exists := authRequestTypes[operation.Id]; exists {
+			if operation.Id == "get_auth_providers" || strings.HasPrefix(operation.Id, "oidc_") {
+				handlers.handleOidc(writer, request, operation.Id)
+			} else if kind, exists := authRequestTypes[operation.Id]; exists {
 				handlers.handleBody(writer, request, operation.Id, kind)
 			} else {
 				handlers.handle(writer, request, operation.Id)

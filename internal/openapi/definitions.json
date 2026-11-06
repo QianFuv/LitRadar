@@ -199,7 +199,10 @@
           "updated_at",
           "folder_count",
           "favorite_count",
-          "notify_enabled"
+          "notify_enabled",
+          "email",
+          "auth_kind",
+          "is_oidc_linked"
         ],
         "properties": {
           "created_at": {
@@ -237,6 +240,25 @@
           "username": {
             "type": "string",
             "description": "Username."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Normalized unique account email; null when unset."
+          },
+          "auth_kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "oidc"
+            ],
+            "description": "Account credential kind."
+          },
+          "is_oidc_linked": {
+            "type": "boolean",
+            "description": "Whether an external OIDC identity is linked."
           }
         }
       },
@@ -2296,7 +2318,7 @@
           },
           "username": {
             "type": "string",
-            "description": "Username."
+            "description": "Username or case-insensitive email address."
           }
         }
       },
@@ -2960,6 +2982,13 @@
           "username": {
             "type": "string",
             "description": "Requested username."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Normalized unique account email; null when unset."
           }
         }
       },
@@ -3995,7 +4024,10 @@
         "required": [
           "id",
           "username",
-          "is_admin"
+          "is_admin",
+          "email",
+          "auth_kind",
+          "is_oidc_linked"
         ],
         "properties": {
           "id": {
@@ -4009,6 +4041,25 @@
           "username": {
             "type": "string",
             "description": "Login username."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Normalized unique account email; null when unset."
+          },
+          "auth_kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "oidc"
+            ],
+            "description": "Account credential kind."
+          },
+          "is_oidc_linked": {
+            "type": "boolean",
+            "description": "Whether an external OIDC identity is linked."
           }
         }
       },
@@ -4387,6 +4438,47 @@
             "type": "integer",
             "format": "int64",
             "description": "Publication year."
+          }
+        }
+      },
+      "EmailUpdateRequest": {
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Normalized unique account email; null when unset."
+          }
+        }
+      },
+      "AuthProvidersResponse": {
+        "type": "object",
+        "required": [
+          "oidc_enabled",
+          "oidc_display_name"
+        ],
+        "properties": {
+          "oidc_enabled": {
+            "type": "boolean"
+          },
+          "oidc_display_name": {
+            "type": "string"
+          }
+        }
+      },
+      "OidcLinkResponse": {
+        "type": "object",
+        "required": [
+          "authorization_url"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": "string"
           }
         }
       }

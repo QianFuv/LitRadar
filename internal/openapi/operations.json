@@ -809,6 +809,9 @@
               }
             }
           }
+        },
+        "400": {
+          "description": "Invalid password or OIDC-only account."
         }
       },
       "security": [
@@ -1424,6 +1427,9 @@
               }
             }
           }
+        },
+        "400": {
+          "description": "Invalid password or OIDC-only account."
         }
       },
       "security": [
@@ -1612,7 +1618,7 @@
       "tags": [
         "auth"
       ],
-      "summary": "Authenticate a user and set a session cookie.",
+      "summary": "Sign in with username or email and password.",
       "description": "# Arguments\n\n* `state` - Shared API state.\n* `body` - Login request.\n\n# Returns\n\nLogin response without the raw token.",
       "operationId": "login",
       "requestBody": {
@@ -1805,6 +1811,9 @@
               }
             }
           }
+        },
+        "409": {
+          "description": "Username or email already exists."
         }
       }
     }
@@ -4779,6 +4788,252 @@
               }
             }
           }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/auth/email",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Update the local account email.",
+      "operationId": "update_email",
+      "responses": {
+        "200": {
+          "description": "Successful response.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserResponse"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Request rejected."
+        },
+        "401": {
+          "description": "Request rejected."
+        },
+        "409": {
+          "description": "Username or email already exists."
+        }
+      },
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/EmailUpdateRequest"
+            }
+          }
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/providers",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "List enabled sign-in providers.",
+      "operationId": "get_auth_providers",
+      "responses": {
+        "200": {
+          "description": "Successful response.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthProvidersResponse"
+              }
+            }
+          }
+        },
+        "429": {
+          "description": "Request rejected."
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/oidc/login",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Start OIDC sign-in.",
+      "operationId": "oidc_login",
+      "responses": {
+        "302": {
+          "description": "Redirect to provider, requested local path, or bounded error result.",
+          "headers": {
+            "Location": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "429": {
+          "description": "Request rejected."
+        }
+      },
+      "parameters": [
+        {
+          "name": "next",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "default": "/"
+          },
+          "description": "Same-site relative path."
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/oidc/callback",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Complete OIDC sign-in or linking.",
+      "operationId": "oidc_callback",
+      "responses": {
+        "302": {
+          "description": "Redirect to provider, requested local path, or bounded error result.",
+          "headers": {
+            "Location": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "429": {
+          "description": "Request rejected."
+        }
+      },
+      "parameters": [
+        {
+          "name": "state",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "code",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "error",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/oidc/link",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Link an OIDC identity to a local account.",
+      "operationId": "oidc_link",
+      "responses": {
+        "200": {
+          "description": "Successful response.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcLinkResponse"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Request rejected."
+        },
+        "401": {
+          "description": "Request rejected."
+        },
+        "409": {
+          "description": "Request rejected."
+        }
+      },
+      "security": [
+        {
+          "bearer_auth": []
+        },
+        {
+          "session_cookie": []
+        }
+      ]
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/auth/oidc/link",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Unlink the local account OIDC identity.",
+      "operationId": "oidc_unlink",
+      "responses": {
+        "200": {
+          "description": "Successful response.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserResponse"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Request rejected."
+        },
+        "401": {
+          "description": "Request rejected."
+        },
+        "409": {
+          "description": "Request rejected."
         }
       },
       "security": [

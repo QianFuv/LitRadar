@@ -17,6 +17,9 @@ var ErrAdminInvitePolicy = errors.New("Invite code expires_at must be in the nex
 
 // AdminUserInfo supplies account counts without credential material.
 type AdminUserInfo struct {
+	Email         *string     `json:"email"`
+	AuthKind      string      `json:"auth_kind"`
+	IsOidcLinked  bool        `json:"is_oidc_linked"`
 	Id            identity.Id `json:"id"`
 	Username      string      `json:"username"`
 	IsAdmin       bool        `json:"is_admin"`
@@ -50,7 +53,7 @@ func (invite AdminInviteInfo) LogValue() slog.Value { return slog.StringValue(in
 
 // ListUsers returns administrator dashboard rows in stable identifier order.
 func (repository *Repository) ListUsers(ctx context.Context) ([]AdminUserInfo, error) {
-	rows, err := repository.database.QueryContext(ctx, `SELECT u.id,u.username,u.is_admin,u.created_at,u.updated_at,(SELECT COUNT(*) FROM folders f WHERE f.user_id=u.id),(SELECT COUNT(*) FROM favorites fv WHERE fv.user_id=u.id),(SELECT COUNT(*) FROM notification_settings ns WHERE ns.user_id=u.id AND ns.enabled=1) FROM users u ORDER BY u.id`)
+	rows, err := repository.database.QueryContext(ctx, `SELECT u.id,u.username,u.email,u.auth_kind,EXISTS(SELECT 1 FROM user_identities WHERE user_id=u.id),u.is_admin,u.created_at,u.updated_at,(SELECT COUNT(*) FROM folders f WHERE f.user_id=u.id),(SELECT COUNT(*) FROM favorites fv WHERE fv.user_id=u.id),(SELECT COUNT(*) FROM notification_settings ns WHERE ns.user_id=u.id AND ns.enabled=1) FROM users u ORDER BY u.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +62,7 @@ func (repository *Repository) ListUsers(ctx context.Context) ([]AdminUserInfo, e
 	for rows.Next() {
 		var item AdminUserInfo
 		var isAdmin, notifyEnabled int64
-		if err := rows.Scan(&item.Id, &item.Username, &isAdmin, &item.CreatedAt, &item.UpdatedAt, &item.FolderCount, &item.FavoriteCount, &notifyEnabled); err != nil {
+		if err := rows.Scan(&item.Id, &item.Username, &item.Email, &item.AuthKind, &item.IsOidcLinked, &isAdmin, &item.CreatedAt, &item.UpdatedAt, &item.FolderCount, &item.FavoriteCount, &notifyEnabled); err != nil {
 			return nil, err
 		}
 		item.IsAdmin = isAdmin != 0

@@ -205,7 +205,7 @@ func (prepared *Prepared) prepareRuntimeCatalogs(ctx context.Context, configurat
 
 // runtimePolicy preserves persisted-policy and frontend-security admission before delivery resources.
 func (prepared *Prepared) runtimePolicy(ctx context.Context, configuration Config) (Config, error) {
-	values, err := settings.New(prepared.services.Auth, prepared.services.Codec).Load(ctx)
+	values, err := settings.New(prepared.services.Auth, prepared.services.Codec, configuration.IsDevelopment).Load(ctx)
 	if err != nil {
 		return configuration, err
 	}

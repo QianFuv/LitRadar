@@ -88,10 +88,10 @@ func CnkiContext(user int64) string { return fmt.Sprintf("cnki_sessions:%d:sessi
 // PoolReferenceContext separates removable pool references from persisted field ciphertext.
 func PoolReferenceContext(field string) string { return RuntimeContext(field) + ":pool-item-reference" }
 
-// IsRuntimeSecret is the persisted registry's four secret fields; unknown rows remain untouched.
+// IsRuntimeSecret identifies encrypted registry fields; unknown rows remain untouched.
 func IsRuntimeSecret(field string) bool {
 	switch field {
-	case "openalex_api_key_pool", "semantic_scholar_api_key_pool", "cnki_captcha_token", "provider_proxy_url":
+	case "openalex_api_key_pool", "semantic_scholar_api_key_pool", "cnki_captcha_token", "provider_proxy_url", "oidc_client_secret":
 		return true
 	default:
 		return false
@@ -305,4 +305,9 @@ func cnkiValues(ctx context.Context, connection *sql.Conn) ([]secretValue, error
 		result = append(result, secretValue{string(value), CnkiContext(user), "UPDATE cnki_sessions SET session_json=? WHERE user_id=?", user})
 	}
 	return result, rows.Err()
+}
+
+// SignOidcState authenticates transient browser flow state without disclosing the deployment key.
+func (codec *Codec) SignOidcState(payload []byte) ([]byte, error) {
+	return codec.primitive.SignOidcState(payload)
 }

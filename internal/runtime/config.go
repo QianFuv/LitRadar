@@ -50,6 +50,7 @@ func (configuration Config) BindAddress() string {
 
 // ApplyRuntimeSettings validates every known setting and applies server policy in source order.
 func (configuration *Config) ApplyRuntimeSettings(values []settings.Value) error {
+	configuration.ApiOptions.IsDevelopment = configuration.IsDevelopment
 	for _, value := range values {
 		if _, exists := settings.Default(value.Field); !exists {
 			continue
@@ -57,6 +58,11 @@ func (configuration *Config) ApplyRuntimeSettings(values []settings.Value) error
 		canonical, err := settings.Normalize(value.Field, value.Value)
 		if err != nil {
 			return err
+		}
+		if value.Field == "oidc_issuer_url" || value.Field == "public_base_url" {
+			if err := settings.ValidateOidcUrl(canonical, configuration.IsDevelopment); err != nil {
+				return err
+			}
 		}
 		if err := configuration.applyCanonicalRuntimeSetting(value.Field, canonical); err != nil {
 			return err

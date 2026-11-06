@@ -1,7 +1,9 @@
 package cryptography
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"strings"
@@ -109,4 +111,19 @@ func decodeSecretEnvelope(payload string) ([]byte, []byte, error) {
 		return nil, nil, ErrAuthentication
 	}
 	return nonce, ciphertext, nil
+}
+
+// SignOidcState authenticates an OIDC state payload under a domain-separated deployment key.
+func (codec *Codec) SignOidcState(payload []byte) ([]byte, error) {
+	if codec.isClosed {
+		return nil, ErrAuthentication
+	}
+	mac := hmac.New(sha256.New, codec.key[:])
+	if _, err := mac.Write([]byte("litradar:oidc-state:v1\x00")); err != nil {
+		return nil, err
+	}
+	if _, err := mac.Write(payload); err != nil {
+		return nil, err
+	}
+	return mac.Sum(nil), nil
 }

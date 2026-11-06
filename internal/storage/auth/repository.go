@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
@@ -192,8 +193,8 @@ func (repository *Repository) Bootstrap(ctx context.Context, username, passwordH
 	return user, nil
 }
 
-// Register preserves bootstrap, missing invite, duplicate username and redemption error priority.
-func (repository *Repository) Register(ctx context.Context, username, passwordHash, salt string, invite *string, now float64, audit *domain.AuditEvent) (domain.User, error) {
+// Register preserves bootstrap, missing invite, duplicate username, redemption and duplicate email error priority.
+func (repository *Repository) Register(ctx context.Context, username, passwordHash, salt string, invite *string, now float64, audit *domain.AuditEvent, email *string) (domain.User, error) {
 	var user domain.User
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
 		var count int64
@@ -221,6 +222,12 @@ func (repository *Repository) Register(ctx context.Context, username, passwordHa
 		}
 		if _, err := connection.ExecContext(ctx, "INSERT INTO invite_code_uses(invite_code_id,user_id,used_at) VALUES(?,?,?)", inviteId, user.Id, now); err != nil {
 			return err
+		}
+		if email != nil {
+			if err := updateEmail(ctx, connection, user.Id, email, now); err != nil {
+				return err
+			}
+			user.Email = email
 		}
 		redemption := (domain.AuditEvent{Action: "invite_redeem", Outcome: "completed", OccurredAt: now}).WithIdentity(int64(user.Id), inviteId)
 		if audit != nil {
@@ -254,7 +261,7 @@ func insertUser(ctx context.Context, connection *sql.Conn, username, passwordHas
 		return domain.User{}, err
 	}
 	id, err := result.LastInsertId()
-	return domain.User{Id: identity.Id(id), Username: username, IsAdmin: isAdmin}, err
+	return domain.User{Id: identity.Id(id), Username: username, IsAdmin: isAdmin, AuthKind: "local"}, err
 }
 
 func defaultFolder(ctx context.Context, connection *sql.Conn, user identity.Id, now float64) error {
@@ -265,7 +272,7 @@ func defaultFolder(ctx context.Context, connection *sql.Conn, user identity.Id, 
 func scanCredentials(row *sql.Row) (*domain.Credentials, error) {
 	var credentials domain.Credentials
 	var isAdmin int64
-	err := row.Scan(&credentials.User.Id, &credentials.User.Username, &credentials.PasswordHash, &credentials.Salt, &isAdmin, &credentials.CreatedAt, &credentials.TokenGeneration)
+	err := row.Scan(&credentials.User.Id, &credentials.User.Username, &credentials.PasswordHash, &credentials.Salt, &isAdmin, &credentials.CreatedAt, &credentials.TokenGeneration, &credentials.User.Email, &credentials.User.AuthKind, &credentials.User.IsOidcLinked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -278,12 +285,15 @@ func scanCredentials(row *sql.Row) (*domain.Credentials, error) {
 
 // CredentialsByName preserves SQLite's existing NOCASE username comparison.
 func (repository *Repository) CredentialsByName(ctx context.Context, username string) (*domain.Credentials, error) {
-	return scanCredentials(repository.database.QueryRowContext(ctx, "SELECT id,username,password_hash,salt,is_admin,created_at,token_generation FROM users WHERE username=?", username))
+	if strings.Contains(username, "@") {
+		return scanCredentials(repository.database.QueryRowContext(ctx, credentialSelect+" WHERE email=?", strings.ToLower(strings.TrimSpace(username))))
+	}
+	return scanCredentials(repository.database.QueryRowContext(ctx, credentialSelect+" WHERE username=?", username))
 }
 
 // CredentialsById loads the current credential generation for post-work race checks.
 func (repository *Repository) CredentialsById(ctx context.Context, user identity.Id) (*domain.Credentials, error) {
-	return scanCredentials(repository.database.QueryRowContext(ctx, "SELECT id,username,password_hash,salt,is_admin,created_at,token_generation FROM users WHERE id=?", user))
+	return scanCredentials(repository.database.QueryRowContext(ctx, credentialSelect+" WHERE id=?", user))
 }
 
 // BootstrapRequired stops at the first user, including non-administrator users.

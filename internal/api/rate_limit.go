@@ -15,6 +15,7 @@ type authAttempt uint8
 const (
 	loginAttempt authAttempt = iota
 	registerAttempt
+	oidcAttempt
 )
 
 type authClientSource struct {
@@ -78,11 +79,13 @@ func (limiter *authRateLimiter) checkAt(kind authAttempt, source authClientSourc
 	if retry != 0 {
 		return limiter.rejection(kind, "client_ip", source.class, retry, now)
 	}
-	retry = acquireTracked(limiter.usernameBuckets, &limiter.usernameOrder, bucketKey{kind: kind, username: normalizeUsername(username)}, limiter.policy.UsernameKeyLimit, limiter.policy.Username, now, limiter.nextSequence)
-	if retry != 0 {
-		return limiter.rejection(kind, "username", source.class, retry, now)
+	if kind != oidcAttempt {
+		retry = acquireTracked(limiter.usernameBuckets, &limiter.usernameOrder, bucketKey{kind: kind, username: normalizeUsername(username)}, limiter.policy.UsernameKeyLimit, limiter.policy.Username, now, limiter.nextSequence)
+		if retry != 0 {
+			return limiter.rejection(kind, "username", source.class, retry, now)
+		}
 	}
-	if kind == loginAttempt {
+	if kind != registerAttempt {
 		retry = limiter.globalLogin.acquire(now, limiter.policy.GlobalLogin)
 	} else {
 		retry = limiter.globalRegister.acquire(now, limiter.policy.GlobalRegister)
@@ -188,8 +191,12 @@ func saturatingIncrement(value uint64) uint64 {
 	return value
 }
 
-// normalizeUsername retains the first 32 trimmed runes without allocating storage for the unused suffix.
+// normalizeUsername preserves complete valid email keys and bounds other identifiers to 32 runes.
 func normalizeUsername(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) <= 254 && strings.Contains(trimmed, "@") {
+		return strings.ToLower(trimmed)
+	}
 	var characters [32]rune
 	count := 0
 	for _, character := range strings.TrimSpace(value) {

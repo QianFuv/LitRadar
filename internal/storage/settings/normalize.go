@@ -31,6 +31,8 @@ func Normalize(field, value string) (canonical string, err error) {
 // normalizeStructuredSetting routes structured endpoint, policy and ordered-list values.
 func normalizeStructuredSetting(definition *definition, value string) (string, error) {
 	switch definition.Parser {
+	case "OidcUrl":
+		return normalizeOidcUrl(value)
 	case "ProviderProxyUrl":
 		return normalizeProxyUrl(value)
 	case "ProviderProxyPolicy":

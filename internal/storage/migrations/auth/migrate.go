@@ -16,7 +16,7 @@ import (
 )
 
 // SchemaVersion is the latest supported auth database version.
-const SchemaVersion = 22
+const SchemaVersion = 23
 
 func init() { sql.Register("litradar-auth-migration", &sqlite3.SQLiteDriver{DeferSynchronous: true}) }
 
@@ -128,7 +128,7 @@ func migrateStep(ctx context.Context, connection *sql.Conn, version, fromVersion
 }
 
 func applyVersion(ctx context.Context, connection *sql.Conn, version, fromVersion int) error {
-	statements := map[int]string{2: versionTwoSql, 3: versionThreeSql, 4: versionFourSql, 5: versionFiveSql, 6: versionSixSql, 9: versionNineSql, 10: versionTenSql, 11: versionElevenSql, 16: versionSixteenSql, 17: versionSeventeenSql, 18: versionEighteenSql, 21: versionTwentyOneSql, 22: versionTwentyTwoSql}
+	statements := map[int]string{2: versionTwoSql, 3: versionThreeSql, 4: versionFourSql, 5: versionFiveSql, 6: versionSixSql, 9: versionNineSql, 10: versionTenSql, 11: versionElevenSql, 16: versionSixteenSql, 17: versionSeventeenSql, 18: versionEighteenSql, 21: versionTwentyOneSql, 22: versionTwentyTwoSql, 23: versionTwentyThreeSql}
 	if statement, exists := statements[version]; exists {
 		return execute(ctx, connection, statement)
 	}

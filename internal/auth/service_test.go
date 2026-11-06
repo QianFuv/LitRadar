@@ -322,7 +322,7 @@ func assertPasswordChangeRevokesSession(t *testing.T, service *Service, ctx cont
 // assertInviteRedemptionAndExhaustion checks registration exhaustion does not permit implicit invite replacement.
 func assertInviteRedemptionAndExhaustion(t *testing.T, service *Service, ctx context.Context, user domain.User, invite domain.InviteResponse) {
 	t.Helper()
-	if _, err := service.Register(ctx, "member", "StrongPassword!2026", &invite.Code, nil); err != nil {
+	if _, err := service.Register(ctx, "member", "StrongPassword!2026", &invite.Code, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	used, err := service.Invite(ctx, user.Id)

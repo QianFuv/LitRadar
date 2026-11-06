@@ -74,7 +74,7 @@ func (repository *Repository) VerifyToken(ctx context.Context, hash string, now 
 	var authorization domain.Authorization
 	var expires, created float64
 	var isAdmin int64
-	err := repository.database.QueryRowContext(ctx, `SELECT t.user_id,t.expires_at,u.username,u.is_admin,u.created_at,u.token_generation FROM access_tokens t JOIN users u ON t.user_id=u.id WHERE t.token_hash=?`, hash).Scan(&authorization.User.Id, &expires, &authorization.User.Username, &isAdmin, &created, &authorization.TokenGeneration)
+	err := repository.database.QueryRowContext(ctx, `SELECT t.user_id,t.expires_at,u.username,u.is_admin,u.created_at,u.token_generation,u.email,u.auth_kind,EXISTS(SELECT 1 FROM user_identities WHERE user_id=u.id) FROM access_tokens t JOIN users u ON t.user_id=u.id WHERE t.token_hash=?`, hash).Scan(&authorization.User.Id, &expires, &authorization.User.Username, &isAdmin, &created, &authorization.TokenGeneration, &authorization.User.Email, &authorization.User.AuthKind, &authorization.User.IsOidcLinked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -210,9 +210,12 @@ func (repository *Repository) UpgradeLegacy(ctx context.Context, observed domain
 
 // ChangePassword admits one winner for the exact credential row observed before verification.
 func (repository *Repository) ChangePassword(ctx context.Context, observed domain.Credentials, replacement, salt string, now float64, audit domain.AuditEvent) (bool, error) {
+	if observed.User.AuthKind == "oidc" {
+		return false, domain.ErrOidcPassword
+	}
 	var changed bool
 	err := repository.Immediate(ctx, false, func(connection *sql.Conn) error {
-		result, err := connection.ExecContext(ctx, "UPDATE users SET password_hash=?,salt=?,updated_at=?,token_generation=token_generation+1 WHERE id=? AND password_hash=? AND salt=?", replacement, salt, now, observed.User.Id, observed.PasswordHash, observed.Salt)
+		result, err := connection.ExecContext(ctx, "UPDATE users SET password_hash=?,salt=?,updated_at=?,token_generation=token_generation+1 WHERE id=? AND password_hash=? AND salt=? AND auth_kind='local'", replacement, salt, now, observed.User.Id, observed.PasswordHash, observed.Salt)
 		if err != nil {
 			return err
 		}
@@ -245,11 +248,15 @@ func (repository *Repository) ResetPassword(ctx context.Context, actor *identity
 				return err
 			}
 		}
-		var exists bool
-		if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE id=?)", user).Scan(&exists); err != nil {
-			return err
+		var authKind string
+		lookup := connection.QueryRowContext(ctx, "SELECT auth_kind FROM users WHERE id=?", user).Scan(&authKind)
+		if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
+			return lookup
 		}
-		if !exists {
+		if authKind == "oidc" {
+			return domain.ErrOidcPassword
+		}
+		if errors.Is(lookup, sql.ErrNoRows) {
 			return nil
 		}
 		result, err := connection.ExecContext(ctx, "UPDATE users SET password_hash=?,salt=?,updated_at=?,token_generation=token_generation+1 WHERE id=?", replacement, salt, now, user)

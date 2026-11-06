@@ -52,8 +52,9 @@ var requestBodies = func() map[string]bodyType {
 		"NotificationSettingsUpdate": notificationBody(),
 
 		"AdminInviteCodeCreate":     {kind: "struct", name: "AdminInviteCodeCreate", deniesUnknown: true, fields: []bodyField{bodyFieldOf("expires_at", optionalBody(bodyType{kind: "float"})), bodyFieldOf("max_uses", optionalBody(integerBody))}},
+		"EmailUpdateRequest":        structBody("EmailUpdateRequest", bodyFieldOf("email", bodyType{kind: "nullable", element: &stringBody})),
 		"LoginRequest":              structBody("LoginRequest", bodyFieldOf("username", stringBody), bodyFieldOf("password", stringBody)),
-		"RegisterRequest":           structBody("RegisterRequest", bodyFieldOf("username", stringBody), bodyFieldOf("password", stringBody), bodyFieldOf("invite_code", stringBody)),
+		"RegisterRequest":           structBody("RegisterRequest", bodyFieldOf("username", stringBody), bodyFieldOf("password", stringBody), bodyFieldOf("invite_code", stringBody), bodyFieldOf("email", optionalBody(stringBody))),
 		"ChangePasswordRequest":     structBody("ChangePasswordRequest", bodyFieldOf("old_password", stringBody), bodyFieldOf("new_password", stringBody)),
 		"TokenCreateRequest":        structBody("TokenCreateRequest", defaultBodyField("name", stringBody, ""), defaultBodyField("ttl", integerBody, int64(604800))),
 		"FolderCreate":              structBody("FolderCreate", bodyFieldOf("name", stringBody), defaultBodyField("is_tracking", boolBody, false)),
@@ -160,7 +161,7 @@ func (scanner *bodyScanner) decodeTyped(kind bodyType, path string, depth int, t
 		return scanner.rawBody()
 	case "job":
 		return scanner.job(path, depth)
-	case "optional":
+	case "optional", "nullable":
 		if token == 'n' {
 			return nil, scanner.literal("null")
 		}

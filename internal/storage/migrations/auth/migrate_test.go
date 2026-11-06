@@ -584,7 +584,7 @@ func TestVersionTwentyTwoRelationGraphFavorites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.ToVersion != 22 {
+	if summary.ToVersion != SchemaVersion {
 		t.Fatalf("version = %d", summary.ToVersion)
 	}
 	names, err := columns(context.Background(), connection, "relation_graph_favorites")

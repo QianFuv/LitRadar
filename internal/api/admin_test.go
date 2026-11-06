@@ -26,7 +26,7 @@ func adminFixture(t *testing.T) (*authHandlers, *http.ServeMux, string, domain.U
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := auth.service.Register(context.Background(), "member", "long enough password", &invite.Code, nil)
+	user, err := auth.service.Register(context.Background(), "member", "long enough password", &invite.Code, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

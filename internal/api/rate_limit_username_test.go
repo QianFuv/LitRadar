@@ -9,7 +9,11 @@ import (
 
 // usernameNormalizationReference preserves the full conversion used before bounded prefix collection.
 func usernameNormalizationReference(value string) string {
-	characters := []rune(strings.TrimSpace(value))
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) <= 254 && strings.Contains(trimmed, "@") {
+		return strings.ToLower(trimmed)
+	}
+	characters := []rune(trimmed)
 	if len(characters) > 32 {
 		characters = characters[:32]
 	}

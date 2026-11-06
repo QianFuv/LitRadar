@@ -127,8 +127,12 @@ func (service *Service) Bootstrap(ctx context.Context, username, password string
 }
 
 // Register atomically consumes an invite after validating the new account's credentials.
-func (service *Service) Register(ctx context.Context, username, password string, invite *string, audit *domain.AuditEvent) (domain.User, error) {
+func (service *Service) Register(ctx context.Context, username, password string, invite *string, audit *domain.AuditEvent, email *string) (domain.User, error) {
 	if err := validateCredentials(username, password); err != nil {
+		return domain.User{}, err
+	}
+	address, err := NormalizeEmail(email)
+	if err != nil {
 		return domain.User{}, err
 	}
 	hash, err := service.hashPassword(ctx, password)
@@ -136,7 +140,7 @@ func (service *Service) Register(ctx context.Context, username, password string,
 		return domain.User{}, err
 	}
 	event := service.event("register", audit)
-	return service.repository.Register(ctx, username, hash, "", invite, service.now(), &event)
+	return service.repository.Register(ctx, username, hash, "", invite, service.now(), &event, address)
 }
 
 // VerifyPasswordAuthorization performs a real dummy KDF for absent users and upgrades valid legacy rows.
@@ -150,7 +154,7 @@ func (service *Service) VerifyPasswordAuthorization(ctx context.Context, usernam
 
 // verifyObservedAuthorization performs dummy or observed password work before authorizing identity.
 func (service *Service) verifyObservedAuthorization(ctx context.Context, credentials *domain.Credentials, password string) (*domain.Authorization, error) {
-	if credentials == nil {
+	if credentials == nil || credentials.User.AuthKind == "oidc" {
 		_, err := service.verifyPassword(ctx, password, "", dummyPasswordHash)
 		return nil, err
 	}
@@ -304,6 +308,9 @@ func (service *Service) ChangePassword(ctx context.Context, user identity.Id, ol
 	if err != nil || credentials == nil {
 		return false, err
 	}
+	if credentials.User.AuthKind == "oidc" {
+		return false, domain.ErrOidcPassword
+	}
 	verification, err := service.verifyPassword(ctx, oldPassword, credentials.Salt, credentials.PasswordHash)
 	if err != nil {
 		return false, err
@@ -324,6 +331,13 @@ func (service *Service) ChangePassword(ctx context.Context, user identity.Id, ol
 
 // ResetPassword supports trusted CLI and actor-fenced administrator reset paths.
 func (service *Service) ResetPassword(ctx context.Context, actor *identity.Id, user identity.Id, password string, audit *domain.AuditEvent) (bool, error) {
+	credentials, err := service.repository.CredentialsById(ctx, user)
+	if err != nil {
+		return false, err
+	}
+	if credentials != nil && credentials.User.AuthKind == "oidc" {
+		return false, domain.ErrOidcPassword
+	}
 	if !cryptography.ValidNewPassword(password) {
 		return false, domain.ErrPasswordShort
 	}

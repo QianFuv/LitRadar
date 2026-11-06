@@ -56,7 +56,7 @@ func authFixture(t *testing.T) (*authHandlers, *http.ServeMux, string) {
 	handlers := &authHandlers{service: service, repository: repository, authenticator: NewAuthenticator(service, pool), pool: pool, kdfPool: kdf, limiter: newAuthRateLimiter(policy), isCookieSecure: true}
 	router := http.NewServeMux()
 	routes := handlers.routes()
-	if len(routes) != 14 {
+	if len(routes) != 20 {
 		t.Fatal("auth route count")
 	}
 	for _, route := range routes {
@@ -232,7 +232,7 @@ func TestRevocationRetryOnlyForTransientSqliteContention(t *testing.T) {
 func assertAuthPublicIdentity(t *testing.T, router *http.ServeMux, token string) {
 	t.Helper()
 	me := authRequest(router, "GET", "/api/auth/me", "", token)
-	if me.Code != 200 || me.Body.String() != `{"id":1,"username":"api_fixture","is_admin":true}` {
+	if me.Code != 200 || me.Body.String() != `{"email":null,"auth_kind":"local","is_oidc_linked":false,"id":1,"username":"api_fixture","is_admin":true}` {
 		t.Fatal(me.Code, me.Body.String())
 	}
 	recorder := httptest.NewRecorder()

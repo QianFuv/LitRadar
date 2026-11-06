@@ -34,7 +34,7 @@ func TestAdministratorInvitePolicyAuthorityAndPublicProjections(t *testing.T) {
 	if _, err := repository.CreateAdministratorInvite(ctx, &owner.User.Id, nil, nil, nil); err != nil {
 		t.Fatal("ownerless invitations incorrectly share creator quota")
 	}
-	member, err := repository.Register(ctx, "member", "hash", "salt", &invite.Code, invite.CreatedAt+1, nil)
+	member, err := repository.Register(ctx, "member", "hash", "salt", &invite.Code, invite.CreatedAt+1, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

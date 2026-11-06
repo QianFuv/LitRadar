@@ -82,7 +82,7 @@ func TestRepositoryOpenDoesNotMigrate(t *testing.T) {
 
 func TestBootstrapHasOneConcurrentWinnerAndRegistrationCannotBootstrap(t *testing.T) {
 	repository := testRepository(t)
-	if _, err := repository.Register(context.Background(), "member", "hash", "salt", nil, 10, nil); !errors.Is(err, domain.ErrBootstrapRequired) {
+	if _, err := repository.Register(context.Background(), "member", "hash", "salt", nil, 10, nil, nil); !errors.Is(err, domain.ErrBootstrapRequired) {
 		t.Fatal(err)
 	}
 	results := make(chan error, 8)
@@ -123,7 +123,7 @@ func TestRegistrationErrorPriorityAndAlwaysRequiredRedemptionAudit(t *testing.T)
 		t.Fatal(err)
 	}
 	for _, username := range []string{"member", "member2"} {
-		if _, err := repository.Register(context.Background(), username, "hash", "salt", &code, 101, nil); err != nil {
+		if _, err := repository.Register(context.Background(), username, "hash", "salt", &code, 101, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -165,7 +165,7 @@ func TestFinalInviteUseAndConcurrentIssuanceSerialize(t *testing.T) {
 		workers.Add(1)
 		go func(index int) {
 			defer workers.Done()
-			_, err := repository.Register(ctx, fmt.Sprintf("member%d", index), "hash", "salt", &invite.Code, 101, nil)
+			_, err := repository.Register(ctx, fmt.Sprintf("member%d", index), "hash", "salt", &invite.Code, 101, nil, nil)
 			results <- err
 		}(index)
 	}
@@ -353,7 +353,7 @@ func TestInviteAuditFailureRollsBackRedemptionAndRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	runSql(t, repository, `CREATE TRIGGER fail_audit BEFORE INSERT ON security_audit_events BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END`)
-	if _, err := repository.Register(ctx, "member", "hash", "salt", &code, 101, nil); !errors.Is(err, domain.ErrAudit) {
+	if _, err := repository.Register(ctx, "member", "hash", "salt", &code, 101, nil, nil); !errors.Is(err, domain.ErrAudit) {
 		t.Fatal(err)
 	}
 	audit := testAudit("invite_rotate")
@@ -513,14 +513,14 @@ func TestAuditValidationRejectsSensitiveFreeTextWithoutMutation(t *testing.T) {
 // assertRegistrationFailurePriority checks missing invite, username conflict and invalid invite priorities before mutation.
 func assertRegistrationFailurePriority(t *testing.T, repository *Repository) {
 	t.Helper()
-	if _, err := repository.Register(context.Background(), "admin", "hash", "salt", nil, 100, nil); !errors.Is(err, domain.ErrInviteRequired) {
+	if _, err := repository.Register(context.Background(), "admin", "hash", "salt", nil, 100, nil, nil); !errors.Is(err, domain.ErrInviteRequired) {
 		t.Fatal(err)
 	}
 	bad := "missing"
-	if _, err := repository.Register(context.Background(), "ADMIN", "hash", "salt", &bad, 100, nil); !errors.Is(err, domain.ErrUsernameExists) {
+	if _, err := repository.Register(context.Background(), "ADMIN", "hash", "salt", &bad, 100, nil, nil); !errors.Is(err, domain.ErrUsernameExists) {
 		t.Fatal(err)
 	}
-	if _, err := repository.Register(context.Background(), "member", "hash", "salt", &bad, 100, nil); !errors.Is(err, domain.ErrInvite) {
+	if _, err := repository.Register(context.Background(), "member", "hash", "salt", &bad, 100, nil, nil); !errors.Is(err, domain.ErrInvite) {
 		t.Fatal(err)
 	}
 	if count := queryScalar[int](t, repository, "SELECT count(*) FROM users"); count != 1 {

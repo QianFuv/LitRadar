@@ -19,13 +19,14 @@ import (
 
 // Repository uses the same auth transaction boundary for settings and required audit events.
 type Repository struct {
-	auth  *authstore.Repository
-	codec *secrets.Codec
+	auth          *authstore.Repository
+	codec         *secrets.Codec
+	isDevelopment bool
 }
 
 // New borrows a migrated auth repository and deployment codec without owning their lifecycle.
-func New(auth *authstore.Repository, codec *secrets.Codec) *Repository {
-	return &Repository{auth, codec}
+func New(auth *authstore.Repository, codec *secrets.Codec, development ...bool) *Repository {
+	return &Repository{auth: auth, codec: codec, isDevelopment: len(development) > 0 && development[0]}
 }
 
 // Value is a trusted backend projection; values are never logged or serialized implicitly.
@@ -272,6 +273,11 @@ func (repository *Repository) Update(ctx context.Context, actor *identity.Id, va
 				value, err = Normalize(field, value)
 				if err != nil {
 					return err
+				}
+			}
+			if field == "oidc_issuer_url" || field == "public_base_url" {
+				if err := ValidateOidcUrl(value, repository.isDevelopment); err != nil {
+					return settingError(InvalidSetting, err.Error())
 				}
 			}
 			pending[field] = value

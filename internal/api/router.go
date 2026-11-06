@@ -41,6 +41,7 @@ type Services struct {
 // Options contains startup-validated security and routing policy, with an optional frontend service.
 type Options struct {
 	AreCookiesSecure                  bool
+	IsDevelopment                     bool
 	TrustedProxies                    []netip.Prefix
 	RateLimit                         settings.RateLimitPolicy
 	ProviderProxy                     sources.ProxySelection
@@ -66,12 +67,14 @@ func New(services Services, options Options) (*Handler, error) {
 	if options.ContentSecurityPolicy == "" {
 		return nil, errors.New("API content security policy is required")
 	}
-	settingsRepository := settings.New(services.Auth, services.Codec)
+	settingsRepository := settings.New(services.Auth, services.Codec, options.IsDevelopment)
 	favoriteRepository := favorites.New(services.Auth)
 	sessions := authstorage.NewCnkiSessions(services.Auth, services.Codec)
 	service := auth.New(services.Auth, 2)
 	authenticator := NewAuthenticator(service, services.StoragePool)
 	authHandlers := &authHandlers{service: service, repository: services.Auth, authenticator: authenticator, pool: services.StoragePool, kdfPool: services.KdfPool, limiter: newAuthRateLimiter(options.RateLimit), trustedProxies: slices.Clone(options.TrustedProxies), isCookieSecure: options.AreCookiesSecure}
+	authHandlers.oidcPool = services.UpstreamPool
+	authHandlers.oidc = auth.NewOidc(service, settingsRepository, services.Codec, options.IsDevelopment)
 	providers, err := newArticleProviders(settingsRepository, sessions, options.ProviderProxy)
 	if err != nil {
 		return nil, err
