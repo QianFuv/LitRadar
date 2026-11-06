@@ -8,11 +8,15 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vitest';
 
 import { AuthProvider, useAuth } from '@/lib/auth-context';
-import { createLoginScenario } from '@/tests/mocks/scenarios';
+import { createAuthUserScenario, createLoginScenario } from '@/tests/mocks/scenarios';
 import { renderWithQuery } from '@/tests/render';
 import { server } from '@/tests/mocks/server';
 
-const RESTORED_USER = { id: 11, username: 'restored_admin', is_admin: true };
+const RESTORED_USER = createAuthUserScenario({
+  id: 11,
+  username: 'restored_admin',
+  is_admin: true,
+});
 
 /**
  * Return the authoritative authenticated user fixture.
@@ -47,11 +51,13 @@ function AuthProbe() {
  * @returns Authentication action probe.
  */
 function AuthActionProbe() {
-  const { loading, login, logout, logoutWarning, recoverLogout, register, user } = useAuth();
+  const { loading, login, logout, logoutWarning, recoverLogout, register, updateUser, user } =
+    useAuth();
   return (
     <div>
       <span>{loading ? 'loading' : 'ready'}</span>
       <span>{user?.username ?? 'anonymous'}</span>
+      <span>{`email:${user?.email ?? 'none'}`}</span>
       <span>
         {logoutWarning ? `warning:${logoutWarning.requestId ?? 'unknown'}` : 'no-warning'}
       </span>
@@ -63,6 +69,33 @@ function AuthActionProbe() {
         onClick={() => void register('registered_user', 'register-password', 'invite-code')}
       >
         Register action
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void register(
+            'registered_user',
+            'register-password',
+            'invite-code',
+            'reader@example.test',
+          )
+        }
+      >
+        Register with email action
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          updateUser(createAuthUserScenario({ ...RESTORED_USER, email: 'restored@example.test' }))
+        }
+      >
+        Update same user action
+      </button>
+      <button
+        type="button"
+        onClick={() => updateUser(createAuthUserScenario({ id: 99, username: 'intruder' }))}
+      >
+        Update other user action
       </button>
       <button type="button" onClick={() => void logout().catch(() => undefined)}>
         Logout action
@@ -130,7 +163,7 @@ async function requiresAuthoritativeServerSession(): Promise<void> {
 async function logsInAndClearsStaleClientState(): Promise<void> {
   let loginPayload: unknown;
   const loginScenario = createLoginScenario({
-    user: { id: 12, username: 'login_user', is_admin: false },
+    user: createAuthUserScenario({ id: 12, username: 'login_user', is_admin: false }),
   });
   server.use(
     http.get('http://localhost/api/auth/me', () =>
@@ -168,7 +201,7 @@ async function logsInAndClearsStaleClientState(): Promise<void> {
 async function registersThenAuthenticates(): Promise<void> {
   let registrationPayload: unknown;
   const loginScenario = createLoginScenario({
-    user: { id: 13, username: 'registered_user', is_admin: false },
+    user: createAuthUserScenario({ id: 13, username: 'registered_user', is_admin: false }),
   });
   server.use(
     http.get('http://localhost/api/auth/me', () =>
@@ -196,6 +229,72 @@ async function registersThenAuthenticates(): Promise<void> {
     password: 'register-password',
     invite_code: 'invite-code',
   });
+}
+
+/**
+ * Verify an optional registration email reaches the register request unchanged.
+ */
+async function registersWithOptionalEmail(): Promise<void> {
+  let registrationPayload: unknown;
+  const loginScenario = createLoginScenario({
+    user: createAuthUserScenario({
+      id: 14,
+      username: 'registered_user',
+      is_admin: false,
+      email: 'reader@example.test',
+    }),
+  });
+  server.use(
+    http.get('http://localhost/api/auth/me', () =>
+      HttpResponse.json({ detail: 'Authentication required' }, { status: 401 }),
+    ),
+    http.post('http://localhost/api/auth/register', async ({ request }) => {
+      registrationPayload = await request.json();
+      return HttpResponse.json(loginScenario.user);
+    }),
+    http.post('http://localhost/api/auth/login', () => HttpResponse.json(loginScenario)),
+  );
+  const user = userEvent.setup();
+  renderWithQuery(
+    <AuthProvider>
+      <AuthActionProbe />
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByText('anonymous')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Register with email action' }));
+
+  expect(await screen.findByText('email:reader@example.test')).toBeInTheDocument();
+  expect(registrationPayload).toEqual({
+    username: 'registered_user',
+    password: 'register-password',
+    invite_code: 'invite-code',
+    email: 'reader@example.test',
+  });
+}
+
+/**
+ * Verify account updates replace only the verified user and are persisted as metadata.
+ */
+async function adoptsUpdatedProjectionForVerifiedUser(): Promise<void> {
+  server.use(http.get('http://localhost/api/auth/me', currentUserResponse));
+  const user = userEvent.setup();
+  renderWithQuery(
+    <AuthProvider>
+      <AuthActionProbe />
+    </AuthProvider>,
+  );
+
+  expect(await screen.findByText('restored_admin')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Update other user action' }));
+  expect(screen.getByText('restored_admin')).toBeInTheDocument();
+  expect(screen.getByText('email:none')).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: 'Update same user action' }));
+  expect(screen.getByText('email:restored@example.test')).toBeInTheDocument();
+  expect(JSON.parse(window.localStorage.getItem('litradar:v1:user') ?? '{}')).toEqual(
+    expect.objectContaining({ id: 11, email: 'restored@example.test' }),
+  );
 }
 
 /**
@@ -297,7 +396,9 @@ async function recoversLogoutAfterFreshAuthentication(): Promise<void> {
     http.post('http://localhost/api/auth/login', async ({ request }) => {
       loginPayload = await request.json();
       return HttpResponse.json(
-        createLoginScenario({ user: { id: 19, username: 'recovery_user', is_admin: false } }),
+        createLoginScenario({
+          user: createAuthUserScenario({ id: 19, username: 'recovery_user', is_admin: false }),
+        }),
       );
     }),
     http.post('http://localhost/api/auth/logout-all', () => {
@@ -342,7 +443,7 @@ async function reconcilesExternalSessions(): Promise<void> {
   );
   expect(await screen.findByText('restored_admin')).toBeInTheDocument();
   queryClient.setQueryData(['private-old-user'], 'private data');
-  currentUser = { id: 22, username: 'replacement', is_admin: false };
+  currentUser = createAuthUserScenario({ id: 22, username: 'replacement', is_admin: false });
   act(() =>
     window.dispatchEvent(
       new StorageEvent('storage', {
@@ -374,11 +475,9 @@ async function ignoresStaleSessionRestoration(): Promise<void> {
       requestCount += 1;
       return requestCount === 1
         ? firstResponse
-        : HttpResponse.json({
-            id: 22,
-            username: 'replacement',
-            is_admin: false,
-          });
+        : HttpResponse.json(
+            createAuthUserScenario({ id: 22, username: 'replacement', is_admin: false }),
+          );
     }),
   );
   renderWithQuery(
@@ -426,6 +525,11 @@ describe('AuthProvider restore', () => {
   test('requires an authoritative server session', requiresAuthoritativeServerSession);
   test('logs in and clears stale client state', logsInAndClearsStaleClientState);
   test('registers an invited user and authenticates it', registersThenAuthenticates);
+  test('registers with an optional email', registersWithOptionalEmail);
+  test(
+    'adopts updated projections only for the verified user',
+    adoptsUpdatedProjectionForVerifiedUser,
+  );
   test('preserves logout failure across refresh', preservesLogoutFailureAcrossRefresh);
   test('accepts an already expired session logout', acceptsAlreadyExpiredSessionLogout);
   test('recovers logout after fresh authentication', recoversLogoutAfterFreshAuthentication);

@@ -26,8 +26,13 @@ import {
   REVEAL_VARIANTS,
   SWAP_VARIANTS,
 } from '@/components/ui/motion';
-import { getInviteRequirement } from '@/lib/api';
-import { getAuthErrorMessage, type AuthFormMode } from '@/lib/auth-error';
+import {
+  buildOidcLoginUrl,
+  getAuthProviders,
+  getInviteRequirement,
+  type AuthProviders,
+} from '@/lib/api';
+import { getAuthErrorMessage, getOidcErrorMessage, type AuthFormMode } from '@/lib/auth-error';
 import { useAuth } from '@/lib/auth-context';
 import { LoadingText } from '@/components/ui/loading-text';
 
@@ -199,10 +204,14 @@ function useLoginViewState() {
   const nextParam = searchParams.get('next') || '';
   const nextPath = normalizeLoginReturnPath(nextParam);
   const isLogoutRecovery = searchParams.get('logout_recovery') === '1';
+  const oidcErrorCode = searchParams.get('oidc_error');
+  const oidcError = oidcErrorCode === null ? null : getOidcErrorMessage(oidcErrorCode);
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
+  const [email, setEmail] = useState('');
+  const [authProviders, setAuthProviders] = useState<AuthProviders | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
@@ -239,6 +248,23 @@ function useLoginViewState() {
     };
   }, [isLogoutRecovery, loading, user]);
 
+  useEffect(() => {
+    if (loading || user || isLogoutRecovery) {
+      return;
+    }
+    let didCancel = false;
+    getAuthProviders()
+      .then((data) => {
+        if (!didCancel) {
+          setAuthProviders(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      didCancel = true;
+    };
+  }, [isLogoutRecovery, loading, user]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
@@ -250,7 +276,7 @@ function useLoginViewState() {
         await recoverLogout(username.trim(), password);
         setIsRecoveryComplete(true);
       } else if (mode === 'register') {
-        await register(username.trim(), password, inviteCode.trim());
+        await register(username.trim(), password, inviteCode.trim(), email.trim());
       } else {
         await login(username.trim(), password);
       }
@@ -275,6 +301,11 @@ function useLoginViewState() {
     setPassword,
     inviteCode,
     setInviteCode,
+    email,
+    setEmail,
+    authProviders,
+    nextPath,
+    oidcError,
     error,
     setError,
     isSubmitting,
@@ -415,6 +446,103 @@ function renderLoginInvite(state: LoginViewState) {
   );
 }
 
+/**
+ * Render the optional registration email field.
+ *
+ * @param state - Login view state.
+ * @returns Animated email field in registration mode, otherwise false.
+ */
+function renderLoginEmail(state: LoginViewState) {
+  const { isLogoutRecovery, email, setEmail, error, mode } = state;
+
+  return (
+    !isLogoutRecovery &&
+    mode === 'register' && (
+      <MotionDiv
+        key="email"
+        data-auth-conditional="email"
+        className="overflow-hidden"
+        variants={DISCLOSURE_VARIANTS}
+        initial="hidden"
+        animate="visible"
+        exit="exit"
+      >
+        <div className="space-y-2">
+          <Label htmlFor="email">邮箱（可选）</Label>
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            value={email}
+            autoComplete="email"
+            spellCheck={false}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="可用于登录"
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? 'login-error' : undefined}
+          />
+        </div>
+      </MotionDiv>
+    )
+  );
+}
+
+/**
+ * Render the single sign-on failure reported by the OIDC callback redirect.
+ *
+ * @param state - Login view state.
+ * @returns Alert describing the `oidc_error` code, or null when absent.
+ */
+function renderLoginOidcError(state: Pick<LoginViewState, 'isLogoutRecovery' | 'oidcError'>) {
+  const { isLogoutRecovery, oidcError } = state;
+
+  return (
+    !isLogoutRecovery &&
+    oidcError && (
+      <MotionDiv
+        key="oidc-error"
+        role="alert"
+        data-auth-feedback="oidc-error"
+        className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        variants={REVEAL_VARIANTS}
+        initial="hidden"
+        animate="visible"
+      >
+        {oidcError}
+      </MotionDiv>
+    )
+  );
+}
+
+/**
+ * Render the full-page single sign-on entry when the server enables OIDC.
+ *
+ * @param state - Login view state.
+ * @returns Divider and provider link, or null when OIDC is unavailable.
+ */
+function renderLoginOidc(
+  state: Pick<LoginViewState, 'authProviders' | 'isLogoutRecovery' | 'nextPath'>,
+) {
+  const { authProviders, isLogoutRecovery, nextPath } = state;
+  if (isLogoutRecovery || !authProviders?.oidc_enabled) {
+    return null;
+  }
+  const displayName = authProviders.oidc_display_name.trim() || '单点登录';
+
+  return (
+    <div data-auth-oidc="available" className="mt-4 space-y-4">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <span className="h-px flex-1 bg-border" aria-hidden="true" />
+        或
+        <span className="h-px flex-1 bg-border" aria-hidden="true" />
+      </div>
+      <Button asChild variant="outline" className="w-full">
+        <a href={buildOidcLoginUrl(nextPath)}>使用 {displayName} 登录</a>
+      </Button>
+    </div>
+  );
+}
+
 /** Retain the registration bootstrap guard and exact command spacing. */
 function renderLoginBootstrap(
   state: Pick<LoginViewState, 'isLogoutRecovery' | 'mode' | 'bootstrapRequired'>,
@@ -541,7 +669,8 @@ function renderLoginSubmit(state: LoginViewState) {
 
 /** Retain the stable auth-form element and input identity across mode switches. */
 function renderLoginForm(state: LoginViewState) {
-  const { isLogoutRecovery, username, setUsername, error, handleSubmit } = state;
+  const { isLogoutRecovery, username, setUsername, error, handleSubmit, mode } = state;
+  const isRegistering = !isLogoutRecovery && mode === 'register';
 
   return (
     <MotionForm
@@ -557,7 +686,7 @@ function renderLoginForm(state: LoginViewState) {
       exit="exit"
     >
       <div className="space-y-2">
-        <Label htmlFor="username">用户名</Label>
+        <Label htmlFor="username">{isRegistering ? '用户名' : '用户名或邮箱'}</Label>
         <Input
           id="username"
           name="username"
@@ -567,13 +696,14 @@ function renderLoginForm(state: LoginViewState) {
           autoFocus
           spellCheck={false}
           onChange={(event) => setUsername(event.target.value)}
-          placeholder="3-32位字母数字下划线"
+          placeholder={isRegistering ? '3-32位字母数字下划线' : '输入用户名或邮箱'}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? 'login-error' : undefined}
           required
         />
       </div>
       {renderLoginPassword(state)}
+      <MotionPresence>{renderLoginEmail(state)}</MotionPresence>
       <MotionPresence>{renderLoginInvite(state)}</MotionPresence>
       <MotionPresence>{renderLoginBootstrap(state)}</MotionPresence>
       <MotionPresence mode="wait">{renderLoginError(state)}</MotionPresence>
@@ -620,6 +750,7 @@ function renderLoginCardContent(state: LoginViewState) {
   return (
     <div>
       {renderLoginLogoutWarning(state)}
+      {renderLoginOidcError(state)}
       <MotionPresence mode="wait">
         {isRecoveryComplete ? (
           <MotionDiv
@@ -647,6 +778,7 @@ function renderLoginCardContent(state: LoginViewState) {
           renderLoginForm(state)
         )}
       </MotionPresence>
+      {!isRecoveryComplete && renderLoginOidc(state)}
       {!isLogoutRecovery && !isRecoveryComplete && (
         <div
           className="mt-6 border-t pt-5 text-center text-sm text-muted-foreground"
@@ -677,7 +809,7 @@ function getLoginTitle(isRecovery: boolean, mode: AuthFormMode): string {
 /** Retain the authentication mode's original explanatory text. */
 function getLoginDescription(isRecovery: boolean, mode: AuthFormMode): string {
   if (isRecovery) return '重新验证账号后，撤销该账号的所有登录令牌和个人访问令牌';
-  return mode === 'login' ? '输入账号和密码登录' : '创建一个新账号';
+  return mode === 'login' ? '输入用户名或邮箱和密码登录' : '创建一个新账号';
 }
 /** Resolve pending feedback before recovery and normal authentication labels. */
 function getLoginSubmitLabel(

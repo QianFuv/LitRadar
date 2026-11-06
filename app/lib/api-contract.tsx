@@ -7,7 +7,10 @@ import type { components } from '@/lib/generated/api-schema';
 type ApiSchemas = components['schemas'];
 
 export type AuthUser = ApiSchemas['UserResponse'];
+export type AuthKind = AuthUser['auth_kind'];
 export type LoginResponse = ApiSchemas['LoginResponse'];
+export type AuthProviders = ApiSchemas['AuthProvidersResponse'];
+export type OidcLinkStart = ApiSchemas['OidcLinkResponse'];
 export type InviteRequirement = ApiSchemas['InviteRequiredResponse'];
 export type InviteCodeStatus = ApiSchemas['InviteCodeStatus'];
 export type InviteCode = Required<ApiSchemas['InviteCodeResponse']>;
@@ -217,7 +220,13 @@ function isSafeUniqueRuntimeNameArray(value: unknown): value is string[] {
 function isRuntimeSettingGroup(value: unknown): value is RuntimeSettingGroup {
   return (
     typeof value === 'string' &&
-    ['source_access', 'provider_routing', 'server_security', 'observability'].includes(value)
+    [
+      'source_access',
+      'provider_routing',
+      'server_security',
+      'observability',
+      'single_sign_on',
+    ].includes(value)
   );
 }
 
@@ -339,7 +348,38 @@ function isAuthUser(value: unknown): value is AuthUser {
     isRecord(value) &&
     isNumber(value.id) &&
     typeof value.username === 'string' &&
-    typeof value.is_admin === 'boolean'
+    typeof value.is_admin === 'boolean' &&
+    isNullableString(value.email) &&
+    (value.auth_kind === 'local' || value.auth_kind === 'oidc') &&
+    typeof value.is_oidc_linked === 'boolean'
+  );
+}
+
+/**
+ * Return whether a value is a sign-in provider summary.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether the value matches the generated providers contract.
+ */
+function isAuthProviders(value: unknown): value is AuthProviders {
+  return (
+    isRecord(value) &&
+    typeof value.oidc_enabled === 'boolean' &&
+    typeof value.oidc_display_name === 'string'
+  );
+}
+
+/**
+ * Return whether a value is an OIDC link start response.
+ *
+ * @param value - Value to inspect.
+ * @returns Whether the value carries a non-empty authorization URL.
+ */
+function isOidcLinkStart(value: unknown): value is OidcLinkStart {
+  return (
+    isRecord(value) &&
+    typeof value.authorization_url === 'string' &&
+    value.authorization_url.length > 0
   );
 }
 
@@ -1051,6 +1091,26 @@ export function parseAuthUser(value: unknown): AuthUser {
  */
 export function parseLoginResponse(value: unknown): LoginResponse {
   return parseContract(value, 'LoginResponse', isLoginResponse);
+}
+
+/**
+ * Parse a sign-in provider summary.
+ *
+ * @param value - Unknown JSON payload.
+ * @returns Validated provider summary.
+ */
+export function parseAuthProviders(value: unknown): AuthProviders {
+  return parseContract(value, 'AuthProvidersResponse', isAuthProviders);
+}
+
+/**
+ * Parse an OIDC link start response.
+ *
+ * @param value - Unknown JSON payload.
+ * @returns Validated authorization redirect target.
+ */
+export function parseOidcLinkStart(value: unknown): OidcLinkStart {
+  return parseContract(value, 'OidcLinkResponse', isOidcLinkStart);
 }
 
 /**

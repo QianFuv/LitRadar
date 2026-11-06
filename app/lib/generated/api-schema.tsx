@@ -499,6 +499,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/auth/email': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Update the local account email. */
+    put: operations['update_email'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/auth/invite-code': {
     parameters: {
       query?: never;
@@ -613,7 +630,7 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Authenticate a user and set a session cookie.
+     * Sign in with username or email and password.
      * @description # Arguments
      *
      *     * `state` - Shared API state.
@@ -704,6 +721,75 @@ export interface paths {
      *     Current user response.
      */
     get: operations['get_me'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/oidc/callback': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Complete OIDC sign-in or linking. */
+    get: operations['oidc_callback'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/oidc/link': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Link an OIDC identity to a local account. */
+    post: operations['oidc_link'];
+    /** Unlink the local account OIDC identity. */
+    delete: operations['oidc_unlink'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/oidc/login': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Start OIDC sign-in. */
+    get: operations['oidc_login'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/providers': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List enabled sign-in providers. */
+    get: operations['get_auth_providers'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1803,10 +1889,17 @@ export interface components {
     /** @description Admin user response payload. */
     AdminUserInfo: {
       /**
+       * @description Account credential kind.
+       * @enum {string}
+       */
+      auth_kind: 'local' | 'oidc';
+      /**
        * Format: double
        * @description Creation timestamp.
        */
       created_at: number;
+      /** @description Normalized unique account email; null when unset. */
+      email: string | null;
       /**
        * Format: int64
        * @description Number of favorites owned by the user.
@@ -1821,6 +1914,8 @@ export interface components {
       id: components['schemas']['UserId'];
       /** @description Whether the user has admin privileges. */
       is_admin: boolean;
+      /** @description Whether an external OIDC identity is linked. */
+      is_oidc_linked: boolean;
       /** @description Whether enabled notification settings exist. */
       notify_enabled: boolean;
       /**
@@ -1957,6 +2052,10 @@ export interface components {
      * @enum {string}
      */
     ArticleSearchMode: 'simple' | 'advanced';
+    AuthProvidersResponse: {
+      oidc_display_name: string;
+      oidc_enabled: boolean;
+    };
     /** @description Auth database statistics payload. */
     AuthStats: {
       /**
@@ -2283,6 +2382,10 @@ export interface components {
      * @enum {string}
      */
     DatePrecision: 'year' | 'month' | 'day';
+    EmailUpdateRequest: {
+      /** @description Normalized unique account email; null when unset. */
+      email: string | null;
+    };
     /** @description FastAPI-compatible error envelope. */
     ErrorEnvelope: {
       /** @description Stable machine-readable error category. */
@@ -2706,7 +2809,7 @@ export interface components {
     LoginRequest: {
       /** @description Password. */
       password: string;
-      /** @description Username. */
+      /** @description Username or case-insensitive email address. */
       username: string;
     };
     /** @description Login response that intentionally omits the raw session token. */
@@ -2904,6 +3007,9 @@ export interface components {
       /** @description Whether PushPlus delivery also syncs to the tracking folder. */
       sync_to_tracking_folder?: boolean;
     };
+    OidcLinkResponse: {
+      authorization_url: string;
+    };
     /** @description Boolean ok response. */
     OkResponse: {
       /** @description Whether the operation succeeded. */
@@ -2987,6 +3093,8 @@ export interface components {
     PushStatsState: 'idle' | 'running' | 'completed' | 'failed' | 'skipped' | 'unknown' | 'error';
     /** @description Account registration request. */
     RegisterRequest: {
+      /** @description Normalized unique account email; null when unset. */
+      email?: string | null;
       /** @description Invite code text required for every public registration. */
       invite_code: string;
       /** @description Requested password. */
@@ -3088,7 +3196,12 @@ export interface components {
      * @description Functional section used to group runtime settings in administrator clients.
      * @enum {string}
      */
-    RuntimeSettingGroup: 'source_access' | 'provider_routing' | 'server_security' | 'observability';
+    RuntimeSettingGroup:
+      | 'source_access'
+      | 'provider_routing'
+      | 'server_security'
+      | 'single_sign_on'
+      | 'observability';
     /** @description Runtime setting response payload. */
     RuntimeSettingInfo: {
       /** @description Finite allowed values for selection controls. */
@@ -3427,10 +3540,19 @@ export interface components {
     UserId: number;
     /** @description User profile returned by auth endpoints. */
     UserResponse: {
+      /**
+       * @description Account credential kind.
+       * @enum {string}
+       */
+      auth_kind: 'local' | 'oidc';
+      /** @description Normalized unique account email; null when unset. */
+      email: string | null;
       /** @description User identifier. */
       id: components['schemas']['UserId'];
       /** @description Whether the user has admin privileges. */
       is_admin: boolean;
+      /** @description Whether an external OIDC identity is linked. */
+      is_oidc_linked: boolean;
       /** @description Login username. */
       username: string;
     };
@@ -4038,6 +4160,13 @@ export interface operations {
           'application/json': components['schemas']['OkResponse'];
         };
       };
+      /** @description Invalid password or OIDC-only account. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
     };
   };
   get_announcements: {
@@ -4291,6 +4420,58 @@ export interface operations {
           'application/json': components['schemas']['OkResponse'];
         };
       };
+      /** @description Invalid password or OIDC-only account. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  update_email: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['EmailUpdateRequest'];
+      };
+    };
+    responses: {
+      /** @description Successful response. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UserResponse'];
+        };
+      };
+      /** @description Request rejected. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Request rejected. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Username or email already exists. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
     };
   };
   get_invite_code: {
@@ -4513,6 +4694,174 @@ export interface operations {
       };
     };
   };
+  oidc_callback: {
+    parameters: {
+      query?: {
+        code?: string;
+        error?: string;
+        state?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Redirect to provider, requested local path, or bounded error result. */
+      302: {
+        headers: {
+          Location?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Request rejected. */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  oidc_link: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful response. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OidcLinkResponse'];
+        };
+      };
+      /** @description Request rejected. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Request rejected. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Request rejected. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  oidc_unlink: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful response. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UserResponse'];
+        };
+      };
+      /** @description Request rejected. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Request rejected. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Request rejected. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  oidc_login: {
+    parameters: {
+      query?: {
+        /** @description Same-site relative path. */
+        next?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Redirect to provider, requested local path, or bounded error result. */
+      302: {
+        headers: {
+          Location?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Request rejected. */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  get_auth_providers: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful response. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthProvidersResponse'];
+        };
+      };
+      /** @description Request rejected. */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   register: {
     parameters: {
       query?: never;
@@ -4534,6 +4883,13 @@ export interface operations {
         content: {
           'application/json': components['schemas']['UserResponse'];
         };
+      };
+      /** @description Username or email already exists. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Authentication rate limit exceeded. */
       429: {

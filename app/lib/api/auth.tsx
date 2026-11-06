@@ -3,12 +3,16 @@
  */
 
 import {
+  parseAuthProviders,
   parseAuthUser,
   parseInviteRequirement,
   parseLoginResponse,
+  parseOidcLinkStart,
+  type AuthProviders,
   type AuthUser,
   type InviteRequirement,
   type LoginResponse,
+  type OidcLinkStart,
 } from '@/lib/api-contract';
 import { ApiError, buildApiUrl, requestJson } from '@/lib/api/client';
 import type {
@@ -34,9 +38,9 @@ export function getCurrentUser(): Promise<AuthUser> {
 }
 
 /**
- * Authenticate a user with username and password.
+ * Authenticate a user with a username or email and a password.
  *
- * @param username - Username.
+ * @param username - Username or account email.
  * @param password - Password.
  * @returns Login response.
  */
@@ -53,23 +57,30 @@ export function loginUser(username: string, password: string): Promise<LoginResp
 }
 
 /**
- * Register a user with a required invite code.
+ * Register a user with a required invite code and an optional email.
  *
  * @param username - Username.
  * @param password - Password.
  * @param inviteCode - Invite code.
+ * @param email - Optional account email; omitted from the request when empty.
  * @returns Empty promise when registration succeeds.
  */
 export async function registerUser(
   username: string,
   password: string,
   inviteCode: string,
+  email = '',
 ): Promise<void> {
   await requestJson<unknown>(
     buildApiUrl('/api/auth/register'),
     {
       method: 'POST',
-      body: JSON.stringify({ username, password, invite_code: inviteCode }),
+      body: JSON.stringify({
+        username,
+        password,
+        invite_code: inviteCode,
+        ...(email ? { email } : {}),
+      }),
     },
     '注册失败',
   );
@@ -120,6 +131,73 @@ export function getInviteRequirement(): Promise<InviteRequirement> {
     parseInviteRequirement,
   );
 }
+/**
+ * Fetch the sign-in providers enabled on this server.
+ *
+ * @returns Single sign-on availability and display name.
+ */
+export function getAuthProviders(): Promise<AuthProviders> {
+  return requestJson<AuthProviders>(
+    buildApiUrl('/api/auth/providers'),
+    undefined,
+    '获取登录方式失败',
+    parseAuthProviders,
+  );
+}
+
+/**
+ * Build the browser navigation target that starts single sign-on.
+ *
+ * @param nextPath - Same-site path to return to after sign-in.
+ * @returns Absolute OIDC login start URL.
+ */
+export function buildOidcLoginUrl(nextPath: string): string {
+  return buildApiUrl('/api/auth/oidc/login', new URLSearchParams({ next: nextPath }));
+}
+
+/**
+ * Set or clear the active local account's email.
+ *
+ * @param email - New email, or null to clear it.
+ * @returns Updated user.
+ */
+export function updateAccountEmail(email: string | null): Promise<AuthUser> {
+  return requestJson<AuthUser>(
+    buildApiUrl('/api/auth/email'),
+    { method: 'PUT', body: JSON.stringify({ email }) },
+    '更新邮箱失败',
+    parseAuthUser,
+  );
+}
+
+/**
+ * Start linking the active local account to the single sign-on provider.
+ *
+ * @returns Provider authorization URL the browser must navigate to.
+ */
+export function startOidcLink(): Promise<OidcLinkStart> {
+  return requestJson<OidcLinkStart>(
+    buildApiUrl('/api/auth/oidc/link'),
+    { method: 'POST' },
+    '发起单点登录绑定失败',
+    parseOidcLinkStart,
+  );
+}
+
+/**
+ * Remove the single sign-on identity linked to the active local account.
+ *
+ * @returns Updated user.
+ */
+export function unlinkOidc(): Promise<AuthUser> {
+  return requestJson<AuthUser>(
+    buildApiUrl('/api/auth/oidc/link'),
+    { method: 'DELETE' },
+    '解除单点登录绑定失败',
+    parseAuthUser,
+  );
+}
+
 /**
  * Fetch current user access tokens.
  *

@@ -54,6 +54,7 @@ const RUNTIME_GROUP_LABELS: Record<RuntimeSettingGroup, string> = {
   provider_routing: 'Provider 路由',
   server_security: '服务与安全',
   observability: '可观测性',
+  single_sign_on: '单点登录',
 };
 const PROVIDER_SETTING_FIELDS = new Set([
   'provider_proxy_policy',

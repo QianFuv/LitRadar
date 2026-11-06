@@ -10,7 +10,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AccessTokensCard } from '@/components/settings/access-tokens-card';
-import { AccountCard } from '@/components/settings/account-card';
+import { AccountCard, AccountSignInCard } from '@/components/settings/account-card';
 import { CnkiSettingsCard } from '@/components/settings/cnki-card';
 import { GeneralSettingsSection } from '@/components/settings/general-settings-section';
 import { InviteCodeCard } from '@/components/settings/invite-code-card';
@@ -27,7 +27,7 @@ import {
 } from '@/components/feature/sectioned-dialog';
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { UserAvatar } from '@/components/shell/user-avatar';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, type AuthUser } from '@/lib/auth-context';
 import {
   buildSettingsCenterHref,
   isTrackingSettingsSection,
@@ -62,19 +62,19 @@ type SettingsCenterSessionProps = {
   onCloseSession: () => void;
   onRemoveSection: () => void;
   onReplaceSection: (section: SettingsSectionId) => void;
+  oidcLinkResult: string | null;
   requestedSection: SettingsSectionId | null;
   returnFocusRef: React.RefObject<HTMLElement | null>;
-  userId: number;
-  username: string;
+  user: AuthUser;
 };
 
 type SettingsCategoryContentProps = {
   activeSection: SettingsSectionId;
   copyFeedback: ReturnType<typeof useSettingsCopy>['copyFeedback'];
   handleCopy: ReturnType<typeof useSettingsCopy>['handleCopy'];
+  oidcLinkResult: string | null;
   onTrackingControllerChange: (controller: TrackingSettingsController | null) => void;
-  userId: number;
-  username: string;
+  user: AuthUser;
 };
 
 const SETTINGS_SECTIONS = [
@@ -198,9 +198,9 @@ function SettingsCategoryContent({
   activeSection,
   copyFeedback,
   handleCopy,
+  oidcLinkResult,
   onTrackingControllerChange,
-  userId,
-  username,
+  user,
 }: SettingsCategoryContentProps) {
   if (activeSection === 'general') {
     return <GeneralSettingsSection />;
@@ -208,20 +208,23 @@ function SettingsCategoryContent({
   if (isTrackingSettingsSection(activeSection)) {
     return (
       <TrackingSettingsContent
-        userId={userId}
+        userId={user.id}
         section={activeSection}
         onControllerChange={onTrackingControllerChange}
       />
     );
   }
   if (activeSection === 'data-sources') {
-    return <CnkiSettingsCard userId={userId} copyFeedback={copyFeedback} handleCopy={handleCopy} />;
+    return (
+      <CnkiSettingsCard userId={user.id} copyFeedback={copyFeedback} handleCopy={handleCopy} />
+    );
   }
   if (activeSection === 'account') {
     return (
       <>
-        <AccountCard username={username} />
-        <PasswordCard />
+        <AccountCard user={user} />
+        <AccountSignInCard oidcLinkResult={oidcLinkResult} />
+        {user.auth_kind === 'local' && <PasswordCard />}
         <InviteCodeCard copyFeedback={copyFeedback} handleCopy={handleCopy} />
       </>
     );
@@ -239,11 +242,11 @@ function SettingsCenterSession({
   initialSection,
   onCloseSession,
   onRemoveSection,
+  oidcLinkResult,
   onReplaceSection,
   requestedSection,
   returnFocusRef,
-  userId,
-  username,
+  user,
 }: SettingsCenterSessionProps) {
   const [hasUnsavedSettings, setHasUnsavedSettings] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -357,9 +360,9 @@ function SettingsCenterSession({
         centerIcon={Settings}
         sidebarFooter={
           <div className="flex min-w-0 items-center gap-3">
-            <UserAvatar username={username} size="md" />
+            <UserAvatar username={user.username} size="md" />
             <div className="min-w-0">
-              <p className="truncate text-sm font-bold">{username}</p>
+              <p className="truncate text-sm font-bold">{user.username}</p>
               <p className="text-xs text-muted-foreground">当前登录账号</p>
             </div>
           </div>
@@ -396,9 +399,9 @@ function SettingsCenterSession({
               activeSection={activeSection}
               copyFeedback={copyFeedback}
               handleCopy={handleCopy}
+              oidcLinkResult={oidcLinkResult}
               onTrackingControllerChange={handleTrackingControllerChange}
-              userId={userId}
-              username={username}
+              user={user}
             />
           </MotionDiv>
         </MotionPresence>
@@ -441,10 +444,26 @@ export function SettingsCenterDialog() {
     observedRequestedSection: requestedSection,
   });
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const rawOidcLinkResult = searchParams.get('oidc_link');
+  const [oidcLinkResult, setOidcLinkResult] = useState<string | null>(null);
 
   if (requestedSection !== mountState.observedRequestedSection) {
     setMountState(synchronizeMountState(mountState, requestedSection));
   }
+  if (rawOidcLinkResult !== null && rawOidcLinkResult !== oidcLinkResult) {
+    setOidcLinkResult(rawOidcLinkResult);
+  }
+
+  useEffect(() => {
+    if (rawOidcLinkResult === null) {
+      return;
+    }
+    const cleanedSearchParams = new URLSearchParams(searchParams.toString());
+    cleanedSearchParams.delete('oidc_link');
+    router.replace(buildSettingsCenterHref(pathname, cleanedSearchParams, 'account'), {
+      scroll: false,
+    });
+  }, [pathname, rawOidcLinkResult, router, searchParams]);
 
   useEffect(() => {
     if (rawSection !== null && requestedSection === null) {
@@ -471,16 +490,17 @@ export function SettingsCenterDialog() {
     <SettingsCenterSession
       initialSection={mountState.initialSection}
       requestedSection={requestedSection}
-      userId={user.id}
-      username={user.username}
+      oidcLinkResult={oidcLinkResult}
+      user={user}
       returnFocusRef={returnFocusRef}
       onReplaceSection={replaceSection}
       onRemoveSection={removeSection}
-      onCloseSession={() =>
+      onCloseSession={() => {
+        setOidcLinkResult(null);
         setMountState((state) =>
           state.observedRequestedSection === null ? { ...state, isSessionOpen: false } : state,
-        )
-      }
+        );
+      }}
     />
   );
 }

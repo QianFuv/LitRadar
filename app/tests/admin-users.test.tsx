@@ -33,6 +33,9 @@ function createAdminUser(id: number, username: string, isAdmin: boolean): AdminU
     folder_count: id,
     favorite_count: id * 2,
     notify_enabled: id % 2 === 0,
+    email: null,
+    auth_kind: 'local',
+    is_oidc_linked: false,
   };
 }
 
@@ -188,6 +191,34 @@ async function reusesRegistrationDatesDuringPasswordEntry(): Promise<void> {
   expect(await screen.findByText(`注册时间: ${updatedLabel}`)).toBeInTheDocument();
 }
 
+/** Verify account email and single sign-on state are visible and OIDC accounts cannot be reset. */
+async function showsIdentityAndGuardsOidcPasswordReset(): Promise<void> {
+  users = [
+    createAdminUser(1, 'admin', true),
+    {
+      ...createAdminUser(2, 'member', false),
+      email: 'member@example.test',
+      is_oidc_linked: true,
+    },
+    {
+      ...createAdminUser(3, 'sso_member', false),
+      email: 'sso@example.test',
+      auth_kind: 'oidc',
+      is_oidc_linked: true,
+    },
+  ];
+  installUserListHandler();
+  renderWithQuery(<AdminUsersCard currentUserId={1} isEnabled />);
+
+  expect(await screen.findByText('member@example.test')).toBeInTheDocument();
+  expect(screen.getByText('sso@example.test')).toBeInTheDocument();
+  expect(screen.getByText('未设置邮箱')).toBeInTheDocument();
+  expect(screen.getByText('SSO 账号')).toBeInTheDocument();
+  expect(screen.getByText('已绑定 SSO')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '重置 sso_member 的密码' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '重置 member 的密码' })).toBeEnabled();
+}
+
 beforeEach(() => {
   users = [createAdminUser(1, 'admin', true), createAdminUser(2, 'member', false)];
   userListRequestCount = 0;
@@ -201,4 +232,8 @@ describe('administrator users', () => {
   test('changes roles and protects the current administrator', changesRolesAndProtectsSelf);
   test('retries a failed password reset', retriesPasswordReset);
   test('retries a failed user deletion', retriesUserDeletion);
+  test(
+    'shows account identity and guards single sign-on password resets',
+    showsIdentityAndGuardsOidcPasswordReset,
+  );
 });

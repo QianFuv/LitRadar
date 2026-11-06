@@ -14,8 +14,11 @@ import weeklyUpdatesJson from '../../../tests/data/scenarios/api/weekly-updates.
 
 type ApiSchemas = components['schemas'];
 type DatePrecision = ApiSchemas['DatePrecision'];
+type AuthKind = ApiSchemas['UserResponse']['auth_kind'];
 
 export type LoginScenario = ApiSchemas['LoginResponse'];
+export type AuthUserScenario = ApiSchemas['UserResponse'];
+export type AuthProvidersScenario = ApiSchemas['AuthProvidersResponse'];
 export type ArticlePageScenario = ApiSchemas['ArticlePage'];
 export type WeeklyUpdatesScenario = ApiSchemas['WeeklyUpdatesResponse'];
 export type WeeklyUpdateSummaryScenario = ApiSchemas['WeeklyUpdatesSummaryResponse'];
@@ -23,7 +26,26 @@ export type WeeklyArticlePageScenario = ApiSchemas['WeeklyArticlePage'];
 export type MaskedNotificationSettingsScenario = ApiSchemas['NotificationSettingsResponse'];
 export type ErrorScenario = ApiSchemas['ErrorEnvelope'];
 
-const LOGIN_SCENARIO: LoginScenario = loginJson satisfies LoginScenario;
+/**
+ * Narrow a JSON-imported account kind to the generated enum.
+ *
+ * @param value - JSON scenario value.
+ * @returns Valid generated account kind.
+ */
+function parseAuthKind(value: string): AuthKind {
+  switch (value) {
+    case 'local':
+    case 'oidc':
+      return value;
+    default:
+      throw new Error(`Invalid account kind fixture: ${value}`);
+  }
+}
+
+const LOGIN_SCENARIO: LoginScenario = {
+  ...loginJson,
+  user: { ...loginJson.user, auth_kind: parseAuthKind(loginJson.user.auth_kind) },
+} satisfies LoginScenario;
 /**
  * Narrow a JSON-imported date precision to the generated enum.
  *
@@ -95,6 +117,30 @@ function buildScenario<Scenario>(scenario: Scenario, overrides: Partial<Scenario
  */
 export function createLoginScenario(overrides: Partial<LoginScenario> = {}): LoginScenario {
   return buildScenario(LOGIN_SCENARIO, overrides);
+}
+
+/**
+ * Build an authenticated local user projection.
+ *
+ * @param overrides - Optional user field overrides.
+ * @returns Independent user response data.
+ */
+export function createAuthUserScenario(
+  overrides: Partial<AuthUserScenario> = {},
+): AuthUserScenario {
+  return buildScenario(LOGIN_SCENARIO.user, overrides);
+}
+
+/**
+ * Build the sign-in provider summary with single sign-on enabled.
+ *
+ * @param overrides - Optional provider field overrides.
+ * @returns Independent provider summary data.
+ */
+export function createAuthProvidersScenario(
+  overrides: Partial<AuthProvidersScenario> = {},
+): AuthProvidersScenario {
+  return { oidc_enabled: true, oidc_display_name: 'authentik', ...overrides };
 }
 
 /**

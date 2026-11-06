@@ -1,22 +1,31 @@
 /**
- * Account password, invite, access-token, and CNKI settings behavior coverage.
+ * Account sign-in methods, password, invite, access-token, and CNKI settings behavior coverage.
  */
 
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+
+import type { AuthUser } from '@/lib/api';
 
 const accountSettingsMocks = vi.hoisted(() => ({
   copy: vi.fn().mockResolvedValue(undefined),
   logout: vi.fn().mockResolvedValue(undefined),
+  updateUser: vi.fn(),
+  user: null as AuthUser | null,
 }));
 
 vi.mock('@/lib/auth-context', () => ({
-  useAuth: () => ({ logout: accountSettingsMocks.logout }),
+  useAuth: () => ({
+    logout: accountSettingsMocks.logout,
+    updateUser: accountSettingsMocks.updateUser,
+    user: accountSettingsMocks.user,
+  }),
 }));
 
 import { AccessTokensCard } from '@/components/settings/access-tokens-card';
+import { AccountSignInCard } from '@/components/settings/account-card';
 import { CnkiSettingsCard } from '@/components/settings/cnki-card';
 import { InviteCodeCard } from '@/components/settings/invite-code-card';
 import { PasswordCard } from '@/components/settings/password-card';
@@ -26,6 +35,8 @@ import type {
   CnkiSessionStatus,
   InviteCode,
 } from '@/lib/api';
+import { createAccountScenarioHandlers, OIDC_AUTHORIZATION_URL } from '@/tests/mocks/handlers/auth';
+import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -88,6 +99,156 @@ function renderCnkiSettings(): void {
   renderWithQuery(
     <CnkiSettingsCard userId={21} copyFeedback={null} handleCopy={accountSettingsMocks.copy} />,
   );
+}
+
+/**
+ * Install account handlers and expose one local user to the mocked authentication context.
+ *
+ * @param overrides - Authenticated user fields.
+ * @param providerOverrides - Sign-in provider summary fields.
+ */
+function installAccountUser(
+  overrides: Partial<AuthUser> = {},
+  providerOverrides: { oidc_enabled?: boolean; oidc_display_name?: string } = {},
+): void {
+  const user = createAuthUserScenario({ id: 21, username: 'account_user', ...overrides });
+  accountSettingsMocks.user = user;
+  server.use(...createAccountScenarioHandlers(user, providerOverrides));
+}
+
+/**
+ * Verify a local account can set, reject, and clear its email through the server projection.
+ */
+async function managesLocalAccountEmail(): Promise<void> {
+  const emailPayloads: unknown[] = [];
+  installAccountUser();
+  server.events.on('request:start', async ({ request }) => {
+    if (request.method === 'PUT' && request.url.endsWith('/api/auth/email')) {
+      emailPayloads.push(await request.clone().json());
+    }
+  });
+  const user = userEvent.setup();
+  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+
+  const emailInput = screen.getByLabelText('邮箱');
+  const saveButton = screen.getByRole('button', { name: '保存邮箱' });
+  expect(saveButton).toBeDisabled();
+  await user.type(emailInput, 'taken@example.test');
+  await user.click(saveButton);
+  expect(await screen.findByRole('alert')).toHaveTextContent('该邮箱已被其他账号使用');
+  expect(accountSettingsMocks.updateUser).not.toHaveBeenCalled();
+
+  await user.clear(emailInput);
+  await user.type(emailInput, '  Reader@Example.test ');
+  await user.click(saveButton);
+  expect(await screen.findByRole('status')).toHaveTextContent('邮箱已更新');
+  expect(accountSettingsMocks.updateUser).toHaveBeenLastCalledWith(
+    expect.objectContaining({ id: 21, email: 'reader@example.test' }),
+  );
+  expect(emailInput).toHaveValue('reader@example.test');
+
+  accountSettingsMocks.user = createAuthUserScenario({
+    id: 21,
+    username: 'account_user',
+    email: 'reader@example.test',
+  });
+  await user.clear(emailInput);
+  await user.click(saveButton);
+  expect(await screen.findByText('邮箱已清除')).toBeInTheDocument();
+  expect(accountSettingsMocks.updateUser).toHaveBeenLastCalledWith(
+    expect.objectContaining({ email: null }),
+  );
+  expect(emailPayloads).toEqual([
+    { email: 'taken@example.test' },
+    { email: 'Reader@Example.test' },
+    { email: null },
+  ]);
+}
+
+/**
+ * Verify linking navigates the whole page to the provider authorization URL.
+ */
+async function startsSingleSignOnLink(): Promise<void> {
+  const assign = vi.fn();
+  vi.stubGlobal('location', { ...window.location, assign });
+  installAccountUser();
+  const user = userEvent.setup();
+  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+
+  const linkButton = await screen.findByRole('button', { name: '绑定 authentik' });
+  await waitFor(() => expect(linkButton).toBeEnabled());
+  await user.click(linkButton);
+
+  await waitFor(() => expect(assign).toHaveBeenCalledWith(OIDC_AUTHORIZATION_URL));
+  expect(linkButton).toBeDisabled();
+}
+
+/**
+ * Verify linking is unavailable until the server enables single sign-on.
+ */
+async function disablesLinkWhenSingleSignOnIsOff(): Promise<void> {
+  installAccountUser({}, { oidc_enabled: false });
+  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+
+  expect(await screen.findByText('服务器尚未启用单点登录')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^绑定/ })).toBeDisabled();
+}
+
+/**
+ * Verify a linked local account confirms before unlinking and adopts the returned user.
+ */
+async function unlinksSingleSignOnAfterConfirmation(): Promise<void> {
+  let unlinkCount = 0;
+  installAccountUser({ is_oidc_linked: true });
+  server.events.on('request:start', ({ request }) => {
+    if (request.method === 'DELETE' && request.url.endsWith('/api/auth/oidc/link')) {
+      unlinkCount += 1;
+    }
+  });
+  const user = userEvent.setup();
+  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+
+  expect(screen.getByText('已绑定')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '解除绑定' }));
+  const dialog = await screen.findByRole('alertdialog');
+  expect(unlinkCount).toBe(0);
+  await user.click(within(dialog).getByRole('button', { name: '解除绑定' }));
+
+  await waitFor(() =>
+    expect(accountSettingsMocks.updateUser).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 21, is_oidc_linked: false }),
+    ),
+  );
+  expect(unlinkCount).toBe(1);
+  expect(await screen.findByRole('status')).toHaveTextContent('已解除 authentik 绑定');
+}
+
+/**
+ * Verify single sign-on accounts see a read-only email and cannot unlink or change it.
+ */
+function showsReadOnlyOidcAccount(): void {
+  installAccountUser({ auth_kind: 'oidc', email: 'sso@example.test', is_oidc_linked: true });
+  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+
+  expect(screen.getByText('sso@example.test')).toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: '邮箱' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '保存邮箱' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '解除绑定' })).not.toBeInTheDocument();
+  expect(screen.getByText('单点登录账号无法解除绑定')).toBeInTheDocument();
+}
+
+/**
+ * Verify the link callback result is announced as success or a readable failure.
+ */
+function announcesLinkCallbackResult(): void {
+  installAccountUser({ is_oidc_linked: true });
+  const view = renderWithQuery(<AccountSignInCard oidcLinkResult="linked" />);
+  expect(screen.getByRole('status')).toHaveTextContent('之后可以使用它登录');
+  view.unmount();
+
+  installAccountUser();
+  renderWithQuery(<AccountSignInCard oidcLinkResult="account_conflict" />);
+  expect(screen.getByRole('alert')).toHaveTextContent('已绑定其他 LitRadar 账号');
 }
 
 /**
@@ -417,9 +578,22 @@ async function retainsCnkiSessionWhenClearFails(): Promise<void> {
 beforeEach(() => {
   accountSettingsMocks.copy.mockReset().mockResolvedValue(undefined);
   accountSettingsMocks.logout.mockReset().mockResolvedValue(undefined);
+  accountSettingsMocks.updateUser.mockReset();
+  accountSettingsMocks.user = null;
+});
+
+afterEach(() => {
+  server.events.removeAllListeners();
+  vi.unstubAllGlobals();
 });
 
 describe('account settings', () => {
+  test('manages a local account email', managesLocalAccountEmail);
+  test('starts single sign-on linking', startsSingleSignOnLink);
+  test('disables linking when single sign-on is off', disablesLinkWhenSingleSignOnIsOff);
+  test('unlinks single sign-on after confirmation', unlinksSingleSignOnAfterConfirmation);
+  test('shows a read-only single sign-on account', showsReadOnlyOidcAccount);
+  test('announces the link callback result', announcesLinkCallbackResult);
   test('changes password then logs out', changesPasswordThenLogsOut, 5_000);
   test('reports password change failure', reportsPasswordChangeFailure);
   test('generates and copies a personal invite', generatesAndCopiesPersonalInvite);

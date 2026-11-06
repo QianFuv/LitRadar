@@ -38,9 +38,15 @@ interface AuthState {
   loading: boolean;
   logoutWarning: LogoutRevocationWarning | null;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string, inviteCode: string) => Promise<void>;
+  register: (
+    username: string,
+    password: string,
+    inviteCode: string,
+    email?: string,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   recoverLogout: (username: string, password: string) => Promise<void>;
+  updateUser: (nextUser: AuthUser) => void;
 }
 
 /**
@@ -259,12 +265,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const register = useCallback(
-    async (username: string, password: string, inviteCode: string) => {
-      await registerUser(username, password, inviteCode);
+    async (username: string, password: string, inviteCode: string, email = '') => {
+      await registerUser(username, password, inviteCode, email);
       await login(username, password);
     },
     [login],
   );
+
+  /** Adopt a server-returned projection of the verified user after an account change. */
+  const updateUser = useCallback((nextUser: AuthUser) => {
+    if (verifiedUser.current?.id !== nextUser.id) {
+      return;
+    }
+    verifiedUser.current = nextUser;
+    writeStoredUser(nextUser);
+    setUser(nextUser);
+  }, []);
 
   const logout = useCallback(async () => {
     try {
@@ -301,8 +317,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, loading, logoutWarning, login, register, logout, recoverLogout }),
-    [loading, login, logout, logoutWarning, recoverLogout, register, user],
+    () => ({ user, loading, logoutWarning, login, register, logout, recoverLogout, updateUser }),
+    [loading, login, logout, logoutWarning, recoverLogout, register, updateUser, user],
   );
 
   return (

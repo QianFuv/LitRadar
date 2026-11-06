@@ -14,6 +14,7 @@ import { FavoriteButton } from '@/components/feature/favorite-button';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import type { FavoriteArticleItem, FavoriteArticlePage, FavoriteCheck, Folder } from '@/lib/api';
+import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { favoriteArticlePageResponse } from '@/tests/mocks/handlers/favorites';
 import { renderWithQuery } from '@/tests/render';
@@ -79,7 +80,9 @@ let removeRequestCount = 0;
  * @returns Current-user response.
  */
 function currentUserResponse(): Response {
-  return HttpResponse.json({ id: 21, username: 'favorite_user', is_admin: false });
+  return HttpResponse.json(
+    createAuthUserScenario({ id: 21, username: 'favorite_user', is_admin: false }),
+  );
 }
 
 /**

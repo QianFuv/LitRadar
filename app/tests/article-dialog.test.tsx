@@ -10,6 +10,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import type { Article } from '@/lib/api';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
+import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -51,7 +52,9 @@ const SAFE_ARTICLE: Article = {
  * @returns Current-user response.
  */
 function currentUserResponse(): Response {
-  return HttpResponse.json({ id: 21, username: 'article_user', is_admin: false });
+  return HttpResponse.json(
+    createAuthUserScenario({ id: 21, username: 'article_user', is_admin: false }),
+  );
 }
 
 /**

@@ -155,7 +155,10 @@
           "updated_at",
           "folder_count",
           "favorite_count",
-          "notify_enabled"
+          "notify_enabled",
+          "email",
+          "auth_kind",
+          "is_oidc_linked"
         ],
         "properties": {
           "created_at": {
@@ -193,6 +196,19 @@
           "username": {
             "type": "string",
             "description": "Username."
+          },
+          "email": {
+            "type": ["string", "null"],
+            "description": "Normalized unique account email; null when unset."
+          },
+          "auth_kind": {
+            "type": "string",
+            "enum": ["local", "oidc"],
+            "description": "Account credential kind."
+          },
+          "is_oidc_linked": {
+            "type": "boolean",
+            "description": "Whether an external OIDC identity is linked."
           }
         }
       },
@@ -1874,7 +1890,7 @@
           },
           "username": {
             "type": "string",
-            "description": "Username."
+            "description": "Username or case-insensitive email address."
           }
         }
       },
@@ -2445,6 +2461,10 @@
           "username": {
             "type": "string",
             "description": "Requested username."
+          },
+          "email": {
+            "type": ["string", "null"],
+            "description": "Normalized unique account email; null when unset."
           }
         }
       },
@@ -2668,7 +2688,13 @@
       "RuntimeSettingGroup": {
         "type": "string",
         "description": "Functional section used to group runtime settings in administrator clients.",
-        "enum": ["source_access", "provider_routing", "server_security", "observability"]
+        "enum": [
+          "source_access",
+          "provider_routing",
+          "server_security",
+          "single_sign_on",
+          "observability"
+        ]
       },
       "RuntimeSettingInfo": {
         "type": "object",
@@ -3336,7 +3362,7 @@
       "UserResponse": {
         "type": "object",
         "description": "User profile returned by auth endpoints.",
-        "required": ["id", "username", "is_admin"],
+        "required": ["id", "username", "is_admin", "email", "auth_kind", "is_oidc_linked"],
         "properties": {
           "id": {
             "$ref": "#/components/schemas/UserId",
@@ -3349,6 +3375,19 @@
           "username": {
             "type": "string",
             "description": "Login username."
+          },
+          "email": {
+            "type": ["string", "null"],
+            "description": "Normalized unique account email; null when unset."
+          },
+          "auth_kind": {
+            "type": "string",
+            "enum": ["local", "oidc"],
+            "description": "Account credential kind."
+          },
+          "is_oidc_linked": {
+            "type": "boolean",
+            "description": "Whether an external OIDC identity is linked."
           }
         }
       },
@@ -3645,6 +3684,37 @@
             "type": "integer",
             "format": "int64",
             "description": "Publication year."
+          }
+        }
+      },
+      "EmailUpdateRequest": {
+        "type": "object",
+        "required": ["email"],
+        "properties": {
+          "email": {
+            "type": ["string", "null"],
+            "description": "Normalized unique account email; null when unset."
+          }
+        }
+      },
+      "AuthProvidersResponse": {
+        "type": "object",
+        "required": ["oidc_enabled", "oidc_display_name"],
+        "properties": {
+          "oidc_enabled": {
+            "type": "boolean"
+          },
+          "oidc_display_name": {
+            "type": "string"
+          }
+        }
+      },
+      "OidcLinkResponse": {
+        "type": "object",
+        "required": ["authorization_url"],
+        "properties": {
+          "authorization_url": {
+            "type": "string"
           }
         }
       }
@@ -4390,6 +4460,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid password or OIDC-only account."
           }
         },
         "security": [
@@ -4973,6 +5046,55 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid password or OIDC-only account."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/auth/email": {
+      "put": {
+        "tags": ["auth"],
+        "summary": "Update the local account email.",
+        "operationId": "update_email",
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected."
+          },
+          "401": {
+            "description": "Request rejected."
+          },
+          "409": {
+            "description": "Username or email already exists."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailUpdateRequest"
+              }
+            }
           }
         },
         "security": [
@@ -5133,7 +5255,7 @@
     "/api/auth/login": {
       "post": {
         "tags": ["auth"],
-        "summary": "Authenticate a user and set a session cookie.",
+        "summary": "Sign in with username or email and password.",
         "description": "# Arguments\n\n* `state` - Shared API state.\n* `body` - Login request.\n\n# Returns\n\nLogin response without the raw token.",
         "operationId": "login",
         "requestBody": {
@@ -5274,6 +5396,180 @@
         ]
       }
     },
+    "/api/auth/oidc/callback": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Complete OIDC sign-in or linking.",
+        "operationId": "oidc_callback",
+        "responses": {
+          "302": {
+            "description": "Redirect to provider, requested local path, or bounded error result.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request rejected."
+          }
+        },
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/auth/oidc/link": {
+      "delete": {
+        "tags": ["auth"],
+        "summary": "Unlink the local account OIDC identity.",
+        "operationId": "oidc_unlink",
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected."
+          },
+          "401": {
+            "description": "Request rejected."
+          },
+          "409": {
+            "description": "Request rejected."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      },
+      "post": {
+        "tags": ["auth"],
+        "summary": "Link an OIDC identity to a local account.",
+        "operationId": "oidc_link",
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcLinkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected."
+          },
+          "401": {
+            "description": "Request rejected."
+          },
+          "409": {
+            "description": "Request rejected."
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          },
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/auth/oidc/login": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Start OIDC sign-in.",
+        "operationId": "oidc_login",
+        "responses": {
+          "302": {
+            "description": "Redirect to provider, requested local path, or bounded error result.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request rejected."
+          }
+        },
+        "parameters": [
+          {
+            "name": "next",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "/"
+            },
+            "description": "Same-site relative path."
+          }
+        ]
+      }
+    },
+    "/api/auth/providers": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "List enabled sign-in providers.",
+        "operationId": "get_auth_providers",
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthProvidersResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request rejected."
+          }
+        }
+      }
+    },
     "/api/auth/register": {
       "post": {
         "tags": ["auth"],
@@ -5310,6 +5606,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Username or email already exists."
           }
         }
       }

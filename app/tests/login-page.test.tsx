@@ -26,9 +26,11 @@ const loginPageMocks = vi.hoisted(() => ({
     register: vi.fn(),
     user: null as MockUser | null,
   },
+  getAuthProviders: vi.fn(),
   getInviteRequirement: vi.fn(),
   logoutRecoveryParam: '',
   nextParam: '',
+  oidcErrorParam: null as string | null,
   replace: vi.fn(),
 }));
 
@@ -51,6 +53,9 @@ vi.mock('next/navigation', () => ({
     new URLSearchParams({
       logout_recovery: loginPageMocks.logoutRecoveryParam,
       next: loginPageMocks.nextParam,
+      ...(loginPageMocks.oidcErrorParam === null
+        ? {}
+        : { oidc_error: loginPageMocks.oidcErrorParam }),
     }),
 }));
 
@@ -58,7 +63,9 @@ vi.mock('@/lib/auth-context', () => ({
   useAuth: () => loginPageMocks.auth,
 }));
 
-vi.mock('@/lib/api', () => ({
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  getAuthProviders: loginPageMocks.getAuthProviders,
   getInviteRequirement: loginPageMocks.getInviteRequirement,
 }));
 
@@ -75,7 +82,11 @@ function resetLoginPageMocks(): void {
   loginPageMocks.getInviteRequirement
     .mockReset()
     .mockResolvedValue({ required: true, bootstrap_required: false });
+  loginPageMocks.getAuthProviders
+    .mockReset()
+    .mockResolvedValue({ oidc_enabled: false, oidc_display_name: 'authentik' });
   loginPageMocks.nextParam = '';
+  loginPageMocks.oidcErrorParam = null;
   loginPageMocks.logoutRecoveryParam = '';
   loginPageMocks.replace.mockReset();
 }
@@ -89,7 +100,7 @@ async function hidesFormUntilAuthenticationSettles(): Promise<void> {
   const view = renderLoginClient();
 
   expect(screen.getByRole('status')).toHaveTextContent('正在检查登录状态');
-  expect(screen.queryByLabelText('用户名')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/用户名/)).not.toBeInTheDocument();
 
   loginPageMocks.auth.loading = false;
   loginPageMocks.auth.user = { id: 7, username: 'signed_in', is_admin: false };
@@ -100,7 +111,7 @@ async function hidesFormUntilAuthenticationSettles(): Promise<void> {
   );
 
   await waitFor(() => expect(loginPageMocks.replace).toHaveBeenCalledWith('/tracking'));
-  expect(screen.queryByLabelText('用户名')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/用户名/)).not.toBeInTheDocument();
 }
 
 /**
@@ -154,7 +165,7 @@ async function focusesAndRevealsPasswordSafely(): Promise<void> {
   const user = userEvent.setup();
   renderLoginClient();
 
-  const usernameInput = screen.getByLabelText('用户名');
+  const usernameInput = screen.getByLabelText('用户名或邮箱');
   const passwordInput = screen.getByLabelText('密码');
   const authForm = screen.getByRole('form', { name: '身份验证表单' });
   const modeToggle = screen.getByRole('button', { name: '注册' });
@@ -243,7 +254,7 @@ async function announcesLoginFailures(): Promise<void> {
   const user = userEvent.setup();
   renderLoginClient();
 
-  await user.type(screen.getByLabelText('用户名'), 'reader');
+  await user.type(screen.getByLabelText('用户名或邮箱'), 'reader');
   await user.type(screen.getByLabelText('密码'), 'wrong-password');
   await user.click(screen.getByRole('button', { name: '登录' }));
 
@@ -292,7 +303,7 @@ async function submitsLoginOnceAndReturnsToProtectedPath(): Promise<void> {
   const user = userEvent.setup();
   renderLoginClient();
 
-  await user.type(screen.getByLabelText('用户名'), '  reader  ');
+  await user.type(screen.getByLabelText('用户名或邮箱'), '  reader@example.test  ');
   await user.type(screen.getByLabelText('密码'), 'correct-password');
   await user.click(screen.getByRole('button', { name: '登录' }));
 
@@ -300,7 +311,7 @@ async function submitsLoginOnceAndReturnsToProtectedPath(): Promise<void> {
   expect(pendingButton).toBeDisabled();
   await user.click(pendingButton);
   expect(loginPageMocks.auth.login).toHaveBeenCalledOnce();
-  expect(loginPageMocks.auth.login).toHaveBeenCalledWith('reader', 'correct-password');
+  expect(loginPageMocks.auth.login).toHaveBeenCalledWith('reader@example.test', 'correct-password');
 
   resolveLogin?.();
   await waitFor(() => expect(loginPageMocks.replace).toHaveBeenCalledWith('/favorites?folder=4'));
@@ -325,9 +336,102 @@ async function registersInvitedUserAndReturnsToRequestedPath(): Promise<void> {
       'invited_reader',
       'registration-password',
       'invite-code',
+      '',
     ),
   );
   expect(loginPageMocks.replace).toHaveBeenCalledWith('/tracking');
+}
+
+/**
+ * Verify the optional registration email is offered only while registering and is trimmed.
+ */
+async function registersWithOptionalEmail(): Promise<void> {
+  const user = userEvent.setup();
+  renderLoginClient();
+
+  expect(screen.queryByLabelText('邮箱（可选）')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '注册' }));
+  const emailInput = screen.getByLabelText('邮箱（可选）');
+  expect(emailInput).toHaveAttribute('type', 'email');
+  expect(emailInput).not.toBeRequired();
+  await user.type(screen.getByLabelText('用户名'), 'reader');
+  await user.type(screen.getByLabelText('密码'), 'password-1234');
+  await user.type(emailInput, ' r@e.test ');
+  await user.type(screen.getByLabelText('邀请码'), 'code');
+  await user.click(screen.getByRole('button', { name: '注册' }));
+
+  await waitFor(() =>
+    expect(loginPageMocks.auth.register).toHaveBeenCalledWith(
+      'reader',
+      'password-1234',
+      'code',
+      'r@e.test',
+    ),
+  );
+}
+
+/**
+ * Verify single sign-on is a full-page link that preserves the normalized return path.
+ */
+async function offersSingleSignOnWhenEnabled(): Promise<void> {
+  loginPageMocks.nextParam = '/favorites?folder=4';
+  loginPageMocks.getAuthProviders.mockResolvedValue({
+    oidc_enabled: true,
+    oidc_display_name: 'authentik',
+  });
+  renderLoginClient();
+
+  const ssoLink = await screen.findByRole('link', { name: '使用 authentik 登录' });
+  const target = new URL(ssoLink.getAttribute('href') ?? '');
+  expect(target.pathname).toBe('/api/auth/oidc/login');
+  expect(target.searchParams.get('next')).toBe('/favorites?folder=4');
+}
+
+/**
+ * Verify the single sign-on entry stays hidden when disabled or during logout recovery.
+ */
+async function hidesSingleSignOnWhenUnavailable(): Promise<void> {
+  const view = renderLoginClient();
+  await waitFor(() => expect(loginPageMocks.getAuthProviders).toHaveBeenCalled());
+  expect(screen.queryByRole('link', { name: /登录$/ })).not.toBeInTheDocument();
+  view.unmount();
+
+  loginPageMocks.logoutRecoveryParam = '1';
+  loginPageMocks.getAuthProviders.mockClear().mockResolvedValue({
+    oidc_enabled: true,
+    oidc_display_name: 'authentik',
+  });
+  renderLoginClient();
+  expect(screen.getByRole('heading', { name: '撤销全部会话' })).toBeInTheDocument();
+  expect(loginPageMocks.getAuthProviders).not.toHaveBeenCalled();
+  expect(document.querySelector('[data-auth-oidc]')).toBeNull();
+}
+
+const OIDC_ERROR_CASES = [
+  ['unavailable', '单点登录暂不可用'],
+  ['state', '请求已失效或校验失败'],
+  ['denied', '授权已取消'],
+  ['provider', '与身份提供方通信失败'],
+  ['email_unverified', '邮箱尚未验证'],
+  ['email_conflict', '该邮箱已被现有 LitRadar 账号使用'],
+  ['account_conflict', '已绑定其他 LitRadar 账号'],
+  ['expired_session', '登录会话已过期'],
+  ['something_new', '单点登录失败，请重试。'],
+] as const;
+
+/**
+ * Verify each callback failure code is announced as readable text.
+ *
+ * @param code - `oidc_error` query value.
+ * @param expectedText - Fragment of the expected message.
+ */
+function announcesOidcError(code: string, expectedText: string): void {
+  loginPageMocks.oidcErrorParam = code;
+  renderLoginClient();
+
+  const alert = screen.getByRole('alert');
+  expect(alert).toHaveAttribute('data-auth-feedback', 'oidc-error');
+  expect(alert).toHaveTextContent(expectedText);
 }
 
 /**
@@ -340,7 +444,7 @@ async function reauthenticatesForLogoutRecovery(): Promise<void> {
 
   expect(screen.getByRole('heading', { name: '撤销全部会话' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '注册' })).not.toBeInTheDocument();
-  await user.type(screen.getByLabelText('用户名'), '  recovery_user  ');
+  await user.type(screen.getByLabelText('用户名或邮箱'), '  recovery_user  ');
   await user.type(screen.getByLabelText('密码'), 'recovery-password');
   await user.click(screen.getByRole('button', { name: '重新认证并撤销全部会话' }));
 
@@ -381,4 +485,8 @@ describe('login page', () => {
     registersInvitedUserAndReturnsToRequestedPath,
   );
   test('reauthenticates for logout recovery', reauthenticatesForLogoutRecovery);
+  test('registers with an optional email', registersWithOptionalEmail, 15_000);
+  test('offers single sign-on when enabled', offersSingleSignOnWhenEnabled);
+  test('hides single sign-on when unavailable', hidesSingleSignOnWhenUnavailable);
+  test.each(OIDC_ERROR_CASES)('announces the %s single sign-on error', announcesOidcError);
 });

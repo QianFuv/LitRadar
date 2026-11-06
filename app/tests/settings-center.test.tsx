@@ -47,7 +47,15 @@ vi.mock('@/lib/auth-context', () => ({
   useAuth: () => ({
     loading: false,
     logout: vi.fn(),
-    user: { id: 51, username: 'settings_user', is_admin: false },
+    updateUser: vi.fn(),
+    user: {
+      id: 51,
+      username: 'settings_user',
+      is_admin: false,
+      email: null,
+      auth_kind: 'local',
+      is_oidc_linked: true,
+    },
   }),
 }));
 
@@ -270,6 +278,33 @@ async function guardsUnsavedCrossCategoryNavigation(): Promise<void> {
   );
 }
 
+/** Verify a link callback result opens account settings once and leaves a clean URL. */
+async function surfacesOidcLinkResultOnce(): Promise<void> {
+  server.use(
+    http.get('http://localhost/api/auth/providers', () =>
+      HttpResponse.json({ oidc_enabled: true, oidc_display_name: 'authentik' }),
+    ),
+    http.get('http://localhost/api/auth/invite-code', () => HttpResponse.json(null)),
+  );
+  navigationMocks.searchParams = new URLSearchParams('view=favorites&oidc_link=linked');
+  const view = renderWithQuery(<SettingsCenterDialog />);
+
+  await waitFor(() =>
+    expect(navigationMocks.router.replace).toHaveBeenCalledWith(
+      '/?view=favorites&settings=account',
+      { scroll: false },
+    ),
+  );
+  navigationMocks.searchParams = new URLSearchParams('view=favorites&settings=account');
+  view.rerender(<SettingsCenterDialog />);
+
+  expect(await screen.findByRole('dialog', { name: '设置中心' })).toBeInTheDocument();
+  expect(await screen.findByText('已绑定 authentik，之后可以使用它登录。')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '解除绑定' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '修改密码' })).toBeInTheDocument();
+  expect(navigationMocks.router.replace).toHaveBeenCalledOnce();
+}
+
 beforeEach(() => {
   navigationMocks.pathname = '/';
   navigationMocks.searchParams = new URLSearchParams('view=favorites&folder=4&settings=general');
@@ -293,4 +328,5 @@ describe('settings center', () => {
   test('preserves one draft across tracking categories', preservesSharedTrackingCategoryState);
   test('normalizes an unknown settings section', normalizesUnknownSettingsSection);
   test('guards unsaved cross-category navigation', guardsUnsavedCrossCategoryNavigation, 20_000);
+  test('surfaces a single sign-on link result once', surfacesOidcLinkResultOnce);
 });

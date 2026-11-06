@@ -25,6 +25,7 @@ import {
 } from '@/lib/article-filters';
 import { readSelectedDatabase } from '@/lib/api';
 import { setSelectedDatabase } from '@/lib/selected-database';
+import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -83,7 +84,9 @@ function QuerySetter({ parameter, value }: { parameter: string; value: string })
  * @returns Current-user response.
  */
 function currentUserResponse(): Response {
-  return HttpResponse.json({ id: 21, username: 'filter_user', is_admin: false });
+  return HttpResponse.json(
+    createAuthUserScenario({ id: 21, username: 'filter_user', is_admin: false }),
+  );
 }
 
 /** Return an explicit empty rating response for unrelated sidebar scenarios. */

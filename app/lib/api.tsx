@@ -3,6 +3,8 @@
  */
 
 export type {
+  AuthKind,
+  AuthProviders,
   AuthUser,
   InviteRequirement,
   LoginResponse,
@@ -10,6 +12,7 @@ export type {
   ManualPushStatus,
   NotificationSettings,
   NotificationSettingsUpdate,
+  OidcLinkStart,
   IndexProviderRoutes,
   ProviderCapabilityInfo,
   ProviderCatalogInfo,

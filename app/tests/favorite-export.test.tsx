@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import type { FavoriteArticleItem } from '@/lib/api';
+import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { favoriteArticlePageResponse } from '@/tests/mocks/handlers/favorites';
 import { renderWithQuery } from '@/tests/render';
@@ -43,7 +44,9 @@ const originalRevokeObjectUrl = URL.revokeObjectURL;
 function installFavoritePageHandlers(): void {
   server.use(
     http.get('http://localhost/api/auth/me', () =>
-      HttpResponse.json({ id: 21, username: 'favorite_user', is_admin: false }),
+      HttpResponse.json(
+        createAuthUserScenario({ id: 21, username: 'favorite_user', is_admin: false }),
+      ),
     ),
     http.get('http://localhost/api/favorites/folders', () =>
       HttpResponse.json([

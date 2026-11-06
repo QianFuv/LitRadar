@@ -3,6 +3,9 @@
   "user": {
     "id": 1,
     "username": "scenario_admin",
-    "is_admin": true
+    "is_admin": true,
+    "email": null,
+    "auth_kind": "local",
+    "is_oidc_linked": false
   }
 }

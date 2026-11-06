@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import type { Article } from '@/lib/api';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
+import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -62,7 +63,7 @@ async function opensRelatedArticleInPlace(): Promise<void> {
   const relatedRequests: URL[] = [];
   server.use(
     http.get('http://localhost/api/auth/me', () =>
-      HttpResponse.json({ id: 21, username: 'reader', is_admin: false }),
+      HttpResponse.json(createAuthUserScenario({ id: 21, username: 'reader', is_admin: false })),
     ),
     http.get('http://localhost/api/articles/:articleId/access', () =>
       HttpResponse.json({

@@ -6,8 +6,11 @@ import { describe, expect, test } from 'vitest';
 
 import {
   ApiContractError,
+  parseAuthProviders,
+  parseAuthUser,
   parseLoginResponse,
   parseManualPushStatus,
+  parseOidcLinkStart,
   parseNotificationSettings,
   parseProviderCatalogResponse,
   parseProviderProxyPolicy,
@@ -37,6 +40,33 @@ function acceptsValidLoginContract(): void {
   const payload = createLoginScenario();
 
   expect(parseLoginResponse(payload)).toBe(payload);
+}
+
+/**
+ * Verify account identity fields are required and enum-checked rather than defaulted.
+ */
+function validatesAccountIdentityContracts(): void {
+  const { user } = createLoginScenario();
+  const oidcUser = { ...user, email: 'a@b.c', auth_kind: 'oidc', is_oidc_linked: true };
+
+  expect(parseAuthUser(oidcUser)).toBe(oidcUser);
+  for (const field of ['email', 'auth_kind', 'is_oidc_linked'] as const) {
+    const missing: Record<string, unknown> = { ...user };
+    delete missing[field];
+    expect(() => parseAuthUser(missing)).toThrow(ApiContractError);
+  }
+  expect(() => parseAuthUser({ ...user, auth_kind: 'ldap' })).toThrow(ApiContractError);
+  expect(() => parseAuthUser({ ...user, email: 1 })).toThrow(ApiContractError);
+  expect(() => parseAuthUser({ ...user, is_oidc_linked: 'true' })).toThrow(ApiContractError);
+
+  const providers = { oidc_enabled: true, oidc_display_name: 'authentik' };
+  expect(parseAuthProviders(providers)).toBe(providers);
+  expect(() => parseAuthProviders({ oidc_enabled: 'yes', oidc_display_name: '' })).toThrow(
+    ApiContractError,
+  );
+  const linkStart = { authorization_url: 'https://auth.example.test/authorize' };
+  expect(parseOidcLinkStart(linkStart)).toBe(linkStart);
+  expect(() => parseOidcLinkStart({ authorization_url: '' })).toThrow(ApiContractError);
 }
 
 /**
@@ -367,6 +397,7 @@ async function servesExplicitSharedScenarioHandlers(): Promise<void> {
 
 describe('generated API runtime contracts', () => {
   test('accepts a valid login response', acceptsValidLoginContract);
+  test('validates account identity contracts', validatesAccountIdentityContracts);
   test('accepts durable scheduler status metadata', acceptsSchedulerStatusContract);
   test(
     'accepts strong runtime metadata and safe Provider catalogs',

@@ -153,12 +153,20 @@ export function AdminUsersCard({
                         ) : (
                           <StatusPill>用户</StatusPill>
                         )}
+                        {u.auth_kind === 'oidc' ? (
+                          <StatusPill tone="success">SSO 账号</StatusPill>
+                        ) : (
+                          u.is_oidc_linked && <StatusPill>已绑定 SSO</StatusPill>
+                        )}
                         {u.id === currentUserId && (
                           <span className="text-xs text-muted-foreground">（你）</span>
                         )}
                       </div>
                       <div className="mt-0.5 text-xs text-muted-foreground tabular-nums">
                         #{u.id} · <span>注册时间: {registrationDate}</span>
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {u.email ?? '未设置邮箱'}
                       </div>
                     </div>
                   </div>
@@ -208,12 +216,15 @@ export function AdminUsersCard({
                         )}
                       </Button>
                     </IconTooltip>
-                    <IconTooltip label="重置密码">
+                    <IconTooltip
+                      label={u.auth_kind === 'oidc' ? 'SSO 账号无法重置密码' : '重置密码'}
+                    >
                       <Button
                         variant="ghost"
                         size="icon"
                         className="size-9"
                         aria-label={`重置 ${u.username} 的密码`}
+                        disabled={u.auth_kind === 'oidc'}
                         onClick={() => {
                           resetPwMut.reset();
                           setResetPwUserId(u.id);

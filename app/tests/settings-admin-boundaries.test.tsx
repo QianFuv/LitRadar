@@ -15,6 +15,7 @@ import { CnkiSettingsCard } from '@/components/settings/cnki-card';
 import { InviteCodeCard } from '@/components/settings/invite-code-card';
 import { PasswordCard } from '@/components/settings/password-card';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
+import { createAuthUserScenario } from '@/tests/mocks/scenarios';
 import { server } from '@/tests/mocks/server';
 import { renderWithQuery } from '@/tests/render';
 
@@ -101,7 +102,13 @@ async function rendersSettingsCards(): Promise<void> {
 
   renderWithQuery(
     <>
-      <AccountCard username="fixture_user" />
+      <AccountCard
+        user={createAuthUserScenario({
+          username: 'fixture_user',
+          email: 'fixture@example.test',
+          auth_kind: 'oidc',
+        })}
+      />
       <CnkiSettingsCard userId={1} copyFeedback={null} handleCopy={ignoreCopy} />
       <InviteCodeCard copyFeedback={null} handleCopy={ignoreCopy} />
       <AccessTokensCard copyFeedback={null} handleCopy={ignoreCopy} />
@@ -109,6 +116,8 @@ async function rendersSettingsCards(): Promise<void> {
   );
 
   expect(screen.getByText('fixture_user')).toBeInTheDocument();
+  expect(screen.getByText('fixture@example.test')).toBeInTheDocument();
+  expect(screen.getByText('单点登录账号')).toBeInTheDocument();
   expect(await screen.findByText('未配置')).toBeInTheDocument();
   expect(await screen.findByRole('button', { name: '生成邀请码' })).toBeInTheDocument();
   expect(await screen.findByText('暂无访问令牌')).toBeInTheDocument();
@@ -346,7 +355,9 @@ function AuthenticatedPasswordFixture() {
 async function rendersPasswordCard(): Promise<void> {
   server.use(
     http.get('http://localhost/api/auth/me', () =>
-      HttpResponse.json({ id: 1, username: 'fixture_user', is_admin: false }),
+      HttpResponse.json(
+        createAuthUserScenario({ id: 1, username: 'fixture_user', is_admin: false }),
+      ),
     ),
   );
 
