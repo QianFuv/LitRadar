@@ -15,7 +15,7 @@ import (
 	"github.com/QianFuv/LitRadar/internal/platform/cryptography"
 )
 
-var authRequestTypes = map[string]string{"register": "RegisterRequest", "update_email": "EmailUpdateRequest", "login": "LoginRequest", "change_password": "ChangePasswordRequest", "create_token": "TokenCreateRequest"}
+var authRequestTypes = map[string]string{"register": "RegisterRequest", "update_email": "EmailUpdateRequest", "login": "LoginRequest", "native_login": "NativeLoginRequest", "change_password": "ChangePasswordRequest", "create_token": "TokenCreateRequest"}
 
 // handleBody decodes before auditing and dispatches authentication phases.
 func (handlers *authHandlers) handleBody(writer http.ResponseWriter, request *http.Request, name, bodyName string) {
@@ -41,7 +41,7 @@ func (handlers *authHandlers) handleBody(writer http.ResponseWriter, request *ht
 	ctx := context.WithoutCancel(request.Context())
 	var payload any
 	var isCompleted bool
-	if name == "login" || name == "register" {
+	if name == "login" || name == "native_login" || name == "register" {
 		payload, isCompleted = handlers.authBodyAttempt(writer, request, ctx, name, body, &event)
 	} else {
 		payload, isCompleted = handlers.authCredentialBody(writer, request, ctx, name, body, &event)
@@ -71,6 +71,8 @@ func (handlers *authHandlers) authBodyAttempt(writer http.ResponseWriter, reques
 	var isCompleted bool
 	if name == "register" {
 		payload, isCompleted = handlers.registerAuthUser(writer, request, ctx, body, username, password, event)
+	} else if name == "native_login" {
+		payload, isCompleted = handlers.nativeLoginAuthUser(writer, request, ctx, body, username, password, event)
 	} else {
 		payload, isCompleted = handlers.loginAuthUser(writer, request, ctx, username, password, event)
 	}
@@ -79,6 +81,25 @@ func (handlers *authHandlers) authBodyAttempt(writer http.ResponseWriter, reques
 	}
 	handlers.limiter.clearUsername(kind, username)
 	return payload, true
+}
+
+// nativeLoginAuthUser returns a new personal credential without changing browser cookies.
+func (handlers *authHandlers) nativeLoginAuthUser(writer http.ResponseWriter, request *http.Request, ctx context.Context, body map[string]any, username, password string, event *domain.AuditEvent) (any, bool) {
+	event.OccurredAt = currentTimestamp()
+	session, failure := runAuth(request, handlers.kdfPool, func() (domain.LoginSession, error) {
+		return handlers.service.NativeLogin(ctx, username, password, body["device_name"].(string), event)
+	})
+	if failure != nil {
+		handlers.reject(request, *event, "authentication_failed", failure).write(writer)
+		return nil, false
+	}
+	actor := int64(session.User.Id)
+	event.ActorId = &actor
+	return struct {
+		Token     string       `json:"token"`
+		ExpiresAt float64      `json:"expires_at"`
+		User      userResponse `json:"user"`
+	}{session.Token, session.ExpiresAt, publicUser(session.User)}, true
 }
 
 // respondAuthRateLimit preserves conditional audit persistence and capped counters.

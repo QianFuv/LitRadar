@@ -2304,6 +2304,55 @@
           }
         }
       },
+      "NativeLoginRequest": {
+        "type": "object",
+        "description": "Native password login that issues an independent 90-day personal access token.",
+        "required": [
+          "username",
+          "password",
+          "device_name"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Password."
+          },
+          "username": {
+            "type": "string",
+            "description": "Username or case-insensitive email address."
+          },
+          "device_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 93,
+            "description": "Device label; surrounding whitespace is trimmed, blank text and control characters are rejected. The raw input is limited to 93 Unicode code points."
+          }
+        }
+      },
+      "NativeLoginResponse": {
+        "type": "object",
+        "description": "Native login credential. Store the raw token in OS secure storage; it is returned only on issuance.",
+        "required": [
+          "user",
+          "expires_at",
+          "token"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix expiration timestamp in seconds, 90 days after issuance."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse",
+            "description": "Authenticated user."
+          },
+          "token": {
+            "type": "string",
+            "description": "Personal access token for Authorization: Bearer."
+          }
+        }
+      },
       "LoginRequest": {
         "type": "object",
         "description": "Login request.",

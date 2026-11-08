@@ -54,6 +54,7 @@ var requestBodies = func() map[string]bodyType {
 		"AdminInviteCodeCreate":     {kind: "struct", name: "AdminInviteCodeCreate", deniesUnknown: true, fields: []bodyField{bodyFieldOf("expires_at", optionalBody(bodyType{kind: "float"})), bodyFieldOf("max_uses", optionalBody(integerBody))}},
 		"EmailUpdateRequest":        structBody("EmailUpdateRequest", bodyFieldOf("email", bodyType{kind: "nullable", element: &stringBody})),
 		"LoginRequest":              structBody("LoginRequest", bodyFieldOf("username", stringBody), bodyFieldOf("password", stringBody)),
+		"NativeLoginRequest":        structBody("NativeLoginRequest", bodyFieldOf("username", stringBody), bodyFieldOf("password", stringBody), bodyFieldOf("device_name", stringBody)),
 		"RegisterRequest":           structBody("RegisterRequest", bodyFieldOf("username", stringBody), bodyFieldOf("password", stringBody), bodyFieldOf("invite_code", stringBody), bodyFieldOf("email", optionalBody(stringBody))),
 		"ChangePasswordRequest":     structBody("ChangePasswordRequest", bodyFieldOf("old_password", stringBody), bodyFieldOf("new_password", stringBody)),
 		"TokenCreateRequest":        structBody("TokenCreateRequest", defaultBodyField("name", stringBody, ""), defaultBodyField("ttl", integerBody, int64(604800))),

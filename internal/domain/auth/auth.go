@@ -47,6 +47,9 @@ var (
 	ErrAudit               = errors.New("Security audit persistence failed")
 )
 
+// ErrDeviceName rejects labels that cannot form a bounded device token name.
+var ErrDeviceName = errors.New("Device name must contain 1-93 Unicode code points, no control characters, and non-whitespace text")
+
 // User is the public identity projection. Its formatting hides the account name.
 type User struct {
 	Email        *string     `json:"email"`

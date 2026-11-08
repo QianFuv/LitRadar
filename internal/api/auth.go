@@ -86,6 +86,7 @@ func (handlers *authHandlers) routes() []route {
 		{Method: "DELETE", Path: "/api/auth/oidc/link", Id: "oidc_unlink"},
 		{Method: "POST", Path: "/api/auth/register", Id: "register"},
 		{Method: "POST", Path: "/api/auth/login", Id: "login"},
+		{Method: "POST", Path: "/api/auth/native/login", Id: "native_login"},
 		{Method: "POST", Path: "/api/auth/change-password", Id: "change_password"},
 		{Method: "POST", Path: "/api/auth/tokens", Id: "create_token"},
 		{Method: "GET", Path: "/api/auth/me", Id: "get_me"},

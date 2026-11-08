@@ -137,7 +137,7 @@ func mapAuthError(err error) *apiError {
 	switch {
 	case errors.Is(err, domain.ErrCredentials):
 		return &apiError{status: 401, detail: domain.ErrCredentials.Error()}
-	case errors.Is(err, domain.ErrEmail), errors.Is(err, domain.ErrManagedEmail), errors.Is(err, domain.ErrOidcPassword), errors.Is(err, domain.ErrAccountConflict), errors.Is(err, domain.ErrUsername), errors.Is(err, domain.ErrPasswordShort), errors.Is(err, domain.ErrTokenNameLength), errors.Is(err, domain.ErrTokenReservedName), errors.Is(err, domain.ErrTokenTtl), errors.Is(err, domain.ErrInviteRequired), errors.Is(err, domain.ErrBootstrapRequired), errors.Is(err, domain.ErrInvite), errors.Is(err, domain.ErrActiveInvite), errors.Is(err, domain.ErrInvitePolicy):
+	case errors.Is(err, domain.ErrDeviceName), errors.Is(err, domain.ErrEmail), errors.Is(err, domain.ErrManagedEmail), errors.Is(err, domain.ErrOidcPassword), errors.Is(err, domain.ErrAccountConflict), errors.Is(err, domain.ErrUsername), errors.Is(err, domain.ErrPasswordShort), errors.Is(err, domain.ErrTokenNameLength), errors.Is(err, domain.ErrTokenReservedName), errors.Is(err, domain.ErrTokenTtl), errors.Is(err, domain.ErrInviteRequired), errors.Is(err, domain.ErrBootstrapRequired), errors.Is(err, domain.ErrInvite), errors.Is(err, domain.ErrActiveInvite), errors.Is(err, domain.ErrInvitePolicy):
 		return badRequest(err.Error())
 	case errors.Is(err, domain.ErrEmailExists), errors.Is(err, domain.ErrUsernameExists), errors.Is(err, domain.ErrTokenLimit):
 		return &apiError{status: 409, detail: err.Error()}

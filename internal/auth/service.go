@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	domain "github.com/QianFuv/LitRadar/internal/domain/auth"
@@ -209,6 +210,36 @@ func (service *Service) Login(ctx context.Context, username, password string, au
 		return domain.LoginSession{}, domain.ErrCredentials
 	}
 	return service.createLogin(ctx, *authorization, service.event("login", audit))
+}
+
+// NativeLogin issues an independent 90-day personal token using password authority.
+// Device names must fit the existing 100-code-point token name including its prefix.
+func (service *Service) NativeLogin(ctx context.Context, username, password, deviceName string, audit *domain.AuditEvent) (domain.LoginSession, error) {
+	if !utf8.ValidString(deviceName) || utf8.RuneCountInString(deviceName) > 93 || strings.ContainsFunc(deviceName, unicode.IsControl) {
+		return domain.LoginSession{}, domain.ErrDeviceName
+	}
+	deviceName = strings.TrimSpace(deviceName)
+	if deviceName == "" {
+		return domain.LoginSession{}, domain.ErrDeviceName
+	}
+	authorization, err := service.VerifyPasswordAuthorization(ctx, username, password)
+	if err != nil {
+		return domain.LoginSession{}, err
+	}
+	if authorization == nil {
+		return domain.LoginSession{}, domain.ErrCredentials
+	}
+	event := service.event("native_login", audit)
+	actor := int64(authorization.User.Id)
+	event.ActorId = &actor
+	token, err := service.createToken(ctx, *authorization, "device:"+deviceName, 90*24*60*60, &event)
+	if errors.Is(err, domain.ErrStaleAuthorization) {
+		return domain.LoginSession{}, domain.ErrCredentials
+	}
+	if err != nil {
+		return domain.LoginSession{}, err
+	}
+	return domain.LoginSession{User: authorization.User, Token: token.Token, ExpiresAt: token.ExpiresAt}, nil
 }
 
 func (service *Service) createLogin(ctx context.Context, authorization domain.Authorization, audit domain.AuditEvent) (domain.LoginSession, error) {

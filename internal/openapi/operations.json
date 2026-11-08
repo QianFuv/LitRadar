@@ -5045,5 +5045,134 @@
         }
       ]
     }
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/native/login",
+    "operation": {
+      "tags": [
+        "auth"
+      ],
+      "summary": "Sign in a native device with username or email and password.",
+      "description": "Issues a new personal access token named device:<device_name> with a fixed 90-day TTL. Uses the password login rate limits and credential generation fence. Does not set cookies or replace the browser login session. Send the token as Authorization: Bearer; POST /api/auth/logout revokes that token.",
+      "operationId": "native_login",
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NativeLoginRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "description": "New device credential and authenticated user.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeLoginResponse"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid device_name (JSON error envelope) or malformed JSON (plain text).",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            },
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "401": {
+          "description": "Invalid username or password, including OIDC-only accounts and stale password authority.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "409": {
+          "description": "Active personal access token limit of 50 reached.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "413": {
+          "description": "JSON request body exceeds the 2 MiB limit.",
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "415": {
+          "description": "Expected Content-Type: application/json.",
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "422": {
+          "description": "Missing or incorrectly typed request fields.",
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "429": {
+          "description": "Authentication rate limit exceeded.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "500": {
+          "description": "Unexpected authentication failure.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        },
+        "503": {
+          "description": "Authentication executor or audit storage unavailable.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
+        }
+      }
+    }
   }
 ]
