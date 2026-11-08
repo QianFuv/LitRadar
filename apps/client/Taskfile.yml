@@ -1,0 +1,49 @@
+version: '3'
+
+# Server-mode build targets for the LitRadar web client.
+# Run with `wails3 task <name>` (or `task <name>`) from apps/client.
+
+vars:
+  APP_NAME: litradar-client-web
+  BIN_DIR: bin
+  TAG: '{{.TAG | default "litradar-client-web:latest"}}'
+
+tasks:
+  build:frontend:
+    desc: Builds the Vite client into frontend/dist
+    dir: ../..
+    cmds:
+      - pnpm --filter litradar-frontend build
+
+  test:
+    desc: Runs the web host unit tests
+    cmds:
+      - go vet ./internal/...
+      - go test ./internal/...
+
+  build:server:
+    desc: Builds the static linux/amd64 server-mode binary with the embedded client
+    deps:
+      - build:frontend
+    env:
+      CGO_ENABLED: '0'
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - go build -mod=readonly -tags server,production -trimpath -buildvcs=false -ldflags="-s -w" -o {{.BIN_DIR}}/{{.APP_NAME}} .
+
+  run:server:
+    desc: Builds and runs the server mode for the host platform on WAILS_SERVER_PORT (default 8080)
+    deps:
+      - build:frontend
+    env:
+      CGO_ENABLED: '0'
+    cmds:
+      - go run -tags server .
+
+  build:docker:
+    desc: Builds the distroless client-web image (TAG=name:tag)
+    deps:
+      - build:frontend
+    cmds:
+      - docker build -f build/docker/Dockerfile.server -t {{.TAG}} .

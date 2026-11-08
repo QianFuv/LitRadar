@@ -1,0 +1,36 @@
+# LitRadar web client image: the Wails v3 server build serving the embedded Vite build.
+#
+# Build context is apps/client and frontend/dist must already exist, because the
+# pnpm workspace lockfile lives at the repository root:
+#   pnpm --filter litradar-frontend build
+#   docker build -f apps/client/build/docker/Dockerfile.server -t litradar-client-web apps/client
+# The Taskfile target build:docker runs both steps.
+
+ARG GO_IMAGE=golang:1.26-alpine
+ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot
+
+FROM ${GO_IMAGE} AS builder
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY main.go ./
+COPY internal ./internal
+COPY frontend/dist ./frontend/dist
+
+RUN test -f frontend/dist/index.html \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -tags server,production \
+       -trimpath -buildvcs=false -ldflags="-s -w" -o /out/litradar-client-web .
+
+FROM ${RUNTIME_IMAGE}
+
+COPY --from=builder /out/litradar-client-web /litradar-client-web
+
+ENV WAILS_SERVER_HOST=0.0.0.0 \
+    WAILS_SERVER_PORT=8080
+
+EXPOSE 8080
+USER nonroot:nonroot
+
+ENTRYPOINT ["/litradar-client-web"]
