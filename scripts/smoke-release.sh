@@ -20,7 +20,7 @@ cd "$isolated"
 ./litradar admin index optimize-storage --confirm-index-maintenance --project-root "$isolated"
 printf 'SyntheticArchivePassword!2026\n' | ./litradar admin bootstrap --username static_smoke --password-stdin --project-root "$isolated"
 head -c 32 /dev/urandom > secret.key
-./litradar serve --host 127.0.0.1 --port 8000 --secret-key-file secret.key > service.log 2>&1 &
+./litradar serve --host 127.0.0.1 --port 8000 --secret-key-file secret.key --project-root "$isolated" > service.log 2>&1 &
 service=$!
 trap 'kill "$service" 2>/dev/null || true; wait "$service" || true; cat service.log' EXIT
 attempt=0
@@ -30,16 +30,10 @@ until curl --fail --silent http://127.0.0.1:8000/health/ready >/dev/null; do
     test "$attempt" -lt 60
     sleep 1
 done
-curl --fail --silent --dump-header /tmp/litradar-embedded-headers http://127.0.0.1:8000/ > /tmp/litradar-embedded-home
-grep -i 'content-security-policy:.*sha256-' /tmp/litradar-embedded-headers >/dev/null
-asset=$(sed -n 's/.*src="\(\/_next\/static\/[^" ]*\.js\)".*/\1/p' /tmp/litradar-embedded-home | head -n 1)
-test -n "$asset"
-curl --fail --silent "http://127.0.0.1:8000$asset" >/dev/null
-stylesheet=$(sed -n 's/.*href="\(\/_next\/static\/[^" ]*\.css\)".*/\1/p' /tmp/litradar-embedded-home | head -n 1)
-test -n "$stylesheet"
-curl --fail --silent "http://127.0.0.1:8000$stylesheet" >/dev/null
-curl --fail --silent http://127.0.0.1:8000/login >/dev/null
-test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8000/missing-embedded-page)" = 404
+for endpoint in / /login /missing-page /page/; do
+    test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:8000$endpoint")" = 404
+done
+curl --fail --silent http://127.0.0.1:8000/docs/ >/dev/null
 test ! -e web
 curl --fail --silent http://127.0.0.1:8000/openapi.json >/dev/null
 test -f data/meta/chinese_journals.csv

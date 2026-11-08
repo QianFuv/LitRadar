@@ -27,8 +27,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	request = request.WithContext(observability.StartSpan(request.Context(), "litradar_api::http_observability", "http.request", map[string]any{"component": "http", "request_id": id, "method": methodLabel(request.Method), "route": label}))
 	response := &policyResponse{ResponseWriter: writer, isHead: request.Method == "HEAD"}
 	isPreflight := request.Method == "OPTIONS"
-	redirect := frontendRedirect(request)
-	response.hasMatchedHead = redirect == "" && (selected != nil || allow != "") && label != "static.frontend" && label != "static.asset"
+	response.hasMatchedHead = selected != nil || allow != ""
 	response.prepare = func(status int) {
 		headers := writer.Header()
 		headers.Set("X-Request-Id", id)
@@ -53,9 +52,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 			}
 		} else {
 			headers.Set("Access-Control-Expose-Headers", "x-request-id,retry-after")
-			if redirect == "" {
-				applyCachePolicy(headers, request, status)
-			}
+			applyCachePolicy(headers, request, status)
 		}
 	}
 	switch {
@@ -64,9 +61,6 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 			response.Header().Set("Allow", allow)
 		}
 		response.WriteHeader(http.StatusOK)
-	case redirect != "":
-		response.Header().Set("Location", redirect)
-		response.WriteHeader(http.StatusPermanentRedirect)
 	case selected != nil:
 		selected.ServeHTTP(response, request)
 	case allow != "":
@@ -154,33 +148,7 @@ func (writer *policyResponse) finish() {
 	}
 }
 
-func isBackendPath(path string) bool {
-	for _, prefix := range []string{"/api", "/health", "/mcp", "/docs", "/openapi.json"} {
-		if path == prefix || strings.HasPrefix(path, prefix+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-// frontendRedirect removes trailing slashes without allowing a network-path destination.
-func frontendRedirect(request *http.Request) string {
-	path := request.URL.EscapedPath()
-	if request.Method != "GET" && request.Method != "HEAD" || !strings.HasSuffix(path, "/") || isBackendPath(path) {
-		return ""
-	}
-	path = strings.TrimRight(path, "/")
-	if path == "" {
-		return ""
-	}
-	path = "/" + strings.TrimLeft(path, "/")
-	if request.URL.RawQuery != "" || request.URL.ForceQuery {
-		path += "?" + request.URL.RawQuery
-	}
-	return path
-}
-
-// applyCachePolicy retains authentication, immutable asset and frontend cache precedence.
+// applyCachePolicy retains authentication cache precedence.
 func applyCachePolicy(headers http.Header, request *http.Request, status int) {
 	path := request.URL.EscapedPath()
 	_, hasAuthorization := request.Header["Authorization"]
@@ -189,26 +157,13 @@ func applyCachePolicy(headers http.Header, request *http.Request, status int) {
 	case path == "/api/auth" || strings.HasPrefix(path, "/api/auth/"):
 		headers.Set("Pragma", "no-cache")
 		headers.Set("Cache-Control", "no-store")
-	case strings.HasPrefix(path, "/_next/static/") && isCacheSuccess(status):
-		headers.Set("Cache-Control", "public, max-age=31536000, immutable")
 	case hasAuthorization || hasCookie || status == 401:
 		headers.Set("Cache-Control", "private, no-store")
-	case isFrontendRevalidation(request, path, status):
-		headers.Set("Cache-Control", "no-cache")
 	}
 }
 
-// isCacheSuccess recognizes successful or unmodified representations.
-func isCacheSuccess(status int) bool {
-	return status >= 200 && status < 300 || status == 304
-}
-
-// isFrontendRevalidation selects cacheable frontend reads, including missing-page responses.
-func isFrontendRevalidation(request *http.Request, path string, status int) bool {
-	return !isBackendPath(path) && (request.Method == "GET" || request.Method == "HEAD") && (isCacheSuccess(status) || status == 404)
-}
 func logRequest(request *http.Request, id, route string, status int, duration time.Duration) {
-	if (status >= 200 && status < 300 || status == 304) && slices.Contains([]string{"/health/live", "/health/ready", "static.asset", "static.frontend"}, route) {
+	if (status >= 200 && status < 300 || status == 304) && slices.Contains([]string{"/health/live", "/health/ready"}, route) {
 		return
 	}
 	method := methodLabel(request.Method)

@@ -240,6 +240,7 @@ func TestPrepareChecksRecoveryBeforeMigrationAndSecurityBeforeBinding(t *testing
 	}
 	configuration = runtimeConfiguration(t)
 	configuration.IsDevelopment = false
+	configuration.AreSecureCookiesRequired = true
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -247,10 +248,10 @@ func TestPrepareChecksRecoveryBeforeMigrationAndSecurityBeforeBinding(t *testing
 	defer listener.Close()
 	configuration.Port = uint16(listener.Addr().(*net.TCPAddr).Port)
 	if _, err := Prepare(context.Background(), configuration); err == nil || strings.Contains(err.Error(), "bind") {
-		t.Fatal("listener checked before deployed frontend security", err)
+		t.Fatal("listener checked before secure-cookie policy", err)
 	}
 	if _, err := os.Stat(configuration.Storage.AuthDbPath); err != nil {
-		t.Fatal("ordered migrations did not precede frontend validation", err)
+		t.Fatal("ordered migrations did not precede runtime security validation", err)
 	}
 }
 

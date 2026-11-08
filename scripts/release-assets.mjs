@@ -9,10 +9,10 @@ import { parseVersion } from "./release-version.mjs";
 /** Return the immutable platform asset names for a stable version. */
 export function releaseAssetNames(inputVersion, windowsOnly = false) {
   const version = parseVersion(inputVersion);
-  const windows = `litradar_${version}_windows_amd64.zip`;
+  const windows = `litradar-server_${version}_windows_amd64.zip`;
   return windowsOnly
     ? [windows, `${windows}.sha256`]
-    : [`litradar_${version}_linux_amd64.tar.gz`, windows, "SHA256SUMS"];
+    : [`litradar-server_${version}_linux_amd64.tar.gz`, windows, "SHA256SUMS"];
 }
 
 /** Require exact checksum membership and verify every archive before any external write. */

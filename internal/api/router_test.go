@@ -41,7 +41,7 @@ func TestRouteCompatibilityOrderingAndCaptures(t *testing.T) {
 	} {
 		routes = append(routes, route{operation, func(writer http.ResponseWriter, request *http.Request) { fmt.Fprint(writer, index) }})
 	}
-	handler := &Handler{routes: compileRoutes(routes), options: Options{Frontend: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) { fmt.Fprint(writer, "frontend") })}}
+	handler := &Handler{routes: compileRoutes(routes)}
 	for _, scenario := range []struct {
 		method, path, selected, label, allow, id, name string
 	}{
@@ -57,7 +57,7 @@ func TestRouteCompatibilityOrderingAndCaptures(t *testing.T) {
 		{"GET", "/api/x/", "", "api.unmatched", "", "", ""},
 		{"GET", "/api/x/a/", "", "api.unmatched", "", "", ""},
 		{"GET", "/api/pair/first/last", "5", "/api/pair/{id}/{id}", "", "last", ""},
-		{"GET", "/page", "frontend", "static.frontend", "", "", ""},
+		{"GET", "/page", "", "http.unmatched", "", "", ""},
 	} {
 		request := httptest.NewRequest(scenario.method, scenario.path, nil)
 		request.SetPathValue("prior", "preserved")
@@ -127,11 +127,6 @@ func TestRouterSecurityCorsCacheAndPrivateLogs(t *testing.T) {
 	handler, _, _ := completeRouter(t)
 	handler.options.CorsOrigins = []string{"https://allowed.example"}
 	handler.options.IsHstsEnabled = true
-	handler.options.Frontend = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Cache-Control", "handler-policy")
-		writer.WriteHeader(200)
-		_, _ = writer.Write([]byte("frontend"))
-	})
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
@@ -140,13 +135,13 @@ func TestRouterSecurityCorsCacheAndPrivateLogs(t *testing.T) {
 		method, path, authorization, cookie, cache string
 		status                                     int
 	}{
-		{"GET", "/_next/static/asset.js", "present", "", "public, max-age=31536000, immutable", 200},
-		{"GET", "/page", "present", "", "private, no-store", 200},
-		{"GET", "/page", "", "litradar_session=", "private, no-store", 200},
-		{"GET", "/page", "", "other=1", "no-cache", 200},
+		{"GET", "/_next/static/asset.js", "present", "", "private, no-store", 404},
+		{"GET", "/page", "present", "", "private, no-store", 404},
+		{"GET", "/page", "", "litradar_session=", "private, no-store", 404},
+		{"GET", "/page", "", "other=1", "", 404},
 		{"GET", "/api/auth/unknown", "present", "", "no-store", 404},
 		{"GET", "/api/unknown-private?secret=private-query", "", "", "", 404},
-		{"HEAD", "/page///?secret=private-query", "present", "", "", 308},
+		{"HEAD", "/page///?secret=private-query", "present", "", "private, no-store", 404},
 		{"OPTIONS", "/api/auth/me", "present", "", "", 200},
 	} {
 		request := httptest.NewRequest(scenario.method, scenario.path, nil)

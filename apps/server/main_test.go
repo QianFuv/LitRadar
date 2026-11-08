@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -22,35 +21,30 @@ import (
 	"github.com/QianFuv/LitRadar/internal/testkit/fullstack"
 )
 
-// TestEmbeddedWebProduction proves the tagged executable serves its real export from an empty project root.
-func TestEmbeddedWebProduction(t *testing.T) {
-	if os.Getenv("LITRADAR_TEST_WEB_ROOT") == "" {
-		t.Skip("requires the independently built production export")
-	}
+// TestServerProductionWithoutUI proves production starts from an empty project root.
+func TestServerProductionWithoutUI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "litradar")
-	compiler := filepath.Join(runtime.GOROOT(), "bin", "go")
-	if runtime.GOOS == "windows" {
-		binary += ".exe"
-		compiler += ".exe"
-	}
-	build := exec.CommandContext(ctx, compiler, "build", "-mod=readonly", "-trimpath", "-tags", "sqlite_fts5,sqlite_dbstat,litradar_web", "-o", binary, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatal(err, string(output))
-	}
+	binary := buildProcessExecutable(t, ctx)
 	root := t.TempDir()
 	key := filepath.Join(root, "secret.key")
 	if err := os.WriteFile(key, bytes.Repeat([]byte{42}, 32), 0600); err != nil {
 		t.Fatal(err)
 	}
-	logfile, err := os.CreateTemp(t.TempDir(), "embedded-service-*.log")
+	bootstrap := exec.CommandContext(ctx, binary, "admin", "bootstrap", "--username", "production_admin", "--password-stdin", "--project-root", root)
+	bootstrap.Dir = t.TempDir()
+	bootstrap.Stdin = strings.NewReader("SyntheticProduction!2026\n")
+	if output, err := bootstrap.CombinedOutput(); err != nil {
+		t.Fatal(err, string(output))
+	}
+	logfile, err := os.CreateTemp(t.TempDir(), "server-service-*.log")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer logfile.Close()
+	working := t.TempDir()
 	command := exec.CommandContext(ctx, binary, "serve", "--host", "127.0.0.1", "--port", "0", "--secret-key-file", key, "--project-root", root)
-	command.Dir, command.Stdout, command.Stderr = root, logfile, logfile
+	command.Dir, command.Stdout, command.Stderr = working, logfile, logfile
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -59,63 +53,64 @@ func TestEmbeddedWebProduction(t *testing.T) {
 	port := readServiceListenerPort(logfile, deadline)
 	if port == 0 {
 		data, _ := os.ReadFile(logfile.Name())
-		t.Fatal("embedded production listener unavailable", string(data))
+		t.Fatal("production listener unavailable", string(data))
 	}
 	awaitServiceReadiness(t, logfile, port, deadline)
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
-	client := &http.Client{Timeout: 5 * time.Second}
-	response, err := client.Get(base + "/")
+	client := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for _, scenario := range []struct {
+		path   string
+		status int
+	}{
+		{"/", 404}, {"/login", 404}, {"/missing-page", 404}, {"/page/", 404}, {"/_next/static/asset.js", 404},
+		{"/health/ready", 200}, {"/docs", 303}, {"/docs/", 200}, {"/openapi.json", 200}, {"/api/auth/me", 401},
+	} {
+		response, err := client.Get(base + scenario.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != scenario.status || response.Header.Get("Content-Security-Policy") == "" {
+			t.Fatal(scenario.path, response.StatusCode, response.Header, err)
+		}
+		if scenario.status == 404 && bytes.Contains(body, []byte("<html")) {
+			t.Fatal("unexpected UI fallback", scenario.path)
+		}
+	}
+	login, err := client.Post(base+"/api/auth/login", "application/json", strings.NewReader(`{"username":"production_admin","password":"SyntheticProduction!2026"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	html, err := io.ReadAll(response.Body)
-	response.Body.Close()
-	if err != nil || response.StatusCode != 200 || !strings.Contains(response.Header.Get("Content-Security-Policy"), "sha256-") || response.Header.Get("Last-Modified") != "" || response.Header.Get("ETag") == "" || response.Header.Get("Cache-Control") != "no-cache" {
-		t.Fatal("embedded HTML/security validators unavailable", response.StatusCode, response.Header, err)
+	login.Body.Close()
+	if login.StatusCode != 200 || len(login.Cookies()) != 1 {
+		t.Fatal("production cookie login failed", login.StatusCode)
 	}
-	asset := regexp.MustCompile(`src="(/_next/static/[^" ]+\.js)"`).FindSubmatch(html)
-	stylesheet := regexp.MustCompile(`href="(/_next/static/[^" ]+\.css)"`).FindSubmatch(html)
-	if len(asset) != 2 || len(stylesheet) != 2 {
-		t.Fatal("real _next script or stylesheet missing")
-	}
-	for _, endpoint := range []string{string(asset[1]), string(stylesheet[1]), "/login", "/openapi.json"} {
-		response, err := client.Get(base + endpoint)
+	for _, isAuthenticated := range []bool{false, true} {
+		request, err := http.NewRequest("POST", base+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"production-smoke","version":"1"}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json, text/event-stream")
+		if isAuthenticated {
+			request.AddCookie(login.Cookies()[0])
+		}
+		response, err := client.Do(request)
 		if err != nil {
 			t.Fatal(err)
 		}
 		response.Body.Close()
-		if response.StatusCode != 200 {
-			t.Fatal(endpoint, response.StatusCode)
+		expected := 401
+		if isAuthenticated {
+			expected = 200
 		}
-		if strings.HasPrefix(endpoint, "/_next/") && !strings.Contains(response.Header.Get("Cache-Control"), "immutable") {
-			t.Fatal("hashed asset cache contract", endpoint, response.Header)
+		if response.StatusCode != expected {
+			t.Fatal("production MCP authentication", isAuthenticated, response.StatusCode)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, "web")); !os.IsNotExist(err) {
-		t.Fatal("frontend assets were extracted", err)
-	}
-	missing, err := client.Get(base + "/missing-embedded-page")
-	if err != nil {
-		t.Fatal(err)
-	}
-	missing.Body.Close()
-	if missing.StatusCode != 404 {
-		t.Fatal("missing page", missing.StatusCode)
-	}
-	if err := os.Mkdir(filepath.Join(root, "web"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "web", "index.html"), []byte("external override"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	override, err := client.Get(base + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual, err := io.ReadAll(override.Body)
-	override.Body.Close()
-	if err != nil || !bytes.Equal(actual, html) {
-		t.Fatal("external web tree changed embedded response", err)
+	if _, err := os.Stat(filepath.Join(working, "data")); !os.IsNotExist(err) {
+		t.Fatal("project root leaked into working directory", err)
 	}
 }
 

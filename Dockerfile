@@ -17,42 +17,7 @@ RUN apt-get update \
     && printf '%s  /tmp/node.tar.xz\n' "$archive_sha256" | sha256sum --check --strict \
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
     && rm /tmp/node.tar.xz \
-    && npm install --global pnpm@12.16.1 --ignore-scripts --no-audit --no-fund \
-    && node /usr/local/lib/node_modules/pnpm/install.js \
-    && test "$(node --version)" = v26.11.1 \
-    && test "$(pnpm --version)" = 12.16.1
-
-
-FROM node-toolchain AS frontend-deps
-
-WORKDIR /app
-
-COPY app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml ./
-
-RUN --mount=type=cache,id=litradar-pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile --store-dir /pnpm/store
-
-
-FROM node-toolchain AS frontend-build
-
-WORKDIR /app
-
-COPY --from=frontend-deps /app/node_modules node_modules/
-COPY app/ ./
-COPY scripts/generate-csp.mjs /scripts/generate-csp.mjs
-
-RUN --mount=type=cache,id=litradar-next-build,target=/app/.next/cache \
-    pnpm build
-RUN find out -type f \( \
-        -name '*.css' \
-        -o -name '*.html' \
-        -o -name '*.js' \
-        -o -name '*.json' \
-        -o -name '*.map' \
-        -o -name '*.svg' \
-        -o -name '*.txt' \
-        -o -name '*.xml' \
-    \) -exec gzip --best --keep --no-name {} +
+    && test "$(node --version)" = v26.11.1
 
 
 FROM --platform=$BUILDPLATFORM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS go-build
@@ -97,8 +62,6 @@ RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod go mod download && 
 COPY cmd cmd
 COPY internal internal
 COPY apps/server apps/server
-RUN rm -rf /app/internal/webassets/export
-COPY --from=frontend-build /app/out internal/webassets/export
 COPY assets assets
 COPY scripts/go-build-inventory.sh /usr/local/bin/go-build-inventory
 COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
@@ -113,7 +76,7 @@ RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod \
     && mkdir -p /out \
     && node scripts/build-simple-tokenizer.mjs \
     && export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment} from "./scripts/build-simple-tokenizer.mjs"; process.stdout.write(simpleBuildEnvironment().CGO_CFLAGS)')" \
-    && go build -mod=readonly -trimpath -tags sqlite_fts5,sqlite_dbstat,litradar_web -o /out/litradar ./apps/server \
+    && go build -mod=readonly -trimpath -tags sqlite_fts5,sqlite_dbstat -o /out/litradar ./apps/server \
     && sh /usr/local/bin/go-build-inventory
 
 

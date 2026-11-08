@@ -16,7 +16,7 @@ assert(
   "Expected exactly one release image",
 );
 assertReleasePlatform(images[0].Os, images[0].Architecture, "linux");
-const name = `litradar_${version}_linux_${architecture}`;
+const name = `litradar-server_${version}_linux_${architecture}`;
 const parent = path.resolve("release-results/packages");
 const directory = path.join(parent, name);
 assert(!fs.existsSync(directory), "Package directory already exists");
@@ -57,6 +57,15 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 export LITRADAR_OBSCURA_PATH="\${LITRADAR_OBSCURA_PATH:-$root/obscura}"
 cd "$root"
+case "\${1-}" in
+  serve|admin|index|cfp|notify|push|scheduler|delivery-run)
+    has_project_root=false
+    for argument do
+      if [ "$argument" = --project-root ]; then has_project_root=true; fi
+    done
+    if [ "$has_project_root" = false ]; then set -- "$@" --project-root "$root"; fi
+    ;;
+esac
 exec "$root/litradar" "$@"
 `,
   { mode: 0o755 },

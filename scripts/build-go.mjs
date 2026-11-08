@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { stageWebAssets } from "./stage-web-assets.mjs";
 import {
   buildSimple,
   simpleBuildEnvironment,
@@ -12,7 +11,6 @@ import {
 const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const OUTPUT = path.join(ROOT, "target", "go");
 await mkdir(OUTPUT, { recursive: true });
-await stageWebAssets(ROOT);
 await buildSimple(ROOT);
 for (const command of ["litradar", "litradar-fixture"]) {
   const filename = path.join(
@@ -26,9 +24,7 @@ for (const command of ["litradar", "litradar-fixture"]) {
       "-mod=readonly",
       "-trimpath",
       "-tags",
-      command === "litradar"
-        ? "sqlite_fts5,sqlite_dbstat,litradar_web"
-        : "sqlite_fts5,sqlite_dbstat",
+      "sqlite_fts5,sqlite_dbstat",
       "-o",
       filename,
       command === "litradar" ? "./apps/server" : "./cmd/litradar-fixture",

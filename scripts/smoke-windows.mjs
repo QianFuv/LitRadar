@@ -20,7 +20,7 @@ const report =
 fs.mkdirSync(report, { recursive: true });
 const extracted = fs.mkdtempSync(path.join(report, "extracted space-"));
 execFileSync("tar", ["-xf", archive, "-C", extracted], { windowsHide: true });
-const root = path.join(extracted, `litradar_${version}_windows_amd64`);
+const root = path.join(extracted, `litradar-server_${version}_windows_amd64`);
 const provenance = JSON.parse(
   fs.readFileSync(path.join(root, "build.json"), "utf8"),
 );
@@ -296,28 +296,13 @@ try {
     assert(Date.now() < deadline, "Windows service readiness timed out");
     await setTimeout(200);
   }
-  for (const endpoint of ["/", "/openapi.json"])
+  for (const endpoint of ["/docs/", "/openapi.json"])
     assert((await fetch(baseUrl + endpoint)).ok, endpoint);
-  assert(
-    !fs.existsSync(path.join(root, "web")),
-    "Release must not contain external web assets",
-  );
-  const home = await fetch(baseUrl + "/");
-  assert(home.headers.get("content-security-policy")?.includes("sha256-"));
-  assert.equal(home.headers.get("last-modified"), null);
-  assert(home.headers.get("etag"));
-  const html = await home.text();
-  const script = html.match(/src="(\/_next\/static\/[^" ]+\.js)"/);
-  assert(script, "Embedded _next script is missing");
-  assert(
-    (await fetch(baseUrl + script[1])).ok,
-    "Embedded script request failed",
-  );
-  const stylesheet = html.match(/href="(\/_next\/static\/[^" ]+\.css)"/);
-  assert(stylesheet, "Embedded _next stylesheet is missing");
-  assert((await fetch(baseUrl + stylesheet[1])).ok);
-  assert((await fetch(baseUrl + "/login")).ok);
-  assert.equal((await fetch(baseUrl + "/missing-embedded-page")).status, 404);
+  for (const endpoint of ["/", "/login", "/missing-page", "/page/"])
+    assert.equal(
+      (await fetch(baseUrl + endpoint, { redirect: "manual" })).status,
+      404,
+    );
   assert.equal((await fetch(baseUrl + "/api/auth/me")).status, 401);
   assert(fs.existsSync(path.join(isolated, "data/meta/chinese_journals.csv")));
   const login = await fetch(baseUrl + "/api/auth/login", {
@@ -351,7 +336,7 @@ try {
     obscura,
     [
       "fetch",
-      baseUrl + "/",
+      baseUrl + "/docs/",
       "--stealth",
       "--timeout",
       "30",
@@ -369,8 +354,8 @@ try {
   );
   const page = JSON.parse(fs.readFileSync(captured, "utf8"));
   assert.equal(page.protocol, "litradar.cfp.page.v1");
-  assert.equal(page.finalUrl, baseUrl + "/");
-  assert(page.html.includes("LitRadar"));
+  assert.equal(page.finalUrl, baseUrl + "/docs/");
+  assert(page.html.includes("swagger"));
 } finally {
   if (service.pid && service.exitCode === null)
     execFileSync(
@@ -390,7 +375,7 @@ fs.writeFileSync(
         "relocated-launcher",
         "restricted-path",
         "ready",
-        "embedded-web-csp",
+        "server-only-404",
         "openapi",
         "anonymous-auth",
         "metadata",

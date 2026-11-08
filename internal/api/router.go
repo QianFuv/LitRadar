@@ -38,7 +38,7 @@ type Services struct {
 	StoragePool, UpstreamPool, KdfPool *executor.Pool
 }
 
-// Options contains startup-validated security and routing policy, with an optional frontend service.
+// Options contains startup-validated security and routing policy.
 type Options struct {
 	AreCookiesSecure                  bool
 	IsDevelopment                     bool
@@ -48,7 +48,6 @@ type Options struct {
 	CorsOrigins, McpHosts, McpOrigins []string
 	ContentSecurityPolicy             string
 	IsHstsEnabled                     bool
-	Frontend                          http.Handler
 }
 
 // Handler serves the complete REST and stateful MCP surface using borrowed services.
@@ -143,7 +142,7 @@ func GenerateOpenAPI() ([]byte, error) {
 	return openapi.Generate(bindings)
 }
 
-// route selects reserved endpoints before ranked application routes and the frontend.
+// route selects reserved endpoints before ranked application routes.
 func (handler *Handler) route(request *http.Request) (http.Handler, string, string) {
 	path := request.URL.EscapedPath()
 	if endpoint, pattern, allow, isHandled := handler.reservedRoute(request, path); isHandled {
@@ -157,9 +156,6 @@ func (handler *Handler) route(request *http.Request) (http.Handler, string, stri
 		}
 		selected.bindParameters(request, pathParts)
 		return selected.handler, selected.operation.Path, ""
-	}
-	if handler.options.Frontend != nil && !isBackendPath(path) {
-		return handler.options.Frontend, unmatchedRoute(path), ""
 	}
 	return nil, unmatchedRoute(path), ""
 }
@@ -286,15 +282,12 @@ func (candidate *compiledRoute) matches(pathParts []string) bool {
 }
 
 func unmatchedRoute(path string) string {
-	if strings.HasPrefix(path, "/_next/static/") {
-		return "static.asset"
-	}
 	for _, prefix := range []string{"/api", "/mcp", "/health"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return prefix[1:] + ".unmatched"
 		}
 	}
-	return "static.frontend"
+	return "http.unmatched"
 }
 
 func withRequestId(request *http.Request, id string) *http.Request {

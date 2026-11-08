@@ -29,15 +29,15 @@ import {
 
 const RELEASE_COMMIT = "a".repeat(40);
 const RELEASE_ASSETS = [
-  "litradar_0.2.0_linux_amd64.tar.gz",
-  "litradar_0.2.0_windows_amd64.zip",
+  "litradar-server_0.2.0_linux_amd64.tar.gz",
+  "litradar-server_0.2.0_windows_amd64.zip",
   "SHA256SUMS",
 ].map((name) => ({ name, digest: `sha256:${"b".repeat(64)}`, size: 100 }));
 
 test("complete releases require exactly Linux amd64, Windows x64 and one checksum manifest", () => {
   assert.deepEqual(releaseAssetNames("0.2.1"), [
-    "litradar_0.2.1_linux_amd64.tar.gz",
-    "litradar_0.2.1_windows_amd64.zip",
+    "litradar-server_0.2.1_linux_amd64.tar.gz",
+    "litradar-server_0.2.1_windows_amd64.zip",
     "SHA256SUMS",
   ]);
 });

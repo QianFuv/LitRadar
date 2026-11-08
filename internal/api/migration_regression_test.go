@@ -16,11 +16,10 @@ import (
 	"github.com/QianFuv/LitRadar/internal/testkit/testlog"
 )
 
-func TestHealthAndStaticSuccessLogsAreQuietButReadinessFailureIsVisible(t *testing.T) {
+func TestHealthSuccessLogsAreQuietButReadinessFailureIsVisible(t *testing.T) {
 	handler, _, _ := completeRouter(t)
-	handler.options.Frontend = http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(200) })
 	_, finish := testlog.Capture(t)
-	for _, route := range []string{"/health/live", "/_next/static/asset.js", "/page", "/health/ready"} {
+	for _, route := range []string{"/health/live", "/health/ready"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest("GET", route, nil))
 		expected := 200

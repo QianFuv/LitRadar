@@ -19,7 +19,6 @@
 /output/
 /app/out/
 /app/.vitest-attachments/
-/internal/webassets/export/
 /secrets/
 /.playwright-cli/
 /.antigravitycli/

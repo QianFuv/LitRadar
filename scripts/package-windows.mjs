@@ -6,18 +6,34 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseVersion } from "./release-version.mjs";
-import { stageWebAssets } from "./stage-web-assets.mjs";
-import { stageReleaseWeb } from "./release-web.mjs";
 import { assertReleasePlatform } from "./release-platform.mjs";
 import {
   buildSimple,
   simpleBuildEnvironment,
 } from "./build-simple-tokenizer.mjs";
 
+const SERVER_SOURCE_PATHS = [
+  "go.mod",
+  "go.sum",
+  "VERSION",
+  "version.go",
+  "apps/server",
+  "cmd",
+  "internal",
+  "assets",
+  "third_party",
+  "scripts",
+  "tests",
+  "docs/third-party",
+  "LICENSE",
+  "Dockerfile",
+  ".dockerignore",
+];
+
 const toolsRoot = fileURLToPath(new URL("..", import.meta.url));
 const [sourceArgument, inputVersion, commit, mode] = process.argv.slice(2);
 assert(
-  mode === undefined || mode === "--local-smoke" || mode === "--verified-web",
+  mode === undefined || mode === "--local-smoke",
   "Unknown packaging mode",
 );
 const isLocalSmoke = mode === "--local-smoke";
@@ -43,7 +59,7 @@ if (isLocalSmoke) fs.mkdirSync("test-results", { recursive: true });
 const output = isLocalSmoke
   ? fs.mkdtempSync(path.resolve("test-results/windows-package-"))
   : path.resolve("release-results/windows");
-const name = `litradar_${version}_windows_amd64`;
+const name = `litradar-server_${version}_windows_amd64`;
 const directory = path.join(output, "packages", name);
 const assets = path.join(output, "assets");
 const dependencies = JSON.parse(
@@ -72,6 +88,8 @@ function sourceInventoryFingerprint() {
     "--cached",
     "--others",
     "--exclude-standard",
+    "--",
+    ...SERVER_SOURCE_PATHS,
   ])
     .split("\0")
     .filter(Boolean)
@@ -134,9 +152,6 @@ const environment = {
   GOOS: "windows",
   GOARCH: "amd64",
 };
-if (mode === "--verified-web")
-  await stageReleaseWeb(path.resolve("release-results/web"), commit, source);
-else await stageWebAssets(source);
 run(
   "go",
   [
@@ -144,7 +159,7 @@ run(
     "-mod=readonly",
     "-trimpath",
     "-tags",
-    "sqlite_fts5,sqlite_dbstat,litradar_web",
+    "sqlite_fts5,sqlite_dbstat",
     "-ldflags",
     "-linkmode external -extldflags -static",
     "-o",
@@ -256,8 +271,17 @@ const provenance = {
         localVerificationOnly: true,
         sourceChanges,
         sourceDiffSha256: createHash("sha256")
-          .update(run("git", ["diff", "HEAD", "--binary"]))
+          .update(
+            run("git", [
+              "diff",
+              "HEAD",
+              "--binary",
+              "--",
+              ...SERVER_SOURCE_PATHS,
+            ]),
+          )
           .digest("hex"),
+        sourceInventoryScope: SERVER_SOURCE_PATHS,
         sourceInventorySha256: sourceInventoryFingerprint(),
       }
     : {}),
@@ -281,6 +305,7 @@ try {
   $env:PATH = "$PSScriptRoot;" + (Join-Path $PSScriptRoot 'native/${dependencies.poppler.directory}/Library/bin') + ";$previousPath"
   if (-not $env:LITRADAR_OBSCURA_PATH) { $env:LITRADAR_OBSCURA_PATH = Join-Path $PSScriptRoot 'obscura.exe' }
   if (-not $env:LITRADAR_PDFTOTEXT_PATH) { $env:LITRADAR_PDFTOTEXT_PATH = Join-Path $PSScriptRoot 'native/${dependencies.poppler.directory}/Library/bin/pdftotext.exe' }
+  if ($args.Count -gt 0 -and $args[0] -in @('serve', 'admin', 'index', 'cfp', 'notify', 'push', 'scheduler', 'delivery-run') -and $args -notcontains '--project-root') { $args = $args + @('--project-root', $PSScriptRoot) }
   & (Join-Path $PSScriptRoot 'litradar.exe') @args
   exit $LASTEXITCODE
 } finally {

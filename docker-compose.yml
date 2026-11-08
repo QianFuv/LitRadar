@@ -28,12 +28,16 @@ services:
       test:
         [
           "CMD-SHELL",
-          "curl --fail --silent --show-error http://127.0.0.1:8000/health/ready >/dev/null && curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null",
+          "curl --fail --silent --show-error http://127.0.0.1:8000/health/ready >/dev/null",
         ]
       interval: 10s
       timeout: 3s
       retries: 3
       start_period: 10s
+
+  # Wave 2: add client-web (Wails Server Build) and caddy here.
+  # Caddy routes /api*, /mcp*, /docs*, /openapi.json and /health/* to litradar.
+  # All other paths route to client-web; its image is defined by the client release.
 
 secrets:
   litradar_key:

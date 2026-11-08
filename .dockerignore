@@ -5,17 +5,7 @@ __pycache__/
 .gitignore
 node_modules/
 .next/
-app/node_modules/
-app/.next/
-app/out/
-app/coverage/
-app/test-results/
-app/playwright-report/
-app/*.tsbuildinfo
-app/tests/
-app/playwright.config.tsx
-app/playwright.full-stack.config.tsx
-app/vitest.config.tsx
+app/
 target/
 output/
 data/
@@ -38,5 +28,5 @@ docs/
 .idea/
 .vscode/
 .env
-internal/webassets/export/
+apps/client/
 release-results/

@@ -23,7 +23,6 @@ import (
 	"github.com/QianFuv/LitRadar/internal/storage/scheduler"
 	"github.com/QianFuv/LitRadar/internal/storage/secrets"
 	"github.com/QianFuv/LitRadar/internal/storage/settings"
-	"github.com/QianFuv/LitRadar/internal/webassets"
 )
 
 // Prepared owns the listener, API resources and deployment key until all service work drains.
@@ -203,7 +202,7 @@ func (prepared *Prepared) prepareRuntimeCatalogs(ctx context.Context, configurat
 	return nil
 }
 
-// runtimePolicy preserves persisted-policy and frontend-security admission before delivery resources.
+// runtimePolicy preserves persisted-policy and server-security admission before delivery resources.
 func (prepared *Prepared) runtimePolicy(ctx context.Context, configuration Config) (Config, error) {
 	values, err := settings.New(prepared.services.Auth, prepared.services.Codec, configuration.IsDevelopment).Load(ctx)
 	if err != nil {
@@ -216,21 +215,7 @@ func (prepared *Prepared) runtimePolicy(ctx context.Context, configuration Confi
 	if err != nil {
 		return configuration, err
 	}
-	configuration.ApiOptions.ContentSecurityPolicy = developmentCsp
-	if !configuration.IsDevelopment {
-		assets, assetError := webassets.Files()
-		if assetError != nil {
-			return configuration, assetError
-		}
-		configuration.ApiOptions.ContentSecurityPolicy, err = loadSecurityPolicyFiles(assets)
-		if err != nil {
-			return configuration, err
-		}
-		configuration.ApiOptions.IsHstsEnabled = configuration.AreSecureCookiesRequired
-		configuration.ApiOptions.Frontend, err = newEmbeddedFrontend(assets)
-		if err != nil {
-			return configuration, err
-		}
-	}
+	configuration.ApiOptions.ContentSecurityPolicy = serverContentSecurityPolicy
+	configuration.ApiOptions.IsHstsEnabled = !configuration.IsDevelopment && configuration.AreSecureCookiesRequired
 	return configuration, nil
 }
