@@ -20,6 +20,7 @@ import {
 } from '@/lib/api';
 import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
 import { invalidateFavoriteMemberships } from '@/components/feature/use-favorite-checks';
+import { CLIENT_PLATFORM } from '@/lib/platform';
 
 /**
  * Build a stable identity for one favorite row in selection state.
@@ -48,27 +49,6 @@ function toFavoriteArticleRef(favorite: FavoriteArticleItem): FavoriteArticleRef
     article_id: favorite.article_id,
     db_name: favorite.db_name,
   };
-}
-
-/**
- * Trigger one browser download and release its temporary object URL.
- *
- * @param blob - Download response body.
- * @param filename - Safe attachment filename.
- */
-function saveBrowserDownload(blob: Blob, filename: string): void {
-  const objectUrl = window.URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = filename;
-  anchor.hidden = true;
-  document.body.append(anchor);
-  try {
-    anchor.click();
-  } finally {
-    anchor.remove();
-    window.URL.revokeObjectURL(objectUrl);
-  }
 }
 
 /**
@@ -215,7 +195,7 @@ export function useFavoritesPage(userId: number) {
       downloadFavoriteExport(folderId, format),
     onMutate: () => setExportFeedback(null),
     onSuccess: ({ blob, filename }) => {
-      saveBrowserDownload(blob, filename);
+      CLIENT_PLATFORM.saveDownload(blob, filename);
       setExportFeedback({ tone: 'success', message: `已导出 ${filename}。` });
     },
     onError: (error) => {

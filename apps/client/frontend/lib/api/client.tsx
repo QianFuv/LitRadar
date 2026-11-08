@@ -1,5 +1,5 @@
 /**
- * Shared browser API transport, error, URL, and database-selection helpers.
+ * Shared API transport, error, URL, and database-selection helpers.
  */
 
 import {
@@ -8,6 +8,7 @@ import {
   writeLocalStorageValue,
 } from '@/lib/browser-storage';
 import type { ContractParser } from '@/lib/api-contract';
+import { CLIENT_PLATFORM } from '@/lib/platform';
 
 export interface ApiErrorInfo {
   code: string | null;
@@ -72,16 +73,31 @@ const LEGACY_SELECTED_DATABASE_KEY = 'selected_database';
 
 const REQUEST_ID_HEADER = 'X-Request-Id';
 
+// ponytail: one ceiling for every request; add a per-call override when a longer endpoint appears.
+/** Upper bound for one request attempt, including reading the response body. */
+export const REQUEST_TIMEOUT_MS = 60_000;
+/** Additional attempts allowed for idempotent requests. */
+export const MAX_IDEMPOTENT_RETRIES = 2;
+/** Longest server-requested Retry-After delay the client waits for before giving up. */
+export const MAX_RETRY_AFTER_MS = 5_000;
+/** First backoff delay after a network failure; doubles for each later attempt. */
+export const NETWORK_RETRY_BASE_DELAY_MS = 300;
+/** Stable error code for a request attempt that exceeded {@link REQUEST_TIMEOUT_MS}. */
+export const REQUEST_TIMEOUT_CODE = 'request_timeout';
+
+const RETRY_AFTER_STATUSES = new Set([429, 503]);
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD']);
+
+/** Result of one request attempt: a consumed value or a delay before the next attempt. */
+type AttemptOutcome<T> = { kind: 'done'; value: T } | { kind: 'retry'; delayMs: number };
+
 /**
- * Resolve the backend base URL for client or server-side rendering.
+ * Resolve the backend base URL from the active client platform.
  *
  * @returns Absolute backend URL.
  */
 export function resolveApiBase(): string {
-  if (typeof window !== 'undefined' && window.location.origin !== 'null') {
-    return window.location.origin;
-  }
-  return 'http://localhost';
+  return CLIENT_PLATFORM.serverOrigin();
 }
 
 /**
@@ -246,19 +262,147 @@ async function createApiError(response: Response, fallback: string): Promise<Api
 }
 
 /**
- * Fetch one API response with shared credentials and headers.
+ * Build request options with the shared JSON content type and caller headers.
  *
- * @param url - Absolute endpoint URL.
- * @param init - Fetch options.
- * @returns Raw fetch response.
+ * @param init - Caller request options.
+ * @returns Request options passed to the platform transport.
  */
-async function fetchApiResponse(url: string, init?: RequestInit): Promise<Response> {
+function buildRequestInit(init?: RequestInit): RequestInit {
   const hasBody = typeof init?.body !== 'undefined';
   const headers: Record<string, string> = {
     ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
     ...(init?.headers as Record<string, string> | undefined),
   };
-  return fetch(url, { ...init, credentials: 'include', headers });
+  return { ...init, headers };
+}
+
+/**
+ * Create the typed error raised when one request attempt exceeds its time budget.
+ *
+ * @returns Retryable timeout API error.
+ */
+function createTimeoutError(): ApiError {
+  return new ApiError('请求超时，请稍后重试', 0, REQUEST_TIMEOUT_CODE, null, null, true, null);
+}
+
+/**
+ * Wait before retrying unless the caller cancels first.
+ *
+ * @param delayMs - Delay in milliseconds.
+ * @param signal - Caller cancellation signal.
+ * @returns Promise resolved after the delay or rejected with the abort reason.
+ */
+function waitForRetry(delayMs: number, signal: AbortSignal | null | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    /** Stop waiting and propagate the caller's cancellation. */
+    function handleAbort(): void {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', handleAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener('abort', handleAbort, { once: true });
+  });
+}
+
+/**
+ * Read a server-requested retry delay that the client is willing to honor.
+ *
+ * @param response - Failed response.
+ * @returns Delay in milliseconds, or null when the response should not be retried.
+ */
+function readRetryAfterDelay(response: Response): number | null {
+  if (!RETRY_AFTER_STATUSES.has(response.status)) {
+    return null;
+  }
+  const seconds = parseRetryAfterSeconds(response.headers.get('Retry-After'));
+  if (seconds === null || seconds * 1000 > MAX_RETRY_AFTER_MS) {
+    return null;
+  }
+  return seconds * 1000;
+}
+
+/**
+ * Run one request attempt with its own timeout that also covers reading the response body.
+ *
+ * @param url - Absolute endpoint URL.
+ * @param requestInit - Prepared request options, including an optional caller signal.
+ * @param consume - Response reader that returns the result or throws a typed API error.
+ * @param attempt - Zero-based attempt number.
+ * @param canRetry - Whether this attempt may request another one.
+ * @returns Consumed value or the delay before the next attempt.
+ */
+async function runAttempt<T>(
+  url: string,
+  requestInit: RequestInit,
+  consume: (response: Response) => Promise<T>,
+  attempt: number,
+  canRetry: boolean,
+): Promise<AttemptOutcome<T>> {
+  const callerSignal = requestInit.signal;
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
+  const signal = callerSignal
+    ? AbortSignal.any([callerSignal, timeoutController.signal])
+    : timeoutController.signal;
+  try {
+    let response: Response;
+    try {
+      response = await CLIENT_PLATFORM.send(url, { ...requestInit, signal });
+    } catch (error) {
+      if (canRetry && !signal.aborted) {
+        return { kind: 'retry', delayMs: NETWORK_RETRY_BASE_DELAY_MS * 2 ** attempt };
+      }
+      throw error;
+    }
+    if (!response.ok && canRetry) {
+      const delayMs = readRetryAfterDelay(response);
+      if (delayMs !== null) {
+        await response.body?.cancel().catch(() => undefined);
+        return { kind: 'retry', delayMs };
+      }
+    }
+    return { kind: 'done', value: await consume(response) };
+  } catch (error) {
+    if (timeoutController.signal.aborted && !callerSignal?.aborted) {
+      throw createTimeoutError();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Send one request through the active platform, retrying idempotent requests after network
+ * failures or an honored Retry-After, and propagating caller cancellation unchanged.
+ *
+ * @param url - Absolute endpoint URL.
+ * @param init - Caller request options, including an optional cancellation signal.
+ * @param consume - Response reader that returns the result or throws a typed API error.
+ * @returns Consumed response result.
+ */
+async function executeRequest<T>(
+  url: string,
+  init: RequestInit | undefined,
+  consume: (response: Response) => Promise<T>,
+): Promise<T> {
+  const requestInit = buildRequestInit(init);
+  const isIdempotent = IDEMPOTENT_METHODS.has((requestInit.method ?? 'GET').toUpperCase());
+  for (let attempt = 0; ; attempt += 1) {
+    const canRetry = isIdempotent && attempt < MAX_IDEMPOTENT_RETRIES;
+    const outcome = await runAttempt(url, requestInit, consume, attempt, canRetry);
+    if (outcome.kind === 'done') {
+      return outcome.value;
+    }
+    await waitForRetry(outcome.delayMs, requestInit.signal);
+  }
 }
 
 /**
@@ -293,7 +437,7 @@ async function parseJson<T>(
 }
 
 /**
- * Fetch JSON from an endpoint using the browser session cookie.
+ * Fetch JSON from an endpoint through the active client platform.
  *
  * @param url - Absolute endpoint URL.
  * @param init - Fetch options.
@@ -307,8 +451,7 @@ export async function requestJson<T>(
   fallback = '请求失败',
   parser?: ContractParser<T>,
 ): Promise<T> {
-  const response = await fetchApiResponse(url, init);
-  return parseJson<T>(response, fallback, parser);
+  return executeRequest(url, init, (response) => parseJson<T>(response, fallback, parser));
 }
 
 /**
@@ -324,12 +467,13 @@ export async function requestDownload(
   init?: RequestInit,
   fallback = '下载失败',
 ): Promise<ApiDownload> {
-  const response = await fetchApiResponse(url, init);
-  if (!response.ok) {
-    throw await createApiError(response, fallback);
-  }
-  return {
-    blob: await response.blob(),
-    filename: parseDownloadFilename(response.headers.get('Content-Disposition')),
-  };
+  return executeRequest(url, init, async (response) => {
+    if (!response.ok) {
+      throw await createApiError(response, fallback);
+    }
+    return {
+      blob: await response.blob(),
+      filename: parseDownloadFilename(response.headers.get('Content-Disposition')),
+    };
+  });
 }
