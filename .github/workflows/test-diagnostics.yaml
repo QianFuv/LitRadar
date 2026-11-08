@@ -49,11 +49,11 @@ jobs:
         with:
           node-version: "26.11.1"
           cache: pnpm
-          cache-dependency-path: app/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install frontend dependencies
         id: install_frontend_dependencies
-        run: pnpm --dir app install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Generate threshold-free coverage diagnostics
         id: diagnostics
@@ -95,7 +95,7 @@ jobs:
           CI_PLATFORMS: independent
           CI_STATUS: ${{ job.status }}
           CI_CHECKS: ${{ toJSON(steps) }}
-          CI_REPORT_ROOT: app/coverage
+          CI_REPORT_ROOT: apps/client/frontend/coverage
         run: node scripts/ci-report.mjs manifest .
 
       - name: Upload frontend coverage
@@ -104,7 +104,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-coverage-diagnostics
-          path: app/coverage/
+          path: apps/client/frontend/coverage/
           if-no-files-found: warn
           retention-days: 14
 

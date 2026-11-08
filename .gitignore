@@ -17,8 +17,8 @@
 /docs/plan/
 /docs/report/
 /output/
-/app/out/
-/app/.vitest-attachments/
+/node_modules/
+/apps/client/frontend/.vitest-attachments/
 /secrets/
 /.playwright-cli/
 /.antigravitycli/

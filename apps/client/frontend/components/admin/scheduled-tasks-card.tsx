@@ -1,0 +1,1115 @@
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, Clock3, Pencil, Plus, Trash2, Clock } from '@/components/ui/animated-icons';
+
+import {
+  adminCreateScheduledTask,
+  adminDeleteScheduledTask,
+  adminGetSchedulerStatus,
+  adminGetScheduledTasks,
+  adminUpdateScheduledTask,
+  type ScheduledJobSpec,
+  type SchedulerRunState,
+  type ScheduledTaskCreate,
+  type ScheduledTaskInfo,
+} from '@/lib/api';
+import { AdminListHeader } from '@/components/admin/admin-list-header';
+import { SettingsGroup, StatusPill } from '@/components/settings/settings-section';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+import {
+  DISCLOSURE_VARIANTS,
+  MotionDiv,
+  MotionParagraph,
+  MotionPresence,
+  REVEAL_VARIANTS,
+  SWAP_VARIANTS,
+} from '@/components/ui/motion';
+import { Switch } from '@/components/ui/switch';
+import { cn } from '@/lib/utils';
+import { RevealItem } from '@/components/ui/reveal';
+import { LoadingText } from '@/components/ui/loading-text';
+
+type TaskFormState = {
+  coalesce: boolean;
+  cron: string;
+  database: string;
+  enabled: boolean;
+  maxCandidates: string;
+  metadataFile: string;
+  name: string;
+  timeoutSeconds: string;
+  timezone: string;
+};
+
+type JobPresetId =
+  | 'index-update'
+  | 'index-update-folder'
+  | 'index-update-external'
+  | 'index-update-both'
+  | 'folder-only'
+  | 'external-only';
+
+const JOB_PRESETS: { label: string; value: JobPresetId }[] = [
+  { value: 'index-update', label: '索引更新' },
+  { value: 'index-update-folder', label: '索引更新 + 文件夹推送' },
+  { value: 'index-update-external', label: '索引更新 + 外部推送' },
+  { value: 'index-update-both', label: '索引更新 + 双推送' },
+  { value: 'folder-only', label: '仅文件夹推送' },
+  { value: 'external-only', label: '仅外部推送' },
+];
+
+const DEFAULT_FORM: TaskFormState = {
+  coalesce: true,
+  cron: '0 8 * * *',
+  database: '',
+  enabled: true,
+  maxCandidates: '',
+  metadataFile: '',
+  name: '',
+  timeoutSeconds: '3600',
+  timezone: 'UTC',
+};
+
+const DEFAULT_PRESET: JobPresetId = 'index-update-external';
+
+/**
+ * Resolve the browser's IANA time zone for new task defaults.
+ *
+ * @returns Browser time zone, or UTC when the runtime does not expose one.
+ */
+function getBrowserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+}
+
+/**
+ * Return whether a preset starts with an index refresh.
+ *
+ * @param preset - Selected structured job preset.
+ * @returns Whether index-only arguments should be displayed.
+ */
+function isIndexPreset(preset: JobPresetId): boolean {
+  return preset.startsWith('index-update');
+}
+
+/**
+ * Resolve a typed job to its structured UI preset.
+ *
+ * @param job - Stored typed job, or null for a migrated legacy task.
+ * @returns Matching preset identifier.
+ */
+function getPresetForJob(job: ScheduledJobSpec | null): JobPresetId {
+  if (!job) {
+    return DEFAULT_PRESET;
+  }
+  if (job.kind === 'notify') {
+    return 'external-only';
+  }
+  if (job.kind === 'push') {
+    return 'folder-only';
+  }
+  if (job.notify && job.push) {
+    return 'index-update-both';
+  }
+  if (job.push) {
+    return 'index-update-folder';
+  }
+  if (job.notify) {
+    return 'index-update-external';
+  }
+  return 'index-update';
+}
+
+/**
+ * Build the allowlisted job payload represented by the form.
+ *
+ * @param form - Structured task form values.
+ * @param preset - Selected job preset.
+ * @returns Generated API job specification.
+ */
+function buildScheduledJob(form: TaskFormState, preset: JobPresetId): ScheduledJobSpec {
+  if (isIndexPreset(preset)) {
+    const metadataFile = form.metadataFile.trim();
+    return {
+      kind: 'index',
+      notify: preset === 'index-update-external' || preset === 'index-update-both',
+      push: preset === 'index-update-folder' || preset === 'index-update-both',
+      ...(metadataFile ? { metadata_file: metadataFile } : {}),
+    };
+  }
+
+  const database = form.database.trim();
+  const maxCandidates = form.maxCandidates.trim();
+  return {
+    kind: preset === 'folder-only' ? 'push' : 'notify',
+    ...(database ? { database } : {}),
+    ...(maxCandidates ? { max_candidates: Number(maxCandidates) } : {}),
+  };
+}
+
+/**
+ * Return whether an optional filename matches the backend basename allowlist.
+ *
+ * @param value - Candidate filename.
+ * @param extension - Required filename extension.
+ * @returns Whether the optional value is empty or a safe basename.
+ */
+function isSafeBasename(value: string, extension: '.csv' | '.sqlite'): boolean {
+  const trimmed = value.trim();
+  return (
+    !trimmed ||
+    (trimmed.length <= 128 &&
+      /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed) &&
+      !trimmed.includes('..') &&
+      trimmed.endsWith(extension))
+  );
+}
+
+/**
+ * Return whether all structured job arguments are valid.
+ *
+ * @param form - Structured task form values.
+ * @param preset - Selected job preset.
+ * @returns Whether the form can be submitted.
+ */
+function isJobFormValid(form: TaskFormState, preset: JobPresetId): boolean {
+  if (isIndexPreset(preset)) {
+    return isSafeBasename(form.metadataFile, '.csv');
+  }
+  const maxCandidates = form.maxCandidates.trim();
+  const parsedMaxCandidates = Number(maxCandidates);
+  return (
+    isSafeBasename(form.database, '.sqlite') &&
+    (!maxCandidates ||
+      (Number.isInteger(parsedMaxCandidates) &&
+        parsedMaxCandidates >= 1 &&
+        parsedMaxCandidates <= 1000))
+  );
+}
+
+/**
+ * Return whether a scheduler time zone can be resolved by the browser runtime.
+ *
+ * @param value - Candidate IANA time-zone name.
+ * @returns Whether the time-zone name is valid.
+ */
+function isValidTimeZone(value: string): boolean {
+  const timezone = value.trim();
+  if (!timezone) {
+    return false;
+  }
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Return whether a scheduler timeout is a whole number within the backend limit.
+ *
+ * @param value - Timeout input in seconds.
+ * @returns Whether the timeout can be submitted.
+ */
+function isValidTimeout(value: string): boolean {
+  const timeoutSeconds = Number(value);
+  return Number.isInteger(timeoutSeconds) && timeoutSeconds >= 1 && timeoutSeconds <= 86_400;
+}
+
+/**
+ * Format a typed job for administrator review.
+ *
+ * @param job - Typed job, or null for a migrated legacy task.
+ * @returns Human-readable job summary.
+ */
+function describeJob(job: ScheduledJobSpec | null): string {
+  if (!job) {
+    return '旧版自由命令（已禁用，需替换）';
+  }
+  if (job.kind === 'index') {
+    const steps = ['索引更新'];
+    if (job.notify) {
+      steps.push('外部推送');
+    }
+    if (job.push) {
+      steps.push('文件夹推送');
+    }
+    const metadata = job.metadata_file ? ` · CSV: ${job.metadata_file}` : '';
+    return `${steps.join(' → ')}${metadata}`;
+  }
+  const workflow = job.kind === 'push' ? '文件夹推送' : '外部推送';
+  const database = job.database ? ` · 数据库: ${job.database}` : '';
+  const limit = job.max_candidates ? ` · 候选上限: ${job.max_candidates}` : '';
+  return `${workflow}${database}${limit}`;
+}
+
+/**
+ * Format a scheduler timestamp for display.
+ *
+ * @param value - Unix timestamp in seconds, or null when the task never ran.
+ * @returns Localized display text.
+ */
+function formatDateTime(value: number | null): string {
+  if (!value) {
+    return '从未执行';
+  }
+
+  return new Date(value * 1000).toLocaleString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+  });
+}
+
+/**
+ * Format every generated scheduler state for administrator display.
+ *
+ * @param status - Generated scheduler state.
+ * @returns Stable localized state label.
+ */
+function formatSchedulerState(status: SchedulerRunState): string {
+  return SCHEDULER_STATE_LABELS.get(status) ?? status;
+}
+
+/**
+ * Render the admin scheduled task management card.
+ *
+ * @param props - Whether the retained panel is active and should fetch scheduler data.
+ * @returns Scheduled task management UI.
+ */
+export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } = {}) {
+  const state = useSchedulerViewState(isActive);
+  const { error, isLoading } = state;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock3 className="h-5 w-5" />
+          定时任务
+        </CardTitle>
+        <CardDescription>管理后台自动执行的类型化任务</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {renderSchedulerStatus(state)}
+
+        <AdminListHeader summary={`共 ${state.tasks.length} 个任务`}>
+          {renderScheduledTaskEditor(state)}
+        </AdminListHeader>
+
+        {error instanceof Error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error.message}
+          </p>
+        )}
+
+        <RevealItem
+          isReady={!isLoading}
+          placeholder={
+            <p role="status" className="text-sm text-muted-foreground">
+              <LoadingText text="加载中…" />
+            </p>
+          }
+        >
+          <SettingsGroup>{renderScheduledTaskList(state)}</SettingsGroup>
+        </RevealItem>
+
+        {renderRecentSchedulerRuns(state)}
+        {renderScheduledTaskDeletion(state)}
+      </CardContent>
+    </Card>
+  );
+}
+/** Retain editor state while limiting task and status queries to the active panel. */
+function useSchedulerViewState(isActive: boolean) {
+  const queryClient = useQueryClient();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<ScheduledTaskInfo | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<ScheduledTaskInfo | null>(null);
+  const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
+  const [jobPreset, setJobPreset] = useState<JobPresetId>(DEFAULT_PRESET);
+
+  const {
+    data: tasks = [],
+    error,
+    isLoading,
+  } = useQuery({
+    queryKey: ['admin-scheduled-tasks'],
+    queryFn: () => adminGetScheduledTasks(),
+    enabled: isActive,
+  });
+  const {
+    data: schedulerStatus,
+    error: schedulerStatusError,
+    isLoading: isSchedulerStatusLoading,
+  } = useQuery({
+    queryKey: ['admin-scheduler-status'],
+    queryFn: () => adminGetSchedulerStatus(),
+    enabled: isActive,
+    refetchInterval: 30_000,
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const payload: ScheduledTaskCreate = {
+        coalesce: form.coalesce,
+        cron: form.cron,
+        enabled: form.enabled,
+        job: buildScheduledJob(form, jobPreset),
+        name: form.name,
+        timeout_seconds: Number(form.timeoutSeconds),
+        timezone: form.timezone.trim(),
+      };
+      if (editingTask) {
+        return adminUpdateScheduledTask(editingTask.id, payload);
+      }
+      return adminCreateScheduledTask(payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+      setDialogOpen(false);
+      setEditingTask(null);
+      setForm(DEFAULT_FORM);
+      setJobPreset(DEFAULT_PRESET);
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ enabled, taskId }: { enabled: boolean; taskId: number }) =>
+      adminUpdateScheduledTask(taskId, { enabled }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (taskId: number) => adminDeleteScheduledTask(taskId),
+    onSuccess: (_data, taskId) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduled-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-scheduler-status'] });
+      setTaskToDelete((current) => (current?.id === taskId ? null : current));
+    },
+  });
+
+  const mutationError = useMemo(() => {
+    if (saveMutation.error instanceof Error) {
+      return saveMutation.error.message;
+    }
+    if (toggleMutation.error instanceof Error) {
+      return toggleMutation.error.message;
+    }
+    if (deleteMutation.error instanceof Error) {
+      return deleteMutation.error.message;
+    }
+    return '';
+  }, [deleteMutation.error, saveMutation.error, toggleMutation.error]);
+
+  const openCreateDialog = () => {
+    setEditingTask(null);
+    setForm({ ...DEFAULT_FORM, timezone: getBrowserTimeZone() });
+    setJobPreset(DEFAULT_PRESET);
+    setDialogOpen(true);
+  };
+
+  const openEditDialog = (task: ScheduledTaskInfo) => {
+    const preset = getPresetForJob(task.job);
+    setEditingTask(task);
+    setForm(getScheduledTaskForm(task));
+    setJobPreset(preset);
+    setDialogOpen(true);
+  };
+
+  const isFormValid =
+    Boolean(form.name.trim()) &&
+    Boolean(form.cron.trim()) &&
+    isValidTimeZone(form.timezone) &&
+    isValidTimeout(form.timeoutSeconds) &&
+    isJobFormValid(form, jobPreset);
+  const healthyWorkerCount =
+    schedulerStatus?.workers.filter((worker) => worker.is_healthy).length ?? 0;
+  const isIndexJobPreset = isIndexPreset(jobPreset);
+  const schedulerStatusKey = getSchedulerStatusKey(
+    isSchedulerStatusLoading,
+    schedulerStatusError,
+    healthyWorkerCount,
+    schedulerStatus,
+  );
+
+  return {
+    dialogOpen,
+    setDialogOpen,
+    editingTask,
+    taskToDelete,
+    setTaskToDelete,
+    form,
+    setForm,
+    jobPreset,
+    setJobPreset,
+    tasks,
+    error,
+    isLoading,
+    schedulerStatus,
+    schedulerStatusError,
+    isSchedulerStatusLoading,
+    saveMutation,
+    toggleMutation,
+    deleteMutation,
+    mutationError,
+    openCreateDialog,
+    openEditDialog,
+    isFormValid,
+    healthyWorkerCount,
+    isIndexJobPreset,
+    schedulerStatusKey,
+  };
+}
+type SchedulerViewState = ReturnType<typeof useSchedulerViewState>;
+
+/** Keep hidden index arguments mounted with identical inert and motion guards. */
+function renderSchedulerIndexFields(
+  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'isIndexJobPreset'>,
+) {
+  const { form, setForm, isIndexJobPreset } = state;
+
+  return (
+    <MotionDiv
+      data-motion-scheduled-fields="index"
+      aria-hidden={!isIndexJobPreset}
+      inert={!isIndexJobPreset ? true : undefined}
+      initial={false}
+      animate={isIndexJobPreset ? 'visible' : 'hidden'}
+      variants={DISCLOSURE_VARIANTS}
+      className="overflow-hidden"
+      style={{ pointerEvents: isIndexJobPreset ? 'auto' : 'none' }}
+    >
+      <div className="space-y-2">
+        <Label htmlFor="scheduled-task-metadata">元数据 CSV 文件名（可选）</Label>
+        <Input
+          id="scheduled-task-metadata"
+          name="scheduled_task_metadata_file"
+          autoComplete="off"
+          spellCheck={false}
+          value={form.metadataFile}
+          onChange={(event) =>
+            setForm((current) => ({ ...current, metadataFile: event.target.value }))
+          }
+          placeholder="journals.csv"
+        />
+        {!isSafeBasename(form.metadataFile, '.csv') && (
+          <p role="alert" className="text-sm text-destructive">
+            请输入不含路径或特殊符号的 .csv 文件名。
+          </p>
+        )}
+      </div>
+    </MotionDiv>
+  );
+}
+
+/** Keep hidden delivery arguments mounted with identical inert and validation guards. */
+function renderSchedulerDeliveryFields(
+  state: Pick<SchedulerViewState, 'form' | 'setForm' | 'isIndexJobPreset'>,
+) {
+  const { form, setForm, isIndexJobPreset } = state;
+
+  return (
+    <MotionDiv
+      data-motion-scheduled-fields="delivery"
+      aria-hidden={isIndexJobPreset}
+      inert={isIndexJobPreset ? true : undefined}
+      initial={false}
+      animate={isIndexJobPreset ? 'hidden' : 'visible'}
+      variants={DISCLOSURE_VARIANTS}
+      className="overflow-hidden"
+      style={{ pointerEvents: isIndexJobPreset ? 'none' : 'auto' }}
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="scheduled-task-database">索引数据库（可选）</Label>
+          <Input
+            id="scheduled-task-database"
+            name="scheduled_task_database"
+            autoComplete="off"
+            spellCheck={false}
+            value={form.database}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, database: event.target.value }))
+            }
+            placeholder="journals.sqlite"
+          />
+          {!isSafeBasename(form.database, '.sqlite') && (
+            <p role="alert" className="text-sm text-destructive">
+              请输入不含路径或特殊符号的 .sqlite 文件名。
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="scheduled-task-candidates">候选上限（可选）</Label>
+          <Input
+            id="scheduled-task-candidates"
+            name="scheduled_task_max_candidates"
+            type="number"
+            min={1}
+            max={1000}
+            step={1}
+            value={form.maxCandidates}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, maxCandidates: event.target.value }))
+            }
+            placeholder="100"
+          />
+        </div>
+      </div>
+    </MotionDiv>
+  );
+}
+
+/** Retain typed task fields, legacy warning and exact create/save admission. */
+function renderScheduledTaskEditor(state: SchedulerViewState) {
+  const {
+    dialogOpen,
+    setDialogOpen,
+    editingTask,
+    form,
+    setForm,
+    jobPreset,
+    setJobPreset,
+    saveMutation,
+    mutationError,
+    openCreateDialog,
+    isFormValid,
+  } = state;
+
+  return (
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" onClick={openCreateDialog}>
+          <Plus className="size-4" />
+          新建任务
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{editingTask ? '编辑定时任务' : '新建定时任务'}</DialogTitle>
+          <DialogDescription>
+            使用五段 crontab 表达式和明确的 IANA 时区，例如 `0 8 * * *` 与 `Asia/Shanghai`。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          {editingTask?.job === null && (
+            <div role="alert" className="space-y-2 rounded-md border border-warning-border p-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <AlertTriangle className="h-4 w-4 text-warning-foreground" />
+                旧任务已自动停用
+              </div>
+              <p className="text-sm text-muted-foreground">
+                保存后会用当前类型化配置替换旧命令，旧命令不会被执行。
+              </p>
+              <div className="rounded bg-muted px-2 py-1 font-mono text-xs break-all">
+                {editingTask.legacy_command}
+              </div>
+            </div>
+          )}
+          <div className="space-y-2">
+            <Label htmlFor="scheduled-task-name">任务名称</Label>
+            <Input
+              id="scheduled-task-name"
+              name="scheduled_task_name"
+              autoComplete="off"
+              value={form.name}
+              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              placeholder="任务名称"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="scheduled-task-cron">Cron 表达式</Label>
+            <Input
+              id="scheduled-task-cron"
+              name="scheduled_task_cron"
+              autoComplete="off"
+              spellCheck={false}
+              value={form.cron}
+              onChange={(event) => setForm((current) => ({ ...current, cron: event.target.value }))}
+              placeholder="Cron 表达式"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="scheduled-task-timezone">IANA 时区</Label>
+              <Input
+                id="scheduled-task-timezone"
+                name="scheduled_task_timezone"
+                autoComplete="off"
+                spellCheck={false}
+                value={form.timezone}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, timezone: event.target.value }))
+                }
+                placeholder="Asia/Shanghai"
+              />
+              {!isValidTimeZone(form.timezone) && (
+                <p role="alert" className="text-sm text-destructive">
+                  请输入有效的 IANA 时区，例如 Asia/Shanghai。
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="scheduled-task-timeout">超时秒数</Label>
+              <Input
+                id="scheduled-task-timeout"
+                name="scheduled_task_timeout_seconds"
+                type="number"
+                min={1}
+                max={86_400}
+                step={1}
+                value={form.timeoutSeconds}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, timeoutSeconds: event.target.value }))
+                }
+              />
+              {!isValidTimeout(form.timeoutSeconds) && (
+                <p role="alert" className="text-sm text-destructive">
+                  超时必须为 1 到 86400 秒的整数。
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="scheduled-task-preset">任务预设</Label>
+            <Select value={jobPreset} onValueChange={(value: JobPresetId) => setJobPreset(value)}>
+              <SelectTrigger id="scheduled-task-preset" className="w-full">
+                <SelectValue placeholder="选择任务预设" />
+              </SelectTrigger>
+              <SelectContent>
+                {JOB_PRESETS.map((preset) => (
+                  <SelectItem key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            {renderSchedulerIndexFields(state)}
+            {renderSchedulerDeliveryFields(state)}
+          </div>
+          <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            将执行：{describeJob(buildScheduledJob(form, jobPreset))}
+          </div>
+          <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
+            <Label htmlFor="scheduled-task-enabled" className="text-sm">
+              启用任务
+            </Label>
+            <Switch
+              id="scheduled-task-enabled"
+              checked={form.enabled}
+              onCheckedChange={(checked: boolean) =>
+                setForm((current) => ({ ...current, enabled: checked }))
+              }
+            />
+          </div>
+          <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
+            <div className="space-y-1">
+              <Label htmlFor="scheduled-task-coalesce" className="text-sm">
+                合并补跑
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                worker 离线后仅补跑最近一次错过的执行。
+              </p>
+            </div>
+            <Switch
+              id="scheduled-task-coalesce"
+              checked={form.coalesce}
+              onCheckedChange={(checked: boolean) =>
+                setForm((current) => ({ ...current, coalesce: checked }))
+              }
+            />
+          </div>
+          <MotionPresence>
+            {mutationError && (
+              <MotionParagraph
+                key="scheduled-task-error"
+                data-motion-feedback="scheduled-task"
+                role="alert"
+                className="text-sm text-destructive"
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                variants={REVEAL_VARIANTS}
+              >
+                {mutationError}
+              </MotionParagraph>
+            )}
+          </MotionPresence>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setDialogOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              className="w-full sm:w-auto"
+              disabled={!isFormValid || saveMutation.isPending}
+              onClick={() => saveMutation.mutate()}
+            >
+              {editingTask ? '保存' : '创建'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Retain loading-before-error state and direct keyed worker-status presence. */
+function renderSchedulerStatus(state: SchedulerViewState) {
+  const {
+    schedulerStatus,
+    schedulerStatusError,
+    isSchedulerStatusLoading,
+    healthyWorkerCount,
+    schedulerStatusKey,
+  } = state;
+
+  return (
+    <div aria-label="调度器状态" className="overflow-hidden border-y py-4 text-sm">
+      <RevealItem
+        isReady={!isSchedulerStatusLoading}
+        placeholder={<LoadingText text="正在读取调度器状态…" />}
+      >
+        <MotionPresence mode="wait">
+          <MotionDiv
+            key={schedulerStatusKey}
+            data-motion-scheduler-state={schedulerStatusKey}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={SWAP_VARIANTS}
+          >
+            {isSchedulerStatusLoading ? (
+              <LoadingText text="正在读取调度器状态…" />
+            ) : schedulerStatusError instanceof Error ? (
+              <span role="alert" className="text-destructive">
+                {schedulerStatusError.message}
+              </span>
+            ) : (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <span aria-hidden="true" className="relative flex size-3">
+                    {healthyWorkerCount > 0 && (
+                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                    )}
+                    <span
+                      className={cn(
+                        'relative inline-flex size-3 rounded-full',
+                        healthyWorkerCount > 0 ? 'bg-emerald-400' : 'bg-red-400',
+                      )}
+                    />
+                  </span>
+                  <div>
+                    <p className="text-xs text-muted-foreground">调度器</p>
+                    <p className="font-bold tabular-nums">
+                      健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
+                </span>
+              </div>
+            )}
+          </MotionDiv>
+        </MotionPresence>
+      </RevealItem>
+    </div>
+  );
+}
+
+/** Retain directly keyed tasks, disabled legacy toggles and captured deletion targets. */
+function renderScheduledTaskList(state: SchedulerViewState) {
+  const { setTaskToDelete, tasks, toggleMutation, deleteMutation, openEditDialog } = state;
+
+  return (
+    <MotionPresence>
+      {tasks.length === 0 ? (
+        <MotionParagraph
+          key="empty-scheduled-tasks"
+          className="px-5 py-10 text-center text-sm text-muted-foreground"
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          variants={REVEAL_VARIANTS}
+        >
+          暂无定时任务
+        </MotionParagraph>
+      ) : (
+        tasks.map((task) => (
+          <MotionDiv
+            key={task.id}
+            data-motion-scheduled-task-key={task.id}
+            className="overflow-hidden px-4 py-4 sm:px-5"
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={DISCLOSURE_VARIANTS}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'hidden size-10 shrink-0 items-center justify-center rounded-xl sm:flex',
+                  task.enabled ? 'bg-info text-primary' : 'bg-muted text-muted-foreground',
+                )}
+              >
+                <Clock3 className="size-5" />
+              </span>
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold">{task.name}</span>
+                  <StatusPill tone={getSchedulerStateTone(task.last_status)}>
+                    {formatSchedulerState(task.last_status)}
+                  </StatusPill>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <code className="rounded-md bg-foreground px-1.5 py-0.5 font-bold text-background">
+                    {task.cron}
+                  </code>
+                  <span className="text-muted-foreground">
+                    {task.timezone} · 超时 {task.timeout_seconds} 秒 ·
+                    {task.coalesce ? ' 合并补跑' : ' 逐次补跑'}
+                  </span>
+                </div>
+                <div className="text-sm break-all text-muted-foreground">
+                  {describeJob(task.job)}
+                </div>
+                {task.legacy_command && (
+                  <div className="rounded-lg border border-warning-border bg-warning px-2.5 py-1.5 text-xs break-all text-warning-foreground">
+                    旧命令（只读）：{task.legacy_command}
+                  </div>
+                )}
+                <div className="text-xs text-muted-foreground tabular-nums">
+                  最近执行: {formatDateTime(task.last_run_at)}
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-1 border-t pt-3 sm:border-0 sm:pt-0">
+                <Switch
+                  checked={task.enabled}
+                  disabled={task.job === null}
+                  className="mr-2"
+                  aria-label={
+                    task.job
+                      ? `${task.enabled ? '停用' : '启用'}定时任务 ${task.name}`
+                      : `旧定时任务 ${task.name} 需替换`
+                  }
+                  onCheckedChange={(checked: boolean) => {
+                    if (task.job) {
+                      toggleMutation.mutate({ enabled: checked, taskId: task.id });
+                    }
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-9"
+                  aria-label={`编辑定时任务 ${task.name}`}
+                  onClick={() => openEditDialog(task)}
+                >
+                  <Pencil className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={`删除定时任务 ${task.name}`}
+                  disabled={deleteMutation.isPending}
+                  onClick={() => {
+                    deleteMutation.reset();
+                    setTaskToDelete(task);
+                  }}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            </div>
+          </MotionDiv>
+        ))
+      )}
+    </MotionPresence>
+  );
+}
+
+/** Retain the first five server-ordered runs and empty-record feedback. */
+function renderRecentSchedulerRuns(
+  state: Pick<SchedulerViewState, 'schedulerStatus' | 'isSchedulerStatusLoading'>,
+) {
+  const { schedulerStatus, isSchedulerStatusLoading } = state;
+
+  return (
+    <RevealItem isReady={!isSchedulerStatusLoading} placeholder={null}>
+      {schedulerStatus && (
+        <section className="space-y-3 pt-7">
+          <h3 className="flex items-center gap-2 px-1 text-sm font-bold">
+            <Clock animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+            最近调度运行
+          </h3>
+          {schedulerStatus.recent_runs.length === 0 ? (
+            <p className="px-1 text-sm text-muted-foreground">暂无调度运行记录</p>
+          ) : (
+            <ol className="relative space-y-0 pl-4 before:absolute before:top-2 before:bottom-2 before:left-[5px] before:w-px before:bg-border">
+              {schedulerStatus.recent_runs.slice(0, 5).map((run) => (
+                <li key={run.id} className="relative flex items-center gap-3 py-2 pl-3 text-sm">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'absolute top-1/2 -left-4 size-[11px] -translate-y-1/2 rounded-full border-2 border-background',
+                      SCHEDULER_STATE_DOT_CLASSES[getSchedulerStateTone(run.status)],
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{run.task_name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {formatSchedulerState(run.status)} · {formatDateTime(run.scheduled_for)}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+    </RevealItem>
+  );
+}
+
+const SCHEDULER_STATE_DOT_CLASSES = {
+  danger: 'bg-destructive',
+  info: 'bg-primary',
+  neutral: 'bg-muted-foreground/50',
+  success: 'bg-success-foreground',
+  warning: 'bg-warning-foreground',
+} as const;
+
+/**
+ * Map a scheduler run state to a status tone.
+ *
+ * @param status - Scheduler run state.
+ * @returns Status pill tone.
+ */
+function getSchedulerStateTone(
+  status: SchedulerRunState,
+): keyof typeof SCHEDULER_STATE_DOT_CLASSES {
+  if (status === 'success') return 'success';
+  if (status === 'failed' || status === 'timed_out' || status === 'error') return 'danger';
+  if (status === 'pending' || status === 'claimed' || status === 'running') return 'info';
+  if (status === 'unknown') return 'warning';
+  return 'neutral';
+}
+
+/** Retain confirmation target identity and pending-dismissal safeguards. */
+function renderScheduledTaskDeletion(
+  state: Pick<SchedulerViewState, 'taskToDelete' | 'setTaskToDelete' | 'deleteMutation'>,
+) {
+  const { taskToDelete, setTaskToDelete, deleteMutation } = state;
+
+  return (
+    <ConfirmDialog
+      open={taskToDelete !== null}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !deleteMutation.isPending) {
+          setTaskToDelete(null);
+        }
+      }}
+      title="删除定时任务？"
+      description={`确认删除定时任务“${taskToDelete?.name ?? ''}”？`}
+      actionLabel="确认删除"
+      pendingLabel="删除中…"
+      isPending={deleteMutation.isPending}
+      error={deleteMutation.error instanceof Error ? deleteMutation.error.message : null}
+      onConfirm={() => {
+        if (taskToDelete) {
+          deleteMutation.mutate(taskToDelete.id);
+        }
+      }}
+    />
+  );
+}
+
+const SCHEDULER_STATE_LABELS = new Map<SchedulerRunState, string>(
+  Object.entries({
+    idle: '未运行',
+    pending: '等待中',
+    claimed: '已领取',
+    running: '运行中',
+    success: '成功',
+    failed: '失败',
+    timed_out: '超时',
+    error: '执行错误',
+    unknown: '结果未知',
+    cancelled: '已取消',
+  } satisfies Record<SchedulerRunState, string>) as [SchedulerRunState, string][],
+);
+
+/** Retain loading-before-error identity and server worker-count fallback. */
+function getSchedulerStatusKey(
+  isSchedulerStatusLoading: boolean,
+  schedulerStatusError: unknown,
+  healthyWorkerCount: number,
+  schedulerStatus: Awaited<ReturnType<typeof adminGetSchedulerStatus>> | undefined,
+): string {
+  return isSchedulerStatusLoading
+    ? 'loading'
+    : schedulerStatusError instanceof Error
+      ? 'error'
+      : `workers-${healthyWorkerCount}-${schedulerStatus?.workers.length ?? 0}`;
+}
+
+/** Restore the original database field only for delivery jobs. */
+function getScheduledTaskDatabase(task: ScheduledTaskInfo): string {
+  return task.job?.kind === 'notify' || task.job?.kind === 'push' ? (task.job.database ?? '') : '';
+}
+
+/** Restore the original maxCandidates field only for delivery jobs. */
+function getScheduledTaskCandidates(task: ScheduledTaskInfo): string {
+  return task.job?.kind === 'notify' || task.job?.kind === 'push'
+    ? (task.job.max_candidates?.toString() ?? '')
+    : '';
+}
+
+/** Restore edit fields in their original order without executing legacy commands. */
+function getScheduledTaskForm(task: ScheduledTaskInfo): TaskFormState {
+  return {
+    coalesce: task.coalesce,
+    cron: task.cron,
+    database: getScheduledTaskDatabase(task),
+    enabled: task.enabled,
+    maxCandidates: getScheduledTaskCandidates(task),
+    metadataFile: task.job?.kind === 'index' ? (task.job.metadata_file ?? '') : '',
+    name: task.name,
+    timeoutSeconds: task.timeout_seconds.toString(),
+    timezone: task.timezone,
+  };
+}

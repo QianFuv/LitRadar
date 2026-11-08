@@ -1,0 +1,975 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Plus, Save, SlidersVertical, Trash2 } from '@/components/ui/animated-icons';
+
+import {
+  adminGetProviderCatalog,
+  adminGetRuntimeSettings,
+  adminUpdateRuntimeSettings,
+  type RuntimeSettingApplyMode,
+  type RuntimeSettingGroup,
+  type RuntimeSettingInfo,
+  type RuntimeSettingsUpdate,
+} from '@/lib/api';
+import { ProviderConfigurationEditor } from '@/components/admin/provider-configuration-editor';
+import {
+  SettingsGroup,
+  SettingsRow,
+  SettingsSection,
+  SettingsSectionHeader,
+  SettingsSectionTitle,
+  StatusPill,
+} from '@/components/settings/settings-section';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { RevealItem } from '@/components/ui/reveal';
+import {
+  DISCLOSURE_VARIANTS,
+  MotionDiv,
+  MotionParagraph,
+  MotionPresence,
+  REVEAL_VARIANTS,
+} from '@/components/ui/motion';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { LoadingText } from '@/components/ui/loading-text';
+
+type RuntimeSettingsForm = Record<string, string>;
+type RuntimeSecretPoolRemovals = Record<string, Set<string>>;
+
+const EMPTY_RUNTIME_SETTINGS: RuntimeSettingInfo[] = [];
+const EMPTY_SECRET_REFERENCES = new Set<string>();
+
+const RUNTIME_GROUP_LABELS: Record<RuntimeSettingGroup, string> = {
+  source_access: '来源访问',
+  provider_routing: 'Provider 路由',
+  server_security: '服务与安全',
+  observability: '可观测性',
+  single_sign_on: '单点登录',
+};
+const PROVIDER_SETTING_FIELDS = new Set([
+  'provider_proxy_policy',
+  'index_provider_routes',
+  'article_abstract_provider_orders',
+  'article_fulltext_provider_orders',
+]);
+
+/**
+ * Convert settings into editable form state.
+ *
+ * @param settings - Runtime settings returned by the API.
+ * @returns Runtime setting values keyed by field name.
+ */
+function buildForm(settings: RuntimeSettingInfo[]): RuntimeSettingsForm {
+  return Object.fromEntries(settings.map((item) => [item.field, item.value]));
+}
+
+/**
+ * Render a short source label for a runtime setting.
+ *
+ * @param source - Runtime setting source.
+ * @returns Source label.
+ */
+function getSourceLabel(source: RuntimeSettingInfo['source']): string {
+  if (source === 'database') {
+    return '数据库';
+  }
+  return '默认值';
+}
+
+/**
+ * Check whether a setting should use the pool editor.
+ *
+ * @param setting - Runtime setting metadata.
+ * @returns Whether the setting stores a pool value.
+ */
+function isPoolSetting(setting: RuntimeSettingInfo): boolean {
+  return setting.control === 'string_list';
+}
+
+/**
+ * Check whether a setting is an encrypted value pool.
+ *
+ * @param setting - Runtime setting metadata.
+ * @returns Whether the setting needs the stored-secret pool editor.
+ */
+function isSecretPoolSetting(setting: RuntimeSettingInfo): boolean {
+  return setting.is_secret && setting.control === 'secret_pool';
+}
+
+/**
+ * Render a short apply-mode label for a runtime setting.
+ *
+ * @param applyMode - Backend-declared lifecycle point.
+ * @returns Administrator-facing apply timing.
+ */
+function getApplyModeLabel(applyMode: RuntimeSettingApplyMode): string {
+  if (applyMode === 'next_request') {
+    return '下次请求生效';
+  }
+  if (applyMode === 'next_command') {
+    return '下次命令生效';
+  }
+  return '重启后生效';
+}
+
+/**
+ * Check whether a runtime setting is rendered by the grouped Provider editor.
+ *
+ * @param setting - Runtime setting descriptor.
+ * @returns Whether the setting belongs to the specialized Provider controls.
+ */
+function isProviderSetting(setting: RuntimeSettingInfo): boolean {
+  return PROVIDER_SETTING_FIELDS.has(setting.field);
+}
+
+/**
+ * Check whether a runtime setting stores URL-like text.
+ *
+ * @param field - Runtime setting field name.
+ * @returns Whether the field should use URL input hints.
+ */
+function isUrlSetting(field: string): boolean {
+  return field.toLowerCase().includes('url');
+}
+
+/**
+ * Check whether a runtime setting should avoid browser spellcheck.
+ *
+ * @param field - Runtime setting field name.
+ * @param inputType - Runtime setting input type.
+ * @returns Whether spellcheck should be disabled.
+ */
+function shouldDisableRuntimeSpellCheck(
+  field: string,
+  inputType: RuntimeSettingInfo['input_type'],
+): boolean {
+  if (inputType === 'email' || inputType === 'password') {
+    return true;
+  }
+  const normalizedField = field.toLowerCase();
+  return [
+    'api',
+    'command',
+    'endpoint',
+    'filter',
+    'key',
+    'model',
+    'pool',
+    'secret',
+    'token',
+    'url',
+  ].some((marker) => normalizedField.includes(marker));
+}
+
+/**
+ * Split a stored pool value into editable rows.
+ *
+ * @param value - Stored pool value.
+ * @returns Editable pool rows.
+ */
+function splitPoolValue(value: string): string[] {
+  if (!value) {
+    return [''];
+  }
+  const parts = value.includes('\n') ? value.split('\n') : value.split(/[,;]+/);
+  return parts.map((part) => part.trim());
+}
+
+/**
+ * Normalize newly entered pool values for an incremental update.
+ *
+ * @param value - Editable pool text.
+ * @returns Unique non-empty values in first-seen order.
+ */
+function normalizePoolValues(value: string): string[] {
+  const normalized: string[] = [];
+  for (const part of value.split(/[,;\n]+/)) {
+    const item = part.trim();
+    if (item && !normalized.includes(item)) {
+      normalized.push(item);
+    }
+  }
+  return normalized;
+}
+
+/**
+ * Render the input type used for one pool row.
+ *
+ * @param inputType - Runtime setting input type.
+ * @returns Input type for an editable pool row.
+ */
+function getPoolInputType(
+  inputType: RuntimeSettingInfo['input_type'],
+): 'email' | 'password' | 'text' | 'url' {
+  if (inputType === 'email' || inputType === 'password' || inputType === 'url') {
+    return inputType;
+  }
+  return 'text';
+}
+
+type RuntimePoolEditorProps = {
+  field: string;
+  id: string;
+  inputType: RuntimeSettingInfo['input_type'];
+  label: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+};
+
+type RuntimePoolRow = {
+  id: number;
+  value: string;
+};
+
+type RuntimePoolEditorState = {
+  nextRowId: number;
+  rows: RuntimePoolRow[];
+  sourceValue: string;
+};
+
+/**
+ * Build editable pool rows with stable local identities.
+ *
+ * @param value - Serialized external pool value.
+ * @param firstRowId - First identity available for the rebuilt rows.
+ * @returns Local row state synchronized to the external value.
+ */
+function buildRuntimePoolEditorState(value: string, firstRowId = 0): RuntimePoolEditorState {
+  const values = splitPoolValue(value);
+  return {
+    nextRowId: firstRowId + values.length,
+    rows: values.map((rowValue, index) => ({ id: firstRowId + index, value: rowValue })),
+    sourceValue: value,
+  };
+}
+
+/**
+ * Serialize editable pool rows for the runtime settings API.
+ *
+ * @param rows - Stable editable pool rows.
+ * @returns Newline-delimited pool value.
+ */
+function serializeRuntimePoolRows(rows: RuntimePoolRow[]): string {
+  return rows.map((row) => row.value).join('\n');
+}
+
+/**
+ * Render a line-based editor for runtime pool values.
+ *
+ * @param props - Component props.
+ * @returns Runtime pool editor.
+ */
+function RuntimePoolEditor({
+  field,
+  id,
+  inputType,
+  label,
+  value,
+  disabled = false,
+  onChange,
+}: RuntimePoolEditorProps) {
+  const [editorState, setEditorState] = useState<RuntimePoolEditorState>(() =>
+    buildRuntimePoolEditorState(value),
+  );
+  const poolInputType = getPoolInputType(inputType);
+  const shouldDisableSpellCheck = shouldDisableRuntimeSpellCheck(field, inputType);
+
+  if (value !== editorState.sourceValue) {
+    const localValue = serializeRuntimePoolRows(editorState.rows);
+    setEditorState(
+      value === localValue
+        ? { ...editorState, sourceValue: value }
+        : buildRuntimePoolEditorState(value, editorState.nextRowId),
+    );
+  }
+
+  const updateRow = (index: number, nextValue: string) => {
+    const nextRows = editorState.rows.map((row, rowIndex) =>
+      rowIndex === index ? { ...row, value: nextValue } : row,
+    );
+    const serializedValue = serializeRuntimePoolRows(nextRows);
+    setEditorState({ ...editorState, rows: nextRows, sourceValue: serializedValue });
+    onChange(serializedValue);
+  };
+
+  const addRow = () => {
+    const nextRows = [...editorState.rows, { id: editorState.nextRowId, value: '' }];
+    const serializedValue = serializeRuntimePoolRows(nextRows);
+    setEditorState({
+      nextRowId: editorState.nextRowId + 1,
+      rows: nextRows,
+      sourceValue: serializedValue,
+    });
+    onChange(serializedValue);
+  };
+
+  const deleteRow = (index: number) => {
+    const retainedRows = editorState.rows.filter((_, rowIndex) => rowIndex !== index);
+    const nextRows =
+      retainedRows.length > 0
+        ? retainedRows
+        : [{ id: editorState.nextRowId, value: '' } satisfies RuntimePoolRow];
+    const serializedValue = serializeRuntimePoolRows(nextRows);
+    setEditorState({
+      nextRowId: retainedRows.length > 0 ? editorState.nextRowId : editorState.nextRowId + 1,
+      rows: nextRows,
+      sourceValue: serializedValue,
+    });
+    onChange(serializedValue);
+  };
+
+  return (
+    <div className="space-y-2">
+      <MotionPresence>
+        {editorState.rows.map((row, index) => (
+          <MotionDiv
+            key={`${field}-${row.id}`}
+            data-motion-runtime-input-row={`${field}-${row.id}`}
+            className="flex items-center gap-2 overflow-hidden p-0.5"
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={DISCLOSURE_VARIANTS}
+          >
+            <Input
+              id={index === 0 ? id : undefined}
+              name={`runtime_${field}_${index + 1}`}
+              type={poolInputType}
+              autoComplete="off"
+              inputMode={isUrlSetting(field) ? 'url' : undefined}
+              spellCheck={shouldDisableSpellCheck ? false : undefined}
+              value={row.value}
+              disabled={disabled}
+              onChange={(event) => updateRow(index, event.target.value)}
+              aria-label={`${label} ${index + 1}`}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              disabled={disabled}
+              aria-label={`删除${label}第 ${index + 1} 行`}
+              onClick={() => deleteRow(index)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </MotionDiv>
+        ))}
+      </MotionPresence>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="text-primary hover:text-primary"
+        disabled={disabled}
+        onClick={addRow}
+      >
+        <Plus className="size-4" />
+        添加
+      </Button>
+    </div>
+  );
+}
+
+type RuntimeSecretPoolEditorProps = {
+  setting: RuntimeSettingInfo;
+  value: string;
+  removedReferences: Set<string>;
+  isCleared: boolean;
+  onChange: (value: string) => void;
+  onToggleRemoval: (reference: string) => void;
+};
+
+/**
+ * Render stored masked secret rows separately from new plaintext inputs.
+ *
+ * @param props - Component props.
+ * @returns Secret-pool editor.
+ */
+function RuntimeSecretPoolEditor({
+  setting,
+  value,
+  removedReferences,
+  isCleared,
+  onChange,
+  onToggleRemoval,
+}: RuntimeSecretPoolEditorProps) {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <MotionPresence>
+          {setting.secret_items.length === 0 ? (
+            <MotionParagraph
+              key="empty-secret-pool"
+              className="text-sm text-muted-foreground"
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={REVEAL_VARIANTS}
+            >
+              尚未保存密钥
+            </MotionParagraph>
+          ) : (
+            setting.secret_items.map((item, index) => {
+              const isPendingRemoval = isCleared || removedReferences.has(item.reference);
+              return (
+                <MotionDiv
+                  key={item.reference}
+                  data-motion-runtime-secret-row={item.reference}
+                  className={`flex items-center justify-between gap-3 overflow-hidden rounded-lg bg-muted/60 px-3 py-2 ${
+                    isPendingRemoval ? 'text-muted-foreground' : ''
+                  }`}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                  variants={DISCLOSURE_VARIANTS}
+                >
+                  <span
+                    className={
+                      isPendingRemoval ? 'font-mono text-sm line-through' : 'font-mono text-sm'
+                    }
+                  >
+                    {item.masked_value}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {isPendingRemoval && <StatusPill tone="warning">保存后删除</StatusPill>}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={isCleared}
+                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={
+                        removedReferences.has(item.reference)
+                          ? `撤销删除${setting.label}第 ${index + 1} 个密钥`
+                          : `删除${setting.label}第 ${index + 1} 个密钥`
+                      }
+                      onClick={() => onToggleRemoval(item.reference)}
+                    >
+                      {removedReferences.has(item.reference) ? (
+                        '撤销删除'
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </MotionDiv>
+              );
+            })
+          )}
+        </MotionPresence>
+      </div>
+      <div className="space-y-2">
+        <span className="text-xs text-muted-foreground">添加新密钥</span>
+        <RuntimePoolEditor
+          field={setting.field}
+          id={`runtime-${setting.field}`}
+          inputType={setting.input_type}
+          label={`${setting.label} 新密钥`}
+          value={value}
+          disabled={isCleared}
+          onChange={onChange}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Render the admin runtime settings editor.
+ *
+ * @param props - Component props.
+ * @returns Runtime settings card.
+ */
+export function RuntimeSettingsCard() {
+  const state = useRuntimeViewState();
+  const { isLoading, saveMutation } = state;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <SlidersVertical className="h-5 w-5" />
+          运行配置
+        </CardTitle>
+        <CardDescription>管理后端共享运行配置</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <RevealItem
+          isReady={!isLoading}
+          placeholder={
+            <div role="status" className="text-sm text-muted-foreground">
+              <LoadingText text="加载中…" />
+            </div>
+          }
+        >
+          <fieldset
+            className="m-0 min-w-0 space-y-10 border-0 p-0"
+            disabled={saveMutation.isPending}
+          >
+            {renderRuntimeSettingGroups(state)}
+
+            {renderRuntimeProviderSettings(state)}
+          </fieldset>
+        </RevealItem>
+        <div className="sticky bottom-0 z-10 mt-10 flex flex-col gap-3 border-t bg-background py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-h-5 flex-1">{renderRuntimeFeedback(state)}</div>
+          {renderRuntimeSaveAction(state)}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+/** Own the original hooks, draft stores and exact completion/cache order. */
+function useRuntimeViewState() {
+  const queryClient = useQueryClient();
+  const [formOverrides, setFormOverrides] = useState<RuntimeSettingsForm>({});
+  const [clearedSecrets, setClearedSecrets] = useState<Set<string>>(new Set());
+  const [secretPoolAdditions, setSecretPoolAdditions] = useState<RuntimeSettingsForm>({});
+  const [secretPoolRemovals, setSecretPoolRemovals] = useState<RuntimeSecretPoolRemovals>({});
+  const [saveFeedback, setSaveFeedback] = useState('');
+
+  const {
+    data: settings = EMPTY_RUNTIME_SETTINGS,
+    error,
+    isLoading,
+  } = useQuery({
+    queryKey: ['admin-runtime-settings'],
+    queryFn: () => adminGetRuntimeSettings(),
+  });
+
+  const providerSettings = useMemo(
+    () => settings.filter((setting) => isProviderSetting(setting)),
+    [settings],
+  );
+  const genericSettingGroups = useMemo(() => {
+    const groups = new Map<RuntimeSettingGroup, RuntimeSettingInfo[]>();
+    for (const setting of settings) {
+      if (isProviderSetting(setting)) {
+        continue;
+      }
+      const group = groups.get(setting.group) ?? [];
+      group.push(setting);
+      groups.set(setting.group, group);
+    }
+    return [...groups.entries()];
+  }, [settings]);
+  const {
+    data: providerCatalog,
+    error: providerCatalogError,
+    isLoading: isProviderCatalogLoading,
+  } = useQuery({
+    queryKey: ['admin-provider-catalog'],
+    queryFn: () => adminGetProviderCatalog(),
+    enabled: providerSettings.length > 0,
+  });
+
+  const baseForm = useMemo(() => buildForm(settings), [settings]);
+  const form = useMemo(() => {
+    return { ...baseForm, ...formOverrides };
+  }, [baseForm, formOverrides]);
+  const hasPendingChanges =
+    Object.keys(formOverrides).length > 0 ||
+    clearedSecrets.size > 0 ||
+    Object.keys(secretPoolAdditions).length > 0 ||
+    Object.keys(secretPoolRemovals).length > 0;
+
+  useEffect(() => {
+    if (!hasPendingChanges) {
+      return;
+    }
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasPendingChanges]);
+
+  const saveMutation = useMutation({
+    onMutate: () => {
+      setSaveFeedback('');
+    },
+    mutationFn: () => {
+      const values: Record<string, string | null> = { ...formOverrides };
+      for (const field of clearedSecrets) {
+        values[field] = null;
+      }
+      const secretPoolUpdates: RuntimeSettingsUpdate['secret_pool_updates'] = {};
+      for (const setting of settings) {
+        if (!isSecretPoolSetting(setting) || clearedSecrets.has(setting.field)) {
+          continue;
+        }
+        const add = normalizePoolValues(secretPoolAdditions[setting.field] ?? '');
+        const remove = [...(secretPoolRemovals[setting.field] ?? EMPTY_SECRET_REFERENCES)];
+        if (add.length > 0 || remove.length > 0) {
+          secretPoolUpdates[setting.field] = { add, remove };
+        }
+      }
+      return adminUpdateRuntimeSettings({ values, secret_pool_updates: secretPoolUpdates });
+    },
+    onSuccess: (updatedSettings) => {
+      setFormOverrides({});
+      setClearedSecrets(new Set());
+      setSecretPoolAdditions({});
+      setSecretPoolRemovals({});
+      setSaveFeedback('运行配置已保存。');
+      queryClient.setQueryData(['admin-runtime-settings'], updatedSettings);
+      queryClient.invalidateQueries({ queryKey: ['admin-runtime-settings'] });
+    },
+  });
+
+  const mutationError = useMemo(() => {
+    if (saveMutation.error instanceof Error) {
+      return saveMutation.error.message;
+    }
+    if (error instanceof Error) {
+      return error.message;
+    }
+    if (providerCatalogError instanceof Error) {
+      return providerCatalogError.message;
+    }
+    return '';
+  }, [error, providerCatalogError, saveMutation.error]);
+
+  const updateFormValue = (field: string, value: string) => {
+    setSaveFeedback('');
+    setFormOverrides((current) => ({ ...current, [field]: value }));
+    setClearedSecrets((current) => {
+      if (!current.has(field)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.delete(field);
+      return next;
+    });
+  };
+
+  const updateSecretPoolAddition = (field: string, value: string) => {
+    setSaveFeedback('');
+    setSecretPoolAdditions((current) => ({ ...current, [field]: value }));
+  };
+
+  const toggleSecretItemRemoval = (field: string, reference: string) => {
+    setSaveFeedback('');
+    setSecretPoolRemovals((current) => {
+      const references = new Set(current[field] ?? EMPTY_SECRET_REFERENCES);
+      if (references.has(reference)) {
+        references.delete(reference);
+      } else {
+        references.add(reference);
+      }
+      const next = { ...current };
+      if (references.size === 0) {
+        delete next[field];
+      } else {
+        next[field] = references;
+      }
+      return next;
+    });
+  };
+
+  const toggleSecretClear = (field: string) => {
+    setSaveFeedback('');
+    setClearedSecrets((current) => {
+      const next = new Set(current);
+      if (next.has(field)) {
+        next.delete(field);
+      } else {
+        next.add(field);
+      }
+      return next;
+    });
+  };
+
+  return {
+    clearedSecrets,
+    secretPoolAdditions,
+    secretPoolRemovals,
+    saveFeedback,
+    isLoading,
+    providerSettings,
+    genericSettingGroups,
+    providerCatalog,
+    providerCatalogError,
+    isProviderCatalogLoading,
+    form,
+    saveMutation,
+    mutationError,
+    updateFormValue,
+    updateSecretPoolAddition,
+    toggleSecretItemRemoval,
+    toggleSecretClear,
+  };
+}
+type RuntimeViewState = ReturnType<typeof useRuntimeViewState>;
+
+/** Retain boolean, secret pool, pool, select and input precedence. */
+function renderRuntimeSettingControl(
+  state: RuntimeViewState,
+  setting: RuntimeSettingInfo,
+  value: string,
+) {
+  const {
+    clearedSecrets,
+    secretPoolAdditions,
+    secretPoolRemovals,
+    updateFormValue,
+    updateSecretPoolAddition,
+    toggleSecretItemRemoval,
+  } = state;
+  if (setting.control === 'boolean')
+    return (
+      <div className="flex items-center justify-end gap-3">
+        <Switch
+          id={`runtime-${setting.field}`}
+          name={`runtime_${setting.field}`}
+          checked={value !== 'false'}
+          onCheckedChange={(checked: boolean) =>
+            updateFormValue(setting.field, checked ? 'true' : 'false')
+          }
+        />
+      </div>
+    );
+  if (isSecretPoolSetting(setting))
+    return (
+      <RuntimeSecretPoolEditor
+        setting={setting}
+        value={secretPoolAdditions[setting.field] ?? ''}
+        removedReferences={secretPoolRemovals[setting.field] ?? EMPTY_SECRET_REFERENCES}
+        isCleared={clearedSecrets.has(setting.field)}
+        onChange={(nextValue) => updateSecretPoolAddition(setting.field, nextValue)}
+        onToggleRemoval={(reference) => toggleSecretItemRemoval(setting.field, reference)}
+      />
+    );
+  if (isPoolSetting(setting))
+    return (
+      <RuntimePoolEditor
+        field={setting.field}
+        id={`runtime-${setting.field}`}
+        inputType={setting.input_type}
+        label={setting.label}
+        value={value}
+        onChange={(nextValue) => updateFormValue(setting.field, nextValue)}
+      />
+    );
+  if (setting.control === 'select')
+    return (
+      <Select
+        value={value}
+        onValueChange={(nextValue) => updateFormValue(setting.field, nextValue)}
+      >
+        <SelectTrigger id={`runtime-${setting.field}`} className="w-full sm:w-72">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {setting.allowed_values.map((allowedValue) => (
+            <SelectItem key={allowedValue} value={allowedValue}>
+              {allowedValue}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  return (
+    <Input
+      id={`runtime-${setting.field}`}
+      name={`runtime_${setting.field}`}
+      type={setting.input_type}
+      autoComplete="off"
+      inputMode={isUrlSetting(setting.field) ? 'url' : undefined}
+      spellCheck={
+        shouldDisableRuntimeSpellCheck(setting.field, setting.input_type) ? false : undefined
+      }
+      value={value}
+      onChange={(event) => updateFormValue(setting.field, event.target.value)}
+      placeholder={setting.description}
+      className="w-full sm:w-72"
+    />
+  );
+}
+
+/** Retain masked-secret metadata and clear/removal status precedence. */
+function renderRuntimeSettingDescription(
+  state: Pick<RuntimeViewState, 'clearedSecrets' | 'toggleSecretClear' | 'secretPoolRemovals'>,
+  setting: RuntimeSettingInfo,
+) {
+  const { clearedSecrets, toggleSecretClear } = state;
+
+  return (
+    <span className="mt-0.5 block space-y-1.5">
+      <span className="block">
+        {setting.description}
+        {setting.control !== 'boolean' && getRuntimeSecretDescription(state, setting)}
+      </span>
+      <span className="flex flex-wrap items-center gap-1.5">
+        {isSecretPoolSetting(setting) && (
+          <StatusPill tone="info">{setting.secret_items.length} 个密钥</StatusPill>
+        )}
+        <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          {getApplyModeLabel(setting.apply_mode)}
+        </span>
+        <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          {getSourceLabel(setting.source)}
+        </span>
+        {setting.control !== 'boolean' && setting.is_secret && setting.has_value && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-1.5 text-[11px] text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => toggleSecretClear(setting.field)}
+          >
+            {clearedSecrets.has(setting.field) ? '保留全部密钥' : '清除全部密钥'}
+          </Button>
+        )}
+      </span>
+    </span>
+  );
+}
+
+/** Retain first-seen generic groups and directly keyed descriptor rows. */
+function renderRuntimeSettingGroups(state: RuntimeViewState) {
+  const { genericSettingGroups, form } = state;
+
+  return genericSettingGroups.map(([group, groupSettings]) => (
+    <SettingsSection key={group} aria-labelledby={`runtime-group-${group}`}>
+      <SettingsSectionHeader>
+        <SettingsSectionTitle id={`runtime-group-${group}`}>
+          {RUNTIME_GROUP_LABELS[group]}
+        </SettingsSectionTitle>
+      </SettingsSectionHeader>
+      <SettingsGroup>
+        {groupSettings.map((setting) => {
+          const value = form[setting.field] ?? '';
+          const isStacked = isPoolSetting(setting) || isSecretPoolSetting(setting);
+          return (
+            <SettingsRow
+              key={setting.field}
+              data-runtime-setting-field={setting.field}
+              title={setting.label}
+              htmlFor={`runtime-${setting.field}`}
+              description={renderRuntimeSettingDescription(state, setting)}
+              isStacked={isStacked}
+              className="sm:items-start"
+            >
+              {renderRuntimeSettingControl(state, setting, value)}
+            </SettingsRow>
+          );
+        })}
+      </SettingsGroup>
+    </SettingsSection>
+  ));
+}
+
+/** Retain provider loading admission and the original editor identity. */
+function renderRuntimeProviderSettings(
+  state: Pick<
+    RuntimeViewState,
+    'providerSettings' | 'providerCatalog' | 'isProviderCatalogLoading' | 'form' | 'updateFormValue'
+  >,
+) {
+  const { providerSettings, providerCatalog, isProviderCatalogLoading, form, updateFormValue } =
+    state;
+
+  return (
+    providerSettings.length > 0 && (
+      <RevealItem
+        isReady={!isProviderCatalogLoading}
+        placeholder={
+          <div role="status" className="text-sm text-muted-foreground">
+            <LoadingText text="正在加载 Provider 能力目录…" />
+          </div>
+        }
+      >
+        {providerCatalog && (
+          <ProviderConfigurationEditor
+            settings={providerSettings}
+            values={form}
+            catalog={providerCatalog}
+            onChange={updateFormValue}
+          />
+        )}
+      </RevealItem>
+    )
+  );
+}
+
+/** Retain failure priority over save feedback and exact presence key. */
+function renderRuntimeFeedback(state: Pick<RuntimeViewState, 'saveFeedback' | 'mutationError'>) {
+  const { saveFeedback, mutationError } = state;
+
+  return (
+    <MotionPresence>
+      {(mutationError || saveFeedback) && (
+        <MotionParagraph
+          key="runtime-feedback"
+          data-motion-feedback="runtime-settings"
+          role={mutationError ? 'alert' : 'status'}
+          className={mutationError ? 'text-sm text-destructive' : 'text-sm text-foreground'}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          variants={REVEAL_VARIANTS}
+        >
+          {mutationError || saveFeedback}
+        </MotionParagraph>
+      )}
+    </MotionPresence>
+  );
+}
+
+/** Retain loading, mutation and provider-catalog save guards. */
+function renderRuntimeSaveAction(state: RuntimeViewState) {
+  const {
+    isLoading,
+    providerSettings,
+    providerCatalog,
+    providerCatalogError,
+    isProviderCatalogLoading,
+    saveMutation,
+  } = state;
+
+  return (
+    <div className="flex justify-end">
+      <Button
+        className="w-full sm:w-auto"
+        disabled={
+          isLoading ||
+          saveMutation.isPending ||
+          (providerSettings.length > 0 &&
+            (isProviderCatalogLoading || !providerCatalog || Boolean(providerCatalogError)))
+        }
+        onClick={() => saveMutation.mutate()}
+      >
+        <Save className="size-4" />
+        保存配置
+      </Button>
+    </div>
+  );
+}
+
+/** Retain clear-before-removal-before-saved secret feedback. */
+function getRuntimeSecretDescription(
+  state: Pick<RuntimeViewState, 'clearedSecrets' | 'secretPoolRemovals'>,
+  setting: RuntimeSettingInfo,
+) {
+  const { clearedSecrets, secretPoolRemovals } = state;
+
+  return setting.is_secret && setting.has_value
+    ? clearedSecrets.has(setting.field)
+      ? '（保存后清除全部）'
+      : (secretPoolRemovals[setting.field]?.size ?? 0) > 0
+        ? `（${secretPoolRemovals[setting.field]?.size} 个保存后删除）`
+        : '（已安全保存）'
+    : '';
+}

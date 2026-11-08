@@ -519,7 +519,7 @@ async function supervisesOwnedServices() {
     "sqlite_fts5,sqlite_dbstat",
     "-o",
     executable,
-    "./cmd/litradar",
+    "./apps/server",
   ]);
   assert.deepEqual(starts[1][2], [
     "serve",
@@ -534,12 +534,21 @@ async function supervisesOwnedServices() {
     path.join(projectRoot, "secrets", "litradar.key"),
   ]);
   assert.deepEqual(starts[2][2], [
-    path.join(workspace, "app", "node_modules", "next", "dist", "bin", "next"),
-    "dev",
-    "--hostname",
+    path.join(
+      workspace,
+      "apps",
+      "client",
+      "frontend",
+      "node_modules",
+      "vite",
+      "bin",
+      "vite.js",
+    ),
+    "--host",
     "127.0.0.1",
     "--port",
     "8000",
+    "--strictPort",
   ]);
   for (const start of starts) {
     assert.equal(start[3].windowsHide, true);
@@ -549,7 +558,7 @@ async function supervisesOwnedServices() {
   }
   assert.deepEqual(
     starts.map((event) => event[3].cwd),
-    [workspace, workspace, path.join(workspace, "app")],
+    [workspace, workspace, path.join(workspace, "apps", "client", "frontend")],
   );
   assert.equal(
     harness.events.filter((event) => event[0] === "cancel").length,

@@ -1,5 +1,5 @@
 /**
- * Run the local Go API and Next.js frontend with one shared lifecycle.
+ * Run the local Go API and Vite frontend with one shared lifecycle.
  *
  * @module dev
  */
@@ -18,15 +18,8 @@ import { fileURLToPath } from "node:url";
 const WORKSPACE_ROOT = path.resolve(
   fileURLToPath(new URL("..", import.meta.url)),
 );
-const APP_ROOT = path.join(WORKSPACE_ROOT, "app");
-const NEXT_CLI = path.join(
-  APP_ROOT,
-  "node_modules",
-  "next",
-  "dist",
-  "bin",
-  "next",
-);
+const APP_ROOT = path.join(WORKSPACE_ROOT, "apps", "client", "frontend");
+const VITE_CLI = path.join(APP_ROOT, "node_modules", "vite", "bin", "vite.js");
 const READY_TIMEOUT_MS = 300_000;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 const CHILDREN = [];
@@ -116,7 +109,7 @@ async function buildBackend() {
       "sqlite_fts5,sqlite_dbstat",
       "-o",
       executable,
-      "./cmd/litradar",
+      "./apps/server",
     ],
     WORKSPACE_ROOT,
     simpleBuildEnvironment(WORKSPACE_ROOT),
@@ -277,9 +270,9 @@ async function main() {
   const projectRoot = resolveDevProjectRoot();
   if (!projectRoot) return;
   const secretKeyFile = path.join(projectRoot, "secrets", "litradar.key");
-  await access(NEXT_CLI).catch(() => {
+  await access(VITE_CLI).catch(() => {
     throw new Error(
-      "Install frontend dependencies with pnpm --dir app install --frozen-lockfile.",
+      "Install frontend dependencies with pnpm install --frozen-lockfile.",
     );
   });
   const keyMetadata = await stat(secretKeyFile);
@@ -308,9 +301,9 @@ async function main() {
     WORKSPACE_ROOT,
   );
   const frontend = startChild(
-    "Next.js",
+    "Vite",
     process.execPath,
-    [NEXT_CLI, "dev", "--hostname", "127.0.0.1", "--port", "8000"],
+    [VITE_CLI, "--host", "127.0.0.1", "--port", "8000", "--strictPort"],
     APP_ROOT,
   );
   await superviseDevServices(backend, frontend);

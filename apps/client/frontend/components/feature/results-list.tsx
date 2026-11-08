@@ -1,0 +1,372 @@
+import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import { useQueryState, parseAsString, parseAsArrayOf } from 'nuqs';
+import { getArticles, type ArticlePage } from '@/lib/api';
+import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
+import { ArticleListSkeleton } from '@/components/feature/article-list-card';
+import { useVisiblePageList } from '@/components/feature/use-visible-page-list';
+import {
+  LIST_ITEM_VARIANTS,
+  MotionDiv,
+  MotionPresence,
+  PANEL_VARIANTS,
+  REVEAL_VARIANTS,
+} from '@/components/ui/motion';
+import { RevealItem } from '@/components/ui/reveal';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StateMessage } from '@/components/ui/state-message';
+import { Button } from '@/components/ui/button';
+import { useMemo, type ComponentProps, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router';
+import { useAuth } from '@/lib/auth-context';
+import { getMonthRangeDateBounds } from '@/lib/article-filters';
+import { useFtsHighlighter } from '@/lib/fts-highlight';
+import { useSelectedDatabase } from '@/lib/selected-database';
+import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
+import { appendJournalRatingParams, useJournalRatingFilters } from '@/lib/journal-ratings';
+import { describeSearchError } from '@/lib/search-syntax';
+
+type HighlightedArticleCardProps = Omit<
+  ComponentProps<typeof ArticleDialogCard>,
+  'title' | 'preview'
+> & {
+  highlightText: (text: string | null | undefined) => ReactNode;
+};
+
+/** Retain each article's highlights while later pages and favorite state change. */
+function HighlightedArticleCard({ highlightText, ...props }: HighlightedArticleCardProps) {
+  const { title, abstract } = props.article;
+  const highlighted = useMemo(
+    () => ({ title: highlightText(title), preview: highlightText(abstract) }),
+    [title, abstract, highlightText],
+  );
+  return <ArticleDialogCard {...props} title={highlighted.title} preview={highlighted.preview} />;
+}
+
+/**
+ * Resolve the cursor for the next article page.
+ *
+ * @param lastPage - Most recently loaded article page.
+ * @returns Next cursor or undefined when pagination is complete.
+ */
+export function getNextArticlePageParam(lastPage: ArticlePage): string | undefined {
+  return lastPage.page.next_cursor ?? undefined;
+}
+
+/**
+ * Reject a cursor that would revisit a page already requested in the current pagination chain.
+ *
+ * @param page - Newly fetched article page.
+ * @param pageParam - Cursor used to fetch the page, or null for the first page.
+ * @param cachedPageParams - Page parameters from the currently cached pagination chain.
+ * @returns The validated article page.
+ */
+function validateArticlePageCursor(
+  page: ArticlePage,
+  pageParam: string | null,
+  cachedPageParams: readonly (string | null)[],
+): ArticlePage {
+  const nextCursor = page.page.next_cursor;
+  if (!nextCursor || pageParam === null) {
+    return page;
+  }
+
+  const cachedPageIndex = cachedPageParams.indexOf(pageParam);
+  const requestedPageParams =
+    cachedPageIndex >= 0
+      ? cachedPageParams.slice(0, cachedPageIndex + 1)
+      : [...cachedPageParams, pageParam];
+  if (requestedPageParams.includes(nextCursor)) {
+    throw new Error('全文检索分页游标重复');
+  }
+
+  return page;
+}
+
+/**
+ * Fetch and render the filtered, progressively visible article result list.
+ *
+ * @returns Article rows and pagination sentinels.
+ */
+export function ResultsList() {
+  const state = useResultsViewState();
+  const { favoriteStateError, retryFavoriteChecks } = state;
+  const { resultContent, resultAnnouncement, resultAnnouncementRole, resultState } =
+    getResultsPresentation(state);
+  return (
+    <div>
+      <p
+        key={`${resultState}-${resultAnnouncement}`}
+        data-testid="results-state-announcement"
+        className="sr-only"
+        role={resultAnnouncementRole}
+        aria-label={resultAnnouncement}
+        aria-live={resultAnnouncementRole === 'alert' ? 'assertive' : 'polite'}
+        aria-atomic="true"
+      >
+        {resultAnnouncement}
+      </p>
+      {favoriteStateError && (
+        <div
+          role="alert"
+          className="m-4 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-[13px] sm:mx-5"
+        >
+          <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
+          <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
+            重试收藏状态
+          </Button>
+        </div>
+      )}
+      <RevealItem
+        isReady={resultState !== 'loading'}
+        className="min-w-0"
+        placeholder={
+          <div data-testid="results-state-loading">
+            <ArticleListSkeleton />
+          </div>
+        }
+      >
+        <MotionPresence mode="wait">
+          <MotionDiv
+            key={resultState}
+            data-testid={`results-state-${resultState}`}
+            className="min-w-0"
+            variants={{
+              ...PANEL_VARIANTS,
+              visible: { ...PANEL_VARIANTS.visible, pointerEvents: 'inherit' },
+            }}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+          >
+            {resultContent}
+          </MotionDiv>
+        </MotionPresence>
+      </RevealItem>
+    </div>
+  );
+}
+/** Own the unchanged query, visibility, favorite and highlight hooks together. */
+function useResultsViewState() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  const [q] = useQueryState('q', parseAsString);
+  const [areas] = useQueryState('area', parseAsArrayOf(parseAsString));
+  const [journalIds] = useQueryState('journal_id', parseAsArrayOf(parseAsString));
+  const [monthRange] = useQueryState('month_range', parseAsString);
+  const [ratings] = useJournalRatingFilters();
+  const [searchParams] = useSearchParams();
+  const searchKey = searchParams.toString();
+
+  const params = getResultsArticleParams(q, areas, journalIds, ratings, monthRange);
+  const paramsString = params.toString();
+  const currentDb = useSelectedDatabase();
+  const queryKey = ['articles', currentDb, paramsString];
+
+  const { data, isLoading, isError, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useInfiniteQuery<
+      ArticlePage,
+      Error,
+      InfiniteData<ArticlePage, string | null>,
+      string[],
+      string | null
+    >({
+      queryKey,
+      queryFn: async ({ pageParam, signal }) => {
+        const page = await getArticles(params, pageParam, false, currentDb, signal);
+        const cachedData =
+          queryClient.getQueryData<InfiniteData<ArticlePage, string | null>>(queryKey);
+        return validateArticlePageCursor(page, pageParam, cachedData?.pageParams ?? []);
+      },
+      initialPageParam: null,
+      getNextPageParam: getNextArticlePageParam,
+      staleTime: 5 * 60 * 1000,
+      gcTime: 10 * 60 * 1000,
+    });
+
+  const pages = useMemo(() => data?.pages ?? [], [data?.pages]);
+  const loadedPages = pages.length;
+  const { visiblePages, prefetchRef, loadMoreRef } = useVisiblePageList({
+    listKey: `${currentDb}:${searchKey}`,
+    loadedPages,
+    hasNextPage,
+    isFetchingNextPage,
+    onFetchNextPage: () => void fetchNextPage(),
+    scrollContainerId: 'results-scroll-container',
+  });
+  const visiblePageCount = Math.min(visiblePages, loadedPages);
+  const visibleArticles = useMemo(
+    () => pages.slice(0, visiblePageCount).flatMap((page) => page.items),
+    [pages, visiblePageCount],
+  );
+  const visibleArticleIds = useMemo(
+    () => visibleArticles.map((article) => article.article_id),
+    [visibleArticles],
+  );
+  const {
+    favoriteChecksByArticle,
+    isFavoriteStatePending,
+    favoriteStateError,
+    retryFavoriteChecks,
+  } = useFavoriteChecks(visibleArticleIds, currentDb, user?.id);
+
+  const highlightText = useFtsHighlighter(q);
+
+  const prefetchThreshold = 25;
+  const prefetchIndex = Math.max(0, visibleArticles.length - prefetchThreshold);
+
+  return {
+    user,
+    currentDb,
+    isLoading,
+    isError,
+    error,
+    isFetchingNextPage,
+    prefetchRef,
+    loadMoreRef,
+    visibleArticles,
+    favoriteChecksByArticle,
+    isFavoriteStatePending,
+    favoriteStateError,
+    retryFavoriteChecks,
+    highlightText,
+    prefetchIndex,
+  };
+}
+type ResultsViewState = ReturnType<typeof useResultsViewState>;
+/** Preserve error, loading, empty and result presentation and the single announcement. */
+function getResultsPresentation(state: ResultsViewState) {
+  const {
+    user,
+    currentDb,
+    isLoading,
+    isError,
+    error,
+    isFetchingNextPage,
+    prefetchRef,
+    loadMoreRef,
+    visibleArticles,
+    favoriteChecksByArticle,
+    isFavoriteStatePending,
+    favoriteStateError,
+    highlightText,
+    prefetchIndex,
+  } = state;
+  let resultContent: ReactNode;
+  let resultAnnouncement: string;
+  let resultAnnouncementRole: 'alert' | 'status' = 'status';
+  let resultState: 'empty' | 'error' | 'loading' | 'results';
+
+  if (isError) {
+    resultState = 'error';
+    resultAnnouncementRole = 'alert';
+    resultAnnouncement = `无法加载文章：${error instanceof Error ? describeSearchError(error.message) : '未知错误'}`;
+    resultContent = (
+      <StateMessage
+        isLive={false}
+        tone="danger"
+        title="无法加载文章"
+        description={error instanceof Error ? describeSearchError(error.message) : '未知错误'}
+      />
+    );
+  } else if (isLoading) {
+    resultState = 'loading';
+    resultAnnouncement = '正在加载搜索结果';
+    resultContent = null;
+  } else if (visibleArticles.length === 0) {
+    resultState = 'empty';
+    resultAnnouncement = '未找到文章。请尝试调整搜索词、数据库或筛选条件。';
+    resultContent = (
+      <StateMessage
+        isLive={false}
+        title="未找到文章。"
+        description="请尝试调整搜索词、数据库或筛选条件。"
+      />
+    );
+  } else {
+    resultState = 'results';
+    resultAnnouncement = isFetchingNextPage
+      ? '正在加载更多文章'
+      : `已加载 ${visibleArticles.length} 篇文章`;
+    resultContent = (
+      <>
+        <MotionPresence>
+          {visibleArticles.map((article, index) => (
+            <MotionDiv
+              key={article.article_id}
+              variants={LIST_ITEM_VARIANTS}
+              initial="hidden"
+              animate="visible"
+            >
+              <HighlightedArticleCard
+                triggerRef={index === prefetchIndex ? prefetchRef : undefined}
+                article={article}
+                dbName={currentDb}
+                highlightText={highlightText}
+                initialFolderIds={
+                  favoriteChecksByArticle[article.article_id]?.map((item) => item.folder_id) ?? []
+                }
+                isFavoriteStatePending={
+                  Boolean(user) &&
+                  isFavoriteStatePending &&
+                  !favoriteChecksByArticle[article.article_id]
+                }
+                isFavoriteStateUnavailable={
+                  Boolean(favoriteStateError) && !favoriteChecksByArticle[article.article_id]
+                }
+              />
+            </MotionDiv>
+          ))}
+        </MotionPresence>
+
+        <div ref={loadMoreRef} className="h-1" />
+        <MotionPresence>
+          {isFetchingNextPage && (
+            <MotionDiv
+              key="next-page-loading"
+              aria-hidden="true"
+              className="space-y-2 px-4 py-4 sm:px-5"
+              variants={REVEAL_VARIANTS}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+            >
+              <Skeleton className="h-4 w-11/12" />
+              <Skeleton className="h-3 w-1/2" />
+            </MotionDiv>
+          )}
+        </MotionPresence>
+      </>
+    );
+  }
+
+  return { resultContent, resultAnnouncement, resultAnnouncementRole, resultState };
+}
+
+/** Serialize raw search text and selected filters in the original request order. */
+function getResultsArticleParams(
+  q: string | null,
+  areas: string[] | null,
+  journalIds: string[] | null,
+  ratings: ReturnType<typeof useJournalRatingFilters>[0],
+  monthRange: string | null,
+): URLSearchParams {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+
+  if (areas && areas.length > 0) {
+    areas.forEach((a) => params.append('area', a));
+  }
+  if (journalIds && journalIds.length > 0) {
+    journalIds.forEach((id) => params.append('journal_id', id));
+  }
+  appendJournalRatingParams(params, ratings);
+
+  const dateBounds = getMonthRangeDateBounds(monthRange);
+  if (dateBounds) {
+    params.set('date_from', dateBounds.dateFrom);
+    params.set('date_to', dateBounds.dateTo);
+  }
+
+  return params;
+}

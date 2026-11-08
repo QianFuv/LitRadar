@@ -194,7 +194,7 @@ test("workflow standardization preserves required check identities and artifact 
   assert.match(workflows.backend, /name: Go checks \(\$\{\{ matrix.os \}\}\)/);
   assert.match(
     workflows.frontend,
-    /  frontend:\s+outputs:/,
+    /  frontend:\s+runs-on:/,
     "Preserve the implicit frontend job name",
   );
   assert.match(workflows.ci, /name: Release rules/);

@@ -1,0 +1,233 @@
+/**
+ * Shared tracking-settings session rendered by the tracking and notification categories.
+ */
+
+import { Save } from '@/components/ui/animated-icons';
+import { useEffect, useMemo } from 'react';
+
+import { DeliverySettingsSection } from '@/components/tracking/delivery-settings-section';
+import { ManualPushCard } from '@/components/tracking/manual-push-card';
+import { RecommendationSettingsSection } from '@/components/tracking/recommendation-settings-section';
+import { TrackingFolderCard } from '@/components/tracking/tracking-folder-card';
+import { TrackingHelpCard } from '@/components/tracking/tracking-help-card';
+import { useTrackingPage } from '@/components/tracking/use-tracking-page';
+import { Button } from '@/components/ui/button';
+import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
+import { RevealItem } from '@/components/ui/reveal';
+import { Skeleton } from '@/components/ui/skeleton';
+
+export type TrackingSettingsSectionId = 'tracking' | 'notifications';
+
+/** Actions and state exposed to the settings-center transition guard. */
+export type TrackingSettingsController = {
+  discardSettings: () => void;
+  hasUnsavedSettings: boolean;
+  isSaving: boolean;
+};
+
+type TrackingSettingsContentProps = {
+  onControllerChange?: (controller: TrackingSettingsController | null) => void;
+  section: TrackingSettingsSectionId;
+  userId: number;
+};
+
+/**
+ * Render a shared tracking draft across recommendation and delivery categories.
+ *
+ * @param props - Authenticated user, active tracking category, and guard callback.
+ * @returns Tracking category content with a shared sticky save bar.
+ */
+export function TrackingSettingsContent({
+  onControllerChange,
+  section,
+  userId,
+}: TrackingSettingsContentProps) {
+  const trackingPage = useTrackingPage(userId);
+  const controller = useMemo<TrackingSettingsController>(
+    () => ({
+      discardSettings: trackingPage.discardSettings,
+      hasUnsavedSettings: trackingPage.hasUnsavedSettings,
+      isSaving: trackingPage.recommendation.save.mutation.isPending,
+    }),
+    [
+      trackingPage.discardSettings,
+      trackingPage.hasUnsavedSettings,
+      trackingPage.recommendation.save.mutation.isPending,
+    ],
+  );
+
+  useEffect(() => {
+    onControllerChange?.(controller);
+  }, [controller, onControllerChange]);
+
+  useEffect(
+    () => () => {
+      onControllerChange?.(null);
+    },
+    [onControllerChange],
+  );
+
+  const recommendation = trackingPage.recommendation;
+  const isInitialLoading = recommendation.notificationQuery.isPending && !recommendation.hasDraft;
+  const isInitialError = recommendation.notificationQuery.isError && !recommendation.hasDraft;
+
+  const state = { trackingPage, recommendation, isInitialLoading, isInitialError, section };
+  return (
+    <div className="flex min-h-full flex-col">
+      <fieldset
+        className="m-0 min-w-0 flex-1 border-0 p-0"
+        disabled={recommendation.save.mutation.isPending}
+      >
+        <MotionPresence mode="wait">
+          <MotionDiv
+            key={section}
+            variants={PANEL_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+          >
+            {renderTrackingCategory(state)}
+          </MotionDiv>
+        </MotionPresence>
+      </fieldset>
+
+      <RevealItem isReady={!isInitialLoading} placeholder={null}>
+        {!isInitialError && renderTrackingSaveBar(state)}
+      </RevealItem>
+    </div>
+  );
+}
+
+/**
+ * Render the loading placeholder of one tracking block.
+ *
+ * @param heightClassName - Height of the block being loaded.
+ * @returns Status placeholder with a skeleton of the block.
+ */
+function renderTrackingBlockPlaceholder(heightClassName: string) {
+  return (
+    <div role="status" className="py-4">
+      <span className="sr-only">正在加载已保存的推荐配置…</span>
+      <Skeleton className={`${heightClassName} w-full rounded-xl`} />
+    </div>
+  );
+}
+
+/** Retain draft-aware initial loading/error and category content precedence. */
+function renderTrackingCategory(state: TrackingSettingsViewState) {
+  const { section, trackingPage, recommendation, isInitialLoading, isInitialError } = state;
+  if (isInitialError)
+    return (
+      <div
+        role="alert"
+        className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive"
+      >
+        {recommendation.notificationQuery.error instanceof Error
+          ? recommendation.notificationQuery.error.message
+          : '加载推荐配置失败'}
+      </div>
+    );
+  if (section === 'tracking')
+    return (
+      <>
+        <TrackingHelpCard />
+        <RevealItem
+          isReady={!trackingPage.folder.isLoading && !trackingPage.isStatusLoading}
+          placeholder={renderTrackingBlockPlaceholder('h-32')}
+        >
+          <TrackingFolderCard model={trackingPage.folder} />
+        </RevealItem>
+        <RevealItem
+          isReady={
+            !isInitialLoading &&
+            !recommendation.databaseSelection.query.isPending &&
+            !recommendation.ai.endpoints.query.isPending
+          }
+          placeholder={renderTrackingBlockPlaceholder('h-96')}
+        >
+          <RecommendationSettingsSection model={recommendation} />
+        </RevealItem>
+      </>
+    );
+  return (
+    <>
+      <RevealItem isReady={!isInitialLoading} placeholder={renderTrackingBlockPlaceholder('h-64')}>
+        <DeliverySettingsSection model={recommendation} />
+      </RevealItem>
+      <RevealItem
+        isReady={!trackingPage.manualPush.isLoading && !trackingPage.isStatusLoading}
+        placeholder={renderTrackingBlockPlaceholder('h-32')}
+      >
+        <ManualPushCard model={trackingPage.manualPush} />
+      </RevealItem>
+    </>
+  );
+}
+
+/** Retain unavailable database, saved and failed-save feedback order. */
+function renderTrackingSaveFeedback(state: TrackingSettingsViewState) {
+  const { recommendation } = state;
+
+  return (
+    <div className="col-span-2 flex-1 text-sm empty:hidden">
+      {recommendation.databaseSelection.unavailable.length > 0 && (
+        <span role="alert" className="text-destructive">
+          推送数据库已不可用，请在“文献追踪”中重新选择或明确设为全部。
+        </span>
+      )}
+      {recommendation.save.didSave && (
+        <span role="status" className="text-success-foreground">
+          已保存
+        </span>
+      )}
+      {recommendation.save.mutation.isError && (
+        <span role="alert" className="text-destructive">
+          {recommendation.save.mutation.error instanceof Error
+            ? recommendation.save.mutation.error.message
+            : '保存失败'}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Retain discard/save admission guards and draft ownership. */
+function renderTrackingSaveBar(state: TrackingSettingsViewState) {
+  const { trackingPage, recommendation } = state;
+
+  return (
+    <div className="sticky bottom-0 mt-10 grid grid-cols-2 gap-2 border-t bg-background py-3 sm:flex sm:items-center sm:justify-end sm:gap-3 sm:py-4">
+      {renderTrackingSaveFeedback(state)}
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full sm:w-auto"
+        disabled={!trackingPage.hasUnsavedSettings || recommendation.save.mutation.isPending}
+        onClick={trackingPage.discardSettings}
+      >
+        取消更改
+      </Button>
+      <Button
+        type="button"
+        className="w-full sm:w-auto"
+        disabled={
+          !trackingPage.hasUnsavedSettings ||
+          recommendation.save.mutation.isPending ||
+          recommendation.databaseSelection.unavailable.length > 0
+        }
+        onClick={() => recommendation.save.mutation.mutate()}
+      >
+        <Save className="size-4" />
+        {recommendation.save.mutation.isPending ? '保存中…' : '保存更改'}
+      </Button>
+    </div>
+  );
+}
+
+type TrackingSettingsViewState = {
+  trackingPage: ReturnType<typeof useTrackingPage>;
+  recommendation: ReturnType<typeof useTrackingPage>['recommendation'];
+  isInitialLoading: boolean;
+  isInitialError: boolean;
+  section: TrackingSettingsSectionId;
+};

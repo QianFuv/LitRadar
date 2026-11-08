@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "dist",
+    "coverage",
+    "playwright-report",
+    "test-results",
+    "tests",
+    "playwright.config.tsx",
+    "playwright.full-stack.config.tsx",
+    "vitest.config.tsx",
+    "vite.config.ts"
+  ]
+}

@@ -1,0 +1,40 @@
+/**
+ * Custom not-found route and document metadata.
+ */
+
+import { Link } from 'react-router';
+
+import { Button } from '@/components/ui/button';
+import { RadarMark } from '@/components/feature/reader-placeholder';
+
+/** Document title rendered by the not-found route. */
+export const NOT_FOUND_PAGE_TITLE = '页面未找到 | LitRadar';
+
+/** Document description rendered by the not-found route. */
+export const NOT_FOUND_PAGE_DESCRIPTION = '所请求的 LitRadar 页面不存在。';
+
+/**
+ * Render the custom application not-found page.
+ *
+ * @returns Accessible not-found content with home navigation.
+ */
+export default function NotFound() {
+  return (
+    <main
+      id="main-content"
+      className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 py-16 text-center"
+    >
+      <title>{NOT_FOUND_PAGE_TITLE}</title>
+      <meta name="description" content={NOT_FOUND_PAGE_DESCRIPTION} />
+      <RadarMark className="size-40 text-muted-foreground" />
+      <p className="mt-8 text-xs font-bold tracking-[0.2em] text-primary-text">404 · 信号丢失</p>
+      <h1 className="mt-3 text-2xl font-bold tracking-tight">页面未找到</h1>
+      <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+        你访问的页面不存在，可能已被移动或删除。
+      </p>
+      <Button asChild className="mt-8 h-10 rounded-xl px-5">
+        <Link to="/">返回首页</Link>
+      </Button>
+    </main>
+  );
+}

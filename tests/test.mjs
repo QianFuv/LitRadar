@@ -15,7 +15,7 @@ const WORKSPACE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const APP_ROOT = path.join(WORKSPACE_ROOT, "app");
+const APP_ROOT = path.join(WORKSPACE_ROOT, "apps", "client", "frontend");
 const VALID_MODES = new Set([
   "fast",
   "integration",
