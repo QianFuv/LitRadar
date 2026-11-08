@@ -31,7 +31,7 @@ for (const command of ["litradar", "litradar-fixture"]) {
         : "sqlite_fts5,sqlite_dbstat",
       "-o",
       filename,
-      `./cmd/${command}`,
+      command === "litradar" ? "./apps/server" : "./cmd/litradar-fixture",
     ],
     {
       cwd: ROOT,

@@ -96,6 +96,7 @@ COPY third_party third_party
 RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod go mod download && go mod verify
 COPY cmd cmd
 COPY internal internal
+COPY apps/server apps/server
 RUN rm -rf /app/internal/webassets/export
 COPY --from=frontend-build /app/out internal/webassets/export
 COPY assets assets
@@ -112,7 +113,7 @@ RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod \
     && mkdir -p /out \
     && node scripts/build-simple-tokenizer.mjs \
     && export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment} from "./scripts/build-simple-tokenizer.mjs"; process.stdout.write(simpleBuildEnvironment().CGO_CFLAGS)')" \
-    && go build -mod=readonly -trimpath -tags sqlite_fts5,sqlite_dbstat,litradar_web -o /out/litradar ./cmd/litradar \
+    && go build -mod=readonly -trimpath -tags sqlite_fts5,sqlite_dbstat,litradar_web -o /out/litradar ./apps/server \
     && sh /usr/local/bin/go-build-inventory
 
 

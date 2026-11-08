@@ -149,7 +149,7 @@ run(
     "-linkmode external -extldflags -static",
     "-o",
     path.join(directory, "litradar.exe"),
-    "./cmd/litradar",
+    "./apps/server",
   ],
   { env: environment, stdio: "inherit" },
 );
