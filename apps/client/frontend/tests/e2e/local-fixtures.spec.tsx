@@ -3078,6 +3078,28 @@ test('supports accessible navigation and theme selection', userMenuNavigationTes
 test('polishes search targets and restrained control feedback', interfacePolishControlsTest);
 test('polishes stable and semantic favorite feedback', interfacePolishFavoriteTest);
 
+/**
+ * Measure an element once its entrance motion has stopped moving it.
+ *
+ * @param locator - Element whose resting geometry is needed.
+ * @returns Bounding box observed unchanged across two consecutive animation frames.
+ */
+async function settledBoundingBox(
+  locator: Locator,
+): Promise<Awaited<ReturnType<Locator['boundingBox']>>> {
+  let previousBox = await locator.boundingBox();
+  await expect
+    .poll(async () => {
+      await locator.page().evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+      const currentBox = await locator.boundingBox();
+      const isStable = JSON.stringify(currentBox) === JSON.stringify(previousBox);
+      previousBox = currentBox;
+      return isStable;
+    })
+    .toBe(true);
+  return previousBox;
+}
+
 /** Verify color feedback without moving controls or changing category selection. */
 async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<void> {
   await page.route('**/api/**', serveTrackingApi);
@@ -3092,7 +3114,7 @@ async function themeInteractionFeedbackTest({ page }: { page: Page }): Promise<v
     const navigation = page.getByRole('navigation', { name: '设置分类' });
     const inactiveCategory = navigation.getByRole('button', { name: '数据源' });
     const currentCategory = navigation.getByRole('button', { name: '文献追踪' });
-    const initialBox = await inactiveCategory.boundingBox();
+    const initialBox = await settledBoundingBox(inactiveCategory);
     await inactiveCategory.hover();
     await expect(inactiveCategory).toHaveCSS(
       'background-color',
