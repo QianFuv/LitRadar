@@ -4,9 +4,9 @@
 
 | Target | Build tags | Output |
 | --- | --- | --- |
-| Web host (linux/amd64, served behind the reverse proxy) | `server,production` | `bin/litradar-client-web` |
+| Web host (linux/amd64, served behind the reverse proxy) | `server,production` | `bin/litradar-client-web`, archive `bin/litradar-client-web_<version>_linux_amd64.tar.gz` |
 | Windows amd64 desktop app | `production` | `bin/litradar-client.exe`, portable zip `bin/litradar-client_<version>_windows_amd64.zip` |
-| Android arm64-v8a app | `android,production` | `bin/litradar-client-android-arm64.apk` |
+| Android arm64-v8a app | `android,production` | `bin/litradar-client_<version>_android_arm64.apk` |
 
 macOS, Linux desktop, and iOS are not built.
 
@@ -20,11 +20,12 @@ the frontend from the repository root workspace in the right Vite mode: `web` fo
 | Task | Result |
 | --- | --- |
 | `build:server` | `bin/litradar-client-web` (`CGO_ENABLED=0`, linux/amd64) |
+| `package:web` | archive `bin/litradar-client-web_<version>_linux_amd64.tar.gz` |
 | `build:docker` | distroless image from `build/docker/Dockerfile.server` |
 | `build:windows` | `bin/litradar-client.exe` (no CGO; WebView2) |
 | `package:windows` | portable zip `bin/litradar-client_<version>_windows_amd64.zip` (on Windows) |
-| `package:android` | release APK `bin/litradar-client-android-arm64.apk` |
-| `build:android:debug` | debuggable APK `bin/litradar-client-android-arm64-debug.apk` with an inspectable WebView |
+| `package:android` | release APK `bin/litradar-client_<version>_android_arm64.apk` |
+| `build:android:debug` | debuggable APK `bin/litradar-client_<version>_android_arm64_debug.apk` with an inspectable WebView |
 | `build:windows:smoke` | `bin/litradar-client-smoke.exe` for the desktop smoke test |
 | `test` | `go vet` and `go test` for `internal/...` |
 
@@ -39,6 +40,10 @@ edits nothing else. The builds derive it as follows:
   `build/windows/info.json` (kept without version fields) and `build/windows/wails.exe.manifest`
   (whose `{{FILE_VERSION}}` placeholder becomes `MAJOR.MINOR.PATCH.0`) into
   `bin/windows-resources` for `generate syso`.
+
+Every package follows `litradar-<component>_<version>_<os>_<arch>.<ext>` and is named only in
+`scripts/package-client.mjs`; CI stages exactly those files. The Web host archive holds one
+`litradar-client-web_<version>_linux_amd64` folder with the executable and `LICENSE`.
 
 The Windows portable zip holds one `litradar-client_<version>_windows_amd64` folder with
 `litradar-client.exe` and `LICENSE`. The app keeps its host config and WebView2 profile in a

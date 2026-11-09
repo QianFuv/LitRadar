@@ -127,7 +127,7 @@ pnpm dev
 
 默认地址为 `http://localhost:8000`。`vite.config.ts` 将 `/api`、`/mcp`、`/docs`、`/openapi.json` 与 `/health` 代理到内部 Go 8001。生产部署由 Caddy 执行同源路由。
 
-在根目录执行 `pnpm build` 生成 `apps/client/frontend/dist`；`node apps/server/scripts/build-go.mjs` 仅构建服务端，不读取客户端产物。Web 客户端在 `apps/client` 执行 `task build:server`，输出 `bin/litradar-client-web`；Windows 执行 `task package:windows`，Android 执行 `task package:android`。平台与签名要求见[发布说明](../operations/releases.md)。
+在根目录执行 `pnpm build` 生成 `apps/client/frontend/dist`；`node apps/server/scripts/build-go.mjs` 仅构建服务端，不读取客户端产物。Web 客户端在 `apps/client` 执行 `task build:server`，输出 `bin/litradar-client-web`，`task package:web` 再打包为 `bin/litradar-client-web_<version>_linux_amd64.tar.gz`；Windows 执行 `task package:windows`，Android 执行 `task package:android`。平台与签名要求见[发布说明](../operations/releases.md)。
 
 ### 索引和投递
 

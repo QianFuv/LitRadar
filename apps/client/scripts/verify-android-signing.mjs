@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { clientAssetName, repositoryVersion } from "./package-client.mjs";
 
 /** Reject valid APK signatures whose signing certificate differs from the release key. */
 export function assertAndroidSigner(output, expectedDigest) {
@@ -43,7 +44,10 @@ if (
       "verify",
       "--verbose",
       "--print-certs",
-      "apps/client/bin/litradar-client-android-arm64.apk",
+      path.join(
+        "apps/client/bin",
+        clientAssetName(repositoryVersion(), "android"),
+      ),
     ],
     { encoding: "utf8", timeout: 60000 },
   );

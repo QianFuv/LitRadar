@@ -147,7 +147,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           case "$TARGET" in
-            web) task build:server; CGO_ENABLED=0 go vet -tags server,production . ;;
+            web) task package:web; CGO_ENABLED=0 go vet -tags server,production . ;;
             windows) task package:windows ;;
             android) task package:android ;;
           esac

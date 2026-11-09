@@ -21,7 +21,7 @@ After backend, frontend and client quality checks pass, release jobs build the s
 
 - `litradar-server_<version>_linux_amd64.tar.gz`
 - `litradar-server_<version>_windows_amd64.zip`
-- `litradar-client-web_<version>_linux_amd64` (Wails Server Build binary)
+- `litradar-client-web_<version>_linux_amd64.tar.gz` (Wails Server Build binary)
 - `litradar-client_<version>_windows_amd64.zip` (unsigned portable app; data stays in `data\` next to `litradar-client.exe`)
 - `litradar-client_<version>_android_arm64.apk` (release-signed, when configured)
 - `SHA256SUMS` covering every published binary/package
@@ -41,9 +41,9 @@ Server packaging is independent of UI builds. Client release jobs install pinned
 
 | Target | Command | Task output |
 | --- | --- | --- |
-| Web | `task build:server` | `bin/litradar-client-web` (linux/amd64, CGO disabled) |
+| Web | `task package:web` | `bin/litradar-client-web_<version>_linux_amd64.tar.gz` (linux/amd64, CGO disabled) |
 | Windows | `task package:windows` | `bin/litradar-client_<version>_windows_amd64.zip` |
-| Android | `task package:android` | `bin/litradar-client-android-arm64.apk` |
+| Android | `task package:android` | `bin/litradar-client_<version>_android_arm64.apk` |
 
 Windows runs on a Windows x64 runner; the portable executable is unsigned. Android uses an Ubuntu runner, Java 21 and sdkmanager with Android 36/build-tools 36.0.0 and NDK r28c (`28.2.13676358`). Quality jobs exercise all three Task targets; the Web host check belongs only to the client workflow. Android quality builds may use development signing.
 
@@ -160,4 +160,4 @@ Server executables statically link Simple and contain no UI. Client binaries emb
 
 ## Run the Web client binary
 
-On Linux amd64, download `litradar-client-web_<version>_linux_amd64`, verify it against SHA256SUMS and mark it executable with `chmod +x`. Start it with WAILS_SERVER_HOST/WAILS_SERVER_PORT on the private network behind the same Caddy routes used by Compose. The binary serves the Vite SPA; the Go API server still runs separately. Windows and Android apps ask for the server URL and use native device tokens; see the [client guide](../guides/clients.md).
+On Linux amd64, download `litradar-client-web_<version>_linux_amd64.tar.gz`, verify it against SHA256SUMS and extract it with `tar -xzf`; the folder holds the executable `litradar-client-web`. Start it with WAILS_SERVER_HOST/WAILS_SERVER_PORT on the private network behind the same Caddy routes used by Compose. The binary serves the Vite SPA; the Go API server still runs separately. Windows and Android apps ask for the server URL and use native device tokens; see the [client guide](../guides/clients.md).

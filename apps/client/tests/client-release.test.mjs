@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   clientAssetName,
-  packageWindowsPortable,
+  packageClient,
   stageClient,
 } from "../scripts/package-client.mjs";
 import {
@@ -112,47 +112,117 @@ test("client packaging accepts only the contracted nonempty outputs and supporte
     ),
     "verified portable zip",
   );
-  fs.writeFileSync(path.join(source, "litradar-client-web"), "");
+  fs.writeFileSync(
+    path.join(source, "litradar-client-web_0.3.0_linux_amd64.tar.gz"),
+    "",
+  );
   assert.throws(() => stageClient("web", VERSION, root, output), /nonempty/);
   for (const target of ["ios", "darwin", "linux", "android-amd64"])
     assert.throws(() => clientAssetName(VERSION, target), /Unsupported/);
 });
 
-test(
-  "the Windows client ships as a portable zip with one versioned folder",
-  {
-    skip:
-      process.platform !== "win32" && "Windows packaging uses the Windows tar",
-  },
-  (context) => {
-    const root = temporaryRoot(context);
-    const bin = path.join(root, "apps/client/bin");
-    fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(path.join(bin, "litradar-client.exe"), "portable exe");
-    fs.writeFileSync(path.join(root, "LICENSE"), "license text");
-    const archive = packageWindowsPortable(VERSION, root);
+/**
+ * List the files of an archive with the tar that packaged it, ignoring folder entries.
+ *
+ * @param {string} archive - Archive to list.
+ * @returns {string[]} Sorted `<mode> <path>` lines.
+ */
+function archiveFiles(archive) {
+  const tar =
+    process.platform === "win32"
+      ? path.join(process.env.SystemRoot, "System32", "tar.exe")
+      : "tar";
+  return execFileSync(tar, ["-tvf", archive], { encoding: "utf8" })
+    .split(/\r?\n/)
+    .filter((line) => line && !line.startsWith("d"))
+    .map((line) => {
+      const fields = line.trim().split(/\s+/);
+      return `${fields[0]} ${fields.at(-1)}`;
+    })
+    .sort();
+}
+
+test("client packages use release names with one versioned folder each", (context) => {
+  const root = temporaryRoot(context);
+  const bin = path.join(root, "apps/client/bin");
+  const apks = path.join(
+    root,
+    "apps/client/build/android/app/build/outputs/apk",
+  );
+  for (const directory of [
+    bin,
+    path.join(apks, "release"),
+    path.join(apks, "debug"),
+  ])
+    fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(root, "LICENSE"), "license text");
+  fs.writeFileSync(path.join(bin, "litradar-client-web"), "web host");
+  fs.writeFileSync(path.join(bin, "litradar-client.exe"), "portable exe");
+  fs.writeFileSync(path.join(apks, "release/app-release.apk"), "release apk");
+  fs.writeFileSync(path.join(apks, "debug/app-debug.apk"), "debug apk");
+
+  const web = packageClient("web", VERSION, root);
+  assert.equal(
+    path.basename(web),
+    "litradar-client-web_0.3.0_linux_amd64.tar.gz",
+  );
+  const webFiles = archiveFiles(web);
+  assert.deepEqual(
+    webFiles.map((line) => line.split(" ")[1]),
+    [
+      "litradar-client-web_0.3.0_linux_amd64/LICENSE",
+      "litradar-client-web_0.3.0_linux_amd64/litradar-client-web",
+    ],
+  );
+  if (process.platform !== "win32")
+    assert.match(webFiles[1], /^-rwxr-xr-x /, "Web host must stay executable");
+
+  if (process.platform === "win32") {
+    const windows = packageClient("windows", VERSION, root);
     assert.equal(
-      archive,
-      path.join(bin, "litradar-client_0.3.0_windows_amd64.zip"),
-    );
-    const entries = execFileSync(
-      path.join(process.env.SystemRoot, "System32", "tar.exe"),
-      ["-tf", archive],
-      { encoding: "utf8" },
-    )
-      .split(/\r?\n/)
-      .filter((entry) => entry && !entry.endsWith("/"))
-      .sort();
-    assert.deepEqual(entries, [
-      "litradar-client_0.3.0_windows_amd64/LICENSE",
-      "litradar-client_0.3.0_windows_amd64/litradar-client.exe",
-    ]);
-    assert.deepEqual(fs.readdirSync(bin).sort(), [
-      "litradar-client.exe",
+      path.basename(windows),
       "litradar-client_0.3.0_windows_amd64.zip",
-    ]);
-  },
-);
+    );
+    assert.deepEqual(
+      archiveFiles(windows).map((line) => line.split(" ")[1]),
+      [
+        "litradar-client_0.3.0_windows_amd64/LICENSE",
+        "litradar-client_0.3.0_windows_amd64/litradar-client.exe",
+      ],
+    );
+  } else {
+    assert.throws(() => packageClient("windows", VERSION, root), /Windows tar/);
+  }
+
+  assert.equal(
+    fs.readFileSync(packageClient("android", VERSION, root), "utf8"),
+    "release apk",
+  );
+  assert.equal(
+    fs.readFileSync(packageClient("android-debug", VERSION, root), "utf8"),
+    "debug apk",
+  );
+  assert.deepEqual(
+    fs
+      .readdirSync(bin)
+      .filter(
+        (name) =>
+          name.startsWith("litradar-client_0") ||
+          name.startsWith("litradar-client-web_0"),
+      )
+      .sort(),
+    [
+      "litradar-client-web_0.3.0_linux_amd64.tar.gz",
+      "litradar-client_0.3.0_android_arm64.apk",
+      "litradar-client_0.3.0_android_arm64_debug.apk",
+      ...(process.platform === "win32"
+        ? ["litradar-client_0.3.0_windows_amd64.zip"]
+        : []),
+    ].sort(),
+  );
+  assert(!fs.readdirSync(bin).some((name) => name.startsWith("package-")));
+  assert.throws(() => packageClient("ios", VERSION, root), /Unsupported/);
+});
 
 for (const android of ["signed", "omitted"]) {
   test(`client evidence accepts ${android} Android and rejects changed or missing mandatory bytes`, async (context) => {
@@ -254,7 +324,7 @@ test("workflows preserve isolated client quality and the release signing omissio
   const frontend = fs.readFileSync(".github/workflows/frontend.yaml", "utf8");
   const release = fs.readFileSync(".github/workflows/release.yaml", "utf8");
   for (const command of [
-    "task build:server",
+    "task package:web",
     "task package:windows",
     "task package:android",
   ])

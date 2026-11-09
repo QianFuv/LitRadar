@@ -44,6 +44,13 @@ tasks:
     cmds:
       - go build -mod=readonly -tags server,production -trimpath -buildvcs=false -ldflags="-s -w" -o {{.BIN_DIR}}/{{.APP_NAME}} .
 
+  package:web:
+    desc: Builds the web host archive bin/litradar-client-web_<version>_linux_amd64.tar.gz
+    deps:
+      - build:server
+    cmds:
+      - node scripts/package-client.mjs package web
+
   run:server:
     desc: Builds and runs the server mode for the host platform on WAILS_SERVER_PORT (default 8080)
     deps:
@@ -122,7 +129,7 @@ tasks:
       NDK_HOST_TAG: '{{if eq OS "windows"}}windows-x86_64{{else if eq OS "darwin"}}darwin-x86_64{{else}}linux-x86_64{{end}}'
 
   package:android:
-    desc: Builds the release APK bin/litradar-client-android-arm64.apk (ANDROID_SIGNING_* env signs it, debug keystore otherwise)
+    desc: Builds the release APK bin/litradar-client_<version>_android_arm64.apk (ANDROID_SIGNING_* env signs it, debug keystore otherwise)
     deps:
       - build:frontend:native
     cmds:
@@ -130,11 +137,10 @@ tasks:
       - task: gradle
         vars:
           GRADLE_TASK: assembleRelease
-      - mkdir -p {{.BIN_DIR}}
-      - cp build/android/app/build/outputs/apk/release/app-release.apk {{.BIN_DIR}}/{{.NATIVE_NAME}}-android-arm64.apk
+      - node scripts/package-client.mjs package android
 
   build:android:debug:
-    desc: Builds a debuggable APK with an inspectable WebView into bin/litradar-client-android-arm64-debug.apk
+    desc: Builds a debuggable APK with an inspectable WebView into bin/litradar-client_<version>_android_arm64_debug.apk
     deps:
       - build:frontend:native
     cmds:
@@ -142,8 +148,7 @@ tasks:
       - task: gradle
         vars:
           GRADLE_TASK: assembleDebug
-      - mkdir -p {{.BIN_DIR}}
-      - cp build/android/app/build/outputs/apk/debug/app-debug.apk {{.BIN_DIR}}/{{.NATIVE_NAME}}-android-arm64-debug.apk
+      - node scripts/package-client.mjs package android-debug
 
   gradle:
     internal: true

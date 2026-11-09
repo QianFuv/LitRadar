@@ -32,7 +32,7 @@ const RELEASE_COMMIT = "a".repeat(40);
 const RELEASE_ASSETS = [
   "litradar-server_0.2.0_linux_amd64.tar.gz",
   "litradar-server_0.2.0_windows_amd64.zip",
-  "litradar-client-web_0.2.0_linux_amd64",
+  "litradar-client-web_0.2.0_linux_amd64.tar.gz",
   "litradar-client_0.2.0_windows_amd64.zip",
   "SHA256SUMS",
 ].map((name) => ({ name, digest: `sha256:${"b".repeat(64)}`, size: 100 }));
@@ -41,7 +41,7 @@ test("complete releases require server archives, Web and Windows clients and one
   assert.deepEqual(releaseAssetNames("0.2.1"), [
     "litradar-server_0.2.1_linux_amd64.tar.gz",
     "litradar-server_0.2.1_windows_amd64.zip",
-    "litradar-client-web_0.2.1_linux_amd64",
+    "litradar-client-web_0.2.1_linux_amd64.tar.gz",
     "litradar-client_0.2.1_windows_amd64.zip",
     "SHA256SUMS",
   ]);
