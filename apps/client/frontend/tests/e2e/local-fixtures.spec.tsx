@@ -2438,6 +2438,7 @@ async function mobileSidebarScrollTest({ page }: { page: Page }): Promise<void> 
   await page.mouse.click(300, 40);
   await expect(drawer).toHaveCount(0);
   await trigger.click();
+  await expect(drawer).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(drawer).toHaveCount(0);
   await expect(trigger).toBeFocused();
