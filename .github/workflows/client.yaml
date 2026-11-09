@@ -85,7 +85,6 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           go install github.com/go-task/task/v3/cmd/task@v3.54.0
-          go install "github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)"
       - name: Resolve Android signing availability
         id: signing
         if: matrix.target == 'android'
