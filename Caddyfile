@@ -1,0 +1,28 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8000 {
+	@wails path /wails /wails/*
+	handle @wails {
+		respond 404
+	}
+
+	@server path /api /api/* /mcp /mcp/* /docs /docs/* /openapi.json /health/*
+	handle @server {
+		reverse_proxy server:8000 {
+			flush_interval -1
+			header_up -Forwarded
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+
+	handle {
+		reverse_proxy client-web:8080 {
+			header_up -Forwarded
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+}
