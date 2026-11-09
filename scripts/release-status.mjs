@@ -13,7 +13,7 @@ export function verifyReleaseJobs(jobs) {
   const required =
     published === "true"
       ? ["promote"]
-      : ["windows", "linux", "publish", "promote"];
+      : ["windows", "linux", "client", "publish", "promote"];
   for (const job of required) {
     assert.equal(
       jobs[job]?.result,
@@ -22,7 +22,7 @@ export function verifyReleaseJobs(jobs) {
     );
   }
   if (published === "true") {
-    for (const job of ["windows", "linux", "publish"]) {
+    for (const job of ["windows", "linux", "client", "publish"]) {
       assert.equal(
         jobs[job]?.result,
         "skipped",

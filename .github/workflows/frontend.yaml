@@ -134,24 +134,6 @@ jobs:
           echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
           exit "$status"
 
-      - name: Check Wails web host
-        id: wails_web_host
-        working-directory: apps/client
-        env:
-          CGO_ENABLED: "0"
-        run: |
-          started_at="$(date +%s)"
-          set +e
-          test -z "$(gofmt -l main.go internal)" \
-            && go vet ./internal/... \
-            && go test ./internal/... \
-            && go vet -tags server,production . \
-            && GOOS=linux GOARCH=amd64 go build -mod=readonly -tags server,production -trimpath -buildvcs=false -ldflags="-s -w" -o bin/litradar-client-web .
-          status="$?"
-          set -e
-          echo "duration_seconds=$(( $(date +%s) - started_at ))" >> "$GITHUB_OUTPUT"
-          exit "$status"
-
       - name: Record quality artifact provenance
         id: record_quality_artifact_provenance
         if: always()

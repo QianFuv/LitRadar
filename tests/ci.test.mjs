@@ -83,8 +83,8 @@ test("release prerequisites include every lane and obsolete quality runs are iso
   assert.match(backend, /fail-fast: false/);
   assert.match(backend, /needs: checks\s+if: always\(\)/);
   assert.match(backend, /test "\$CHECKS_RESULT" = success/);
-  assert.match(ci, /needs: \[release-rules, backend, frontend\]/);
-  for (const name of ["backend", "frontend"]) {
+  assert.match(ci, /needs: \[release-rules, backend, frontend, client\]/);
+  for (const name of ["backend", "frontend", "client"]) {
     assert.match(
       ci,
       new RegExp(

@@ -170,7 +170,14 @@ test("final summary reflects a later upload failure without rewriting the upload
 });
 
 test("workflow standardization preserves required check identities and artifact download roots", async () => {
-  const names = ["backend", "frontend", "ci", "release", "test-diagnostics"];
+  const names = [
+    "backend",
+    "frontend",
+    "client",
+    "ci",
+    "release",
+    "test-diagnostics",
+  ];
   const workflows = Object.fromEntries(
     await Promise.all(
       names.map(async (name) => [

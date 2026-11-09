@@ -6,10 +6,15 @@ on:
       version:
         required: true
         type: string
-      web_artifact_id:
-        description: Same-run immutable artifact ID from successful frontend checks
-        required: true
-        type: string
+    secrets:
+      ANDROID_SIGNING_KEYSTORE:
+        required: false
+      ANDROID_SIGNING_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_SIGNING_KEY_ALIAS:
+        required: false
+      ANDROID_SIGNING_KEY_PASSWORD:
+        required: false
 
 concurrency:
   group: version-release-${{ inputs.version }}
@@ -46,13 +51,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: node scripts/release-context.mjs
-      - name: Require tested frontend artifact identity
-        id: require_tested_frontend_artifact_identity
-        if: steps.context.outputs.build == 'true'
-        env:
-          WEB_ARTIFACT_ID: ${{ inputs.web_artifact_id }}
-        run: node -e 'require("node:assert/strict").match(process.env.WEB_ARTIFACT_ID, /^[0-9]+$/)'
-
       - name: Report build-acceptance summary
         id: report_build_acceptance_summary
         if: always()
@@ -96,19 +94,9 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
-      - name: Download tested frontend export
-        id: download_tested_frontend_export
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ inputs.web_artifact_id }}
-          path: release-results/web
-          merge-multiple: true
-      - name: Verify tested frontend export
-        id: verify_tested_frontend_export
-        run: node scripts/release-web.mjs verify $env:SOURCE_SHA
       - name: Package and smoke Windows distribution
         id: package_and_smoke_windows_distribution
-        run: node scripts/package-windows.mjs . $env:RELEASE_VERSION $env:SOURCE_SHA --verified-web
+        run: node scripts/package-windows.mjs . $env:RELEASE_VERSION $env:SOURCE_SHA
       - name: Record build-acceptance provenance
         id: record_build_acceptance_provenance
         if: always()
@@ -225,32 +213,15 @@ jobs:
           mkdir -p release-results
           docker compose -f docker-compose.yml \
             config --format json > release-results/compose.json
-          jq -e \
-            --arg image "ghcr.io/qianfuv/litradar:latest" \
-            '.services.litradar as $service |
-             .name == "litradar" and
-             $service.image == $image and
-             ($service.ports | length == 1) and
-             ($service.ports[0].host_ip == "127.0.0.1") and
-             ($service.ports[0].target == 8000) and
-             ($service.read_only == true) and
-             ($service.cap_drop | index("ALL") != null) and
-             ($service.security_opt | index("no-new-privileges:true") != null) and
-             ($service.tmpfs | any(contains("noexec") and contains("nosuid") and contains("nodev")))' \
-            release-results/compose.json >/dev/null
-
-      - name: Download tested frontend export
-        id: download_tested_frontend_export
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ inputs.web_artifact_id }}
-          path: release-results/web
-          merge-multiple: true
-      - name: Verify tested frontend export
-        id: verify_tested_frontend_export
-        env:
-          SOURCE_SHA: ${{ needs.context.outputs.source }}
-        run: node scripts/release-web.mjs verify "$SOURCE_SHA"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import fs from "node:fs";
+            const {services} = JSON.parse(fs.readFileSync("release-results/compose.json"));
+            assert.deepEqual(Object.keys(services).sort(), ["client-web", "gateway", "server"]);
+            assert(!services.server.ports && !services["client-web"].ports);
+            assert(services.gateway.ports[0].host_ip === "127.0.0.1");
+            assert(services.server.read_only && services["client-web"].read_only);
+          '
 
       - name: Build Linux image
         id: build_linux_image
@@ -259,7 +230,6 @@ jobs:
           DOCKER_BUILD_SUMMARY: "false"
         with:
           context: .
-          build-contexts: frontend-build=./release-results/web
           platforms: linux/amd64
           tags: ${{ steps.image.outputs.tag }}
           load: true
@@ -348,13 +318,24 @@ jobs:
           CI_REPORT_ROOT: release-results
         run: node scripts/ci-report.mjs summary
 
+  client:
+    name: Client release packages
+    needs: context
+    if: needs.context.outputs.build == 'true'
+    uses: ./.github/workflows/client.yaml
+    with:
+      source_ref: ${{ needs.context.outputs.source }}
+      release: true
+      version: ${{ needs.context.outputs.version }}
+    secrets: inherit
+
   # Stage 4: publish only the accepted platform bytes; retain retry and latest gates.
   publish:
     name: Publish verified packages and image
-    needs: [context, windows, linux]
+    needs: [context, windows, linux, client]
     if: >-
       !cancelled() && needs.context.result == 'success' &&
-      needs.windows.result == 'success' && needs.linux.result == 'success'
+      needs.windows.result == 'success' && needs.linux.result == 'success' && needs.client.result == 'success'
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
@@ -390,6 +371,17 @@ jobs:
         with:
           name: windows-release
           path: release-results/windows
+      - name: Download tested client packages
+        id: download_tested_client_packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: client-*-release
+          path: release-results/clients
+      - name: Verify client source and checksums
+        id: verify_client_evidence
+        env:
+          RELEASE_SOURCE_SHA: ${{ needs.context.outputs.source }}
+        run: node scripts/release-client-evidence.mjs
       - name: Load and verify tested image and smoke evidence
         id: load_and_verify_tested_image_and_smoke_evidence
         env:
@@ -398,6 +390,14 @@ jobs:
           docker load --input release-results/image-amd64.tar
           docker image inspect "ghcr.io/${SOURCE_REPOSITORY,,}:v${RELEASE_VERSION}" > release-results/loaded-image.json
           node scripts/release-evidence.mjs
+          docker load --input release-results/clients/client-web-release/image-client-web.tar
+          docker image inspect "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}" > release-results/loaded-client-image.json
+          node scripts/release-client-evidence.mjs image
+      - name: Smoke single-origin deployment
+        id: compose_smoke
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: node tests/compose-smoke.mjs "ghcr.io/${SOURCE_REPOSITORY,,}:v${RELEASE_VERSION}" "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}"
       - name: Combine and verify both platform archives
         id: combine_and_verify_both_platform_archives
         run: node scripts/release-assets.mjs "$RELEASE_VERSION"
@@ -418,6 +418,8 @@ jobs:
         run: |
           image="ghcr.io/${SOURCE_REPOSITORY,,}:v${RELEASE_VERSION}"
           docker push "$image"
+          docker push "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}"
+          docker buildx imagetools inspect --raw "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}" > release-results/published-client-manifest.json
           docker buildx imagetools inspect --raw "$image" > release-results/published-manifest.json
       - name: Publish binary release
         id: publish_binary_release
@@ -434,7 +436,7 @@ jobs:
           CI_REPORT_ROOT: release-results
           CI_REPORT_FILE: publication-ci-manifest.json
           CI_REQUIRE_FILES: "true"
-        run: node scripts/ci-report.mjs manifest notes.md assets/SHA256SUMS loaded-image.json published-manifest.json
+        run: node scripts/ci-report.mjs manifest notes.md assets/SHA256SUMS loaded-image.json published-manifest.json loaded-client-image.json published-client-manifest.json
 
       - name: Upload publication evidence
         id: upload_publication_evidence
@@ -448,6 +450,8 @@ jobs:
             release-results/assets/SHA256SUMS
             release-results/loaded-image.json
             release-results/published-manifest.json
+            release-results/loaded-client-image.json
+            release-results/published-client-manifest.json
           if-no-files-found: warn
           retention-days: 14
 
@@ -517,7 +521,7 @@ jobs:
 
   complete:
     name: Confirm complete release
-    needs: [context, windows, linux, publish, promote]
+    needs: [context, windows, linux, client, publish, promote]
     if: always()
     runs-on: ubuntu-26.04
     timeout-minutes: 5

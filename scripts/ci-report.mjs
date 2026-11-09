@@ -17,7 +17,12 @@ function reportMetadata(metadata) {
   assert(
     metadata.platforms.length > 0 &&
       metadata.platforms.every((platform) =>
-        ["linux/amd64", "windows/amd64", "independent"].includes(platform),
+        [
+          "linux/amd64",
+          "windows/amd64",
+          "android/arm64",
+          "independent",
+        ].includes(platform),
       ),
     "Unknown artifact platform",
   );

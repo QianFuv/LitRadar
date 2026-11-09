@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { compareVersions, parseVersion } from "./release-version.mjs";
 import { releaseAssetNames, validateAssets } from "./release-assets.mjs";
+import { clientAssetName } from "./package-client.mjs";
 import { generateReleaseNotes } from "./release-notes.mjs";
 
 /** Select the highest published stable version, independent of completion order. */
@@ -34,19 +35,21 @@ async function promoteLatest() {
   const release = latestRelease(releases);
   assert(release, "No published stable release to promote");
   const image = `ghcr.io/${process.env.GITHUB_REPOSITORY.toLowerCase()}`;
-  execFileSync(
-    "docker",
-    [
-      "buildx",
-      "imagetools",
-      "create",
-      "--prefer-index=false",
-      "--tag",
-      `${image}:latest`,
-      `${image}:${release.tag_name}`,
-    ],
-    { stdio: "inherit", timeout: 300000 },
-  );
+  for (const suffix of ["", "-client-web"]) {
+    execFileSync(
+      "docker",
+      [
+        "buildx",
+        "imagetools",
+        "create",
+        "--prefer-index=false",
+        "--tag",
+        `${image}${suffix}:latest`,
+        `${image}${suffix}:${release.tag_name}`,
+      ],
+      { stdio: "inherit", timeout: 300000 },
+    );
+  }
   execFileSync("gh", ["release", "edit", release.tag_name, "--latest"], {
     stdio: "inherit",
     timeout: 300000,
@@ -120,7 +123,18 @@ async function prepareRelease(release, tag, version, commit, gh) {
     },
     github,
   );
-  fs.writeFileSync(notesFile, notes);
+  const android = files.includes(clientAssetName(version, "android"));
+  fs.writeFileSync(
+    notesFile,
+    notes +
+      `
+## Packages
+
+Server: Linux amd64 and Windows x64. Web client: Linux amd64 binary and OCI image.
+Windows x64 client installer is unsigned. Android arm64-v8a uses experimental Wails v3 mobile support.
+${android ? "Android APK is release-signed." : "**Android APK omitted:** Android signing secrets were unavailable; no debug-signed APK is published."}
+`,
+  );
   if (!release) {
     gh(
       "release",
@@ -179,8 +193,14 @@ async function main() {
     );
     assert.deepEqual(
       release.assets.map((asset) => asset.name).sort(),
-      releaseAssetNames(version).sort(),
-      "Published release must contain both archives and one checksum manifest",
+      releaseAssetNames(
+        version,
+        false,
+        release.assets.some(
+          (asset) => asset.name === clientAssetName(version, "android"),
+        ),
+      ).sort(),
+      "Published release must contain required server and client assets and one checksum manifest",
     );
     for (const asset of release.assets) {
       assert(asset.size > 0, `Published asset is empty: ${asset.name}`);

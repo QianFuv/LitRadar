@@ -36,7 +36,7 @@ jobs:
           node-version: "26.11.1"
       - name: Verify release contracts
         id: verify_release_contracts
-        run: node --test tests/release.test.mjs tests/ci.test.mjs tests/release-platform.test.mjs tests/ci-report.test.mjs
+        run: node --test tests/release.test.mjs tests/ci.test.mjs tests/release-platform.test.mjs tests/ci-report.test.mjs tests/client-release.test.mjs
       - name: Resolve version increase or explicit retry
         id: version
         if: github.event_name != 'pull_request'
@@ -73,15 +73,24 @@ jobs:
       cancel-in-progress: true
     uses: ./.github/workflows/frontend.yaml
 
+  client:
+    name: Client
+    needs: release-rules
+    if: ${{ !cancelled() }}
+    concurrency:
+      group: client-${{ needs.release-rules.outputs.release == 'true' && format('release-{0}', github.run_id) || format('quality-{0}-{1}', github.event_name, github.event.pull_request.number || github.ref) }}
+      cancel-in-progress: true
+    uses: ./.github/workflows/client.yaml
+
   # Stages 3 and 4: build-acceptance, then publish inside the reusable workflow.
   release:
     name: Version release
-    needs: [release-rules, backend, frontend]
+    needs: [release-rules, backend, frontend, client]
     if: needs.release-rules.outputs.release == 'true'
     permissions:
       contents: write
       packages: write
     uses: ./.github/workflows/release.yaml
+    secrets: inherit
     with:
       version: ${{ needs.release-rules.outputs.version }}
-      web_artifact_id: ${{ needs.frontend.outputs.web_artifact_id }}

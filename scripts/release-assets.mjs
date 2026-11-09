@@ -4,20 +4,36 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { clientAssetName } from "./package-client.mjs";
 import { parseVersion } from "./release-version.mjs";
 
 /** Return the immutable platform asset names for a stable version. */
-export function releaseAssetNames(inputVersion, windowsOnly = false) {
+export function releaseAssetNames(
+  inputVersion,
+  windowsOnly = false,
+  includeAndroid = false,
+) {
   const version = parseVersion(inputVersion);
   const windows = `litradar-server_${version}_windows_amd64.zip`;
   return windowsOnly
     ? [windows, `${windows}.sha256`]
-    : [`litradar-server_${version}_linux_amd64.tar.gz`, windows, "SHA256SUMS"];
+    : [
+        `litradar-server_${version}_linux_amd64.tar.gz`,
+        windows,
+        clientAssetName(version, "web"),
+        clientAssetName(version, "windows"),
+        ...(includeAndroid ? [clientAssetName(version, "android")] : []),
+        "SHA256SUMS",
+      ];
 }
 
 /** Require exact checksum membership and verify every archive before any external write. */
 export function validateAssets(directory, version, windowsOnly = false) {
-  const names = releaseAssetNames(version, windowsOnly);
+  const names = releaseAssetNames(
+    version,
+    windowsOnly,
+    fs.existsSync(path.join(directory, clientAssetName(version, "android"))),
+  );
   const checksumName = names.at(-1);
   const expectedArchives = names.slice(0, -1);
   const lines = fs
@@ -65,6 +81,26 @@ function mergeAssets(version) {
     path.join(directory, "SHA256SUMS"),
     `${assets[0].digest.slice(7)}  ${zip}\n`,
   );
+  for (const target of ["web", "windows", "android"]) {
+    const name = clientAssetName(version, target);
+    const source = path.join(
+      `release-results/clients/client-${target}-release/assets`,
+      name,
+    );
+    if (target === "android" && !fs.existsSync(source)) continue;
+    fs.copyFileSync(
+      source,
+      path.join(directory, name),
+      fs.constants.COPYFILE_EXCL,
+    );
+    const digest = createHash("sha256")
+      .update(fs.readFileSync(source))
+      .digest("hex");
+    fs.appendFileSync(
+      path.join(directory, "SHA256SUMS"),
+      `${digest}  ${name}\n`,
+    );
+  }
   validateAssets(directory, version);
 }
 

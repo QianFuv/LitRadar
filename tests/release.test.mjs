@@ -10,6 +10,7 @@ import {
   releaseAssetNames,
   validateAssets,
 } from "../scripts/release-assets.mjs";
+import { clientAssetName } from "../scripts/package-client.mjs";
 import { resolveReleaseContext } from "../scripts/release-context.mjs";
 import { generateReleaseNotes } from "../scripts/release-notes.mjs";
 import { verifyReleaseJobs } from "../scripts/release-status.mjs";
@@ -31,13 +32,17 @@ const RELEASE_COMMIT = "a".repeat(40);
 const RELEASE_ASSETS = [
   "litradar-server_0.2.0_linux_amd64.tar.gz",
   "litradar-server_0.2.0_windows_amd64.zip",
+  "litradar-client-web_0.2.0_linux_amd64",
+  "litradar-client_0.2.0_windows_amd64_setup.exe",
   "SHA256SUMS",
 ].map((name) => ({ name, digest: `sha256:${"b".repeat(64)}`, size: 100 }));
 
-test("complete releases require exactly Linux amd64, Windows x64 and one checksum manifest", () => {
+test("complete releases require server archives, Web and Windows clients and one checksum manifest", () => {
   assert.deepEqual(releaseAssetNames("0.2.1"), [
     "litradar-server_0.2.1_linux_amd64.tar.gz",
     "litradar-server_0.2.1_windows_amd64.zip",
+    "litradar-client-web_0.2.1_linux_amd64",
+    "litradar-client_0.2.1_windows_amd64_setup.exe",
     "SHA256SUMS",
   ]);
 });
@@ -47,6 +52,7 @@ test("release completion rejects skipped publication even when earlier jobs succ
     context: { result: "success", outputs: { published: "false" } },
     windows: { result: "success" },
     linux: { result: "success" },
+    client: { result: "success" },
     publish: { result: "success" },
     promote: { result: "success" },
   };
@@ -63,6 +69,7 @@ test("release completion rejects skipped publication even when earlier jobs succ
     context: { result: "success", outputs: { published: "true" } },
     windows: { result: "skipped" },
     linux: { result: "skipped" },
+    client: { result: "skipped" },
     publish: { result: "skipped" },
   };
   verifyReleaseJobs(retry);
@@ -278,7 +285,8 @@ function createReleaseHarness(
   /** Capture the generated body before any draft creation or update. */
   function writeNotes(filename, value) {
     assert.equal(filename, "release-results/notes.md");
-    assert.equal(value, "fixture release notes\n");
+    assert(value.startsWith("fixture release notes\n"));
+    assert(value.includes("Android APK omitted"));
     events.push(["notes", value]);
   }
   /** Isolate history generation while checking immutable source inputs. */
@@ -315,6 +323,7 @@ function createReleaseHarness(
     "path",
     "parseVersion",
     "releaseAssetNames",
+    "clientAssetName",
     "validateAssets",
     "compareVersions",
     "generateReleaseNotes",
@@ -332,6 +341,7 @@ function createReleaseHarness(
     path,
     parseVersion,
     releaseAssetNames,
+    clientAssetName,
     validateFixtureAssets,
     compareVersions,
     generateFixtureNotes,
@@ -637,6 +647,17 @@ async function promotesLatestInOrder() {
       "ghcr.io/fixture/repository:latest",
       "ghcr.io/fixture/repository:v0.3.0",
     ],
+    [
+      "command",
+      "docker",
+      "buildx",
+      "imagetools",
+      "create",
+      "--prefer-index=false",
+      "--tag",
+      "ghcr.io/fixture/repository-client-web:latest",
+      "ghcr.io/fixture/repository-client-web:v0.3.0",
+    ],
     ["command", "gh", "release", "edit", "v0.3.0", "--latest"],
   ]);
   const failed = createReleaseHarness(
@@ -745,7 +766,7 @@ test("a release requires verified Linux and Windows archives before publication"
   fs.writeFileSync(checksum, lines.slice(0, 1).join(""));
   assert.throws(() => validateAssets(directory, "0.2.0"), /expected platforms/);
   fs.writeFileSync(checksum, lines.join(""));
-  assert.equal(validateAssets(directory, "0.2.0").length, 3);
+  assert.equal(validateAssets(directory, "0.2.0").length, 5);
   fs.appendFileSync(checksum, lines[0]);
   assert.throws(() => validateAssets(directory, "0.2.0"), /Duplicate/);
   fs.writeFileSync(checksum, lines.join(""));
