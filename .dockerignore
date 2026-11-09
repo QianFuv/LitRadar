@@ -22,8 +22,7 @@ docs/
 !docs/third-party/**
 !README.md
 !third_party/**
-!cmd/**
-!internal/**
+!apps/server/**
 !assets/**
 .idea/
 .vscode/

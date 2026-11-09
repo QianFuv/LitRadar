@@ -185,7 +185,7 @@ fs.cpSync(path.join(root, "assets/meta"), path.join(isolated, "assets/meta"), {
 });
 fs.mkdirSync(path.join(isolated, "data/index"), { recursive: true });
 const schema = /const ContentTables = `([\s\S]*?)`/.exec(
-  fs.readFileSync("internal/storage/indexschema/schema.go", "utf8"),
+  fs.readFileSync("apps/server/internal/storage/indexschema/schema.go", "utf8"),
 )[1];
 const fixture = new DatabaseSync(
   path.join(isolated, "data/index/smoke.sqlite"),

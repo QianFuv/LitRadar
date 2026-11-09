@@ -22,4 +22,4 @@ find /out/inventory/licenses -type d -exec chmod u+w {} +
 cp /usr/local/go/LICENSE /out/inventory/licenses/Go-LICENSE
 find third_party -type f -print0 | sort -z | xargs -0 sha256sum > /out/inventory/patched-sources.sha256
 
-find apps/server cmd internal assets -type f -print0 | sort -z | xargs -0 sha256sum > /out/inventory/application-sources.sha256
+find apps/server assets -type f -print0 | sort -z | xargs -0 sha256sum > /out/inventory/application-sources.sha256

@@ -12,9 +12,9 @@ import (
 	"syscall"
 
 	"github.com/QianFuv/LitRadar"
-	"github.com/QianFuv/LitRadar/internal/cli"
-	"github.com/QianFuv/LitRadar/internal/runtime"
-	"github.com/QianFuv/LitRadar/internal/runtime/observability"
+	"github.com/QianFuv/LitRadar/apps/server/internal/cli"
+	"github.com/QianFuv/LitRadar/apps/server/internal/runtime"
+	"github.com/QianFuv/LitRadar/apps/server/internal/runtime/observability"
 )
 
 func main() { os.Exit(run(os.Args[1:])) }

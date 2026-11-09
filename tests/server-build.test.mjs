@@ -26,8 +26,8 @@ test("server formatting includes the moved entry and excludes client source in t
   );
   context.after(() => fs.rm(root, { recursive: true, force: true }));
   for (const directory of [
-    "cmd/fixture",
-    "internal/example",
+    "apps/server/cmd/fixture",
+    "apps/server/internal/example",
     "apps/server",
     "apps/client",
   ]) {

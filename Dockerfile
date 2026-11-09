@@ -59,8 +59,6 @@ RUN if [ "$TARGETARCH" != "$BUILDARCH" ]; then \
 COPY go.mod go.sum VERSION version.go ./
 COPY third_party third_party
 RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod go mod download && go mod verify
-COPY cmd cmd
-COPY internal internal
 COPY apps/server apps/server
 COPY assets assets
 COPY scripts/go-build-inventory.sh /usr/local/bin/go-build-inventory

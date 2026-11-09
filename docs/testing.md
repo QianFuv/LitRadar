@@ -16,8 +16,8 @@
 
 ## 放置与处置规则
 
-- Go 规则与适配器测试放在所属包旁的 `*_test.go`；真实 `litradar` 进程边界放在 `cmd/litradar/main_test.go`。
-- REST 路由场景放在 `internal/api/`；MCP 协议和工具测试放在 `internal/mcp/` 与 `internal/platform/mcpcompat/`。
+- Go 规则与适配器测试放在所属包旁的 `*_test.go`；真实 `litradar` 进程边界放在 `apps/server/main_test.go`。
+- REST 路由场景放在 `apps/server/internal/api/`；MCP 协议和工具测试放在 `apps/server/internal/mcp/` 与 `apps/server/internal/platform/mcpcompat/`。
 - 普通前端行为放在 `apps/client/frontend/tests/*.test.tsx`。只有 jsdom 无法忠实提供的浏览器 API 或事件链，才进入 `browser-components/`。
 - fixture Playwright 放在 `local-fixtures.spec.tsx`；真实后端 Playwright 只放在 `e2e/full-stack/`，且禁止 `page.route`、`context.route`、`route.fulfill`、`route.abort` 等拦截。
 - 跨栈稳定 JSON 放在 `tests/data/scenarios/api/`；运行时生成物、随机凭据和数据库快照不得签入该目录。
@@ -32,7 +32,7 @@
 
 ## OpenAPI、共享场景与 MSW
 
-Go 的 `internal/openapi/` 声明与真实路由绑定共同约束 HTTP schema：
+Go 的 `apps/server/internal/openapi/` 声明与真实路由绑定共同约束 HTTP schema：
 
 ```text
 Go OpenAPI definitions + operations + route bindings
@@ -73,18 +73,18 @@ Playwright 有两个独立角色：
 
 | 功能                   | 最低充分所有者                                                                                                   | 契约/适配器所有者                                                              | 真实关键边界                                                              |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| 认证与账户             | `internal/auth` 单元测试；`login-page`、`auth-context`、`user-menu`、`account-settings`                          | `internal/api` auth route、rate-limit 和共享 login/error 场景                  | full-stack 登录、HttpOnly 会话、退出、匿名 401 与非管理员 403             |
-| 检索、文章、周报与公告 | `internal/index`；`results-list`、`search-filter-ui`、`article-dialog`、`weekly-updates`、`announcements-dialog` | index/weekly REST、文章访问、共享 article/weekly 场景                          | full-stack SQLite 文章检索；管理员公告写入后 refetch                      |
+| 认证与账户             | `apps/server/internal/auth` 单元测试；`login-page`、`auth-context`、`user-menu`、`account-settings`                          | `apps/server/internal/api` auth route、rate-limit 和共享 login/error 场景                  | full-stack 登录、HttpOnly 会话、退出、匿名 401 与非管理员 403             |
+| 检索、文章、周报与公告 | `apps/server/internal/index`；`results-list`、`search-filter-ui`、`article-dialog`、`weekly-updates`、`announcements-dialog` | index/weekly REST、文章访问、共享 article/weekly 场景                          | full-stack SQLite 文章检索；管理员公告写入后 refetch                      |
 | 收藏与导出             | `favorite-flow`、`favorite-checks`、citation helper                                                              | favorites REST 的 folder、batch、BibTeX/RIS/EndNote 与用户隔离                 | full-stack 收藏后刷新仍持久化                                             |
-| 追踪与投递             | `tracking-page`、`tracking-polling`；`internal/delivery` / `internal/scheduler` delivery/retry                   | tracking REST、notify/push CLI 的本地空变更状态                                | fixture tracking push smoke；真实 CLI 子命令进程边界                      |
+| 追踪与投递             | `tracking-page`、`tracking-polling`；`apps/server/internal/delivery` / `apps/server/internal/scheduler` delivery/retry                   | tracking REST、notify/push CLI 的本地空变更状态                                | fixture tracking push smoke；真实 CLI 子命令进程边界                      |
 | 管理后台               | `admin-users`、`admin-mutations`、`admin-announcements`、runtime secret suites                                   | admin REST、调度存储、密码/邀请码/角色/运行设置校验                            | full-stack 用户角色、邀请码和公告 mutation 持久化                         |
-| REST 与 MCP            | API route/unit suites；MCP initialize/index/favorites tool suites                                                | OpenAPI 完整路由检查、共享场景、临时 router/storage                            | `cmd/litradar/main_test.go` 的实际 listener；full-stack REST              |
-| CLI 与统一服务         | `internal/cli` parser/runner；`internal/runtime` 单元测试                                                        | `cmd/litradar/main_test.go` 的真实二进制副作用                                 | `cmd/litradar/main_test.go` 启动、readiness、认证、信号、端口与临时根清理 |
-| Provider 与索引        | `internal/domain`、`internal/provider`、`internal/index`                                                         | source fixture、实际 ZJLIB transport 的 bounded loopback、迁移/identity/outbox | 真实 CLI index 对本地已完成 catalog 的恢复                                |
+| REST 与 MCP            | API route/unit suites；MCP initialize/index/favorites tool suites                                                | OpenAPI 完整路由检查、共享场景、临时 router/storage                            | `apps/server/main_test.go` 的实际 listener；full-stack REST              |
+| CLI 与统一服务         | `apps/server/internal/cli` parser/runner；`apps/server/internal/runtime` 单元测试                                                        | `apps/server/main_test.go` 的真实二进制副作用                                 | `apps/server/main_test.go` 启动、readiness、认证、信号、端口与临时根清理 |
+| Provider 与索引        | `apps/server/internal/domain`、`apps/server/internal/provider`、`apps/server/internal/index`                                                         | source fixture、实际 ZJLIB transport 的 bounded loopback、迁移/identity/outbox | 真实 CLI index 对本地已完成 catalog 的恢复                                |
 | 调度与 worker          | worker scheduler/delivery/AI/PushPlus fixture 测试；runtime 协调测试                                             | 租约、时区、超时、取消、去重、持久状态和安全日志                               | scheduler run-once 启动实际类型化子命令并等待结果                         |
 | 容器运行时             | Dockerfile/Compose 静态检查                                                                                      | `tests/container-smoke.mjs` 的 HTTP 与 inspect 断言                            | CI 对将要推送的同一镜像 ID 执行硬化启动和完整清理                         |
 
-征稿领域的最低充分测试分别位于[领域规则](../internal/domain/cfp/characterization_test.go)、[来源解析](../internal/cfp/characterization_test.go)、[持久化](../internal/storage/cfp/characterization_test.go)、[API](../internal/api/cfp_test.go)和[前端状态](../apps/client/frontend/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
+征稿领域的最低充分测试分别位于[领域规则](../apps/server/internal/domain/cfp/characterization_test.go)、[来源解析](../apps/server/internal/cfp/characterization_test.go)、[持久化](../apps/server/internal/storage/cfp/characterization_test.go)、[API](../apps/server/internal/api/cfp_test.go)和[前端状态](../apps/client/frontend/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
 
 ## 统一命令
 

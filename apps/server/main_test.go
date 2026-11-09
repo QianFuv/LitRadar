@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/QianFuv/LitRadar"
-	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
-	"github.com/QianFuv/LitRadar/internal/testkit/fullstack"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
+	"github.com/QianFuv/LitRadar/apps/server/internal/testkit/fullstack"
 )
 
 // TestServerProductionWithoutUI proves production starts from an empty project root.

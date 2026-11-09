@@ -152,21 +152,21 @@ Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 
 
 | 任务                 | 主要位置                                                             |
 | -------------------- | -------------------------------------------------------------------- |
-| 进程入口与生命周期   | `apps/server/`、`internal/cli/`、`internal/runtime/`                |
-| REST 路由或 OpenAPI  | `internal/api/`、`internal/openapi/`                                 |
-| 认证                 | `internal/domain/auth/`、`internal/storage/auth/`                    |
-| 业务存储             | `internal/storage/`                                                  |
-| 数据库迁移与内容定义 | `internal/storage/migrations/auth/`、`internal/storage/indexschema/` |
-| 索引执行与控制状态   | `internal/index/`                                                    |
-| 上游数据源           | `internal/sources/`                                                  |
-| 推荐、通知和调度     | `internal/delivery/`、`internal/scheduler/`                          |
+| 进程入口与生命周期   | `apps/server/`、`apps/server/internal/cli/`、`apps/server/internal/runtime/`                |
+| REST 路由或 OpenAPI  | `apps/server/internal/api/`、`apps/server/internal/openapi/`                                 |
+| 认证                 | `apps/server/internal/domain/auth/`、`apps/server/internal/storage/auth/`                    |
+| 业务存储             | `apps/server/internal/storage/`                                                  |
+| 数据库迁移与内容定义 | `apps/server/internal/storage/migrations/auth/`、`apps/server/internal/storage/indexschema/` |
+| 索引执行与控制状态   | `apps/server/internal/index/`                                                    |
+| 上游数据源           | `apps/server/internal/sources/`                                                  |
+| 推荐、通知和调度     | `apps/server/internal/delivery/`、`apps/server/internal/scheduler/`                          |
 | 前端 API facade      | `apps/client/frontend/lib/api/`、`apps/client/frontend/lib/api.tsx`                                    |
 | 前端页面和组件       | `apps/client/frontend/src/routes/`、`apps/client/frontend/components/`                                        |
 | 前端测试             | `apps/client/frontend/tests/`                                                         |
 
 ## OpenAPI 与前端类型
 
-`internal/openapi/` 中的声明及 `internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，先确保已按[原生分词器](#原生分词器)准备 `target/simple-tokenizer/libsimple.a`，再在 `apps/client/frontend/` 运行：
+`apps/server/internal/openapi/` 中的声明及 `apps/server/internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，先确保已按[原生分词器](#原生分词器)准备 `target/simple-tokenizer/libsimple.a`，再在 `apps/client/frontend/` 运行：
 
 ```bash
 pnpm generate:api
@@ -189,11 +189,11 @@ pnpm generate:api:check
 
 ## 数据库变更
 
-认证库和内容库分别使用 `PRAGMA user_version`，但迁移事务的组织方式不同。认证库在 `internal/storage/migrations/auth/` 按有序版本逐个执行，每个版本独立提交，并在同一事务末尾更新版本号；内容库由 `internal/storage/indexschema/` 统一定义 DDL、版本和校验规则，迁移可在一个事务中完成多步转换，最后更新到目标版本。
+认证库和内容库分别使用 `PRAGMA user_version`，但迁移事务的组织方式不同。认证库在 `apps/server/internal/storage/migrations/auth/` 按有序版本逐个执行，每个版本独立提交，并在同一事务末尾更新版本号；内容库由 `apps/server/internal/storage/indexschema/` 统一定义 DDL、版本和校验规则，迁移可在一个事务中完成多步转换，最后更新到目标版本。
 
 修改前先确定数据库类型，再更新相应定义与迁移路径。测试应覆盖空库、代表性旧库、当前版本幂等、失败回滚和未来版本拒绝；不要在查询函数或连接辅助函数中隐式执行迁移。
 
-`internal/index` 使用共享内容定义初始化和写入新库，storage 负责既有库的迁移与预检。兼容版本、显式离线优化和控制库边界见[数据库参考](../reference/database.md)。
+`apps/server/internal/index` 使用共享内容定义初始化和写入新库，storage 负责既有库的迁移与预检。兼容版本、显式离线优化和控制库边界见[数据库参考](../reference/database.md)。
 
 ## 调度变更
 
@@ -201,7 +201,7 @@ pnpm generate:api:check
 
 新增调度能力时必须同步更新：
 
-- `internal/domain` 的 job 类型
+- `apps/server/internal/domain` 的 job 类型
 - API 和存储校验
 - 内嵌调度的 argv 构造、运行认领、取消和持久状态
 - OpenAPI 和前端管理界面
@@ -296,7 +296,7 @@ API 在汇总与文章分页请求之间共享解析后的每周更新清单。�
 修改相关逻辑时，在仓库根运行正确性与确定性过期测试：
 
 ```bash
-go test -count=1 -race -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./internal/storage/weekly ./internal/storage/query
+go test -count=1 -race -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server/internal/storage/weekly ./apps/server/internal/storage/query
 ```
 
 Go 版本的容器性能画像使用 `node tests/profiling/go-image.mjs`，要求已构建 `litradar:go-test-amd64`。

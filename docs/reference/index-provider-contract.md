@@ -1,6 +1,6 @@
 # 索引与 Provider 契约
 
-本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `3`，实现来源是 `internal/domain/sources`、`internal/provider`、`internal/index` 和 `internal/storage/index`；私有多进程 worker wire protocol 当前为 `8`。
+本文档是 LitRadar 文章索引 Provider 的规范接入文档。当前契约版本为 `3`，实现来源是 `apps/server/internal/domain/sources`、`apps/server/internal/provider`、`apps/server/internal/index` 和 `apps/server/internal/storage/index`；私有多进程 worker wire protocol 当前为 `8`。
 
 核心边界只有三条：
 
@@ -147,7 +147,7 @@ Crossref 私有工作集不是 core ACK 的替代品：缓存超前时先重放�
 - PMID：只允许数字并移除前导零。
 - ISSN：统一为校验位正确的 `NNNN-NNNX`。
 
-ID 由索引核心（`internal/storage/index`）独占生成：
+ID 由索引核心（`apps/server/internal/storage/index`）独占生成：
 
 - `journal_id` 来自不可变 `catalog_id` 和命名空间 `journal:v1`；
 - 当前 catalog ID、全部 catalog alias 和全部 ISSN 通过 `journal_identity_keys` 归属于同一个规范 catalog ID；
@@ -257,8 +257,8 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 修改内置实现后，先按[开发指南](../guides/development.md#原生分词器)准备静态 Simple 与 `CGO_CFLAGS`，再在仓库根目录运行以下检查；应通过相关测试且 `go vet` 无告警：
 
 ```bash
-go test -count=1 -tags sqlite_fts5,sqlite_dbstat ./internal/domain/... ./internal/provider/... ./internal/sources/... ./internal/index/...
-go vet -tags sqlite_fts5,sqlite_dbstat ./internal/provider/... ./internal/sources/... ./internal/index/...
+go test -count=1 -tags sqlite_fts5,sqlite_dbstat ./apps/server/internal/domain/... ./apps/server/internal/provider/... ./apps/server/internal/sources/... ./apps/server/internal/index/...
+go vet -tags sqlite_fts5,sqlite_dbstat ./apps/server/internal/provider/... ./apps/server/internal/sources/... ./apps/server/internal/index/...
 ```
 
 ## 更换索引 Provider

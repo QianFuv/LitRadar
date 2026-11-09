@@ -6,7 +6,7 @@
 - OpenAPI JSON：`/openapi.json`
 - 前端生成基线：`apps/client/frontend/lib/generated/openapi.json`
 
-`internal/openapi` 的契约构造代码是 REST schema 的实现来源。修改 REST 接口后，应重新生成前端基线；不要在本文重复维护完整 schema。
+`apps/server/internal/openapi` 的契约构造代码是 REST schema 的实现来源。修改 REST 接口后，应重新生成前端基线；不要在本文重复维护完整 schema。
 
 ## 地址与认证
 

@@ -9,6 +9,7 @@
     "typecheck": "pnpm --filter litradar-frontend typecheck",
     "test": "pnpm --filter litradar-frontend test",
     "e2e": "pnpm --filter litradar-frontend test:e2e",
-    "generate:api": "pnpm --filter litradar-frontend generate:api"
+    "generate:api": "pnpm --filter litradar-frontend generate:api",
+    "generate:api:check": "pnpm --filter litradar-frontend generate:api:check"
   }
 }

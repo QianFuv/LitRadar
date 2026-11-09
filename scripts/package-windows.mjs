@@ -18,8 +18,6 @@ const SERVER_SOURCE_PATHS = [
   "VERSION",
   "version.go",
   "apps/server",
-  "cmd",
-  "internal",
   "assets",
   "third_party",
   "scripts",

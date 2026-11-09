@@ -719,7 +719,10 @@ async function enableSecureCookies(imageReference) {
  */
 async function installSearchMaintenanceFixture(imageReference) {
   const declaration = await fs.readFile(
-    path.join(WORKSPACE_ROOT, "internal/storage/indexschema/schema.go"),
+    path.join(
+      WORKSPACE_ROOT,
+      "apps/server/internal/storage/indexschema/schema.go",
+    ),
     "utf8",
   );
   const schema = /const ContentTables = `([\s\S]*?)`/.exec(declaration)?.[1];

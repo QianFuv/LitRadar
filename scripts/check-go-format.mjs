@@ -12,8 +12,7 @@ async function collect(directory) {
     else if (entry.isFile() && entry.name.endsWith(".go")) files.push(filename);
   }
 }
-for (const directory of ["cmd", "internal", "apps/server"])
-  await collect(directory);
+for (const directory of ["apps/server"]) await collect(directory);
 files.push("version.go");
 const result = spawnSync("gofmt", ["-l", ...files.sort()], {
   encoding: "utf8",

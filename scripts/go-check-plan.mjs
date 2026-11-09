@@ -1,12 +1,7 @@
 /** Define complete Go verification lanes without executing native builds or tests. */
 import assert from "node:assert/strict";
 
-export const SERVER_PACKAGES = [
-  ".",
-  "./apps/server/...",
-  "./cmd/...",
-  "./internal/...",
-];
+export const SERVER_PACKAGES = [".", "./apps/server/..."];
 
 const TAGS = "sqlite_fts5,sqlite_dbstat";
 

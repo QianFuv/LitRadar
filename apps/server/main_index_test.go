@@ -17,15 +17,15 @@ import (
 	"testing"
 	"time"
 
-	domain "github.com/QianFuv/LitRadar/internal/domain/sources"
-	"github.com/QianFuv/LitRadar/internal/index"
-	"github.com/QianFuv/LitRadar/internal/sources/scholarly"
-	authstorage "github.com/QianFuv/LitRadar/internal/storage/auth"
-	storage "github.com/QianFuv/LitRadar/internal/storage/index"
-	"github.com/QianFuv/LitRadar/internal/storage/migrations/auth"
-	"github.com/QianFuv/LitRadar/internal/storage/secrets"
-	"github.com/QianFuv/LitRadar/internal/storage/settings"
-	"github.com/QianFuv/LitRadar/internal/storage/sqlite"
+	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
+	"github.com/QianFuv/LitRadar/apps/server/internal/index"
+	"github.com/QianFuv/LitRadar/apps/server/internal/sources/scholarly"
+	authstorage "github.com/QianFuv/LitRadar/apps/server/internal/storage/auth"
+	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/index"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 func prepareRecoveredIndex(t *testing.T, ctx context.Context) string {

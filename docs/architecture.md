@@ -82,17 +82,17 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 | 包 | 职责 |
 | --- | --- |
 | `apps/server` | 应用可执行文件与公开命令分发 |
-| `internal/runtime` | 服务组装、信号、调度和进程监督 |
+| `apps/server/internal/runtime` | 服务组装、信号、调度和进程监督 |
 | `apps/client` | 共用根 Go 模块的 Wails 客户端；原生端与 Web host 共享 Vite UI |
-| `internal/api`、`internal/mcp`、`internal/openapi` | HTTP/MCP 契约、认证边界和 schema |
-| `internal/auth`、`internal/cli` | 身份服务与命令编排 |
-| `internal/domain`、`internal/provider` | 领域值、Provider 接口和能力注册表 |
-| `internal/index`、`internal/sources`、`internal/transport` | 索引执行、上游适配器和出站 HTTP |
-| `internal/recommend`、`internal/delivery`、`internal/scheduler` | 推荐、持久投递和定时任务 |
-| `internal/cfp`、`internal/citation` | 征稿采集与引用导出 |
-| `internal/storage`、`internal/platform` | 持久化与平台设施 |
+| `apps/server/internal/api`、`apps/server/internal/mcp`、`apps/server/internal/openapi` | HTTP/MCP 契约、认证边界和 schema |
+| `apps/server/internal/auth`、`apps/server/internal/cli` | 身份服务与命令编排 |
+| `apps/server/internal/domain`、`apps/server/internal/provider` | 领域值、Provider 接口和能力注册表 |
+| `apps/server/internal/index`、`apps/server/internal/sources`、`apps/server/internal/transport` | 索引执行、上游适配器和出站 HTTP |
+| `apps/server/internal/recommend`、`apps/server/internal/delivery`、`apps/server/internal/scheduler` | 推荐、持久投递和定时任务 |
+| `apps/server/internal/cfp`、`apps/server/internal/citation` | 征稿采集与引用导出 |
+| `apps/server/internal/storage`、`apps/server/internal/platform` | 持久化与平台设施 |
 
-应用只有一个公开可执行文件。测试夹具命令单独位于 `cmd/litradar-fixture`。原生辅助程序仍是显式的运行时依赖。
+应用只有一个公开可执行文件。测试夹具命令单独位于 `apps/server/cmd/litradar-fixture`。原生辅助程序仍是显式的运行时依赖。
 
 ## 持久化边界
 
@@ -166,7 +166,7 @@ batch compatibility 包含 CSV 的选择方式、顺序和精确内容、Provide
 
 多进程索引使用私有 worker protocol v8，把同步模式、Provider-opaque 的 committed anchor 和 traversal checkpoint 随 journal assignment 写入可丢弃 request JSON；worker 不解析这些值，父进程仍独占 SQLite、batch ID 和提交顺序。项目 batch ID 不进入 `IndexFetchContext` 或 worker request JSON，Provider 内容契约保持 v3；私有工作进程协议为 v8，二者分别演进。国内 CNKI captcha token 和共用 Provider 代理 URL 都不属于该文件、进程参数或 child 环境：父进程启动 child 后移除继承的探测环境变量，再通过 stdin 发送一次版本化 bootstrap。只有 `provider_name=cnki` 的 worker 可以收到 captcha token，只有自身逻辑 Provider 的代理开关已启用时才能收到代理 URL。worker 在 Provider 构造前验证协议版本和 worker ID，随后同一管道继续接收 parent 的 durable commit ACK；相关格式化输出、错误和日志只保留固定脱敏字段。
 
-Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `ProviderProgress`。`Continue` 携带下一 traversal checkpoint；`Complete` 携带可空的 next anchor。两个字符串都保持 Provider-scoped、opaque，核心不解析 CNKI issue ID、Scholarly fingerprint 或上游 cursor。`internal/index` 负责校验、稳定 ID、合并、SQLite 事务和 outbox。内容先提交、控制状态后提交；控制提交失败时旧 anchor 保持不变，重跑依靠冻结窗口和规范 alias 幂等收敛。
+Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `ProviderProgress`。`Continue` 携带下一 traversal checkpoint；`Complete` 携带可空的 next anchor。两个字符串都保持 Provider-scoped、opaque，核心不解析 CNKI issue ID、Scholarly fingerprint 或上游 cursor。`apps/server/internal/index` 负责校验、稳定 ID、合并、SQLite 事务和 outbox。内容先提交、控制状态后提交；控制提交失败时旧 anchor 保持不变，重跑依靠冻结窗口和规范 alias 幂等收敛。
 
 ### 索引数据库
 
@@ -211,7 +211,7 @@ Simple 按未修改的驱动头文件编译，并在每个准入的物理连接�
 3. Crossref 对所有 ISSN 均返回 404，或没有可复用 anchor 的完整扫描只得到空作品页时，OpenAlex 解析 source 并作为文章列表 fallback。
 4. OpenAlex 按 DOI 增强元数据；Semantic Scholar 增强 OA 和缺失摘要；所有上游 URL 在映射边界丢弃。
 5. 增量运行从远端头部扫描到成功 anchor 的规范期次 fingerprint，并完整包含该边界；日期 filter 只用于缩小候选，不能替代边界证明。
-6. Provider 返回规范 batch 和 Continue/Complete 进度，`internal/index` 写入关系表、`article_listing` 和 `article_search`，整刊完成后才推进 anchor。
+6. Provider 返回规范 batch 和 Continue/Complete 进度，`apps/server/internal/index` 写入关系表、`article_listing` 和 `article_search`，整刊完成后才推进 anchor。
 7. `--update` 生成变更清单；`--full-rescan` 覆盖完整历史但不生成该清单。
 
 具体请求和字段优先级见 [Scholarly 数据源](reference/sources/scholarly.md)。
@@ -289,9 +289,9 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 ## 同步工作与异步服务
 
-SQLite、密码派生、HTTP 和文件系统操作通过有界 Go 执行器运行。API 分别限制存储、上游请求和密码派生任务，容量分别为 8、4、2，排队超时为 30 秒；取消和关闭通过 context 与显式生命周期管理。定义见[运行时准备](../internal/runtime/prepare.go)与 `internal/platform/executor`。内嵌调度与手动投递由运行时监督器管理。
+SQLite、密码派生、HTTP 和文件系统操作通过有界 Go 执行器运行。API 分别限制存储、上游请求和密码派生任务，容量分别为 8、4、2，排队超时为 30 秒；取消和关闭通过 context 与显式生命周期管理。定义见[运行时准备](../apps/server/internal/runtime/prepare.go)与 `apps/server/internal/platform/executor`。内嵌调度与手动投递由运行时监督器管理。
 
-手动周报通过 SQLite 持久任务排队，API 返回 `202` 后由独立的[投递监督器](../internal/runtime/manual_delivery.go)启动子进程。同一用户重复启动会复用当前排队或活动任务；不同用户可以排队并在实例容量内并行。并发池由 `delivery_worker_concurrency` 控制，租约、版本比较和去重仍由存储层保证。状态、取消和不确定结果的确认规则见[API 参考](reference/api.md#收藏与追踪)，配置见[运行配置](reference/configuration.md#用户通知配置)。
+手动周报通过 SQLite 持久任务排队，API 返回 `202` 后由独立的[投递监督器](../apps/server/internal/runtime/manual_delivery.go)启动子进程。同一用户重复启动会复用当前排队或活动任务；不同用户可以排队并在实例容量内并行。并发池由 `delivery_worker_concurrency` 控制，租约、版本比较和去重仍由存储层保证。状态、取消和不确定结果的确认规则见[API 参考](reference/api.md#收藏与追踪)，配置见[运行配置](reference/configuration.md#用户通知配置)。
 
 <a id="scheduled-execution-across-service-ticks"></a>
 

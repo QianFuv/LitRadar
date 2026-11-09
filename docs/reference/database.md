@@ -174,7 +174,7 @@ tokenize = 'unicode61 remove_diacritics 2'
 
 v7/v8 不创建 `article_search_content`，详情和列表字段继续以 `articles`、`journals` 和 `article_listing` 为权威来源；全文查询只依赖 FTS `rowid`/`MATCH` 结果，因此短语、布尔、否定、前缀和列限定语义不变。这三种旧版本不依赖外部 `simple` tokenizer。v9/v10 保留 contentless 布局，但使用 `tokenize = 'simple 0'`，明确禁用拼音别名。检索投影和查询操作数使用一致的重音、大小写及标点边界规范化；规范标题、摘要和身份不变。
 
-内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7 的只读 preflight 保留原文件和历史索引；显式迁移或离线优化才升级到当前 v10。当前 DDL、版本和公共结构验证统一由 `internal/storage/indexschema` 提供。
+内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7 的只读 preflight 保留原文件和历史索引；显式迁移或离线优化才升级到当前 v10。当前 DDL、版本和公共结构验证统一由 `apps/server/internal/storage/indexschema` 提供。
 
 当前二进制读写精确 v6/v7/v8/v9/v10。旧二进制未必支持 v10；需要降级时，必须停机并恢复优化前已验证、且受目标二进制支持的旧索引备份。不得降低 `user_version`、直接把新版索引交给不支持它的旧二进制，或手工拼接影子表。
 
