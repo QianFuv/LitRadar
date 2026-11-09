@@ -10,8 +10,8 @@ import (
 )
 
 // windowsOptions returns no Windows options outside Windows.
-func windowsOptions() application.WindowsOptions {
-	return application.WindowsOptions{}
+func windowsOptions() (application.WindowsOptions, error) {
+	return application.WindowsOptions{}, nil
 }
 
 // newPlatformOptions reports that only the Windows and Android native hosts exist.

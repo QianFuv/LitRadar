@@ -31,11 +31,15 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	windows, err := windowsOptions()
+	if err != nil {
+		return err
+	}
 	app := application.New(application.Options{
 		Name:        "LitRadar",
 		Description: "LitRadar literature search, favorites, and tracking client",
 		Services:    []application.Service{application.NewService(nativehost.NewBridge(options))},
-		Windows:     windowsOptions(),
+		Windows:     windows,
 		Assets: application.AssetOptions{
 			Handler:        handler,
 			Middleware:     securityHeaders,

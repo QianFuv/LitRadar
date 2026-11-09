@@ -45,7 +45,7 @@ const CLIENT_ROOT = path.resolve(FRONTEND_ROOT, '..');
 const CLIENT_BINARY = path.join(CLIENT_ROOT, 'bin', 'litradar-client-smoke.exe');
 const RESULTS_DIR = path.join(FRONTEND_ROOT, 'test-results', 'native-windows-oidc');
 const BROWSER_URL_FILE = path.join(RESULTS_DIR, 'browser-urls.txt');
-const CONFIG_FILE = path.join(process.env.APPDATA ?? '', 'LitRadar', 'client.json');
+const CONFIG_FILE = path.join(path.dirname(CLIENT_BINARY), 'data', 'client.json');
 const STEP_TIMEOUT_MS = 60_000;
 const SSO_BUTTON_NAME = `使用 ${FAKE_OIDC_DISPLAY_NAME} 登录`;
 

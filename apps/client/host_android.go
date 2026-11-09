@@ -45,8 +45,8 @@ func newPlatformOptions() (nativehost.Options, error) {
 }
 
 // windowsOptions returns no Windows options on Android.
-func windowsOptions() application.WindowsOptions {
-	return application.WindowsOptions{}
+func windowsOptions() (application.WindowsOptions, error) {
+	return application.WindowsOptions{}, nil
 }
 
 // androidSecretStore keeps secrets in the Wails EncryptedSharedPreferences store.

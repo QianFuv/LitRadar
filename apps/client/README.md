@@ -79,8 +79,9 @@ keystore when `ANDROID_SIGNING_KEYSTORE` is unset (testing only):
   `frontend/lib/api/client.tsx`; cancelling a request cancels the Go call context.
 - Tokens are stored per server origin under `LitRadar/token/<origin>`: Windows Credential
   Manager on desktop, Wails `SecureSet` (EncryptedSharedPreferences) on Android. The selected
-  origin is not secret and lives in `client.json` in the user config directory
-  (`%AppData%\LitRadar` on Windows, the app files directory on Android).
+  origin is not secret and lives in `client.json`: in the portable `data` folder next to
+  `litradar-client.exe` on Windows (which also holds the WebView2 profile), and in the app files
+  directory on Android.
 - Native clients sign in only with a password or single sign-on. Password sign-in uses
   `POST /api/auth/native/login`, which issues a `device:<name>` personal access token.
 - Single sign-on (`Bridge.LoginWithOidc`) runs in the system browser. The bridge generates the
@@ -114,7 +115,7 @@ binaries first with `node apps/server/scripts/build-go.mjs` from the repository 
   `LITRADAR_CLIENT_REMOTE_DEBUGGING_PORT` (Wails clears `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`,
   and release builds contain no debugging hook). It drives setup, login, search, favorite,
   export through the real save dialog, restart, logout, and server switch, writing evidence to
-  `test-results/native-windows`. It refuses to run when `%AppData%\LitRadar\client.json` exists.
+  `test-results/native-windows`. It refuses to run when `bin\data\client.json` exists.
 - `node tests/native-smoke/android-smoke.mjs` with a debuggable APK installed on a running
   device or emulator. The server port is mapped into the device with `adb reverse`, so the app
   uses a loopback `http://127.0.0.1:<port>` origin. Evidence goes to

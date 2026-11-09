@@ -15,24 +15,18 @@ import (
 )
 
 // newPlatformOptions returns the Windows facilities of the bridge: Credential
-// Manager for tokens, the LitRadar folder under the roaming AppData directory
-// for the host config, and the system save dialog and browser.
+// Manager for tokens, the portable data directory for the host config, and the
+// system save dialog and browser.
 func newPlatformOptions() (nativehost.Options, error) {
 	hostname, _ := os.Hostname()
 	return nativehost.Options{
-		Secrets: credentialStore{},
-		ConfigDirectory: func() (string, error) {
-			directory, err := os.UserConfigDir()
-			if err != nil {
-				return "", err
-			}
-			return filepath.Join(directory, "LitRadar"), nil
-		},
-		DeviceName:    "Windows " + hostname,
-		SaveFile:      saveWithDialog,
-		OpenURL:       openInBrowser,
-		OidcCallbacks: nativehost.LoopbackOidcCallbacks{},
-		FocusApp:      focusMainWindow,
+		Secrets:         credentialStore{},
+		ConfigDirectory: portableDataDirectory,
+		DeviceName:      "Windows " + hostname,
+		SaveFile:        saveWithDialog,
+		OpenURL:         openInBrowser,
+		OidcCallbacks:   nativehost.LoopbackOidcCallbacks{},
+		FocusApp:        focusMainWindow,
 	}, nil
 }
 
@@ -55,10 +49,28 @@ func focusMainWindow() {
 	}
 }
 
-// windowsOptions returns the WebView2 options of the desktop window. Only smoke
-// builds add browser arguments; see smokeBrowserArguments.
-func windowsOptions() application.WindowsOptions {
-	return application.WindowsOptions{AdditionalBrowserArgs: smokeBrowserArguments()}
+// portableDataDirectory returns the data folder next to the executable, so the
+// portable client keeps its host config and WebView2 profile with its files.
+func portableDataDirectory() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(executable), "data"), nil
+}
+
+// windowsOptions returns the WebView2 options of the desktop window: the
+// profile lives in the portable data directory, and only smoke builds add
+// browser arguments; see smokeBrowserArguments.
+func windowsOptions() (application.WindowsOptions, error) {
+	directory, err := portableDataDirectory()
+	if err != nil {
+		return application.WindowsOptions{}, err
+	}
+	return application.WindowsOptions{
+		WebviewUserDataPath:   filepath.Join(directory, "webview2"),
+		AdditionalBrowserArgs: smokeBrowserArguments(),
+	}, nil
 }
 
 // credentialStore keeps secrets as generic credentials in Windows Credential Manager.
