@@ -150,3 +150,7 @@ export async function attachToAppPage(endpoint, urlPrefix, timeoutMs) {
   }
   return null;
 }
+ * Playwright emulates `prefers-color-scheme: light` on attached pages by default; the
+ * emulation is cleared so the app renders with the operating system's light or dark mode.
+ *
+      await page.emulateMedia({ colorScheme: null });
