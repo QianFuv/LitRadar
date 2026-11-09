@@ -2,7 +2,9 @@ name: litradar
 
 services:
   server:
-    build: .
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
     networks: [backend]
     image: ghcr.io/qianfuv/litradar:latest
     volumes:
@@ -36,8 +38,8 @@ services:
 
   client-web:
     build:
-      context: ./apps/client
-      dockerfile: build/docker/Dockerfile.server
+      context: .
+      dockerfile: apps/client/build/docker/Dockerfile.server
     image: ghcr.io/qianfuv/litradar-client-web:latest
     environment:
       WAILS_SERVER_HOST: 0.0.0.0

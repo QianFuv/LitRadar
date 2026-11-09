@@ -230,6 +230,7 @@ jobs:
           DOCKER_BUILD_SUMMARY: "false"
         with:
           context: .
+          file: apps/server/Dockerfile
           platforms: linux/amd64
           tags: ${{ steps.image.outputs.tag }}
           load: true

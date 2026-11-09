@@ -23,8 +23,6 @@ const SERVER_SOURCE_PATHS = [
   "tests",
   "docs/third-party",
   "LICENSE",
-  "Dockerfile",
-  ".dockerignore",
 ];
 
 const toolsRoot = fileURLToPath(new URL("..", import.meta.url));
