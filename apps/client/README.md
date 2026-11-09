@@ -70,9 +70,19 @@ keystore when `ANDROID_SIGNING_KEYSTORE` is unset (testing only):
   origin is not secret and lives in `client.json` in the user config directory
   (`%AppData%\LitRadar` on Windows, the app files directory on Android).
 - Password sign-in uses `POST /api/auth/native/login`, which issues a `device:<name>` personal
-  access token. Users without a password (single sign-on accounts) paste a personal access
-  token created in the web settings; the bridge validates it with `GET /api/auth/me` before
-  storing it. Single sign-on and its link actions are hidden in the native apps.
+  access token. A pasted personal access token created in the web settings also works; the
+  bridge validates it with `GET /api/auth/me` before storing it.
+- Single sign-on (`Bridge.LoginWithOidc`) runs in the system browser. The bridge generates the
+  PKCE verifier, S256 challenge, and state, opens
+  `/api/auth/oidc/native/login?redirect_uri=…&code_challenge=…&state=…`, waits up to five
+  minutes for the callback with the matching state, and exchanges the one-time code through
+  `POST /api/auth/oidc/native/exchange`; the code, verifier, and token never reach JavaScript.
+  Windows receives the callback on a one-shot listener at `http://127.0.0.1:<port>/oidc/callback`
+  (GET, matching state, first request only) and then asks Windows to bring the window forward.
+  Android receives `litradar://oidc/callback` through the activity's intent filter
+  (`LitRadarOidc.java` hands the link to Go over JNI). When the activity or process was recreated
+  while the browser was open, the callback is reported as an interrupted sign-in on the login
+  page. Linking and unlinking single sign-on stay web-only.
 - Logout revokes the token on the server and deletes it locally even when the server is
   unreachable. Switching servers in the settings revokes and deletes the token of the current
   server, clears cached queries and the local user cache, and returns to server setup.
@@ -98,6 +108,17 @@ binaries first with `node scripts/build-go.mjs` from the repository root, then r
   device or emulator. The server port is mapped into the device with `adb reverse`, so the app
   uses a loopback `http://127.0.0.1:<port>` origin. Evidence goes to
   `test-results/native-android`.
+- `node tests/native-smoke/windows-oidc-smoke.mjs` and `node tests/native-smoke/android-oidc-smoke.mjs`
+  cover single sign-on against `fake-oidc-provider.mjs`, with the fixture server in development
+  mode so the provider may use plain HTTP. On Windows the smoke build writes the URLs it would
+  open to `LITRADAR_CLIENT_SMOKE_BROWSER_URL_FILE`, and the driver opens them in its own
+  Chromium; the journey covers cancel, deny, success, restart, and logout. On Android the real
+  Chrome on the device is the browser (start it once with first-run screens disabled); the
+  journey covers a sign-in whose app process is killed while Chrome is open, then a normal
+  sign-in and restart.
+
+Playwright's `connectOverCDP` emulates `prefers-color-scheme: light` on attached pages;
+`attachToAppPage` clears that emulation so screenshots follow the system light or dark mode.
 
 The arm64 APK does not run on x86_64 emulator images with ARM translation: the Go arm64 runtime
 reads `MIDR_EL1`, which the translator does not implement (`SIGILL`). Use an arm64 device, or an

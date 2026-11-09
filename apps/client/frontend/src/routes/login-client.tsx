@@ -5,7 +5,7 @@
 import { Radar } from 'lucide-react';
 import { Eye, EyeOff, Megaphone, Search } from '@/components/ui/animated-icons';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { useEffect, useState, type ComponentType, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ComponentType, type FormEvent } from 'react';
 import { Shine } from '@animate-ui/react/primitives/effects/shine';
 import { SplittingText } from '@animate-ui/react/primitives/texts/splitting';
 import { Button } from '@/components/ui/button';
@@ -28,11 +28,17 @@ import {
   getInviteRequirement,
   type AuthProviders,
 } from '@/lib/api';
-import { getAuthErrorMessage, getOidcErrorMessage, type AuthFormMode } from '@/lib/auth-error';
+import {
+  getAuthErrorMessage,
+  getNativeOidcErrorMessage,
+  getOidcErrorMessage,
+  type AuthFormMode,
+} from '@/lib/auth-error';
 import { useAuth } from '@/lib/auth-context';
 import { CLIENT_PLATFORM } from '@/lib/platform';
 import { LoadingText } from '@/components/ui/loading-text';
 import { useServerConnection } from '@/lib/server-connection';
+import { preloadWorkspaceRoutes } from '@/src/routes/lazy-routes';
 
 const LOGIN_RETURN_ORIGIN = 'https://litradar.invalid';
 
@@ -198,14 +204,25 @@ export default function LoginClient() {
 function useLoginViewState() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { loading, login, logoutWarning, recoverLogout, register, signInWithAccessToken, user } =
-    useAuth();
+  const {
+    loading,
+    login,
+    logoutWarning,
+    recoverLogout,
+    register,
+    signInWithAccessToken,
+    signInWithNativeOidc,
+    user,
+  } = useAuth();
   const serverConnection = useServerConnection();
   const nextParam = searchParams.get('next') || '';
   const nextPath = normalizeLoginReturnPath(nextParam);
   const isLogoutRecovery = searchParams.get('logout_recovery') === '1';
   const oidcErrorCode = searchParams.get('oidc_error');
-  const oidcError = oidcErrorCode === null ? null : getOidcErrorMessage(oidcErrorCode);
+  const [nativeOidcError, setNativeOidcError] = useState<string | null>(null);
+  const [pendingNativeOidc, setPendingNativeOidc] = useState<AbortController | null>(null);
+  const pendingNativeOidcRef = useRef<AbortController | null>(null);
+  const oidcError = oidcErrorCode === null ? nativeOidcError : getOidcErrorMessage(oidcErrorCode);
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -266,11 +283,63 @@ function useLoginViewState() {
     };
   }, [isLogoutRecovery, loading, user]);
 
+  useEffect(() => {
+    if (loading || user || isLogoutRecovery || !CLIENT_PLATFORM.nativeSession) {
+      return;
+    }
+    CLIENT_PLATFORM.nativeSession
+      .consumeOidcInterruption()
+      .then((isInterrupted) => {
+        if (isInterrupted) {
+          setNativeOidcError(getOidcErrorMessage('interrupted'));
+        }
+      })
+      .catch(() => undefined);
+  }, [isLogoutRecovery, loading, user]);
+
+  useEffect(
+    () => () => {
+      pendingNativeOidcRef.current?.abort();
+    },
+    [],
+  );
+
+  /** Run single sign-on through the native host and the system browser. */
+  const startNativeOidc = async () => {
+    const controller = new AbortController();
+    pendingNativeOidcRef.current = controller;
+    setPendingNativeOidc(controller);
+    setError(null);
+    setNativeOidcError(null);
+    preloadWorkspaceRoutes();
+    try {
+      await signInWithNativeOidc(controller.signal);
+      navigate(nextPath, { replace: true });
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setNativeOidcError(getNativeOidcErrorMessage(err));
+      }
+    } finally {
+      if (pendingNativeOidcRef.current === controller) {
+        pendingNativeOidcRef.current = null;
+        setPendingNativeOidc(null);
+      }
+    }
+  };
+
+  /** Stop waiting for the browser and return the page to its idle state. */
+  const cancelNativeOidc = () => {
+    pendingNativeOidcRef.current?.abort();
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
     setIsRecoveryComplete(false);
+    if (!isLogoutRecovery) {
+      preloadWorkspaceRoutes();
+    }
 
     try {
       if (isLogoutRecovery) {
@@ -312,6 +381,9 @@ function useLoginViewState() {
     authProviders,
     nextPath,
     oidcError,
+    isNativeOidcPending: pendingNativeOidc !== null,
+    startNativeOidc,
+    cancelNativeOidc,
     error,
     setError,
     isSubmitting,
@@ -550,15 +622,87 @@ function renderLoginOidc(
 }
 
 /**
+ * Render the native single sign-on entry, its browser wait state, and its cancel action.
+ *
+ * @param state - Login view state.
+ * @returns Divider and sign-on controls, or null outside native hosts or without OIDC.
+ */
+function renderLoginNativeOidc(
+  state: Pick<
+    LoginViewState,
+    | 'authProviders'
+    | 'cancelNativeOidc'
+    | 'isLogoutRecovery'
+    | 'isNativeOidcPending'
+    | 'isSubmitting'
+    | 'startNativeOidc'
+  >,
+) {
+  const {
+    authProviders,
+    cancelNativeOidc,
+    isLogoutRecovery,
+    isNativeOidcPending,
+    isSubmitting,
+    startNativeOidc,
+  } = state;
+  if (
+    isLogoutRecovery ||
+    CLIENT_PLATFORM.supportsSingleSignOn ||
+    !CLIENT_PLATFORM.nativeSession ||
+    !authProviders?.oidc_enabled
+  ) {
+    return null;
+  }
+  const displayName = authProviders.oidc_display_name.trim() || '单点登录';
+
+  return (
+    <div data-auth-oidc={isNativeOidcPending ? 'pending' : 'available'} className="mt-4 space-y-4">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <span className="h-px flex-1 bg-border" aria-hidden="true" />
+        或
+        <span className="h-px flex-1 bg-border" aria-hidden="true" />
+      </div>
+      {isNativeOidcPending ? (
+        <div className="space-y-3">
+          <div
+            role="status"
+            className="rounded-xl bg-muted px-4 py-3 text-sm leading-6 text-muted-foreground"
+          >
+            <LoadingText text={`已在浏览器中打开 ${displayName}，完成登录后将自动返回…`} />
+          </div>
+          <Button type="button" variant="outline" className="w-full" onClick={cancelNativeOidc}>
+            取消单点登录
+          </Button>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          disabled={isSubmitting}
+          onClick={() => void startNativeOidc()}
+        >
+          使用 {displayName} 登录
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
  * Render the access-token sign-in switch shown by hosts without single sign-on.
  *
  * @param state - Login view state.
  * @returns Mode switch and hint, or null when single sign-on is available.
  */
 function renderLoginAccessTokenOption(
-  state: Pick<LoginViewState, 'isLogoutRecovery' | 'mode' | 'setMode' | 'setError'>,
+  state: Pick<
+    LoginViewState,
+    'authProviders' | 'isLogoutRecovery' | 'mode' | 'setMode' | 'setError'
+  >,
 ) {
-  const { isLogoutRecovery, mode, setMode, setError } = state;
+  const { authProviders, isLogoutRecovery, mode, setMode, setError } = state;
   if (isLogoutRecovery || CLIENT_PLATFORM.supportsSingleSignOn || mode === 'register') {
     return null;
   }
@@ -583,7 +727,9 @@ function renderLoginAccessTokenOption(
         {isTokenMode ? '使用账号密码登录' : '使用访问令牌登录'}
       </Button>
       <p className="text-xs leading-5 text-muted-foreground">
-        客户端不支持单点登录。单点登录账号请在网页版“访问令牌”设置中创建令牌，再粘贴到此处登录。
+        {authProviders?.oidc_enabled
+          ? '也可以在网页版“访问令牌”设置中创建令牌，再粘贴到此处登录。'
+          : '单点登录账号请在网页版“访问令牌”设置中创建令牌，再粘贴到此处登录。'}
       </p>
     </div>
   );
@@ -742,7 +888,14 @@ function renderLoginLogoutWarning(
 
 /** Retain pending/bootstrap admission guards and keyed animated submit label; a sheen sweeps across on hover. */
 function renderLoginSubmit(state: LoginViewState) {
-  const { isLogoutRecovery, isSubmitting, mode, bootstrapRequired, submitLabel } = state;
+  const {
+    isLogoutRecovery,
+    isNativeOidcPending,
+    isSubmitting,
+    mode,
+    bootstrapRequired,
+    submitLabel,
+  } = state;
 
   return (
     <Shine asChild enableOnHover color="var(--primary-foreground)" opacity={0.28}>
@@ -750,7 +903,11 @@ function renderLoginSubmit(state: LoginViewState) {
         type="submit"
         aria-label={submitLabel}
         className="w-full"
-        disabled={isSubmitting || (!isLogoutRecovery && mode === 'register' && bootstrapRequired)}
+        disabled={
+          isSubmitting ||
+          isNativeOidcPending ||
+          (!isLogoutRecovery && mode === 'register' && bootstrapRequired)
+        }
       >
         <span className="grid" aria-hidden="true">
           <MotionPresence>
@@ -887,6 +1044,7 @@ function renderLoginCardContent(state: LoginViewState) {
         )}
       </MotionPresence>
       {!isRecoveryComplete && renderLoginOidc(state)}
+      {!isRecoveryComplete && renderLoginNativeOidc(state)}
       {!isRecoveryComplete && renderLoginAccessTokenOption(state)}
       {!isLogoutRecovery && !isRecoveryComplete && mode !== 'token' && (
         <div

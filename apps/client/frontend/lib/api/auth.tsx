@@ -124,6 +124,31 @@ export function importAccessToken(token: string): Promise<AuthUser> {
 }
 
 /**
+ * Sign a native host in through the server's single sign-on in the system browser.
+ *
+ * The host opens the browser, waits for the callback, exchanges the one-time code, and keeps
+ * the issued token; only the exchange response without the token reaches this function. The
+ * shared request timeout does not apply because the browser step may take minutes.
+ *
+ * @param signal - Cancellation signal that stops waiting for the browser.
+ * @returns Login response.
+ */
+export async function loginWithNativeOidc(signal: AbortSignal): Promise<LoginResponse> {
+  const nativeSession = CLIENT_PLATFORM.nativeSession;
+  if (!nativeSession) {
+    throw new Error('客户端单点登录仅适用于桌面和移动客户端');
+  }
+  const response = await nativeSession.loginWithOidc(signal);
+  return requestJsonVia<LoginResponse>(
+    () => Promise.resolve(response),
+    buildApiUrl('/api/auth/oidc/native/exchange'),
+    { method: 'POST', signal },
+    '单点登录失败',
+    parseLoginResponse,
+  );
+}
+
+/**
  * Revoke the active login token.
  *
  * A native host deletes its stored token even when the server cannot confirm revocation.

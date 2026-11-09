@@ -1,11 +1,11 @@
 /**
- * Native shell coverage: first-run server setup, server switching, access-token sign-in, and
- * hidden single sign-on actions on a host without browser redirects.
+ * Native shell coverage: first-run server setup, server switching, access-token sign-in,
+ * single sign-on through the host and the system browser, and hidden account-link actions.
  */
 
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { AccountSignInCard } from '@/components/settings/account-card';
@@ -22,6 +22,8 @@ const shellMocks = vi.hoisted(() => ({
   connect: vi.fn(),
   disconnect: vi.fn(),
   signInWithAccessToken: vi.fn(),
+  signInWithNativeOidc: vi.fn(),
+  consumeOidcInterruption: vi.fn(),
   login: vi.fn(),
   user: null as Record<string, unknown> | null,
 }));
@@ -38,6 +40,8 @@ vi.mock('@/lib/platform', () => {
       login: vi.fn(),
       importAccessToken: vi.fn(),
       logout: vi.fn(),
+      loginWithOidc: vi.fn(),
+      consumeOidcInterruption: shellMocks.consumeOidcInterruption,
       discardCredential: vi.fn(async () => undefined),
     },
     serverConnection: {
@@ -58,6 +62,7 @@ vi.mock('@/lib/auth-context', async (importOriginal) => ({
     recoverLogout: vi.fn(),
     register: vi.fn(),
     signInWithAccessToken: shellMocks.signInWithAccessToken,
+    signInWithNativeOidc: shellMocks.signInWithNativeOidc,
     updateUser: vi.fn(),
     user: shellMocks.user,
   }),
@@ -68,6 +73,34 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   getAuthProviders: vi.fn(async () => ({ oidc_enabled: true, oidc_display_name: '校园身份' })),
   getInviteRequirement: vi.fn(async () => ({ required: true, bootstrap_required: false })),
 }));
+
+/**
+ * Show the current router location after a sign-in navigation.
+ *
+ * @returns Location marker.
+ */
+function LoginLocationProbe() {
+  const location = useLocation();
+  return <p data-testid="login-location">{`${location.pathname}${location.search}`}</p>;
+}
+
+/**
+ * Render the native login page with a route that reports where sign-in navigates.
+ *
+ * @param initialEntry - Initial router URL.
+ */
+function renderNativeLogin(initialEntry: string): void {
+  render(
+    <MotionProvider>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route path="/login" element={<LoginClient />} />
+          <Route path="/" element={<LoginLocationProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </MotionProvider>,
+  );
+}
 
 /**
  * Show the connected origin and expose the switch action to the test.
@@ -91,6 +124,8 @@ beforeEach(() => {
   shellMocks.connect.mockReset();
   shellMocks.disconnect.mockReset();
   shellMocks.signInWithAccessToken.mockReset();
+  shellMocks.signInWithNativeOidc.mockReset();
+  shellMocks.consumeOidcInterruption.mockReset().mockResolvedValue(false);
   shellMocks.login.mockReset();
   shellMocks.user = null;
 });
@@ -143,7 +178,65 @@ describe('native server setup gate', () => {
 });
 
 describe('native sign-in surface', () => {
-  test('offers access-token sign-in instead of single sign-on', async () => {
+  test('signs in through the host single sign-on and returns to the requested page', async () => {
+    const user = userEvent.setup();
+    shellMocks.signInWithNativeOidc.mockResolvedValue(undefined);
+
+    renderNativeLogin('/login?next=%2F%3Fview%3Dfavorites');
+
+    await user.click(await screen.findByRole('button', { name: '使用 校园身份 登录' }));
+
+    expect(await screen.findByTestId('login-location')).toHaveTextContent('/?view=favorites');
+    expect(shellMocks.signInWithNativeOidc).toHaveBeenCalledWith(expect.any(AbortSignal));
+  });
+
+  test('shows the browser wait and returns to idle when cancelled', async () => {
+    const user = userEvent.setup();
+    const captured: { signal: AbortSignal | null } = { signal: null };
+    shellMocks.signInWithNativeOidc.mockImplementation(
+      (signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          captured.signal = signal;
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+    );
+
+    renderNativeLogin('/login');
+    await user.click(await screen.findByRole('button', { name: '使用 校园身份 登录' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('已在浏览器中打开 校园身份');
+    expect(screen.getByRole('button', { name: '登录' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '取消单点登录' }));
+
+    expect(captured.signal?.aborted).toBe(true);
+    expect(await screen.findByRole('button', { name: '使用 校园身份 登录' })).toBeEnabled();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  test('announces single sign-on failures reported by the host', async () => {
+    const user = userEvent.setup();
+    shellMocks.signInWithNativeOidc
+      .mockRejectedValueOnce(new PlatformBridgeError('oidc_error', 'denied', undefined, 'denied'))
+      .mockRejectedValueOnce(new PlatformBridgeError('oidc_timeout', 'timeout'));
+
+    renderNativeLogin('/login');
+    await user.click(await screen.findByRole('button', { name: '使用 校园身份 登录' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('授权已取消');
+
+    await user.click(screen.getByRole('button', { name: '使用 校园身份 登录' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('5 分钟'));
+  });
+
+  test('tells the user when the app lost a sign-in while the browser was open', async () => {
+    shellMocks.consumeOidcInterruption.mockResolvedValue(true);
+
+    renderNativeLogin('/login');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('单点登录被中断');
+    expect(screen.getByRole('button', { name: '使用 校园身份 登录' })).toBeEnabled();
+  });
+
+  test('offers access-token sign-in next to single sign-on', async () => {
     const user = userEvent.setup();
     shellMocks.signInWithAccessToken.mockResolvedValue(undefined);
 
@@ -177,7 +270,9 @@ describe('native sign-in surface', () => {
 
     renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
 
-    expect(await screen.findByText('客户端不支持单点登录，请在网页版中绑定或解除')).toBeVisible();
+    expect(
+      await screen.findByText('客户端不支持绑定或解除单点登录，请在网页版中操作'),
+    ).toBeVisible();
     expect(screen.queryByRole('button', { name: /绑定/ })).toBeNull();
   });
 });

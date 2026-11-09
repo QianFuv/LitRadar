@@ -18,6 +18,7 @@ import {
   getCurrentUser,
   importAccessToken,
   loginUser,
+  loginWithNativeOidc,
   logoutAllSessions,
   logoutUser,
   registerUser,
@@ -39,6 +40,7 @@ interface AuthState {
   logoutWarning: LogoutRevocationWarning | null;
   login: (username: string, password: string) => Promise<void>;
   signInWithAccessToken: (token: string) => Promise<void>;
+  signInWithNativeOidc: (signal: AbortSignal) => Promise<void>;
   register: (
     username: string,
     password: string,
@@ -291,6 +293,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [adoptSignedInUser],
   );
 
+  const signInWithNativeOidc = useCallback(
+    async (signal: AbortSignal) => {
+      const response = await loginWithNativeOidc(signal);
+      adoptSignedInUser(response.user);
+    },
+    [adoptSignedInUser],
+  );
+
   const register = useCallback(
     async (username: string, password: string, inviteCode: string, email = '') => {
       await registerUser(username, password, inviteCode, email);
@@ -350,6 +360,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logoutWarning,
       login,
       signInWithAccessToken,
+      signInWithNativeOidc,
       register,
       logout,
       recoverLogout,
@@ -363,6 +374,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       recoverLogout,
       register,
       signInWithAccessToken,
+      signInWithNativeOidc,
       updateUser,
       user,
     ],

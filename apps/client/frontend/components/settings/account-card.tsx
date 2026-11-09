@@ -275,7 +275,7 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
  */
 function describeOidcRow(user: AuthUser, isOidcEnabled: boolean): string {
   if (!CLIENT_PLATFORM.supportsSingleSignOn) {
-    return '客户端不支持单点登录，请在网页版中绑定或解除';
+    return '客户端不支持绑定或解除单点登录，请在网页版中操作';
   }
   if (user.auth_kind === 'oidc') {
     return '单点登录账号无法解除绑定';

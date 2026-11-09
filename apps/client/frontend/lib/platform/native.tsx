@@ -81,19 +81,20 @@ function invokeBridge<T>(
 }
 
 /**
- * Read the stable code a Go bridge error carries in its runtime error cause.
+ * Read one non-empty string field a Go bridge error carries in its runtime error cause.
  *
  * @param error - Rejection from a bridge call.
- * @returns Host error code, or `unknown`.
+ * @param field - Field of the serialized Go `BridgeError`.
+ * @returns Field value, or null when absent.
  */
-function readBridgeErrorCode(error: unknown): string {
+function readBridgeErrorField(error: unknown, field: 'code' | 'reason'): string | null {
   if (error instanceof Error && error.cause && typeof error.cause === 'object') {
-    const code = (error.cause as Record<string, unknown>).code;
-    if (typeof code === 'string' && code) {
-      return code;
+    const value = (error.cause as Record<string, unknown>)[field];
+    if (typeof value === 'string' && value) {
+      return value;
     }
   }
-  return 'unknown';
+  return null;
 }
 
 /**
@@ -104,7 +105,36 @@ function readBridgeErrorCode(error: unknown): string {
  */
 function toPlatformError(error: unknown): PlatformBridgeError {
   const message = error instanceof Error ? error.message : String(error);
-  return new PlatformBridgeError(readBridgeErrorCode(error), message, { cause: error });
+  return new PlatformBridgeError(
+    readBridgeErrorField(error, 'code') ?? 'unknown',
+    message,
+    { cause: error },
+    readBridgeErrorField(error, 'reason'),
+  );
+}
+
+/**
+ * Run the host's browser-based single sign-on, keeping its typed failures distinguishable from
+ * transport failures.
+ *
+ * @param signal - Optional cancellation signal.
+ * @returns Exchange response without the token.
+ */
+async function loginNativeWithOidc(signal: AbortSignal | null): Promise<Response> {
+  let result: BridgeResponse;
+  try {
+    result = await invokeBridge<BridgeResponse>('LoginWithOidc', signal);
+  } catch (error) {
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
+    const platformError = toPlatformError(error);
+    if (platformError.code === 'server_unreachable') {
+      throw new TypeError('无法连接 LitRadar 服务器', { cause: platformError });
+    }
+    throw platformError;
+  }
+  return toResponse(result);
 }
 
 /**
@@ -277,6 +307,8 @@ function prepareNativeDocument(): void {
 /** Credential operations backed by the Go bridge. */
 const NATIVE_SESSION: NativeSession = {
   login: (username, password, signal) => invokeTransport('Login', signal, username, password),
+  loginWithOidc: loginNativeWithOidc,
+  consumeOidcInterruption: () => invokeBridge<boolean>('ConsumeOidcInterruption', null),
   importAccessToken: (token, signal) => invokeTransport('ImportToken', signal, token),
   logout: (signal) => invokeTransport('Logout', signal),
   async discardCredential() {

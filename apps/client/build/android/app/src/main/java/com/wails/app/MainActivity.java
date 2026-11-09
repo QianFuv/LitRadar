@@ -110,12 +110,40 @@ public class MainActivity extends AppCompatActivity {
         // Initialize the native Go library
         bridge = new WailsBridge(this);
         bridge.initialize();
+        LitRadarOidc.onActivityCreated();
+        if (savedInstanceState == null && !isLaunchedFromHistory(getIntent())) {
+            LitRadarOidc.deliver(getIntent());
+        }
 
         // Set up WebView
         setupWebView();
 
         // Load the application
         loadApplication();
+    }
+
+    /**
+     * Receives sign-in callback links while the activity exists; the manifest launches it as
+     * {@code singleTask}, so the browser's redirect returns to this instance.
+     *
+     * @param intent the new intent
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        LitRadarOidc.deliver(intent);
+    }
+
+    /**
+     * Reports whether the system relaunched the activity from the recents list, which replays the
+     * intent that originally started the task instead of delivering a new one.
+     *
+     * @param intent the launch intent
+     * @return whether the intent is a replay from recents
+     */
+    private static boolean isLaunchedFromHistory(Intent intent) {
+        return intent != null && (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
     }
 
     /**

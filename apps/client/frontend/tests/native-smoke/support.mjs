@@ -31,6 +31,10 @@ const READY_TIMEOUT_MS = 60_000;
 export const MEMBER_USERNAME = 'fullstack_member';
 /** Password of {@link MEMBER_USERNAME}. */
 export const MEMBER_PASSWORD = 'FullStackMember!2026';
+/** Seeded administrator account of the full-stack fixture. */
+export const ADMIN_USERNAME = 'fullstack_admin';
+/** Password of {@link ADMIN_USERNAME}. */
+export const ADMIN_PASSWORD = 'FullStackAdmin!2026';
 /** Title of the seeded article used by the journeys. */
 export const ARTICLE_TITLE = 'Evidence Graphs for Living Literature Reviews';
 
@@ -80,9 +84,11 @@ async function waitForReady(url) {
 /**
  * Seed a temporary project root and serve it on a loopback port.
  *
+ * @param options - Server options.
+ * @param options.isDevelopment - Start in development mode, which admits HTTP OIDC providers.
  * @returns Server origin, port, and an idempotent stop function.
  */
-export async function startFixtureServer() {
+export async function startFixtureServer({ isDevelopment = false } = {}) {
   const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'litradar-native-smoke-'));
   const secretKey = path.join(fixtureRoot, 'secret.key');
   await fs.writeFile(secretKey, Buffer.alloc(32, 41));
@@ -104,6 +110,7 @@ export async function startFixtureServer() {
       secretKey,
       '--scheduler-interval-seconds',
       '3600',
+      ...(isDevelopment ? ['--development'] : []),
     ],
     { stdio: 'ignore' },
   );
@@ -127,7 +134,53 @@ export async function startFixtureServer() {
 }
 
 /**
+ * Enable single sign-on on a fixture server through the administrator runtime settings.
+ *
+ * @param origin - Fixture server origin, also used as the public base URL.
+ * @param provider - OIDC issuer, client credentials, and button label.
+ * @returns Provider summary the server now reports.
+ */
+export async function enableFixtureOidc(origin, provider) {
+  const login = await fetch(`${origin}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: ADMIN_USERNAME, password: ADMIN_PASSWORD }),
+  });
+  if (!login.ok) {
+    throw new Error(`administrator login failed with ${login.status}`);
+  }
+  const cookie = login.headers
+    .getSetCookie()
+    .map((value) => value.split(';')[0])
+    .join('; ');
+  const update = await fetch(`${origin}/api/admin/runtime-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({
+      values: {
+        oidc_issuer_url: provider.issuer,
+        oidc_client_id: provider.clientId,
+        oidc_client_secret: provider.clientSecret,
+        oidc_display_name: provider.displayName,
+        public_base_url: origin,
+      },
+    }),
+  });
+  if (!update.ok) {
+    throw new Error(`runtime settings update failed with ${update.status}: ${await update.text()}`);
+  }
+  const providers = await (await fetch(`${origin}/api/auth/providers`)).json();
+  if (providers.oidc_enabled !== true) {
+    throw new Error(`single sign-on is not enabled: ${JSON.stringify(providers)}`);
+  }
+  return providers;
+}
+
+/**
  * Attach Playwright to the app page behind a CDP endpoint, retrying until it appears.
+ *
+ * Playwright emulates `prefers-color-scheme: light` on attached pages by default; the
+ * emulation is cleared so the app renders with the operating system's light or dark mode.
  *
  * @param endpoint - CDP HTTP endpoint.
  * @param urlPrefix - Origin prefix of the app page.
@@ -143,6 +196,7 @@ export async function attachToAppPage(endpoint, urlPrefix, timeoutMs) {
       .flatMap((context) => context.pages())
       .find((candidate) => candidate.url().startsWith(urlPrefix));
     if (page) {
+      await page.emulateMedia({ colorScheme: null });
       return { browser, page };
     }
     await browser?.close();
@@ -150,7 +204,3 @@ export async function attachToAppPage(endpoint, urlPrefix, timeoutMs) {
   }
   return null;
 }
- * Playwright emulates `prefers-color-scheme: light` on attached pages by default; the
- * emulation is cleared so the app renders with the operating system's light or dark mode.
- *
-      await page.emulateMedia({ colorScheme: null });

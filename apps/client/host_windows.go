@@ -28,12 +28,31 @@ func newPlatformOptions() (nativehost.Options, error) {
 			}
 			return filepath.Join(directory, "LitRadar"), nil
 		},
-		DeviceName: "Windows " + hostname,
-		SaveFile:   saveWithDialog,
-		OpenURL: func(rawURL string) error {
-			return application.Get().Browser.OpenURL(rawURL)
-		},
+		DeviceName:    "Windows " + hostname,
+		SaveFile:      saveWithDialog,
+		OpenURL:       openInBrowser,
+		OidcCallbacks: nativehost.LoopbackOidcCallbacks{},
+		FocusApp:      focusMainWindow,
 	}, nil
+}
+
+// openInBrowser opens rawURL in the system browser. Smoke builds can hand the
+// URL to the smoke driver instead; see smokeOpenURL.
+func openInBrowser(rawURL string) error {
+	if isHandled, err := smokeOpenURL(rawURL); isHandled {
+		return err
+	}
+	return application.Get().Browser.OpenURL(rawURL)
+}
+
+// focusMainWindow restores the application window and asks Windows to bring
+// it to the foreground. Windows may only flash the taskbar button instead when
+// another application owns the foreground.
+func focusMainWindow() {
+	for _, window := range application.Get().Window.GetAll() {
+		window.Focus()
+		return
+	}
 }
 
 // windowsOptions returns the WebView2 options of the desktop window. Only smoke

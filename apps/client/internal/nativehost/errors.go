@@ -26,6 +26,10 @@ const (
 	CodeStorageFailure = "storage_failure"
 	// CodeUnsupported marks an operation the current platform does not provide.
 	CodeUnsupported = "unsupported"
+	// CodeOidcError marks a single sign-on that did not complete; Reason names the cause.
+	CodeOidcError = "oidc_error"
+	// CodeOidcTimeout marks a single sign-on whose browser step did not finish in time.
+	CodeOidcTimeout = "oidc_timeout"
 )
 
 // BridgeError is the error type returned by [Bridge] methods. Wails serializes it
@@ -35,6 +39,9 @@ type BridgeError struct {
 	Code string `json:"code"`
 	// Message describes the failure for logs; it never contains secrets.
 	Message string `json:"message"`
+	// Reason is the bounded single sign-on failure code of a [CodeOidcError],
+	// such as the oidc_error value the server reported.
+	Reason string `json:"reason,omitempty"`
 }
 
 // Error implements [error].

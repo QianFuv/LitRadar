@@ -3,6 +3,7 @@
  */
 
 import { ApiError } from '@/lib/api/client';
+import { PlatformBridgeError } from '@/lib/platform/errors';
 
 export type AuthFormMode = 'login' | 'register' | 'token';
 
@@ -86,7 +87,11 @@ const OIDC_ERROR_MESSAGES = new Map<string, string>([
   ],
   ['account_conflict', '该单点登录身份已绑定其他 LitRadar 账号，或当前账号已绑定其他身份。'],
   ['expired_session', '登录会话已过期或已变更，请重新登录后再试。'],
+  ['interrupted', '单点登录被中断：应用在浏览器登录期间被关闭，请重新发起单点登录。'],
+  ['browser', '无法打开系统浏览器，请检查默认浏览器设置后重试。'],
 ]);
+
+const NATIVE_OIDC_TIMEOUT_ERROR = '单点登录超时：浏览器中的登录未在 5 分钟内完成，请重新发起。';
 
 /**
  * Convert a bounded single sign-on failure code into a user-facing message.
@@ -96,4 +101,31 @@ const OIDC_ERROR_MESSAGES = new Map<string, string>([
  */
 export function getOidcErrorMessage(code: string): string {
   return OIDC_ERROR_MESSAGES.get(code) ?? FALLBACK_OIDC_ERROR;
+}
+
+/**
+ * Convert a failed native single sign-on into a user-facing message.
+ *
+ * @param error - Rejection from the native single sign-on flow.
+ * @returns Readable message for the login page.
+ */
+export function getNativeOidcErrorMessage(error: unknown): string {
+  if (error instanceof PlatformBridgeError) {
+    if (error.code === 'oidc_timeout') {
+      return NATIVE_OIDC_TIMEOUT_ERROR;
+    }
+    return getOidcErrorMessage(error.code === 'oidc_error' ? (error.reason ?? '') : '');
+  }
+  if (error instanceof ApiError) {
+    if (error.status === 404) {
+      return getOidcErrorMessage('unavailable');
+    }
+    if (error.status === 429) {
+      return '尝试次数过多，请稍后再试。';
+    }
+    if (error.status === 400) {
+      return getOidcErrorMessage('state');
+    }
+  }
+  return getAccountErrorMessage(error);
 }

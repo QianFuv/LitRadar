@@ -69,6 +69,28 @@ export interface NativeSession {
   login(username: string, password: string, signal: AbortSignal | null): Promise<Response>;
 
   /**
+   * Sign in through the server's single sign-on in the system browser and let the host
+   * exchange the one-time code and store the issued token. The code, the PKCE verifier, and
+   * the token never reach JavaScript.
+   *
+   * Rejects with a `PlatformBridgeError` coded `oidc_error` (with a `reason`) or
+   * `oidc_timeout` when the browser step fails, with a `TypeError` when the server cannot be
+   * reached, and with the abort reason after cancellation.
+   *
+   * @param signal - Cancellation signal; aborting stops waiting for the browser.
+   * @returns Exchange response without the token.
+   */
+  loginWithOidc(signal: AbortSignal | null): Promise<Response>;
+
+  /**
+   * Report, once, whether a single sign-on callback arrived for a sign-in the host lost, for
+   * example because the operating system closed the app while the browser was open.
+   *
+   * @returns Whether the user should be told to start single sign-on again.
+   */
+  consumeOidcInterruption(): Promise<boolean>;
+
+  /**
    * Validate a pasted personal access token and let the host store it when accepted.
    *
    * @param token - Personal access token.

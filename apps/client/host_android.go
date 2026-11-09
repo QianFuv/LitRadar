@@ -11,14 +11,20 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+// appLinkOidcCallbacks receives the litradar://oidc/callback links that
+// MainActivity forwards through deliverOidcCallback.
+var appLinkOidcCallbacks = nativehost.NewAppLinkOidcCallbacks()
+
 func init() {
 	application.RegisterAndroidMain(main)
 }
 
 // newPlatformOptions returns the Android facilities of the bridge:
-// EncryptedSharedPreferences for tokens and the app files directory for the
-// host config. The Java host saves downloads through MediaStore, so the bridge
-// has no save dialog here.
+// EncryptedSharedPreferences for tokens, the app files directory for the host
+// config, and app links for single sign-on callbacks. The Java host saves
+// downloads through MediaStore, so the bridge has no save dialog here. The
+// activity returns to the foreground by itself when the browser opens the
+// callback link, so the bridge needs no focus hook.
 func newPlatformOptions() (nativehost.Options, error) {
 	return nativehost.Options{
 		Secrets: androidSecretStore{},
@@ -34,6 +40,7 @@ func newPlatformOptions() (nativehost.Options, error) {
 			application.Android.OpenURL(rawURL)
 			return nil
 		},
+		OidcCallbacks: appLinkOidcCallbacks,
 	}, nil
 }
 

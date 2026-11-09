@@ -6,8 +6,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api/client';
-import { importAccessToken, loginUser, logoutUser } from '@/lib/api/auth';
-import { getAuthErrorMessage } from '@/lib/auth-error';
+import { importAccessToken, loginUser, loginWithNativeOidc, logoutUser } from '@/lib/api/auth';
+import { getAuthErrorMessage, getNativeOidcErrorMessage } from '@/lib/auth-error';
 import { CLIENT_PLATFORM } from '@/lib/platform';
 import { PlatformBridgeError } from '@/lib/platform/errors';
 import {
@@ -81,8 +81,8 @@ function base64Text(text: string): string {
  * @param code - Bridge error code.
  * @returns Runtime-like error carrying the code in its cause.
  */
-function bridgeFailure(code: string): Error {
-  return new Error(`${code}: failure`, { cause: { code, message: 'failure' } });
+function bridgeFailure(code: string, reason?: string): Error {
+  return new Error(`${code}: failure`, { cause: { code, message: 'failure', reason } });
 }
 
 /**
@@ -254,6 +254,105 @@ describe('native credential flows', () => {
     await NATIVE_PLATFORM.nativeSession?.discardCredential();
 
     expect(runtimeMocks.byName).toHaveBeenLastCalledWith(`${BRIDGE_SERVICE}.ForgetToken`);
+  });
+});
+
+describe('native single sign-on', () => {
+  test('returns the exchanged user without a token or code', async () => {
+    runtimeMocks.byName.mockReturnValueOnce(
+      settledCall({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: base64Text(
+          JSON.stringify({
+            expires_at: 1_900_000_000,
+            user: {
+              id: 9,
+              username: 'sso_member',
+              is_admin: false,
+              email: 'sso@example.com',
+              auth_kind: 'oidc',
+              is_oidc_linked: true,
+            },
+          }),
+        ),
+      }),
+    );
+
+    const response = await loginWithNativeOidc(new AbortController().signal);
+
+    expect(runtimeMocks.byName).toHaveBeenLastCalledWith(`${BRIDGE_SERVICE}.LoginWithOidc`);
+    expect(response.user.username).toBe('sso_member');
+    expect(JSON.stringify(response)).not.toMatch(/token|code/);
+  });
+
+  test('keeps identity-provider failures typed with their reason', async () => {
+    runtimeMocks.byName.mockReturnValueOnce(settledCall(bridgeFailure('oidc_error', 'denied')));
+
+    const error = await loginWithNativeOidc(new AbortController().signal).catch(
+      (rejection: unknown) => rejection,
+    );
+
+    expect(error).toBeInstanceOf(PlatformBridgeError);
+    expect(error).toMatchObject({ code: 'oidc_error', reason: 'denied' });
+    expect(getNativeOidcErrorMessage(error)).toContain('授权已取消');
+  });
+
+  test('maps timeouts, rejected exchanges, and unreachable servers to messages', async () => {
+    runtimeMocks.byName.mockReturnValueOnce(settledCall(bridgeFailure('oidc_timeout')));
+    const timeout = await loginWithNativeOidc(new AbortController().signal).catch(
+      (rejection: unknown) => rejection,
+    );
+    expect(getNativeOidcErrorMessage(timeout)).toContain('5 分钟');
+
+    runtimeMocks.byName.mockReturnValueOnce(
+      settledCall({
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: base64Text('{"detail":"invalid_grant"}'),
+      }),
+    );
+    const rejected = await loginWithNativeOidc(new AbortController().signal).catch(
+      (rejection: unknown) => rejection,
+    );
+    expect(rejected).toBeInstanceOf(ApiError);
+    expect(getNativeOidcErrorMessage(rejected)).toContain('请求已失效或校验失败');
+
+    runtimeMocks.byName.mockReturnValueOnce(
+      settledCall({ status: 404, headers: null, body: base64Text('{"detail":"Not Found"}') }),
+    );
+    const disabled = await loginWithNativeOidc(new AbortController().signal).catch(
+      (rejection: unknown) => rejection,
+    );
+    expect(getNativeOidcErrorMessage(disabled)).toContain('单点登录暂不可用');
+
+    runtimeMocks.byName.mockReturnValueOnce(settledCall(bridgeFailure('server_unreachable')));
+    const unreachable = await loginWithNativeOidc(new AbortController().signal).catch(
+      (rejection: unknown) => rejection,
+    );
+    expect(unreachable).toBeInstanceOf(TypeError);
+  });
+
+  test('cancels the browser wait in the host', async () => {
+    const call = pendingCall();
+    runtimeMocks.byName.mockReturnValueOnce(call);
+    const controller = new AbortController();
+    const reason = new DOMException('stop', 'AbortError');
+
+    const signingIn = loginWithNativeOidc(controller.signal);
+    controller.abort(reason);
+
+    await expect(signingIn).rejects.toBe(reason);
+    expect(call.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  test('asks the host whether a previous sign-in was interrupted', async () => {
+    runtimeMocks.byName.mockReturnValueOnce(settledCall(true));
+
+    await expect(NATIVE_PLATFORM.nativeSession?.consumeOidcInterruption()).resolves.toBe(true);
+    expect(runtimeMocks.byName).toHaveBeenLastCalledWith(
+      `${BRIDGE_SERVICE}.ConsumeOidcInterruption`,
+    );
   });
 });
 

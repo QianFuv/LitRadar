@@ -89,6 +89,11 @@ type Options struct {
 	SaveFile func(ctx context.Context, filename string, data []byte) (bool, error)
 	// OpenURL opens an external URL in the system browser.
 	OpenURL func(rawURL string) error
+	// OidcCallbacks receives single sign-on callbacks; nil disables native single sign-on.
+	OidcCallbacks OidcCallbackSource
+	// FocusApp brings the app back to the foreground after the browser step of
+	// single sign-on; nil when the platform returns to the app by itself.
+	FocusApp func()
 }
 
 // Bridge is the Wails service that owns server traffic for the native hosts.
@@ -237,6 +242,12 @@ func (bridge *Bridge) Login(ctx context.Context, username, password string) (Res
 	if err != nil || !isSuccess(response.Status) {
 		return response, err
 	}
+	return bridge.adoptLoginResponse(origin, response)
+}
+
+// adoptLoginResponse stores the token of a successful native login response
+// for origin and returns the response with the token removed from its body.
+func (bridge *Bridge) adoptLoginResponse(origin string, response Response) (Response, error) {
 	var login struct {
 		Token     string          `json:"token"`
 		ExpiresAt json.RawMessage `json:"expires_at"`

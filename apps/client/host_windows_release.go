@@ -6,3 +6,8 @@ package main
 func smokeBrowserArguments() []string {
 	return nil
 }
+
+// smokeOpenURL leaves every URL to the system browser in release builds.
+func smokeOpenURL(string) (bool, error) {
+	return false, nil
+}
