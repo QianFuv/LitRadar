@@ -314,19 +314,19 @@ function renderHome(searchParams = ''): void {
 }
 
 /**
- * Verify legal workspace views dispatch to their reusable root content.
+ * Verify legal workspace views dispatch to their reusable root content after their code loads.
  */
-function dispatchesLegalWorkspaceViews(): void {
+async function dispatchesLegalWorkspaceViews(): Promise<void> {
   const { unmount } = render(
     <NuqsTestingAdapter searchParams="?view=favorites">
       <Home />
     </NuqsTestingAdapter>,
   );
-  expect(screen.getByText('收藏工作区用户 21')).toBeInTheDocument();
+  expect(await screen.findByText('收藏工作区用户 21')).toBeInTheDocument();
 
   unmount();
   renderHome('?view=weekly-updates');
-  expect(screen.getByText('每周更新工作区')).toBeInTheDocument();
+  expect(await screen.findByText('每周更新工作区')).toBeInTheDocument();
 }
 
 /**
@@ -356,9 +356,9 @@ describe('WorkspaceShell', () => {
   test('opens explicit reader content as a sheet and restores focus', opensExplicitReaderSheet);
   test('renders the application frame landmarks and navigation', rendersApplicationFrame);
   test('dispatches legal root workspace views', dispatchesLegalWorkspaceViews);
-  test('dispatches the CFP workspace from its canonical URL', () => {
+  test('dispatches the CFP workspace from its canonical URL', async () => {
     renderHome('?view=cfp-tracking');
-    expect(screen.getByText('征稿追踪工作区')).toBeInTheDocument();
+    expect(await screen.findByText('征稿追踪工作区')).toBeInTheDocument();
   });
   test('falls back to search for absent or unknown views', fallsBackToSearchWorkspace);
 });

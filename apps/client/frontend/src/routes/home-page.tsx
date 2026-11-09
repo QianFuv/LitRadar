@@ -3,14 +3,17 @@
  */
 
 import { useQueryState } from 'nuqs';
-import type { ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 
 import { SearchWorkspaceView } from '@/components/feature/search-workspace-view';
-import { CfpTrackingView } from '@/components/cfp/cfp-tracking-view';
-import { FavoritesWorkspace } from '@/components/favorites/favorites-workspace';
-import { RelationsWorkspaceView } from '@/components/relations/relations-workspace-view';
+import {
+  CFP_TRACKING_VIEW,
+  FAVORITES_WORKSPACE,
+  RELATIONS_WORKSPACE_VIEW,
+  WEEKLY_UPDATES_VIEW,
+  WorkspaceViewFallback,
+} from '@/components/shell/lazy-workspaces';
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
-import { WeeklyUpdatesView } from '@/components/weekly/weekly-updates-view';
 import { useAuth } from '@/lib/auth-context';
 import { WORKSPACE_VIEW_PARSER } from '@/lib/workspace-view';
 
@@ -25,13 +28,13 @@ export default function Home() {
   let workspaceContent: ReactNode;
 
   if (view === 'favorites') {
-    workspaceContent = user ? <FavoritesWorkspace userId={user.id} /> : null;
+    workspaceContent = user ? <FAVORITES_WORKSPACE.Component userId={user.id} /> : null;
   } else if (view === 'weekly-updates') {
-    workspaceContent = <WeeklyUpdatesView />;
+    workspaceContent = <WEEKLY_UPDATES_VIEW.Component />;
   } else if (view === 'cfp-tracking') {
-    workspaceContent = <CfpTrackingView />;
+    workspaceContent = <CFP_TRACKING_VIEW.Component />;
   } else if (view === 'relations') {
-    workspaceContent = <RelationsWorkspaceView />;
+    workspaceContent = <RELATIONS_WORKSPACE_VIEW.Component />;
   } else {
     workspaceContent = <SearchWorkspaceView />;
   }
@@ -47,7 +50,7 @@ export default function Home() {
         animate="visible"
         exit="exit"
       >
-        {workspaceContent}
+        <Suspense fallback={<WorkspaceViewFallback />}>{workspaceContent}</Suspense>
       </MotionDiv>
     </MotionPresence>
   );

@@ -46,6 +46,9 @@ import LoginPage from '@/src/routes/login-page';
 import NotFound from '@/src/routes/not-found-page';
 import RequireAuth from '@/src/routes/require-auth';
 
+/** Allow code-split route modules to transform and load on a busy test machine. */
+const LAZY_ROUTE_WAIT = { timeout: 30_000 };
+
 /**
  * Render the current router location so redirects can be asserted.
  *
@@ -156,7 +159,8 @@ function rendersCustomNotFoundPage(): void {
 }
 
 /**
- * Verify protected routes wait for restoration, preserve deep links, and reveal authenticated UI.
+ * Verify protected routes wait for restoration, preserve deep links, reveal authenticated UI,
+ * and load each query-driven center only when the URL requests it.
  */
 async function protectsRenderedRouteContent(): Promise<void> {
   routeBoundaryMocks.auth.loading = true;
@@ -178,10 +182,24 @@ async function protectsRenderedRouteContent(): Promise<void> {
 
   routeBoundaryMocks.auth.user = { id: 7, username: 'reader', is_admin: false };
   renderProtectedRoute('/?view=favorites&folder=4');
-  expect(screen.getByText('protected route content')).toBeInTheDocument();
-  expect(screen.getByText('settings center marker')).toBeInTheDocument();
-  expect(screen.getByText('admin center marker')).toBeInTheDocument();
+  expect(
+    await screen.findByText('protected route content', {}, LAZY_ROUTE_WAIT),
+  ).toBeInTheDocument();
   expect(screen.getAllByText('user menu marker')).toHaveLength(2);
+  expect(screen.queryByText('settings center marker')).not.toBeInTheDocument();
+  expect(screen.queryByText('admin center marker')).not.toBeInTheDocument();
+  cleanup();
+
+  renderProtectedRoute('/?settings=general');
+  expect(
+    await screen.findByText('settings center marker', {}, LAZY_ROUTE_WAIT),
+  ).toBeInTheDocument();
+  expect(screen.queryByText('admin center marker')).not.toBeInTheDocument();
+  cleanup();
+
+  renderProtectedRoute('/?admin=overview');
+  expect(await screen.findByText('admin center marker', {}, LAZY_ROUTE_WAIT)).toBeInTheDocument();
+  expect(screen.queryByText('settings center marker')).not.toBeInTheDocument();
 }
 
 /**

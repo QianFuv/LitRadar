@@ -3,15 +3,15 @@
  */
 
 import { BrowserRouter, Route, Routes, useLocation } from 'react-router';
-import type { ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 
 import { ErrorBoundary } from '@/src/error-boundary';
 import GlobalError from '@/src/global-error';
 import Providers from '@/src/providers';
 import RouteError from '@/src/route-error';
 import { ServerSetupGate } from '@/src/server-setup-gate';
-import Home from '@/src/routes/home-page';
-import LoginPage from '@/src/routes/login-page';
+import { HOME_PAGE, LOGIN_PAGE } from '@/src/routes/lazy-routes';
+import { RouteLoadingFallback } from '@/src/routes/route-loading-fallback';
 import NotFound from '@/src/routes/not-found-page';
 import RequireAuth from '@/src/routes/require-auth';
 
@@ -23,9 +23,16 @@ import RequireAuth from '@/src/routes/require-auth';
 export function AppRoutes() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/login"
+        element={
+          <Suspense fallback={<RouteLoadingFallback />}>
+            <LOGIN_PAGE.Component />
+          </Suspense>
+        }
+      />
       <Route element={<RequireAuth />}>
-        <Route index element={<Home />} />
+        <Route index element={<HOME_PAGE.Component />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

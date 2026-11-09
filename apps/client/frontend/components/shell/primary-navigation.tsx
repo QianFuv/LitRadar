@@ -16,6 +16,7 @@ import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/h
 import { Link, useSearchParams } from 'react-router';
 import type { ComponentProps } from 'react';
 
+import { preloadWorkspaceView } from '@/components/shell/lazy-workspaces';
 import { cn } from '@/lib/utils';
 import {
   getWorkspaceViewHref,
@@ -50,19 +51,45 @@ function useCurrentWorkspaceView(): WorkspaceView {
 }
 
 /**
- * Render one workspace link whose icon plays on hover, on touch, and when it becomes current.
+ * Render one workspace link whose icon plays on hover, on touch, and when it becomes current,
+ * and that reports navigation intent so the destination's code can be fetched early.
  *
- * @param props - Link properties and whether the link is the current workspace.
+ * @param props - Link properties, whether the link is current, and the intent callback.
  * @returns Navigation link that drives its animated icon.
  */
 function NavigationItemLink({
   isCurrent,
+  onIntent,
+  onFocus,
+  onPointerDown,
+  onPointerEnter,
   ...props
-}: ComponentProps<typeof Link> & { isCurrent: boolean }) {
-  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>(props, isCurrent);
+}: ComponentProps<typeof Link> & { isCurrent: boolean; onIntent: () => void }) {
+  const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>(
+    {
+      ...props,
+      onPointerDown: (event) => {
+        onIntent();
+        onPointerDown?.(event);
+      },
+      onPointerEnter: (event) => {
+        onIntent();
+        onPointerEnter?.(event);
+      },
+    },
+    isCurrent,
+  );
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <Link {...props} {...triggerHandlers} aria-current={isCurrent ? 'page' : undefined} />
+      <Link
+        {...props}
+        {...triggerHandlers}
+        onFocus={(event) => {
+          onIntent();
+          onFocus?.(event);
+        }}
+        aria-current={isCurrent ? 'page' : undefined}
+      />
     </IconTriggerProvider>
   );
 }
@@ -89,6 +116,7 @@ export function RailNavigation() {
                 to={getWorkspaceViewHref(item.view)}
                 aria-label={item.label}
                 isCurrent={isCurrent}
+                onIntent={() => preloadWorkspaceView(item.view)}
                 title={item.label}
                 className={cn(
                   'motion-control relative flex w-12 flex-col items-center gap-1 rounded-xl py-2 text-rail-foreground outline-none transition-[background-color,color] hover:bg-rail-hover hover:text-rail-active focus-visible:ring-2 focus-visible:ring-ring',
@@ -139,6 +167,7 @@ export function TabNavigation() {
                 to={getWorkspaceViewHref(item.view)}
                 aria-label={item.label}
                 isCurrent={isCurrent}
+                onIntent={() => preloadWorkspaceView(item.view)}
                 className={cn(
                   'motion-control flex h-14 flex-col items-center justify-center gap-1 text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                   isCurrent && 'text-primary-text',

@@ -28,6 +28,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
+import { preloadAdminCenter, preloadSettingsCenter } from '@/components/shell/lazy-workspaces';
 import { UserAvatar } from '@/components/shell/user-avatar';
 import { keepRadixCloseFocus } from '@/components/ui/dropdown-menu';
 import { buildAdminCenterHref, parseAdminSection } from '@/lib/admin-center';
@@ -311,6 +312,8 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
                 to={settingsHref}
                 className={MENU_ITEM_CLASS}
                 onClick={handleSectionedDialogOpen}
+                onFocus={preloadSettingsCenter}
+                onPointerEnter={preloadSettingsCenter}
               >
                 <Settings />
                 <span>打开设置中心</span>
@@ -326,6 +329,8 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
                   aria-current={isAdminOpen ? 'page' : undefined}
                   className={cn(MENU_ITEM_CLASS, isAdminOpen && 'bg-accent')}
                   onClick={handleSectionedDialogOpen}
+                  onFocus={preloadAdminCenter}
+                  onPointerEnter={preloadAdminCenter}
                 >
                   <ShieldCheck />
                   <span>管理面板</span>

@@ -14,6 +14,7 @@ import type { MouseEvent, ReactNode } from 'react';
 
 import { UserMenu } from '@/components/feature/user-menu';
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
+import { preloadAdminCenter, preloadSettingsCenter } from '@/components/shell/lazy-workspaces';
 import { RailNavigation, TabNavigation } from '@/components/shell/primary-navigation';
 import { buildAdminCenterHref, parseAdminSection } from '@/lib/admin-center';
 import { useAuth } from '@/lib/auth-context';
@@ -35,7 +36,7 @@ function markReturnFocus(event: MouseEvent<HTMLAnchorElement>): void {
 /**
  * Render one icon shortcut in the lower rail group.
  *
- * @param props - Destination, icon, accessible label, and current state.
+ * @param props - Destination, icon, accessible label, current state, and intent callback.
  * @returns Rail shortcut link.
  */
 function RailShortcut({
@@ -43,11 +44,13 @@ function RailShortcut({
   icon: Icon,
   isCurrent,
   label,
+  onIntent,
 }: {
   href: string;
   icon: AppIcon;
   isCurrent: boolean;
   label: string;
+  onIntent: () => void;
 }) {
   const { isTriggered, triggerHandlers } = useIconTrigger<HTMLAnchorElement>({}, isCurrent);
   return (
@@ -59,6 +62,15 @@ function RailShortcut({
         aria-current={isCurrent ? 'page' : undefined}
         title={label}
         onClick={markReturnFocus}
+        onFocus={onIntent}
+        onPointerEnter={(event) => {
+          onIntent();
+          triggerHandlers.onPointerEnter(event);
+        }}
+        onPointerDown={(event) => {
+          onIntent();
+          triggerHandlers.onPointerDown(event);
+        }}
         className={cn(
           'motion-control flex size-10 items-center justify-center rounded-xl text-rail-foreground outline-none transition-[background-color,color] hover:bg-rail-hover hover:text-rail-active focus-visible:ring-2 focus-visible:ring-ring',
           isCurrent && 'bg-rail-hover text-rail-active',
@@ -112,6 +124,7 @@ function AppRail() {
           icon={Settings}
           isCurrent={isSettingsOpen}
           label="设置中心"
+          onIntent={preloadSettingsCenter}
         />
         {user?.is_admin && (
           <RailShortcut
@@ -119,6 +132,7 @@ function AppRail() {
             icon={ShieldCheck}
             isCurrent={isAdminOpen}
             label="管理面板"
+            onIntent={preloadAdminCenter}
           />
         )}
         <div className="mt-2 border-t border-rail-border pt-3">
