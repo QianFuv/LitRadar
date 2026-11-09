@@ -175,7 +175,7 @@ export async function buildSimple(root = ROOT, hasCompatibilityOracle = false) {
     await mkdir(oracleRoot, { recursive: true });
     const filename = target.GOOS === "windows" ? "simple.dll" : "libsimple.so";
     if (target.GOOS === "windows") {
-      const previous = path.join(root, "libs/simple/windows/simple.dll");
+      const previous = path.join(root, "third_party/simple-prebuilt/windows/simple.dll");
       assert.equal(
         digest(await readFile(previous)),
         "27c700ca34cd5935ff934459f1f9c107cdefef7e54250de5a1c6646e05f21a4f",
