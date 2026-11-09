@@ -11,6 +11,11 @@ import {
   verifyClientImage,
 } from "../scripts/release-client-evidence.mjs";
 import { assertAndroidSigner } from "../scripts/verify-android-signing.mjs";
+import {
+  clientVersions,
+  MANIFEST_VERSION_PLACEHOLDER,
+  windowsResources,
+} from "../scripts/client-version.mjs";
 import { writeCiReport } from "../../../scripts/ci-report.mjs";
 import {
   releaseAssetNames,
@@ -233,4 +238,102 @@ test("workflows preserve isolated client quality and the release signing omissio
     assert(!release.includes(obsolete));
   assert(release.includes("needs: [context, windows, linux, client]"));
   assert(release.includes("node tests/compose-smoke.mjs"));
+});
+
+test("client build metadata derives its version only from VERSION", () => {
+  const readClientFile = (relativePath) =>
+    fs.readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8");
+  const semanticVersions = (text) =>
+    text.match(/\b\d+\.\d+\.\d+(?:\.\d+)?\b/g) ?? [];
+  for (const relativePath of [
+    "build/config.yml",
+    "build/windows/info.json",
+    "build/windows/nsis/project.nsi",
+    "build/windows/nsis/wails_tools.nsh",
+  ])
+    assert.deepEqual(
+      semanticVersions(readClientFile(relativePath)),
+      [],
+      relativePath,
+    );
+  const manifest = readClientFile("build/windows/wails.exe.manifest");
+  assert.deepEqual(semanticVersions(manifest), ["6.0.0.0"]);
+  assert(
+    manifest.includes(
+      `name="com.qianfuv.litradar" version="${MANIFEST_VERSION_PLACEHOLDER}"`,
+    ),
+  );
+  const gradle = readClientFile("build/android/app/build.gradle");
+  assert.match(gradle, /versionCode = releaseVersion\.code\b/);
+  assert.match(gradle, /versionName = releaseVersion\.name\b/);
+  assert.match(
+    gradle,
+    /rootProject\.file\('\.\.\/\.\.\/\.\.\/\.\.\/VERSION'\)/,
+  );
+  const taskfile = readClientFile("Taskfile.yml");
+  assert(
+    taskfile.includes("node scripts/client-version.mjs windows-resources"),
+  );
+  assert(taskfile.includes('-DINFO_PRODUCTVERSION="{{.VERSION_NAME}}"'));
+  assert(!taskfile.includes("-manifest build/windows/"));
+  assert(!taskfile.includes("-info build/windows/"));
+});
+
+test("client version identifiers are derived from VERSION", () => {
+  assert.deepEqual(clientVersions("9.8.7\n"), {
+    versionName: "9.8.7",
+    versionCode: 90807,
+    fileVersion: "9.8.7.0",
+  });
+  assert.deepEqual(clientVersions("0.1.0"), {
+    versionName: "0.1.0",
+    versionCode: 100,
+    fileVersion: "0.1.0.0",
+  });
+  assert.equal(clientVersions("65535.99.99").versionCode, 655359999);
+  for (const malformed of [
+    "1.2",
+    "v1.2.3",
+    "1.2.3-rc.1",
+    "01.2.3",
+    "1.100.0",
+    "1.2.100",
+    "65536.0.0",
+  ])
+    assert.throws(() => clientVersions(malformed), /VERSION/, malformed);
+  const versions = clientVersions(
+    fs.readFileSync(new URL("../../../VERSION", import.meta.url), "utf8"),
+  );
+  const resources = windowsResources(
+    fs.readFileSync(
+      new URL("../build/windows/info.json", import.meta.url),
+      "utf8",
+    ),
+    fs.readFileSync(
+      new URL("../build/windows/wails.exe.manifest", import.meta.url),
+      "utf8",
+    ),
+    clientVersions("9.8.7"),
+  );
+  const info = JSON.parse(resources.info);
+  assert.deepEqual(info.fixed, {
+    file_version: "9.8.7.0",
+    product_version: "9.8.7.0",
+  });
+  for (const strings of Object.values(info.info)) {
+    assert.equal(strings.FileVersion, "9.8.7");
+    assert.equal(strings.ProductVersion, "9.8.7");
+    assert.equal(strings.ProductName, "LitRadar");
+  }
+  assert(
+    resources.manifest.includes(
+      'name="com.qianfuv.litradar" version="9.8.7.0"',
+    ),
+  );
+  assert(!resources.manifest.includes(MANIFEST_VERSION_PLACEHOLDER));
+  assert.match(versions.fileVersion, /^\d+\.\d+\.\d+\.0$/);
+  assert.throws(
+    () => windowsResources('{"info": {}}', "<assembly/>", versions),
+    /FILE_VERSION/,
+  );
 });

@@ -22,7 +22,7 @@ Unicode true
 ## !define INFO_PROJECTNAME    "my-project" # Default "litradar-client"
 ## !define INFO_COMPANYNAME    "My Company" # Default "QianFuv"
 ## !define INFO_PRODUCTNAME    "My Product Name" # Default "LitRadar"
-## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.4.2"
+## !define INFO_PRODUCTVERSION "MAJOR.MINOR.PATCH" # Required; package:windows passes the repository VERSION
 ## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "(c) 2026, QianFuv"
 ###
 ## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"

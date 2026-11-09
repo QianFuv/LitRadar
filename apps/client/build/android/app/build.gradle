@@ -2,6 +2,29 @@ plugins {
     id 'com.android.application'
 }
 
+/**
+ * Derives the Android version from the repository VERSION file, the only place a release
+ * version is written: versionName is MAJOR.MINOR.PATCH and versionCode is
+ * major * 10000 + minor * 100 + patch. Fails the build when VERSION is missing or malformed.
+ */
+def repositoryReleaseVersion() {
+    def versionFile = rootProject.file('../../../../VERSION')
+    if (!versionFile.isFile()) {
+        throw new GradleException("Release VERSION file not found at ${versionFile.canonicalPath}")
+    }
+    def versionName = versionFile.getText('UTF-8').trim()
+    def versionMatcher = versionName =~ /^(0|[1-9]\d{0,4})\.(0|[1-9]\d?)\.(0|[1-9]\d?)$/
+    if (!versionMatcher.matches() || (versionMatcher.group(1) as int) > 65535) {
+        throw new GradleException("VERSION must be MAJOR.MINOR.PATCH with major up to 65535 and minor and patch below 100, got '${versionName}'")
+    }
+    return [
+        name: versionName,
+        code: (versionMatcher.group(1) as int) * 10000 + (versionMatcher.group(2) as int) * 100 + (versionMatcher.group(3) as int),
+    ]
+}
+
+def releaseVersion = repositoryReleaseVersion()
+
 android {
     namespace = 'com.wails.app'
     compileSdk = 36
@@ -14,8 +37,8 @@ android {
         applicationId = "com.qianfuv.litradar"
         minSdk = 29
         targetSdk = 36
-        versionCode = 402
-        versionName = "0.4.2"
+        versionCode = releaseVersion.code
+        versionName = releaseVersion.name
 
         ndk {
             abiFilters 'arm64-v8a'

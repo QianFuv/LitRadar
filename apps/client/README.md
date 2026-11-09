@@ -31,6 +31,18 @@ the frontend from the repository root workspace in the right Vite mode: `web` fo
 `WAILS3` overrides the Wails CLI used for `generate syso` and the WebView2 bootstrapper; it
 defaults to `go run github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0`.
 
+The repository `VERSION` file is the only place the client version is written; a release bump
+edits nothing else. The builds derive it as follows:
+
+- Android: `build/android/app/build.gradle` reads `VERSION` into `versionName` and sets
+  `versionCode` to `major * 10000 + minor * 100 + patch`, failing on a malformed `VERSION`.
+- Windows executable: `scripts/client-version.mjs windows-resources` renders
+  `build/windows/info.json` (kept without version fields) and `build/windows/wails.exe.manifest`
+  (whose `{{FILE_VERSION}}` placeholder becomes `MAJOR.MINOR.PATCH.0`) into
+  `bin/windows-resources` for `generate syso`.
+- Windows installer: `package:windows` passes `-DINFO_PRODUCTVERSION` to `makensis`;
+  `wails_tools.nsh` stops with an error when it is missing.
+
 ## Requirements
 
 - Go 1.26+, Node 24, pnpm 12 (the workspace root `pnpm-lock.yaml` pins `@wailsio/runtime` 3.1.0).

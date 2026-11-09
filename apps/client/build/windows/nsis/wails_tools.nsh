@@ -14,7 +14,7 @@
     !define INFO_PRODUCTNAME "LitRadar"
 !endif
 !ifndef INFO_PRODUCTVERSION
-    !define INFO_PRODUCTVERSION "0.4.2"
+    !error "INFO_PRODUCTVERSION is required; build the installer with wails3 task package:windows, which passes the repository VERSION"
 !endif
 !ifndef INFO_COPYRIGHT
     !define INFO_COPYRIGHT "(c) 2026, QianFuv"

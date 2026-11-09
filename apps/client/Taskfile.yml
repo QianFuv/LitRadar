@@ -8,6 +8,7 @@ vars:
   APP_NAME: litradar-client-web
   NATIVE_NAME: litradar-client
   BIN_DIR: bin
+  WINDOWS_RESOURCE_DIR: bin/windows-resources
   TAG: '{{.TAG | default "litradar-client-web:latest"}}'
   WAILS3: '{{.WAILS3 | default "go run github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0"}}'
   ANDROID_MIN_SDK: '29'
@@ -82,7 +83,8 @@ tasks:
   windows:compile:
     internal: true
     cmds:
-      - '{{.WAILS3}} generate syso -arch amd64 -icon build/windows/icon.ico -manifest build/windows/wails.exe.manifest -info build/windows/info.json -out wails_windows_amd64.syso'
+      - node scripts/client-version.mjs windows-resources {{.WINDOWS_RESOURCE_DIR}}
+      - '{{.WAILS3}} generate syso -arch amd64 -icon build/windows/icon.ico -manifest {{.WINDOWS_RESOURCE_DIR}}/wails.exe.manifest -info {{.WINDOWS_RESOURCE_DIR}}/info.json -out wails_windows_amd64.syso'
       - defer: rm -f wails_windows_amd64.syso
       - go build -mod=readonly -tags {{.TAGS}} -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o {{.OUTPUT}} .
     env:
@@ -96,9 +98,11 @@ tasks:
       - build:windows
     cmds:
       - '{{.WAILS3}} generate webview2bootstrapper -dir build/windows/nsis'
-      - cmd: makensis -DARG_WAILS_AMD64_BINARY="{{.ROOT_DIR}}{{.SEPARATOR}}{{.BIN_DIR}}{{.SEPARATOR}}{{.NATIVE_NAME}}.exe" build/windows/nsis/project.nsi
+      - cmd: makensis -DINFO_PRODUCTVERSION="{{.VERSION_NAME}}" -DARG_WAILS_AMD64_BINARY="{{.ROOT_DIR}}{{.SEPARATOR}}{{.BIN_DIR}}{{.SEPARATOR}}{{.NATIVE_NAME}}.exe" build/windows/nsis/project.nsi
     vars:
       SEPARATOR: '{{if eq OS "windows"}}\{{else}}/{{end}}'
+      VERSION_NAME:
+        sh: node scripts/client-version.mjs name
 
   build:android:lib:
     desc: Compiles the Go host into the arm64-v8a libwails.so with the Android NDK
