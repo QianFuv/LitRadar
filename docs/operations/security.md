@@ -214,7 +214,7 @@ Go 服务端只提供 API、MCP、Swagger/OpenAPI 和健康检查，页面返回
 
 根 `Caddyfile` 拒绝 `/wails` 和 `/wails/*`：Wails v3 Server Build 的 runtime 端点未经认证，Web host 不注册服务，不能把 runtime 调用暴露给匿名网络请求。网关保留 Authorization、Cookie、Origin 和 Host，覆盖 `X-Forwarded-For` 为直连地址并移除 `Forwarded`，避免客户端伪造限流来源；MCP 关闭代理缓冲。准确设置 `trusted_proxy_cidrs` 为 backend 网络，`mcp_allowed_hosts` 为公开域名。Caddy 前若再加代理，必须明确设计可信链；默认配置只信任直连客户端。
 
-原生登录使用 `/api/auth/native/login` 签发独立 `device:` 个人令牌，有效期 90 天，不覆盖浏览器会话；令牌列表可撤销设备，原生退出撤销当前令牌。OIDC-only 用户粘贴浏览器创建的访问令牌，原生 OIDC deep link 尚不支持。见[客户端指南](../guides/clients.md)。
+原生客户端只支持账号密码和 OIDC 登录：`/api/auth/native/login` 与[原生客户端 OIDC](#原生客户端-oidc) 都签发独立 `device:` 个人令牌，有效期 90 天，不覆盖浏览器会话；令牌列表可撤销设备，原生退出撤销当前令牌。见[客户端指南](../guides/clients.md)。
 
 ## 服务器出站请求
 

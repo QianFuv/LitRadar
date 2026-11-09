@@ -351,4 +351,4 @@ Web host 对 `/assets/*` 哈希资源使用长期 immutable 缓存，SPA HTML �
 
 ## 原生客户端登录
 
-`POST /api/auth/native/login` 接受 username、password、device_name，返回 token、expires_at 与 user，不写浏览器 Cookie。服务端签发名称以 `device:` 开头、90 天有效的独立个人令牌；使用 Authorization Bearer 认证。访问令牌列表可撤销，原生 logout 撤销当前令牌。OIDC-only 用户粘贴浏览器创建的访问令牌，暂不支持原生 OIDC deep link。见[客户端指南](../guides/clients.md)。
+`POST /api/auth/native/login` 接受 username、password、device_name，返回 token、expires_at 与 user，不写浏览器 Cookie。服务端签发名称以 `device:` 开头、90 天有效的独立个人令牌；使用 Authorization Bearer 认证。访问令牌列表可撤销，原生 logout 撤销当前令牌。原生客户端只支持账号密码和 OIDC 登录；原生 OIDC 使用 `/api/auth/oidc/native/login` 与 `/api/auth/oidc/native/exchange`，见[安全说明](../operations/security.md#原生客户端-oidc)。见[客户端指南](../guides/clients.md)。

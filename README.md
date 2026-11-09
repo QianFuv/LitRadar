@@ -100,7 +100,7 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 客户端
 
-Web、Windows x64 和 Android arm64-v8a 共用同一 Vite 前端。首次打开原生客户端先填写服务端 HTTPS URL，再用账号密码登录；`/api/auth/native/login` 签发名称为 `device:` 前缀、有效期 90 天的个人令牌。可在访问令牌列表撤销设备，原生退出会撤销当前令牌。仅 OIDC 用户先在浏览器获取访问令牌并粘贴；暂不支持原生 OIDC deep link。见[客户端指南](docs/guides/clients.md)。
+Web、Windows x64 和 Android arm64-v8a 共用同一 Vite 前端。首次打开原生客户端先填写服务端 HTTPS URL，再用账号密码或 OIDC（服务端启用时）登录；两种方式都签发名称为 `device:` 前缀、有效期 90 天的个人令牌。可在访问令牌列表撤销设备，原生退出会撤销当前令牌。见[客户端指南](docs/guides/clients.md)。
 
 发布提供 Web Linux amd64 二进制及 OCI 镜像、未签名的 Windows x64 安装器，以及配置发布签名后提供的 Android arm64 APK。Wails v3 官方将 [Android 支持标为实验性](https://wails.io/blog/wails-v3-released)。不发布 iOS、macOS 或 Linux 桌面客户端。
 
