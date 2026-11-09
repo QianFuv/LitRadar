@@ -204,16 +204,8 @@ export default function LoginClient() {
 function useLoginViewState() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const {
-    loading,
-    login,
-    logoutWarning,
-    recoverLogout,
-    register,
-    signInWithAccessToken,
-    signInWithNativeOidc,
-    user,
-  } = useAuth();
+  const { loading, login, logoutWarning, recoverLogout, register, signInWithNativeOidc, user } =
+    useAuth();
   const serverConnection = useServerConnection();
   const nextParam = searchParams.get('next') || '';
   const nextPath = normalizeLoginReturnPath(nextParam);
@@ -226,7 +218,6 @@ function useLoginViewState() {
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [accessToken, setAccessToken] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [email, setEmail] = useState('');
   const [authProviders, setAuthProviders] = useState<AuthProviders | null>(null);
@@ -347,8 +338,6 @@ function useLoginViewState() {
         setIsRecoveryComplete(true);
       } else if (mode === 'register') {
         await register(username.trim(), password, inviteCode.trim(), email.trim());
-      } else if (mode === 'token') {
-        await signInWithAccessToken(accessToken.trim());
       } else {
         await login(username.trim(), password);
       }
@@ -371,8 +360,6 @@ function useLoginViewState() {
     setUsername,
     password,
     setPassword,
-    accessToken,
-    setAccessToken,
     serverConnection,
     inviteCode,
     setInviteCode,
@@ -691,81 +678,6 @@ function renderLoginNativeOidc(
 }
 
 /**
- * Render the access-token sign-in switch shown by hosts without single sign-on.
- *
- * @param state - Login view state.
- * @returns Mode switch and hint, or null when single sign-on is available.
- */
-function renderLoginAccessTokenOption(
-  state: Pick<
-    LoginViewState,
-    'authProviders' | 'isLogoutRecovery' | 'mode' | 'setMode' | 'setError'
-  >,
-) {
-  const { authProviders, isLogoutRecovery, mode, setMode, setError } = state;
-  if (isLogoutRecovery || CLIENT_PLATFORM.supportsSingleSignOn || mode === 'register') {
-    return null;
-  }
-  const isTokenMode = mode === 'token';
-
-  return (
-    <div data-auth-token-option={isTokenMode ? 'active' : 'available'} className="mt-4 space-y-3">
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span className="h-px flex-1 bg-border" aria-hidden="true" />
-        或
-        <span className="h-px flex-1 bg-border" aria-hidden="true" />
-      </div>
-      <Button
-        type="button"
-        variant="outline"
-        className="w-full"
-        onClick={() => {
-          setMode(isTokenMode ? 'login' : 'token');
-          setError(null);
-        }}
-      >
-        {isTokenMode ? '使用账号密码登录' : '使用访问令牌登录'}
-      </Button>
-      <p className="text-xs leading-5 text-muted-foreground">
-        {authProviders?.oidc_enabled
-          ? '也可以在网页版“访问令牌”设置中创建令牌，再粘贴到此处登录。'
-          : '单点登录账号请在网页版“访问令牌”设置中创建令牌，再粘贴到此处登录。'}
-      </p>
-    </div>
-  );
-}
-
-/**
- * Render the access-token field used by token sign-in.
- *
- * @param state - Login view state.
- * @returns Token input.
- */
-function renderLoginAccessToken(state: LoginViewState) {
-  const { accessToken, setAccessToken, error } = state;
-
-  return (
-    <div className="space-y-2">
-      <Label htmlFor="access-token">访问令牌</Label>
-      <Input
-        id="access-token"
-        name="access_token"
-        type="password"
-        value={accessToken}
-        autoComplete="off"
-        autoFocus
-        spellCheck={false}
-        onChange={(event) => setAccessToken(event.target.value)}
-        placeholder="粘贴个人访问令牌"
-        aria-invalid={Boolean(error)}
-        aria-describedby={error ? 'login-error' : undefined}
-        required
-      />
-    </div>
-  );
-}
-
-/**
  * Render the connected server and the switch action on native hosts.
  *
  * @param state - Login view state.
@@ -946,30 +858,24 @@ function renderLoginForm(state: LoginViewState) {
       animate="visible"
       exit="exit"
     >
-      {!isLogoutRecovery && mode === 'token' ? (
-        renderLoginAccessToken(state)
-      ) : (
-        <>
-          <div className="space-y-2">
-            <Label htmlFor="username">{isRegistering ? '用户名' : '用户名或邮箱'}</Label>
-            <Input
-              id="username"
-              name="username"
-              type="text"
-              value={username}
-              autoComplete="username"
-              autoFocus
-              spellCheck={false}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder={isRegistering ? '3-32位字母数字下划线' : '输入用户名或邮箱'}
-              aria-invalid={Boolean(error)}
-              aria-describedby={error ? 'login-error' : undefined}
-              required
-            />
-          </div>
-          {renderLoginPassword(state)}
-        </>
-      )}
+      <div className="space-y-2">
+        <Label htmlFor="username">{isRegistering ? '用户名' : '用户名或邮箱'}</Label>
+        <Input
+          id="username"
+          name="username"
+          type="text"
+          value={username}
+          autoComplete="username"
+          autoFocus
+          spellCheck={false}
+          onChange={(event) => setUsername(event.target.value)}
+          placeholder={isRegistering ? '3-32位字母数字下划线' : '输入用户名或邮箱'}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? 'login-error' : undefined}
+          required
+        />
+      </div>
+      {renderLoginPassword(state)}
       <MotionPresence>{renderLoginEmail(state)}</MotionPresence>
       <MotionPresence>{renderLoginInvite(state)}</MotionPresence>
       <MotionPresence>{renderLoginBootstrap(state)}</MotionPresence>
@@ -1045,8 +951,7 @@ function renderLoginCardContent(state: LoginViewState) {
       </MotionPresence>
       {!isRecoveryComplete && renderLoginOidc(state)}
       {!isRecoveryComplete && renderLoginNativeOidc(state)}
-      {!isRecoveryComplete && renderLoginAccessTokenOption(state)}
-      {!isLogoutRecovery && !isRecoveryComplete && mode !== 'token' && (
+      {!isLogoutRecovery && !isRecoveryComplete && (
         <div
           className="mt-6 border-t pt-5 text-center text-sm text-muted-foreground"
           data-auth-mode-switch={mode}
@@ -1072,13 +977,11 @@ function renderLoginCardContent(state: LoginViewState) {
 /** Resolve the recovery, login and registration title in its original priority. */
 function getLoginTitle(isRecovery: boolean, mode: AuthFormMode): string {
   if (isRecovery) return '撤销全部会话';
-  if (mode === 'token') return '访问令牌登录';
   return mode === 'login' ? '登录' : '注册';
 }
 /** Retain the authentication mode's original explanatory text. */
 function getLoginDescription(isRecovery: boolean, mode: AuthFormMode): string {
   if (isRecovery) return '重新验证账号后，撤销该账号的所有登录令牌和个人访问令牌';
-  if (mode === 'token') return '粘贴在网页版设置中创建的个人访问令牌';
   return mode === 'login' ? '输入用户名或邮箱和密码登录' : '创建一个新账号';
 }
 /** Resolve pending feedback before recovery and normal authentication labels. */

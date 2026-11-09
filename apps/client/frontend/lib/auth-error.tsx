@@ -5,7 +5,7 @@
 import { ApiError } from '@/lib/api/client';
 import { PlatformBridgeError } from '@/lib/platform/errors';
 
-export type AuthFormMode = 'login' | 'register' | 'token';
+export type AuthFormMode = 'login' | 'register';
 
 const FALLBACK_AUTH_ERROR = '操作失败，请重试';
 const KNOWN_AUTH_ERROR_MESSAGES = new Map<string, string>([
@@ -46,9 +46,7 @@ export function getAuthErrorMessage(error: unknown, mode: AuthFormMode): string 
       return '尝试次数过多，请稍后再试。';
     }
     if (error.status === 401) {
-      return mode === 'token'
-        ? '访问令牌无效、已过期或已被撤销。'
-        : '用户名或密码错误，请检查后重试。';
+      return '用户名或密码错误，请检查后重试。';
     }
     if (
       error.status === 409 &&

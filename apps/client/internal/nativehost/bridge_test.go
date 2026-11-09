@@ -353,41 +353,6 @@ func TestLoginFailureReturnsServerErrorWithoutStoringAToken(t *testing.T) {
 	}
 }
 
-func TestImportTokenStoresOnlyAcceptedTokens(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/auth/me" {
-			t.Errorf("unexpected path %s", request.URL.Path)
-		}
-		if request.Header.Get("Authorization") != "Bearer good-token" {
-			writer.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"id":7,"username":"member"}`))
-	}))
-	defer server.Close()
-	secrets := newMemorySecretStore()
-	bridge, origin := newTestBridge(t, server, secrets)
-
-	response, err := bridge.ImportToken(context.Background(), "bad-token")
-	if err != nil || response.Status != http.StatusUnauthorized {
-		t.Fatalf("ImportToken(bad) = %d, %v", response.Status, err)
-	}
-	if _, hasToken, _ := secrets.Get(tokenKey(origin)); hasToken {
-		t.Fatal("rejected token was stored")
-	}
-	if _, err := bridge.ImportToken(context.Background(), "has space"); errorCode(err) != CodeInvalidToken {
-		t.Fatalf("ImportToken(malformed) error = %v", err)
-	}
-	response, err = bridge.ImportToken(context.Background(), "  good-token\n")
-	if err != nil || response.Status != http.StatusOK {
-		t.Fatalf("ImportToken(good) = %d, %v", response.Status, err)
-	}
-	if token, _, _ := secrets.Get(tokenKey(origin)); token != "good-token" {
-		t.Fatalf("stored token = %q", token)
-	}
-}
-
 func TestLogoutRevokesAndDeletesTheToken(t *testing.T) {
 	var authorization string
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

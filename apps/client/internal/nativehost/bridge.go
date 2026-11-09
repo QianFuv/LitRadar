@@ -19,15 +19,12 @@ import (
 const (
 	nativeLoginPath = "/api/auth/native/login"
 	logoutPath      = "/api/auth/logout"
-	currentUserPath = "/api/auth/me"
 
 	// maxResponseBytes bounds one buffered response body.
 	// ponytail: whole bodies are buffered for the JS bridge; stream if exports outgrow this.
 	maxResponseBytes = 64 << 20
 	// maxDeviceNameRunes matches the server limit for native login device names.
 	maxDeviceNameRunes = 93
-	// maxTokenLength bounds a pasted personal access token.
-	maxTokenLength = 512
 	// revokeOnForgetTimeout bounds the best-effort token revocation when the
 	// server is switched.
 	revokeOnForgetTimeout = 5 * time.Second
@@ -267,28 +264,6 @@ func (bridge *Bridge) adoptLoginResponse(origin string, response Response) (Resp
 	return response, nil
 }
 
-// ImportToken validates a pasted personal access token against the current user
-// endpoint and stores it when the server accepts it. The response is the
-// current user payload, or the server error when the token is rejected.
-func (bridge *Bridge) ImportToken(ctx context.Context, token string) (Response, error) {
-	origin, err := bridge.requireOrigin()
-	if err != nil {
-		return Response{}, err
-	}
-	token = strings.TrimSpace(token)
-	if !isWellFormedToken(token) {
-		return Response{}, newBridgeError(CodeInvalidToken, "access token is empty or malformed")
-	}
-	response, err := bridge.do(ctx, http.MethodGet, origin+currentUserPath, nil, "", token)
-	if err != nil || !isSuccess(response.Status) {
-		return response, err
-	}
-	if err := bridge.options.Secrets.Set(tokenKey(origin), token); err != nil {
-		return Response{}, newBridgeError(CodeStorageFailure, "store token: "+err.Error())
-	}
-	return response, nil
-}
-
 // Logout revokes the stored token on the server and deletes it locally even
 // when the server cannot be reached. The response reports whether revocation
 // was confirmed.
@@ -498,20 +473,6 @@ func (bridge *Bridge) configStoreLocked() (*ConfigStore, error) {
 // isSuccess reports whether status is a 2xx status.
 func isSuccess(status int) bool {
 	return status >= 200 && status < 300
-}
-
-// isWellFormedToken reports whether token is non-empty printable ASCII without
-// spaces and within the length limit.
-func isWellFormedToken(token string) bool {
-	if token == "" || len(token) > maxTokenLength {
-		return false
-	}
-	for index := 0; index < len(token); index++ {
-		if token[index] <= ' ' || token[index] >= 0x7f {
-			return false
-		}
-	}
-	return true
 }
 
 // sanitizeDeviceName removes control characters and bounds the device label to

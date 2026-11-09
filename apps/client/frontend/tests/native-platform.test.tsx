@@ -6,8 +6,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api/client';
-import { importAccessToken, loginUser, loginWithNativeOidc, logoutUser } from '@/lib/api/auth';
-import { getAuthErrorMessage, getNativeOidcErrorMessage } from '@/lib/auth-error';
+import { loginUser, loginWithNativeOidc, logoutUser } from '@/lib/api/auth';
+import { getNativeOidcErrorMessage } from '@/lib/auth-error';
 import { CLIENT_PLATFORM } from '@/lib/platform';
 import { PlatformBridgeError } from '@/lib/platform/errors';
 import {
@@ -217,26 +217,6 @@ describe('native credential flows', () => {
     );
     expect(response.user.username).toBe('member');
     expect(JSON.stringify(response)).not.toContain('token');
-  });
-
-  test('maps a rejected access token to a token-specific message', async () => {
-    runtimeMocks.byName.mockReturnValueOnce(
-      settledCall({
-        status: 401,
-        headers: { 'Content-Type': 'application/json' },
-        body: base64Text('{"detail":"Not authenticated"}'),
-      }),
-    );
-
-    const importing = importAccessToken('revoked-token');
-
-    await expect(importing).rejects.toBeInstanceOf(ApiError);
-    const error = await importing.catch((rejection: unknown) => rejection);
-    expect(runtimeMocks.byName).toHaveBeenLastCalledWith(
-      `${BRIDGE_SERVICE}.ImportToken`,
-      'revoked-token',
-    );
-    expect(getAuthErrorMessage(error, 'token')).toBe('访问令牌无效、已过期或已被撤销。');
   });
 
   test('logs out through the host and treats an already rejected token as signed out', async () => {

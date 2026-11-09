@@ -69,9 +69,8 @@ keystore when `ANDROID_SIGNING_KEYSTORE` is unset (testing only):
   Manager on desktop, Wails `SecureSet` (EncryptedSharedPreferences) on Android. The selected
   origin is not secret and lives in `client.json` in the user config directory
   (`%AppData%\LitRadar` on Windows, the app files directory on Android).
-- Password sign-in uses `POST /api/auth/native/login`, which issues a `device:<name>` personal
-  access token. A pasted personal access token created in the web settings also works; the
-  bridge validates it with `GET /api/auth/me` before storing it.
+- Native clients sign in only with a password or single sign-on. Password sign-in uses
+  `POST /api/auth/native/login`, which issues a `device:<name>` personal access token.
 - Single sign-on (`Bridge.LoginWithOidc`) runs in the system browser. The bridge generates the
   PKCE verifier, S256 challenge, and state, opens
   `/api/auth/oidc/native/login?redirect_uri=…&code_challenge=…&state=…`, waits up to five

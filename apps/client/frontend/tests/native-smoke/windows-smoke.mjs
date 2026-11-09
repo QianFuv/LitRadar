@@ -190,6 +190,7 @@ async function main() {
     await page.getByLabel('服务器地址').fill(origin);
     await page.getByRole('button', { name: '连接', exact: true }).click();
     await expect(page.getByLabel('用户名或邮箱')).toBeVisible();
+    await expect(page.getByRole('button', { name: /访问令牌/ })).toHaveCount(0);
     await page.screenshot({ path: path.join(RESULTS_DIR, '01-login.png') });
     report.steps.push('server setup');
 

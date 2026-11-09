@@ -91,15 +91,6 @@ export interface NativeSession {
   consumeOidcInterruption(): Promise<boolean>;
 
   /**
-   * Validate a pasted personal access token and let the host store it when accepted.
-   *
-   * @param token - Personal access token.
-   * @param signal - Cancellation signal.
-   * @returns Current-user response for the token.
-   */
-  importAccessToken(token: string, signal: AbortSignal | null): Promise<Response>;
-
-  /**
    * Revoke the stored token on the server; the host deletes it locally regardless.
    *
    * @param signal - Cancellation signal.

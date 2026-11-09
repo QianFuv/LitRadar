@@ -155,6 +155,7 @@ async function main() {
     await page.getByLabel('服务器地址').fill(origin);
     await page.getByRole('button', { name: '连接', exact: true }).click();
     await expect(page.getByRole('button', { name: SSO_BUTTON_NAME })).toBeVisible();
+    await expect(page.getByRole('button', { name: /访问令牌/ })).toHaveCount(0);
     await page.screenshot({ path: path.join(RESULTS_DIR, '01-login-with-sso.png') });
     report.steps.push('sso offered');
 

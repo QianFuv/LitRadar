@@ -1,5 +1,5 @@
 /**
- * Native shell coverage: first-run server setup, server switching, access-token sign-in,
+ * Native shell coverage: first-run server setup, server switching, password-only sign-in choices,
  * single sign-on through the host and the system browser, and hidden account-link actions.
  */
 
@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { AccountSignInCard } from '@/components/settings/account-card';
 import { MotionProvider } from '@/components/ui/motion';
+import { getAuthProviders } from '@/lib/api';
 import type { ClientPlatform } from '@/lib/platform';
 import { PlatformBridgeError } from '@/lib/platform/errors';
 import { useServerConnection } from '@/lib/server-connection';
@@ -21,7 +22,6 @@ const shellMocks = vi.hoisted(() => ({
   load: vi.fn(),
   connect: vi.fn(),
   disconnect: vi.fn(),
-  signInWithAccessToken: vi.fn(),
   signInWithNativeOidc: vi.fn(),
   consumeOidcInterruption: vi.fn(),
   login: vi.fn(),
@@ -38,7 +38,6 @@ vi.mock('@/lib/platform', () => {
     supportsSingleSignOn: false,
     nativeSession: {
       login: vi.fn(),
-      importAccessToken: vi.fn(),
       logout: vi.fn(),
       loginWithOidc: vi.fn(),
       consumeOidcInterruption: shellMocks.consumeOidcInterruption,
@@ -61,7 +60,6 @@ vi.mock('@/lib/auth-context', async (importOriginal) => ({
     logoutWarning: null,
     recoverLogout: vi.fn(),
     register: vi.fn(),
-    signInWithAccessToken: shellMocks.signInWithAccessToken,
     signInWithNativeOidc: shellMocks.signInWithNativeOidc,
     updateUser: vi.fn(),
     user: shellMocks.user,
@@ -123,7 +121,6 @@ beforeEach(() => {
   shellMocks.load.mockReset();
   shellMocks.connect.mockReset();
   shellMocks.disconnect.mockReset();
-  shellMocks.signInWithAccessToken.mockReset();
   shellMocks.signInWithNativeOidc.mockReset();
   shellMocks.consumeOidcInterruption.mockReset().mockResolvedValue(false);
   shellMocks.login.mockReset();
@@ -236,26 +233,36 @@ describe('native sign-in surface', () => {
     expect(screen.getByRole('button', { name: '使用 校园身份 登录' })).toBeEnabled();
   });
 
-  test('offers access-token sign-in next to single sign-on', async () => {
+  test('offers only password and single sign-on sign-in', async () => {
     const user = userEvent.setup();
-    shellMocks.signInWithAccessToken.mockResolvedValue(undefined);
+    shellMocks.login.mockResolvedValue(undefined);
 
-    render(
-      <MotionProvider>
-        <LoginClient />
-      </MotionProvider>,
-      { wrapper: MemoryRouter },
-    );
+    renderNativeLogin('/login');
 
-    await user.click(await screen.findByRole('button', { name: '使用访问令牌登录' }));
-    expect(screen.queryByRole('link', { name: /使用 校园身份 登录/ })).toBeNull();
-    await user.type(screen.getByLabelText('访问令牌'), '  pasted-token ');
+    expect(await screen.findByRole('button', { name: '使用 校园身份 登录' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /访问令牌/ })).toBeNull();
+    expect(screen.queryByLabelText(/访问令牌/)).toBeNull();
+    await user.type(screen.getByLabelText('用户名或邮箱'), ' member ');
+    await user.type(screen.getByLabelText('密码'), 'correct horse battery');
     await user.click(screen.getByRole('button', { name: '登录' }));
 
     await waitFor(() =>
-      expect(shellMocks.signInWithAccessToken).toHaveBeenCalledWith('pasted-token'),
+      expect(shellMocks.login).toHaveBeenCalledWith('member', 'correct horse battery'),
     );
-    expect(shellMocks.login).not.toHaveBeenCalled();
+  });
+
+  test('offers only password sign-in when single sign-on is disabled', async () => {
+    vi.mocked(getAuthProviders).mockResolvedValueOnce({
+      oidc_enabled: false,
+      oidc_display_name: '',
+    });
+
+    renderNativeLogin('/login');
+
+    await waitFor(() => expect(getAuthProviders).toHaveBeenCalled());
+    expect(await screen.findByRole('button', { name: '登录' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /使用 .* 登录|访问令牌/ })).toBeNull();
+    expect(screen.queryByText('或')).toBeNull();
   });
 
   test('hides single sign-on link actions in account settings', async () => {

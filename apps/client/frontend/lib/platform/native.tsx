@@ -309,7 +309,6 @@ const NATIVE_SESSION: NativeSession = {
   login: (username, password, signal) => invokeTransport('Login', signal, username, password),
   loginWithOidc: loginNativeWithOidc,
   consumeOidcInterruption: () => invokeBridge<boolean>('ConsumeOidcInterruption', null),
-  importAccessToken: (token, signal) => invokeTransport('ImportToken', signal, token),
   logout: (signal) => invokeTransport('Logout', signal),
   async discardCredential() {
     await invokeBridge<void>('ForgetToken', null);

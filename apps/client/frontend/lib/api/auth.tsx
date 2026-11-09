@@ -101,29 +101,6 @@ export async function registerUser(
 }
 
 /**
- * Sign in a native host with a pasted personal access token.
- *
- * The host validates the token against the current-user endpoint and stores it only when
- * the server accepts it.
- *
- * @param token - Personal access token.
- * @returns User the token belongs to.
- */
-export function importAccessToken(token: string): Promise<AuthUser> {
-  const nativeSession = CLIENT_PLATFORM.nativeSession;
-  if (!nativeSession) {
-    return Promise.reject(new Error('访问令牌登录仅适用于桌面和移动客户端'));
-  }
-  return requestJsonVia<AuthUser>(
-    (_url, init) => nativeSession.importAccessToken(token, init.signal ?? null),
-    buildApiUrl('/api/auth/me'),
-    undefined,
-    '访问令牌登录失败',
-    parseAuthUser,
-  );
-}
-
-/**
  * Sign a native host in through the server's single sign-on in the system browser.
  *
  * The host opens the browser, waits for the callback, exchanges the one-time code, and keeps

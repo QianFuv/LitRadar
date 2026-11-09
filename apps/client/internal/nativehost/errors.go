@@ -20,8 +20,6 @@ const (
 	CodeForbiddenTarget = "forbidden_target"
 	// CodeInvalidRequest marks a malformed bridge request.
 	CodeInvalidRequest = "invalid_request"
-	// CodeInvalidToken marks a malformed access token.
-	CodeInvalidToken = "invalid_token"
 	// CodeStorageFailure marks a failure of the secure token store or the config file.
 	CodeStorageFailure = "storage_failure"
 	// CodeUnsupported marks an operation the current platform does not provide.

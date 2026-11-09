@@ -16,7 +16,6 @@ import {
 import {
   ApiError,
   getCurrentUser,
-  importAccessToken,
   loginUser,
   loginWithNativeOidc,
   logoutAllSessions,
@@ -39,7 +38,6 @@ interface AuthState {
   loading: boolean;
   logoutWarning: LogoutRevocationWarning | null;
   login: (username: string, password: string) => Promise<void>;
-  signInWithAccessToken: (token: string) => Promise<void>;
   signInWithNativeOidc: (signal: AbortSignal) => Promise<void>;
   register: (
     username: string,
@@ -286,13 +284,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [adoptSignedInUser],
   );
 
-  const signInWithAccessToken = useCallback(
-    async (token: string) => {
-      adoptSignedInUser(await importAccessToken(token));
-    },
-    [adoptSignedInUser],
-  );
-
   const signInWithNativeOidc = useCallback(
     async (signal: AbortSignal) => {
       const response = await loginWithNativeOidc(signal);
@@ -359,7 +350,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       logoutWarning,
       login,
-      signInWithAccessToken,
       signInWithNativeOidc,
       register,
       logout,
@@ -373,7 +363,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logoutWarning,
       recoverLogout,
       register,
-      signInWithAccessToken,
       signInWithNativeOidc,
       updateUser,
       user,
