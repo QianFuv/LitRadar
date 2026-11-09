@@ -934,7 +934,7 @@ async function verifyCfpHelpers() {
       containerName,
       "obscura",
       "fetch",
-      "http://127.0.0.1:8000/",
+      "http://127.0.0.1:8000/docs/",
       "--stealth",
       "--timeout",
       "5",
@@ -956,7 +956,7 @@ async function verifyCfpHelpers() {
     containerName,
     "obscura",
     "fetch",
-    "http://127.0.0.1:8000/",
+    "http://127.0.0.1:8000/docs/",
     "--stealth",
     "--timeout",
     "30",
@@ -982,9 +982,9 @@ async function verifyCfpHelpers() {
   );
   assertInvariant(
     page.protocol === "litradar.cfp.page.v1" &&
-      page.finalUrl === "http://127.0.0.1:8000/" &&
+      page.finalUrl === "http://127.0.0.1:8000/docs/" &&
       typeof page.html === "string" &&
-      page.html.includes("LitRadar"),
+      page.html.includes("swagger-ui"),
     "CFP browser did not evaluate the original-HTML protocol",
   );
   await runDocker(["exec", containerName, "rm", "/tmp/cfp-browser-smoke.json"]);
@@ -1082,66 +1082,38 @@ async function verifySmokeHttpResponses(
   openApiResponse,
   authResponse,
 ) {
-  assertInvariant(
-    rootResponse.ok,
-    `root endpoint returned ${rootResponse.status}`,
-  );
-  assertInvariant(
-    openApiResponse.ok,
-    `OpenAPI endpoint returned ${openApiResponse.status}`,
-  );
+  assertInvariant(rootResponse.status === 404, "server root must return 404");
+  assertInvariant(openApiResponse.ok, "OpenAPI endpoint failed");
   assertInvariant(
     authResponse.status === 401,
-    `anonymous auth endpoint returned ${authResponse.status}`,
+    "anonymous auth must return 401",
   );
   for (const response of [rootResponse, openApiResponse, authResponse]) {
     assertSecurityHeaders(response, true);
   }
   assertInvariant(
-    rootResponse.headers.get("content-security-policy")?.includes("sha256-"),
-    "root CSP omitted exported inline script hashes",
-  );
-  assertInvariant(
     authResponse.headers.get("cache-control") === "no-store" &&
       authResponse.headers.get("pragma") === "no-cache",
     "auth response was cacheable",
   );
-  const rootBody = await rootResponse.text();
   const baseUrl = new URL(rootResponse.url).origin;
-  assertInvariant(
-    rootResponse.headers.get("last-modified") === null,
-    "embedded HTML declared filesystem modification time",
-  );
-  assertInvariant(
-    Boolean(rootResponse.headers.get("etag")),
-    "embedded HTML omitted content validator",
-  );
-  for (const expression of [
-    /src="(\/_next\/static\/[^" ]+\.js)"/,
-    /href="(\/_next\/static\/[^" ]+\.css)"/,
+  for (const route of [
+    "/login",
+    "/settings",
+    "/assets/missing.js",
+    "/missing-page",
   ]) {
-    const asset = rootBody.match(expression);
     assertInvariant(
-      Boolean(asset),
-      "embedded HTML omitted a real JS/CSS asset",
-    );
-    const response = await fetchRuntime(`${baseUrl}${asset[1]}`);
-    assertInvariant(
-      response.ok &&
-        response.headers.get("cache-control")?.includes("immutable"),
-      "embedded hashed asset unavailable or cacheable incorrectly",
+      (await fetchRuntime(`${baseUrl}${route}`)).status === 404,
+      `server UI route must return 404: ${route}`,
     );
   }
+  const docs = await fetchRuntime(`${baseUrl}/docs/`);
   assertInvariant(
-    (await fetchRuntime(`${baseUrl}/missing-embedded-page`)).status === 404,
-    "missing embedded route did not return 404",
+    docs.ok && (await docs.text()).includes("Swagger"),
+    "docs unavailable",
   );
-  await runDocker(["exec", containerName, "test", "!", "-e", "/app/web"]);
   const openApi = await openApiResponse.json();
-  assertInvariant(
-    rootBody.includes("LitRadar"),
-    "root endpoint omitted the application marker",
-  );
   assertInvariant(
     openApi.openapi === "3.1.0",
     "OpenAPI endpoint returned an unexpected document",

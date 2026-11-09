@@ -4,8 +4,8 @@ FROM --platform=$BUILDPLATFORM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e
 
 ARG BUILDARCH
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.1 curl gzip libatomic1 libstdc++6 xz-utils \
-    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.1 \
+    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.2 curl gzip libatomic1 libstdc++6 xz-utils \
+    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.2 \
     && rm -rf /var/lib/apt/lists/* \
     && case "$BUILDARCH" in \
         amd64) node_arch=x64; archive_sha256=3883bfc73f9a680ca4eab04b196068aaaab1373ffa77d8fc1a4408222495b651 ;; \
@@ -31,8 +31,8 @@ ENV CGO_ENABLED=1 GOTOOLCHAIN=local GOWORK=off GOENV=off GOFLAGS="" GOOS=linux G
 ENV PATH=/usr/local/go/bin:$PATH GOPATH=/go
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.1 curl gcc g++ git make cmake libatomic1 libstdc++6 \
-    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.1 \
+    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.2 curl gcc g++ git make cmake libatomic1 libstdc++6 \
+    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.2 \
     && rm -rf /var/lib/apt/lists/* \
     && case "$BUILDARCH" in \
         amd64) archive_sha256=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 ;; \
@@ -84,8 +84,8 @@ FROM --platform=$BUILDPLATFORM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e
 
 ARG TARGETARCH
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.1 curl \
-    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.1 \
+    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.2 curl \
+    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.2 \
     && rm -rf /var/lib/apt/lists/*
 RUN case "$TARGETARCH" in \
         amd64) asset=obscura-x86_64-linux-stealth.tar.gz; archive_sha256=49b53f74a509764c42a35c8e73a37301399e1500d43564fad4cb641721efc753 ;; \
@@ -106,8 +106,8 @@ FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.1 curl libgcc-s1 libstdc++6 passwd poppler-data poppler-utils \
-    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.1 \
+    && apt-get install --yes --no-install-recommends ca-certificates=20260816ubuntu0.26.04.2 curl libgcc-s1 libstdc++6 passwd poppler-data poppler-utils \
+    && test "$(dpkg-query -W -f='${Version}' ca-certificates)" = 20260816ubuntu0.26.04.2 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 litradar \
     && useradd --uid 10001 --gid litradar --no-create-home --home-dir /app --shell /usr/sbin/nologin litradar \
