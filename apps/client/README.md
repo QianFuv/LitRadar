@@ -95,7 +95,7 @@ keystore when `ANDROID_SIGNING_KEYSTORE` is unset (testing only):
 ## Smoke tests
 
 Both drivers start a disposable Go server seeded with the full-stack fixture. Build the server
-binaries first with `node scripts/build-go.mjs` from the repository root, then run from
+binaries first with `node apps/server/scripts/build-go.mjs` from the repository root, then run from
 `apps/client/frontend`:
 
 - `node tests/native-smoke/windows-smoke.mjs` after `task build:windows:smoke`. The smoke build

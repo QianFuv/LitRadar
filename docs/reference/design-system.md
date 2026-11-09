@@ -4,8 +4,8 @@
 
 - [全局样式](../../apps/client/frontend/src/globals.css)：主题、字体、圆角、阴影、动画和全局行为
 - [根布局](../../apps/client/frontend/src/app.tsx)、[根级上下文](../../apps/client/frontend/src/providers.tsx)：根文档、主题和根级无障碍
-- [基础组件目录](../../apps/client/frontend/components/ui/)：组件变体
-- [应用框架](../../apps/client/frontend/components/shell/)：导航轨、手机底栏与账号头像
+- [基础组件目录](../../apps/client/frontend/components/ui)：组件变体
+- [应用框架](../../apps/client/frontend/components/shell)：导航轨、手机底栏与账号头像
 - [阅读工作区](../../apps/client/frontend/components/feature/workspace-shell.tsx)：列表栏、阅读台与详情面板
 - `apps/client/frontend/src/routes/*.tsx` 与业务组件：真实布局和响应式用法
 

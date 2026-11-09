@@ -58,7 +58,7 @@ tests, source-bound frontend verification or platform smoke acceptance.
   cancel a version's prerequisites. Publication keeps its existing version/latest
   serialization. There is no outer branch-wide cancellation of the release.
 
-`node scripts/check-go.mjs` still runs all checks locally. Pass `regular` or `race`
+`node apps/server/scripts/check-go.mjs` still runs all checks locally. Pass `regular` or `race`
 to reproduce one CI lane. Do not run both lanes concurrently in the same working
 directory: they share generated native files and diagnostic paths. Hosted matrix
 jobs have separate checkouts.

@@ -10,7 +10,7 @@
 
 Windows 和 Linux 使用同一份固定版本的 Simple 源码，以 `SQLITE_CORE` 按未修改的 SQLite 驱动头文件编译。可执行文件在每个准入的连接上直接初始化分词器，不查找或加载 `simple.dll`、`libsimple.so`。
 
-在仓库根目录运行 `node scripts/build-simple-tokenizer.mjs`。它需要 curl、tar、CMake 和与 Go 匹配的 C++14 编译器；Linux 使用 Make，Windows 另需 MinGW 和 Ninja。产物为 `target/simple-tokenizer/libsimple.a`。构建脚本把静态库、头文件、源码和编译器标识写入 Go 的缓存参数；直接运行 Go 命令时也必须使用 `simpleBuildEnvironment`，见[开发指南](../../docs/guides/development.md#原生分词器)。
+在仓库根目录运行 `node apps/server/scripts/build-simple-tokenizer.mjs`。它需要 curl、tar、CMake 和与 Go 匹配的 C++14 编译器；Linux 使用 Make，Windows 另需 MinGW 和 Ninja。产物为 `target/simple-tokenizer/libsimple.a`。构建脚本把静态库、头文件、源码和编译器标识写入 Go 的缓存参数；直接运行 Go 命令时也必须使用 `simpleBuildEnvironment`，见[开发指南](../../docs/guides/development.md#原生分词器)。
 
 源码提交：`45db071ba8043ffe8a2e5dfe41f9d68fb477576c`；源码归档 SHA-256：`d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61`。适配构建排除 Jieba、SQLite 和示例目标，并包含两个 CMRC 资源对象。内嵌的拼音资源在 `simple 0` 下不会启用别名。
 

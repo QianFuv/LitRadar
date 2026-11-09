@@ -1,6 +1,6 @@
 # 日志运维
 
-本文档是 LitRadar 服务端和浏览器错误日志的唯一运维说明。它定义当前日志契约、配置、关联方式、保留边界、隐私规则、查询方法和事故处理流程。进程与数据流见[系统架构](../architecture.md)，日志字段的安全边界同时受[安全说明](security.md)约束。以下 Bash 查询在部署目录执行，Docker 筛选示例需要 jq，审计查询需要 sqlite3；PowerShell 示例单独标注。
+本文档是 LitRadar 服务端和浏览器错误日志的唯一运维说明。它定义当前日志契约、配置、关联方式、保留边界、隐私规则、查询方法和事故处理流程。进程与数据流见[系统架构](../architecture/README.md)，日志字段的安全边界同时受[安全说明](security.md)约束。以下 Bash 查询在部署目录执行，Docker 筛选示例需要 jq，审计查询需要 sqlite3；PowerShell 示例单独标注。
 
 ## 输出边界
 
@@ -261,7 +261,7 @@ docker compose logs --no-log-prefix server |
 
 ```powershell
 docker compose build
-pwsh ./tests/profiling/profile_logging.ps1 `
+pwsh ./apps/server/tests/profiling/profile_logging.ps1 `
   -DataPath ./output/logging-fixture `
   -Rounds 3 `
   -RequestCount 300 `

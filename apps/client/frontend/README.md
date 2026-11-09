@@ -2,12 +2,12 @@
 
 `apps/client/frontend/` 是 LitRadar 的 Vite + React 单页客户端源码，负责登录、检索、收藏、每周更新、征稿追踪、聚合设置中心和管理后台。发布构建输出静态 `dist/`，由 `apps/client` 的 Wails v3 Server Build 嵌入并提供（SPA 回退与安全响应头）；Go API 服务不再托管网页，生产环境由外部反向代理把 `/api*`、`/mcp*`、`/docs*`、`/openapi.json`、`/health/*` 转发到 Go 服务、其余路径转发到 Web 客户端。本页只说明前端包的开发边界：
 
-- 系统进程与数据流见[系统架构](../../../docs/architecture.md)。
+- 系统进程与数据流见[系统架构](../../../docs/architecture/README.md)。
 - REST 契约与认证方式见[API 参考](../../../docs/reference/api.md)。
 - 后端与前端的无环境覆盖配置边界见[运行配置](../../../docs/reference/configuration.md)。
 - UI token 与组件约定见[设计系统](../../../docs/reference/design-system.md)。
 - 服务端和浏览器日志契约见[日志运维](../../../docs/operations/logging.md)。
-- 五层测试模型、功能所有权和报告策略见[测试系统](../../../docs/testing.md)。
+- 五层测试模型、功能所有权和报告策略见[测试系统](../../../docs/guides/testing.md)。
 
 ## 工具链
 
@@ -191,7 +191,7 @@ pnpm generate:api:check
 
 ## 质量检查
 
-以下命令在 `apps/client/frontend/` 中运行。日常修改按[测试系统](../../../docs/testing.md)选择适用检查；涉及完整前端交付时使用下列检查序列，任一步失败都应先定位原因：
+以下命令在 `apps/client/frontend/` 中运行。日常修改按[测试系统](../../../docs/guides/testing.md)选择适用检查；涉及完整前端交付时使用下列检查序列，任一步失败都应先定位原因：
 
 ```bash
 pnpm generate:api:check
@@ -214,4 +214,4 @@ pnpm build
 - Playwright 本地零重试；CI 最多一次重试以保留 trace/video，并通过 `failOnFlakyTests` 让 retry-pass 仍失败。
 - 覆盖率排除生成代码和 `components/ui/`，只作独立诊断，不设置完成阈值。
 
-实现变更应运行与影响范围相称的检查；API facade、认证或生成契约变化时至少执行生成检查、类型检查和相关测试。统一的 `fast`、`integration`、`e2e-smoke`、`all`、`diagnostics` 命令及 CI 报告路径见[测试系统](../../../docs/testing.md)。
+实现变更应运行与影响范围相称的检查；API facade、认证或生成契约变化时至少执行生成检查、类型检查和相关测试。统一的 `fast`、`integration`、`e2e-smoke`、`all`、`diagnostics` 命令及 CI 报告路径见[测试系统](../../../docs/guides/testing.md)。

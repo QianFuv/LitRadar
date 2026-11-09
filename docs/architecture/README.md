@@ -1,6 +1,6 @@
 # 系统架构
 
-本文档说明 LitRadar 当前的组件边界、进程模型、数据流和持久化结构。命令参数见 [CLI 参考](reference/cli.md)，具体部署步骤见 [Docker 部署](operations/docker.md)。
+本文档说明 LitRadar 当前的组件边界、进程模型、数据流和持久化结构。命令参数见 [CLI 参考](../reference/cli.md)，具体部署步骤见 [Docker 部署](../operations/docker.md)。
 
 ## 总览
 
@@ -75,7 +75,11 @@ browser boundary -> allowlisted console.error object -> local DevTools only
 
 HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UUID；请求内的异步和 blocking 工作重新进入同一 span。成功健康检查、静态资源与前端文档不产生逐请求终态事件。调度 span 使用 `run_id` 关联任务；父进程把该值作为经过校验的隐藏内部参数交给规范子进程，应用在公共命令解析前移除参数并记录 `parent_run_id`。它不出现在 help 中，也不是运维配置。子进程 `stderr` 直接继承到同一容器 sink，`stdout` 仍保留给结构化业务结果。
 
-队列饱和时业务线程不等待；正常关闭最多等待 1 秒排空队列，并直接报告精确丢失行数。浏览器静态客户端没有日志采集端点，只在本地控制台记录不含错误消息和内容的白名单对象。完整字段、配置、保留、隐私和事故流程以[日志运维](operations/logging.md)为准。
+队列饱和时业务线程不等待；正常关闭最多等待 1 秒排空队列，并直接报告精确丢失行数。浏览器静态客户端没有日志采集端点，只在本地控制台记录不含错误消息和内容的白名单对象。完整字段、配置、保留、隐私和事故流程以[日志运维](../operations/logging.md)为准。
+
+## 源码归属
+
+`apps/server/` 拥有服务端代码、`assets/`、Dockerfile、构建检查脚本和专用测试；`apps/client/` 拥有客户端代码、构建脚本和专用测试。根 `scripts/`、`tests/` 只保留跨应用工具、发布协调与共享 `tests/data/`。历史分词器 oracle 位于 `third_party/simple-prebuilt/`。根 Go/pnpm 工作区、部署入口和运行时 `data/` 保持共享；源码资源迁移不改变发行包的 `assets/meta` 布局。
 
 ## Go 包
 
@@ -100,7 +104,7 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 
 `data/meta/*.csv` 是 LitRadar 维护的 Provider 无关期刊目录。每行使用不可变 `catalog_id`，并包含规范标题、印刷/电子/全部 ISSN、标题别名、领域和排名字段。目录中没有 `source`、Provider 名称、上游 ID、URL、路由或检查点。
 
-目录格式、规范化和变更规则见[索引与 Provider 契约](reference/index-provider-contract.md)。CSV 文件名 stem 同时决定稳定内容库名；更换 Provider 不改文件名或 `catalog_id`。
+目录格式、规范化和变更规则见[索引与 Provider 契约](../reference/index-provider-contract.md)。CSV 文件名 stem 同时决定稳定内容库名；更换 Provider 不改文件名或 `catalog_id`。
 
 ### 受管目录生命周期
 
@@ -174,7 +178,7 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 
 Simple 按未修改的驱动头文件编译，并在每个准入的物理连接上直接注册；不使用全局自动注册或运行时 DLL/SO 发现。普通/认证连接和版本优先迁移角色仍需显式启用；SQL 扩展加载保持关闭。
 
-`data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v2；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v5 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent、typed notify handoff/Unknown acknowledgement 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。v1 active Notifying 行迁移为保守 Unknown，不丢弃 manifest。删除全部控制状态后没有可信 batch、成功边界、handoff 或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章；operator 也同时承担失去待完成 handoff 证明的风险。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](reference/database.md)。
+`data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v2；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v5 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent、typed notify handoff/Unknown acknowledgement 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。v1 active Notifying 行迁移为保守 Unknown，不丢弃 manifest。删除全部控制状态后没有可信 batch、成功边界、handoff 或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章；operator 也同时承担失去待完成 handoff 证明的风险。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](../reference/database.md)。
 
 ### 认证与业务数据库
 
@@ -214,15 +218,15 @@ Simple 按未修改的驱动头文件编译，并在每个准入的物理连接�
 6. Provider 返回规范 batch 和 Continue/Complete 进度，`apps/server/internal/index` 写入关系表、`article_listing` 和 `article_search`，整刊完成后才推进 anchor。
 7. `--update` 生成变更清单；`--full-rescan` 覆盖完整历史但不生成该清单。
 
-具体请求和字段优先级见 [Scholarly 数据源](reference/sources/scholarly.md)。
+具体请求和字段优先级见 [Scholarly 数据源](../reference/sources/scholarly.md)。
 
 ### CNKI 索引和全文
 
-默认国内 `cnki` 元数据 Provider 使用 NZKPT 的 `navi.cnki.net` / `kns.cnki.net` 页面和接口生成规范内容；海外运行时实现已移除。页面 filename、详情 URL 和 captcha 状态只存在于一次适配调用中。按用户全文获取是独立的 `zjlib` 在线能力，使用当前用户已有的浙江图书馆会话，与索引 Provider 无关。详见 [CNKI 数据源](reference/sources/cnki.md)。
+默认国内 `cnki` 元数据 Provider 使用 NZKPT 的 `navi.cnki.net` / `kns.cnki.net` 页面和接口生成规范内容；海外运行时实现已移除。页面 filename、详情 URL 和 captcha 状态只存在于一次适配调用中。按用户全文获取是独立的 `zjlib` 在线能力，使用当前用户已有的浙江图书馆会话，与索引 Provider 无关。详见 [CNKI 数据源](../reference/sources/cnki.md)。
 
 ### 征稿追踪
 
-征稿追踪使用维护目录中的期刊身份，但不依赖文章索引是否已有内容。后端负责征稿采集、原文解析、状态计算和持久化；前端通过认证 API 浏览，不在浏览器中运行采集器，也不把种子数据打包进 JavaScript。征稿状态随查询时刻计算，日期缺失不表示长期开放。数据归属、刷新流程与限制见[征稿追踪架构](architecture/cfp-tracking.md)。
+征稿追踪使用维护目录中的期刊身份，但不依赖文章索引是否已有内容。后端负责征稿采集、原文解析、状态计算和持久化；前端通过认证 API 浏览，不在浏览器中运行采集器，也不把种子数据打包进 JavaScript。征稿状态随查询时刻计算，日期缺失不表示长期开放。数据归属、刷新流程与限制见[征稿追踪架构](cfp-tracking.md)。
 
 ### 文章在线访问
 
@@ -263,7 +267,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 `index --notify` 在这层外增加 parent-owned attempt：attempt 参与 scheduled run external ID，但不参与 article dedupe identity。新 attempt 因而能恢复已知 pre-send 失败，同时 Confirmed/Unknown article 仍跨 attempt 保持 no-replay。Unknown parent handoff 只有在 operator 审核并把确认 ID/时间写入 batch ledger 后才允许新 attempt。
 
-完整行为见[通知与追踪](guides/notifications.md)。
+完整行为见[通知与追踪](../guides/notifications.md)。
 
 ## 配置层次
 
@@ -277,21 +281,21 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 部署后的应用不把 LitRadar 自定义环境变量作为通用配置中心。固定镜像路径和隐藏父子进程关联参数都是不可配置的内部协议；CLI 路径/监听/并发参数、部署密钥文件和测试工具输入仍保留各自边界。数据库 token 为空时，`LITRADAR_CNKI_CAPTCHA_TOKEN` 是国内 CNKI 单次索引探测的唯一来源凭据例外，并在父进程解析后从 child 环境移除。
 
-来源、默认值和优先级见[运行配置](reference/configuration.md)。
+来源、默认值和优先级见[运行配置](../reference/configuration.md)。
 
 ## 数据库迁移
 
 正式子命令在业务访问前完成各自需要的存储准备：先解析路径和参数，检查 `PRAGMA user_version`，再执行受支持的迁移或结构预检。认证库按版本在独立的 `BEGIN IMMEDIATE` 事务中迁移；普通查询仓库不负责数据定义操作。
 
-新建内容库使用 v10。精确匹配的 v4/v5 可事务迁移到 v10；现有 v6/v7/v8/v9/v10 在普通启动时只做结构预检，旧版分词器不会被自动替换。非空 v0 及 v1 至 v3 要求先备份，再按错误中点名的文件执行重建。内容库、项目批次账本和目录控制库分别维护版本，当前版本与迁移边界统一见[数据库参考](reference/database.md#连接和版本)。
+新建内容库使用 v10。精确匹配的 v4/v5 可事务迁移到 v10；现有 v6/v7/v8/v9/v10 在普通启动时只做结构预检，旧版分词器不会被自动替换。非空 v0 及 v1 至 v3 要求先备份，再按错误中点名的文件执行重建。内容库、项目批次账本和目录控制库分别维护版本，当前版本与迁移边界统一见[数据库参考](../reference/database.md#连接和版本)。
 
 项目批次账本与目录控制库可以重建，但删除它们会丢失恢复进度和已发布通知的交接记录。遇到未来版本或迁移失败时，命令会退出，不会自动删除文件。`serve` 完成存储迁移、密钥验证和 HTTP 准备后，才启动监听器及首轮调度。
 
 ## 同步工作与异步服务
 
-SQLite、密码派生、HTTP 和文件系统操作通过有界 Go 执行器运行。API 分别限制存储、上游请求和密码派生任务，容量分别为 8、4、2，排队超时为 30 秒；取消和关闭通过 context 与显式生命周期管理。定义见[运行时准备](../apps/server/internal/runtime/prepare.go)与 `apps/server/internal/platform/executor`。内嵌调度与手动投递由运行时监督器管理。
+SQLite、密码派生、HTTP 和文件系统操作通过有界 Go 执行器运行。API 分别限制存储、上游请求和密码派生任务，容量分别为 8、4、2，排队超时为 30 秒；取消和关闭通过 context 与显式生命周期管理。定义见[运行时准备](../../apps/server/internal/runtime/prepare.go)与 `apps/server/internal/platform/executor`。内嵌调度与手动投递由运行时监督器管理。
 
-手动周报通过 SQLite 持久任务排队，API 返回 `202` 后由独立的[投递监督器](../apps/server/internal/runtime/manual_delivery.go)启动子进程。同一用户重复启动会复用当前排队或活动任务；不同用户可以排队并在实例容量内并行。并发池由 `delivery_worker_concurrency` 控制，租约、版本比较和去重仍由存储层保证。状态、取消和不确定结果的确认规则见[API 参考](reference/api.md#收藏与追踪)，配置见[运行配置](reference/configuration.md#用户通知配置)。
+手动周报通过 SQLite 持久任务排队，API 返回 `202` 后由独立的[投递监督器](../../apps/server/internal/runtime/manual_delivery.go)启动子进程。同一用户重复启动会复用当前排队或活动任务；不同用户可以排队并在实例容量内并行。并发池由 `delivery_worker_concurrency` 控制，租约、版本比较和去重仍由存储层保证。状态、取消和不确定结果的确认规则见[API 参考](../reference/api.md#收藏与追踪)，配置见[运行配置](../reference/configuration.md#用户通知配置)。
 
 <a id="scheduled-execution-across-service-ticks"></a>
 
@@ -311,4 +315,4 @@ Cron 使用五字段 crontab 规则：日期和星期字段同时受限时，任
 
 ## 部署边界
 
-默认 Compose 只运行一个非 root、只读根文件系统且丢弃全部 Linux capabilities 的 `litradar` 容器，并把唯一 HTTP 入口 `127.0.0.1:8000` 发布到宿主机 loopback。对外访问时必须增加 TLS 反向代理和共享限流，不能把默认端口直接改为所有网卡。详见 [Docker 部署](operations/docker.md)和[安全说明](operations/security.md)。
+默认 Compose 只运行一个非 root、只读根文件系统且丢弃全部 Linux capabilities 的 `litradar` 容器，并把唯一 HTTP 入口 `127.0.0.1:8000` 发布到宿主机 loopback。对外访问时必须增加 TLS 反向代理和共享限流，不能把默认端口直接改为所有网卡。详见 [Docker 部署](../operations/docker.md)和[安全说明](../operations/security.md)。

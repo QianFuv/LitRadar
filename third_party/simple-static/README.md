@@ -6,7 +6,7 @@ without modifying its sources. It uses the application's go-sqlite3 headers and
 Jieba is disabled. Both CMRC resource objects are included in `libsimple.a`, with
 the upstream `contrib/pinyin.txt` key preserved.
 
-Run `node scripts/build-simple-tokenizer.mjs` before native Go builds. Windows
+Run `node apps/server/scripts/build-simple-tokenizer.mjs` before native Go builds. Windows
 requires curl, tar, MinGW GCC/G++, CMake and Ninja; Linux requires curl, tar,
 GCC/G++, CMake and Make.
 The compiler must match Go's cgo toolchain. Generated source, archive and input

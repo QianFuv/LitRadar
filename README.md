@@ -13,7 +13,7 @@ LitRadar 是面向学术期刊的自托管检索与订阅平台。它从 Crossre
 
 ## 运行组成
 
-Go 服务端入口为 `apps/server`，`litradar serve` 提供 REST、Swagger/OpenAPI、MCP 和持久化调度。Wails v3 客户端位于 `apps/client`，与服务端共用根 Go 模块，共享唯一 Vite 前端 `apps/client/frontend`。Web 部署通过 Caddy 将同一 Origin 的接口请求转发给服务端、页面转发给 Linux amd64 Wails Server Build；服务端根路径返回 404。只有服务端访问数据与部署密钥。Simple 分词器静态链接进服务端，Obscura、Poppler 和期刊元数据仍随服务端部署。见[系统架构](docs/architecture.md)。
+Go 服务端入口为 `apps/server`，`litradar serve` 提供 REST、Swagger/OpenAPI、MCP 和持久化调度。Wails v3 客户端位于 `apps/client`，与服务端共用根 Go 模块，共享唯一 Vite 前端 `apps/client/frontend`。Web 部署通过 Caddy 将同一 Origin 的接口请求转发给服务端、页面转发给 Linux amd64 Wails Server Build；服务端根路径返回 404。只有服务端访问数据与部署密钥。Simple 分词器静态链接进服务端，Obscura、Poppler 和期刊元数据仍随服务端部署。见[系统架构](docs/architecture/README.md)。
 
 ## Docker 快速开始
 
@@ -112,7 +112,7 @@ Web、Windows x64 和 Android arm64-v8a 共用同一 Vite 前端。首次打开�
 
 从[文档中心](docs/README.md)选择阅读路径：
 
-- 开发：[系统架构](docs/architecture.md)、[开发指南](docs/guides/development.md)、[测试系统](docs/testing.md)。
+- 开发：[系统架构](docs/architecture/README.md)、[开发指南](docs/guides/development.md)、[测试系统](docs/guides/testing.md)。
 - 运维：[Docker 部署](docs/operations/docker.md)、[备份与恢复](docs/operations/backup.md)、[日志运维](docs/operations/logging.md)。
 - 使用与接入：[通知与追踪](docs/guides/notifications.md)、[API 参考](docs/reference/api.md)、[CLI 参考](docs/reference/cli.md)。
 

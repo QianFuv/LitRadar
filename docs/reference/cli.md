@@ -466,4 +466,4 @@ litradar openapi [--output PATH]
 
 <a id="search-tokenizer-upgrade"></a>
 
-分词升级统一见[索引存储优化](#索引存储优化)，原生库与旧版行为见[分词器说明](../../libs/simple/README.md)。
+分词升级统一见[索引存储优化](#索引存储优化)，原生库与旧版行为见[分词器说明](../../third_party/simple-prebuilt/README.md)。

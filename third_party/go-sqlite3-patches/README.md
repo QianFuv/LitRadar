@@ -6,7 +6,7 @@ Upstream: mattn/go-sqlite3 v1.14.52, commit `b0be46fa28d17ee0b65c79774ac0dad84b6
 
 Native Windows SQLite still follows a final symlink with NOFOLLOW; the application also validates final paths. Crossref workset ancestry/reparse/hard-link checks are a separate application policy, not a new global restriction on ordinary database paths. Tests retain the external target's exact bytes.
 
-`upstream.json`, `patched.json` and `compatibility.patch` capture exact upstream, local and patch identities. Run `node scripts/verify-go-dependency.mjs go-sqlite3` from the root to reproduce the patch and reject any unlisted modification or new file.
+`upstream.json`, `patched.json` and `compatibility.patch` capture exact upstream, local and patch identities. Run `node apps/server/scripts/verify-go-dependency.mjs go-sqlite3` from the root to reproduce the patch and reject any unlisted modification or new file.
 
 Regular and race suites run with `sqlite_fts5` both in the original module and in the root build list, on Windows and Linux. These suites must be serialized across configurations because upstream tests use fixed temporary filenames in their working directory. Application tests additionally cover native Simple on each physical connection, reconnects, backups, transactions, URI conversion and owned paths.
 

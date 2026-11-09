@@ -1,6 +1,6 @@
 # Docker 部署
 
-本文档是根目录 `Dockerfile` 与 `docker-compose.yml` 的部署操作手册。命令参数见 [CLI 参考](../reference/cli.md)，安全边界见[安全说明](security.md)。
+本文档是服务端 `apps/server/Dockerfile` 与 `docker-compose.yml` 的部署操作手册。命令参数见 [CLI 参考](../reference/cli.md)，安全边界见[安全说明](security.md)。
 
 首次部署按下文的初始化步骤执行；已有数据先阅读备份与恢复要求。除明确标为 PowerShell 的画像命令外，示例在仓库根目录的 Bash 中执行，所需工具包括 Docker Compose、OpenSSL 和 curl；日志筛选另需 jq。
 
@@ -17,7 +17,7 @@ Compose 项目名为 `litradar`，服务为 `server`、`client-web`、`gateway`�
 
 | 服务 | 构建 | 镜像 | 持久化 |
 | --- | --- | --- | --- |
-| server | 根 `Dockerfile` | `ghcr.io/qianfuv/litradar:latest` | `/app/data`，只读部署密钥 |
+| server | `apps/server/Dockerfile` | `ghcr.io/qianfuv/litradar:latest` | `/app/data`，只读部署密钥 |
 | client-web | `apps/client/build/docker/Dockerfile.server`，上下文为仓库根目录（专用 Dockerfile ignore） | `ghcr.io/qianfuv/litradar-client-web:latest` | 无 |
 | gateway | digest 固定的 Caddy 2.11.2 Alpine | 见 Compose | 只读 `Caddyfile` |
 
@@ -35,7 +35,7 @@ Wails Server Build 的 runtime 端点未经认证；Web host 不注册任何服�
 
 ## 镜像内容与源码构建
 
-根 Dockerfile 使用固定 Ubuntu digest、Go/Node 归档校验和与 CA 包版本；Node 仅用于静态 Simple 分词器构建，不构建 UI。`apps/server` 使用 CGO、`sqlite_fts5,sqlite_dbstat` 编译，服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs/`、API、MCP、健康检查可用。
+服务端 Dockerfile 使用固定 Ubuntu digest、Go/Node 归档校验和与 CA 包版本；Node 仅用于静态 Simple 分词器构建，不构建 UI。`apps/server` 使用 CGO、`sqlite_fts5,sqlite_dbstat` 编译，服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs/`、API、MCP、健康检查可用。
 
 客户端先在根目录构建 Vite，再由独立 Dockerfile 将 `frontend/dist` 嵌入 linux/amd64 Wails Web host，并放入 distroless 镜像。两个应用运行镜像均不需要 Node.js。
 
@@ -91,7 +91,7 @@ docker compose ps
 需要验证当前源码时改为本地构建：
 
 ```bash
-docker buildx build --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar:latest .
+docker buildx build -f apps/server/Dockerfile --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar:latest .
 docker compose up -d --remove-orphans
 ```
 
@@ -249,14 +249,14 @@ docker compose logs --no-log-prefix server | jq -c 'select(.level == "ERROR")'
 
 ## Go 容器画像
 
-先用 `docker buildx build --platform linux/amd64 --load --provenance=false -t litradar:go-test-amd64 .` 构建镜像，再运行 `node tests/profiling/go-image.mjs`。它在原生 amd64 主机上执行三轮隔离工作负载，使用 160 MiB 容器上限和 64 MiB tmpfs，验证合成文章的认证检索、真实 helper 与退出清理，分别报告应用 RSS 和整个 cgroup 的当前/峰值用量；不把两者相加，也不声称单独测得 helper RSS。结果保存在 `output/profiling/`。
+先用 `docker buildx build -f apps/server/Dockerfile --platform linux/amd64 --load --provenance=false -t litradar:go-test-amd64 .` 构建镜像，再运行 `node apps/server/tests/profiling/go-image.mjs`。它在原生 amd64 主机上执行三轮隔离工作负载，使用 160 MiB 容器上限和 64 MiB tmpfs，验证合成文章的认证检索、真实 helper 与退出清理，分别报告应用 RSS 和整个 cgroup 的当前/峰值用量；不把两者相加，也不声称单独测得 helper RSS。结果保存在 `output/profiling/`。
 
 ## 内存画像与门禁
 
-仓库提供 PowerShell 7 脚本 `tests/profiling/profile_docker_memory.ps1`。脚本为每次运行生成唯一的 Compose 项目、容器和网络，只删除这些具名测试资源，并把不含命令参数和密钥值的 JSON 写入已忽略的 `output/memory/`。Docker 必须使用 cgroup v2，目标镜像必须先构建：
+仓库提供 PowerShell 7 脚本 `apps/server/tests/profiling/profile_docker_memory.ps1`。脚本为每次运行生成唯一的 Compose 项目、容器和网络，只删除这些具名测试资源，并把不含命令参数和密钥值的 JSON 写入已忽略的 `output/memory/`。Docker 必须使用 cgroup v2，目标镜像必须先构建：
 
 ```powershell
-docker buildx build --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar:latest .
+docker buildx build -f apps/server/Dockerfile --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar:latest .
 docker compose config --quiet
 ```
 
@@ -294,7 +294,7 @@ docker compose config --quiet
 默认恢复索引不带 `--update`，用于证明已完成期刊可跳过且旧待发布事件不会被非更新运行接管：
 
 ```powershell
-pwsh ./tests/profiling/profile_docker_memory.ps1 `
+pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
   -Scenario index `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -308,7 +308,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 先运行需要恢复待发布事件的 CCF 更新，再分别运行中国期刊和英文学术更新：
 
 ```powershell
-pwsh ./tests/profiling/profile_docker_memory.ps1 `
+pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
   -Scenario update `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -320,7 +320,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
   ) `
   -OutputPath ./output/memory/final-update-ccf.json
 
-pwsh ./tests/profiling/profile_docker_memory.ps1 `
+pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
   -Scenario update `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -332,7 +332,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
   ) `
   -OutputPath ./output/memory/final-update-chinese.json
 
-pwsh ./tests/profiling/profile_docker_memory.ps1 `
+pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
   -Scenario update `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -348,7 +348,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 常驻服务和同 cgroup 子任务的合并画像：
 
 ```powershell
-pwsh ./tests/profiling/profile_docker_memory.ps1 `
+pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
   -Scenario scheduled-child `
   -DataPath ./data `
   -DurationSeconds 14400 `
@@ -364,7 +364,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 五分钟预热后采集十分钟日常服务和轻流量；直接画像服务端时路径包含 `/health/live`、`/health/ready` 和 `/docs/`：
 
 ```powershell
-pwsh ./tests/profiling/profile_docker_memory.ps1 `
+pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
   -Scenario warm-idle `
   -DataPath ./data `
   -WarmupSeconds 300 `
@@ -378,7 +378,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 无论内存选项如何，非零退出（含超时 124）、上游错误、OOM 或流量失败都属于失败运行。显式阈值或旧压力检查超限也返回 1，未设置的预算不参与判断。以下极小阈值用于验证单项内存检查确实能报错：
 
 ```powershell
-pwsh ./tests/profiling/profile_docker_memory.ps1 `
+pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
   -Scenario warm-idle `
   -DataPath ./isolated-profile-data `
   -DurationSeconds 10 `
@@ -519,6 +519,6 @@ curl --fail http://localhost:8000/openapi.json
 
 ### 中文检索原生运行库
 
-镜像为目标架构把固定版本的 Simple 按驱动自带的 SQLite 头文件静态链接进应用，不分发 `libsimple.so`；仍保留系统 `libstdc++6` 和 MIT 许可声明，Obscura 与 Poppler 是独立辅助程序。运行时不启用 Jieba 或拼音别名。新建 v10 索引使用 `simple 0`；旧 unicode61 索引仍需显式离线迁移。容器冒烟测试覆盖打包迁移，以及认证后的中文、拉丁文和无拼音查询。详见 [Simple](../../libs/simple/README.md)。
+镜像为目标架构把固定版本的 Simple 按驱动自带的 SQLite 头文件静态链接进应用，不分发 `libsimple.so`；仍保留系统 `libstdc++6` 和 MIT 许可声明，Obscura 与 Poppler 是独立辅助程序。运行时不启用 Jieba 或拼音别名。新建 v10 索引使用 `simple 0`；旧 unicode61 索引仍需显式离线迁移。容器冒烟测试覆盖打包迁移，以及认证后的中文、拉丁文和无拼音查询。详见 [Simple](../../third_party/simple-prebuilt/README.md)。
 
 v9/v10 的 simple 静态注册失败时会明确报错，不回退到 unicode61。先核对镜像版本和目标架构；不存在可补装的外部扩展，也不要从未知来源复制 DLL/SO。

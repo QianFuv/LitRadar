@@ -6,9 +6,9 @@
 
 | 目标                         | 文档                                                         |
 | ---------------------------- | ------------------------------------------------------------ |
-| 了解组件、数据流和持久化边界 | [系统架构](architecture.md)                                  |
+| 了解组件、数据流和持久化边界 | [系统架构](architecture/README.md)                                  |
 | 搭建本地开发环境             | [开发指南](guides/development.md)                            |
-| 选择测试层、命令和诊断报告   | [测试系统](testing.md)                                       |
+| 选择测试层、命令和诊断报告   | [测试系统](guides/testing.md)                                       |
 | 使用 Docker Compose 部署     | [Docker 部署](operations/docker.md)                          |
 | 查询和排查结构化日志         | [日志运维](operations/logging.md)                            |
 | 查找 `litradar` 命令和参数 | [CLI 参考](reference/cli.md)                                 |
@@ -22,7 +22,7 @@
 
 - [客户端与登录](guides/clients.md)：Web、Windows x64、Android arm64-v8a、服务端 URL 与设备令牌。
 - [开发指南](guides/development.md)：本地环境、开发流程、OpenAPI 类型生成、测试和质量检查
-- [测试系统](testing.md)：五层测试模型、功能所有权、共享场景、统一命令、报告和 flaky/覆盖率策略
+- [测试系统](guides/testing.md)：五层测试模型、功能所有权、共享场景、统一命令、报告和 flaky/覆盖率策略
 - [通知与追踪](guides/notifications.md)：候选来源、AI 选择、PushPlus、追踪文件夹、状态和排障
 
 指南回答“怎样完成一项工作”。完整参数、字段和默认值应链接到参考文档，不在指南中维护第二份副本。
@@ -52,16 +52,16 @@
 
 ## 架构专题
 
-[系统架构](architecture.md)说明进程、模块和数据流；[征稿追踪架构](architecture/cfp-tracking.md)进一步说明 CFP 来源、证据保存、刷新边界与测试。导入和刷新步骤以 [CLI 参考](reference/cli.md#cfp)为准。
+[系统架构](architecture/README.md)说明进程、模块和数据流；[征稿追踪架构](architecture/cfp-tracking.md)进一步说明 CFP 来源、证据保存、刷新边界与测试。导入和刷新步骤以 [CLI 参考](reference/cli.md#cfp)为准。
 
 ## 包级文档
 
 - [前端包说明](../apps/client/frontend/README.md)：`apps/client/frontend/` 的启动、目录、API 契约和测试
-- [simple 分词器](../libs/simple/README.md)：静态构建、兼容性 oracle、旧库升级和上游许可证
+- [simple 分词器](../third_party/simple-prebuilt/README.md)：静态构建、兼容性 oracle、旧库升级和上游许可证
 - [Simple 静态构建输入](../third_party/simple-static/README.md)：固定上游源码与 CMake 构建
 - [go-sdk 补丁](../third_party/go-sdk-patches/README.md)、[go-sqlite3 补丁](../third_party/go-sqlite3-patches/README.md)：vendored 依赖的本地补丁说明
 
-`libs/simple/{linux,windows}/dict/README.md` 是第三方词典说明，不属于 LitRadar 的项目文档，保持上游内容。`docs/third-party/` 保存随镜像和发行包分发的第三方许可证与固定发行记录，不是阅读文档。
+`third_party/simple-prebuilt/{linux,windows}/dict/README.md` 是第三方词典说明，不属于 LitRadar 的项目文档，保持上游内容。`docs/third-party/` 保存随镜像和发行包分发的第三方许可证与固定发行记录，不是阅读文档。
 
 ## 事实来源
 
@@ -76,16 +76,16 @@
 
 | 事实               | 实现来源                                                                                                                           | 文档所有者                                                   |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| 进程与服务生命周期 | `apps/server/internal/runtime/`                                                                                                             | [系统架构](architecture.md)                                  |
+| 进程与服务生命周期 | `apps/server/internal/runtime/`                                                                                                             | [系统架构](architecture/README.md)                                  |
 | CLI 参数和默认值   | `apps/server/internal/cli/arguments.go`、`apps/server/internal/cli/`                                          | [CLI 参考](reference/cli.md)                                 |
 | 全局运行配置       | `apps/server/internal/storage/settings/`                                                                         | [运行配置](reference/configuration.md)                       |
 | REST schema        | `apps/client/frontend/lib/generated/openapi.json`                                                                                                   | OpenAPI；[API 参考](reference/api.md)补充语义                |
 | SQLite schema      | `apps/server/internal/storage/migrations/`、`apps/server/internal/storage/indexschema/`、`apps/server/internal/storage/index/control.go` | [数据库参考](reference/database.md)                          |
 | Provider 内容契约  | `apps/server/internal/domain/sources/`、`apps/server/internal/provider/`                                                    | [索引与 Provider 契约](reference/index-provider-contract.md) |
-| Docker 行为        | `Dockerfile`、`docker-compose.yml`                                                                                                 | [Docker 部署](operations/docker.md)                          |
+| Docker 行为        | `apps/server/Dockerfile`、`docker-compose.yml`                                                                                                 | [Docker 部署](operations/docker.md)                          |
 | 结构化日志         | `apps/server/internal/runtime/observability/`、各组件结构化事件、`apps/client/frontend/lib/client-logger.tsx`                                           | [日志运维](operations/logging.md)                            |
 | 前端结构           | `apps/client/frontend/package.json`、`apps/client/frontend/src/`、`apps/client/frontend/lib/`、`apps/client/frontend/components/`                                                                      | [前端包说明](../apps/client/frontend/README.md)                               |
-| 测试分层与诊断     | `tests/test.mjs`、测试配置、`.github/workflows/`                                                                                   | [测试系统](testing.md)                                       |
+| 测试分层与诊断     | `tests/test.mjs`、测试配置、`.github/workflows/`                                                                                   | [测试系统](guides/testing.md)                                       |
 | UI token 与组件    | `apps/client/frontend/src/globals.css`、`apps/client/frontend/components/ui/`                                                                                        | [前端设计系统](reference/design-system.md)                   |
 
 ## 维护原则

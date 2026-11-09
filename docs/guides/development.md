@@ -1,6 +1,6 @@
 # 开发指南
 
-本文档面向修改 LitRadar 源码的贡献者，说明本地环境、日常开发流程、契约生成和质量检查。系统边界见[架构说明](../architecture.md)，测试层和诊断策略见[测试系统](../testing.md)，完整命令参数见 [CLI 参考](../reference/cli.md)。
+本文档面向修改 LitRadar 源码的贡献者，说明本地环境、日常开发流程、契约生成和质量检查。系统边界见[架构说明](../architecture/README.md)，测试层和诊断策略见[测试系统](testing.md)，完整命令参数见 [CLI 参考](../reference/cli.md)。
 
 ## 工具链
 
@@ -44,8 +44,8 @@ Windows 和 Linux 构建都静态链接 Simple，需要安装 curl、tar、CMake
 直接运行 Go 命令（包括 `go run`、`go test` 和 `pnpm generate:api`）前，先在同一 shell 中准备原生输入并导出其缓存标识：
 
 ```bash
-node scripts/build-simple-tokenizer.mjs --compatibility-oracle
-export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment} from "./scripts/build-simple-tokenizer.mjs"; process.stdout.write(simpleBuildEnvironment().CGO_CFLAGS)')"
+node apps/server/scripts/build-simple-tokenizer.mjs --compatibility-oracle
+export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment} from "./apps/server/scripts/build-simple-tokenizer.mjs"; process.stdout.write(simpleBuildEnvironment().CGO_CFLAGS)')"
 ```
 
 静态库位于 `target/simple-tokenizer/libsimple.a`，运行时不再查找 DLL/SO。`--compatibility-oracle` 只为兼容性测试额外准备旧版分词器。构建输入见 [Simple 静态构建](../../third_party/simple-static/README.md)。
@@ -127,7 +127,7 @@ pnpm dev
 
 默认地址为 `http://localhost:8000`。`vite.config.ts` 将 `/api`、`/mcp`、`/docs`、`/openapi.json` 与 `/health` 代理到内部 Go 8001。生产部署由 Caddy 执行同源路由。
 
-在根目录执行 `pnpm build` 生成 `apps/client/frontend/dist`；`node scripts/build-go.mjs` 仅构建服务端，不读取客户端产物。Web 客户端在 `apps/client` 执行 `task build:server`，输出 `bin/litradar-client-web`；Windows 执行 `task package:windows`，Android 执行 `task package:android`。平台与签名要求见[发布说明](../operations/releases.md)。
+在根目录执行 `pnpm build` 生成 `apps/client/frontend/dist`；`node apps/server/scripts/build-go.mjs` 仅构建服务端，不读取客户端产物。Web 客户端在 `apps/client` 执行 `task build:server`，输出 `bin/litradar-client-web`；Windows 执行 `task package:windows`，Android 执行 `task package:android`。平台与签名要求见[发布说明](../operations/releases.md)。
 
 ### 索引和投递
 
@@ -211,7 +211,7 @@ pnpm generate:api:check
 
 ## Go 检查
 
-日常从仓库根选择最低充分的统一入口；完整职责和聚焦命令见[测试系统](../testing.md)：
+日常从仓库根选择最低充分的统一入口；完整职责和聚焦命令见[测试系统](testing.md)：
 
 ```bash
 node tests/test.mjs fast
@@ -219,7 +219,7 @@ node tests/test.mjs integration
 node tests/test.mjs all
 ```
 
-Backend CI 在 Windows 和 Linux 执行 `node scripts/check-go.mjs`，固定 Go 1.27.3、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。脚本会自行构建静态 Simple 及兼容性 oracle。
+Backend CI 在 Windows 和 Linux 执行 `node apps/server/scripts/check-go.mjs`，固定 Go 1.27.3、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。脚本会自行构建静态 Simple 及兼容性 oracle。
 
 覆盖率只在每周/手动诊断中分别生成 Go 和前端报告，不设阈值：
 
@@ -245,7 +245,7 @@ pnpm test:e2e:full-stack
 pnpm build
 ```
 
-Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Go 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](../testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
+Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、IntersectionObserver 和动效等原生语义。Playwright fixture 项目负责拦截式 UI 冒烟测试；full-stack 项目构建前端，通过真实 Go 监听器、HttpOnly Cookie 和临时 SQLite 验证关键旅程。具体覆盖以[测试系统](testing.md)和当前测试文件为准。CI 最多重试 Playwright 一次以取得 trace/video，但重试后通过仍按不稳定测试判定失败。
 
 ## 部署检查
 
@@ -254,23 +254,23 @@ Vitest/jsdom 使用显式 MSW 场景；Browser Mode 验证焦点、Clipboard、I
 ```bash
 docker compose config --quiet
 docker compose build
-docker build --tag litradar:test .
-node tests/container-smoke.mjs litradar:test
+docker build -f apps/server/Dockerfile --tag litradar:test .
+node apps/server/tests/container-smoke.mjs litradar:test
 ```
 
-根 Dockerfile 仅构建 Go 服务端及原生辅助程序；Web 客户端使用 `apps/client/build/docker/Dockerfile.server`，构建前先在根目录执行 `pnpm build`。Compose 包含 server、client-web、gateway；只有 server 访问数据和密钥。
+服务端 Dockerfile 仅构建 Go 服务端及原生辅助程序；Web 客户端使用 `apps/client/build/docker/Dockerfile.server`，构建前先在根目录执行 `pnpm build`。Compose 包含 server、client-web、gateway；只有 server 访问数据和密钥。
 
 日志或请求路径变更还应使用隔离 fixture 运行 off/on 门禁：
 
 ```powershell
-pwsh ./tests/profiling/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 -RequestCount 300 -Concurrency 4
+pwsh ./apps/server/tests/profiling/profile_logging.ps1 -DataPath ./output/logging-fixture -Rounds 3 -RequestCount 300 -Concurrency 4
 ```
 
 脚本验证 JSON schema、请求事件完整性、零丢失、p95 延迟差，并复用 Docker warm-idle 内存画像。它会迁移和写入传入目录，不能指向正在运行的真实数据。
 
 ## 测试边界
 
-完整放置规则、共享场景限制、功能所有权和报告路径见[测试系统](../testing.md)。
+完整放置规则、共享场景限制、功能所有权和报告路径见[测试系统](testing.md)。
 
 - 后端测试使用临时目录、临时 SQLite、临时密钥和 fixture transport。
 - 不对仓库真实 `data/` 执行备份恢复、密文迁移或写入。
@@ -299,6 +299,6 @@ API 在汇总与文章分页请求之间共享解析后的每周更新清单。�
 go test -count=1 -race -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server/internal/storage/weekly ./apps/server/internal/storage/query
 ```
 
-Go 版本的容器性能画像使用 `node tests/profiling/go-image.mjs`，要求已构建 `litradar:go-test-amd64`。
+Go 版本的容器性能画像使用 `node apps/server/tests/profiling/go-image.mjs`，要求已构建 `litradar:go-test-amd64`。
 
 历史记录中，2026-09-05 的一次本地 Windows release 测试使用 8 个目录、每个目录 10,000 篇文章。10 次未缓存的续页请求总计 267.83 ms，预热缓存后为 198.03 ms；预热后的系列在初始 8 次解析之外没有新增解析。这是单次合成测试结果，仅说明当时的测试表现，不构成线上延迟承诺。目录元数据检查、成员分组和每次查询的临时 SQLite 成员表仍有开销。

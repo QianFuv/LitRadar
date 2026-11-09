@@ -6,7 +6,7 @@
 
 ## 数据归属
 
-后端打包的[征稿种子](../../assets/cfp/seed.json)包含 467 个期刊身份、1,622 条征稿记录，以及 16 条限定范围内未发现征稿的出版方声明。原始语言内容只导入已有的 `data/auth.sqlite` 业务库一次，不进入浏览器 JavaScript。启动不依赖文章索引，也不会覆盖后续在线刷新结果。
+后端打包的[征稿种子](../../apps/server/assets/cfp/seed.json)包含 467 个期刊身份、1,622 条征稿记录，以及 16 条限定范围内未发现征稿的出版方声明。原始语言内容只导入已有的 `data/auth.sqlite` 业务库一次，不进入浏览器 JavaScript。启动不依赖文章索引，也不会覆盖后续在线刷新结果。
 
 认证库 v18 新增 `cfp_journals`、`cfp_journal_aliases`、`cfp_sources`、`cfp_source_journals`、`cfp_notices` 和 `cfp_seed_imports`。征稿记录在期刊内唯一，多刊共用的征稿启事会分别保留。导入标记把版本化身份绑定到精确内容摘要；输入损坏、别名冲突或已有期刊归属冲突都会拒绝整个导入。
 
@@ -20,7 +20,7 @@
 
 导入接受后端种子格式，只追加经验证且不可变的内容，不替换已有期刊的在线快照。相同字节重复导入是幂等的；内置种子使用打包身份，其他输入使用内容摘要派生的运维导入身份。
 
-普通刷新读取实际发现页面，以新增征稿为目标。[来源注册表](../../assets/cfp/sources.json)记录采集单元、观察到的发现 URL、期刊身份、允许的主机和路径，以及适配器能力。当前配置包含 106 个发现适配器：65 个 Springer 专题列表、39 个 ScienceDirect 征稿列表和 2 个 KeAi 征稿栏目；其余 361 个单元保留已审阅快照，明确不支持自动发现。这些数字描述配置覆盖，不能视为所有出版方的一次成功在线抓取。
+普通刷新读取实际发现页面，以新增征稿为目标。[来源注册表](../../apps/server/assets/cfp/sources.json)记录采集单元、观察到的发现 URL、期刊身份、允许的主机和路径，以及适配器能力。当前配置包含 106 个发现适配器：65 个 Springer 专题列表、39 个 ScienceDirect 征稿列表和 2 个 KeAi 征稿栏目；其余 361 个单元保留已审阅快照，明确不支持自动发现。这些数字描述配置覆盖，不能视为所有出版方的一次成功在线抓取。
 
 适配器提取卡片或栏目原文，并跟随必需的已注册详情链接。期刊身份错误、标题冲突、卡片不完整、尚待适配的分页、验证挑战或空响应，都不能证明该刊没有征稿。筛选或预览列表，以及已有独立审阅详情记录的专题，会保留先前验证的记录。只有显式配置的否定声明才能建立对应范围内的空结果，不能据此推断普通投稿也已关闭。复杂的 HTML/PDF 包装链仍可能尚未适配，不能标记为完整征稿。
 
@@ -40,7 +40,7 @@ HTTP 与子进程工作发生在写事务之外。发布时重新验证全部期
 
 后端优先使用直接 HTTP。连接失败、受限状态、验证挑战或无法识别的 JavaScript 页面，可以在来源剩余预算内使用一次 Obscura 后备采集；浏览器 API 不会直接调用 Obscura。辅助程序按显式 CLI 路径、对应后端环境变量、`PATH` 的顺序解析，详见[征稿参数](../reference/cli.md#cfp)。
 
-Docker 镜像包含 `/usr/local/bin/obscura` 和 `/usr/bin/pdftotext`，并设置对应路径变量。Obscura 使用官方 `0.2.4` render + stealth 二进制，并保留配套 `obscura-worker`；固定发行包见 [Dockerfile](../../Dockerfile) 及[发行记录](../third-party/obscura-release.json)。采集使用 `fetch`，不需要 Chromium、Node.js 或运行时浏览器下载。PDF 提取依赖 Ubuntu 26.04 的 `poppler-utils` 和 `poppler-data`，包括中文 PDF 所需的 CJK 字符映射。
+Docker 镜像包含 `/usr/local/bin/obscura` 和 `/usr/bin/pdftotext`，并设置对应路径变量。Obscura 使用官方 `0.2.4` render + stealth 二进制，并保留配套 `obscura-worker`；固定发行包见 [Dockerfile](../../apps/server/Dockerfile) 及[发行记录](../third-party/obscura-release.json)。采集使用 `fetch`，不需要 Chromium、Node.js 或运行时浏览器下载。PDF 提取依赖 Ubuntu 26.04 的 `poppler-utils` 和 `poppler-data`，包括中文 PDF 所需的 CJK 字符映射。
 
 两个辅助程序都以现有非特权服务用户运行，临时采集使用 `/tmp`，不放宽只读根文件系统或 noexec 挂载设置。Obscura 不经过 shell，以有限超时和 `--stealth` 运行，`--eval` 返回包含最终 URL 与原始 HTML 的 JSON。退出码为 0 不等于采集有效；结果仍须通过封装格式、URL、出版方身份、挑战页面和征稿原文边界检查。
 
@@ -72,4 +72,4 @@ Docker 镜像包含 `/usr/local/bin/obscura` 和 `/usr/bin/pdftotext`，并设�
 
 Go 回归测试覆盖并发导入、发布代际保护、辅助程序清理、错误恢复和来源边界；前端场景覆盖来源语言、服务端状态、分页、读取失败和过期选择响应。
 
-浏览器场景检查导航轨与手机底栏、固定的期刊目录控件、独立滚动的期刊分组、阅读台与移动端侧滑详情面板。受标记保护的全栈场景使用本地 HTTP 来源，验证刷新可以改变已构建页面中的内容，无需重新构建前端。这些是测试职责说明，不代表本次编辑执行了测试或在线刷新；测试位置与执行方法见[测试系统](../testing.md)。
+浏览器场景检查导航轨与手机底栏、固定的期刊目录控件、独立滚动的期刊分组、阅读台与移动端侧滑详情面板。受标记保护的全栈场景使用本地 HTTP 来源，验证刷新可以改变已构建页面中的内容，无需重新构建前端。这些是测试职责说明，不代表本次编辑执行了测试或在线刷新；测试位置与执行方法见[测试系统](../guides/testing.md)。
