@@ -45,7 +45,7 @@ Server packaging is independent of UI builds. Client release jobs install pinned
 | Windows | `task package:windows` | `bin/litradar-client-windows-amd64-setup.exe` |
 | Android | `task package:android` | `bin/litradar-client-android-arm64.apk` |
 
-Windows runs on a Windows x64 runner with NSIS; the installer is unsigned. Android uses an Ubuntu runner, Java 21 and sdkmanager with Android 35/build-tools 35.0.0 and NDK r28c (`28.2.13676358`). Quality jobs exercise all three Task targets; the Web host check belongs only to the client workflow. Android quality builds may use development signing.
+Windows runs on a Windows x64 runner with NSIS; the installer is unsigned. Android uses an Ubuntu runner, Java 21 and sdkmanager with Android 36/build-tools 36.0.0 and NDK r28c (`28.2.13676358`). Quality jobs exercise all three Task targets; the Web host check belongs only to the client workflow. Android quality builds may use development signing.
 
 ### Android release signing
 

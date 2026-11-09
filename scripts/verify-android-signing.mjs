@@ -38,7 +38,7 @@ if (
     { timeout: 60000 },
   );
   const output = execFileSync(
-    path.join(process.env.ANDROID_HOME, "build-tools/35.0.0/apksigner"),
+    path.join(process.env.ANDROID_HOME, "build-tools/36.0.0/apksigner"),
     [
       "verify",
       "--verbose",
