@@ -3480,7 +3480,10 @@ async function cfpFullTextScrollTest({ page }: { page: Page }): Promise<void> {
     await scopeRegion.evaluate((element) => element.scrollTo(0, 0));
     await requirementsRegion.evaluate((element) => element.scrollTo(0, 0));
     await outerScroller.evaluate((element) => element.scrollTo(0, 0));
-    await page.screenshot({ path: `../../../output/cfp-layout/full-text-${width}.png`, fullPage: true });
+    await page.screenshot({
+      path: `../../../output/cfp-layout/full-text-${width}.png`,
+      fullPage: true,
+    });
   }
 }
 
