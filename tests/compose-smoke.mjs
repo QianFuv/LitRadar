@@ -10,6 +10,11 @@ const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "litradar-compose-"));
 const PROJECT = `litradar-smoke-${randomBytes(6).toString("hex")}`;
 const CONFIG = path.join(ROOT, "compose.json");
 const PASSWORD = randomBytes(24).toString("base64url") + "Aa1!";
+/**
+ * Compose bind-mounts file secrets with host ownership, so the synthetic key must be readable
+ * by the image's non-root account (10001) without a host chown.
+ */
+const CONTAINER_READABLE_KEY_MODE = 0o644;
 
 /** Run a bounded Docker command, keeping the synthetic password on stdin. */
 function docker(args, input) {
@@ -64,7 +69,9 @@ try {
   delete configuration.networks.backend.ipam;
   for (const network of Object.values(configuration.networks))
     delete network.name;
-  fs.writeFileSync(path.join(ROOT, "key"), randomBytes(32), { mode: 0o600 });
+  fs.writeFileSync(path.join(ROOT, "key"), randomBytes(32), {
+    mode: CONTAINER_READABLE_KEY_MODE,
+  });
   configuration.secrets.litradar_key.file = path.join(ROOT, "key");
   fs.copyFileSync("Caddyfile", path.join(ROOT, "Caddyfile"));
   configuration.services.gateway.volumes = [
