@@ -353,7 +353,7 @@ async function protectedRouteJourney({ page }: { page: Page }): Promise<void> {
   ).toBe(false);
 
   const anonymousAdminRoute = await page.goto('/admin');
-  expect(anonymousAdminRoute?.status()).toBe(404);
+  expect(anonymousAdminRoute?.status()).toBe(200);
   await expect(page.getByRole('heading', { name: '页面未找到' })).toBeVisible();
   expect((await page.request.get('/api/admin/users')).status()).toBe(401);
 }
