@@ -13,7 +13,7 @@ LitRadar 是面向学术期刊的自托管检索与订阅平台。它从 Crossre
 
 ## 运行组成
 
-应用入口是唯一的 `litradar` 可执行文件。`litradar serve` 同时承载静态 Web、REST、Swagger/OpenAPI、MCP 和持久化调度；任务需要隔离时，由它启动短生命周期的同名子命令。Next.js 前端和 CSP 清单在发布构建时编入 Go 二进制，部署时不需要外部 `web/` 或 Node.js 服务。Simple 分词器同样静态链接，索引和检索不需要 Simple DLL/SO；Obscura、Poppler 和期刊元数据目录仍是独立的部署输入。模块边界和数据流见[系统架构](docs/architecture.md)。
+Go 服务端入口为 `apps/server`，`litradar serve` 提供 REST、Swagger/OpenAPI、MCP 和持久化调度。Wails v3 客户端在独立 Go 模块 `apps/client`，共享唯一 Vite 前端 `apps/client/frontend`。Web 部署通过 Caddy 将同一 Origin 的接口请求转发给服务端、页面转发给 Linux amd64 Wails Server Build；服务端根路径返回 404。只有服务端访问数据与部署密钥。Simple 分词器静态链接进服务端，Obscura、Poppler 和期刊元数据仍随服务端部署。见[系统架构](docs/architecture.md)。
 
 ## Docker 快速开始
 
@@ -48,7 +48,7 @@ docker compose up -d --remove-orphans
 docker compose ps
 ```
 
-Compose 运行一个 `litradar` 服务，本机示例使用 `ghcr.io/qianfuv/litradar:latest`。从当前源码构建时，改用 `docker compose up -d --build --remove-orphans`。镜像自带官方期刊目录，首次运行会准备 `data/meta/`，后续升级保留自定义文件；完整规则见 [Meta 与持久卷](docs/operations/docker.md#meta-bundle-与持久卷)。
+Compose 运行 `server`、`client-web`、`gateway` 三个服务，只有网关向 loopback 发布 8000 端口。服务端镜像为 `ghcr.io/qianfuv/litradar:latest`，客户端为 `ghcr.io/qianfuv/litradar-client-web:latest`。从源码构建时先在根目录执行 `pnpm install --frozen-lockfile && pnpm build`，再执行 `docker compose up -d --build`。镜像自带官方期刊目录，首次运行会准备 `data/meta/`，后续升级保留自定义文件；完整规则见 [Meta 与持久卷](docs/operations/docker.md#meta-bundle-与持久卷)。
 
 ### 3. 初始化首个管理员
 
@@ -58,7 +58,7 @@ Compose 运行一个 `litradar` 服务，本机示例使用 `ghcr.io/qianfuv/lit
 IFS= read -r -s -p 'Admin password: ' ADMIN_PASSWORD
 printf '\n'
 printf '%s\n' "$ADMIN_PASSWORD" |
-  docker compose run --rm -T litradar admin bootstrap \
+  docker compose run --rm -T server admin bootstrap \
     --username admin \
     --password-stdin
 unset ADMIN_PASSWORD
@@ -71,7 +71,7 @@ unset ADMIN_PASSWORD
 CNKI 元数据索引不需要 Scholarly API key，可先运行：
 
 ```bash
-docker compose run --rm litradar index \
+docker compose run --rm server index \
   --secret-key-file /run/secrets/litradar_key \
   --file chinese_journals.csv \
   --update
@@ -94,11 +94,19 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 本地开发
 
-项目使用 Go 1.27.3（启用 CGO）、Node.js 26.11.1 和 pnpm 12.16.1；构建静态 Simple 还需要与 Go 目标匹配的 C/C++14 编译器、CMake、curl 和 tar，Windows 另需 MinGW 和 Ninja。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](app/README.md)。
+项目使用 Go 1.27.3（启用 CGO）、Node.js 26.11.1 和 pnpm 12.16.1；构建静态 Simple 还需要与 Go 目标匹配的 C/C++14 编译器、CMake、curl 和 tar，Windows 另需 MinGW 和 Ninja。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](apps/client/frontend/README.md)。
+
+开发时在根目录运行 `pnpm dev`，由 `scripts/dev.mjs` 一起启动 Vite（8000）和 Go 服务端（8001）。根目录维护唯一 `pnpm-lock.yaml`。
+
+## 客户端
+
+Web、Windows x64 和 Android arm64-v8a 共用同一 Vite 前端。首次打开原生客户端先填写服务端 HTTPS URL，再用账号密码登录；`/api/auth/native/login` 签发名称为 `device:` 前缀、有效期 90 天的个人令牌。可在访问令牌列表撤销设备，原生退出会撤销当前令牌。仅 OIDC 用户先在浏览器获取访问令牌并粘贴；暂不支持原生 OIDC deep link。见[客户端指南](docs/guides/clients.md)。
+
+发布提供 Web Linux amd64 二进制及 OCI 镜像、未签名的 Windows x64 安装器，以及配置发布签名后提供的 Android arm64 APK。Wails v3 官方将 [Android 支持标为实验性](https://wails.io/blog/wails-v3-released)。不发布 iOS、macOS 或 Linux 桌面客户端。
 
 ## 版本发布
 
-普通推送只运行质量检查；发布时修改根目录 `VERSION`（例如 `0.1.0` → `0.1.1`），提交并推送到 `main`。检查通过后自动发布 GitHub Release 二进制包及 `ghcr.io/qianfuv/litradar:v0.1.1`、`latest` 镜像，无需手动打标签。二进制包支持 Linux amd64 和 Windows x64，内嵌 Web 资源并附带原生辅助程序；容器镜像只提供 `linux/amd64`。Actions 的 `CI` 负责检查，也可手动运行并填写当前 `VERSION` 重试发布；`Release` 是由 `CI` 调用的可复用发布流程。版本规则、安装依赖和失败重试见[版本发布说明](docs/operations/releases.md)。
+普通推送只运行质量检查；发布时修改根目录 `VERSION`（例如 `0.1.0` → `0.1.1`），提交并推送到 `main`。检查通过后自动发布 GitHub Release 二进制包及 `ghcr.io/qianfuv/litradar:v0.1.1`、`latest` 镜像，无需手动打标签。服务端二进制包支持 Linux amd64 和 Windows x64，仅附带服务端与原生辅助程序；容器镜像只提供 `linux/amd64`。Actions 的 `CI` 负责检查，也可手动运行并填写当前 `VERSION` 重试发布；`Release` 是由 `CI` 调用的可复用发布流程。版本规则、安装依赖和失败重试见[版本发布说明](docs/operations/releases.md)。
 
 ## 文档
 

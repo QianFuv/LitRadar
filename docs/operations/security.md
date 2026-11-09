@@ -178,7 +178,7 @@ unset ADMIN_PASSWORD
 
 默认 `secure_cookies=false`，适合 loopback HTTP。通过 HTTPS 对外访问前应把数据库设置改为 `true`。直接运行二进制时可用 `litradar serve --require-secure-cookies` 作为启动门；不满足时应用在绑定端口前失败。默认 Compose 不添加该参数，因此开放入口前要核对数据库设置。
 
-部署后的 Web 静态资源和后端命名空间由同一个 Go 监听器直接提供，因此浏览器默认同源调用 API，不经过 Next.js 服务或 rewrite。本地开发由 Next.js 8000 端口代理内部 Go 8001；浏览器跨源直连时：
+部署的浏览器通过 Caddy 同源访问 Wails Web host 与 Go 服务端；开发由 Vite 8000 代理到 Go 8001。浏览器跨源直连时：
 
 - 在 `cors_allowed_origins` 列出准确 Origin
 - credentialed CORS 拒绝 `*` wildcard，避免把任意网站纳入携带 Cookie 的信任边界
@@ -198,31 +198,13 @@ MCP 的 `Host` 防护与浏览器 CORS 分开：
 
 ### 响应安全策略
 
-前端发布构建在 `next build` 后生成 `app/out/csp-hashes.json`，记录每个导出 HTML 的完整 SHA-256 和所有内联脚本的 CSP SHA-256。`scripts/stage-web-assets.mjs` 校验清单与导出一致、拒绝符号链接并生成 gzip 兄弟文件后，把导出复制到 `internal/webassets/export`，由 `litradar_web` 构建 tag 嵌入二进制。服务启动时会重新读取全部内嵌 HTML，并要求文件集合、文件摘要、脚本顺序和全局哈希集合与清单完全一致；清单缺失、损坏、过大或不一致都会在绑定端口前失败。未嵌入前端的构建在非 `--development` 模式下拒绝启动。部署不存在外部 `web/` 目录，网页随二进制整体替换。
+Go 服务端只提供 API、MCP、Swagger/OpenAPI 和健康检查，页面返回 404。Web host 独立嵌入 Vite `dist`；两者均设置 `script-src 'self'`、`frame-ancestors 'none'`、`nosniff`、`Referrer-Policy: same-origin`、权限限制和 `X-Frame-Options: DENY`。Vite 使用外部脚本，不生成旧的 HTML/CSP 哈希清单。
 
-所有静态与后端响应统一包含：
+服务端使用 `--require-secure-cookies` 时要求 `secure_cookies=true`，并发送一年 HSTS。Web host 通过 `LITRADAR_CLIENT_HSTS_MAX_AGE` 单独启用 HSTS；只在外部入口始终为 HTTPS 后配置。认证响应始终 `Cache-Control: no-store`、`Pragma: no-cache`。客户端哈希资源可长期 immutable 缓存，SPA HTML 重新验证；UI 不包含数据或部署密钥。
 
-- `Content-Security-Policy`：脚本只允许同源外部文件和已复算的精确 SHA-256，不包含脚本 `unsafe-inline`；样式暂时保留 `style-src 'self' 'unsafe-inline'` 以兼容当前 Next.js 静态导出。
-- `X-Content-Type-Options: nosniff`
-- `Referrer-Policy: same-origin`
-- `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()`
-- `X-Frame-Options: DENY`，并同时使用 CSP `frame-ancestors 'none'`。
+根 `Caddyfile` 拒绝 `/wails` 和 `/wails/*`：Wails v3 Server Build 的 runtime 端点未经认证，Web host 不注册服务，不能把 runtime 调用暴露给匿名网络请求。网关保留 Authorization、Cookie、Origin 和 Host，覆盖 `X-Forwarded-For` 为直连地址并移除 `Forwarded`，避免客户端伪造限流来源；MCP 关闭代理缓冲。准确设置 `trusted_proxy_cidrs` 为 backend 网络，`mcp_allowed_hosts` 为公开域名。Caddy 前若再加代理，必须明确设计可信链；默认配置只信任直连客户端。
 
-`Strict-Transport-Security: max-age=31536000` 只在使用 `--require-secure-cookies` 的 hardened 模式下由应用发送。该模式同时要求数据库中的 `secure_cookies=true`；仅在确认外部入口始终使用 HTTPS 后启用。TLS 反向代理不得删除或用更宽松策略覆盖这些 Header。
-
-所有 `/api/auth` 和 `/api/auth/*` 响应无论状态或是否携带凭据，都强制使用 `Cache-Control: no-store` 与 `Pragma: no-cache`。这包括成功、输入错误、认证失败、限流和内部失败，避免浏览器或中间缓存保存认证状态。
-
-### 静态 Web 缓存
-
-导出的 Web 文件是公开构建产物，不得包含部署密钥或用户秘密。Go 按以下边界设置缓存：
-
-- 成功的 `/_next/static/*` 哈希资源使用 `public, max-age=31536000, immutable`，即使请求携带会话 Cookie 也不会变成用户专属内容。
-- 页面、导航 payload 和导出的 404 使用 `no-cache`，以便浏览器重新验证版本。
-- 受保护 API、携带 Bearer/Cookie 的非静态响应和 `401` 继续使用 `private, no-store`。
-- 所有认证路径使用更严格且状态无关的 `no-store` 与 `Pragma: no-cache`。
-- 支持 gzip 的客户端读取二进制内嵌的预压缩兄弟文件；不支持的客户端读取原文件。
-
-`/api`、`/mcp`、`/docs` 和 `/openapi.json` 始终由后端路由优先处理，未知路径不会借静态 fallback 读取项目数据或密钥。
+原生登录使用 `/api/auth/native/login` 签发独立 `device:` 个人令牌，有效期 90 天，不覆盖浏览器会话；令牌列表可撤销设备，原生退出撤销当前令牌。OIDC-only 用户粘贴浏览器创建的访问令牌，原生 OIDC deep link 尚不支持。见[客户端指南](../guides/clients.md)。
 
 ## 服务器出站请求
 
@@ -243,7 +225,7 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 ## 构建与发布验证
 
-发布前运行 Linux 与 Windows 后端检查和前端检查；`Release` 工作流对 Linux amd64 镜像、Linux 归档和 Windows x64 归档分别执行冒烟测试，全部通过后只发布 amd64 镜像和两个平台归档。仓库不再提供漏洞、密钥或 CodeQL 扫描工作流和本地扫描入口。GitHub 仓库级保护设置独立于这些文件管理。
+发布前运行 Linux 与 Windows 后端检查和前端检查；`Release` 工作流对 Linux amd64 镜像、Linux 归档和 Windows x64 归档分别执行冒烟测试，全部通过后发布服务端归档/镜像，以及独立客户端产物；Android 发布必须具备签名密钥。仓库不再提供漏洞、密钥或 CodeQL 扫描工作流和本地扫描入口。GitHub 仓库级保护设置独立于这些文件管理。
 
 构建继续使用固定依赖、基础镜像摘要和发行包校验和。Obscura 使用官方 v0.2.4 render + stealth 二进制；下载校验用于可复现构建，功能、渲染和容器隔离仍由冒烟测试验证。Dependabot 继续提出常规依赖更新。
 
@@ -253,19 +235,19 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 - `127.0.0.1:8000:8000`
 
-该 Go 入口同时提供 Web、REST、Swagger/OpenAPI 和 MCP。容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要直接把宿主机端口改为所有网卡。
+该 Caddy 入口统一代理 UI、REST、Swagger/OpenAPI 和 MCP。容器内监听 `0.0.0.0` 只用于 Compose 网络通信。远程访问应经 TLS 反向代理，并同时配置 Secure Cookie、准确 CORS/MCP 白名单和共享限流。不要直接把宿主机端口改为所有网卡。
 
 ## 容器边界
 
-唯一的 `litradar` 常驻容器使用无后缀镜像：
+`server` 使用原服务端镜像，`client-web` 和 `gateway` 独立运行：
 
 - 使用 UID/GID `10001:10001`；应用入口为 `/usr/local/bin/litradar`，并打包 Obscura 和 `pdftotext`；Simple 分词器静态链接进应用，没有 Node.js 运行时
 - 根文件系统只读
 - `/tmp` 使用 `noexec,nosuid,nodev` tmpfs
-- 只允许 `/app/data` 持久写入；网页资源嵌入在二进制中
+- 只允许 `/app/data` 持久写入；客户端不挂载业务数据或部署密钥
 - 丢弃全部 Linux capabilities
 - 启用 `no-new-privileges:true`
-- 镜像定义 `/health/ready` Docker health check；发布 smoke 另行探测根 Web、OpenAPI 和 auth cache/Header 边界
+- 镜像定义 `/health/ready` Docker health check；发布 smoke 另行探测根路径 404、文档、OpenAPI 和 auth cache/Header 边界
 - Compose 只向宿主机 loopback 发布端口；通过 HTTPS 对外访问前应把数据库 `secure_cookies` 设为 `true`
 
 不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
@@ -326,3 +308,5 @@ litradar admin secrets verify \
 路由层的管理员检查和“不能撤销/删除自己”只提供提前反馈。所有管理员写操作都把 actor ID 传入 storage，并在各自的 `BEGIN IMMEDIATE` 获得写锁后重新确认 actor 仍存在且仍为管理员；只有随后同一事务中的目标写入、凭据/令牌撤销和必需审计能够提交。输入校验和密码 KDF 可以在事务外完成，但撤权若先提交，已经通过入口检查的在途密码重置、邀请码、计划任务、运行设置或公告写入仍固定返回 `403`，不能使用旧授权快照提交。
 
 管理员授权或删除用户还会在同一事务中读取 target 和当前管理员计数。撤权或删除的提交结果必须至少保留一个管理员；并发交叉撤权/删除中只有一个事务可以成功。target 不存在映射为 `404`，最后管理员不变量冲突映射为 `409`，三者不会降级为通用 `500`。
+
+网关保留 `NET_BIND_SERVICE` capability，因为官方 Caddy 二进制带该文件 capability；移除其 bounding-set 权限会在执行时返回 EPERM，即使监听 8000。其他 capabilities 仍全部丢弃。根文件系统只读，自动 HTTPS 与配置持久化在 loopback 示例中关闭。

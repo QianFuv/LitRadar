@@ -94,11 +94,11 @@ CLI `--retries` 的范围是 `1..=10`、默认值是 3（首次请求外最多�
 ### PushPlus
 
 ```bash
-go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar notify \
+go run -tags sqlite_fts5,sqlite_dbstat ./apps/server notify \
   --secret-key-file secrets/litradar.key \
   --dry-run
 
-go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar notify \
+go run -tags sqlite_fts5,sqlite_dbstat ./apps/server notify \
   --secret-key-file secrets/litradar.key \
   --db utd24.sqlite \
   --changes-file data/push_state/utd24.changes.json \
@@ -110,11 +110,11 @@ go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar notify \
 ### 追踪文件夹
 
 ```bash
-go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar push \
+go run -tags sqlite_fts5,sqlite_dbstat ./apps/server push \
   --secret-key-file secrets/litradar.key \
   --dry-run
 
-go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar push \
+go run -tags sqlite_fts5,sqlite_dbstat ./apps/server push \
   --secret-key-file secrets/litradar.key \
   --db utd24.sqlite \
   --changes-file data/push_state/utd24.changes.json \

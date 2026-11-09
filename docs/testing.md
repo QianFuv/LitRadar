@@ -8,9 +8,9 @@
 | ----------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------- |
 | 1. 单元                 | Go 包内 `*_test.go`；Vitest 的纯 helper 测试                                                               | 解析、规范化、状态机、序列化、错误映射和纯业务规则                                               | HTTP、真实浏览器或进程装配        |
 | 2. 契约与适配器         | Go 集成测试、临时 SQLite、net/http 与 httptest、MCP、loopback transport、共享 JSON 场景                    | 路由/存储/迁移/Provider/CLI 边界，以及真实响应与 OpenAPI 场景的一致性                            | 页面交互和浏览器语义              |
-| 3. 前端功能组件         | `app/tests/*.test.tsx` 的 Vitest/jsdom/MSW；仅必要时使用 `app/tests/browser-components/*.browser.test.tsx` | 页面状态、mutation、缓存、路由、错误呈现；焦点、Clipboard、IntersectionObserver 等浏览器原生语义 | 完整后端或部署拓扑                |
-| 4. 浏览器 fixture smoke | `app/tests/e2e/local-fixtures.spec.tsx` 的 Playwright Chromium                                             | 少量跨页面 UI、可访问导航、主题和响应式关键流；API 由显式页面 fixture 提供                       | 后端、Cookie、SQLite 持久化真实性 |
-| 5. 真实系统边界         | `app/tests/e2e/full-stack/`、`cmd/litradar/`、`tests/container-smoke.mjs`                                  | 前端导出 → 实际 Go listener → 临时 SQLite，以及真实进程、信号、镜像安全和清理                    | 组合式边界条件枚举                |
+| 3. 前端功能组件         | `apps/client/frontend/tests/*.test.tsx` 的 Vitest/jsdom/MSW；仅必要时使用 `apps/client/frontend/tests/browser-components/*.browser.test.tsx` | 页面状态、mutation、缓存、路由、错误呈现；焦点、Clipboard、IntersectionObserver 等浏览器原生语义 | 完整后端或部署拓扑                |
+| 4. 浏览器 fixture smoke | `apps/client/frontend/tests/e2e/local-fixtures.spec.tsx` 的 Playwright Chromium                                             | 少量跨页面 UI、可访问导航、主题和响应式关键流；API 由显式页面 fixture 提供                       | 后端、Cookie、SQLite 持久化真实性 |
+| 5. 真实系统边界         | `apps/client/frontend/tests/e2e/full-stack/`、`apps/server/`、`tests/container-smoke.mjs`                                  | Vite 前端 → 实际 Go listener → 临时 SQLite，以及真实进程、信号、镜像安全和清理                    | 组合式边界条件枚举                |
 
 一个改动可以由多层共同拥有，但每条业务规则必须有一个最低充分所有者。高层 smoke 只证明关键装配，不复制低层的全部输入组合。
 
@@ -18,7 +18,7 @@
 
 - Go 规则与适配器测试放在所属包旁的 `*_test.go`；真实 `litradar` 进程边界放在 `cmd/litradar/main_test.go`。
 - REST 路由场景放在 `internal/api/`；MCP 协议和工具测试放在 `internal/mcp/` 与 `internal/platform/mcpcompat/`。
-- 普通前端行为放在 `app/tests/*.test.tsx`。只有 jsdom 无法忠实提供的浏览器 API 或事件链，才进入 `browser-components/`。
+- 普通前端行为放在 `apps/client/frontend/tests/*.test.tsx`。只有 jsdom 无法忠实提供的浏览器 API 或事件链，才进入 `browser-components/`。
 - fixture Playwright 放在 `local-fixtures.spec.tsx`；真实后端 Playwright 只放在 `e2e/full-stack/`，且禁止 `page.route`、`context.route`、`route.fulfill`、`route.abort` 等拦截。
 - 跨栈稳定 JSON 放在 `tests/data/scenarios/api/`；运行时生成物、随机凭据和数据库快照不得签入该目录。
 - 不为视觉整齐批量移动测试。审阅现有用例时使用以下处置：
@@ -36,20 +36,20 @@ Go 的 `internal/openapi/` 声明与真实路由绑定共同约束 HTTP schema�
 
 ```text
 Go OpenAPI definitions + operations + route bindings
-  -> app/lib/generated/openapi.json
-  -> app/lib/generated/api-schema.tsx
+  -> apps/client/frontend/lib/generated/openapi.json
+  -> apps/client/frontend/lib/generated/api-schema.tsx
   -> typed scenario imports and MSW handlers
 ```
 
 当前共享语料仅包含登录、文章页、每周更新、掩码通知设置和标准错误五类稳定响应。规则如下：
 
 1. Go 路由测试构造真实临时存储，通过原版迁移观测语料和响应断言验证兼容性；前端消费这里的共享 JSON。当前 Go 测试不直接加载这些前端共享场景，不能将两条证据链混为一谈。
-2. TypeScript 通过生成的 `components['schemas']` 类型约束 JSON；认证、秘密设置等敏感响应还必须经过 `app/lib/api-contract.tsx` 的现有运行时解析器。
+2. TypeScript 通过生成的 `components['schemas']` 类型约束 JSON；认证、秘密设置等敏感响应还必须经过 `apps/client/frontend/lib/api-contract.tsx` 的现有运行时解析器。
 3. 共享 JSON 不得包含 token、Cookie、密码、凭据、绝对路径、随机 ID 或运行时生成时间，也不得成为第二套 schema。
-4. 修改路由、DTO 或 OpenAPI 声明后，在 `app/` 运行 `pnpm generate:api:check`；不要手工编辑 `lib/generated/`。
+4. 修改路由、DTO 或 OpenAPI 声明后，在 `apps/client/frontend/` 运行 `pnpm generate:api:check`；不要手工编辑 `lib/generated/`。
 5. 不增加跨 Go/TypeScript 的共享 helper、Pact 或另一套 schema 生成器来替代该链路。
 
-MSW 的全局 server 不安装登录态或业务默认值，并以 `onUnhandledRequest: 'error'` 拒绝未声明请求。测试从 `app/tests/mocks/handlers/` 显式安装 auth、discovery/index、favorites、tracking 或 admin 场景 bundle；单个失败场景只覆盖必要 handler，测试结束后由公共 setup 重置。这样每个请求依赖在套件中可见，不会由其他测试留下的状态暗中满足。
+MSW 的全局 server 不安装登录态或业务默认值，并以 `onUnhandledRequest: 'error'` 拒绝未声明请求。测试从 `apps/client/frontend/tests/mocks/handlers/` 显式安装 auth、discovery/index、favorites、tracking 或 admin 场景 bundle；单个失败场景只覆盖必要 handler，测试结束后由公共 setup 重置。这样每个请求依赖在套件中可见，不会由其他测试留下的状态暗中满足。
 
 ## 浏览器边界
 
@@ -64,7 +64,7 @@ Vitest Browser Mode 覆盖 jsdom 无法忠实验证的行为：
 
 Playwright 有两个独立角色：
 
-- `fixture-chromium` 运行快速 UI 冒烟测试；它启动隔离 Next.js dev server，并显式拦截 API。
+- `fixture-chromium` 运行快速 UI 冒烟测试；它启动隔离 Vite dev server，并显式拦截 API。
 - `full-stack-chromium` 串行运行真实后端关键旅程；它先构建静态前端，再启动实际 `litradar serve` 和临时 SQLite/index，验证 HttpOnly 会话、搜索/收藏持久化、管理员 mutation、权限、退出和匿名拒绝。
 
 全栈 fixture 由 marker 保护，只能写入 OS 临时根；不提供线上测试端点，不读取真实 `data/`、`secrets/` 或外部凭据，也不访问 Crossref、OpenAlex、Semantic Scholar、ZJLIB、CNKI、AI 或 PushPlus。
@@ -84,7 +84,7 @@ Playwright 有两个独立角色：
 | 调度与 worker          | worker scheduler/delivery/AI/PushPlus fixture 测试；runtime 协调测试                                             | 租约、时区、超时、取消、去重、持久状态和安全日志                               | scheduler run-once 启动实际类型化子命令并等待结果                         |
 | 容器运行时             | Dockerfile/Compose 静态检查                                                                                      | `tests/container-smoke.mjs` 的 HTTP 与 inspect 断言                            | CI 对将要推送的同一镜像 ID 执行硬化启动和完整清理                         |
 
-征稿领域的最低充分测试分别位于[领域规则](../internal/domain/cfp/characterization_test.go)、[来源解析](../internal/cfp/characterization_test.go)、[持久化](../internal/storage/cfp/characterization_test.go)、[API](../internal/api/cfp_test.go)和[前端状态](../app/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
+征稿领域的最低充分测试分别位于[领域规则](../internal/domain/cfp/characterization_test.go)、[来源解析](../internal/cfp/characterization_test.go)、[持久化](../internal/storage/cfp/characterization_test.go)、[API](../internal/api/cfp_test.go)和[前端状态](../apps/client/frontend/tests/cfp-tracking.test.tsx)。原文与日期状态由后端测试证明，前端验证来源语言展示、分页、失败和过期选择响应；跨栈刷新由真实后端场景验证。测试数量以当前套件和运行报告为准，不在文档中重复维护。
 
 ## 统一命令
 
@@ -110,7 +110,7 @@ node scripts/check-go.mjs
 
 `all` 不包含 race 或替换依赖包测试；后两者由 `check-go.mjs` 提供。`--ci` 设置 CI 环境与前端 JUnit 路径，不生成 Go JUnit。安装浏览器依赖使用 `pnpm --dir app exec playwright install --with-deps chromium`。
 
-聚焦 Go 检查使用 `go test -count=1 -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./相关包`；涉及并发时增加 `-race`。前端可在 `app/` 单独运行 `pnpm generate:api:check`、`pnpm test:unit`、`pnpm test:browser-components`、`pnpm test:e2e:fixtures` 或 `pnpm test:e2e:full-stack`。
+聚焦 Go 检查使用 `go test -count=1 -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./相关包`；涉及并发时增加 `-race`。前端可在 `apps/client/frontend/` 单独运行 `pnpm generate:api:check`、`pnpm test:unit`、`pnpm test:browser-components`、`pnpm test:e2e:fixtures` 或 `pnpm test:e2e:full-stack`。
 
 容器边界必须测试将要发布的确切本地镜像：
 
@@ -140,15 +140,15 @@ docker compose \
 | 报告                                               | 路径                                                                                                                                               |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Go 发布检查                                        | `test-results/go/results.json`、各项 `.log` 与 `native-inputs.json`                                                                                |
-| Vitest jsdom JUnit                                 | `app/test-results/vitest/junit.xml`                                                                                                                |
-| Vitest Browser Mode JUnit                          | `app/test-results/vitest-browser/junit.xml`                                                                                                        |
-| Browser Mode 截图                                  | `app/test-results/browser-components/screenshots/`                                                                                                 |
-| fixture Playwright JUnit/trace/screenshot/video    | `app/test-results/playwright-fixtures/`                                                                                                            |
-| fixture Playwright HTML                            | `app/playwright-report/fixtures/`                                                                                                                  |
-| full-stack Playwright JUnit/trace/screenshot/video | `app/test-results/playwright-full-stack/`                                                                                                          |
-| full-stack Playwright HTML                         | `app/playwright-report/full-stack/`                                                                                                                |
+| Vitest jsdom JUnit                                 | `apps/client/frontend/test-results/vitest/junit.xml`                                                                                                                |
+| Vitest Browser Mode JUnit                          | `apps/client/frontend/test-results/vitest-browser/junit.xml`                                                                                                        |
+| Browser Mode 截图                                  | `apps/client/frontend/test-results/browser-components/screenshots/`                                                                                                 |
+| fixture Playwright JUnit/trace/screenshot/video    | `apps/client/frontend/test-results/playwright-fixtures/`                                                                                                            |
+| fixture Playwright HTML                            | `apps/client/frontend/playwright-report/fixtures/`                                                                                                                  |
+| full-stack Playwright JUnit/trace/screenshot/video | `apps/client/frontend/test-results/playwright-full-stack/`                                                                                                          |
+| full-stack Playwright HTML                         | `apps/client/frontend/playwright-report/full-stack/`                                                                                                                |
 | Go coverage                                        | `target/go-coverage/coverage.out`、`target/go-coverage/index.html`                                                                                 |
-| Frontend coverage                                  | `app/coverage/`、`app/coverage/lcov.info`                                                                                                          |
+| Frontend coverage                                  | `apps/client/frontend/coverage/`、`apps/client/frontend/coverage/lcov.info`                                                                                                          |
 | Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`                                                                               |
 | Release                                            | workflow artifact `linux-release`、`windows-release`、`release-publication`，失败诊断为 `linux-release-diagnostics`、`windows-release-diagnostics` |
 

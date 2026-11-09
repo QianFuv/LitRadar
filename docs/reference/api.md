@@ -4,7 +4,7 @@
 
 - Swagger UI：`/docs/`
 - OpenAPI JSON：`/openapi.json`
-- 前端生成基线：`app/lib/generated/openapi.json`
+- 前端生成基线：`apps/client/frontend/lib/generated/openapi.json`
 
 `internal/openapi` 的契约构造代码是 REST schema 的实现来源。修改 REST 接口后，应重新生成前端基线；不要在本文重复维护完整 schema。
 
@@ -310,7 +310,7 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 
 ## 缓存与 CORS
 
-所有 HTML、REST、健康检查、Swagger/OpenAPI 和 MCP 响应都带有同一基线安全 Header：严格 CSP、`nosniff`、`Referrer-Policy: same-origin`、禁用敏感浏览器能力以及双重 frame denial。CSP 的 `script-src` 只包含 `'self'` 与启动时从内嵌 HTML 复算并核对构建清单的 SHA-256，不允许任意内联脚本；当前静态样式保留最小的 `style-src 'self' 'unsafe-inline'`。hardened HTTPS 启动模式额外返回一年 HSTS，普通 loopback HTTP 不返回 HSTS。
+所有 HTML、REST、健康检查、Swagger/OpenAPI 和 MCP 响应都带有同一基线安全 Header：严格 CSP、`nosniff`、`Referrer-Policy: same-origin`、禁用敏感浏览器能力以及双重 frame denial。CSP 的 `script-src` 为同源外部脚本；Vite UI 由独立 Wails Web host 提供，不依赖 HTML 内联脚本哈希。hardened HTTPS 服务端发送一年 HSTS。
 
 `/api/articles*`、`/api/meta*` 及其他受保护路由需要普通用户或管理员身份，不能作为匿名共享缓存内容。请求带有 `Authorization` 或 `litradar_session` 时，以及任何返回 `401 Unauthorized` 的响应，后端都会设置：
 
@@ -327,9 +327,9 @@ Pragma: no-cache
 
 前文列出的免认证端点在成功响应时保持现有缓存头行为；本策略不会为它们新增共享缓存 TTL。
 
-部署后的 Web 由编入 Go 二进制的静态资源直接提供，浏览器同源访问 `/api/*`，不依赖 Next.js 运行时或 rewrite。只有本地开发的 Next.js 8000 入口会把后端命名空间代理到内部 Go 8001。第一方前端始终同源。确需跨源访问的其他浏览器客户端必须在 `cors_allowed_origins` 中显式列出 Origin；不要使用通配 Origin 搭配 Cookie 凭据。
+Web 浏览器经 Caddy 同源访问独立 Web host 和 `/api/*`；开发时 Vite 8000 代理到内部 Go 8001。原生 Windows/Android 客户端使用用户配置的服务端 URL 和 Bearer token。其他跨源浏览器客户端必须在 `cors_allowed_origins` 显式列出 Origin；不要使用通配 Origin 搭配 Cookie。
 
-成功的 `/_next/static/*` 哈希文件使用 `public, max-age=31536000, immutable`；页面、导航 payload 和导出的 404 使用 `no-cache`。客户端声明支持 gzip 时，Go 优先返回二进制内嵌的预压缩文件并保留正确 MIME，响应使用内容 ETag、不返回 `Last-Modified`；原文件仍供不支持 gzip 的客户端和 Range 请求使用。后端保留 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 的路由优先级。
+Web host 对 `/assets/*` 哈希资源使用长期 immutable 缓存，SPA HTML 重新验证；服务端不提供静态 UI。Caddy 保留后端命名空间的路由优先级。
 
 ## Streamable HTTP MCP
 
@@ -348,3 +348,7 @@ Pragma: no-cache
 工具结果的 text content 是 JSON 字符串。收藏工具始终使用当前认证用户 ID，不能访问其他用户的数据。所有 MCP 字符串参数最多 2,048 个 Unicode 字符，数组参数最多 500 项；超限作为 tool-level error 返回，不进入 SQLite 查询。
 
 `mcp_allowed_hosts` 默认只允许本机 host；经公网域名、局域网地址或反向代理访问时必须显式配置。浏览器跨源调用 MCP 时再设置 `mcp_allowed_origins`。详见[配置参考](configuration.md)。
+
+## 原生客户端登录
+
+`POST /api/auth/native/login` 接受 username、password、device_name，返回 token、expires_at 与 user，不写浏览器 Cookie。服务端签发名称以 `device:` 开头、90 天有效的独立个人令牌；使用 Authorization Bearer 认证。访问令牌列表可撤销，原生 logout 撤销当前令牌。OIDC-only 用户粘贴浏览器创建的访问令牌，暂不支持原生 OIDC deep link。见[客户端指南](../guides/clients.md)。

@@ -8,8 +8,10 @@
 browser
    |
    v
-litradar serve  (one long-running process)
-   |-- HTTP component: static Web / REST / Swagger / OpenAPI / MCP
+Caddy gateway -> client-web (Wails Server Build + Vite SPA)
+   |
+   +-- server: litradar serve (apps/server)
+   |-- HTTP component: REST / Swagger / OpenAPI / MCP
    |-- embedded scheduler: persistent cursor, claims and heartbeats
    |       |
    |       +-- current executable -> litradar index  (transient child)
@@ -31,7 +33,9 @@ litradar serve  (one long-running process)
                                                                -> *.changes.json -> litradar notify / litradar push
 ```
 
-系统没有 Python 运行时路径。Node.js 只在构建阶段把 `app/` 导出为静态资源；网页、压缩资源和 CSP 清单通过 Go embed 编入 `litradar`，运行时从内存提供，不读取或释放外部 `web/`。运行镜像不包含 Node.js。Go 应用只发布 `litradar` 一个可执行文件，所有能力都通过它的公共子命令进入。
+服务端 `apps/server` 是根 Go 模块中的 API/任务入口，不包含 UI。独立 Go 模块 `apps/client` 使用 Wails v3，唯一前端为 `apps/client/frontend`；Vite 生成的 `dist` 仅嵌入客户端。Node.js 只参与开发与构建，服务端和 Web 客户端运行镜像均不需要 Node.js。
+
+浏览器通过 Caddy 同源访问页面与 API。Windows x64、Android arm64-v8a 原生客户端连接用户配置的服务端 URL，通过个人令牌认证。发布不覆盖 iOS、macOS 或 Linux 桌面端；Wails v3 的 Android 支持为官方实验性功能。
 
 ## 运行进程
 
@@ -46,13 +50,13 @@ litradar serve  (one long-running process)
 | `litradar admin`     | 按需、本机 | 初始化管理员、维护密文、备份和离线恢复                      |
 | `litradar openapi`   | 按需       | 把当前 REST schema 输出到 stdout 或文件                     |
 
-Docker Compose 只运行一个名为 `litradar` 的容器。`app/` 是镜像构建输入，不是运行服务。调度和索引需要进程隔离时，父进程通过当前可执行路径再次启动 `litradar` 并传入规范子命令；镜像还包含征稿采集所需的 Obscura 和 `pdftotext` 辅助程序；它们不提供独立的 LitRadar 服务。
+Docker Compose 运行 `server`、`client-web` 和 `gateway`。只有 `server` 挂载数据与密钥；`client-web` 只连接内部前端网络。Caddy 把 `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/health/*` 转发到 `server`，其他页面交给客户端；`/wails` 与 `/wails/*` 直接返回 404，因为 Wails Server Build 的运行时端点没有认证，Web host 不注册任何服务。MCP 使用 `flush_interval -1`。服务端子任务仍通过同一 `litradar` 可执行文件运行，辅助程序仍为 Obscura 和 `pdftotext`。
 
 SIGINT 或 SIGTERM 会同时通知 HTTP 与调度组件。若计划任务子进程正在运行，调度器先终止并等待该子进程，将运行状态持久化为 `cancelled`，且不再启动剩余步骤。HTTP、心跳或调度组件意外退出时，组合根会关闭另一组件并以非零状态退出，避免半可用进程继续运行。
 
 ## 日志流
 
-唯一二进制在分发子命令前从 `data/auth.sqlite.runtime_settings` 只读加载 `log_format` 和 `log_filter`，再安装一个进程级 Go slog 日志处理器。数据库或表尚不存在时使用安全默认值；已存在但非法的值会让进程在业务工作前失败。所有包 只产生结构化事件，不各自初始化日志处理器 或写应用日志文件：
+服务端二进制在分发子命令前从 `data/auth.sqlite.runtime_settings` 只读加载 `log_format` 和 `log_filter`，再安装一个进程级 Go slog 日志处理器。数据库或表尚不存在时使用安全默认值；已存在但非法的值会让进程在业务工作前失败。所有包 只产生结构化事件，不各自初始化日志处理器 或写应用日志文件：
 
 ```text
 process / request / workflow spans
@@ -77,9 +81,9 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 
 | 包 | 职责 |
 | --- | --- |
-| `cmd/litradar` | 应用可执行文件与公开命令分发 |
+| `apps/server` | 应用可执行文件与公开命令分发 |
 | `internal/runtime` | 服务组装、信号、调度和进程监督 |
-| `internal/webassets` | 发布构建（`litradar_web` tag）内嵌的前端导出与 CSP 清单 |
+| `apps/client` | 独立 Wails 模块；原生端与 Web host 共享 Vite UI |
 | `internal/api`、`internal/mcp`、`internal/openapi` | HTTP/MCP 契约、认证边界和 schema |
 | `internal/auth`、`internal/cli` | 身份服务与命令编排 |
 | `internal/domain`、`internal/provider` | 领域值、Provider 接口和能力注册表 |
@@ -238,7 +242,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 ### 检索
 
-1. 浏览器加载 Go 提供的静态前端，并通过 `app/lib/api/` 同源调用 `/api/*`。
+1. 浏览器通过 Caddy 加载 Wails Web host 提供的 Vite 前端，并通过 `apps/client/frontend/lib/api/` 同源调用 `/api/*`。
 2. API 根据可选 `db` 选择一个 `data/index/*.sqlite`。
 3. 列表与过滤使用 `article_listing`，详情从规范关系表读取。
 4. `q` 默认先转义为一个 FTS5 字面短语再使用 `article_search MATCH`；只有显式 `search_mode=advanced` 才解释 FTS5 运算符，非法表达式作为可纠正的 400 输入错误返回。

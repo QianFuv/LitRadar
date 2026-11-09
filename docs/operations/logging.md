@@ -235,22 +235,22 @@ logging:
 不要直接读取 Docker 内部日志文件。使用 Docker CLI：
 
 ```bash
-docker compose logs --since 30m --timestamps litradar
-docker compose logs --no-log-prefix litradar | jq -c 'select(.level == "ERROR")'
+docker compose logs --since 30m --timestamps server
+docker compose logs --no-log-prefix server | jq -c 'select(.level == "ERROR")'
 ```
 
 按请求 ID 查询：
 
 ```bash
 request_id='019be8c4-4e8a-7c21-9d17-9017ca04a290'
-docker compose logs --no-log-prefix litradar |
+docker compose logs --no-log-prefix server |
   jq -c --arg id "$request_id" 'select(.request_id == $id or .span.request_id == $id)'
 ```
 
 PowerShell：
 
 ```powershell
-docker compose logs --no-log-prefix litradar |
+docker compose logs --no-log-prefix server |
   ForEach-Object { $_ | ConvertFrom-Json } |
   Where-Object { $_.level -eq "ERROR" }
 ```

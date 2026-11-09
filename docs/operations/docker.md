@@ -7,62 +7,46 @@
 ## 服务拓扑
 
 ```text
-browser / API / MCP client
-           |
-           v
-127.0.0.1:8000 -> litradar container
-                    `-- litradar serve (one long-running process)
-                          |-- static Web / REST / Swagger / OpenAPI / MCP
-                          |-- embedded persistent scheduler
-                          `-- transient same-binary job children when due
-
-litradar -> ./data:/app/data
-litradar -> litradar_key Compose secret
-image -> ghcr.io/qianfuv/litradar:latest or local build
+browser/API/MCP -> 127.0.0.1:8000 -> gateway (Caddy)
+                                    |-- server:8000 (Go API + scheduler)
+                                    `-- client-web:8080 (Wails Server Build + Vite)
+server -> ./data:/app/data + litradar_key Compose secret
 ```
 
-`docker-compose.yml` 是默认部署配置，Compose 项目名为 `litradar`，并且只声明一个同名服务。HTTP 和调度共享一个应用生命周期；没有第二个常驻容器。默认只把 8000 端口发布到宿主机 loopback，不直接暴露到局域网或公网。
+Compose 项目名为 `litradar`，服务为 `server`、`client-web`、`gateway`。只有网关发布宿主端口；客户端仅连接内部 frontend 网络，没有数据卷或密钥。server 连接 backend 网络并保留访问上游所需的出站连接。
 
-对外访问时在同一主机上配置 HTTPS 反向代理，转发到宿主机 `127.0.0.1:8000`；Compose 端口仍只绑定 loopback。
+| 服务 | 构建 | 镜像 | 持久化 |
+| --- | --- | --- | --- |
+| server | 根 `Dockerfile` | `ghcr.io/qianfuv/litradar:latest` | `/app/data`，只读部署密钥 |
+| client-web | `apps/client/build/docker/Dockerfile.server`，上下文 `apps/client` | `ghcr.io/qianfuv/litradar-client-web:latest` | 无 |
+| gateway | digest 固定的 Caddy 2.11.2 Alpine | 见 Compose | 只读 `Caddyfile` |
 
-## 服务契约
+根 `Caddyfile` 路由：
 
-| 项目       | 值                                                                                                 |
-| ---------- | -------------------------------------------------------------------------------------------------- |
-| 服务名     | `litradar`                                                                                         |
-| 构建上下文 | 仓库根目录                                                                                         |
-| 镜像       | `ghcr.io/qianfuv/litradar:latest` 或当前源码 build                                                 |
-| 入口       | `litradar`                                                                                         |
-| 默认命令   | `serve --host 0.0.0.0 --port 8000 --project-root /app --secret-key-file /run/secrets/litradar_key` |
-| 宿主机端口 | `127.0.0.1:8000:8000`                                                                              |
-| 可写数据   | `./data:/app/data:rw`                                                                              |
-| 运行用户   | 固定 UID/GID `10001:10001`                                                                         |
-| 健康检查   | `GET /health/ready` 后再请求根 Web 文档 `GET /`                                                    |
-| 内存上限   | 默认不设上限；运维人员可配置容器内存预算                                                           |
-| 日志       | `local` 驱动；每容器五个 10 MiB 文件，启用压缩                                                     |
+| 路径 | 目标 |
+| --- | --- |
+| `/api`、`/api/*`、`/mcp`、`/mcp/*`、`/docs`、`/docs/*`、`/openapi.json`、`/health/*` | server |
+| `/wails`、`/wails/*` | 网关直接返回 404 |
+| 其他，包括 `/`、`/login` | client-web 的 SPA |
 
-`litradar serve` 在绑定端口前依次完成数据库迁移、持久 Meta 准备、密钥验证、运行设置加载和 HTTP 准备，然后立即执行第一个调度 tick。默认每 30 秒再次检查计划任务。调度任务通过同一 `/usr/local/bin/litradar` 启动短生命周期的 `index`、`notify` 或 `push` 子进程；这些子进程不是 Compose 服务。
+Wails Server Build 的 runtime 端点未经认证；Web host 不注册任何服务，因此网关禁止整个 runtime 命名空间。网关保留 Authorization、Cookie、Origin、Host，覆盖 X-Forwarded-For 为直连地址并移除 Forwarded；MCP 使用 `flush_interval -1`，保留流式响应。[Caddy 官方说明](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)介绍转发头和缓冲行为。
 
-SIGINT/SIGTERM 会协调关闭 HTTP 与调度组件。若任务子进程正在运行，应用会终止并等待它，把运行状态保存为 `cancelled`，且不再启动该任务的剩余步骤。HTTP、心跳或调度组件意外失败会关闭整个进程并返回非零状态。
+默认入口是 loopback HTTP，自动 HTTPS 和配置持久化关闭。网关只保留官方 Caddy 文件 capability 所需的 NET_BIND_SERVICE；server/client-web 丢弃全部 capabilities，所有服务使用只读根文件系统与 no-new-privileges。server 以 UID/GID 10001:10001 运行，`/tmp` 为 noexec/nosuid/nodev tmpfs，Docker healthcheck 只请求 `/health/ready`。
 
-## 镜像内容
+## 镜像内容与源码构建
 
-Dockerfile 的前端阶段和 Ubuntu 基础镜像使用可读 tag 加不可变 digest；Node.js 与 Go 归档使用精确版本和 SHA-256 校验。正式发布以已通过全栈测试的静态导出覆盖 `frontend-build` 构建上下文；以下源码构建流程仍可独立执行。发布镜像固定为 `linux/amd64`，归档另提供 `windows/amd64`。
+根 Dockerfile 使用固定 Ubuntu digest、Go/Node 归档校验和与 CA 包版本；Node 仅用于静态 Simple 分词器构建，不构建 UI。`apps/server` 使用 CGO、`sqlite_fts5,sqlite_dbstat` 编译，服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs/`、API、MCP、健康检查可用。
 
-1. Ubuntu 26.04 安装 Node.js 26.11.1 和 pnpm 12.16.1，复制 `app/package.json`、lockfile 和 `app/pnpm-workspace.yaml`，用缓存执行 frozen 依赖安装。
-2. 独立前端构建阶段复制 `app/` 源码，生成 `out/`，并为 HTML、CSS、JavaScript、JSON、SVG、TXT、XML 和 source map 保留原文件及确定性 gzip 兄弟文件。
-3. Ubuntu 26.04 中的 Go 1.27.3 在 BUILDPLATFORM 原生执行编译器，为跨架构目标选择对应 C 交叉编译器，先把前端 `out/` 复制到 `internal/webassets/export`，再用 CGO、`-mod=readonly -trimpath` 和 `sqlite_fts5,sqlite_dbstat,litradar_web` 构建唯一 Go 应用并嵌入网页；独立架构缓存复用模块与编译结果，并输出工具链、实际模块图、补丁、源码和二进制哈希。
-4. 正式发布只选择 Obscura 官方 v0.2.4 的 amd64 render + stealth 二进制归档，固定版本和 SHA-256，并一起安装 `obscura` 与 `obscura-worker`。ARM64 源码构建分支与构建宿主支持保留，但不属于默认发布目标。辅助程序无需本地编译。
-5. Go 构建阶段在编译应用前运行 `scripts/build-simple-tokenizer.mjs`，从固定上游源码为目标架构构建静态 `libsimple.a`（不含 Jieba 和示例），并通过 `CGO_CFLAGS` 静态链接进应用，不产生 `libsimple.so`。
-6. `ubuntu:26.04` 接收带内嵌网页和 CSP 的应用（包括静态 Simple）、Obscura 和 `/usr/share/litradar/meta` 中来自 `assets/meta/` 的不可变期刊目录。Ubuntu 26.04 的 `poppler-utils` 提供 `/usr/bin/pdftotext`，`poppler-data` 提供中文等 CJK PDF 所需的字符映射。
+客户端先在根目录构建 Vite，再由独立 Dockerfile 将 `frontend/dist` 嵌入 linux/amd64 Wails Web host，并放入 distroless 镜像。两个应用运行镜像均不需要 Node.js。
 
-镜像把 `LITRADAR_OBSCURA_PATH` 和 `LITRADAR_PDFTOTEXT_PATH` 指向打包的辅助程序。征稿刷新可在服务器直接采集 HTML 和 PDF，无需安装 Chromium 或在运行时下载浏览器。发布冒烟测试在非特权、只读服务容器中验证原始 HTML 的 JavaScript 协议、真实 PDF 提取和默认私网拒绝；loopback 例外仅限该次临时测试。
+```bash
+pnpm install --frozen-lockfile
+pnpm build
+docker compose build
+docker compose up -d
+```
 
-运行层安装 CA 证书、`curl` 和非 root 账户所需的最小系统包，随后切换到固定 UID/GID `10001:10001`。当前二进制新建内容 schema v10，并在 rollout 窗口内读写精确 v6/v7/v8/v9/v10；旧 v6/v7/v8 仍使用 SQLite 内建 `unicode61`，v9/v10 使用固定打包的 `simple 0` 分词库并禁用拼音别名。最终镜像不包含其他 LitRadar 可执行文件、Node.js、Next.js standalone、`server.js` 或 Python 运行时。镜像自身定义 readiness `HEALTHCHECK` 和 `SIGTERM` stop signal。默认 `ENTRYPOINT` 与 `CMD` 已包含应用、`serve` 子命令和密钥路径，因此本地 Compose 不覆盖命令；自行使用 `docker run` 时仍必须把 32 字节密钥只读挂载到该路径。
-
-Go 应用保持运行时取消、进程监管和清理语义。镜像在 `/usr/share/doc/litradar/third-party` 保存 Go 构建清单、许可证与 Obscura 官方发行包信息。构建清单用于记录 Go 源码和二进制身份。用户已明确豁免 Obscura 供应链检查（A13）；清单将其标记为上游二进制，不声称验证其传递依赖、原生引擎或许可证/对应源码完整性。功能、渲染和运行隔离检查仍保留。
-
-支持 gzip 的客户端会直接收到预压缩文件，不支持的客户端仍收到原文件。`/_next/static/*` 成功响应使用长期 public immutable 缓存；页面、导航 payload 和导出的 404 使用 `no-cache`；认证/API 的私有缓存边界不因此放宽。
+`server` 仍在同一进程中监管 HTTP 与持久化调度，按需使用同一可执行文件启动任务子进程；SIGINT/SIGTERM 协调关闭并等待子进程。Web 客户端不运行索引或调度。
 
 ## 首次部署
 
@@ -86,7 +70,7 @@ sudo chmod 600 secrets/litradar.key
 Docker Desktop for macOS/Windows 通常由虚拟化层转换 bind mount 权限，不应照搬 Linux `chown`。拉取镜像后，可用只读权限检查确认容器账号能读取密钥并写入数据目录：
 
 ```bash
-docker compose run --rm --no-deps --entrypoint sh litradar \
+docker compose run --rm --no-deps --entrypoint sh server \
   -c 'test -r /run/secrets/litradar_key && test -w /app/data'
 ```
 
@@ -111,7 +95,7 @@ docker buildx build --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar:la
 docker compose up -d --remove-orphans
 ```
 
-`docker compose config --services` 应只输出 `litradar`。
+`docker compose config --services` 应输出 `server`、`client-web`、`gateway`。
 
 ### 3. 初始化管理员
 
@@ -121,7 +105,7 @@ docker compose up -d --remove-orphans
 IFS= read -r -s -p 'Admin password: ' ADMIN_PASSWORD
 printf '\n'
 printf '%s\n' "$ADMIN_PASSWORD" |
-  docker compose run --rm -T litradar admin bootstrap \
+  docker compose run --rm -T server admin bootstrap \
     --username admin \
     --password-stdin
 unset ADMIN_PASSWORD
@@ -147,7 +131,7 @@ unset ADMIN_PASSWORD
 CNKI 示例：
 
 ```bash
-docker compose run --rm litradar index \
+docker compose run --rm server index \
   --secret-key-file /run/secrets/litradar_key \
   --file chinese_journals.csv \
   --update
@@ -231,7 +215,7 @@ curl --fail http://localhost:8000/openapi.json
 docker compose ps
 ```
 
-`/health/live` 表示应用事件循环存活。`/health/ready` 只有在内嵌调度的持久化心跳处于 90 秒健康窗口内时才返回 `200`，否则返回 `503`。Compose 健康检查先请求 readiness，再请求根 Web 文档。Docker unhealthy 本身不会杀死仍在运行的进程；`restart: unless-stopped` 处理进程退出和 daemon 重启。
+`/health/live` 表示应用事件循环存活。`/health/ready` 只有在内嵌调度的持久化心跳处于 90 秒健康窗口内时才返回 `200`，否则返回 `503`。server 健康检查只请求 readiness；网关页面需单独探测。Docker unhealthy 本身不会杀死仍在运行的进程；`restart: unless-stopped` 处理进程退出和 daemon 重启。
 
 `/mcp` 位于 `http://localhost:8000/mcp`；未认证请求预期返回 `401`，实际客户端应携带访问令牌或会话 Cookie。
 
@@ -246,7 +230,7 @@ docker compose ps
 - 带 `noexec,nosuid,nodev` 的 `/tmp` tmpfs
 - 唯一持久可写的数据挂载、只读密钥挂载和镜像内 readiness 健康检查
 
-除 `/app/data` 外没有持久写路径。网页随二进制提供，运行时不释放前端文件或生成 Next.js cache。不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
+除 `/app/data` 外没有持久写路径。页面由独立 client-web 提供，server 不读 UI 资源。不要通过 root 容器、开放整个宿主机目录或挂载 Docker socket 解决权限问题。
 
 Compose 默认不设置 cgroup 内存上限。需要限定部署预算时，可在 Compose 覆盖文件中设置 `mem_limit`，或向 `docker run` 传入 `--memory`。服务与调度子进程共享容器 cgroup；画像默认只报告用量，只有显式启用的预算才参与门禁。
 
@@ -257,8 +241,8 @@ Compose 默认不设置 cgroup 内存上限。需要限定部署预算时，可�
 应用默认把 JSON Lines 写入 `stderr`，不在 `/app` 创建日志文件。Compose 使用 Docker `local` 驱动并设置 `max-size=10m`、`max-file=5`、`compress=true`；每个容器在压缩影响之前最多约 50 MiB 驱动日志，同时保持 `read_only: true` 和唯一数据写卷不变。
 
 ```bash
-docker compose logs --since 30m --timestamps litradar
-docker compose logs --no-log-prefix litradar | jq -c 'select(.level == "ERROR")'
+docker compose logs --since 30m --timestamps server
+docker compose logs --no-log-prefix server | jq -c 'select(.level == "ERROR")'
 ```
 
 删除容器会连同其驱动日志一起删除；需要跨轮转或跨容器保留的事故证据必须在窗口内导出。不要直接读取 Docker 内部 driver 文件。事件 schema、request/run ID 关联、丢失语义、浏览器本地范围和事故流程见[日志运维](logging.md)。
@@ -377,7 +361,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
   -OutputPath ./output/memory/final-scheduled-child.json
 ```
 
-五分钟预热后采集十分钟日常服务和轻流量；路径必须包含 `/health/live`、`/health/ready` 和 `/`：
+五分钟预热后采集十分钟日常服务和轻流量；直接画像服务端时路径包含 `/health/live`、`/health/ready` 和 `/docs/`：
 
 ```powershell
 pwsh ./tests/profiling/profile_docker_memory.ps1 `
@@ -385,7 +369,7 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
   -DataPath ./data `
   -WarmupSeconds 300 `
   -DurationSeconds 600 `
-  -TrafficPath /health/live,/health/ready,/ `
+  -TrafficPath /health/live,/health/ready,/docs/ `
   -OutputPath ./output/memory/final-warm-idle.json
 ```
 
@@ -412,19 +396,25 @@ pwsh ./tests/profiling/profile_docker_memory.ps1 `
 
 ### 2. 配置 HTTPS 访问
 
-先通过 loopback 完成管理员 bootstrap，在管理员运行配置中设置 `secure_cookies=true`，并配置准确的 CORS Origin、MCP Host/Origin、trusted proxy 与认证限流。对外开放前确认这些设置已经生效。
+先通过 loopback 完成管理员 bootstrap。在管理员运行配置设置 `public_base_url=https://papers.example.org`、`secure_cookies=true`、`trusted_proxy_cidrs=172.30.42.0/24`（默认 backend 网段）和 `mcp_allowed_hosts`（包含 `papers.example.org`）。网络、Cookie 与 MCP 设置保存后重启 server；公网前检查 `--require-secure-cookies` 启动门。不要用 `0.0.0.0/0` 代替准确可信网络。
 
-检查单个 Compose 文件的解析结果：
+默认 backend 子网可用 `LITRADAR_BACKEND_SUBNET` 改为不冲突的私网 CIDR，同时更新服务端 trusted_proxy_cidrs。`LITRADAR_DATA_DIR`、`LITRADAR_SECRET_KEY_FILE` 可选择专用数据/密钥路径；`LITRADAR_BIND_ADDRESS` 和 `LITRADAR_PORT` 控制网关发布地址。client-web 使用 WAILS_SERVER_HOST/PORT；客户端 HSTS 使用 LITRADAR_CLIENT_HSTS_MAX_AGE。
+
+生产 TLS 建议直接在同一 Caddy 中使用域名站点，移除 `auto_https off`，发布 80/443，并为 Caddy 的证书状态配置独立持久存储；业务数据和部署密钥仍仅授予 server。保留原有 handle 路由、MCP flush_interval 和请求头边界。启用 HTTPS 后将 client-web 的 `LITRADAR_CLIENT_HSTS_MAX_AGE=31536000`，server 命令增加 `--require-secure-cookies`。
+
+默认 Caddy 将 X-Forwarded-For 设为直连地址。如果额外接入外层 TLS/CDN 代理，必须显式配置准确可信代理链和客户端地址解析，再将经过验证的客户端地址传给 server；不能盲目信任外来 Forwarded/X-Forwarded-For。默认 loopback 示例不会自动信任外层代理。
 
 ```bash
-docker compose config --images
-docker compose config --format json > /tmp/litradar-compose.json
+docker compose config --quiet
+docker compose config --services
+curl --fail http://localhost:8000/health/ready
+curl --fail http://localhost:8000/docs/
+curl --fail http://localhost:8000/login
+# Expected: 404
+curl -o /dev/null -w '%{http_code}\n' http://localhost:8000/wails/runtime
 ```
 
-`config --images` 应只输出 `ghcr.io/qianfuv/litradar:latest`；服务端口应只绑定 `127.0.0.1:8000`，并保留只读根文件系统、丢弃全部 capability 和受限 `/tmp`。
-
-在同一主机上配置只发布 HTTPS `443` 的反向代理，把 Web、API、Swagger/OpenAPI 和 MCP 全部路径转发到 `127.0.0.1:8000`。不要把 Compose 端口改为 `0.0.0.0`。
-
+可用 `node tests/compose-smoke.mjs <server-image> <client-image>` 对临时项目执行真实三服务、Cookie/Bearer 登录与路由验证；脚本只创建合成密钥与专用卷，并在结束时清理。
 应用 URL 校验不能替代网络策略。容器或主机 egress ACL 只应允许管理员批准的 AI/PushPlus 目标、DNS 和 TLS 基础设施，并显式阻断 loopback、RFC1918、link-local、元数据地址与内部服务网段。多实例部署还必须在反向代理/网关使用共享认证限流；应用内单实例 bucket 不是跨实例协调器。
 
 ## 按需命令
@@ -432,9 +422,9 @@ docker compose config --format json > /tmp/litradar-compose.json
 维护和作业命令复用相同镜像与入口，不启动 HTTP 或调度循环：
 
 ```bash
-docker compose run --rm litradar --help
-docker compose run --rm litradar openapi
-docker compose run --rm litradar scheduler validate \
+docker compose run --rm server --help
+docker compose run --rm server openapi
+docker compose run --rm server scheduler validate \
   --secret-key-file /run/secrets/litradar_key
 ```
 
@@ -449,7 +439,7 @@ MCP 端点内置于统一应用的 `/mcp`，不需要单独服务：
 
 ## 备份和恢复
 
-通过独立 `/backups` bind mount 运行 `litradar admin backup`，不要把备份输出写入 `/app/data`。恢复前必须停止唯一的 `litradar` 服务并等待活动心跳过期。完整流程见[备份与恢复](backup.md)。
+通过独立 `/backups` bind mount 运行 `litradar admin backup`，不要把备份输出写入 `/app/data`。恢复前必须停止`server` 服务并等待活动心跳过期。完整流程见[备份与恢复](backup.md)。
 
 ## 离线索引存储优化
 
@@ -461,11 +451,11 @@ MCP 端点内置于统一应用的 `/mcp`，不需要单独服务：
 mkdir -p backups
 sudo chown 10001:10001 backups
 
-docker compose stop litradar
+docker compose stop server
 
 docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:rw" \
-  litradar admin backup create \
+  server admin backup create \
     --project-root /app \
     --output /backups/litradar-before-index-v10 \
     --include-indexes \
@@ -473,7 +463,7 @@ docker compose run --rm --no-deps \
 
 docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:ro" \
-  litradar admin backup verify \
+  server admin backup verify \
     --backup /backups/litradar-before-index-v10
 ```
 
@@ -482,7 +472,7 @@ docker compose run --rm --no-deps \
 ```bash
 docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:ro" \
-  litradar admin index optimize-storage \
+  server admin index optimize-storage \
     --project-root /app \
     --confirm-index-maintenance
 ```
@@ -505,17 +495,17 @@ curl --fail http://localhost:8000/openapi.json
 
 ### Web 可访问但没有检索结果
 
-1. 运行 `docker compose logs --since 30m litradar`，按 `index.*`、`source.*` 和 `error_kind` 查询。
+1. 运行 `docker compose logs --since 30m server`，按 `index.*`、`source.*` 和 `error_kind` 查询。
 2. 确认宿主机 `data/index/*.sqlite` 存在。
 3. 确认 bind mount 权限。
 4. 按 CLI 参考运行单个 CSV 索引。
 
 ### readiness 返回 503
 
-1. 运行 `docker compose logs --since 30m litradar`，查找 `scheduler.tick.*`、`service.component.failed` 或安全错误分类。
+1. 运行 `docker compose logs --since 30m server`，查找 `scheduler.tick.*`、`service.component.failed` 或安全错误分类。
 2. 确认应用可以写入同一个 `data/auth.sqlite`。
 3. 确认没有长时间阻塞的任务；调度心跳健康窗口为 90 秒。
-4. 用 `docker compose run --rm litradar scheduler validate --secret-key-file /run/secrets/litradar_key` 验证已保存任务。
+4. 用 `docker compose run --rm server scheduler validate --secret-key-file /run/secrets/litradar_key` 验证已保存任务。
 
 ### 历史 `simple` tokenizer 索引
 

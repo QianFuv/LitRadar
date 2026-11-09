@@ -2,14 +2,14 @@
 
 The root `VERSION` file is the release source of truth. It contains a stable
 `MAJOR.MINOR.PATCH` version without a `v` prefix. The frontend's private
-`app/package.json` version does not trigger releases.
+`apps/client/frontend/package.json` version does not trigger releases.
 
 ## Publish a version
 
 1. Change `VERSION`, for example from `0.1.0` to `0.1.1`.
 2. Commit that change together with the intended release contents and push to `main`.
-3. CI compares the versions before and after the entire push, runs the backend and
-   frontend quality checks, and builds only when the version increases.
+3. CI compares the versions before and after the entire push, runs the backend, frontend and
+   client quality checks, and builds only when the version increases.
 
 Ordinary pushes run quality checks without building release images or archives.
 Test suites may still compile binaries and the frontend for verification. The
@@ -17,26 +17,16 @@ initial `VERSION=0.1.0` establishes the existing version without publishing it.
 Version downgrades and malformed versions fail CI. Tags pushed separately do not
 trigger releases. No manual tag or release creation is needed.
 
-After the backend and frontend checks pass, Windows x64 and Linux amd64 build
-and smoke jobs run in parallel. Publication waits for both, verifies the transferred
-image against its smoke-tested identity, and prepares a draft with all tested
-binaries. It publishes the Linux image, publishes the draft, updates the latest
-pointers, and verifies the public release. Required skipped jobs fail the final
-completion check. The release contains:
+After backend, frontend and client quality checks pass, release jobs build the server and clients from the exact source commit. Publication requires all mandatory jobs and validates transferred checksums, source SHA, server smoke evidence and client image identity. The public assets are:
 
-- `litradar_<version>_linux_amd64.tar.gz`
-- `litradar_<version>_windows_amd64.zip`
-- `SHA256SUMS`
+- `litradar-server_<version>_linux_amd64.tar.gz`
+- `litradar-server_<version>_windows_amd64.zip`
+- `litradar-client-web_<version>_linux_amd64` (Wails Server Build binary)
+- `litradar-client_<version>_windows_amd64_setup.exe` (unsigned installer)
+- `litradar-client_<version>_android_arm64.apk` (release-signed, when configured)
+- `SHA256SUMS` covering every published binary/package
 
-`SHA256SUMS` covers both archives. Releases do not publish a separate Windows
-checksum file. ARM64 builds and partial platform supplementation are not supported.
-
-Packaging scripts enforce the boundary independently of the workflow: Linux checks
-the image's actual OS/architecture before creating output or extracting files;
-Windows checks the effective Go target before preparing native inputs. Wrong OS or
-non-amd64 targets fail immediately. Source/build-host compatibility paths, including
-ARM64, are retained; they do not add publication targets. There is no default
-Android or macOS release path. Historical releases and their assets are unchanged.
+Server OCI images remain `ghcr.io/qianfuv/litradar:v<version>`; Web client images use `ghcr.io/qianfuv/litradar-client-web:v<version>`. Both are linux/amd64 and both have serialized latest promotion. Server packagers continue to reject unsupported targets before extraction. Native clients are Windows x64 and Android arm64-v8a only; there are no iOS, macOS or Linux desktop jobs. [Wails officially marks mobile support experimental](https://wails.io/blog/wails-v3-released).
 
 Release notes list every commit since the highest older published stable version
 reachable from the release commit. Conventional Commit prefixes group entries by
@@ -47,20 +37,33 @@ notes; published release notes remain unchanged.
 
 ## Actions entrypoints
 
-The successful frontend full-stack job exports the exact embedded static files,
-including CSP metadata and deterministic gzip files. Its immutable artifact ID is
-passed to both release jobs in the same workflow run. Each consumer verifies the
-release source SHA and complete SHA-256 file inventory before compilation; missing,
-extra, modified or linked assets fail the build. Windows stages that export without
-installing frontend dependencies. Linux uses the verified directory as Buildx's
-`frontend-build` named context, overriding only the Docker frontend stage. Ordinary
-standalone Docker builds still build the frontend from source. Platform smoke tests
-and publication checks remain mandatory. Artifact expiry requires rerunning the
-frontend prerequisite on the same permitted source, not rebuilding unchecked assets
-inside a packaging job.
+Server packaging is independent of UI builds. Client release jobs install pinned Task v3.54.0 and the Wails CLI matching `apps/client/go.mod`, install frontend dependencies from the root pnpm lockfile, and invoke these exact contracts in `apps/client`:
+
+| Target | Command | Task output |
+| --- | --- | --- |
+| Web | `task build:server` | `bin/litradar-client-web` (linux/amd64, CGO disabled) |
+| Windows | `task package:windows` | `bin/litradar-client-windows-amd64-setup.exe` |
+| Android | `task package:android` | `bin/litradar-client-android-arm64.apk` |
+
+Windows runs on a Windows x64 runner with NSIS; the installer is unsigned. Android uses an Ubuntu runner, Java 21 and sdkmanager with Android 35/build-tools 35.0.0 and NDK r28c (`28.2.13676358`). Quality jobs exercise all three Task targets; the Web host check belongs only to the client workflow. Android quality builds may use development signing.
+
+### Android release signing
+
+Configure all four repository secrets:
+
+- `ANDROID_SIGNING_KEYSTORE`: base64-encoded release keystore. CI decodes it to a temporary file and passes its path as the `ANDROID_SIGNING_KEYSTORE` environment variable.
+- `ANDROID_SIGNING_KEYSTORE_PASSWORD`
+- `ANDROID_SIGNING_KEY_ALIAS`
+- `ANDROID_SIGNING_KEY_PASSWORD`
+
+The remaining three secrets map directly to environment variables with the same names. The Task must consume them for release signing. CI verifies the APK with apksigner and compares its signing certificate against the configured keystore using keytool, inventories only the output/evidence directory, and removes the decoded keystore in an always-running cleanup step. No signing file is uploaded.
+
+If any secret is absent, the Android release lane records `android: omitted`, writes an explicit job-summary warning, and uploads omission evidence. Publication continues for the server, Web and Windows artifacts. It never substitutes a debug-signed release APK. The release notes explicitly state when Android was omitted. Complete signing configuration with an invalid key or password fails the release lane.
+
+Client manifests bind the exact source, platforms and file hashes, including the image tar. The publish job verifies them before loading the accepted image; the loaded image must match its smoke-tested image ID, version and revision. Missing or changed required client artifacts fail publication.
 
 - CI runs on main pushes and pull requests. It checks release rules, Linux/Windows
-  Go code and the frontend, then calls Release when VERSION increases.
+  Go code, the frontend and all client targets, then calls Release when VERSION increases.
 - CI also accepts a manual version retry on main. It runs the same checks and
   complete release flow, with no separate supplement or promotion entrypoints.
 - Release and the reusable check workflows are internal workflows only.
@@ -77,7 +80,7 @@ To retry the current version, select **Run workflow** on CI or run:
 gh workflow run ci.yaml --ref main -f version=0.2.2
 ```
 
-The requested version must match VERSION at the selected main commit. Both
+The requested version must match VERSION at the selected main commit. All
 quality suites and all required build and smoke gates run. Existing tags and
 drafts must belong to that same commit; published assets are never rebuilt or
 replaced. A same-commit retry of a published release only updates latest pointers
@@ -95,7 +98,7 @@ original workflow resumes publication and updates latest only after publication.
 ## Run a binary archive
 
 The Linux package targets Ubuntu 26.04 on amd64. It contains the native Go
-binary (with embedded web assets, CSP and the statically linked Simple tokenizer),
+server binary (with the statically linked Simple tokenizer),
 the catalog bundle, Obscura and its worker, and third-party notices. It is a
 dynamically linked distribution, not a standalone static binary. Install the system dependencies first:
 
@@ -103,8 +106,8 @@ dynamically linked distribution, not a standalone static binary. Install the sys
 sudo apt-get update
 sudo apt-get install ca-certificates libgcc-s1 libstdc++6 poppler-utils poppler-data openssl
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf litradar_0.2.2_linux_amd64.tar.gz
-cd litradar_0.2.2_linux_amd64
+tar -xzf litradar-server_0.2.2_linux_amd64.tar.gz
+cd litradar-server_0.2.2_linux_amd64
 mkdir -p secrets
 test -e secrets/litradar.key || (umask 077; openssl rand -out secrets/litradar.key 32)
 ./run.sh --version
@@ -115,8 +118,7 @@ test -e secrets/litradar.key || (umask 077; openssl rand -out secrets/litradar.k
 Obscura helper. `pdftotext` is provided by the installed Poppler packages. To run
 `litradar` directly, set `LITRADAR_OBSCURA_PATH` to the bundled Obscura and run
 from the archive directory, or specify `--project-root` pointing to the writable
-data root. No external `web/` is required or consulted. Embedded assets use content
-ETags, omit `Last-Modified`, and ignore date-based HTTP conditions. Native metadata discovery uses the system bundle first and
+data root. The server serves API, docs and health endpoints; `/` returns 404. Deploy the Web client separately behind the gateway. Native metadata discovery uses the system bundle first and
 then `assets/meta/` beside the executable; it preserves customized catalogs.
 
 Keep deployment keys and existing `data/` across upgrades. Stop the old service
@@ -135,9 +137,9 @@ fonts are used for rendering.
 In PowerShell, verify the ZIP against `SHA256SUMS`, then extract it:
 
 ```powershell
-Get-FileHash .\litradar_0.2.2_windows_amd64.zip -Algorithm SHA256
-Expand-Archive .\litradar_0.2.2_windows_amd64.zip -DestinationPath .
-Set-Location .\litradar_0.2.2_windows_amd64
+Get-FileHash .\litradar-server_0.2.2_windows_amd64.zip -Algorithm SHA256
+Expand-Archive .\litradar-server_0.2.2_windows_amd64.zip -DestinationPath .
+Set-Location .\litradar-server_0.2.2_windows_amd64
 New-Item -ItemType Directory -Force secrets | Out-Null
 if (-not (Test-Path secrets/litradar.key)) {
     $keyBytes = New-Object byte[] 32
@@ -154,4 +156,8 @@ selects its own directory and packaged helpers while preserving explicit helper
 overrides. All CLI commands remain available. Keep `data/` and `secrets/` across
 upgrades; do not unpack over a running service.
 
-Production executables embed the frontend/CSP and statically link Simple. Release archives contain no external `web/`, `simple.dll` or `libsimple.so`. Windows packaging statically links the GCC/C++ runtime; Linux retains system C/C++ runtime dependencies. Obscura, Poppler, CA certificates and metadata catalogs retain their documented separate deployment requirements. Go inventory includes the static archive/source/compiler/header identity. Smoke tests relocate the executable into a fresh root and verify authenticated v9 migration/search without tokenizer libraries.
+Server executables statically link Simple and contain no UI. Client binaries embed the shared Vite build. Release archives contain no external `web/`, `simple.dll` or `libsimple.so`. Windows packaging statically links the GCC/C++ runtime; Linux retains system C/C++ runtime dependencies. Obscura, Poppler, CA certificates and metadata catalogs retain their documented separate deployment requirements. Go inventory includes the static archive/source/compiler/header identity. Smoke tests relocate the executable into a fresh root and verify authenticated v9 migration/search without tokenizer libraries.
+
+## Run the Web client binary
+
+On Linux amd64, download `litradar-client-web_<version>_linux_amd64`, verify it against SHA256SUMS and mark it executable with `chmod +x`. Start it with WAILS_SERVER_HOST/WAILS_SERVER_PORT on the private network behind the same Caddy routes used by Compose. The binary serves the Vite SPA; the Go API server still runs separately. Windows and Android apps ask for the server URL and use native device tokens; see the [client guide](../guides/clients.md).

@@ -126,7 +126,7 @@ litradar admin index optimize-storage \
 
 ## Docker Compose
 
-唯一的 `litradar` 服务只有 `/app/data` 持久挂载，备份应使用独立 `/backups`：
+`server` 服务只有 `/app/data` 持久挂载，备份应使用独立 `/backups`：
 
 ```bash
 mkdir -p backups
@@ -134,7 +134,7 @@ sudo chown 10001:10001 backups
 
 docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:rw" \
-  litradar admin backup create \
+  server admin backup create \
     --project-root /app \
     --output /backups/litradar-2026-07-10 \
     --include-indexes \
@@ -142,7 +142,7 @@ docker compose run --rm --no-deps \
 
 docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:ro" \
-  litradar admin backup verify \
+  server admin backup verify \
     --backup /backups/litradar-2026-07-10
 ```
 
@@ -173,11 +173,11 @@ litradar admin backup restore \
 Docker：
 
 ```bash
-docker compose stop litradar
+docker compose stop server
 
 docker compose run --rm --no-deps \
   -v "$PWD/backups:/backups:ro" \
-  litradar admin backup restore \
+  server admin backup restore \
     --project-root /app \
     --backup /backups/litradar-2026-07-10 \
     --confirm-restore

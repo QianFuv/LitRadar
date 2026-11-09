@@ -13,7 +13,7 @@ CI 和容器使用以下主版本：
 | pnpm    | 12.16.1                                          |
 | Docker  | 当前 Docker Engine / Docker Desktop 与 Compose   |
 
-Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由 `app/pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
+Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由根目录 `pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
 
 Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.3`。Windows 原生构建要求 PATH 中有匹配的 MinGW GCC/G++ 和 Ninja；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
 
@@ -21,7 +21,7 @@ pnpm 会转发已有的 `NODE_OPTIONS`，并为子进程关闭 Node.js 实验性
 
 ## 初始准备
 
-以下 Bash 命令在仓库根目录执行，除非步骤明确要求进入 `app/`。Windows 可使用 WSL Bash，或把命令改为当前 PowerShell 的等价语法；标为 PowerShell 的画像命令需要 PowerShell 7。
+以下 Bash 命令在仓库根目录执行，除非步骤明确要求进入 `apps/client/frontend/`。Windows 可使用 WSL Bash，或把命令改为当前 PowerShell 的等价语法；标为 PowerShell 的画像命令需要 PowerShell 7。
 
 ### 部署密钥
 
@@ -53,7 +53,7 @@ export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment
 ### 前端依赖
 
 ```bash
-cd app
+cd apps/client/frontend
 npm install --global pnpm@12.16.1
 pnpm install --frozen-lockfile
 ```
@@ -65,10 +65,10 @@ pnpm install --frozen-lockfile
 完成部署密钥和前端依赖准备后，在仓库根目录运行：
 
 ```bash
-node scripts/dev.mjs
+pnpm dev
 ```
 
-也可以在 `app/` 中运行 `pnpm dev:full`。脚本检查部署密钥和 8000/8001 端口，使用锁定依赖编译并启动 Go 开发服务，同时启动 Next.js，最多等待 5 分钟确认两个服务就绪。浏览器入口为 `http://localhost:8000`，按 `Ctrl+C` 关闭前后端；任一服务启动失败或意外退出时，脚本也会停止另一服务。退出最多给予子进程 10 秒宽限，再终止仍存活的进程树。端口已被占用时直接报错，不终止已有服务。
+根目录 `pnpm dev` 调用 `scripts/dev.mjs`。脚本检查部署密钥和 8000/8001 端口，使用锁定依赖编译并启动 Go 开发服务，同时启动 Vite，最多等待 5 分钟确认两个服务就绪。浏览器入口为 `http://localhost:8000`，按 `Ctrl+C` 关闭前后端；任一服务启动失败或意外退出时，脚本也会停止另一服务。退出最多给予子进程 10 秒宽限，再终止仍存活的进程树。端口已被占用时直接报错，不终止已有服务。
 
 该命令不需要前端发布构建、静态资源目录或目录连接。默认使用仓库中的数据和部署密钥；需要隔离数据时，使用 `node scripts/dev.mjs --project-root PATH`，该目录必须已有 `secrets/litradar.key`，源码和前端依赖仍从当前仓库读取。脚本不会生成或替换部署密钥。
 
@@ -77,14 +77,14 @@ node scripts/dev.mjs
 在仓库根目录运行：
 
 ```bash
-go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar serve \
+go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server serve \
   --development \
   --host 127.0.0.1 \
   --port 8001 \
   --secret-key-file secrets/litradar.key
 ```
 
-该命令在一个进程中启动 HTTP 与内嵌调度；调度会立即执行一次 tick，之后默认每 30 秒检查一次。开发 HTTP 只在内部地址 `http://127.0.0.1:8001` 监听。启动下文的 Next.js 开发服务器后，浏览器统一通过以下 8000 端口地址访问：
+该命令在一个进程中启动 HTTP 与内嵌调度；调度会立即执行一次 tick，之后默认每 30 秒检查一次。开发 HTTP 只在内部地址 `http://127.0.0.1:8001` 监听。启动下文的 Vite 开发服务器后，浏览器统一通过以下 8000 端口地址访问：
 
 - Web：`http://localhost:8000/`
 - REST API：`http://localhost:8000/api`
@@ -92,7 +92,7 @@ go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar serve \
 - OpenAPI：`http://localhost:8000/openapi.json`
 - MCP：`http://localhost:8000/mcp`
 
-`--development` 显式选择不托管静态前端的本地模式：Go 保留 API、认证、健康检查、接口文档、MCP、内嵌任务和基础安全响应头；直接访问后端的页面路径返回 404。该模式只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合。省略 `--development` 时使用编入二进制的前端，并严格校验同一内嵌来源的 HTML 和 CSP 清单；没有内嵌前端的源码构建会明确报错，不自动降级。
+服务端始终只托管 API、认证、健康检查、接口文档、MCP 与内嵌任务；直接访问页面路径返回 404。`--development` 只允许 loopback，且不能与 `--require-secure-cookies` 组合；不传该参数也不需要 UI 构建。
 
 服务端默认把 JSON Lines 写入 stderr；请求终态使用匹配 route、status、outcome、duration 和服务器生成的 request ID，不记录 query。成功健康检查和静态流量被抑制。日志格式和 filter 是管理员“运行配置”中的持久设置，不接受进程环境覆盖：首次按默认 JSON 启动，登录管理页把 `log_format` 改为 `compact`，按需把 `log_filter` 改为例如 `warn,litradar=debug,litradar_api=debug`，再重启进程。配置、实际终端样式和隐私边界见[日志运维](../operations/logging.md)。
 
@@ -104,7 +104,7 @@ go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar serve \
 IFS= read -r -s -p 'Admin password: ' ADMIN_PASSWORD
 printf '\n'
 printf '%s\n' "$ADMIN_PASSWORD" |
-  go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar admin bootstrap \
+  go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server admin bootstrap \
     --username admin \
     --password-stdin
 unset ADMIN_PASSWORD
@@ -121,27 +121,25 @@ unset ADMIN_PASSWORD
 ### 前端
 
 ```bash
-cd app
+cd apps/client/frontend
 pnpm dev
 ```
 
-默认地址为 `http://localhost:8000`。`next.config.ts` 只在开发 phase 把同源 `/api/*`、`/mcp/*`、`/docs/*` 和 `/openapi.json` rewrite 到固定 `http://127.0.0.1:8001`。浏览器始终使用当前 Origin，不存在构建时 API 地址或开发代理环境覆盖。
+默认地址为 `http://localhost:8000`。`vite.config.ts` 将 `/api`、`/mcp`、`/docs`、`/openapi.json` 与 `/health` 代理到内部 Go 8001。生产部署由 Caddy 执行同源路由。
 
-发布构建执行静态导出，rewrite 不会进入产物；Go 从内嵌资源提供页面和压缩资源，并在同一 8000 监听器处理后端命名空间。
-
-本地构建生产可执行文件时，先运行 `pnpm --dir app build`，再运行 `node scripts/build-go.mjs`。后者校验生成的 CSP 清单与导出完全一致，把完整导出暂存到已忽略的 `internal/webassets/export/`，并以 `litradar_web` tag 编译。纯源码测试和后端开发不使用该 tag，也不需要前端导出。内嵌响应按原始或 gzip 表示分别使用内容 ETag，不返回 `Last-Modified`，并忽略基于日期的 HTTP 条件请求。
+在根目录执行 `pnpm build` 生成 `apps/client/frontend/dist`；`node scripts/build-go.mjs` 仅构建服务端，不读取客户端产物。Web 客户端在 `apps/client` 执行 `task build:server`，输出 `bin/litradar-client-web`；Windows 执行 `task package:windows`，Android 执行 `task package:android`。平台与签名要求见[发布说明](../operations/releases.md)。
 
 ### 索引和投递
 
 开发时优先选择单个小型 CSV 或离线 fixture。真实索引和投递会访问外部服务：
 
 ```bash
-go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar index \
+go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server index \
   --secret-key-file secrets/litradar.key \
   --file chinese_journals.csv \
   --update
 
-go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar notify \
+go run -mod=readonly -tags sqlite_fts5,sqlite_dbstat ./apps/server notify \
   --secret-key-file secrets/litradar.key \
   --dry-run
 ```
@@ -154,7 +152,7 @@ Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 
 
 | 任务                 | 主要位置                                                             |
 | -------------------- | -------------------------------------------------------------------- |
-| 进程入口与生命周期   | `cmd/litradar/`、`internal/cli/`、`internal/runtime/`                |
+| 进程入口与生命周期   | `apps/server/`、`internal/cli/`、`internal/runtime/`                |
 | REST 路由或 OpenAPI  | `internal/api/`、`internal/openapi/`                                 |
 | 认证                 | `internal/domain/auth/`、`internal/storage/auth/`                    |
 | 业务存储             | `internal/storage/`                                                  |
@@ -162,13 +160,13 @@ Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 
 | 索引执行与控制状态   | `internal/index/`                                                    |
 | 上游数据源           | `internal/sources/`                                                  |
 | 推荐、通知和调度     | `internal/delivery/`、`internal/scheduler/`                          |
-| 前端 API facade      | `app/lib/api/`、`app/lib/api.tsx`                                    |
-| 前端页面和组件       | `app/app/`、`app/components/`                                        |
-| 前端测试             | `app/tests/`                                                         |
+| 前端 API facade      | `apps/client/frontend/lib/api/`、`apps/client/frontend/lib/api.tsx`                                    |
+| 前端页面和组件       | `apps/client/frontend/src/routes/`、`apps/client/frontend/components/`                                        |
+| 前端测试             | `apps/client/frontend/tests/`                                                         |
 
 ## OpenAPI 与前端类型
 
-`internal/openapi/` 中的声明及 `internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，先确保已按[原生分词器](#原生分词器)准备 `target/simple-tokenizer/libsimple.a`，再在 `app/` 运行：
+`internal/openapi/` 中的声明及 `internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，先确保已按[原生分词器](#原生分词器)准备 `target/simple-tokenizer/libsimple.a`，再在 `apps/client/frontend/` 运行：
 
 ```bash
 pnpm generate:api
@@ -187,7 +185,7 @@ CI 使用：
 pnpm generate:api:check
 ```
 
-认证、管理员任务、推送状态和秘密设置等关键响应还要经过 `app/lib/api-contract.tsx` 的运行时校验。不要用泛型断言替代这些边界。
+认证、管理员任务、推送状态和秘密设置等关键响应还要经过 `apps/client/frontend/lib/api-contract.tsx` 的运行时校验。不要用泛型断言替代这些边界。
 
 ## 数据库变更
 
@@ -231,10 +229,10 @@ node tests/test.mjs diagnostics
 
 ## 前端检查
 
-聚焦前端时可在 `app/` 直接运行：
+聚焦前端时可在 `apps/client/frontend/` 直接运行：
 
 ```bash
-cd app
+cd apps/client/frontend
 pnpm generate:api:check
 pnpm lint
 pnpm format:check
@@ -260,7 +258,7 @@ docker build --tag litradar:test .
 node tests/container-smoke.mjs litradar:test
 ```
 
-根 Dockerfile 必须成功导出前端并把 `out/` 复制到 Go 编译阶段，最终 Ubuntu 26.04 层通过二进制提供内嵌网页。应用入口只有 release `litradar`；镜像还提供征稿抓取使用的 Obscura 和 `pdftotext`，Simple 分词器已静态链接进 `litradar`；不包含 Node.js 或 Next.js standalone 运行时。根 Compose 只声明一个 `litradar` 服务，使用非 root 账号、只读根文件系统、tmpfs、显式数据卷、空 capability 集合、`no-new-privileges`、健康检查和重启策略。
+根 Dockerfile 仅构建 Go 服务端及原生辅助程序；Web 客户端使用 `apps/client/build/docker/Dockerfile.server`，构建前先在根目录执行 `pnpm build`。Compose 包含 server、client-web、gateway；只有 server 访问数据和密钥。
 
 日志或请求路径变更还应使用隔离 fixture 运行 off/on 门禁：
 
@@ -285,7 +283,7 @@ pwsh ./tests/profiling/profile_logging.ps1 -DataPath ./output/logging-fixture -R
 - `--notify-dry-run` 只决定 `index --notify` 的下游模式；要发生 handoff，必须同时使用 `--update --notify`。
 - notify/push 的可变状态都在 `data/auth.sqlite`；`data/push_state/*.changes.json` 只是候选输入，两个旧状态目录只用于一次性只读导入。
 - 每周更新和投递依赖 `*.changes.json`，不是按文章日期实时扫描。
-- 前端 API 入口是 `app/lib/api.tsx` 和 `app/lib/api/`。
+- 前端 API 入口是 `apps/client/frontend/lib/api.tsx` 和 `apps/client/frontend/lib/api/`。
 - 前端 API 始终同源；本地 Go 服务需要监听固定的 `127.0.0.1:8001` 才能被 `pnpm dev` 代理。
 - 全局 scholarly key 池与用户级 AI/PushPlus 设置是两套不同配置。
 

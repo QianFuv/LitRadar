@@ -268,14 +268,14 @@ Scholarly 默认每个期刊执行器使用 6 个来源工作线程，同时运�
 5. 加载全局运行设置并构造受管 Provider 代理选择。
 6. 应用 Provider 代理、CORS、MCP、Cookie、可信代理和认证限流策略。
 7. 若启用 `--require-secure-cookies` 但设置仍为 `false`，拒绝启动。
-8. 默认重新散列二进制内嵌前端导出中的全部 HTML，并要求内嵌的 `csp-hashes.json` 完全一致后构造 CSP；未以 `litradar_web` 构建 tag 嵌入前端的二进制拒绝启动。显式 `--development` 模式不托管静态前端，使用无构建脚本哈希的基础安全策略，不读取静态构建。
+8. 构造服务端基础安全响应策略；服务端不读取或托管 UI 构建。
 9. 绑定监听端口并并发启动 HTTP 与立即执行的调度 tick。
 
 默认调度间隔为 30 秒，可用 `--scheduler-interval-seconds N` 覆盖；N 必须大于 0。任一组件意外失败都会使整个 `serve` 调用失败。
 
-`--development` 是显式启动参数，不是数据库运行设置或环境覆盖，只允许 `--host 127.0.0.1`，且与 `--require-secure-cookies` 互斥。检查在存储准备前完成；省略参数时，二进制未嵌入前端或 CSP 清单不匹配仍会导致启动失败。本地可通过 `node scripts/dev.mjs` 同时启动 Go 开发模式和 Next.js，并在同一终端统一停止。
+`--development` 是显式启动参数，只允许 loopback，且与 `--require-secure-cookies` 互斥。根目录 `pnpm dev` 通过 `scripts/dev.mjs` 同时管理 Go 服务端与 Vite。
 
-`--require-secure-cookies` 同时选择 hardened HTTPS 响应模式：在 Secure Cookie 启动门通过后，应用为所有响应增加 `Strict-Transport-Security: max-age=31536000`。未传该参数的 loopback HTTP 模式不发送 HSTS。CSP 清单由 `pnpm --dir app build` 自动生成；打包或部署不得绕过该构建步骤，也不得把不同构建的 HTML 与清单混用。
+`--require-secure-cookies` 同时选择 hardened HTTPS 响应模式：在 Secure Cookie 启动门通过后，应用为所有响应增加 `Strict-Transport-Security: max-age=31536000`。未传该参数的 loopback HTTP 模式不发送 HSTS。服务端与客户端分别设置安全响应头；客户端 Vite 构建无需内联脚本哈希。
 
 ## 索引进程
 
@@ -301,9 +301,11 @@ AI 凭据和 PushPlus 是用户级设置。每个用户在 `notification_setting
 
 ## 前端网络边界
 
-前端没有应用专用环境配置。浏览器始终从 `window.location.origin` 生成同源 API URL；`next dev` 通过 Next phase 固定把 `/api`、`/mcp`、`/docs` 和 `/openapi.json` 代理到 `http://127.0.0.1:8001`；其他 phase 始终 `output: 'export'`。导出的静态文件和 API 由同一 Go 监听器提供。
+Web 客户端通过 Caddy 同源访问 API；开发时 Vite 8000 代理至 Go 8001。原生客户端由用户设置服务端 URL，并通过 Bearer 个人令牌访问；详见[客户端指南](../guides/clients.md)。
 
-跨源静态前端部署和构建时 API 地址覆盖不再受支持。需要外部域名时，应在同一 Origin 前放置 TLS 反向代理；`cors_allowed_origins` 只服务确有需要的非第一方客户端，不改变第一方浏览器的同源策略。
+Web host 使用 `WAILS_SERVER_HOST`（默认 `0.0.0.0`）、`WAILS_SERVER_PORT`（默认 `8080`）、`LITRADAR_CLIENT_ORIGIN_PATTERNS` 和 `LITRADAR_CLIENT_HSTS_MAX_AGE`。Origin patterns 采用 Wails 的主机匹配语法，不是 CORS 白名单；Web host 不注册业务服务，网关与 host 均拒绝 `/wails/*`。客户端没有数据卷或部署密钥。
+
+对外部署时将 `public_base_url` 设置为用户访问的准确 HTTPS Origin，启用 `secure_cookies=true` 并使用 `--require-secure-cookies` 启动门；`trusted_proxy_cidrs` 仅信任网关的 backend 网络（默认 `172.30.42.0/24`，可用 `LITRADAR_BACKEND_SUBNET` 改为无冲突网段）；`mcp_allowed_hosts` 包含公开域名。设置的保存/重启语义见字段表及[Docker 部署](../operations/docker.md)。
 
 ## 日志设置
 

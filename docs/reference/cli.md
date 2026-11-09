@@ -1,13 +1,13 @@
 # CLI 参考
 
-LitRadar 只发布一个可执行文件 `litradar`。本文档说明其公共子命令、参数和默认值。任务流程分别见[开发指南](../guides/development.md)、[Docker 部署](../operations/docker.md)、[通知与追踪](../guides/notifications.md)和[备份与恢复](../operations/backup.md)。
+Go 服务端的可执行文件为 `litradar`；Wails 客户端独立发布。本文档说明其公共子命令、参数和默认值。任务流程分别见[开发指南](../guides/development.md)、[Docker 部署](../operations/docker.md)、[通知与追踪](../guides/notifications.md)和[备份与恢复](../operations/backup.md)。
 
 ## 调用形式
 
 以下调用形式是语法示意，将 `<subcommand>` 和 `<arguments>` 替换为后文的命令与参数。在仓库根目录使用本地源码：
 
 ```bash
-go run -tags sqlite_fts5,sqlite_dbstat ./cmd/litradar <subcommand> <arguments>
+go run -tags sqlite_fts5,sqlite_dbstat ./apps/server <subcommand> <arguments>
 ```
 
 已安装二进制：
@@ -19,7 +19,7 @@ litradar <subcommand> <arguments>
 Compose 镜像的入口已经是 `litradar`：
 
 ```bash
-docker compose run --rm litradar <subcommand> <arguments>
+docker compose run --rm server <subcommand> <arguments>
 ```
 
 顶层 `--help` 只列出：
@@ -63,14 +63,14 @@ litradar serve --secret-key-file PATH
 | `--secret-key-file PATH`         | 必填         | 32 字节部署密钥                                      |
 | `--host HOST`                    | `127.0.0.1`  | HTTP 监听地址                                        |
 | `--port PORT`                    | `8000`       | HTTP TCP 端口                                        |
-| `--project-root PATH`            | 当前工作目录 | 数据根目录（前端已编入二进制）                       |
+| `--project-root PATH`            | 当前工作目录 | 服务端数据根目录                       |
 | `--scheduler-interval-seconds N` | `30`         | 立即执行首个 tick 后的调度间隔；必须大于 0           |
 | `--require-secure-cookies`       | 关闭         | 要求数据库 `secure_cookies=true`，否则绑定端口前失败 |
-| `--development`                  | 关闭         | 本地开发只提供后端接口，不依赖或托管前端静态构建     |
+| `--development`                  | 关闭         | 限制为 loopback 开发模式     |
 
 `serve` 是唯一常驻入口。它先准备和迁移存储，再在一个进程中并发运行 HTTP 与内嵌调度。计划任务使用当前 `litradar` 可执行文件启动类型化子命令进程，并把每次运行隔离到 Unix process group 或 Windows Job Object。SIGINT/SIGTERM 会先终止完整进程树、等待直接子进程，再保存 `cancelled`；任一运行组件意外失败会关闭另一组件并使进程非零退出。
 
-`--development` 只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合；无效组合在准备存储前拒绝。该模式保留 API、认证、MCP、文档、健康检查、内嵌任务和基础安全响应头，页面路径返回 404，页面由 Next.js 开发服务器提供。省略此参数时使用编入二进制的前端，并校验内嵌 HTML 与 CSP 清单；未以 `litradar_web` tag 嵌入前端的源码构建会明确失败，不会自动降级为开发模式。本地一键启停命令见[开发指南](../guides/development.md#一条命令启动前后端)。
+`--development` 只接受 `--host 127.0.0.1`，不能与 `--require-secure-cookies` 组合。服务端所有模式均只提供 API、认证、MCP、文档、健康检查和任务，页面路径返回 404。开发 UI 由 Vite 提供，部署 UI 由独立 Wails Web host 提供。见[开发指南](../guides/development.md#一条命令启动前后端)。
 
 ## `admin`
 

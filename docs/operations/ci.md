@@ -22,8 +22,7 @@ The common `ci-manifest.json` schema records `sourceSha`, `platforms`, `stage`,
 Platform-independent exports say `independent`; combined publication evidence lists
 both targets. Large image tar files are hashed as streams. Manifests stay inside
 existing artifact roots and outside official release `assets/`, preserving download
-layouts and the exact three public release assets. The tested frontend also retains
-its stricter source/file/CSP validation manifest.
+layouts and the versioned public server and client assets. Client evidence also binds its image tar and optional signed Android package.
 
 Successful build transfers require actual payloads before upload; a manifest alone
 cannot satisfy the contract. Diagnostic reports may record missing files after an
@@ -34,7 +33,7 @@ and flaky-test policy, and informational coverage policy, remain visible.
 
 Go caches explicitly name the root and both replacement modules' `go.mod`/`go.sum`
 inputs. The existing backend compiler/lane/native partitioning remains. pnpm names
-its lockfile; Next.js keys include source/toolchain/configuration identity. BuildKit
+the root lockfile. BuildKit
 uses the `litradar-linux-amd64` cache scope and hashes Dockerfile, build contexts,
 arguments and pinned bases through its own cache graph. Cached bytes never replace
 tests, source-bound frontend verification or platform smoke acceptance.
@@ -79,7 +78,7 @@ same-config explicit `go vet` succeeds; race-selected files and dependency modul
 graphs retain their own vet behavior. Native outputs are rebuilt and checked,
 rather than trusted because a cache path exists.
 
-Next.js and pnpm caches remain distinct from test/build artifacts. Publication
+Vite and pnpm caches remain distinct from test/build artifacts. Publication
 continues transferring the exact smoke-tested Linux image and both platform
 archives to its publication job; it never rebuilds those bytes there.
 
@@ -124,52 +123,14 @@ correctness, not hosted performance. The initial optimization was validated loca
 record actual post-change job/step data from an authorized hosted run before claiming
 a speedup. Version releases and deployments require their own authorization.
 
-## Local validation and remaining measurements
+## Client quality and releases
 
-On 2026-10-23, the combined CI, export, platform, release and existing staging
-contract suites passed 42/42 tests with local Node 24.22.1. Actionlint 1.7.12,
-changed-script syntax checks, scoped Prettier and Git whitespace checks passed.
-The actionlint configuration adds the existing `ubuntu-26.04` hosted label to its
-older label catalog; workflow runners and permissions are unchanged.
+`Client` adds Web linux/amd64, Windows x64 and Android arm64 quality lanes. Task is pinned to v3.54.0; Wails CLI follows the version in the nested client module. The client workflow owns the Web host check; frontend.yaml owns Vite contracts, static checks and browser flows.
 
-Local development and CI now use pnpm 12.16.1; CI uses Node 26.11.1. The validation above predates this pnpm update.
-The complete native Go suites and frontend browser suites were not rerun locally;
-their retained scheduling/arguments and packaging contracts were tested instead.
-Docker Desktop's Linux engine was unavailable, so the real named-context image
-build, artifact service transfer and full platform packaging still need a future
-authorized hosted run. No post-change hosted performance saving has been measured.
+Server release builds never download frontend exports. Web release builds embed the same single Vite frontend and smoke `/` and `/login`; Windows invokes `task package:windows`; Android invokes `task package:android` with Java 21, SDK 35 and NDK r28c. Release APKs require all four signing secrets. Missing signing configuration yields explicit omission evidence and job-summary warnings while mandatory packages still publish. Windows installers are unsigned. See [release contracts](releases.md).
 
-Published targets remain exactly `windows/amd64` and `linux/amd64`. The scripts now
-reject a mismatched Go target or image identity before native preparation or archive
-extraction. Other platform source paths and historical releases remain intact.
+Publication verifies source and SHA-256 inventories before loading client image bytes, checks the loaded image against smoke evidence, and runs the isolated three-service gateway smoke. Existing server archive/image evidence, exact-commit retries and serialized highest-version latest promotion remain required. Public assets include server archives, Web binary, Windows installer, optional signed Android APK and one SHA256SUMS. Both OCI images are linux/amd64. Hosted run timings must be measured before making performance claims.
 
-## Official references and applicability
-
-Release builds now reuse the full-stack job's source-bound export via its immutable
-same-run artifact ID. Windows no longer installs pnpm/dependencies or builds Next.js;
-the old web-build step took 12 seconds in the latest baseline and 21 seconds in the
-comparison run. Linux overrides the Docker `frontend-build` stage using a named
-context. Its frontend portion was not separately timed inside the 251-second Docker
-step, so no numeric Linux saving is claimed. Artifact upload/download and hashing
-add overhead; net savings remain unmeasured. CSP, full-stack and platform smoke
-checks are retained. Hidden files and compressed representations travel intact.
-
-- [GitHub artifact transfer](https://docs.github.com/en/actions/tutorials/store-and-share-data)
-  supports cross-job reuse; automatic digest mismatch is a warning, so release
-  consumers independently fail on source/file-inventory mismatch.
-- [Docker named contexts](https://docs.docker.com/reference/cli/docker/buildx/build/#build-context)
-  can override a same-named build stage. The
-  [pinned build-push action](https://github.com/docker/build-push-action/blob/c3c9e263c25d99ce0380d002d59b67737d91b0dc/README.md)
-  exposes this through `build-contexts`. Standalone source builds remain unchanged.
-
-- [GoReleaser build workflow](https://github.com/goreleaser/goreleaser/blob/4762c79733dde55c7f63b3cdb4ef08d249df562d/.github/workflows/build.yml)
-  separates test-cache identity from faster lint/license jobs and cancels obsolete
-  builds; its [release workflow](https://github.com/goreleaser/goreleaser/blob/4762c79733dde55c7f63b3cdb4ef08d249df562d/.github/workflows/release.yml)
-  is separate. LitRadar retains its combined entrypoint, with release-aware groups.
-- [Caddy CI](https://github.com/caddyserver/caddy/blob/f355b8687d5582ea9fcc99f71598109d1e5b6ced/.github/workflows/ci.yml)
-  uses independent OS jobs, `fail-fast: false`, and race testing. Splitting regular
-  and race into separate lanes is LitRadar's measured-bottleneck decision, not a
-  claim that Caddy has the identical design.
 - [GitHub concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
   describes running cancellation and pending-run replacement. Distinct release
   groups are needed; setting cancellation false in one shared branch group alone

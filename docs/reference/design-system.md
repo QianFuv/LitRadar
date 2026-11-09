@@ -2,14 +2,14 @@
 
 本文档说明当前实现中的设计变量（token）、基础组件、应用框架、布局和无障碍约定。修改界面时先复用这里的语义变量和组件，再核对实现来源：
 
-- [全局样式](../../app/app/globals.css)：主题、字体、圆角、阴影、动画和全局行为
-- [根布局](../../app/app/layout.tsx)、[根级上下文](../../app/app/providers.tsx)：根文档、主题和根级无障碍
-- [基础组件目录](../../app/components/ui/)：组件变体
-- [应用框架](../../app/components/shell/)：导航轨、手机底栏与账号头像
-- [阅读工作区](../../app/components/feature/workspace-shell.tsx)：列表栏、阅读台与详情面板
-- `app/app/(protected)/*.tsx` 与业务组件：真实布局和响应式用法
+- [全局样式](../../apps/client/frontend/src/globals.css)：主题、字体、圆角、阴影、动画和全局行为
+- [根布局](../../apps/client/frontend/src/app.tsx)、[根级上下文](../../apps/client/frontend/src/providers.tsx)：根文档、主题和根级无障碍
+- [基础组件目录](../../apps/client/frontend/components/ui/)：组件变体
+- [应用框架](../../apps/client/frontend/components/shell/)：导航轨、手机底栏与账号头像
+- [阅读工作区](../../apps/client/frontend/components/feature/workspace-shell.tsx)：列表栏、阅读台与详情面板
+- `apps/client/frontend/src/routes/*.tsx` 与业务组件：真实布局和响应式用法
 
-前端开发流程见[前端包说明](../../app/README.md)。
+前端开发流程见[前端包说明](../../apps/client/frontend/README.md)。
 
 ## 系统层次
 
@@ -32,7 +32,7 @@
 | 正文与普通 UI                | `'JetBrainsLxgwNerdMono', monospace` |
 | `code`、`kbd`、`samp`、`pre` | `'JetBrainsLxgwNerdMono', monospace` |
 
-`JetBrainsLxgwNerdMono` 是正文、控件、标题、文章内容、设置/管理页面和代码区域的统一首选字体。`app/assets/JetBrainsLxgwNerdMono-Regular/result.css` 通过 344 个本地 WOFF2 分片提供 400 字重，`app/assets/JetBrainsLxgwNerdMono-Bold/result.css` 通过 324 个本地 WOFF2 分片提供 700 字重；两套生成样式都保留生成器、版权与 OFL/MIT 授权元数据，按 Unicode range 引用字体并为每个 `@font-face` 使用 `font-display: swap`。根布局不加载 Google 托管字体，字体链只在本地字体缺失时回退系统 `monospace`；正文与代码继续启用 `'liga' 1`。
+`JetBrainsLxgwNerdMono` 是正文、控件、标题、文章内容、设置/管理页面和代码区域的统一首选字体。`apps/client/frontend/assets/JetBrainsLxgwNerdMono-Regular/result.css` 通过 344 个本地 WOFF2 分片提供 400 字重，`apps/client/frontend/assets/JetBrainsLxgwNerdMono-Bold/result.css` 通过 324 个本地 WOFF2 分片提供 700 字重；两套生成样式都保留生成器、版权与 OFL/MIT 授权元数据，按 Unicode range 引用字体并为每个 `@font-face` 使用 `font-display: swap`。根布局不加载 Google 托管字体，字体链只在本地字体缺失时回退系统 `monospace`；正文与代码继续启用 `'liga' 1`。
 
 字体只有 400 与 700 两个字重：`font-medium` 实际渲染为 400，`font-semibold` 渲染为 700。需要强调时直接使用 `font-bold`。这套等宽中文字体的粗细差异较小，因此检索命中词同时使用粗体与 `bg-info` 浅蓝底，不能只靠字重表达。
 
