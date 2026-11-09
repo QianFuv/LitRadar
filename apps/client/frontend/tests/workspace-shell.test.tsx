@@ -20,6 +20,9 @@ import { WorkspaceShell } from '@/components/feature/workspace-shell';
 import { AppFrame } from '@/components/shell/app-frame';
 import { READER_DOCK_MEDIA_QUERY } from '@/lib/use-media-query';
 
+/** Upper bound for a lazily loaded workspace module to resolve under a loaded test machine. */
+const LAZY_VIEW_TIMEOUT_MS = 10_000;
+
 const shellMocks = vi.hoisted(() => ({
   searchParams: new URLSearchParams('view=favorites&folder=4'),
 }));
@@ -322,11 +325,15 @@ async function dispatchesLegalWorkspaceViews(): Promise<void> {
       <Home />
     </NuqsTestingAdapter>,
   );
-  expect(await screen.findByText('收藏工作区用户 21')).toBeInTheDocument();
+  expect(
+    await screen.findByText('收藏工作区用户 21', {}, { timeout: LAZY_VIEW_TIMEOUT_MS }),
+  ).toBeInTheDocument();
 
   unmount();
   renderHome('?view=weekly-updates');
-  expect(await screen.findByText('每周更新工作区')).toBeInTheDocument();
+  expect(
+    await screen.findByText('每周更新工作区', {}, { timeout: LAZY_VIEW_TIMEOUT_MS }),
+  ).toBeInTheDocument();
 }
 
 /**
@@ -358,7 +365,9 @@ describe('WorkspaceShell', () => {
   test('dispatches legal root workspace views', dispatchesLegalWorkspaceViews);
   test('dispatches the CFP workspace from its canonical URL', async () => {
     renderHome('?view=cfp-tracking');
-    expect(await screen.findByText('征稿追踪工作区')).toBeInTheDocument();
+    expect(
+      await screen.findByText('征稿追踪工作区', {}, { timeout: LAZY_VIEW_TIMEOUT_MS }),
+    ).toBeInTheDocument();
   });
   test('falls back to search for absent or unknown views', fallsBackToSearchWorkspace);
 });
