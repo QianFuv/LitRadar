@@ -1,6 +1,10 @@
 /**
  * Vite configuration for the LitRadar single-page client and its local backend proxy.
  *
+ * The default `web` mode builds the browser client. `vite build --mode native` builds the
+ * Wails desktop and Android frontend by aliasing the active platform module to the native
+ * implementation, so the Wails runtime stays out of the web bundle.
+ *
  * @packageDocumentation
  */
 
@@ -32,12 +36,23 @@ function createBackendProxy(target: string): Record<string, ProxyOptions> {
 
 const BACKEND_PROXY = createBackendProxy(DEVELOPMENT_BACKEND_URL);
 
-export default defineConfig({
+/** Vite mode that builds the frontend embedded in the native Wails hosts. */
+const NATIVE_MODE = 'native';
+
+export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: {
-      '@': PROJECT_ROOT,
-    },
+    alias: [
+      ...(mode === NATIVE_MODE
+        ? [
+            {
+              find: /^@\/lib\/platform\/active$/,
+              replacement: path.join(PROJECT_ROOT, 'lib', 'platform', 'native.tsx'),
+            },
+          ]
+        : []),
+      { find: '@', replacement: PROJECT_ROOT },
+    ],
   },
   build: {
     outDir: 'dist',
@@ -50,4 +65,4 @@ export default defineConfig({
   preview: {
     proxy: BACKEND_PROXY,
   },
-});
+}));

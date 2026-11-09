@@ -16,6 +16,7 @@ import {
 import {
   ApiError,
   getCurrentUser,
+  importAccessToken,
   loginUser,
   logoutAllSessions,
   logoutUser,
@@ -28,6 +29,7 @@ import {
   removeSessionStorageValue,
   writeLocalStorageValue,
 } from '@/lib/browser-storage';
+import { CLIENT_PLATFORM } from '@/lib/platform';
 
 export type { AuthUser };
 
@@ -36,6 +38,7 @@ interface AuthState {
   loading: boolean;
   logoutWarning: LogoutRevocationWarning | null;
   login: (username: string, password: string) => Promise<void>;
+  signInWithAccessToken: (token: string) => Promise<void>;
   register: (
     username: string,
     password: string,
@@ -79,7 +82,7 @@ function clearStoredAccessTokens(): void {
 /**
  * Remove locally persisted non-secret session metadata and access tokens.
  */
-function clearStoredSession(): void {
+export function clearStoredSession(): void {
   clearStoredAccessTokens();
   removeLocalStorageValue(USER_STORAGE_KEY);
 }
@@ -134,6 +137,13 @@ function clearStoredLogoutWarning(): void {
 }
 
 /**
+ * Ask a native host to delete a stored token that is revoked or no longer accepted.
+ */
+function discardNativeCredential(): void {
+  CLIENT_PLATFORM.nativeSession?.discardCredential().catch(() => undefined);
+}
+
+/**
  * Convert a logout failure into fixed warning metadata.
  *
  * @param error - Failure returned by the logout transport.
@@ -171,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** Invalidate pending identity checks and clear the local session after logout. */
   const clearSession = useCallback(() => {
     sessionGeneration.current += 1;
+    discardNativeCredential();
     clearStoredSession();
     clearPrivateState();
     setLoading(false);
@@ -205,9 +216,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearStoredAccessTokens();
         writeStoredUser(currentUser);
         setUser(currentUser);
-      } catch {
+      } catch (error) {
         if (didCancel || generation !== sessionGeneration.current) {
           return;
+        }
+        if (error instanceof ApiError && error.status === 401) {
+          discardNativeCredential();
         }
         clearStoredSession();
         clearPrivateState();
@@ -248,18 +262,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [clearPrivateState]);
 
-  const login = useCallback(
-    async (username: string, password: string) => {
-      const response = await loginUser(username, password);
+  /** Adopt a freshly authenticated identity after discarding any previous private state. */
+  const adoptSignedInUser = useCallback(
+    (signedInUser: AuthUser) => {
       sessionGeneration.current += 1;
       clearPrivateState();
       clearStoredAccessTokens();
-      writeStoredUser(response.user);
-      verifiedUser.current = response.user;
-      setUser(response.user);
+      writeStoredUser(signedInUser);
+      verifiedUser.current = signedInUser;
+      setUser(signedInUser);
       setLoading(false);
     },
     [clearPrivateState],
+  );
+
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const response = await loginUser(username, password);
+      adoptSignedInUser(response.user);
+    },
+    [adoptSignedInUser],
+  );
+
+  const signInWithAccessToken = useCallback(
+    async (token: string) => {
+      adoptSignedInUser(await importAccessToken(token));
+    },
+    [adoptSignedInUser],
   );
 
   const register = useCallback(
@@ -315,8 +344,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, loading, logoutWarning, login, register, logout, recoverLogout, updateUser }),
-    [loading, login, logout, logoutWarning, recoverLogout, register, updateUser, user],
+    () => ({
+      user,
+      loading,
+      logoutWarning,
+      login,
+      signInWithAccessToken,
+      register,
+      logout,
+      recoverLogout,
+      updateUser,
+    }),
+    [
+      loading,
+      login,
+      logout,
+      logoutWarning,
+      recoverLogout,
+      register,
+      signInWithAccessToken,
+      updateUser,
+      user,
+    ],
   );
 
   return (

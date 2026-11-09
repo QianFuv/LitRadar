@@ -191,12 +191,16 @@ export function useFavoritesPage(userId: number) {
   });
 
   const exportMut = useMutation({
-    mutationFn: ({ folderId, format }: { folderId: number; format: CitationFormat }) =>
-      downloadFavoriteExport(folderId, format),
+    mutationFn: async ({ folderId, format }: { folderId: number; format: CitationFormat }) => {
+      const { blob, filename } = await downloadFavoriteExport(folderId, format);
+      const isSaved = await CLIENT_PLATFORM.saveDownload(blob, filename);
+      return { filename, isSaved };
+    },
     onMutate: () => setExportFeedback(null),
-    onSuccess: ({ blob, filename }) => {
-      CLIENT_PLATFORM.saveDownload(blob, filename);
-      setExportFeedback({ tone: 'success', message: `已导出 ${filename}。` });
+    onSuccess: ({ filename, isSaved }) => {
+      if (isSaved) {
+        setExportFeedback({ tone: 'success', message: `已导出 ${filename}。` });
+      }
     },
     onError: (error) => {
       setExportFeedback({

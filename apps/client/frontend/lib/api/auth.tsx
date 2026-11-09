@@ -14,7 +14,8 @@ import {
   type LoginResponse,
   type OidcLinkStart,
 } from '@/lib/api-contract';
-import { ApiError, buildApiUrl, requestJson } from '@/lib/api/client';
+import { ApiError, buildApiUrl, requestJson, requestJsonVia } from '@/lib/api/client';
+import { CLIENT_PLATFORM } from '@/lib/platform';
 import type {
   AccessToken,
   CnkiLoginPollResponse,
@@ -40,11 +41,24 @@ export function getCurrentUser(): Promise<AuthUser> {
 /**
  * Authenticate a user with a username or email and a password.
  *
+ * Native hosts sign in through their own endpoint and keep the issued token; the browser
+ * receives the session cookie.
+ *
  * @param username - Username or account email.
  * @param password - Password.
  * @returns Login response.
  */
 export function loginUser(username: string, password: string): Promise<LoginResponse> {
+  const nativeSession = CLIENT_PLATFORM.nativeSession;
+  if (nativeSession) {
+    return requestJsonVia<LoginResponse>(
+      (_url, init) => nativeSession.login(username, password, init.signal ?? null),
+      buildApiUrl('/api/auth/native/login'),
+      { method: 'POST' },
+      '登录失败',
+      parseLoginResponse,
+    );
+  }
   return requestJson<LoginResponse>(
     buildApiUrl('/api/auth/login'),
     {
@@ -87,11 +101,45 @@ export async function registerUser(
 }
 
 /**
+ * Sign in a native host with a pasted personal access token.
+ *
+ * The host validates the token against the current-user endpoint and stores it only when
+ * the server accepts it.
+ *
+ * @param token - Personal access token.
+ * @returns User the token belongs to.
+ */
+export function importAccessToken(token: string): Promise<AuthUser> {
+  const nativeSession = CLIENT_PLATFORM.nativeSession;
+  if (!nativeSession) {
+    return Promise.reject(new Error('访问令牌登录仅适用于桌面和移动客户端'));
+  }
+  return requestJsonVia<AuthUser>(
+    (_url, init) => nativeSession.importAccessToken(token, init.signal ?? null),
+    buildApiUrl('/api/auth/me'),
+    undefined,
+    '访问令牌登录失败',
+    parseAuthUser,
+  );
+}
+
+/**
  * Revoke the active login token.
  *
+ * A native host deletes its stored token even when the server cannot confirm revocation.
  */
 export async function logoutUser(): Promise<void> {
+  const nativeSession = CLIENT_PLATFORM.nativeSession;
   try {
+    if (nativeSession) {
+      await requestJsonVia<unknown>(
+        (_url, init) => nativeSession.logout(init.signal ?? null),
+        buildApiUrl('/api/auth/logout'),
+        { method: 'POST' },
+        '服务端会话撤销未确认',
+      );
+      return;
+    }
     await requestJson<unknown>(
       buildApiUrl('/api/auth/logout'),
       { method: 'POST' },

@@ -4,7 +4,7 @@
 
 import { ApiError } from '@/lib/api/client';
 
-export type AuthFormMode = 'login' | 'register';
+export type AuthFormMode = 'login' | 'register' | 'token';
 
 const FALLBACK_AUTH_ERROR = '操作失败，请重试';
 const KNOWN_AUTH_ERROR_MESSAGES = new Map<string, string>([
@@ -26,6 +26,10 @@ const KNOWN_AUTH_ERROR_MESSAGES = new Map<string, string>([
   ],
   ['Email is managed by the identity provider', '该邮箱由身份提供方管理，无法在此修改。'],
   ['Password login is not available for single sign-on accounts', '单点登录账号不支持密码登录。'],
+  [
+    'Active access token limit of 50 reached; revoke a token before creating another',
+    '访问令牌数量已达上限（50 个），请先在网页版设置中撤销不用的令牌。',
+  ],
 ]);
 
 /**
@@ -41,7 +45,9 @@ export function getAuthErrorMessage(error: unknown, mode: AuthFormMode): string 
       return '尝试次数过多，请稍后再试。';
     }
     if (error.status === 401) {
-      return '用户名或密码错误，请检查后重试。';
+      return mode === 'token'
+        ? '访问令牌无效、已过期或已被撤销。'
+        : '用户名或密码错误，请检查后重试。';
     }
     if (
       error.status === 409 &&

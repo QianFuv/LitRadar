@@ -25,6 +25,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { getAccountErrorMessage, getOidcErrorMessage } from '@/lib/auth-error';
+import { CLIENT_PLATFORM } from '@/lib/platform';
 
 /** Successful `oidc_link` query result written by the link callback. */
 export const OIDC_LINK_SUCCESS = 'linked';
@@ -199,6 +200,7 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
             <StatusPill>未绑定</StatusPill>
           )}
           {isLocalAccount &&
+            CLIENT_PLATFORM.supportsSingleSignOn &&
             (user.is_oidc_linked ? (
               <Button
                 type="button"
@@ -272,6 +274,9 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
  * @returns Row description.
  */
 function describeOidcRow(user: AuthUser, isOidcEnabled: boolean): string {
+  if (!CLIENT_PLATFORM.supportsSingleSignOn) {
+    return '客户端不支持单点登录，请在网页版中绑定或解除';
+  }
   if (user.auth_kind === 'oidc') {
     return '单点登录账号无法解除绑定';
   }

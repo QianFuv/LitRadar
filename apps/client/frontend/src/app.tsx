@@ -9,6 +9,7 @@ import { ErrorBoundary } from '@/src/error-boundary';
 import GlobalError from '@/src/global-error';
 import Providers from '@/src/providers';
 import RouteError from '@/src/route-error';
+import { ServerSetupGate } from '@/src/server-setup-gate';
 import Home from '@/src/routes/home-page';
 import LoginPage from '@/src/routes/login-page';
 import NotFound from '@/src/routes/not-found-page';
@@ -47,20 +48,22 @@ function RouteErrorBoundary({ children }: { children: ReactNode }) {
 }
 
 /**
- * Render the complete browser application.
+ * Render the complete application, behind server selection on native hosts.
  *
  * @returns Application root element.
  */
 export function App() {
   return (
     <ErrorBoundary fallback={GlobalError}>
-      <BrowserRouter>
-        <Providers>
-          <RouteErrorBoundary>
-            <AppRoutes />
-          </RouteErrorBoundary>
-        </Providers>
-      </BrowserRouter>
+      <ServerSetupGate>
+        <BrowserRouter>
+          <Providers>
+            <RouteErrorBoundary>
+              <AppRoutes />
+            </RouteErrorBoundary>
+          </Providers>
+        </BrowserRouter>
+      </ServerSetupGate>
     </ErrorBoundary>
   );
 }

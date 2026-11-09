@@ -13,6 +13,7 @@ import { CnkiSettingsCard } from '@/components/settings/cnki-card';
 import { GeneralSettingsSection } from '@/components/settings/general-settings-section';
 import { InviteCodeCard } from '@/components/settings/invite-code-card';
 import { PasswordCard } from '@/components/settings/password-card';
+import { ServerConnectionCard } from '@/components/settings/server-connection-card';
 import { useSettingsCopy } from '@/components/settings/use-settings-copy';
 import {
   TrackingSettingsContent,
@@ -224,6 +225,7 @@ function SettingsCategoryContent({
         <AccountSignInCard oidcLinkResult={oidcLinkResult} />
         {user.auth_kind === 'local' && <PasswordCard />}
         <InviteCodeCard copyFeedback={copyFeedback} handleCopy={handleCopy} />
+        <ServerConnectionCard />
       </>
     );
   }

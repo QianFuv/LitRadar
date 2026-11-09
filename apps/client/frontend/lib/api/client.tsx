@@ -88,6 +88,9 @@ export const REQUEST_TIMEOUT_CODE = 'request_timeout';
 const RETRY_AFTER_STATUSES = new Set([429, 503]);
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD']);
 
+/** Transport that performs one request attempt. */
+export type RequestTransport = (url: string, init: RequestInit) => Promise<Response>;
+
 /** Result of one request attempt: a consumed value or a delay before the next attempt. */
 type AttemptOutcome<T> = { kind: 'done'; value: T } | { kind: 'retry'; delayMs: number };
 
@@ -331,6 +334,7 @@ function readRetryAfterDelay(response: Response): number | null {
 /**
  * Run one request attempt with its own timeout that also covers reading the response body.
  *
+ * @param transport - Transport that performs the attempt.
  * @param url - Absolute endpoint URL.
  * @param requestInit - Prepared request options, including an optional caller signal.
  * @param consume - Response reader that returns the result or throws a typed API error.
@@ -339,6 +343,7 @@ function readRetryAfterDelay(response: Response): number | null {
  * @returns Consumed value or the delay before the next attempt.
  */
 async function runAttempt<T>(
+  transport: RequestTransport,
   url: string,
   requestInit: RequestInit,
   consume: (response: Response) => Promise<T>,
@@ -354,7 +359,7 @@ async function runAttempt<T>(
   try {
     let response: Response;
     try {
-      response = await CLIENT_PLATFORM.send(url, { ...requestInit, signal });
+      response = await transport(url, { ...requestInit, signal });
     } catch (error) {
       if (canRetry && !signal.aborted) {
         return { kind: 'retry', delayMs: NETWORK_RETRY_BASE_DELAY_MS * 2 ** attempt };
@@ -380,15 +385,17 @@ async function runAttempt<T>(
 }
 
 /**
- * Send one request through the active platform, retrying idempotent requests after network
+ * Send one request through a transport, retrying idempotent requests after network
  * failures or an honored Retry-After, and propagating caller cancellation unchanged.
  *
+ * @param transport - Transport that performs each attempt.
  * @param url - Absolute endpoint URL.
  * @param init - Caller request options, including an optional cancellation signal.
  * @param consume - Response reader that returns the result or throws a typed API error.
  * @returns Consumed response result.
  */
 async function executeRequest<T>(
+  transport: RequestTransport,
   url: string,
   init: RequestInit | undefined,
   consume: (response: Response) => Promise<T>,
@@ -397,7 +404,7 @@ async function executeRequest<T>(
   const isIdempotent = IDEMPOTENT_METHODS.has((requestInit.method ?? 'GET').toUpperCase());
   for (let attempt = 0; ; attempt += 1) {
     const canRetry = isIdempotent && attempt < MAX_IDEMPOTENT_RETRIES;
-    const outcome = await runAttempt(url, requestInit, consume, attempt, canRetry);
+    const outcome = await runAttempt(transport, url, requestInit, consume, attempt, canRetry);
     if (outcome.kind === 'done') {
       return outcome.value;
     }
@@ -437,6 +444,17 @@ async function parseJson<T>(
 }
 
 /**
+ * Send one request through the active client platform.
+ *
+ * @param url - Absolute endpoint URL.
+ * @param init - Request options.
+ * @returns Raw server response.
+ */
+function sendThroughPlatform(url: string, init: RequestInit): Promise<Response> {
+  return CLIENT_PLATFORM.send(url, init);
+}
+
+/**
  * Fetch JSON from an endpoint through the active client platform.
  *
  * @param url - Absolute endpoint URL.
@@ -451,7 +469,29 @@ export async function requestJson<T>(
   fallback = '请求失败',
   parser?: ContractParser<T>,
 ): Promise<T> {
-  return executeRequest(url, init, (response) => parseJson<T>(response, fallback, parser));
+  return requestJsonVia(sendThroughPlatform, url, init, fallback, parser);
+}
+
+/**
+ * Fetch JSON through a specific transport with the shared timeout, retry, and error handling.
+ *
+ * @param transport - Transport that performs each attempt, such as a native session call.
+ * @param url - Absolute endpoint URL the transport targets.
+ * @param init - Request options.
+ * @param fallback - Fallback error message.
+ * @param parser - Optional runtime contract parser for control-plane responses.
+ * @returns Parsed response body.
+ */
+export async function requestJsonVia<T>(
+  transport: RequestTransport,
+  url: string,
+  init?: RequestInit,
+  fallback = '请求失败',
+  parser?: ContractParser<T>,
+): Promise<T> {
+  return executeRequest(transport, url, init, (response) =>
+    parseJson<T>(response, fallback, parser),
+  );
 }
 
 /**
@@ -467,7 +507,7 @@ export async function requestDownload(
   init?: RequestInit,
   fallback = '下载失败',
 ): Promise<ApiDownload> {
-  return executeRequest(url, init, async (response) => {
+  return executeRequest(sendThroughPlatform, url, init, async (response) => {
     if (!response.ok) {
       throw await createApiError(response, fallback);
     }

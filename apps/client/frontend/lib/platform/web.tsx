@@ -20,8 +20,9 @@ function sendBrowserRequest(url: string, init: RequestInit): Promise<Response> {
  *
  * @param blob - Download response body.
  * @param filename - Safe attachment filename.
+ * @returns True, because the browser owns any later save prompt.
  */
-function saveBrowserDownload(blob: Blob, filename: string): void {
+async function saveBrowserDownload(blob: Blob, filename: string): Promise<boolean> {
   const objectUrl = window.URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = objectUrl;
@@ -34,6 +35,7 @@ function saveBrowserDownload(blob: Blob, filename: string): void {
     anchor.remove();
     window.URL.revokeObjectURL(objectUrl);
   }
+  return true;
 }
 
 /**
@@ -57,10 +59,19 @@ function resolveBrowserServerOrigin(): string {
   return 'http://localhost';
 }
 
+/**
+ * Leave the document unchanged; browsers handle links natively.
+ */
+function prepareBrowserDocument(): void {}
+
 /** Browser platform used by the web build. */
 export const WEB_PLATFORM: ClientPlatform = {
   send: sendBrowserRequest,
   saveDownload: saveBrowserDownload,
   openExternal: openBrowserExternal,
   serverOrigin: resolveBrowserServerOrigin,
+  prepareDocument: prepareBrowserDocument,
+  supportsSingleSignOn: true,
+  nativeSession: null,
+  serverConnection: null,
 };
