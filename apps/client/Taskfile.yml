@@ -1,22 +1,33 @@
 version: '3'
 
-# Server-mode build targets for the LitRadar web client.
-# Run with `wails3 task <name>` (or `task <name>`) from apps/client.
+# Build targets for the LitRadar client: the web host, the Windows desktop app, and the
+# Android app. Run with `wails3 task <name>` (or `task <name>`) from apps/client.
+# Required tools and environment variables are listed in README.md.
 
 vars:
   APP_NAME: litradar-client-web
+  NATIVE_NAME: litradar-client
   BIN_DIR: bin
   TAG: '{{.TAG | default "litradar-client-web:latest"}}'
+  WAILS3: '{{.WAILS3 | default "go run github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0"}}'
+  ANDROID_MIN_SDK: '29'
+  ANDROID_JNI_DIR: build/android/app/src/main/jniLibs/arm64-v8a
 
 tasks:
   build:frontend:
-    desc: Builds the Vite client into frontend/dist
+    desc: Builds the Vite web client into frontend/dist
     dir: ../..
     cmds:
       - pnpm --filter litradar-frontend build
 
+  build:frontend:native:
+    desc: Builds the Vite client in native mode into frontend/dist for the Wails hosts
+    dir: ../..
+    cmds:
+      - pnpm --filter litradar-frontend build:native
+
   test:
-    desc: Runs the web host unit tests
+    desc: Runs the host unit tests
     cmds:
       - go vet ./internal/...
       - go test ./internal/...
@@ -47,3 +58,99 @@ tasks:
       - build:frontend
     cmds:
       - docker build -f build/docker/Dockerfile.server -t {{.TAG}} .
+
+  build:windows:
+    desc: Builds the Windows amd64 desktop app into bin/litradar-client.exe
+    deps:
+      - build:frontend:native
+    cmds:
+      - task: windows:compile
+        vars:
+          TAGS: production
+          OUTPUT: '{{.BIN_DIR}}/{{.NATIVE_NAME}}.exe'
+
+  build:windows:smoke:
+    desc: Builds bin/litradar-client-smoke.exe, a release build that also opens a CDP port for the smoke test
+    deps:
+      - build:frontend:native
+    cmds:
+      - task: windows:compile
+        vars:
+          TAGS: production,smoke
+          OUTPUT: '{{.BIN_DIR}}/{{.NATIVE_NAME}}-smoke.exe'
+
+  windows:compile:
+    internal: true
+    cmds:
+      - '{{.WAILS3}} generate syso -arch amd64 -icon build/windows/icon.ico -manifest build/windows/wails.exe.manifest -info build/windows/info.json -out wails_windows_amd64.syso'
+      - defer: rm -f wails_windows_amd64.syso
+      - go build -mod=readonly -tags {{.TAGS}} -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o {{.OUTPUT}} .
+    env:
+      CGO_ENABLED: '0'
+      GOOS: windows
+      GOARCH: amd64
+
+  package:windows:
+    desc: Builds the NSIS installer bin/litradar-client-windows-amd64-setup.exe (needs makensis)
+    deps:
+      - build:windows
+    cmds:
+      - '{{.WAILS3}} generate webview2bootstrapper -dir build/windows/nsis'
+      - cmd: makensis -DARG_WAILS_AMD64_BINARY="{{.ROOT_DIR}}{{.SEPARATOR}}{{.BIN_DIR}}{{.SEPARATOR}}{{.NATIVE_NAME}}.exe" build/windows/nsis/project.nsi
+    vars:
+      SEPARATOR: '{{if eq OS "windows"}}\{{else}}/{{end}}'
+
+  build:android:lib:
+    desc: Compiles the Go host into the arm64-v8a libwails.so with the Android NDK
+    cmds:
+      - |
+        SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+        NDK_ROOT="$ANDROID_NDK_HOME"
+        if [ -z "$NDK_ROOT" ]; then
+          NDK_ROOT=$(ls -d "$SDK_ROOT"/ndk/* 2>/dev/null | sort | tail -n 1)
+        fi
+        if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+          echo "Android NDK not found: set ANDROID_NDK_HOME or install an NDK under ANDROID_HOME/ndk" >&2
+          exit 1
+        fi
+        CLANG="$NDK_ROOT/toolchains/llvm/prebuilt/{{.NDK_HOST_TAG}}/bin/aarch64-linux-android{{.ANDROID_MIN_SDK}}-clang{{if eq OS "windows"}}.cmd{{end}}"
+        mkdir -p {{.ANDROID_JNI_DIR}}
+        CC="$CLANG" CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
+          go build -mod=readonly -buildmode=c-shared -tags android,production -trimpath -buildvcs=false -ldflags="-w -s" \
+          -o {{.ANDROID_JNI_DIR}}/libwails.so .
+        rm -f {{.ANDROID_JNI_DIR}}/libwails.h
+    vars:
+      NDK_HOST_TAG: '{{if eq OS "windows"}}windows-x86_64{{else if eq OS "darwin"}}darwin-x86_64{{else}}linux-x86_64{{end}}'
+
+  package:android:
+    desc: Builds the release APK bin/litradar-client-android-arm64.apk (ANDROID_SIGNING_* env signs it, debug keystore otherwise)
+    deps:
+      - build:frontend:native
+    cmds:
+      - task: build:android:lib
+      - task: gradle
+        vars:
+          GRADLE_TASK: assembleRelease
+      - mkdir -p {{.BIN_DIR}}
+      - cp build/android/app/build/outputs/apk/release/app-release.apk {{.BIN_DIR}}/{{.NATIVE_NAME}}-android-arm64.apk
+
+  build:android:debug:
+    desc: Builds a debuggable APK with an inspectable WebView into bin/litradar-client-android-arm64-debug.apk
+    deps:
+      - build:frontend:native
+    cmds:
+      - task: build:android:lib
+      - task: gradle
+        vars:
+          GRADLE_TASK: assembleDebug
+      - mkdir -p {{.BIN_DIR}}
+      - cp build/android/app/build/outputs/apk/debug/app-debug.apk {{.BIN_DIR}}/{{.NATIVE_NAME}}-android-arm64-debug.apk
+
+  gradle:
+    internal: true
+    dir: build/android
+    cmds:
+      - cmd: '"{{.ROOT_DIR}}\build\android\gradlew.bat" --no-daemon {{.GRADLE_TASK}}'
+        platforms: [windows]
+      - cmd: sh ./gradlew --no-daemon {{.GRADLE_TASK}}
+        platforms: [linux, darwin]

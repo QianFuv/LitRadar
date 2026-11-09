@@ -1,1 +1,8 @@
 /bin/
+*.syso
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+build/android/.gradle/
+build/android/build/
+build/android/app/build/
+build/android/app/src/main/jniLibs/
+build/android/local.properties
