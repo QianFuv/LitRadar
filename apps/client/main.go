@@ -1,14 +1,8 @@
 //go:build server
 
-// Command litradar-client serves the LitRadar web client as a Wails v3 server build.
-//
-// The web host only serves the embedded Vite build: it binds no services, emits
-// no events, and hides the Wails runtime namespace. API traffic reaches the Go
-// server through the external reverse proxy, not through this process.
 package main
 
 import (
-	"embed"
 	"io/fs"
 	"log"
 	"os"
@@ -16,9 +10,6 @@ import (
 	"github.com/QianFuv/LitRadar/apps/client/internal/webhost"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
-
-//go:embed all:frontend/dist
-var embeddedAssets embed.FS
 
 func main() {
 	if err := run(); err != nil {
