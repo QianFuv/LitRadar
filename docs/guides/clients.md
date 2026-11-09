@@ -6,8 +6,8 @@
 
 | 平台 | 产物 | 说明 |
 | --- | --- | --- |
-| Web | Linux amd64 Wails Server Build 二进制与 client-web OCI 镜像 | Caddy 提供同源 UI/API 入口 |
-| Windows | x64 安装器 | 未签名；连接独立部署的服务端 |
+| Web | Linux amd64 Wails Server Build 归档（`.tar.gz`）与 client-web OCI 镜像 | Caddy 提供同源 UI/API 入口 |
+| Windows | x64 便携版 zip | 未签名；解压后运行 `litradar-client.exe`，配置与 WebView2 数据保存在同目录 `data`，令牌保存在 Windows 凭据管理器；连接独立部署的服务端 |
 | Android | arm64-v8a APK | 仅发布签名构建；Wails 官方支持为实验性 |
 
 不发布 iOS、macOS 或 Linux 桌面客户端。[Wails 官方发布说明](https://wails.io/blog/wails-v3-released)说明 Android/mobile 的实验性状态。
