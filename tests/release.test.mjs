@@ -33,7 +33,7 @@ const RELEASE_ASSETS = [
   "litradar-server_0.2.0_linux_amd64.tar.gz",
   "litradar-server_0.2.0_windows_amd64.zip",
   "litradar-client-web_0.2.0_linux_amd64",
-  "litradar-client_0.2.0_windows_amd64_setup.exe",
+  "litradar-client_0.2.0_windows_amd64.zip",
   "SHA256SUMS",
 ].map((name) => ({ name, digest: `sha256:${"b".repeat(64)}`, size: 100 }));
 
@@ -42,7 +42,7 @@ test("complete releases require server archives, Web and Windows clients and one
     "litradar-server_0.2.1_linux_amd64.tar.gz",
     "litradar-server_0.2.1_windows_amd64.zip",
     "litradar-client-web_0.2.1_linux_amd64",
-    "litradar-client_0.2.1_windows_amd64_setup.exe",
+    "litradar-client_0.2.1_windows_amd64.zip",
     "SHA256SUMS",
   ]);
 });

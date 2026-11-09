@@ -2,13 +2,11 @@
  * Derive client build metadata from the repository VERSION file, the only place a release
  * version is written.
  *
- * Usage (from apps/client):
- * - `node scripts/client-version.mjs name` prints the MAJOR.MINOR.PATCH version name.
- * - `node scripts/client-version.mjs windows-resources <directory>` writes `info.json` and
- *   `wails.exe.manifest` with the release version into `<directory>` for `wails3 generate syso`.
- *   The tracked `build/windows/info.json` carries no version fields, and the tracked
- *   `build/windows/wails.exe.manifest` uses the `{{FILE_VERSION}}` placeholder as the
- *   application assembly version.
+ * Usage (from apps/client): `node scripts/client-version.mjs windows-resources <directory>`
+ * writes `info.json` and `wails.exe.manifest` with the release version into `<directory>` for
+ * `wails3 generate syso`. The tracked `build/windows/info.json` carries no version fields, and
+ * the tracked `build/windows/wails.exe.manifest` uses the `{{FILE_VERSION}}` placeholder as the
+ * application assembly version.
  *
  * The Android Gradle build derives the same values in `build/android/app/build.gradle`.
  */
@@ -108,15 +106,11 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   const [command, directory] = process.argv.slice(2);
-  if (command === "name") {
-    process.stdout.write(
-      clientVersions(fs.readFileSync(VERSION_FILE, "utf8")).versionName,
-    );
-  } else if (command === "windows-resources") {
+  if (command === "windows-resources") {
     writeWindowsResources(directory);
   } else {
     throw new Error(
-      `Usage: node ${fileURLToPath(import.meta.url)} name | windows-resources <directory>`,
+      `Usage: node ${fileURLToPath(import.meta.url)} windows-resources <directory>`,
     );
   }
 }

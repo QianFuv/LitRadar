@@ -131,7 +131,7 @@ async function prepareRelease(release, tag, version, commit, gh) {
 ## Packages
 
 Server: Linux amd64 and Windows x64. Web client: Linux amd64 binary and OCI image.
-Windows x64 client installer is unsigned. Android arm64-v8a uses experimental Wails v3 mobile support.
+Windows x64 client is an unsigned portable zip. Android arm64-v8a uses experimental Wails v3 mobile support.
 ${android ? "Android APK is release-signed." : "**Android APK omitted:** Android signing secrets were unavailable; no debug-signed APK is published."}
 `,
   );

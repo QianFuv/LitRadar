@@ -93,16 +93,11 @@ tasks:
       GOARCH: amd64
 
   package:windows:
-    desc: Builds the NSIS installer bin/litradar-client-windows-amd64-setup.exe (needs makensis)
+    desc: Builds the portable zip bin/litradar-client_<version>_windows_amd64.zip (on Windows)
     deps:
       - build:windows
     cmds:
-      - '{{.WAILS3}} generate webview2bootstrapper -dir build/windows/nsis'
-      - cmd: makensis -DINFO_PRODUCTVERSION="{{.VERSION_NAME}}" -DARG_WAILS_AMD64_BINARY="{{.ROOT_DIR}}{{.SEPARATOR}}{{.BIN_DIR}}{{.SEPARATOR}}{{.NATIVE_NAME}}.exe" build/windows/nsis/project.nsi
-    vars:
-      SEPARATOR: '{{if eq OS "windows"}}\{{else}}/{{end}}'
-      VERSION_NAME:
-        sh: node scripts/client-version.mjs name
+      - node scripts/package-client.mjs package windows
 
   build:android:lib:
     desc: Compiles the Go host into the arm64-v8a libwails.so with the Android NDK

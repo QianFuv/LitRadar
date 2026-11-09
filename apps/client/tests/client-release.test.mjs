@@ -1,11 +1,16 @@
 /** Exercise mandatory client artifacts, release signing and exact-source byte transfer. */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { clientAssetName, stageClient } from "../scripts/package-client.mjs";
+import {
+  clientAssetName,
+  packageWindowsPortable,
+  stageClient,
+} from "../scripts/package-client.mjs";
 import {
   verifyClientEvidence,
   verifyClientImage,
@@ -96,22 +101,58 @@ test("client packaging accepts only the contracted nonempty outputs and supporte
   fs.mkdirSync(source, { recursive: true });
   const output = path.join(root, "staged");
   fs.writeFileSync(
-    path.join(source, "litradar-client-windows-amd64-setup.exe"),
-    "verified installer",
+    path.join(source, "litradar-client_0.3.0_windows_amd64.zip"),
+    "verified portable zip",
   );
   stageClient("windows", VERSION, root, output);
   assert.equal(
     fs.readFileSync(
-      path.join(output, "assets/litradar-client_0.3.0_windows_amd64_setup.exe"),
+      path.join(output, "assets/litradar-client_0.3.0_windows_amd64.zip"),
       "utf8",
     ),
-    "verified installer",
+    "verified portable zip",
   );
   fs.writeFileSync(path.join(source, "litradar-client-web"), "");
   assert.throws(() => stageClient("web", VERSION, root, output), /nonempty/);
   for (const target of ["ios", "darwin", "linux", "android-amd64"])
     assert.throws(() => clientAssetName(VERSION, target), /Unsupported/);
 });
+
+test(
+  "the Windows client ships as a portable zip with one versioned folder",
+  {
+    skip:
+      process.platform !== "win32" && "Windows packaging uses the Windows tar",
+  },
+  (context) => {
+    const root = temporaryRoot(context);
+    const bin = path.join(root, "apps/client/bin");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "litradar-client.exe"), "portable exe");
+    fs.writeFileSync(path.join(root, "LICENSE"), "license text");
+    const archive = packageWindowsPortable(VERSION, root);
+    assert.equal(
+      archive,
+      path.join(bin, "litradar-client_0.3.0_windows_amd64.zip"),
+    );
+    const entries = execFileSync(
+      path.join(process.env.SystemRoot, "System32", "tar.exe"),
+      ["-tf", archive],
+      { encoding: "utf8" },
+    )
+      .split(/\r?\n/)
+      .filter((entry) => entry && !entry.endsWith("/"))
+      .sort();
+    assert.deepEqual(entries, [
+      "litradar-client_0.3.0_windows_amd64/LICENSE",
+      "litradar-client_0.3.0_windows_amd64/litradar-client.exe",
+    ]);
+    assert.deepEqual(fs.readdirSync(bin).sort(), [
+      "litradar-client.exe",
+      "litradar-client_0.3.0_windows_amd64.zip",
+    ]);
+  },
+);
 
 for (const android of ["signed", "omitted"]) {
   test(`client evidence accepts ${android} Android and rejects changed or missing mandatory bytes`, async (context) => {
@@ -245,12 +286,7 @@ test("client build metadata derives its version only from VERSION", () => {
     fs.readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8");
   const semanticVersions = (text) =>
     text.match(/\b\d+\.\d+\.\d+(?:\.\d+)?\b/g) ?? [];
-  for (const relativePath of [
-    "build/config.yml",
-    "build/windows/info.json",
-    "build/windows/nsis/project.nsi",
-    "build/windows/nsis/wails_tools.nsh",
-  ])
+  for (const relativePath of ["build/config.yml", "build/windows/info.json"])
     assert.deepEqual(
       semanticVersions(readClientFile(relativePath)),
       [],
@@ -274,7 +310,6 @@ test("client build metadata derives its version only from VERSION", () => {
   assert(
     taskfile.includes("node scripts/client-version.mjs windows-resources"),
   );
-  assert(taskfile.includes('-DINFO_PRODUCTVERSION="{{.VERSION_NAME}}"'));
   assert(!taskfile.includes("-manifest build/windows/"));
   assert(!taskfile.includes("-info build/windows/"));
 });

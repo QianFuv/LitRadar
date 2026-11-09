@@ -5,7 +5,7 @@
 | Target | Build tags | Output |
 | --- | --- | --- |
 | Web host (linux/amd64, served behind the reverse proxy) | `server,production` | `bin/litradar-client-web` |
-| Windows amd64 desktop app | `production` | `bin/litradar-client.exe`, NSIS installer `bin/litradar-client-windows-amd64-setup.exe` |
+| Windows amd64 desktop app | `production` | `bin/litradar-client.exe`, portable zip `bin/litradar-client_<version>_windows_amd64.zip` |
 | Android arm64-v8a app | `android,production` | `bin/litradar-client-android-arm64.apk` |
 
 macOS, Linux desktop, and iOS are not built.
@@ -22,14 +22,13 @@ the frontend from the repository root workspace in the right Vite mode: `web` fo
 | `build:server` | `bin/litradar-client-web` (`CGO_ENABLED=0`, linux/amd64) |
 | `build:docker` | distroless image from `build/docker/Dockerfile.server` |
 | `build:windows` | `bin/litradar-client.exe` (no CGO; WebView2) |
-| `package:windows` | `bin/litradar-client-windows-amd64-setup.exe` (needs `makensis`) |
+| `package:windows` | portable zip `bin/litradar-client_<version>_windows_amd64.zip` (on Windows) |
 | `package:android` | release APK `bin/litradar-client-android-arm64.apk` |
 | `build:android:debug` | debuggable APK `bin/litradar-client-android-arm64-debug.apk` with an inspectable WebView |
 | `build:windows:smoke` | `bin/litradar-client-smoke.exe` for the desktop smoke test |
 | `test` | `go vet` and `go test` for `internal/...` |
 
-`WAILS3` overrides the Wails CLI used for `generate syso` and the WebView2 bootstrapper; it
-defaults to `go run github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0`.
+`WAILS3` overrides the Wails CLI used for `generate syso`; it defaults to `go run github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0`.
 
 The repository `VERSION` file is the only place the client version is written; a release bump
 edits nothing else. The builds derive it as follows:
@@ -40,14 +39,15 @@ edits nothing else. The builds derive it as follows:
   `build/windows/info.json` (kept without version fields) and `build/windows/wails.exe.manifest`
   (whose `{{FILE_VERSION}}` placeholder becomes `MAJOR.MINOR.PATCH.0`) into
   `bin/windows-resources` for `generate syso`.
-- Windows installer: `package:windows` passes `-DINFO_PRODUCTVERSION` to `makensis`;
-  `wails_tools.nsh` stops with an error when it is missing.
+
+The Windows portable zip holds one `litradar-client_<version>_windows_amd64` folder with
+`litradar-client.exe` and `LICENSE`. The app keeps its host config and WebView2 profile in a
+`data` folder next to the executable; tokens stay in Windows Credential Manager. It needs the
+WebView2 runtime that ships with Windows 10 and 11.
 
 ## Requirements
 
 - Go 1.26+, Node 24, pnpm 12 (the workspace root `pnpm-lock.yaml` pins `@wailsio/runtime` 3.1.0).
-- Windows installer: NSIS 3 (`makensis` on `PATH`). The installer bundles the WebView2
-  bootstrapper, which `package:windows` downloads with the Wails CLI.
 - Android:
   - `ANDROID_HOME` (or `ANDROID_SDK_ROOT`): SDK with platform 36 and build-tools.
   - `ANDROID_NDK_HOME`: optional; defaults to the newest NDK under `$ANDROID_HOME/ndk`

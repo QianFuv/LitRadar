@@ -126,13 +126,6 @@ jobs:
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
-      - name: Set up Windows installer tools
-        id: windows_tools
-        if: matrix.target == 'windows'
-        shell: pwsh
-        run: |
-          choco install nsis --version=3.11 --yes --no-progress
-          'C:\Program Files (x86)\NSIS' >> $env:GITHUB_PATH
       - name: Check Wails web host
         id: web_host
         if: matrix.target == 'web'
@@ -187,7 +180,7 @@ jobs:
         if: matrix.target != 'android' || steps.signing.outputs.build == 'true'
         env:
           TARGET: ${{ matrix.target }}
-        run: node apps/client/scripts/package-client.mjs "$TARGET" "${RELEASE_VERSION:-$(cat VERSION)}"
+        run: node apps/client/scripts/package-client.mjs stage "$TARGET" "${RELEASE_VERSION:-$(cat VERSION)}"
       - name: Record client artifact provenance
         id: evidence
         if: always()
