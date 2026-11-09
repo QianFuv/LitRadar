@@ -56,7 +56,7 @@ func authFixture(t *testing.T) (*authHandlers, *http.ServeMux, string) {
 	handlers := &authHandlers{service: service, repository: repository, authenticator: NewAuthenticator(service, pool), pool: pool, kdfPool: kdf, limiter: newAuthRateLimiter(policy), isCookieSecure: true}
 	router := http.NewServeMux()
 	routes := handlers.routes()
-	if len(routes) != 21 {
+	if len(routes) != 23 {
 		t.Fatal("auth route count")
 	}
 	for _, route := range routes {

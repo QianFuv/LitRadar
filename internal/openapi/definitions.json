@@ -2304,6 +2304,38 @@
           }
         }
       },
+      "NativeOidcExchangeRequest": {
+        "type": "object",
+        "description": "Native OIDC authorization code exchange with client PKCE. No session cookie is issued.",
+        "required": [
+          "code",
+          "code_verifier",
+          "redirect_uri",
+          "device_name"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "One-time unpadded base64url code (32 random bytes); TTL 120 seconds."
+          },
+          "code_verifier": {
+            "type": "string",
+            "minLength": 43,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._~-]{43,128}$"
+          },
+          "redirect_uri": {
+            "type": "string",
+            "description": "Exact native redirect_uri supplied at login."
+          },
+          "device_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 93,
+            "description": "Device label; surrounding whitespace is trimmed, blank text and control characters are rejected. The raw input is limited to 93 Unicode code points."
+          }
+        }
+      },
       "NativeLoginRequest": {
         "type": "object",
         "description": "Native password login that issues an independent 90-day personal access token.",

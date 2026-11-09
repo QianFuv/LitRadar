@@ -27,6 +27,16 @@ wc -c secrets/litradar.key
 
 `litradar serve`、`litradar index`、`litradar notify`、`litradar push` 和 `litradar scheduler` 都要求 `--secret-key-file`。`litradar admin secrets` 使用相应 key 参数；`litradar admin bootstrap` 和 `litradar admin backup` 不需要密钥。
 
+## 原生客户端 OIDC
+
+Windows/Android 客户端通过系统浏览器访问 `GET /api/auth/oidc/native/login`，携带 `redirect_uri`、43 字符的 base64url S256 `code_challenge` 与 16–128 字符的 `[A-Za-z0-9._~-]` 客户端 `state`。回调地址仅允许 `http://127.0.0.1:<port>/oidc/callback`（端口 1024–65535）和 `litradar://oidc/callback`，不得带查询或片段。
+
+服务端仍使用自己的 confidential-client PKCE、nonce 和签名状态 Cookie，与 Web 登录共用身份解析及账号关联规则。Authentik **无需新增 redirect URI**：IdP 始终回调服务端的 `/api/auth/oidc/callback`。成功后服务端不创建浏览器会话，将 32 随机字节的 base64url 一次性授权码和原始客户端 state 重定向给客户端；失败返回 `error=<现有 oidc_error 分类>&state=...`。原生回调不返回任何 Set-Cookie，起始流程 Cookie 在 10 分钟后自然过期，已有登录 Cookie 保持有效。
+
+客户端校验 state 后调用 `POST /api/auth/oidc/native/exchange`，JSON 为 `{code, code_verifier, redirect_uri, device_name}`。授权码在 120 秒后过期，任意一次兑换尝试均消耗授权码，并绑定 PKCE、完整回调地址、用户及认证代际。兑换失败统一返回 `400`（标准错误信封，`detail: "invalid_grant"`）；设备名校验、50 枚个人令牌上限、90 天 `device:<name>` 令牌与原生密码登录相同。返回 `{token, expires_at, user}`，客户端将 token 保存在系统安全存储。两个原生端点共用 OIDC 的 IP/全局认证限流，限流返回 429 与 Retry-After。OIDC 关闭时原生登录入口返回 404。
+
+待兑换码仅存于当前服务进程内存，进程重启后失效；多实例部署需将待兑换流程固定到同一实例，或在支持多实例兑换前改用共享原子存储。
+
 ## 日志数据边界
 
 所有日志级别都禁止密码、部署密钥、Cookie、Bearer token、邀请码、访问令牌、第三方 API key、PushPlus token、认证头、用户名/邮箱、请求或响应 body、URL query、文章/公告/AI 内容、会话 JSON、密文、hash 和完整文件路径。`DEBUG` 或 `TRACE` 不放宽该边界。

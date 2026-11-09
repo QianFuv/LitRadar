@@ -215,12 +215,8 @@ func (service *Service) Login(ctx context.Context, username, password string, au
 // NativeLogin issues an independent 90-day personal token using password authority.
 // Device names must fit the existing 100-code-point token name including its prefix.
 func (service *Service) NativeLogin(ctx context.Context, username, password, deviceName string, audit *domain.AuditEvent) (domain.LoginSession, error) {
-	if !utf8.ValidString(deviceName) || utf8.RuneCountInString(deviceName) > 93 || strings.ContainsFunc(deviceName, unicode.IsControl) {
-		return domain.LoginSession{}, domain.ErrDeviceName
-	}
-	deviceName = strings.TrimSpace(deviceName)
-	if deviceName == "" {
-		return domain.LoginSession{}, domain.ErrDeviceName
+	if _, err := deviceTokenName(deviceName); err != nil {
+		return domain.LoginSession{}, err
 	}
 	authorization, err := service.VerifyPasswordAuthorization(ctx, username, password)
 	if err != nil {
@@ -229,10 +225,28 @@ func (service *Service) NativeLogin(ctx context.Context, username, password, dev
 	if authorization == nil {
 		return domain.LoginSession{}, domain.ErrCredentials
 	}
-	event := service.event("native_login", audit)
+	return service.issueDeviceToken(ctx, *authorization, deviceName, service.event("native_login", audit))
+}
+
+func deviceTokenName(deviceName string) (string, error) {
+	if !utf8.ValidString(deviceName) || utf8.RuneCountInString(deviceName) > 93 || strings.ContainsFunc(deviceName, unicode.IsControl) {
+		return "", domain.ErrDeviceName
+	}
+	deviceName = strings.TrimSpace(deviceName)
+	if deviceName == "" {
+		return "", domain.ErrDeviceName
+	}
+	return "device:" + deviceName, nil
+}
+
+func (service *Service) issueDeviceToken(ctx context.Context, authorization domain.Authorization, deviceName string, event domain.AuditEvent) (domain.LoginSession, error) {
+	name, err := deviceTokenName(deviceName)
+	if err != nil {
+		return domain.LoginSession{}, err
+	}
 	actor := int64(authorization.User.Id)
 	event.ActorId = &actor
-	token, err := service.createToken(ctx, *authorization, "device:"+deviceName, 90*24*60*60, &event)
+	token, err := service.createToken(ctx, authorization, name, 90*24*60*60, &event)
 	if errors.Is(err, domain.ErrStaleAuthorization) {
 		return domain.LoginSession{}, domain.ErrCredentials
 	}

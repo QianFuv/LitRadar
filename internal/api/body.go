@@ -46,6 +46,7 @@ var requestBodies = func() map[string]bodyType {
 	favorite := structBody("FavoriteAdd", bodyFieldOf("article_id", articleBody), defaultBodyField("db_name", stringBody, ""), defaultBodyField("note", stringBody, ""))
 	reference := structBody("FavoriteArticleRef", bodyFieldOf("article_id", articleBody), defaultBodyField("db_name", stringBody, ""))
 	return map[string]bodyType{
+		"NativeOidcExchangeRequest":  structBody("NativeOidcExchangeRequest", bodyFieldOf("code", stringBody), bodyFieldOf("code_verifier", stringBody), bodyFieldOf("redirect_uri", stringBody), bodyFieldOf("device_name", stringBody)),
 		"ScheduledTaskCreate":        scheduledBody(false),
 		"ScheduledTaskUpdate":        scheduledBody(true),
 		"RuntimeSettingsUpdate":      runtimeSettingsBody(),

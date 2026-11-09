@@ -87,6 +87,8 @@ func (handlers *authHandlers) routes() []route {
 		{Method: "POST", Path: "/api/auth/register", Id: "register"},
 		{Method: "POST", Path: "/api/auth/login", Id: "login"},
 		{Method: "POST", Path: "/api/auth/native/login", Id: "native_login"},
+		{Method: "GET", Path: "/api/auth/oidc/native/login", Id: "oidc_native_login"},
+		{Method: "POST", Path: "/api/auth/oidc/native/exchange", Id: "oidc_native_exchange"},
 		{Method: "POST", Path: "/api/auth/change-password", Id: "change_password"},
 		{Method: "POST", Path: "/api/auth/tokens", Id: "create_token"},
 		{Method: "GET", Path: "/api/auth/me", Id: "get_me"},
@@ -101,7 +103,9 @@ func (handlers *authHandlers) routes() []route {
 		{Method: "GET", Path: "/api/auth/invite-required", Id: "check_invite_required"},
 	} {
 		routes = append(routes, route{operation, func(writer http.ResponseWriter, request *http.Request) {
-			if operation.Id == "get_auth_providers" || strings.HasPrefix(operation.Id, "oidc_") {
+			if operation.Id == "oidc_native_exchange" {
+				handlers.nativeOIDCExchange(writer, request)
+			} else if operation.Id == "get_auth_providers" || strings.HasPrefix(operation.Id, "oidc_") {
 				handlers.handleOidc(writer, request, operation.Id)
 			} else if kind, exists := authRequestTypes[operation.Id]; exists {
 				handlers.handleBody(writer, request, operation.Id, kind)

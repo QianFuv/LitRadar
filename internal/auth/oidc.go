@@ -28,14 +28,15 @@ func (failure OidcError) Error() string { return string(failure) }
 
 // OidcState binds a short-lived browser flow to its nonce, verifier and optional local session.
 type OidcState struct {
-	State           string      `json:"state"`
-	Nonce           string      `json:"nonce"`
-	Verifier        string      `json:"verifier"`
-	Next            string      `json:"next"`
-	UserId          identity.Id `json:"user_id,omitempty"`
-	TokenGeneration int64       `json:"token_generation,omitempty"`
-	ExpiresAt       int64       `json:"expires_at"`
-	Configuration   string      `json:"configuration"`
+	State           string                `json:"state"`
+	Nonce           string                `json:"nonce"`
+	Verifier        string                `json:"verifier"`
+	Next            string                `json:"next"`
+	UserId          identity.Id           `json:"user_id,omitempty"`
+	TokenGeneration int64                 `json:"token_generation,omitempty"`
+	ExpiresAt       int64                 `json:"expires_at"`
+	Configuration   string                `json:"configuration"`
+	Native          *NativeOIDCParameters `json:"native,omitempty"`
 }
 
 func (state OidcState) String() string   { return "OidcState([REDACTED])" }
@@ -72,6 +73,8 @@ type Oidc struct {
 	mutex         sync.Mutex
 	cached        oidcDiscovery
 	cacheUntil    time.Time
+	nativeMutex   sync.Mutex
+	nativeCodes   map[string]nativeOIDCGrant
 }
 
 // NewOidc borrows runtime settings and a deployment-key signer without owning their lifecycle.
@@ -180,6 +183,10 @@ func SafeOidcNext(next string) string {
 
 // Start signs a ten-minute flow cookie and builds an authorization-code request with PKCE S256.
 func (oidc *Oidc) Start(ctx context.Context, next string, link *domain.Authorization) (string, string, error) {
+	return oidc.start(ctx, next, link, nil)
+}
+
+func (oidc *Oidc) start(ctx context.Context, next string, link *domain.Authorization, native *NativeOIDCParameters) (string, string, error) {
 	configuration, err := oidc.configuration(ctx)
 	if err != nil {
 		return "", "", err
@@ -191,7 +198,7 @@ func (oidc *Oidc) Start(ctx context.Context, next string, link *domain.Authoriza
 	if err != nil {
 		return "", "", err
 	}
-	state := OidcState{Next: SafeOidcNext(next), ExpiresAt: time.Now().Add(10 * time.Minute).Unix(), Configuration: configuration.binding()}
+	state := OidcState{Next: SafeOidcNext(next), ExpiresAt: time.Now().Add(10 * time.Minute).Unix(), Configuration: configuration.binding(), Native: native}
 	for _, value := range []*string{&state.State, &state.Nonce, &state.Verifier} {
 		*value, err = randomHex(32)
 		if err != nil {
@@ -242,6 +249,9 @@ func (oidc *Oidc) ReadState(encoded string) (*OidcState, error) {
 	if json.Unmarshal(data, &state) != nil || state.State == "" || state.Nonce == "" || state.Verifier == "" {
 		return nil, OidcError("state")
 	}
+	if state.Native != nil && (!state.Native.Valid() || state.UserId != 0) {
+		return nil, OidcError("state")
+	}
 	if time.Now().Unix() >= state.ExpiresAt || state.ExpiresAt > time.Now().Add(10*time.Minute).Unix()+5 {
 		return &state, OidcError("state")
 	}
@@ -255,38 +265,53 @@ func MatchOidcState(expected, supplied string) bool {
 
 // Finish exchanges a back-channel code, validates claims and resolves or links the external identity.
 func (oidc *Oidc) Finish(ctx context.Context, state OidcState, code string, link *domain.Authorization, audit domain.AuditEvent) (domain.LoginSession, error) {
-	configuration, err := oidc.configuration(ctx)
+	if state.Native != nil {
+		return domain.LoginSession{}, OidcError("state")
+	}
+	authorization, err := oidc.finishIdentity(ctx, state, code, link, audit)
 	if err != nil {
 		return domain.LoginSession{}, err
 	}
+	if link != nil {
+		return domain.LoginSession{User: authorization.User}, nil
+	}
+	audit.Action = "oidc_login"
+	return oidc.service.createLogin(ctx, authorization, audit)
+}
+
+func (oidc *Oidc) finishIdentity(ctx context.Context, state OidcState, code string, link *domain.Authorization, audit domain.AuditEvent) (domain.Authorization, error) {
+	configuration, err := oidc.configuration(ctx)
+	if err != nil {
+		return domain.Authorization{}, err
+	}
 	if !configuration.enabled() {
-		return domain.LoginSession{}, OidcError("unavailable")
+		return domain.Authorization{}, OidcError("unavailable")
 	}
 	if configuration.binding() != state.Configuration || time.Now().Unix() >= state.ExpiresAt || code == "" {
-		return domain.LoginSession{}, OidcError("state")
+		return domain.Authorization{}, OidcError("state")
 	}
 	if state.UserId != 0 && (link == nil || state.UserId != link.User.Id || state.TokenGeneration != link.TokenGeneration) {
-		return domain.LoginSession{}, OidcError("expired_session")
+		return domain.Authorization{}, OidcError("expired_session")
 	}
 	if state.UserId == 0 && link != nil {
-		return domain.LoginSession{}, OidcError("state")
+		return domain.Authorization{}, OidcError("state")
 	}
 	discovery, err := oidc.discovery(ctx, configuration)
 	if err != nil {
-		return domain.LoginSession{}, err
+		return domain.Authorization{}, err
 	}
 	oauth := oauthConfiguration(configuration, discovery)
 	token, err := oauth.Exchange(context.WithValue(ctx, oauth2.HTTPClient, oidc.client), code, oauth2.VerifierOption(state.Verifier))
 	if err != nil {
-		return domain.LoginSession{}, OidcError("provider")
+		return domain.Authorization{}, OidcError("provider")
 	}
 	rawIdToken, ok := token.Extra("id_token").(string)
 	if !ok {
-		return domain.LoginSession{}, OidcError("provider")
+		return domain.Authorization{}, OidcError("provider")
 	}
 	subject, err := validateIdToken(rawIdToken, configuration.issuer, configuration.clientId, state.Nonce, time.Now())
 	if err != nil {
-		return domain.LoginSession{}, err
+		return domain.Authorization{}, err
 	}
 	var profile struct {
 		Subject           string `json:"sub"`
@@ -295,17 +320,17 @@ func (oidc *Oidc) Finish(ctx context.Context, state OidcState, code string, link
 		PreferredUsername string `json:"preferred_username"`
 	}
 	if token.AccessToken == "" || !strings.EqualFold(token.Type(), "Bearer") {
-		return domain.LoginSession{}, OidcError("provider")
+		return domain.Authorization{}, OidcError("provider")
 	}
 	if err := oidc.getJson(ctx, discovery.UserinfoEndpoint, token.AccessToken, &profile); err != nil || profile.Subject != subject {
-		return domain.LoginSession{}, OidcError("provider")
+		return domain.Authorization{}, OidcError("provider")
 	}
 	if !profile.EmailVerified {
-		return domain.LoginSession{}, OidcError("email_unverified")
+		return domain.Authorization{}, OidcError("email_unverified")
 	}
 	email, err := NormalizeEmail(&profile.Email)
 	if err != nil || email == nil {
-		return domain.LoginSession{}, OidcError("provider")
+		return domain.Authorization{}, OidcError("provider")
 	}
 	username := ""
 	if ValidUsername(profile.PreferredUsername) {
@@ -315,20 +340,16 @@ func (oidc *Oidc) Finish(ctx context.Context, state OidcState, code string, link
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrEmailExists):
-			return domain.LoginSession{}, OidcError("email_conflict")
+			return domain.Authorization{}, OidcError("email_conflict")
 		case errors.Is(err, domain.ErrAccountConflict):
-			return domain.LoginSession{}, OidcError("account_conflict")
+			return domain.Authorization{}, OidcError("account_conflict")
 		case errors.Is(err, domain.ErrExpiredSession):
-			return domain.LoginSession{}, OidcError("expired_session")
+			return domain.Authorization{}, OidcError("expired_session")
 		default:
-			return domain.LoginSession{}, err
+			return domain.Authorization{}, err
 		}
 	}
-	if link != nil {
-		return domain.LoginSession{User: authorization.User}, nil
-	}
-	audit.Action = "oidc_login"
-	return oidc.service.createLogin(ctx, authorization, audit)
+	return authorization, nil
 }
 
 // Unlink removes external identity access while retaining local password access.
