@@ -18,7 +18,7 @@ Compose 项目名为 `litradar`，服务为 `server`、`client-web`、`gateway`�
 | 服务 | 构建 | 镜像 | 持久化 |
 | --- | --- | --- | --- |
 | server | 根 `Dockerfile` | `ghcr.io/qianfuv/litradar:latest` | `/app/data`，只读部署密钥 |
-| client-web | `apps/client/build/docker/Dockerfile.server`，上下文 `apps/client` | `ghcr.io/qianfuv/litradar-client-web:latest` | 无 |
+| client-web | `apps/client/build/docker/Dockerfile.server`，上下文为仓库根目录（专用 Dockerfile ignore） | `ghcr.io/qianfuv/litradar-client-web:latest` | 无 |
 | gateway | digest 固定的 Caddy 2.11.2 Alpine | 见 Compose | 只读 `Caddyfile` |
 
 根 `Caddyfile` 路由：

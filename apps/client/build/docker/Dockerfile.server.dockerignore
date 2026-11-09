@@ -1,0 +1,17 @@
+**
+!go.mod
+!go.sum
+!third_party/
+!third_party/go-sdk/
+!third_party/go-sdk/**
+!third_party/go-sqlite3/
+!third_party/go-sqlite3/**
+!apps/
+!apps/client/
+!apps/client/*.go
+!apps/client/internal/
+!apps/client/internal/**
+!apps/client/frontend/
+!apps/client/frontend/dist/
+!apps/client/frontend/dist/**
+**/*_test.go

@@ -1,5 +1,5 @@
 /**
- * Run complete uncached Go verification, or one isolated regular/race CI lane.
+ * Run complete uncached server-scoped Go verification, or one isolated regular/race CI lane.
  * Root suites allow 20 minutes per package for durable large-collection tests;
  * their 25-minute command budget also covers compilation and package scheduling.
  */

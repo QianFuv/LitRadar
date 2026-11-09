@@ -313,6 +313,27 @@ export async function verifyDependency(name, generate = false) {
   const policy = policies[name];
   assert(policy, "Unknown dependency");
   const local = path.join(WORKSPACE_ROOT, "third_party", name);
+  const moduleName =
+    name === "go-sdk"
+      ? "github.com/modelcontextprotocol/go-sdk"
+      : "github.com/mattn/go-sqlite3";
+  const selected = spawnSync(
+    "go",
+    ["list", "-mod=readonly", "-m", "-json", moduleName],
+    {
+      cwd: WORKSPACE_ROOT,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 60000,
+    },
+  );
+  assert.ifError(selected.error);
+  assert.equal(selected.status, 0, selected.stderr);
+  assert.equal(
+    path.resolve(JSON.parse(selected.stdout).Replace.Dir),
+    local,
+    "Root module must use the verified local replacement",
+  );
   const records = path.join(WORKSPACE_ROOT, "third_party", `${name}-patches`);
   const upstream = JSON.parse(
     await fs.readFile(path.join(records, "upstream.json"), "utf8"),

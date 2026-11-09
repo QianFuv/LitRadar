@@ -1,7 +1,0 @@
-*
-!go.mod
-!go.sum
-!*.go
-!internal/
-!frontend/dist/
-**/*_test.go

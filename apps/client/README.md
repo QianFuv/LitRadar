@@ -1,6 +1,6 @@
 # LitRadar client hosts
 
-`apps/client` is a Wails v3.1.0 module that hosts the Vite frontend in `frontend/` three ways:
+`apps/client` shares the repository root Go module and dependencies with the server. It uses Wails v3.1.0 and hosts the Vite frontend in `frontend/` three ways:
 
 | Target | Build tags | Output |
 | --- | --- | --- |

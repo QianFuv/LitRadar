@@ -37,7 +37,7 @@ notes; published release notes remain unchanged.
 
 ## Actions entrypoints
 
-Server packaging is independent of UI builds. Client release jobs install pinned Task v3.54.0 and the Wails CLI matching `apps/client/go.mod`, install frontend dependencies from the root pnpm lockfile, and invoke these exact contracts in `apps/client`:
+Server packaging is independent of UI builds. Client release jobs install pinned Task v3.54.0 and the Wails CLI matching the root `go.mod`, install frontend dependencies from the root pnpm lockfile, and invoke these exact contracts in `apps/client`:
 
 | Target | Command | Task output |
 | --- | --- | --- |

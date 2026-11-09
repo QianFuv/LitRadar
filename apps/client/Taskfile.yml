@@ -57,7 +57,7 @@ tasks:
     deps:
       - build:frontend
     cmds:
-      - docker build -f build/docker/Dockerfile.server -t {{.TAG}} .
+      - docker build -f build/docker/Dockerfile.server -t {{.TAG}} ../..
 
   build:windows:
     desc: Builds the Windows amd64 desktop app into bin/litradar-client.exe

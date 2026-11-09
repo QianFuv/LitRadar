@@ -10,7 +10,8 @@ go version -m /out/litradar > /out/inventory/binary-modules.txt
 cp go.mod go.sum /out/inventory/
 sha256sum /out/litradar > /out/inventory/binary.sha256
 cp target/simple-tokenizer/inputs.json /out/inventory/simple-inputs.json
-go list -mod=readonly -m -f '{{if .Replace}}{{.Replace.Dir}}{{else}}{{.Dir}}{{end}}' all |
+go list -mod=readonly -deps -tags sqlite_fts5,sqlite_dbstat \
+    -f '{{with .Module}}{{if .Replace}}{{.Replace.Dir}}{{else}}{{.Dir}}{{end}}{{end}}' ./apps/server | sort -u |
 while IFS= read -r module_directory; do
     test -n "$module_directory" || continue
     test "$module_directory" != /app || continue

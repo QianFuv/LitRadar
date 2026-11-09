@@ -125,7 +125,7 @@ a speedup. Version releases and deployments require their own authorization.
 
 ## Client quality and releases
 
-`Client` adds Web linux/amd64, Windows x64 and Android arm64 quality lanes. Task is pinned to v3.54.0; Wails CLI follows the version in the nested client module. The client workflow owns the Web host check; frontend.yaml owns Vite contracts, static checks and browser flows.
+`Client` adds Web linux/amd64, Windows x64 and Android arm64 quality lanes. Task is pinned to v3.54.0; Wails CLI follows the version in the shared root Go module. The client workflow owns the Web host check; frontend.yaml owns Vite contracts, static checks and browser flows.
 
 Server release builds never download frontend exports. Web release builds embed the same single Vite frontend and smoke `/` and `/login`; Windows invokes `task package:windows`; Android invokes `task package:android` with Java 21, SDK 35 and NDK r28c. Release APKs require all four signing secrets. Missing signing configuration yields explicit omission evidence and job-summary warnings while mandatory packages still publish. Windows installers are unsigned. See [release contracts](releases.md).
 

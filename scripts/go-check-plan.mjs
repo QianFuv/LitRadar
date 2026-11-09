@@ -1,6 +1,13 @@
 /** Define complete Go verification lanes without executing native builds or tests. */
 import assert from "node:assert/strict";
 
+export const SERVER_PACKAGES = [
+  ".",
+  "./apps/server/...",
+  "./cmd/...",
+  "./internal/...",
+];
+
 const TAGS = "sqlite_fts5,sqlite_dbstat";
 
 /**
@@ -17,7 +24,11 @@ export function goCheckPlan(lane = "all") {
       ["modules", "go", ["mod", "verify"]],
       ["sdk", "node", ["scripts/verify-go-dependency.mjs", "go-sdk"]],
       ["sqlite", "node", ["scripts/verify-go-dependency.mjs", "go-sqlite3"]],
-      ["vet", "go", ["vet", "-mod=readonly", "-tags", TAGS, "./..."]],
+      [
+        "vet",
+        "go",
+        ["vet", "-mod=readonly", "-tags", TAGS, ...SERVER_PACKAGES],
+      ],
     );
   }
   for (const mode of ["regular", "race"]) {
@@ -38,7 +49,7 @@ export function goCheckPlan(lane = "all") {
         ...flags,
         "-timeout=20m",
         ...(mode === "regular" ? ["-vet=off"] : []),
-        "./...",
+        ...SERVER_PACKAGES,
       ],
     ]);
     for (const [name, module, packageName] of [

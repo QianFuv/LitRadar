@@ -1,10 +1,11 @@
-/** Verify server source checks stay inside the root module after the client split. */
+/** Verify server source checks stay inside the shared root module with the client. */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { SERVER_PACKAGES } from "../scripts/go-check-plan.mjs";
 
 const FORMAT_SCRIPT = path.resolve("scripts/check-go-format.mjs");
 
@@ -19,7 +20,7 @@ function runTool(command, args, root) {
   });
 }
 
-test("server formatting includes the moved entry and excludes the nested client module", async (context) => {
+test("server formatting includes the moved entry and excludes client source in the shared module", async (context) => {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "litradar-server-check-"),
   );
@@ -37,22 +38,22 @@ test("server formatting includes the moved entry and excludes the nested client 
     "module example.com/server\n\ngo 1.27.3\n",
   );
   await fs.writeFile(
-    path.join(root, "apps/client/go.mod"),
-    "module example.com/client\n\ngo 1.27.3\n",
-  );
-  await fs.writeFile(
     path.join(root, "apps/client/broken.go"),
     "deliberately invalid client source",
   );
+  await fs.writeFile(path.join(root, "version.go"), "package server\n");
   const server = path.join(root, "apps/server/main.go");
   await fs.writeFile(server, "package main\n\nfunc main() {}\n");
   let result = runTool(process.execPath, [FORMAT_SCRIPT], root);
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
-  const graph = runTool("go", ["list", "./..."], root);
+  const graph = runTool("go", ["list", ...SERVER_PACKAGES], root);
   assert.ifError(graph.error);
   assert.equal(graph.status, 0, graph.stderr);
-  assert.equal(graph.stdout.trim(), "example.com/server/apps/server");
+  assert.equal(
+    graph.stdout.trim(),
+    "example.com/server\nexample.com/server/apps/server",
+  );
   await fs.writeFile(server, "package main\nfunc main(){ }\n");
   result = runTool(process.execPath, [FORMAT_SCRIPT], root);
   assert.ifError(result.error);

@@ -14,6 +14,7 @@ async function collect(directory) {
 }
 for (const directory of ["cmd", "internal", "apps/server"])
   await collect(directory);
+files.push("version.go");
 const result = spawnSync("gofmt", ["-l", ...files.sort()], {
   encoding: "utf8",
   windowsHide: true,

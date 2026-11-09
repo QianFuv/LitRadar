@@ -33,7 +33,7 @@ Caddy gateway -> client-web (Wails Server Build + Vite SPA)
                                                                -> *.changes.json -> litradar notify / litradar push
 ```
 
-服务端 `apps/server` 是根 Go 模块中的 API/任务入口，不包含 UI。独立 Go 模块 `apps/client` 使用 Wails v3，唯一前端为 `apps/client/frontend`；Vite 生成的 `dist` 仅嵌入客户端。Node.js 只参与开发与构建，服务端和 Web 客户端运行镜像均不需要 Node.js。
+服务端 `apps/server` 是根 Go 模块中的 API/任务入口，不包含 UI。`apps/client` 与服务端共用根 Go 模块，使用 Wails v3，唯一前端为 `apps/client/frontend`；Vite 生成的 `dist` 仅嵌入客户端。Node.js 只参与开发与构建，服务端和 Web 客户端运行镜像均不需要 Node.js。
 
 浏览器通过 Caddy 同源访问页面与 API。Windows x64、Android arm64-v8a 原生客户端连接用户配置的服务端 URL，通过个人令牌认证。发布不覆盖 iOS、macOS 或 Linux 桌面端；Wails v3 的 Android 支持为官方实验性功能。
 
@@ -83,7 +83,7 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 | --- | --- |
 | `apps/server` | 应用可执行文件与公开命令分发 |
 | `internal/runtime` | 服务组装、信号、调度和进程监督 |
-| `apps/client` | 独立 Wails 模块；原生端与 Web host 共享 Vite UI |
+| `apps/client` | 共用根 Go 模块的 Wails 客户端；原生端与 Web host 共享 Vite UI |
 | `internal/api`、`internal/mcp`、`internal/openapi` | HTTP/MCP 契约、认证边界和 schema |
 | `internal/auth`、`internal/cli` | 身份服务与命令编排 |
 | `internal/domain`、`internal/provider` | 领域值、Provider 接口和能力注册表 |
