@@ -128,7 +128,7 @@ function profileDockerResult(args, state, options) {
 /** Complete a mocked child only after its output or interruption is observed. */
 function createProfileChild(args, configuration, state, options) {
   assert.deepEqual(args, [
-    "tests/container-smoke.mjs",
+    "apps/server/tests/container-smoke.mjs",
     "litradar:go-test-amd64",
     "--profile",
   ]);

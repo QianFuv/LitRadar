@@ -4,8 +4,8 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { parseVersion } from "./release-version.mjs";
-import { assertReleasePlatform } from "./release-platform.mjs";
+import { parseVersion } from "../../../scripts/release-version.mjs";
+import { assertReleasePlatform } from "../../../scripts/release-platform.mjs";
 
 const [image, architecture, inputVersion] = process.argv.slice(2);
 assert(image && architecture === "amd64");
@@ -86,7 +86,7 @@ run("docker", [
   "--mount",
   `type=bind,source=${assets},target=/release-assets,readonly`,
   "--mount",
-  `type=bind,source=${path.resolve("scripts/smoke-release.sh")},target=/smoke-release.sh,readonly`,
+  `type=bind,source=${path.resolve("apps/server/scripts/smoke-release.sh")},target=/smoke-release.sh,readonly`,
   "--mount",
   `type=bind,source=${path.resolve("test-results/container-smoke/search-fixture.sqlite")},target=/smoke-fixture.sqlite,readonly`,
   "--env",

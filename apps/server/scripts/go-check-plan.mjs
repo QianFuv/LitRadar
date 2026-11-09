@@ -15,10 +15,18 @@ export function goCheckPlan(lane = "all") {
   const checks = [["environment", "go", ["env", "-json"]]];
   if (lane !== "race") {
     checks.push(
-      ["format", "node", ["scripts/check-go-format.mjs"]],
+      ["format", "node", ["apps/server/scripts/check-go-format.mjs"]],
       ["modules", "go", ["mod", "verify"]],
-      ["sdk", "node", ["scripts/verify-go-dependency.mjs", "go-sdk"]],
-      ["sqlite", "node", ["scripts/verify-go-dependency.mjs", "go-sqlite3"]],
+      [
+        "sdk",
+        "node",
+        ["apps/server/scripts/verify-go-dependency.mjs", "go-sdk"],
+      ],
+      [
+        "sqlite",
+        "node",
+        ["apps/server/scripts/verify-go-dependency.mjs", "go-sqlite3"],
+      ],
       [
         "vet",
         "go",

@@ -96,7 +96,7 @@ jobs:
           node-version: "26.11.1"
       - name: Package and smoke Windows distribution
         id: package_and_smoke_windows_distribution
-        run: node scripts/package-windows.mjs . $env:RELEASE_VERSION $env:SOURCE_SHA
+        run: node apps/server/scripts/package-windows.mjs . $env:RELEASE_VERSION $env:SOURCE_SHA
       - name: Record build-acceptance provenance
         id: record_build_acceptance_provenance
         if: always()
@@ -252,9 +252,9 @@ jobs:
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
           RELEASE_VERSION: ${{ needs.context.outputs.version }}
         run: |
-          node tests/container-smoke.mjs "$IMAGE_TAG"
+          node apps/server/tests/container-smoke.mjs "$IMAGE_TAG"
           test "$(docker run --rm --entrypoint litradar "$IMAGE_TAG" --version)" = "litradar $RELEASE_VERSION"
-          node scripts/package-release.mjs "$IMAGE_TAG" amd64 "$RELEASE_VERSION"
+          node apps/server/scripts/package-release.mjs "$IMAGE_TAG" amd64 "$RELEASE_VERSION"
           cp test-results/container-smoke/summary.json release-results/smoke-amd64.json
           docker image inspect "$IMAGE_TAG" > release-results/image-amd64.json
           docker save --output release-results/image-amd64.tar "$IMAGE_TAG"
@@ -382,7 +382,7 @@ jobs:
         id: verify_client_evidence
         env:
           RELEASE_SOURCE_SHA: ${{ needs.context.outputs.source }}
-        run: node scripts/release-client-evidence.mjs
+        run: node apps/client/scripts/release-client-evidence.mjs
       - name: Load and verify tested image and smoke evidence
         id: load_and_verify_tested_image_and_smoke_evidence
         env:
@@ -393,7 +393,7 @@ jobs:
           node scripts/release-evidence.mjs
           docker load --input release-results/clients/client-web-release/image-client-web.tar
           docker image inspect "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}" > release-results/loaded-client-image.json
-          node scripts/release-client-evidence.mjs image
+          node apps/client/scripts/release-client-evidence.mjs image
       - name: Smoke single-origin deployment
         id: compose_smoke
         env:

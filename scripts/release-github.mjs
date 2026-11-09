@@ -6,7 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { compareVersions, parseVersion } from "./release-version.mjs";
 import { releaseAssetNames, validateAssets } from "./release-assets.mjs";
-import { clientAssetName } from "./package-client.mjs";
+import { clientAssetName } from "../apps/client/scripts/package-client.mjs";
 import { generateReleaseNotes } from "./release-notes.mjs";
 
 /** Select the highest published stable version, independent of completion order. */

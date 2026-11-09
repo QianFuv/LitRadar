@@ -5,7 +5,8 @@
 import {
   buildSimple,
   simpleBuildEnvironment,
-} from "../scripts/build-simple-tokenizer.mjs";
+} from "../apps/server/scripts/build-simple-tokenizer.mjs";
+import { SERVER_PACKAGES } from "../apps/server/scripts/go-check-plan.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -69,7 +70,7 @@ function fastSteps(isCi) {
       "-mod=readonly",
       "-tags",
       "sqlite_fts5,sqlite_dbstat",
-      "./...",
+      ...SERVER_PACKAGES,
     ]),
     pnpmStep(
       "Vitest jsdom",
@@ -92,7 +93,7 @@ function integrationSteps() {
       "-mod=readonly",
       "-tags",
       "sqlite_fts5,sqlite_dbstat",
-      "./...",
+      ...SERVER_PACKAGES,
     ]),
     pnpmStep("Generated OpenAPI idempotence", ["generate:api:check"]),
     pnpmStep("Shared frontend API contract", [
@@ -125,14 +126,16 @@ function e2eSmokeSteps() {
  */
 function allSteps(isCi) {
   return [
-    step("Go formatting", process.execPath, ["scripts/check-go-format.mjs"]),
+    step("Go formatting", process.execPath, [
+      "apps/server/scripts/check-go-format.mjs",
+    ]),
     step("Go module integrity", "go", ["mod", "verify"]),
     step("Go vet", "go", [
       "vet",
       "-mod=readonly",
       "-tags",
       "sqlite_fts5,sqlite_dbstat",
-      "./...",
+      ...SERVER_PACKAGES,
     ]),
     pnpmStep("Frontend lint", ["lint"]),
     pnpmStep("Frontend formatting", ["format:check"]),
@@ -169,7 +172,7 @@ function diagnosticsSteps() {
       "-tags",
       "sqlite_fts5,sqlite_dbstat",
       "-coverprofile=target/go-coverage/coverage.out",
-      "./...",
+      ...SERVER_PACKAGES,
     ]),
     step("Go coverage HTML", "go", [
       "tool",

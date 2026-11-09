@@ -20,7 +20,7 @@
     "test:watch": "vitest --config vitest.config.tsx --project unit-jsdom",
     "test:e2e": "pnpm test:e2e:fixtures",
     "test:e2e:fixtures": "playwright test --config playwright.config.tsx",
-    "test:e2e:full-stack": "pnpm build && node ../../../scripts/build-go.mjs && node tests/e2e/support/full-stack-server.mjs"
+    "test:e2e:full-stack": "pnpm build && node ../../server/scripts/build-go.mjs && node tests/e2e/support/full-stack-server.mjs"
   },
   "dependencies": {
     "@animate-ui/react": "^2.4.1",

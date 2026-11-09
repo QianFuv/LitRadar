@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 
 const IMAGE = process.argv[2];
-assert(IMAGE, "Usage: node tests/client-web-smoke.mjs <image>");
+assert(IMAGE, "Usage: node apps/client/tests/client-web-smoke.mjs <image>");
 const NAME = `litradar-client-smoke-${randomUUID()}`;
 
 /** Run a bounded Docker command against task-owned resources. */

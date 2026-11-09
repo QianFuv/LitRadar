@@ -9,7 +9,7 @@
  * token, and logout. Screenshots and the exported file go to
  * `apps/client/frontend/test-results/native-windows`.
  *
- * Usage, from apps/client/frontend after `node scripts/build-go.mjs` and `task build:windows:smoke`:
+ * Usage, from apps/client/frontend after `node ../../server/scripts/build-go.mjs` and `task build:windows:smoke`:
  *   node tests/native-smoke/windows-smoke.mjs
  *
  * @packageDocumentation

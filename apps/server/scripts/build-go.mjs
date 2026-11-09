@@ -8,7 +8,7 @@ import {
   simpleBuildEnvironment,
 } from "./build-simple-tokenizer.mjs";
 
-const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const ROOT = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const OUTPUT = path.join(ROOT, "target", "go");
 await mkdir(OUTPUT, { recursive: true });
 await buildSimple(ROOT);

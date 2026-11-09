@@ -191,7 +191,7 @@ function runSmoke(image, runId, signal) {
   return new Promise((resolve) => {
     const child = spawn(
       process.execPath,
-      ["tests/container-smoke.mjs", image, "--profile"],
+      ["apps/server/tests/container-smoke.mjs", image, "--profile"],
       {
         env: { ...process.env, LITRADAR_SMOKE_RUN_ID: runId },
         windowsHide: true,

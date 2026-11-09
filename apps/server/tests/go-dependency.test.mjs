@@ -114,7 +114,7 @@ async function snapshotTree(directory, relative = "") {
 /** Verify both replacements without regenerating dependency or patch bytes. */
 async function verifiesWithoutRegeneration(context) {
   const protectedDirectory = fileURLToPath(
-    new URL("../third_party/", import.meta.url),
+    new URL("../../../third_party/", import.meta.url),
   );
   const writeFile = fs.writeFile;
   /** Reject dependency and patch writes while allowing integrity reports and archive caching. */
@@ -140,8 +140,11 @@ async function verifiesWithoutRegeneration(context) {
     /Verification must not regenerate/,
   );
   for (const name of ["go-sdk", "go-sqlite3"]) {
-    const local = new URL(`../third_party/${name}/`, import.meta.url);
-    const records = new URL(`../third_party/${name}-patches/`, import.meta.url);
+    const local = new URL(`../../../third_party/${name}/`, import.meta.url);
+    const records = new URL(
+      `../../../third_party/${name}-patches/`,
+      import.meta.url,
+    );
     const localDirectory = fileURLToPath(local);
     const recordDirectory = fileURLToPath(records);
     const before = [

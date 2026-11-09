@@ -13,7 +13,7 @@ import { inflateSync } from "node:zlib";
 
 const WORKSPACE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "..",
+  "../../..",
 );
 const REPORT_ROOT = path.join(
   WORKSPACE_ROOT,
@@ -1506,7 +1506,7 @@ if (
   (args.length === 2 && args[1] !== "--profile")
 ) {
   failure = new Error(
-    "Usage: node tests/container-smoke.mjs <image-tag> [--profile]",
+    "Usage: node apps/server/tests/container-smoke.mjs <image-tag> [--profile]",
   );
 } else {
   try {

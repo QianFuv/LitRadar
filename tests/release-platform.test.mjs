@@ -56,7 +56,7 @@ syncBuiltinESMExports();
 `,
   );
   const script = path.resolve(
-    `scripts/package-${kind === "linux" ? "release" : "windows"}.mjs`,
+    `apps/server/scripts/package-${kind === "linux" ? "release" : "windows"}.mjs`,
   );
   const args =
     kind === "linux"

@@ -9,7 +9,7 @@
  * collection, and an app restart that keeps the session. Screenshots go to
  * `apps/client/frontend/test-results/native-android`.
  *
- * Usage, from apps/client/frontend after `node scripts/build-go.mjs`,
+ * Usage, from apps/client/frontend after `node ../../server/scripts/build-go.mjs`,
  * `task build:android:debug`, and `adb install -r ../bin/litradar-client-android-arm64-debug.apk`:
  *   node tests/native-smoke/android-smoke.mjs
  *

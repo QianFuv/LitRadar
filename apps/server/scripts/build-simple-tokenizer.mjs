@@ -8,7 +8,10 @@ import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
 const REVISION = "45db071ba8043ffe8a2e5dfe41f9d68fb477576c";
 const SOURCE_SHA256 =
   "d60f39ecad1f4fcf46485810708353777224ddc3829b7c9de865034277481e61";
@@ -175,7 +178,10 @@ export async function buildSimple(root = ROOT, hasCompatibilityOracle = false) {
     await mkdir(oracleRoot, { recursive: true });
     const filename = target.GOOS === "windows" ? "simple.dll" : "libsimple.so";
     if (target.GOOS === "windows") {
-      const previous = path.join(root, "third_party/simple-prebuilt/windows/simple.dll");
+      const previous = path.join(
+        root,
+        "third_party/simple-prebuilt/windows/simple.dll",
+      );
       assert.equal(
         digest(await readFile(previous)),
         "27c700ca34cd5935ff934459f1f9c107cdefef7e54250de5a1c6646e05f21a4f",

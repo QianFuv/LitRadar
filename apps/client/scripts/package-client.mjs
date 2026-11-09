@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseVersion } from "./release-version.mjs";
+import { parseVersion } from "../../../scripts/release-version.mjs";
 
 /** Return the single supported artifact for each client platform. */
 export function clientAssetName(version, platform) {

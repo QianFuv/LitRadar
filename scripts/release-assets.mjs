@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { clientAssetName } from "./package-client.mjs";
+import { clientAssetName } from "../apps/client/scripts/package-client.mjs";
 import { parseVersion } from "./release-version.mjs";
 
 /** Return the immutable platform asset names for a stable version. */

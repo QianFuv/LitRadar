@@ -10,7 +10,7 @@ import {
   releaseAssetNames,
   validateAssets,
 } from "../scripts/release-assets.mjs";
-import { clientAssetName } from "../scripts/package-client.mjs";
+import { clientAssetName } from "../apps/client/scripts/package-client.mjs";
 import { resolveReleaseContext } from "../scripts/release-context.mjs";
 import { generateReleaseNotes } from "../scripts/release-notes.mjs";
 import { verifyReleaseJobs } from "../scripts/release-status.mjs";

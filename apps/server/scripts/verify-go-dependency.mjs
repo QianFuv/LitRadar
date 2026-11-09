@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 const WORKSPACE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "..",
+  "../../..",
 );
 /** Hash exact dependency source bytes. */
 function digest(bytes) {

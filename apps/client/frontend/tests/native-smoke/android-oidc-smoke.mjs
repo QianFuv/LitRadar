@@ -10,7 +10,7 @@
  * that survives an app restart. Screenshots go to
  * `apps/client/frontend/test-results/native-android-oidc`.
  *
- * Usage, from apps/client/frontend after `node scripts/build-go.mjs` and installing a
+ * Usage, from apps/client/frontend after `node ../../server/scripts/build-go.mjs` and installing a
  * debuggable APK of the current sources:
  *   node tests/native-smoke/android-oidc-smoke.mjs
  *

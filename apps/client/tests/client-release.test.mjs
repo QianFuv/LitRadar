@@ -11,11 +11,11 @@ import {
   verifyClientImage,
 } from "../scripts/release-client-evidence.mjs";
 import { assertAndroidSigner } from "../scripts/verify-android-signing.mjs";
-import { writeCiReport } from "../scripts/ci-report.mjs";
+import { writeCiReport } from "../../../scripts/ci-report.mjs";
 import {
   releaseAssetNames,
   validateAssets,
-} from "../scripts/release-assets.mjs";
+} from "../../../scripts/release-assets.mjs";
 
 const VERSION = "0.3.0";
 const SOURCE = "a".repeat(40);

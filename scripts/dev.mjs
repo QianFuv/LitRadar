@@ -7,7 +7,7 @@
 import {
   buildSimple,
   simpleBuildEnvironment,
-} from "./build-simple-tokenizer.mjs";
+} from "../apps/server/scripts/build-simple-tokenizer.mjs";
 import { spawn } from "node:child_process";
 import { access, mkdir, stat } from "node:fs/promises";
 import { createServer } from "node:net";

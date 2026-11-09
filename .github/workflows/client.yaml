@@ -165,7 +165,7 @@ jobs:
         env:
           ANDROID_SIGNING_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}
           ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
-        run: node scripts/verify-android-signing.mjs
+        run: node apps/client/scripts/verify-android-signing.mjs
       - name: Build and smoke client web image
         id: image
         if: matrix.target == 'web'
@@ -178,7 +178,7 @@ jobs:
           docker build -f apps/client/build/docker/Dockerfile.server \
             --label "org.opencontainers.image.revision=$SOURCE_SHA" \
             --label "org.opencontainers.image.version=$version" -t "$image" .
-          node tests/client-web-smoke.mjs "$image"
+          node apps/client/tests/client-web-smoke.mjs "$image"
           if [[ '${{ inputs.release }}' == true ]]; then
             docker save --output release-results/client/image-client-web.tar "$image"
             docker image inspect "$image" > release-results/client/image-client-web.json
@@ -188,7 +188,7 @@ jobs:
         if: matrix.target != 'android' || steps.signing.outputs.build == 'true'
         env:
           TARGET: ${{ matrix.target }}
-        run: node scripts/package-client.mjs "$TARGET" "${RELEASE_VERSION:-$(cat VERSION)}"
+        run: node apps/client/scripts/package-client.mjs "$TARGET" "${RELEASE_VERSION:-$(cat VERSION)}"
       - name: Record client artifact provenance
         id: evidence
         if: always()

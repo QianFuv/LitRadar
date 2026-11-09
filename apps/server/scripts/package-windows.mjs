@@ -5,8 +5,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseVersion } from "./release-version.mjs";
-import { assertReleasePlatform } from "./release-platform.mjs";
+import { parseVersion } from "../../../scripts/release-version.mjs";
+import { assertReleasePlatform } from "../../../scripts/release-platform.mjs";
 import {
   buildSimple,
   simpleBuildEnvironment,
@@ -25,7 +25,7 @@ const SERVER_SOURCE_PATHS = [
   "LICENSE",
 ];
 
-const toolsRoot = fileURLToPath(new URL("..", import.meta.url));
+const toolsRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const [sourceArgument, inputVersion, commit, mode] = process.argv.slice(2);
 assert(
   mode === undefined || mode === "--local-smoke",
@@ -316,7 +316,7 @@ run("tar", ["-a", "-cf", archive, "-C", path.dirname(directory), name]);
 run(
   process.execPath,
   [
-    path.join(toolsRoot, "scripts/smoke-windows.mjs"),
+    path.join(toolsRoot, "apps/server/scripts/smoke-windows.mjs"),
     archive,
     version,
     commit,

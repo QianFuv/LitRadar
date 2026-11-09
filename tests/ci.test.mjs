@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { goCheckPlan } from "../scripts/go-check-plan.mjs";
+import { goCheckPlan } from "../apps/server/scripts/go-check-plan.mjs";
 
 test("regular and race lanes retain every root and replacement-module check", () => {
   const expected = [
@@ -63,7 +63,7 @@ test("regular and race lanes retain every root and replacement-module check", ()
 test("unknown lanes fail before native preparation", () => {
   const result = spawnSync(
     process.execPath,
-    ["scripts/check-go.mjs", "short"],
+    ["apps/server/scripts/check-go.mjs", "short"],
     {
       encoding: "utf8",
       timeout: 10000,

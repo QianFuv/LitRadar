@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { SERVER_PACKAGES } from "../scripts/go-check-plan.mjs";
 
-const FORMAT_SCRIPT = path.resolve("scripts/check-go-format.mjs");
+const FORMAT_SCRIPT = path.resolve("apps/server/scripts/check-go-format.mjs");
 
 /** Run a bounded local tool inside a synthetic workspace. */
 function runTool(command, args, root) {
@@ -84,7 +84,7 @@ test(
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "litradar-launcher-"));
     context.after(() => fs.rm(root, { recursive: true, force: true }));
     let launcher = await launcherTemplate(
-      "scripts/package-windows.mjs",
+      "apps/server/scripts/package-windows.mjs",
       "run.ps1",
     );
     const invocation = "  & (Join-Path $PSScriptRoot 'litradar.exe') @args";
@@ -137,7 +137,7 @@ test(
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "litradar-launcher-"));
     context.after(() => fs.rm(root, { recursive: true, force: true }));
     let launcher = await launcherTemplate(
-      "scripts/package-release.mjs",
+      "apps/server/scripts/package-release.mjs",
       "run.sh",
     );
     const invocation = 'exec "$root/litradar" "$@"';

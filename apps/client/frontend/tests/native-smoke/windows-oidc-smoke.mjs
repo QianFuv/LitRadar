@@ -9,7 +9,7 @@
  * in Credential Manager and survives an app restart. Screenshots go to
  * `apps/client/frontend/test-results/native-windows-oidc`.
  *
- * Usage, from apps/client/frontend after `node scripts/build-go.mjs` and building
+ * Usage, from apps/client/frontend after `node ../../server/scripts/build-go.mjs` and building
  * `../bin/litradar-client-smoke.exe` (`task build:windows:smoke`):
  *   node tests/native-smoke/windows-oidc-smoke.mjs
  *
