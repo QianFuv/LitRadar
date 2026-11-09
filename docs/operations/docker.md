@@ -17,9 +17,11 @@ Compose 项目名为 `litradar`，服务为 `server`、`client-web`、`gateway`�
 
 | 服务 | 构建 | 镜像 | 持久化 |
 | --- | --- | --- | --- |
-| server | `apps/server/Dockerfile` | `ghcr.io/qianfuv/litradar:latest` | `/app/data`，只读部署密钥 |
+| server | `apps/server/Dockerfile` | `ghcr.io/qianfuv/litradar-server:latest` | `/app/data`，只读部署密钥 |
 | client-web | `apps/client/build/docker/Dockerfile.server`，上下文为仓库根目录（专用 Dockerfile ignore） | `ghcr.io/qianfuv/litradar-client-web:latest` | 无 |
 | gateway | digest 固定的 Caddy 2.11.2 Alpine | 见 Compose | 只读 `Caddyfile` |
+
+server 镜像在 0.5.0 之后由 `ghcr.io/qianfuv/litradar` 更名为 `ghcr.io/qianfuv/litradar-server`，旧名称停留在 0.5.0，不再发布新版本。已有部署更新时，把自己 Compose 文件中 server 的 `image` 改为新名称（或改用仓库中的 `docker-compose.yml`），再执行 `docker compose pull` 和 `docker compose up -d`。
 
 根 `Caddyfile` 路由：
 
@@ -91,7 +93,7 @@ docker compose ps
 需要验证当前源码时改为本地构建：
 
 ```bash
-docker buildx build -f apps/server/Dockerfile --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar:latest .
+docker buildx build -f apps/server/Dockerfile --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar-server:latest .
 docker compose up -d --remove-orphans
 ```
 
@@ -256,7 +258,7 @@ docker compose logs --no-log-prefix server | jq -c 'select(.level == "ERROR")'
 仓库提供 PowerShell 7 脚本 `apps/server/tests/profiling/profile_docker_memory.ps1`。脚本为每次运行生成唯一的 Compose 项目、容器和网络，只删除这些具名测试资源，并把不含命令参数和密钥值的 JSON 写入已忽略的 `output/memory/`。Docker 必须使用 cgroup v2，目标镜像必须先构建：
 
 ```powershell
-docker buildx build -f apps/server/Dockerfile --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar:latest .
+docker buildx build -f apps/server/Dockerfile --platform linux/amd64 --load -t ghcr.io/qianfuv/litradar-server:latest .
 docker compose config --quiet
 ```
 
@@ -392,7 +394,7 @@ pwsh ./apps/server/tests/profiling/profile_docker_memory.ps1 `
 
 ### 1. 确认镜像发布
 
-`VERSION` 递增且 backend、frontend 检查通过后，`CI` 调用 `Release` 工作流：只构建 `linux/amd64` 镜像，容器冒烟通过后推送 `ghcr.io/qianfuv/litradar:v<version>`，再由串行的 latest 更新步骤把 `ghcr.io/qianfuv/litradar:latest` 指向已发布的最高稳定版本。不提供 arm64 镜像或 `sha-*` tag。部署前确认对应 GitHub Release 已发布；可复现部署优先使用 `v<version>`，`latest` 是可变 tag。流程见[版本发布](releases.md)。
+`VERSION` 递增且 backend、frontend 检查通过后，`CI` 调用 `Release` 工作流：只构建 `linux/amd64` 镜像，容器冒烟通过后推送 `ghcr.io/qianfuv/litradar-server:v<version>`，再由串行的 latest 更新步骤把 `ghcr.io/qianfuv/litradar-server:latest` 指向已发布的最高稳定版本。不提供 arm64 镜像或 `sha-*` tag。部署前确认对应 GitHub Release 已发布；可复现部署优先使用 `v<version>`，`latest` 是可变 tag。流程见[版本发布](releases.md)。
 
 ### 2. 配置 HTTPS 访问
 

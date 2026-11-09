@@ -198,7 +198,7 @@ jobs:
           SOURCE_REPOSITORY: ${{ github.repository }}
           RELEASE_VERSION: ${{ needs.context.outputs.version }}
         run: |
-          echo "tag=ghcr.io/${SOURCE_REPOSITORY,,}:v${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=ghcr.io/${SOURCE_REPOSITORY,,}-server:v${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
           echo "created_at=$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
           description="$(awk 'NR > 1 && NF { print; exit }' README.md)"
           description_bytes="$(printf '%s' "$description" | wc -c)"
@@ -389,7 +389,7 @@ jobs:
           SOURCE_REPOSITORY: ${{ github.repository }}
         run: |
           docker load --input release-results/image-amd64.tar
-          docker image inspect "ghcr.io/${SOURCE_REPOSITORY,,}:v${RELEASE_VERSION}" > release-results/loaded-image.json
+          docker image inspect "ghcr.io/${SOURCE_REPOSITORY,,}-server:v${RELEASE_VERSION}" > release-results/loaded-image.json
           node scripts/release-evidence.mjs
           docker load --input release-results/clients/client-web-release/image-client-web.tar
           docker image inspect "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}" > release-results/loaded-client-image.json
@@ -398,7 +398,7 @@ jobs:
         id: compose_smoke
         env:
           SOURCE_REPOSITORY: ${{ github.repository }}
-        run: node tests/compose-smoke.mjs "ghcr.io/${SOURCE_REPOSITORY,,}:v${RELEASE_VERSION}" "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}"
+        run: node tests/compose-smoke.mjs "ghcr.io/${SOURCE_REPOSITORY,,}-server:v${RELEASE_VERSION}" "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}"
       - name: Combine and verify both platform archives
         id: combine_and_verify_both_platform_archives
         run: node scripts/release-assets.mjs "$RELEASE_VERSION"
@@ -417,7 +417,7 @@ jobs:
         env:
           SOURCE_REPOSITORY: ${{ github.repository }}
         run: |
-          image="ghcr.io/${SOURCE_REPOSITORY,,}:v${RELEASE_VERSION}"
+          image="ghcr.io/${SOURCE_REPOSITORY,,}-server:v${RELEASE_VERSION}"
           docker push "$image"
           docker push "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}"
           docker buildx imagetools inspect --raw "ghcr.io/${SOURCE_REPOSITORY,,}-client-web:v${RELEASE_VERSION}" > release-results/published-client-manifest.json

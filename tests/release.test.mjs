@@ -644,8 +644,8 @@ async function promotesLatestInOrder() {
       "create",
       "--prefer-index=false",
       "--tag",
-      "ghcr.io/fixture/repository:latest",
-      "ghcr.io/fixture/repository:v0.3.0",
+      "ghcr.io/fixture/repository-server:latest",
+      "ghcr.io/fixture/repository-server:v0.3.0",
     ],
     [
       "command",

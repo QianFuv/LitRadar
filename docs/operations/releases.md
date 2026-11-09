@@ -26,7 +26,7 @@ After backend, frontend and client quality checks pass, release jobs build the s
 - `litradar-client_<version>_android_arm64.apk` (release-signed, when configured)
 - `SHA256SUMS` covering every published binary/package
 
-Server OCI images remain `ghcr.io/qianfuv/litradar:v<version>`; Web client images use `ghcr.io/qianfuv/litradar-client-web:v<version>`. Both are linux/amd64 and both have serialized latest promotion. Server packagers continue to reject unsupported targets before extraction. Native clients are Windows x64 and Android arm64-v8a only; there are no iOS, macOS or Linux desktop jobs. [Wails officially marks mobile support experimental](https://wails.io/blog/wails-v3-released).
+Server OCI images are `ghcr.io/qianfuv/litradar-server:v<version>` (versions up to 0.5.0 were published as `ghcr.io/qianfuv/litradar`); Web client images use `ghcr.io/qianfuv/litradar-client-web:v<version>`. Both are linux/amd64 and both have serialized latest promotion. Server packagers continue to reject unsupported targets before extraction. Native clients are Windows x64 and Android arm64-v8a only; there are no iOS, macOS or Linux desktop jobs. [Wails officially marks mobile support experimental](https://wails.io/blog/wails-v3-released).
 
 Release notes list every commit since the highest older published stable version
 reachable from the release commit. Conventional Commit prefixes group entries by
@@ -69,7 +69,7 @@ Client manifests bind the exact source, platforms and file hashes, including the
 - Release and the reusable check workflows are internal workflows only.
 - Test Diagnostics runs weekly or manually for informational coverage artifacts.
 
-Images are published as `ghcr.io/qianfuv/litradar:v<version>` and `:latest`.
+Images are published as `ghcr.io/qianfuv/litradar-server:v<version>` and `:latest`.
 Prefer a version tag for reproducible deployments. The Git tag
 `v<version>` points to the exact CI source commit. A serialized promotion step
 selects the highest published stable version for both latest pointers.

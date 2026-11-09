@@ -35,7 +35,7 @@ async function promoteLatest() {
   const release = latestRelease(releases);
   assert(release, "No published stable release to promote");
   const image = `ghcr.io/${process.env.GITHUB_REPOSITORY.toLowerCase()}`;
-  for (const suffix of ["", "-client-web"]) {
+  for (const suffix of ["-server", "-client-web"]) {
     execFileSync(
       "docker",
       [

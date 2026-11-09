@@ -48,7 +48,7 @@ docker compose up -d --remove-orphans
 docker compose ps
 ```
 
-Compose 运行 `server`、`client-web`、`gateway` 三个服务，只有网关向 loopback 发布 8000 端口。服务端镜像为 `ghcr.io/qianfuv/litradar:latest`，客户端为 `ghcr.io/qianfuv/litradar-client-web:latest`。从源码构建时先在根目录执行 `pnpm install --frozen-lockfile && pnpm build`，再执行 `docker compose up -d --build`。镜像自带官方期刊目录，首次运行会准备 `data/meta/`，后续升级保留自定义文件；完整规则见 [Meta 与持久卷](docs/operations/docker.md#meta-bundle-与持久卷)。
+Compose 运行 `server`、`client-web`、`gateway` 三个服务，只有网关向 loopback 发布 8000 端口。服务端镜像为 `ghcr.io/qianfuv/litradar-server:latest`，客户端为 `ghcr.io/qianfuv/litradar-client-web:latest`。从源码构建时先在根目录执行 `pnpm install --frozen-lockfile && pnpm build`，再执行 `docker compose up -d --build`。镜像自带官方期刊目录，首次运行会准备 `data/meta/`，后续升级保留自定义文件；完整规则见 [Meta 与持久卷](docs/operations/docker.md#meta-bundle-与持久卷)。
 
 ### 3. 初始化首个管理员
 
@@ -106,7 +106,7 @@ Web、Windows x64 和 Android arm64-v8a 共用同一 Vite 前端。首次打开�
 
 ## 版本发布
 
-普通推送只运行质量检查；发布时修改根目录 `VERSION`（例如 `0.1.0` → `0.1.1`），提交并推送到 `main`。检查通过后自动发布 GitHub Release 二进制包及 `ghcr.io/qianfuv/litradar:v0.1.1`、`latest` 镜像，无需手动打标签。服务端二进制包支持 Linux amd64 和 Windows x64，仅附带服务端与原生辅助程序；容器镜像只提供 `linux/amd64`。Actions 的 `CI` 负责检查，也可手动运行并填写当前 `VERSION` 重试发布；`Release` 是由 `CI` 调用的可复用发布流程。版本规则、安装依赖和失败重试见[版本发布说明](docs/operations/releases.md)。
+普通推送只运行质量检查；发布时修改根目录 `VERSION`（例如 `0.1.0` → `0.1.1`），提交并推送到 `main`。检查通过后自动发布 GitHub Release 二进制包及 `ghcr.io/qianfuv/litradar-server:v0.1.1`、`latest` 镜像，无需手动打标签。服务端二进制包支持 Linux amd64 和 Windows x64，仅附带服务端与原生辅助程序；容器镜像只提供 `linux/amd64`。Actions 的 `CI` 负责检查，也可手动运行并填写当前 `VERSION` 重试发布；`Release` 是由 `CI` 调用的可复用发布流程。版本规则、安装依赖和失败重试见[版本发布说明](docs/operations/releases.md)。
 
 ## 文档
 
