@@ -22,6 +22,7 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.util.Log;
+import android.view.View;
 import android.webkit.ConsoleMessage;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -34,7 +35,13 @@ import android.webkit.WebViewClient;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.webkit.WebViewAssetLoader;
 
 import org.json.JSONObject;
@@ -94,6 +101,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        applyWindowInsets();
+        applySystemBarAppearance();
 
         String devURL = WailsBridge.devServerURL(this);
         if (devURL != null) devServer = Uri.parse(devURL);
@@ -107,6 +116,42 @@ public class MainActivity extends AppCompatActivity {
 
         // Load the application
         loadApplication();
+    }
+
+    /**
+     * Draws the window edge to edge on every supported API level and pads the WebView container
+     * by the system bar, display cutout, and soft keyboard insets, so web content never sits
+     * under the status bar, the navigation or gesture bar, or a cutout. Targeting SDK 35 and
+     * later makes edge-to-edge mandatory, so the system no longer insets the content itself.
+     */
+    private void applyWindowInsets() {
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main_container), (container, windowInsets) -> {
+            Insets barInsets = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            Insets keyboardInsets = windowInsets.getInsets(WindowInsetsCompat.Type.ime());
+            container.setPadding(
+                    barInsets.left,
+                    barInsets.top,
+                    barInsets.right,
+                    Math.max(barInsets.bottom, keyboardInsets.bottom));
+            return WindowInsetsCompat.CONSUMED;
+        });
+    }
+
+    /**
+     * Paints the inset area behind the system bars in the web client's theme color for the
+     * current light or dark mode and picks bar icons that contrast with it.
+     */
+    private void applySystemBarAppearance() {
+        View container = findViewById(R.id.main_container);
+        container.setBackgroundColor(ContextCompat.getColor(this, R.color.system_bar_background));
+        int nightMode = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        boolean isDarkMode = nightMode == Configuration.UI_MODE_NIGHT_YES;
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        controller.setAppearanceLightStatusBars(!isDarkMode);
+        controller.setAppearanceLightNavigationBars(!isDarkMode);
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -872,6 +917,7 @@ public class MainActivity extends AppCompatActivity {
         super.onConfigurationChanged(newConfig);
         // Fires for light/dark switches because the manifest lists uiMode in
         // android:configChanges (otherwise the activity would be recreated).
+        applySystemBarAppearance();
         emitTheme();
     }
 

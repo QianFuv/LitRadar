@@ -5,9 +5,9 @@
         <item name="colorPrimary">@color/wails_blue</item>
         <item name="colorPrimaryVariant">@color/wails_blue_dark</item>
         <item name="colorOnPrimary">@android:color/white</item>
-        <!-- Status bar color. -->
-        <item name="android:statusBarColor">@color/wails_background</item>
-        <item name="android:navigationBarColor">@color/wails_background</item>
+        <!-- Transparent bars; MainActivity pads the content by the bar insets. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <!-- Window background -->
         <item name="android:windowBackground">@color/wails_background</item>
     </style>
