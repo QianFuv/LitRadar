@@ -1,0 +1,17 @@
+{
+	"fixed": {
+		"file_version": "0.4.2",
+		"product_version": "0.4.2"
+	},
+	"info": {
+		"0409": {
+			"FileVersion": "0.4.2",
+			"ProductVersion": "0.4.2",
+			"CompanyName": "QianFuv",
+			"FileDescription": "LitRadar literature search, favorites, and tracking client",
+			"LegalCopyright": "(c) 2026, QianFuv",
+			"ProductName": "LitRadar",
+			"Comments": "LitRadar client"
+		}
+	}
+}

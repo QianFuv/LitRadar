@@ -1,0 +1,113 @@
+//go:build windows && !server
+
+package main
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/QianFuv/LitRadar/apps/client/internal/nativehost"
+	"github.com/danieljoos/wincred"
+	"github.com/wailsapp/wails/v3/pkg/application"
+)
+
+// newPlatformOptions returns the Windows facilities of the bridge: Credential
+// Manager for tokens, the LitRadar folder under the roaming AppData directory
+// for the host config, and the system save dialog and browser.
+func newPlatformOptions() (nativehost.Options, error) {
+	hostname, _ := os.Hostname()
+	return nativehost.Options{
+		Secrets: credentialStore{},
+		ConfigDirectory: func() (string, error) {
+			directory, err := os.UserConfigDir()
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(directory, "LitRadar"), nil
+		},
+		DeviceName: "Windows " + hostname,
+		SaveFile:   saveWithDialog,
+		OpenURL: func(rawURL string) error {
+			return application.Get().Browser.OpenURL(rawURL)
+		},
+	}, nil
+}
+
+// windowsOptions returns the WebView2 options of the desktop window. Only smoke
+// builds add browser arguments; see smokeBrowserArguments.
+func windowsOptions() application.WindowsOptions {
+	return application.WindowsOptions{AdditionalBrowserArgs: smokeBrowserArguments()}
+}
+
+// credentialStore keeps secrets as generic credentials in Windows Credential Manager.
+type credentialStore struct{}
+
+// Get implements [nativehost.SecretStore].
+func (credentialStore) Get(key string) (string, bool, error) {
+	credential, err := wincred.GetGenericCredential(key)
+	if errors.Is(err, wincred.ErrElementNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return string(credential.CredentialBlob), true, nil
+}
+
+// Set implements [nativehost.SecretStore].
+func (credentialStore) Set(key, value string) error {
+	credential := wincred.NewGenericCredential(key)
+	credential.UserName = "LitRadar"
+	credential.CredentialBlob = []byte(value)
+	credential.Persist = wincred.PersistLocalMachine
+	return credential.Write()
+}
+
+// Delete implements [nativehost.SecretStore].
+func (credentialStore) Delete(key string) error {
+	credential, err := wincred.GetGenericCredential(key)
+	if errors.Is(err, wincred.ErrElementNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return credential.Delete()
+}
+
+// dialogCancelledMessage is the error text Wails returns when the user closes
+// the Windows file dialog; the error value lives in an internal Wails package.
+const dialogCancelledMessage = "cancelled by user"
+
+// saveWithDialog asks for a destination with the system save dialog, starting
+// in the Downloads folder, and writes data there.
+func saveWithDialog(_ context.Context, filename string, data []byte) (bool, error) {
+	app := application.Get()
+	dialog := app.Dialog.SaveFile().SetFilename(filename).CanCreateDirectories(true)
+	if home, err := os.UserHomeDir(); err == nil {
+		downloads := filepath.Join(home, "Downloads")
+		if info, err := os.Stat(downloads); err == nil && info.IsDir() {
+			dialog.SetDirectory(downloads)
+		}
+	}
+	if window := app.Window.Current(); window != nil {
+		dialog.AttachToWindow(window)
+	}
+	destination, err := dialog.PromptForSingleSelection()
+	if err != nil {
+		if strings.Contains(err.Error(), dialogCancelledMessage) {
+			return false, nil
+		}
+		return false, err
+	}
+	if destination == "" || destination == "." {
+		return false, nil
+	}
+	if err := os.WriteFile(destination, data, 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
