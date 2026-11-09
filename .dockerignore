@@ -23,7 +23,6 @@ docs/
 !README.md
 !third_party/**
 !apps/server/**
-!assets/**
 .idea/
 .vscode/
 .env

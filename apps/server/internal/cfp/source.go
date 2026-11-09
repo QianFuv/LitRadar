@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	assets "github.com/QianFuv/LitRadar/apps/server/assets/cfp"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
-	assets "github.com/QianFuv/LitRadar/assets/cfp"
 	whatwg "github.com/nlnwa/whatwg-url/url"
 )
 

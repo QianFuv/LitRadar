@@ -8,10 +8,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	assets "github.com/QianFuv/LitRadar/apps/server/assets/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/cfp"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/cfp"
-	assets "github.com/QianFuv/LitRadar/assets/cfp"
 )
 
 var preparedSeed = sync.OnceValues(func() (*storage.PreparedSeed, error) { return storage.PrepareSeed(assets.Seed()) })

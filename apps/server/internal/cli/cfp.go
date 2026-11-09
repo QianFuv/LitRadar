@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	assets "github.com/QianFuv/LitRadar/apps/server/assets/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/index"
 	store "github.com/QianFuv/LitRadar/apps/server/internal/storage/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
 	authmigration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
-	assets "github.com/QianFuv/LitRadar/assets/cfp"
 )
 
 var cfpUsage = map[string]any{

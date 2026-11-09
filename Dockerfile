@@ -60,7 +60,6 @@ COPY go.mod go.sum VERSION version.go ./
 COPY third_party third_party
 RUN --mount=type=cache,id=litradar-go-mod,target=/go/pkg/mod go mod download && go mod verify
 COPY apps/server apps/server
-COPY assets assets
 COPY scripts/go-build-inventory.sh /usr/local/bin/go-build-inventory
 COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
 COPY scripts/build-simple-tokenizer.mjs scripts/build-simple-tokenizer.mjs
@@ -132,7 +131,7 @@ FROM runtime-base
 
 COPY --from=go-build /out/litradar /usr/local/bin/litradar
 
-COPY assets/meta /usr/share/litradar/meta
+COPY apps/server/assets/meta /usr/share/litradar/meta
 
 EXPOSE 8000
 

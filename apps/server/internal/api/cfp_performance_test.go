@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
+	assets "github.com/QianFuv/LitRadar/apps/server/assets/cfp"
 	acquisition "github.com/QianFuv/LitRadar/apps/server/internal/cfp"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/apps/server/internal/index"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/cfp"
 	migration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
-	assets "github.com/QianFuv/LitRadar/assets/cfp"
 )
 
 // TestCfpCatalogRetainsPerJournalCapabilities compares shared catalog projection with individual summaries.

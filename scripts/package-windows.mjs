@@ -18,7 +18,6 @@ const SERVER_SOURCE_PATHS = [
   "VERSION",
   "version.go",
   "apps/server",
-  "assets",
   "third_party",
   "scripts",
   "tests",
@@ -167,7 +166,7 @@ run(
   { env: environment, stdio: "inherit" },
 );
 for (const [from, to] of [
-  ["assets/meta", "assets/meta"],
+  ["apps/server/assets/meta", "assets/meta"],
   ["docs/third-party", "licenses"],
   ["LICENSE", "LICENSE"],
 ]) {

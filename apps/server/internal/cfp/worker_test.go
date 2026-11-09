@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	assets "github.com/QianFuv/LitRadar/assets/cfp"
+	assets "github.com/QianFuv/LitRadar/apps/server/assets/cfp"
 
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/cfp"
 	migration "github.com/QianFuv/LitRadar/apps/server/internal/storage/migrations/auth"
