@@ -1879,6 +1879,74 @@
           }
         }
       },
+      "NativeOidcExchangeRequest": {
+        "type": "object",
+        "description": "Native OIDC authorization code exchange with client PKCE. No session cookie is issued.",
+        "required": ["code", "code_verifier", "redirect_uri", "device_name"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "One-time unpadded base64url code (32 random bytes); TTL 120 seconds."
+          },
+          "code_verifier": {
+            "type": "string",
+            "minLength": 43,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._~-]{43,128}$"
+          },
+          "redirect_uri": {
+            "type": "string",
+            "description": "Exact native redirect_uri supplied at login."
+          },
+          "device_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 93,
+            "description": "Device label; surrounding whitespace is trimmed, blank text and control characters are rejected. The raw input is limited to 93 Unicode code points."
+          }
+        }
+      },
+      "NativeLoginRequest": {
+        "type": "object",
+        "description": "Native password login that issues an independent 90-day personal access token.",
+        "required": ["username", "password", "device_name"],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Password."
+          },
+          "username": {
+            "type": "string",
+            "description": "Username or case-insensitive email address."
+          },
+          "device_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 93,
+            "description": "Device label; surrounding whitespace is trimmed, blank text and control characters are rejected. The raw input is limited to 93 Unicode code points."
+          }
+        }
+      },
+      "NativeLoginResponse": {
+        "type": "object",
+        "description": "Native login credential. Store the raw token in OS secure storage; it is returned only on issuance.",
+        "required": ["user", "expires_at", "token"],
+        "properties": {
+          "expires_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix expiration timestamp in seconds, 90 days after issuance."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse",
+            "description": "Authenticated user."
+          },
+          "token": {
+            "type": "string",
+            "description": "Personal access token for Authorization: Bearer."
+          }
+        }
+      },
       "LoginRequest": {
         "type": "object",
         "description": "Login request.",
@@ -5396,6 +5464,131 @@
         ]
       }
     },
+    "/api/auth/native/login": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Sign in a native device with username or email and password.",
+        "description": "Issues a new personal access token named device:\u003cdevice_name\u003e with a fixed 90-day TTL. Uses the password login rate limits and credential generation fence. Does not set cookies or replace the browser login session. Send the token as Authorization: Bearer; POST /api/auth/logout revokes that token.",
+        "operationId": "native_login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "New device credential and authenticated user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeLoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid device_name (JSON error envelope) or malformed JSON (plain text).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid username or password, including OIDC-only accounts and stale password authority.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Active personal access token limit of 50 reached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request body exceeds the 2 MiB limit.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected Content-Type: application/json.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Missing or incorrectly typed request fields.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Authentication rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected authentication failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication executor or audit storage unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/oidc/callback": {
       "get": {
         "tags": ["auth"],
@@ -5546,6 +5739,180 @@
             "description": "Same-site relative path."
           }
         ]
+      }
+    },
+    "/api/auth/oidc/native/exchange": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Exchange a one-time native OIDC authorization code for a 90-day device token.",
+        "description": "Issues a new personal access token named device:\u003cdevice_name\u003e with a fixed 90-day TTL. Uses the password login rate limits and credential generation fence. Does not set cookies or replace the browser login session. Send the token as Authorization: Bearer; POST /api/auth/logout revokes that token.",
+        "operationId": "oidc_native_exchange",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeOidcExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "New device credential and authenticated user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeLoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_grant for missing, expired, consumed, mismatched PKCE or redirect, deleted user or changed auth generation; invalid device_name uses the native password login validation error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Active personal access token limit of 50 reached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request body exceeds the 2 MiB limit.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected Content-Type: application/json.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Missing or incorrectly typed request fields.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Authentication rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected authentication failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication executor or audit storage unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/oidc/native/login": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Start native OIDC sign-in using signed server state and client PKCE.",
+        "operationId": "oidc_native_login",
+        "parameters": [
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Exactly litradar://oidc/callback or http://127.0.0.1:\u003cport\u003e/oidc/callback, port 1024-65535."
+            }
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 43,
+              "maxLength": 43,
+              "description": "Canonical unpadded base64url SHA-256 challenge."
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._~-]{16,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to identity provider; callback redirects to the native URI with code and state, or error and state. Codes expire after 120 seconds and are single-use."
+          },
+          "400": {
+            "description": "Invalid native parameters (invalid_request)."
+          },
+          "404": {
+            "description": "OIDC is disabled or unavailable."
+          },
+          "429": {
+            "description": "Authentication rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/auth/providers": {

@@ -729,6 +729,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/auth/native/login': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Sign in a native device with username or email and password.
+     * @description Issues a new personal access token named device:<device_name> with a fixed 90-day TTL. Uses the password login rate limits and credential generation fence. Does not set cookies or replace the browser login session. Send the token as Authorization: Bearer; POST /api/auth/logout revokes that token.
+     */
+    post: operations['native_login'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/auth/oidc/callback': {
     parameters: {
       query?: never;
@@ -773,6 +793,43 @@ export interface paths {
     };
     /** Start OIDC sign-in. */
     get: operations['oidc_login'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/oidc/native/exchange': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Exchange a one-time native OIDC authorization code for a 90-day device token.
+     * @description Issues a new personal access token named device:<device_name> with a fixed 90-day TTL. Uses the password login rate limits and credential generation fence. Does not set cookies or replace the browser login session. Send the token as Authorization: Bearer; POST /api/auth/logout revokes that token.
+     */
+    post: operations['oidc_native_exchange'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/auth/oidc/native/login': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Start native OIDC sign-in using signed server state and client PKCE. */
+    get: operations['oidc_native_login'];
     put?: never;
     post?: never;
     delete?: never;
@@ -2896,6 +2953,37 @@ export interface components {
        */
       total_candidates?: number | null;
     };
+    /** @description Native password login that issues an independent 90-day personal access token. */
+    NativeLoginRequest: {
+      /** @description Device label; surrounding whitespace is trimmed, blank text and control characters are rejected. The raw input is limited to 93 Unicode code points. */
+      device_name: string;
+      /** @description Password. */
+      password: string;
+      /** @description Username or case-insensitive email address. */
+      username: string;
+    };
+    /** @description Native login credential. Store the raw token in OS secure storage; it is returned only on issuance. */
+    NativeLoginResponse: {
+      /**
+       * Format: double
+       * @description Unix expiration timestamp in seconds, 90 days after issuance.
+       */
+      expires_at: number;
+      /** @description Personal access token for Authorization: Bearer. */
+      token: string;
+      /** @description Authenticated user. */
+      user: components['schemas']['UserResponse'];
+    };
+    /** @description Native OIDC authorization code exchange with client PKCE. No session cookie is issued. */
+    NativeOidcExchangeRequest: {
+      /** @description One-time unpadded base64url code (32 random bytes); TTL 120 seconds. */
+      code: string;
+      code_verifier: string;
+      /** @description Device label; surrounding whitespace is trimmed, blank text and control characters are rejected. The raw input is limited to 93 Unicode code points. */
+      device_name: string;
+      /** @description Exact native redirect_uri supplied at login. */
+      redirect_uri: string;
+    };
     /** @description Notification settings response payload. */
     NotificationSettingsResponse: {
       /** @description Fixed non-secret mask when a primary AI API key is configured. */
@@ -4694,6 +4782,112 @@ export interface operations {
       };
     };
   };
+  native_login: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['NativeLoginRequest'];
+      };
+    };
+    responses: {
+      /** @description New device credential and authenticated user. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['NativeLoginResponse'];
+        };
+      };
+      /** @description Invalid device_name (JSON error envelope) or malformed JSON (plain text). */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+          'text/plain': string;
+        };
+      };
+      /** @description Invalid username or password, including OIDC-only accounts and stale password authority. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Active personal access token limit of 50 reached. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description JSON request body exceeds the 2 MiB limit. */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+      /** @description Expected Content-Type: application/json. */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+      /** @description Missing or incorrectly typed request fields. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+      /** @description Authentication rate limit exceeded. */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Unexpected authentication failure. */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Authentication executor or audit storage unavailable. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
   oidc_callback: {
     parameters: {
       query?: {
@@ -4832,6 +5026,148 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+    };
+  };
+  oidc_native_exchange: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['NativeOidcExchangeRequest'];
+      };
+    };
+    responses: {
+      /** @description New device credential and authenticated user. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['NativeLoginResponse'];
+        };
+      };
+      /** @description invalid_grant for missing, expired, consumed, mismatched PKCE or redirect, deleted user or changed auth generation; invalid device_name uses the native password login validation error. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+          'text/plain': string;
+        };
+      };
+      /** @description Active personal access token limit of 50 reached. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description JSON request body exceeds the 2 MiB limit. */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+      /** @description Expected Content-Type: application/json. */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+      /** @description Missing or incorrectly typed request fields. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/plain': string;
+        };
+      };
+      /** @description Authentication rate limit exceeded. */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Unexpected authentication failure. */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+      /** @description Authentication executor or audit storage unavailable. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
+      };
+    };
+  };
+  oidc_native_login: {
+    parameters: {
+      query: {
+        code_challenge: string;
+        redirect_uri: string;
+        state: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Redirect to identity provider; callback redirects to the native URI with code and state, or error and state. Codes expire after 120 seconds and are single-use. */
+      302: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Invalid native parameters (invalid_request). */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description OIDC is disabled or unavailable. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Authentication rate limit exceeded. */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
       };
     };
   };
