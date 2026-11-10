@@ -5,6 +5,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { MotionGlobalConfig } from 'motion/react';
+import * as React from 'react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 
 import { server } from '@/tests/mocks/server';
@@ -132,6 +133,27 @@ function installTestAnimationApis(): void {
 }
 
 /**
+ * Stop React's development build from capturing an owner stack for every created element.
+ *
+ * React 19 constructs an `Error` per JSX element (up to 10,000 per render) so warnings can show
+ * where an element was created. Typing into large forms re-renders them on every keystroke, and
+ * that stack capture took about 40% of render time in these tests. Holding the per-render counter
+ * above React's limit makes elements share React's placeholder stack instead. Rendering, act
+ * checks, and warnings still behave the same; warnings only lose the element creation frames.
+ */
+function disableReactOwnerStackCapture(): void {
+  const reactInternals = (React as unknown as Record<string, Record<string, unknown> | undefined>)
+    .__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+  if (reactInternals) {
+    Object.defineProperty(reactInternals, 'recentlyCreatedOwnerStacks', {
+      configurable: true,
+      get: () => Number.POSITIVE_INFINITY,
+      set: () => undefined,
+    });
+  }
+}
+
+/**
  * Start request interception and fail tests on unhandled network calls.
  */
 function startMockServer(): void {
@@ -157,6 +179,7 @@ function closeMockServer(): void {
 
 installTestMediaQueries();
 installTestAnimationApis();
+disableReactOwnerStackCapture();
 beforeAll(startMockServer);
 afterEach(resetTestState);
 afterAll(closeMockServer);

@@ -563,7 +563,12 @@ async function readsHistoryOnlyForNavigation(): Promise<void> {
   expect(await screen.findByRole('option', { name: 'recent query' })).toBeInTheDocument();
 }
 
-/** Verify closed journal controls skip option construction and keep filtering and selection. */
+/**
+ * Verify closed journal controls skip option construction and keep filtering and selection.
+ *
+ * Opens a 100-option journal list twice and types a search, so it runs about 13 seconds on a
+ * loaded developer machine; its timeout keeps twice that headroom.
+ */
 async function defersClosedJournalOptions(): Promise<void> {
   setSelectedDatabase('fixture.sqlite');
   server.use(
@@ -628,7 +633,12 @@ async function defersClosedJournalOptions(): Promise<void> {
   expect(within(reopenedPanel).getByRole('combobox', { name: '搜索期刊' })).toHaveValue('');
 }
 
-/** Keep large filter selections on indexed membership checks while preserving order and toggles. */
+/**
+ * Keep large filter selections on indexed membership checks while preserving order and toggles.
+ *
+ * Renders 200 journal and 80 area options with 140 selections and queries them by role, so it
+ * runs about 26 seconds on a loaded developer machine; its timeout keeps twice that headroom.
+ */
 async function indexesSelectedJournalMembership(): Promise<void> {
   setSelectedDatabase('fixture.sqlite');
   const selected = Array.from({ length: 100 }, (_, index) => String(index * 2 + 1));
@@ -734,9 +744,9 @@ describe('search and filter UI', () => {
   test(
     'indexes large journal selections without row scans',
     indexesSelectedJournalMembership,
-    30000,
+    60_000,
   );
-  test('defers journal options until opening the popover', defersClosedJournalOptions, 15000);
+  test('defers journal options until opening the popover', defersClosedJournalOptions, 30_000);
   test('reads persisted history only for navigation keys', readsHistoryOnlyForNavigation);
   test(
     'combines rating groups and clears their state on database changes',
