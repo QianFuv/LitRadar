@@ -150,6 +150,7 @@ func TestOperationSuccessResponsesMatchGeneratedSchemas(t *testing.T) {
 		{"email", TestEmailHttpContract},
 		{"oidc", TestNativeOidcHttpFlow},
 		{"admin_users", TestAdministratorRoutesEnforceRolesSelfProtectionAndNumericIds},
+		{"admin_identity", TestAdministratorUserListIncludesAccountIdentity},
 		{"admin_invites", TestAdministratorInviteOptionalBodyAndRevocation},
 		{"admin_announcements", TestAdministratorAnnouncementsValidateBeforeLookupAndAuditChanges},
 		{"admin_tasks", TestAdministratorScheduledTaskValidationAndLifecycle},

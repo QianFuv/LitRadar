@@ -32,6 +32,12 @@ type adminHandlers struct {
 	settings  *settings.Repository
 }
 type adminUserResponse struct {
+	// Email contains the account email, or null when unset.
+	Email *string `json:"email" nullable:"true"`
+	// AuthKind identifies a local or OIDC account.
+	AuthKind string `json:"auth_kind" nullable:"false" enum:"local,oidc"`
+	// IsOIDCLinked reports whether the account has a linked OIDC identity.
+	IsOIDCLinked  bool    `json:"is_oidc_linked" nullable:"false"`
 	Id            int64   `json:"id" nullable:"false" format:"int64"`
 	Username      string  `json:"username" nullable:"false"`
 	IsAdmin       bool    `json:"is_admin" nullable:"false"`
@@ -256,7 +262,7 @@ func (handlers *adminHandlers) performAdminUsers(ctx context.Context, name strin
 		}
 		result := make([]adminUserResponse, len(rows))
 		for index, row := range rows {
-			result[index] = adminUserResponse{Id: int64(row.Id), Username: row.Username, IsAdmin: row.IsAdmin, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FolderCount: row.FolderCount, FavoriteCount: row.FavoriteCount, NotifyEnabled: row.NotifyEnabled}
+			result[index] = adminUserResponse{Email: row.Email, AuthKind: row.AuthKind, IsOIDCLinked: row.IsOidcLinked, Id: int64(row.Id), Username: row.Username, IsAdmin: row.IsAdmin, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FolderCount: row.FolderCount, FavoriteCount: row.FavoriteCount, NotifyEnabled: row.NotifyEnabled}
 		}
 		return result, nil
 	case "set_admin":
