@@ -38,7 +38,7 @@ func TestAdminTelemetryAuthorizationAndShape(t *testing.T) {
 		status, series int
 	}{
 		{"", 200, 2}, {"?period=7d&kind=mcp", 200, 1}, {"?period=30d&kind=search", 200, 0},
-		{"?period=1d", 400, 0}, {"?kind=private", 400, 0},
+		{"?period=1d", 422, 0}, {"?kind=private", 422, 0},
 	} {
 		response := authRequest(httpTelemetryHandler(&handlers), "GET", "/api/admin/telemetry"+scenario.query, "", token)
 		if response.Code != scenario.status {
@@ -59,7 +59,7 @@ func TestAdminTelemetryAuthorizationAndShape(t *testing.T) {
 
 // httpTelemetryHandler exposes the concrete administrator handler for focused admission checks.
 func httpTelemetryHandler(handlers *adminHandlers) *Handler {
-	return &Handler{mux: fixtureMux([]route{{operation: handlers.routes()[0].operation, handler: handlers.loadTelemetry}})}
+	return &Handler{mux: fixtureMux(handlers.routes()[:1])}
 }
 
 // TestHttpSearchTelemetryPrivacyStoredRows exercises real auth, routes and MATCH execution before inspecting SQLite.

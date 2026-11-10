@@ -11,56 +11,56 @@ import (
 
 // Journal retains canonical catalog identity, metadata and live article availability.
 type Journal struct {
-	JournalId    identity.Id `json:"journal_id"`
-	CatalogId    string      `json:"catalog_id"`
-	Title        string      `json:"title"`
-	TitleAliases []string    `json:"title_aliases"`
-	Issns        []string    `json:"issns"`
-	Issn         *string     `json:"issn"`
-	Eissn        *string     `json:"eissn"`
-	Area         *string     `json:"area"`
-	UtdRank      *string     `json:"utd_rank"`
-	UtdRating    *string     `json:"utd_rating"`
-	AbsRank      *string     `json:"abs_rank"`
-	AbsRating    *string     `json:"abs_rating"`
-	FmsRank      *string     `json:"fms_rank"`
-	FmsRating    *string     `json:"fms_rating"`
-	FmscnRank    *string     `json:"fmscn_rank"`
-	FmscnRating  *string     `json:"fmscn_rating"`
-	HasArticles  bool        `json:"has_articles"`
+	JournalId    identity.Id `json:"journal_id" nullable:"false"`
+	CatalogId    string      `json:"catalog_id" nullable:"false"`
+	Title        string      `json:"title" nullable:"false"`
+	TitleAliases []string    `json:"title_aliases" nullable:"false"`
+	Issns        []string    `json:"issns" nullable:"false"`
+	Issn         *string     `json:"issn" required:"false" nullable:"true"`
+	Eissn        *string     `json:"eissn" required:"false" nullable:"true"`
+	Area         *string     `json:"area" required:"false" nullable:"true"`
+	UtdRank      *string     `json:"utd_rank" required:"false" nullable:"true"`
+	UtdRating    *string     `json:"utd_rating" required:"false" nullable:"true"`
+	AbsRank      *string     `json:"abs_rank" required:"false" nullable:"true"`
+	AbsRating    *string     `json:"abs_rating" required:"false" nullable:"true"`
+	FmsRank      *string     `json:"fms_rank" required:"false" nullable:"true"`
+	FmsRating    *string     `json:"fms_rating" required:"false" nullable:"true"`
+	FmscnRank    *string     `json:"fmscn_rank" required:"false" nullable:"true"`
+	FmscnRating  *string     `json:"fmscn_rating" required:"false" nullable:"true"`
+	HasArticles  bool        `json:"has_articles" nullable:"false"`
 }
 
 // Issue preserves absent fields and derives date precision without rewriting stored text.
 type Issue struct {
-	IssueId         int64       `json:"issue_id"`
-	JournalId       identity.Id `json:"journal_id"`
-	PublicationYear *int64      `json:"publication_year"`
-	Title           *string     `json:"title"`
-	Volume          *string     `json:"volume"`
-	Number          *string     `json:"number"`
-	Date            *string     `json:"date"`
-	DatePrecision   *string     `json:"date_precision"`
+	IssueId         int64       `json:"issue_id" nullable:"false" format:"int64"`
+	JournalId       identity.Id `json:"journal_id" nullable:"false"`
+	PublicationYear *int64      `json:"publication_year" required:"false" nullable:"true" format:"int64"`
+	Title           *string     `json:"title" required:"false" nullable:"true"`
+	Volume          *string     `json:"volume" required:"false" nullable:"true"`
+	Number          *string     `json:"number" required:"false" nullable:"true"`
+	Date            *string     `json:"date" required:"false" nullable:"true"`
+	DatePrecision   *string     `json:"date_precision" required:"false" nullable:"true" enum:"year,month,day"`
 }
 
 // PageMeta keeps optional cursor and count fields explicitly present in JSON.
 type PageMeta struct {
-	Total      *int64  `json:"total"`
-	Limit      int64   `json:"limit"`
-	Offset     int64   `json:"offset"`
-	NextCursor *string `json:"next_cursor"`
-	HasMore    *bool   `json:"has_more"`
+	Total      *int64  `json:"total" required:"false" nullable:"true" format:"int64"`
+	Limit      int64   `json:"limit" nullable:"false" format:"int64"`
+	Offset     int64   `json:"offset" nullable:"false" format:"int64"`
+	NextCursor *string `json:"next_cursor" required:"false" nullable:"true"`
+	HasMore    *bool   `json:"has_more" required:"false" nullable:"true"`
 }
 
 // Page contains ordered records and the pagination contract shared by content reads.
 type Page[Record any] struct {
-	Items []Record `json:"items"`
-	Page  PageMeta `json:"page"`
+	Items []Record `json:"items" nullable:"false"`
+	Page  PageMeta `json:"page" nullable:"false"`
 }
 
 // ValueCount counts stored labels without discarding whitespace-only values.
 type ValueCount struct {
-	Value string `json:"value"`
-	Count int64  `json:"count"`
+	Value string `json:"value" nullable:"false"`
+	Count int64  `json:"count" nullable:"false" format:"int64"`
 }
 
 // JournalRatings intersects four independent systems of exact rating values.
@@ -73,23 +73,23 @@ type JournalRatings struct {
 
 // RatingOptions includes journals with no indexed articles in every rating group.
 type RatingOptions struct {
-	UtdRating   []ValueCount `json:"utd_rating"`
-	AbsRating   []ValueCount `json:"abs_rating"`
-	FmsRating   []ValueCount `json:"fms_rating"`
-	FmscnRating []ValueCount `json:"fmscn_rating"`
+	UtdRating   []ValueCount `json:"utd_rating" nullable:"false"`
+	AbsRating   []ValueCount `json:"abs_rating" nullable:"false"`
+	FmsRating   []ValueCount `json:"fms_rating" nullable:"false"`
+	FmscnRating []ValueCount `json:"fmscn_rating" nullable:"false"`
 }
 
 // YearSummary counts canonical issues and their distinct journals.
 type YearSummary struct {
-	Year         int64 `json:"year"`
-	IssueCount   int64 `json:"issue_count"`
-	JournalCount int64 `json:"journal_count"`
+	Year         int64 `json:"year" nullable:"false" format:"int64"`
+	IssueCount   int64 `json:"issue_count" nullable:"false" format:"int64"`
+	JournalCount int64 `json:"journal_count" nullable:"false" format:"int64"`
 }
 
 // JournalOption exposes the stable identifier and title used by selectors.
 type JournalOption struct {
-	JournalId identity.Id `json:"journal_id"`
-	Title     string      `json:"title"`
+	JournalId identity.Id `json:"journal_id" nullable:"false"`
+	Title     string      `json:"title" nullable:"false"`
 }
 
 // DatePrecision validates the complete partial-date grammar including year zero and real calendar dates.

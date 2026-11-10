@@ -35,9 +35,7 @@ func TestPublicHealthAndAnnouncementsRemainUnauthenticated(t *testing.T) {
 	defer pool.Close()
 	handlers := publicHandlers{configuration, pool, scheduler}
 	router := http.NewServeMux()
-	for _, route := range handlers.routes() {
-		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
-	}
+	registerFixtureRoutes(t, router, handlers.routes())
 	check := func(path string, status int, body string) {
 		t.Helper()
 		response := authRequest(router, "GET", path, "", "")

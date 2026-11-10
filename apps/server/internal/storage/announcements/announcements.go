@@ -18,13 +18,13 @@ import (
 
 // Announcement preserves numeric identifiers and fractional epoch timestamps.
 type Announcement struct {
-	Id        int64   `json:"id"`
-	Title     string  `json:"title"`
-	Message   string  `json:"message"`
-	Priority  string  `json:"priority"`
-	Enabled   bool    `json:"enabled"`
-	CreatedAt float64 `json:"created_at"`
-	UpdatedAt float64 `json:"updated_at"`
+	Id        int64   `json:"id" nullable:"false" format:"int64"`
+	Title     string  `json:"title" nullable:"false"`
+	Message   string  `json:"message" nullable:"false"`
+	Priority  string  `json:"priority" nullable:"false"`
+	Enabled   bool    `json:"enabled" nullable:"false"`
+	CreatedAt float64 `json:"created_at" nullable:"false" format:"double"`
+	UpdatedAt float64 `json:"updated_at" nullable:"false" format:"double"`
 }
 
 // InvalidInput reports normalized announcement field constraints.

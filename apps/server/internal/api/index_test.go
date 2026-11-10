@@ -47,7 +47,7 @@ func TestIndexCancellationStopsActualQueryWorker(t *testing.T) {
 	request := httptest.NewRequest("GET", "/api/meta/areas?db=slow.sqlite", nil).WithContext(requestContext)
 	request.Header.Set("Authorization", "Bearer "+token)
 	done := make(chan struct{})
-	go func() { defer close(done); handlers.handle(httptest.NewRecorder(), request, "list_areas") }()
+	go func() { defer close(done); fixtureMux(handlers.routes()).ServeHTTP(httptest.NewRecorder(), request) }()
 	waitForIndexReader(t, database)
 	cancel()
 	select {

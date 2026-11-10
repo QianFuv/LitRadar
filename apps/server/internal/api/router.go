@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/netip"
@@ -24,6 +25,7 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/weekly"
 	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // Services borrows migrated repositories, the deployment key and independently bounded executors.
@@ -95,7 +97,7 @@ func New(services Services, options Options) (*Handler, error) {
 	contract := openapi.New(mux)
 	for _, group := range groups {
 		for _, candidate := range group {
-			if err := openapi.Register(contract, candidate.operation, candidate.handler); err != nil {
+			if err := candidate.register(contract); err != nil {
 				return nil, err
 			}
 		}
@@ -130,19 +132,29 @@ func (handler *Handler) Close() error { return handler.mcp.Close() }
 
 // GenerateOpenAPI verifies the real handler declarations without opening deployment resources.
 func GenerateOpenAPI() ([]byte, error) {
+	contract, err := newDocumentationAPI()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(contract.OpenAPI())
+}
+
+func newDocumentationAPI() (huma.API, error) {
 	groups := [][]route{
 		(&authHandlers{}).routes(), (&indexHandlers{}).routes(), (&favoriteHandlers{}).routes(),
 		(&favoriteHandlers{}).graphRoutes(),
 		(&publicHandlers{}).routes(), (&cnkiHandlers{}).routes(), (&adminHandlers{}).routes(),
 		(&cfpHandlers{}).routes(), (&articleHandlers{}).routes(), (&trackingHandlers{}).routes(),
 	}
-	bindings := []openapi.Operation{}
+	contract := openapi.New(http.NewServeMux())
 	for _, group := range groups {
-		for _, route := range group {
-			bindings = append(bindings, route.operation)
+		for _, candidate := range group {
+			if err := candidate.register(contract); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return openapi.Generate(bindings)
+	return contract, nil
 }
 
 // route obtains bounded telemetry labels and method policy from ServeMux.

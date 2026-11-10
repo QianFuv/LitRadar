@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/QianFuv/LitRadar/apps/server/internal/platform/httpwire"
 	"github.com/danielgtaylor/huma/v2"
 	"net/http"
 	"net/http/httptest"
@@ -81,5 +82,11 @@ func TestStorageAndWorkerFailuresDoNotExposePrivateDetails(t *testing.T) {
 	}
 	if mapExecutorError(admission.ErrClosed).status != 503 || mapExecutorError(context.DeadlineExceeded).status != 503 || mapExecutorError(executor.ErrWorkerFailed).status != 500 {
 		t.Fatal("executor classification changed")
+	}
+}
+
+func writeResponse(writer http.ResponseWriter, value any) {
+	if err := httpwire.JSON(writer, 200, value); err != nil {
+		internalError().write(writer)
 	}
 }

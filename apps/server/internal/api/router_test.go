@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +26,8 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/delivery"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/scheduler"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
 )
 
 const fixtureCsp = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
@@ -32,10 +35,38 @@ const fixtureCsp = "default-src 'self'; base-uri 'self'; object-src 'none'; fram
 // fixtureMux installs synthetic handlers using the production router's matching semantics.
 func fixtureMux(routes []route) *http.ServeMux {
 	mux := http.NewServeMux()
+	contract := openapi.New(mux)
 	for _, candidate := range routes {
-		mux.HandleFunc(candidate.operation.Method+" "+candidate.operation.Path, candidate.handler)
+		if err := candidate.register(contract); err != nil {
+			panic(err)
+		}
 	}
 	return mux
+}
+
+var fixtureAPIs sync.Map
+
+func registerFixtureRoutes(t *testing.T, mux *http.ServeMux, routes []route) {
+	t.Helper()
+	var contract huma.API
+	if existing, ok := fixtureAPIs.Load(mux); ok {
+		contract = existing.(huma.API)
+	} else {
+		contract = openapi.New(mux)
+		fixtureAPIs.Store(mux, contract)
+		t.Cleanup(func() { fixtureAPIs.Delete(mux) })
+	}
+	for _, candidate := range routes {
+		if err := candidate.register(contract); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+func fixtureRawRoute(binding openapi.Operation, handler http.HandlerFunc) route {
+	return route{operation: binding, register: func(api huma.API) error {
+		api.Adapter().Handle(&huma.Operation{Method: binding.Method, Path: binding.Path}, func(ctx huma.Context) { request, writer := humago.Unwrap(ctx); handler(writer, request) })
+		return nil
+	}}
 }
 
 // TestServeMuxRoutingAndCaptures checks method routing, HEAD and escaped captures.
@@ -46,11 +77,11 @@ func TestServeMuxRoutingAndCaptures(t *testing.T) {
 		{Method: "POST", Path: "/api/x/{id}"},
 		{Method: "GET", Path: "/api/x/fixed"},
 	} {
-		routes = append(routes, route{operation, func(writer http.ResponseWriter, request *http.Request) {
+		routes = append(routes, fixtureRawRoute(operation, func(writer http.ResponseWriter, request *http.Request) {
 			if _, err := fmt.Fprintf(writer, "%d:%s", index, request.PathValue("id")); err != nil {
 				t.Error(err)
 			}
-		}})
+		}))
 	}
 	handler := &Handler{mux: fixtureMux(routes)}
 	for _, scenario := range []struct{ method, path, body, pattern string }{
@@ -76,7 +107,7 @@ func TestServeMuxRoutingAndCaptures(t *testing.T) {
 
 // TestServeMuxMethodRejectionIncludesAllow checks method metadata and safe unmatched labels.
 func TestServeMuxMethodRejectionIncludesAllow(t *testing.T) {
-	handler := &Handler{mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/api/x/{id}"}, func(http.ResponseWriter, *http.Request) {}}})}
+	handler := &Handler{mux: fixtureMux([]route{fixtureRawRoute(openapi.Operation{Method: "GET", Path: "/api/x/{id}"}, func(http.ResponseWriter, *http.Request) {})})}
 	selected, label, allow := handler.route(httptest.NewRequest("DELETE", "/api/x/private", nil))
 	if selected != nil || label != "api.unmatched" || allow != "GET, HEAD" {
 		t.Fatal(selected, label, allow)
@@ -171,7 +202,7 @@ func TestServeMuxMatchesMethodAndDecodedPath(t *testing.T) {
 	write := func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = writer.Write([]byte(request.PathValue("id")))
 	}
-	handler := &Handler{mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/x/{id}/fixed/fixed"}, write}, {openapi.Operation{Method: "POST", Path: "/x/static/{id}/{tail}"}, write}})}
+	handler := &Handler{mux: fixtureMux([]route{fixtureRawRoute(openapi.Operation{Method: "GET", Path: "/x/{id}/fixed/fixed"}, write), fixtureRawRoute(openapi.Operation{Method: "POST", Path: "/x/static/{id}/{tail}"}, write)})}
 	for _, scenario := range []struct{ method, path, route, allow string }{
 		{"GET", "/x/static/fixed/fixed", "/x/{id}/fixed/fixed", ""},
 		{"GET", "/x/other/fixed/fixed", "/x/{id}/fixed/fixed", ""},
@@ -240,7 +271,7 @@ func TestCompleteRouterMcpAuthenticationAndStreaming(t *testing.T) {
 
 func TestMiddlewareFlushesBeforeStreamCompletion(t *testing.T) {
 	release := make(chan struct{})
-	handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/stream"}, func(writer http.ResponseWriter, request *http.Request) {
+	handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, mux: fixtureMux([]route{fixtureRawRoute(openapi.Operation{Method: "GET", Path: "/stream"}, func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		_, _ = writer.Write([]byte("data: first\n\n"))
 		if err := http.NewResponseController(writer).Flush(); err != nil {
@@ -251,7 +282,7 @@ func TestMiddlewareFlushesBeforeStreamCompletion(t *testing.T) {
 		case <-release:
 		case <-request.Context().Done():
 		}
-	}}})}
+	})})}
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	defer close(release)

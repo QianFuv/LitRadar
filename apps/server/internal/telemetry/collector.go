@@ -13,18 +13,18 @@ const seriesLimit = 8192
 
 // Dimensions contains only server-controlled labels and coarse search features.
 type Dimensions struct {
-	Kind          string `json:"kind"`
-	Name          string `json:"name"`
-	Method        string `json:"method,omitempty"`
-	StatusClass   string `json:"status_class,omitempty"`
-	IsError       bool   `json:"is_error"`
-	Mode          string `json:"mode,omitempty"`
-	Database      string `json:"database,omitempty"`
-	TermCount     string `json:"term_count,omitempty"`
-	UsesPrefix    bool   `json:"uses_prefix"`
-	UsesBoolean   bool   `json:"uses_boolean"`
-	Hits          string `json:"hits,omitempty"`
-	HitCountBasis string `json:"hit_count_basis,omitempty"`
+	Kind          string `json:"kind" nullable:"false" enum:"http,mcp,search"`
+	Name          string `json:"name" nullable:"false"`
+	Method        string `json:"method,omitempty" required:"false" nullable:"false"`
+	StatusClass   string `json:"status_class,omitempty" required:"false" nullable:"false" enum:"2xx,3xx,4xx,5xx"`
+	IsError       bool   `json:"is_error" nullable:"false"`
+	Mode          string `json:"mode,omitempty" required:"false" nullable:"false" enum:"simple,advanced"`
+	Database      string `json:"database,omitempty" required:"false" nullable:"false"`
+	TermCount     string `json:"term_count,omitempty" required:"false" nullable:"false" enum:"0,1,2-4,5-9,10+"`
+	UsesPrefix    bool   `json:"uses_prefix" nullable:"false"`
+	UsesBoolean   bool   `json:"uses_boolean" nullable:"false"`
+	Hits          string `json:"hits,omitempty" required:"false" nullable:"false" enum:"0,1-9,10-99,100-999,1000+"`
+	HitCountBasis string `json:"hit_count_basis,omitempty" required:"false" nullable:"false" enum:"total,returned,candidates"`
 }
 
 type bucketKey struct {

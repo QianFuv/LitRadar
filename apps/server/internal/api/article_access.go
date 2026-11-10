@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/http"
+
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
-	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
+
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/admission"
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
 	"github.com/QianFuv/LitRadar/apps/server/internal/provider"
@@ -32,14 +32,14 @@ type articleHandlers struct {
 }
 type articleOrders struct{ abstract, fulltext settings.ProviderOrders }
 type articleAction struct {
-	Available     bool    `json:"available"`
-	Label         string  `json:"label"`
-	RequiresLogin bool    `json:"requires_login"`
-	Message       *string `json:"message"`
+	Available     bool    `json:"available" nullable:"false"`
+	Label         string  `json:"label" nullable:"false"`
+	RequiresLogin bool    `json:"requires_login" nullable:"false"`
+	Message       *string `json:"message" required:"false" nullable:"true"`
 }
 type articleAccess struct {
-	AbstractPage articleAction `json:"abstract_page"`
-	Fulltext     articleAction `json:"fulltext"`
+	AbstractPage articleAction `json:"abstract_page" nullable:"false"`
+	Fulltext     articleAction `json:"fulltext" nullable:"false"`
 }
 
 func newArticleProviders(repository *settings.Repository, sessions *storage.CnkiSessions, proxy sources.ProxySelection) (*provider.Registry, error) {
@@ -66,75 +66,6 @@ func newArticleProviders(repository *settings.Repository, sessions *storage.Cnki
 		}
 	}
 	return registry, nil
-}
-
-func (handlers *articleHandlers) routes() []route {
-	routes := []route{}
-	for _, operation := range []openapi.Operation{{Method: "GET", Path: "/api/articles/{article_id}/access", Id: "get_article_access"}, {Method: "GET", Path: "/api/articles/{article_id}/abstract", Id: "redirect_article_abstract"}, {Method: "GET", Path: "/api/articles/{article_id}/fulltext", Id: "redirect_article_fulltext"}} {
-		routes = append(routes, route{operation, func(writer http.ResponseWriter, request *http.Request) {
-			handlers.handle(writer, request, operation.Id)
-		}})
-	}
-	return routes
-}
-
-func (handlers *articleHandlers) handle(writer http.ResponseWriter, request *http.Request, operation string) {
-	articleId, failure := extractPathInteger(request, "article_id")
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	query, failure := extractQuery(request.URL.RawQuery, map[string]queryKind{"db": queryText})
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	current, failure := handlers.authenticator.requireUser(request)
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	type locatorResult struct {
-		article domain.ArticleLocator
-		stem    string
-		err     error
-	}
-	located, err := executor.Run(request.Context(), handlers.pool, func() (locatorResult, error) {
-		stem, err := handlers.storage.ResolveIndexCatalogStem(query.database())
-		if err != nil {
-			return locatorResult{err: err}, nil
-		}
-		article, err := sources.GetArticleLocator(context.WithoutCancel(request.Context()), handlers.storage, query.database(), identity.Id(articleId))
-		return locatorResult{article, stem, err}, nil
-	})
-	if err != nil {
-		mapExecutorError(err).write(writer)
-		return
-	}
-	if located.err != nil {
-		mapIndexError(located.err).write(writer)
-		return
-	}
-	user := current.authorization.User.Id
-	if operation == "get_article_access" {
-		status, failure := handlers.status(request.Context(), located.article, user, located.stem)
-		if failure != nil {
-			failure.write(writer)
-		} else {
-			writeResponse(writer, status)
-		}
-		return
-	}
-	action := "abstract"
-	if operation == "redirect_article_fulltext" {
-		action = "fulltext"
-	}
-	resolved, failure := handlers.resolve(request.Context(), located.article, user, located.stem, action, time.Now().Add(30*time.Second))
-	if failure != nil {
-		failure.write(writer)
-		return
-	}
-	writeArticleResolution(writer, resolved)
 }
 
 func (handlers *articleHandlers) loadOrders(ctx context.Context) (articleOrders, *apiError) {
@@ -408,21 +339,6 @@ func approvedArticleRedirect(allowed []string, location string) bool {
 	return slices.Contains(allowed, asciiLower(authority))
 }
 
-func writeArticleResolution(writer http.ResponseWriter, resolution domain.ArticleFullTextResolution) {
-	writer.Header().Set("Cache-Control", "private, no-store")
-	if resolution.Redirect != nil {
-		writer.Header().Set("Location", resolution.Redirect.Location)
-		writer.WriteHeader(http.StatusTemporaryRedirect)
-		return
-	}
-	document := resolution.Document
-	writer.Header().Set("Content-Type", document.ContentType)
-	if document.Filename != nil {
-		writer.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+articleFilename(*document.Filename))
-	}
-	writer.WriteHeader(200)
-	_, _ = writer.Write(document.Bytes)
-}
 func articleFilename(filename string) string {
 	var result strings.Builder
 	const hex = "0123456789ABCDEF"

@@ -89,18 +89,18 @@ func (authorization Authorization) GoString() string { return authorization.Stri
 
 // TokenInfo exposes metadata without a credential hash or raw bearer value.
 type TokenInfo struct {
-	Id        int64   `json:"id"`
-	Name      string  `json:"name"`
-	ExpiresAt float64 `json:"expires_at"`
-	CreatedAt float64 `json:"created_at"`
+	Id        int64   `json:"id" nullable:"false" format:"int64"`
+	Name      string  `json:"name" nullable:"false"`
+	ExpiresAt float64 `json:"expires_at" nullable:"false" format:"double"`
+	CreatedAt float64 `json:"created_at" nullable:"false" format:"double"`
 }
 
 // IssuedToken is the explicitly authorized one-time bearer disclosure.
 type IssuedToken struct {
-	Id        int64   `json:"id"`
-	Token     string  `json:"token"`
-	Name      string  `json:"name"`
-	ExpiresAt float64 `json:"expires_at"`
+	Id        int64   `json:"id" nullable:"false" format:"int64"`
+	Token     string  `json:"token" nullable:"false"`
+	Name      string  `json:"name" nullable:"false"`
+	ExpiresAt float64 `json:"expires_at" nullable:"false" format:"double"`
 }
 
 func (token IssuedToken) String() string   { return "IssuedToken([REDACTED])" }
@@ -134,15 +134,15 @@ func (invite InviteRow) GoString() string { return invite.String() }
 
 // InviteResponse is the owner-visible issuance and lifecycle projection.
 type InviteResponse struct {
-	Id        int64    `json:"id"`
-	Code      string   `json:"code"`
-	Used      bool     `json:"used"`
-	Status    string   `json:"status"`
-	ExpiresAt float64  `json:"expires_at"`
-	RevokedAt *float64 `json:"revoked_at"`
-	MaxUses   int64    `json:"max_uses"`
-	UseCount  int64    `json:"use_count"`
-	CreatedAt float64  `json:"created_at"`
+	Id        int64    `json:"id" nullable:"false" format:"int64"`
+	Code      string   `json:"code" nullable:"false"`
+	Used      bool     `json:"used" nullable:"false"`
+	Status    string   `json:"status" nullable:"false" enum:"active,expired,revoked,exhausted"`
+	ExpiresAt float64  `json:"expires_at" nullable:"false" format:"double"`
+	RevokedAt *float64 `json:"revoked_at" required:"false" nullable:"true" format:"double"`
+	MaxUses   int64    `json:"max_uses" nullable:"false" format:"int64"`
+	UseCount  int64    `json:"use_count" nullable:"false" format:"int64"`
+	CreatedAt float64  `json:"created_at" nullable:"false" format:"double"`
 }
 
 func (invite InviteResponse) String() string   { return "InviteResponse([REDACTED])" }

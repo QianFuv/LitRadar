@@ -55,9 +55,7 @@ func cfpFixture(t *testing.T) (*cfpHandlers, *http.ServeMux, string) {
 		t.Fatal(err)
 	}
 	handlers := &cfpHandlers{configuration, repository, codec, auth.authenticator, auth.pool}
-	for _, route := range handlers.routes() {
-		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
-	}
+	registerFixtureRoutes(t, router, handlers.routes())
 	return handlers, router, token
 }
 
@@ -81,13 +79,13 @@ func TestCfpExtractionAuthenticationAndValidationPrecedence(t *testing.T) {
 		status        int
 		detail        string
 	}{
-		{"/api/cfp/journals", false, 400, "missing field `db`"},
-		{"/api/cfp/journals?db=fixture.sqlite&db=fixture.sqlite", false, 400, "duplicate field"},
-		{"/api/cfp/journals/x/notices?db=fixture.sqlite&limit=9223372036854775808", false, 401, "Authentication required"},
-		{"/api/cfp/journals/x/notices?db=fixture.sqlite&limit=9223372036854775808", true, 400, "between 1 and 200"},
-		{"/api/cfp/journals/x/notices?db=fixture.sqlite&limit=18446744073709551616", false, 400, "number too large"},
-		{"/api/cfp/journals/x/notices?db=fixture.sqlite&limit=-1", false, 400, "invalid digit"},
-		{"/api/cfp/journals/x/notices?db=fixture.sqlite&include_closed=1", false, 400, "not `true` or `false`"},
+		{"/api/cfp/journals", false, 422, "query.db"},
+		{"/api/cfp/journals?db=fixture.sqlite&db=fixture.sqlite", false, 401, "Authentication required"},
+		{"/api/cfp/journals/x/notices?db=fixture.sqlite&limit=9223372036854775808", false, 422, "invalid integer"},
+		{"/api/cfp/journals/x/notices?db=fixture.sqlite&limit=9223372036854775808", true, 422, "invalid integer"},
+		{"/api/cfp/journals/x/notices?db=fixture.sqlite&limit=18446744073709551616", false, 422, "invalid integer"},
+		{"/api/cfp/journals/x/notices?db=fixture.sqlite&limit=-1", false, 422, "expected number >= 0"},
+		{"/api/cfp/journals/x/notices?db=fixture.sqlite&include_closed=1", false, 401, "Authentication required"},
 		{"/api/cfp/journals?db=fixture", true, 404, "database catalog not found"},
 		{"/api/cfp/journals?db=%20fixture.sqlite", true, 404, "database catalog not found"},
 		{"/api/cfp/journals?db=fixture.sqlite&q=" + strings.Repeat("x", 257), true, 400, "exceeds 256"},

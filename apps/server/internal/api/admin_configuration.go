@@ -10,16 +10,11 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/auth"
 	"github.com/QianFuv/LitRadar/apps/server/internal/domain/identity"
 	scheduled "github.com/QianFuv/LitRadar/apps/server/internal/domain/scheduler"
-	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
+
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/cron"
 	"github.com/QianFuv/LitRadar/apps/server/internal/sources"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/settings"
 )
-
-func runtimeSettingsBody() bodyType {
-	pool := structBody("RuntimeSecretPoolUpdate", defaultBodyField("add", listBody(stringBody), []any{}), defaultBodyField("remove", listBody(stringBody), []any{}))
-	return structBody("RuntimeSettingsUpdate", defaultBodyField("values", mapBody(optionalBody(stringBody)), map[string]any{}), defaultBodyField("secret_pool_updates", mapBody(pool), map[string]any{}))
-}
 
 // validateScheduledBody preserves label, cron, job and timing rejection order.
 func validateScheduledBody(body map[string]any) *apiError {
@@ -72,26 +67,11 @@ func validateScheduledTiming(body map[string]any) *apiError {
 }
 
 func configurationFields(body map[string]any) (map[string]*string, map[string]settings.PoolUpdate) {
-	values := map[string]*string{}
-	for field, value := range body["values"].(map[string]any) {
-		if value == nil {
-			values[field] = nil
-		} else {
-			text := value.(string)
-			values[field] = &text
-		}
-	}
+	values, _ := body["values"].(map[string]*string)
 	pools := map[string]settings.PoolUpdate{}
-	for field, value := range body["secret_pool_updates"].(map[string]any) {
-		fields := value.(map[string]any)
-		update := settings.PoolUpdate{Add: []string{}, Remove: []string{}}
-		for _, item := range fields["add"].([]any) {
-			update.Add = append(update.Add, item.(string))
-		}
-		for _, item := range fields["remove"].([]any) {
-			update.Remove = append(update.Remove, item.(string))
-		}
-		pools[field] = update
+	updates, _ := body["secret_pool_updates"].(map[string]RuntimeSecretPoolUpdate)
+	for field, update := range updates {
+		pools[field] = settings.PoolUpdate{Add: update.Add, Remove: update.Remove}
 	}
 	return values, pools
 }
@@ -270,10 +250,7 @@ func (handlers *adminHandlers) performConfiguration(ctx context.Context, name st
 		if err != nil {
 			return nil, err
 		}
-		return struct {
-			Providers []sources.CapabilityInfo `json:"providers"`
-			Catalogs  []domain.ProviderCatalog `json:"catalogs"`
-		}{sources.BuiltInCapabilities(), catalogs}, nil
+		return providerCatalogResponse{sources.BuiltInCapabilities(), catalogs}, nil
 	}
 	return nil, fmt.Errorf("unknown administrator configuration operation")
 }

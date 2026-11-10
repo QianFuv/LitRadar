@@ -59,9 +59,7 @@ func authFixture(t *testing.T) (*authHandlers, *http.ServeMux, string) {
 	if len(routes) != 23 {
 		t.Fatal("auth route count")
 	}
-	for _, route := range routes {
-		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
-	}
+	registerFixtureRoutes(t, router, routes)
 	return handlers, router, token.Token
 }
 
@@ -74,6 +72,7 @@ func authRequest(router http.Handler, method, path, body, token string) *httptes
 	request = request.WithContext(context.WithValue(request.Context(), requestIdKey{}, "fixture-request"))
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
+	observeResponse(request, recorder)
 	return recorder
 }
 
@@ -110,8 +109,8 @@ func TestAuthValidationPrecedenceAndRateLimit(t *testing.T) {
 	}{
 		{"/api/auth/change-password", `{"old_password":"x","new_password":"x"}`, 400, "Password must be"},
 		{"/api/auth/change-password", `{"old_password":"x","new_password":"long enough password"}`, 401, "Authentication required"},
-		{"/api/auth/tokens", `{"ttl":0}`, 401, "Authentication required"},
-		{"/api/auth/login", `{"username":false}`, 422, "expected a string"},
+		{"/api/auth/tokens", `{"ttl":0}`, 422, "body.ttl"},
+		{"/api/auth/login", `{"username":false}`, 422, "expected string"},
 	} {
 		response := authRequest(router, "POST", scenario.path, scenario.body, "")
 		if response.Code != scenario.status || !strings.Contains(response.Body.String(), scenario.detail) {
@@ -262,7 +261,7 @@ func assertAuthSessionLogin(t *testing.T, router *http.ServeMux) string {
 // assertAuthAccessTokenIssuance checks independent access-token identity and nonempty credentials.
 func assertAuthAccessTokenIssuance(t *testing.T, router *http.ServeMux, session string) string {
 	t.Helper()
-	issued := authRequest(router, "POST", "/api/auth/tokens", `["browser-issued",3600]`, session)
+	issued := authRequest(router, "POST", "/api/auth/tokens", `{"name":"browser-issued","ttl":3600}`, session)
 	if issued.Code != 200 {
 		t.Fatal(issued.Code, issued.Body.String())
 	}

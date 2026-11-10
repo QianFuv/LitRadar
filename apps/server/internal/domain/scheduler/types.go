@@ -30,18 +30,9 @@ func (job Job) MarshalJSON() ([]byte, error) {
 	var value any
 	switch job.Kind {
 	case "index":
-		value = struct {
-			Kind         string  `json:"kind"`
-			MetadataFile *string `json:"metadata_file,omitempty"`
-			Notify       bool    `json:"notify"`
-			Push         bool    `json:"push"`
-		}{job.Kind, job.MetadataFile, job.Notify, job.Push}
+		value = IndexJob{job.Kind, job.MetadataFile, job.Notify, job.Push}
 	case "notify", "push":
-		value = struct {
-			Kind          string  `json:"kind"`
-			Database      *string `json:"database,omitempty"`
-			MaxCandidates *uint64 `json:"max_candidates,omitempty"`
-		}{job.Kind, job.Database, job.MaxCandidates}
+		value = DeliveryJob{job.Kind, job.Database, job.MaxCandidates}
 	default:
 		return nil, errors.New("invalid scheduled job kind")
 	}
@@ -257,19 +248,19 @@ func (state State) IsTerminal() bool {
 
 // Task is the persisted administrator task response, including retained legacy commands.
 type Task struct {
-	Id             int64    `json:"id"`
-	Name           string   `json:"name"`
-	Job            *Job     `json:"job"`
-	LegacyCommand  *string  `json:"legacy_command"`
-	Cron           string   `json:"cron"`
-	Timezone       string   `json:"timezone"`
-	TimeoutSeconds uint64   `json:"timeout_seconds"`
-	Coalesce       bool     `json:"coalesce"`
-	Enabled        bool     `json:"enabled"`
-	LastRunAt      *float64 `json:"last_run_at"`
-	LastStatus     State    `json:"last_status"`
-	CreatedAt      float64  `json:"created_at"`
-	UpdatedAt      float64  `json:"updated_at"`
+	Id             int64    `json:"id" nullable:"false" format:"int64"`
+	Name           string   `json:"name" nullable:"false"`
+	Job            *Job     `json:"job" required:"false" allowNull:"true" nullable:"false"`
+	LegacyCommand  *string  `json:"legacy_command" required:"false" nullable:"true"`
+	Cron           string   `json:"cron" nullable:"false"`
+	Timezone       string   `json:"timezone" nullable:"false"`
+	TimeoutSeconds uint64   `json:"timeout_seconds" nullable:"false" minimum:"0" format:"int64"`
+	Coalesce       bool     `json:"coalesce" nullable:"false"`
+	Enabled        bool     `json:"enabled" nullable:"false"`
+	LastRunAt      *float64 `json:"last_run_at" required:"false" nullable:"true" format:"double"`
+	LastStatus     State    `json:"last_status" nullable:"false" enum:"idle,pending,claimed,running,success,failed,timed_out,error,unknown,cancelled"`
+	CreatedAt      float64  `json:"created_at" nullable:"false" format:"double"`
+	UpdatedAt      float64  `json:"updated_at" nullable:"false" format:"double"`
 }
 
 // Create specifies all effective task creation values after API defaulting.
@@ -293,30 +284,30 @@ type Update struct {
 
 // Run is the bounded public task execution history without captured output.
 type Run struct {
-	Id           int64    `json:"id"`
-	TaskId       int64    `json:"task_id"`
-	TaskName     string   `json:"task_name"`
-	ScheduledFor int64    `json:"scheduled_for"`
-	Status       State    `json:"status"`
-	WorkerId     *string  `json:"worker_id"`
-	ClaimedAt    *float64 `json:"claimed_at"`
-	StartedAt    *float64 `json:"started_at"`
-	FinishedAt   *float64 `json:"finished_at"`
+	Id           int64    `json:"id" nullable:"false" format:"int64"`
+	TaskId       int64    `json:"task_id" nullable:"false" format:"int64"`
+	TaskName     string   `json:"task_name" nullable:"false"`
+	ScheduledFor int64    `json:"scheduled_for" nullable:"false" format:"int64"`
+	Status       State    `json:"status" nullable:"false" enum:"idle,pending,claimed,running,success,failed,timed_out,error,unknown,cancelled"`
+	WorkerId     *string  `json:"worker_id" required:"false" nullable:"true"`
+	ClaimedAt    *float64 `json:"claimed_at" required:"false" nullable:"true" format:"double"`
+	StartedAt    *float64 `json:"started_at" required:"false" nullable:"true" format:"double"`
+	FinishedAt   *float64 `json:"finished_at" required:"false" nullable:"true" format:"double"`
 }
 
 // Worker reports persisted heartbeat health against the caller's wall clock.
 type Worker struct {
-	WorkerId    string  `json:"worker_id"`
-	StartedAt   float64 `json:"started_at"`
-	HeartbeatAt float64 `json:"heartbeat_at"`
-	IsHealthy   bool    `json:"is_healthy"`
+	WorkerId    string  `json:"worker_id" nullable:"false"`
+	StartedAt   float64 `json:"started_at" nullable:"false" format:"double"`
+	HeartbeatAt float64 `json:"heartbeat_at" nullable:"false" format:"double"`
+	IsHealthy   bool    `json:"is_healthy" nullable:"false"`
 }
 
 // Status combines the durable cursor, worker health and bounded recent history.
 type Status struct {
-	LastCheckedAt *float64 `json:"last_checked_at"`
-	Workers       []Worker `json:"workers"`
-	RecentRuns    []Run    `json:"recent_runs"`
+	LastCheckedAt *float64 `json:"last_checked_at" required:"false" nullable:"true" format:"double"`
+	Workers       []Worker `json:"workers" nullable:"false"`
+	RecentRuns    []Run    `json:"recent_runs" nullable:"false"`
 }
 
 // isScheduledFilenameCharacter preserves the ASCII-only basename alphabet without normalization.
@@ -354,4 +345,26 @@ func scheduledStateWireName(data []byte, invalid error) (string, error) {
 		return "", invalid
 	}
 	return name, nil
+}
+
+// IndexJob is the serialized index command and its arguments.
+type IndexJob struct {
+	// Kind identifies the index command.
+	Kind string `json:"kind" enum:"index"`
+	// MetadataFile optionally selects one catalog file.
+	MetadataFile *string `json:"metadata_file,omitempty" nullable:"true" maxLength:"128" pattern:"^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.csv$"`
+	// Notify schedules notification after indexing.
+	Notify bool `json:"notify" required:"false"`
+	// Push schedules delivery after indexing.
+	Push bool `json:"push" required:"false"`
+}
+
+// DeliveryJob is the serialized notification or delivery command.
+type DeliveryJob struct {
+	// Kind identifies notification or delivery.
+	Kind string `json:"kind" enum:"notify,push"`
+	// Database optionally selects one source database.
+	Database *string `json:"database,omitempty" nullable:"true" maxLength:"128" pattern:"^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*\\.sqlite$"`
+	// MaxCandidates optionally bounds candidate selection.
+	MaxCandidates *uint64 `json:"max_candidates,omitempty" nullable:"true" minimum:"1" maximum:"1000"`
 }

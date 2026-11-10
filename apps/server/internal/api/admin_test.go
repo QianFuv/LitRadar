@@ -52,9 +52,7 @@ func adminFixture(t *testing.T) (*authHandlers, *http.ServeMux, string, domain.U
 	}
 	t.Cleanup(codec.Close)
 	handlers := adminHandlers{auth: auth, storage: config.FromProjectRoot(t.TempDir()), scheduler: tasks, settings: settings.New(auth.repository, codec)}
-	for _, route := range handlers.routes() {
-		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
-	}
+	registerFixtureRoutes(t, router, handlers.routes())
 	return auth, router, token, user, memberToken.Token
 }
 
@@ -91,10 +89,11 @@ func TestAdministratorRoutesEnforceRolesSelfProtectionAndNumericIds(t *testing.T
 
 func TestAdministratorInviteOptionalBodyAndRevocation(t *testing.T) {
 	_, router, token, _, _ := adminFixture(t)
-	request := httptest.NewRequest("POST", "/api/admin/invite-codes", strings.NewReader("ignored without content type"))
+	request := httptest.NewRequest("POST", "/api/admin/invite-codes", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
+	observeResponse(request, response)
 	if response.Code != 200 {
 		t.Fatal(response.Code, response.Body.String())
 	}
@@ -112,7 +111,7 @@ func TestAdministratorInviteOptionalBodyAndRevocation(t *testing.T) {
 		}
 	}
 	response = authRequest(router, "POST", "/api/admin/invite-codes", `{"max_uses":0}`, token)
-	if response.Code != 400 {
+	if response.Code != 422 {
 		t.Fatal(response.Code, response.Body.String())
 	}
 }

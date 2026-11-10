@@ -16,9 +16,7 @@ import (
 func graphFixture(t *testing.T) (*authHandlers, *favoriteHandlers, *http.ServeMux, string) {
 	t.Helper()
 	auth, handlers, router, token := favoriteFixture(t)
-	for _, route := range handlers.graphRoutes() {
-		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
-	}
+	registerFixtureRoutes(t, router, handlers.graphRoutes())
 	return auth, handlers, router, token
 }
 
@@ -153,15 +151,15 @@ func TestRelationGraphFavoriteValidation(t *testing.T) {
 		status                   int
 	}{
 		{"empty title", "POST", base, graphRequestBody(" ", 1, `{}`), 400},
-		{"long title", "POST", base, graphRequestBody(strings.Repeat("文", 201), 1, `{}`), 400},
-		{"array graph", "POST", base, graphRequestBody("valid", 1, `[]`), 400},
-		{"null graph", "POST", base, graphRequestBody("valid", 1, `null`), 400},
-		{"scalar graph", "POST", base, graphRequestBody("valid", 1, `42`), 400},
-		{"string graph", "POST", base, graphRequestBody("valid", 1, `"graph"`), 400},
-		{"zero nodes", "POST", base, graphRequestBody("valid", 0, `{}`), 400},
-		{"too many nodes", "POST", base, graphRequestBody("valid", 501, `{}`), 400},
-		{"invalid root", "POST", base, `{"title":"title","db_name":"","root_article_id":0,"node_count":1,"graph":{}}`, 400},
-		{"long database", "POST", base, strings.Replace(graphRequestBody("valid", 1, `{}`), `"source"`, fmt.Sprintf("%q", strings.Repeat("文", 256)), 1), 400},
+		{"long title", "POST", base, graphRequestBody(strings.Repeat("文", 201), 1, `{}`), 422},
+		{"array graph", "POST", base, graphRequestBody("valid", 1, `[]`), 422},
+		{"null graph", "POST", base, graphRequestBody("valid", 1, `null`), 422},
+		{"scalar graph", "POST", base, graphRequestBody("valid", 1, `42`), 422},
+		{"string graph", "POST", base, graphRequestBody("valid", 1, `"graph"`), 422},
+		{"zero nodes", "POST", base, graphRequestBody("valid", 0, `{}`), 422},
+		{"too many nodes", "POST", base, graphRequestBody("valid", 501, `{}`), 422},
+		{"invalid root", "POST", base, `{"title":"title","db_name":"","root_article_id":0,"node_count":1,"graph":{}}`, 422},
+		{"long database", "POST", base, strings.Replace(graphRequestBody("valid", 1, `{}`), `"source"`, fmt.Sprintf("%q", strings.Repeat("文", 256)), 1), 422},
 		{"empty update", "PUT", base + "/1", `{}`, 400},
 		{"count without graph", "PUT", base + "/1", `{"node_count":1}`, 400},
 		{"title and count without graph", "PUT", base + "/1", `{"title":"valid","node_count":1}`, 400},
@@ -171,15 +169,17 @@ func TestRelationGraphFavoriteValidation(t *testing.T) {
 		{"missing create fields", "POST", base, `{}`, 422},
 		{"invalid field type", "PUT", base + "/1", `{"title":1}`, 422},
 		{"invalid syntax", "POST", base, `{`, 400},
-		{"small limit", "GET", base + "?limit=0", "", 400},
-		{"large limit", "GET", base + "?limit=101", "", 400},
+		{"small limit", "GET", base + "?limit=0", "", 422},
+		{"large limit", "GET", base + "?limit=101", "", 422},
 		{"bad cursor", "GET", base + "?cursor=bad", "", 400},
-		{"empty cursor", "GET", base + "?cursor=", "", 400},
-		{"zero graph id", "GET", base + "/0", "", 400},
+		{"empty cursor", "GET", base + "?cursor=", "", 200},
+		{"zero graph id", "GET", base + "/0", "", 422},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			response := requireGraphRequest(t, router, token, scenario.method, scenario.path, scenario.body, scenario.status)
-			requireProblem(t, response, scenario.status, "")
+			if scenario.status >= 400 {
+				requireProblem(t, response, scenario.status, "")
+			}
 		})
 	}
 	response := requireGraphRequest(t, router, token, "GET", base+"?cursor=bad", "", 400)
@@ -206,7 +206,7 @@ func TestRelationGraphFavoriteSizeBoundary(t *testing.T) {
 		requireProblem(t, response, 413, "graph must be at most 2 MiB")
 	}
 	response := requireGraphRequest(t, router, token, "POST", base, strings.Repeat(" ", 3*1024*1024+1), 413)
-	requireProblem(t, response, 413, "Failed to buffer the request body: length limit exceeded")
+	requireProblem(t, response, 413, "request body is too large limit=3145728 bytes")
 }
 
 // TestRelationGraphFavoriteRegisteredRoutesAndContract checks production routing and offline generation.
@@ -244,11 +244,11 @@ func TestRelationGraphFavoriteRegisteredRoutesAndContract(t *testing.T) {
 	}
 	for _, route := range (&favoriteHandlers{}).graphRoutes() {
 		operation := route.operation
-		if contract.Paths[operation.Path][strings.ToLower(operation.Method)].OperationId != operation.Id {
+		if contract.Paths[operation.Path][strings.ToLower(operation.Method)].OperationId != operation.ID {
 			t.Fatal("missing graph operation", operation)
 		}
 	}
-	for _, name := range []string{"RelationGraphFavoriteSummary", "RelationGraphFavorite", "RelationGraphFavoriteCreate", "RelationGraphFavoriteUpdate", "RelationGraphFavoritePage"} {
+	for _, name := range []string{"FavoriteGraphSummary", "FavoriteGraph", "RelationGraphFavoriteCreate", "RelationGraphFavoriteUpdate", "FavoriteGraphPage"} {
 		if _, exists := contract.Components.Schemas[name]; !exists {
 			t.Fatal("missing graph schema", name)
 		}

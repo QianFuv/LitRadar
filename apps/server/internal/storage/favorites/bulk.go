@@ -183,14 +183,14 @@ func (repository *Repository) BulkMove(ctx context.Context, owner identity.Id, s
 
 // Membership identifies an owned folder containing a database-qualified article.
 type Membership struct {
-	FolderId   int64  `json:"folder_id"`
-	FolderName string `json:"folder_name"`
+	FolderId   int64  `json:"folder_id" nullable:"false" format:"int64"`
+	FolderName string `json:"folder_name" nullable:"false"`
 }
 
 // BatchMembership retains first-occurrence request ordering after filtering nonpositive identifiers.
 type BatchMembership struct {
-	ArticleId identity.Id  `json:"article_id"`
-	Folders   []Membership `json:"folders"`
+	ArticleId identity.Id  `json:"article_id" nullable:"false"`
+	Folders   []Membership `json:"folders" nullable:"false"`
 }
 
 // IsFavorited returns all owned memberships for one exact reference.

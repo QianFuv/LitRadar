@@ -23,7 +23,19 @@ type apiError struct {
 	retryAfter *uint64
 }
 
-func (failure *apiError) Error() string  { return failure.detail }
+func (failure *apiError) Error() string { return failure.detail }
+
+func (failure *apiError) problem() error {
+	detail, details := failure.problemDetails()
+	model := huma.NewError(failure.status, detail, details...)
+	if failure.retryAfter != nil {
+		return huma.ErrorWithHeaders(model, http.Header{"Retry-After": {strconv.FormatUint(*failure.retryAfter, 10)}})
+	}
+	if failure.status == 503 || failure.status == 429 {
+		return huma.ErrorWithHeaders(model, http.Header{"Retry-After": {"5"}})
+	}
+	return model
+}
 func badRequest(detail string) *apiError { return &apiError{status: 400, detail: detail} }
 func internalError() *apiError           { return &apiError{status: 500, detail: "Internal Server Error"} }
 func serviceUnavailable() *apiError {

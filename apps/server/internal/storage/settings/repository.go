@@ -43,8 +43,8 @@ func (value Value) LogValue() slog.Value { return slog.StringValue(value.String(
 
 // SecretItem exposes an encrypted removal reference and a Unicode-aware public mask.
 type SecretItem struct {
-	Reference   string `json:"reference"`
-	MaskedValue string `json:"masked_value"`
+	Reference   string `json:"reference" nullable:"false"`
+	MaskedValue string `json:"masked_value" nullable:"false"`
 }
 
 func (item SecretItem) String() string       { return "RuntimeSecretItemInfo([REDACTED])" }
@@ -53,21 +53,21 @@ func (item SecretItem) LogValue() slog.Value { return slog.StringValue(item.Stri
 
 // Info preserves the complete administrator form and disclosure contract.
 type Info struct {
-	Field         string       `json:"field"`
-	Label         string       `json:"label"`
-	Description   string       `json:"description"`
-	Group         string       `json:"group"`
-	Control       string       `json:"control"`
-	ApplyMode     string       `json:"apply_mode"`
-	AllowedValues []string     `json:"allowed_values"`
-	InputType     string       `json:"input_type"`
-	IsSecret      bool         `json:"is_secret"`
-	Value         string       `json:"value"`
-	HasValue      bool         `json:"has_value"`
-	MaskedValue   string       `json:"masked_value"`
-	SecretItems   []SecretItem `json:"secret_items"`
-	Source        string       `json:"source"`
-	UpdatedAt     *float64     `json:"updated_at"`
+	Field         string       `json:"field" nullable:"false"`
+	Label         string       `json:"label" nullable:"false"`
+	Description   string       `json:"description" nullable:"false"`
+	Group         string       `json:"group" nullable:"false" enum:"source_access,provider_routing,server_security,single_sign_on,observability"`
+	Control       string       `json:"control" nullable:"false" enum:"text,secret_pool,string_list,boolean,select,index_provider_routes,provider_order,provider_proxy_policy"`
+	ApplyMode     string       `json:"apply_mode" nullable:"false" enum:"next_request,next_command,restart_required"`
+	AllowedValues []string     `json:"allowed_values" nullable:"false"`
+	InputType     string       `json:"input_type" nullable:"false"`
+	IsSecret      bool         `json:"is_secret" nullable:"false"`
+	Value         string       `json:"value" nullable:"false"`
+	HasValue      bool         `json:"has_value" nullable:"false"`
+	MaskedValue   string       `json:"masked_value" nullable:"false"`
+	SecretItems   []SecretItem `json:"secret_items" required:"false" nullable:"false"`
+	Source        string       `json:"source" nullable:"false"`
+	UpdatedAt     *float64     `json:"updated_at" required:"false" nullable:"true" format:"double"`
 }
 
 func (info Info) String() string       { return "RuntimeSettingInfo(" + info.Field + ", [REDACTED])" }

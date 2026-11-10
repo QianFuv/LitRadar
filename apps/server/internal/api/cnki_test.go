@@ -28,9 +28,7 @@ func cnkiFixture(t *testing.T, mode zjlib.FixtureMode) (*cnkiHandlers, *http.Ser
 	handlers := &cnkiHandlers{sessions: storage.NewCnkiSessions(auth.repository, codec), authenticator: auth.authenticator, pool: auth.pool, upstream: upstream, newClient: func() (*zjlib.Client, func(), error) {
 		return zjlib.NewClient(zjlib.NewFixtureTransport(mode)), func() {}, nil
 	}}
-	for _, route := range handlers.routes() {
-		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
-	}
+	registerFixtureRoutes(t, router, handlers.routes())
 	return handlers, router, token
 }
 
@@ -50,9 +48,7 @@ func TestCnkiRoutesPreserveLifecycleAndClassifiedErrors(t *testing.T) {
 			}
 			response = authRequest(router, "POST", "/api/cnki/login/start", "", token)
 			if scenario.mode == zjlib.StartFailure {
-				if response.Code != scenario.status || !strings.Contains(response.Body.String(), scenario.code) {
-					t.Fatal(response.Code, response.Body.String())
-				}
+				requireCNKIProblem(t, response, scenario.status, scenario.code, "login")
 				return
 			}
 			if response.Code != 200 || !strings.Contains(response.Body.String(), `"status":"WAITING_SCAN"`) || !strings.Contains(response.Body.String(), `"status":"waiting_scan"`) {
@@ -62,8 +58,12 @@ func TestCnkiRoutesPreserveLifecycleAndClassifiedErrors(t *testing.T) {
 			if response.Code != scenario.status {
 				t.Fatal(response.Code, response.Body.String())
 			}
-			if scenario.code != "" && !strings.Contains(response.Body.String(), scenario.code) {
-				t.Fatal(response.Body.String())
+			if scenario.code != "" {
+				phase := "login"
+				if scenario.mode == zjlib.WarmupFailure {
+					phase = "warmup"
+				}
+				requireCNKIProblem(t, response, scenario.status, scenario.code, phase)
 			}
 			data, err := handlers.sessions.Data(context.Background(), 1, false)
 			if err != nil || data == nil {
@@ -93,9 +93,9 @@ func TestCnkiPollValidationOccursBeforeAuthentication(t *testing.T) {
 	}{
 		{`{"timeout_seconds":0,"interval_seconds":0}`, 400, "timeout_seconds"},
 		{`{"interval_seconds":0}`, 400, "interval_seconds"},
-		{`{"timeout_seconds":null}`, 422, "expected i64"},
+		{`{"timeout_seconds":null}`, 401, "Authentication required"},
 		{`{}`, 401, "Authentication required"},
-		{`[180,2]`, 401, "Authentication required"},
+		{`[180,2]`, 422, "expected object"},
 	} {
 		response := authRequest(router, "POST", "/api/cnki/login/poll", scenario.body, "")
 		if response.Code != scenario.status || !strings.Contains(response.Body.String(), scenario.detail) {

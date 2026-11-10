@@ -17,19 +17,19 @@ const MaxGraphBytes = 2 * 1024 * 1024
 
 // GraphSummary describes an owned graph without loading its snapshot.
 type GraphSummary struct {
-	Id            int64   `json:"id"`
-	Title         string  `json:"title"`
-	DbName        string  `json:"db_name"`
-	RootArticleId int64   `json:"root_article_id"`
-	NodeCount     int64   `json:"node_count"`
-	CreatedAt     float64 `json:"created_at"`
-	UpdatedAt     float64 `json:"updated_at"`
+	Id            int64   `json:"id" nullable:"false" format:"int64"`
+	Title         string  `json:"title" nullable:"false"`
+	DbName        string  `json:"db_name" nullable:"false"`
+	RootArticleId int64   `json:"root_article_id" nullable:"false" format:"int64"`
+	NodeCount     int64   `json:"node_count" nullable:"false" format:"int64"`
+	CreatedAt     float64 `json:"created_at" nullable:"false" format:"double"`
+	UpdatedAt     float64 `json:"updated_at" nullable:"false" format:"double"`
 }
 
 // Graph includes the original JSON object snapshot with its summary.
 type Graph struct {
 	GraphSummary
-	Graph json.RawMessage `json:"graph"`
+	Graph json.RawMessage `json:"graph" nullable:"false"`
 }
 
 // GraphCreate supplies the immutable source and initial graph snapshot.
@@ -50,8 +50,8 @@ type GraphUpdate struct {
 
 // GraphPage contains summaries and an owner-bound continuation cursor.
 type GraphPage struct {
-	Items      []GraphSummary `json:"items"`
-	NextCursor *string        `json:"next_cursor"`
+	Items      []GraphSummary `json:"items" nullable:"false"`
+	NextCursor *string        `json:"next_cursor" nullable:"true"`
 }
 
 func validateGraphTitle(title string) error {

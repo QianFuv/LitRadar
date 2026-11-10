@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
+	"github.com/danielgtaylor/huma/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,9 +57,7 @@ func articleFixture(t *testing.T) (*articleHandlers, *authHandlers, *http.ServeM
 	upstream := executor.New(2, 30*time.Second)
 	t.Cleanup(upstream.Close)
 	handlers := &articleHandlers{storage: config.FromProjectRoot(t.TempDir()), authenticator: auth.authenticator, settings: settings.New(auth.repository, codec), sessions: storage.NewCnkiSessions(auth.repository, codec), providers: &provider.Registry{}, pool: auth.pool, upstream: upstream}
-	for _, route := range handlers.routes() {
-		router.HandleFunc(route.operation.Method+" "+route.operation.Path, route.handler)
-	}
+	registerFixtureRoutes(t, router, handlers.routes())
 	return handlers, auth, router, token
 }
 func articleLocatorFixture() domain.ArticleLocator {
@@ -241,7 +241,7 @@ func TestArticleHttpExtractionAndResponseHeaders(t *testing.T) {
 	for _, scenario := range []struct {
 		path, bearer string
 		status       int
-	}{{"/api/articles/bad/access", "", 400}, {"/api/articles/1/access?db=a&db=b", "", 400}, {"/api/articles/0/access", "", 401}, {"/api/articles/-1/access", token, 404}} {
+	}{{"/api/articles/bad/access", "", 422}, {"/api/articles/1/access?db=a&db=b", "", 401}, {"/api/articles/0/access", "", 401}, {"/api/articles/-1/access", token, 404}} {
 		response := authRequest(router, "GET", scenario.path, "", scenario.bearer)
 		if response.Code != scenario.status {
 			t.Fatal(scenario.path, response.Code, response.Body.String())
@@ -285,14 +285,24 @@ func assertArticleResolutionHeaders(t *testing.T) {
 	t.Helper()
 	writer := httptest.NewRecorder()
 	location := "https://example.org/论文?a=1"
-	writeArticleResolution(writer, domain.ArticleFullTextResolution{Redirect: &domain.ArticleRedirect{Location: location}})
+	writeTypedArticleResponse(t, writer, domain.ArticleFullTextResolution{Redirect: &domain.ArticleRedirect{Location: location}})
 	if writer.Code != 307 || writer.Body.Len() != 0 || writer.Header().Get("Location") != location || writer.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatal(writer)
 	}
 	writer = httptest.NewRecorder()
 	filename := "论文 file+.pdf"
-	writeArticleResolution(writer, domain.ArticleFullTextResolution{Document: &domain.ArticleFullTextDocument{ContentType: "application/pdf", Filename: &filename, Bytes: []byte("%PDF-test")}})
+	writeTypedArticleResponse(t, writer, domain.ArticleFullTextResolution{Document: &domain.ArticleFullTextDocument{ContentType: "application/pdf", Filename: &filename, Bytes: []byte("%PDF-test")}})
 	if writer.Code != 200 || writer.Body.String() != "%PDF-test" || writer.Header().Get("Content-Type") != "application/pdf" || writer.Header().Get("Content-Disposition") != "attachment; filename*=UTF-8''%E8%AE%BA%E6%96%87%20file%2B.pdf" {
 		t.Fatal(writer.Header(), writer.Body.String())
 	}
+}
+
+func writeTypedArticleResponse(t *testing.T, writer *httptest.ResponseRecorder, resolution domain.ArticleFullTextResolution) {
+	t.Helper()
+	mux := http.NewServeMux()
+	api := openapi.New(mux)
+	huma.Register(api, huma.Operation{Method: "GET", Path: "/resolution"}, func(context.Context, *struct{}) (*articleOutput, error) {
+		return resolvedArticleOutput(resolution), nil
+	})
+	mux.ServeHTTP(writer, httptest.NewRequest("GET", "/resolution", nil))
 }

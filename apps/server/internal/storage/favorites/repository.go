@@ -42,17 +42,17 @@ func (failure InvalidInput) Error() string { return failure.Message }
 
 // Folder retains numeric row identities and original fractional creation timestamps.
 type Folder struct {
-	Id           int64   `json:"id"`
-	Name         string  `json:"name"`
-	IsTracking   bool    `json:"is_tracking"`
-	ArticleCount int64   `json:"article_count"`
-	CreatedAt    float64 `json:"created_at"`
+	Id           int64   `json:"id" nullable:"false" format:"int64"`
+	Name         string  `json:"name" nullable:"false"`
+	IsTracking   bool    `json:"is_tracking" nullable:"false"`
+	ArticleCount int64   `json:"article_count" nullable:"false" format:"int64"`
+	CreatedAt    float64 `json:"created_at" nullable:"false" format:"double"`
 }
 
 // Reference distinguishes equal article identifiers in separate source databases.
 type Reference struct {
-	ArticleId identity.Id `json:"article_id"`
-	DbName    string      `json:"db_name"`
+	ArticleId identity.Id `json:"article_id" nullable:"false"`
+	DbName    string      `json:"db_name" nullable:"false"`
 }
 
 // Add supplies a reference and its initial note, which duplicate adds do not replace.
@@ -63,11 +63,11 @@ type Add struct {
 
 // Favorite is the persisted owner-scoped favorite response.
 type Favorite struct {
-	Id       int64 `json:"id"`
-	FolderId int64 `json:"folder_id"`
+	Id       int64 `json:"id" nullable:"false" format:"int64"`
+	FolderId int64 `json:"folder_id" nullable:"false" format:"int64"`
 	Reference
-	Note      string  `json:"note"`
-	CreatedAt float64 `json:"created_at"`
+	Note      string  `json:"note" nullable:"false"`
+	CreatedAt float64 `json:"created_at" nullable:"false" format:"double"`
 }
 
 // Repository composes the existing auth pool without running migrations or owning its lifetime.

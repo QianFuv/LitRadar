@@ -1,18 +1,19 @@
 package api
 
 import (
+	"context"
+	"github.com/QianFuv/LitRadar/apps/server/internal/telemetry"
 	"log/slog"
-	"net/http"
 	"time"
 )
 
 // loadTelemetry requires administrator admission before reading bounded hourly data.
-func (handlers *adminHandlers) loadTelemetry(writer http.ResponseWriter, request *http.Request) {
+func (handlers *adminHandlers) loadTelemetry(ctx context.Context, input *TelemetryInput) (*output[telemetry.Report], error) {
+	request := input.request
 	if _, failure := handlers.auth.authenticator.requireAdmin(request); failure != nil {
-		failure.write(writer)
-		return
+		return nil, failure.problem()
 	}
-	period := request.URL.Query().Get("period")
+	period := input.Period
 	hours := 24
 	switch period {
 	case "", "24h":
@@ -21,23 +22,20 @@ func (handlers *adminHandlers) loadTelemetry(writer http.ResponseWriter, request
 	case "30d":
 		hours = 30 * 24
 	default:
-		badRequest("period must be 24h, 7d or 30d").write(writer)
-		return
+		return nil, badRequest("period must be 24h, 7d or 30d").problem()
 	}
-	kind := request.URL.Query().Get("kind")
+	kind := textOr(input.Kind.Pointer(), "")
 	switch kind {
 	case "", "http", "mcp", "search":
 	default:
-		badRequest("kind must be http, mcp or search").write(writer)
-		return
+		return nil, badRequest("kind must be http, mcp or search").problem()
 	}
 	to := time.Now().UTC().Truncate(time.Hour).Add(time.Hour)
 	report, err := handlers.telemetry.Read(request.Context(), to.Add(-time.Duration(hours)*time.Hour), to, kind)
 	if err != nil {
 		slog.WarnContext(request.Context(), "telemetry.read.failed", "component", "telemetry")
 		retry := uint64(5)
-		(&apiError{status: http.StatusServiceUnavailable, detail: "Load telemetry temporarily unavailable", retryAfter: &retry}).write(writer)
-		return
+		return nil, (&apiError{status: 503, detail: "Load telemetry temporarily unavailable", retryAfter: &retry}).problem()
 	}
-	writeResponse(writer, report)
+	return &output[telemetry.Report]{Body: report}, nil
 }

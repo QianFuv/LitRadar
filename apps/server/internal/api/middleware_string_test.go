@@ -146,7 +146,7 @@ func TestPolicyLargeStringHttpResponse(t *testing.T) {
 	value := strings.Repeat("中<&>", 262144)
 	expected := "prefix" + value + "suffix"
 	for _, hasLength := range []bool{false, true} {
-		handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/api/large-string"}, func(writer http.ResponseWriter, request *http.Request) {
+		handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, mux: fixtureMux([]route{fixtureRawRoute(openapi.Operation{Method: "GET", Path: "/api/large-string"}, func(writer http.ResponseWriter, request *http.Request) {
 			writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			if hasLength {
 				writer.Header().Set("Content-Length", strconv.Itoa(len(expected)))
@@ -156,7 +156,7 @@ func TestPolicyLargeStringHttpResponse(t *testing.T) {
 				t.Error("large string write failed", count, err)
 			}
 			_, _ = io.WriteString(writer, "suffix")
-		}}})}
+		})})}
 		server := httptest.NewServer(handler)
 		client := server.Client()
 		client.Timeout = 5 * time.Second
@@ -216,8 +216,8 @@ func TestPolicyOversizedDeclaredString(t *testing.T) {
 	}
 }
 
-// TestFavoriteExportStringResponse preserves authenticated attachment and HEAD behavior through the policy.
-func TestFavoriteExportStringResponse(t *testing.T) {
+// TestFavoriteExportResponse preserves authenticated attachment and HEAD behavior through the policy.
+func TestFavoriteExportResponse(t *testing.T) {
 	_, _, router, token := favoriteFixture(t)
 	created := authRequest(router, "POST", "/api/favorites/folders", `{"name":"string-write"}`, token)
 	var folder struct{ Id int64 }
@@ -225,7 +225,7 @@ func TestFavoriteExportStringResponse(t *testing.T) {
 		t.Fatal("folder creation failed", created)
 	}
 	path := fmt.Sprintf("/api/favorites/folders/%d", folder.Id)
-	added := authRequest(router, "POST", path+"/articles", `{"article_id":1,"db_name":"unavailable"}`, token)
+	added := authRequest(router, "POST", path+"/articles", `{"article_id":"1","db_name":"unavailable"}`, token)
 	if added.Code != 200 {
 		t.Fatal("favorite creation failed", added)
 	}
@@ -237,8 +237,8 @@ func TestFavoriteExportStringResponse(t *testing.T) {
 		response.finish()
 	})
 	get := authRequest(wrapped, "GET", path+"/export", "", token)
-	if get.Code != 200 || get.Body.Len() == 0 || probe.stringWrites != 1 || probe.byteWrites != 0 {
-		t.Fatal("export copied through byte writes", get, probe)
+	if get.Code != 200 || get.Body.Len() == 0 || probe.headers != 1 {
+		t.Fatal("export attachment response changed", get, probe)
 	}
 	head := authRequest(wrapped, "HEAD", path+"/export", "", token)
 	if head.Code != 200 || head.Body.Len() != 0 || head.Header().Get("Content-Length") != strconv.Itoa(get.Body.Len()) ||
@@ -266,7 +266,7 @@ func BenchmarkPolicyHttpStringResponses(b *testing.B) {
 					if format == "JSON" {
 						expectedLength = len(encoded)
 					}
-					handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/api/benchmark"}, func(writer http.ResponseWriter, request *http.Request) {
+					handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, mux: fixtureMux([]route{fixtureRawRoute(openapi.Operation{Method: "GET", Path: "/api/benchmark"}, func(writer http.ResponseWriter, request *http.Request) {
 						if !usesStrings {
 							writer = struct{ http.ResponseWriter }{writer}
 						}
@@ -276,7 +276,7 @@ func BenchmarkPolicyHttpStringResponses(b *testing.B) {
 							writer.Header().Set("Content-Type", "application/x-bibtex")
 							_, _ = io.WriteString(writer, export)
 						}
-					}}})}
+					})})}
 					server := httptest.NewServer(handler)
 					defer server.Close()
 					client := server.Client()

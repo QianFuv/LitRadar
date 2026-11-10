@@ -42,14 +42,14 @@ func (data CnkiData) LogValue() slog.Value { return slog.StringValue(data.String
 
 // CnkiStatus is a credential-free lifecycle projection with explicit nullable timestamps.
 type CnkiStatus struct {
-	Configured       bool     `json:"configured"`
-	Status           string   `json:"status"`
-	HasBffUserToken  bool     `json:"has_bff_user_token"`
-	ExpiresAt        *float64 `json:"expires_at"`
-	SecondsRemaining *int64   `json:"seconds_remaining"`
-	CookieNames      []string `json:"cookie_names"`
-	UpdatedAt        *float64 `json:"updated_at"`
-	LastUsedAt       *float64 `json:"last_used_at"`
+	Configured       bool     `json:"configured" nullable:"false"`
+	Status           string   `json:"status" nullable:"false"`
+	HasBffUserToken  bool     `json:"has_bff_user_token" nullable:"false"`
+	ExpiresAt        *float64 `json:"expires_at" required:"false" nullable:"true" format:"double"`
+	SecondsRemaining *int64   `json:"seconds_remaining" required:"false" nullable:"true" format:"int64"`
+	CookieNames      []string `json:"cookie_names" nullable:"false"`
+	UpdatedAt        *float64 `json:"updated_at" required:"false" nullable:"true" format:"double"`
+	LastUsedAt       *float64 `json:"last_used_at" required:"false" nullable:"true" format:"double"`
 }
 
 type cnkiRow struct {

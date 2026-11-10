@@ -137,7 +137,11 @@ func TestNativeLoginUsesPasswordFailuresAndSharedLockout(t *testing.T) {
 				if attempt%2 == 1 && attempt < 5 {
 					path = "/api/auth/login"
 				}
-				response := authRequest(router, "POST", path, body, "")
+				requestBody := body
+				if path == "/api/auth/login" {
+					requestBody = fmt.Sprintf(`{"username":"api_fixture","password":%q}`, password)
+				}
+				response := authRequest(router, "POST", path, requestBody, "")
 				expected := 401
 				if attempt == 5 {
 					expected = 429
@@ -165,7 +169,11 @@ func TestNativeLoginValidatesDeviceNameAndReusesQuota(t *testing.T) {
 	for _, name := range []string{"", "   ", "Android\nphone", strings.Repeat("界", 94)} {
 		body, _ := json.Marshal(map[string]string{"username": "api_fixture", "password": "correct password long", "device_name": name})
 		response := authRequest(router, "POST", "/api/auth/native/login", string(body), "")
-		if response.Code != 400 || response.Header().Get("Set-Cookie") != "" {
+		expected := 400
+		if name == "" || len([]rune(name)) > 93 {
+			expected = 422
+		}
+		if response.Code != expected || response.Header().Get("Set-Cookie") != "" {
 			t.Fatal(response.Code, response.Body.String())
 		}
 	}

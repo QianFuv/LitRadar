@@ -14,41 +14,41 @@ import (
 )
 
 type authStats struct {
-	TotalUsers              int64 `json:"total_users"`
-	AdminCount              int64 `json:"admin_count"`
-	TotalFolders            int64 `json:"total_folders"`
-	TotalFavorites          int64 `json:"total_favorites"`
-	TotalInviteCodes        int64 `json:"total_invite_codes"`
-	UsedInviteCodes         int64 `json:"used_invite_codes"`
-	UnusedInviteCodes       int64 `json:"unused_invite_codes"`
-	ActiveTokens            int64 `json:"active_tokens"`
-	NotificationSubscribers int64 `json:"notification_subscribers"`
-	ScheduledTasks          int64 `json:"scheduled_tasks"`
-	ActiveAnnouncements     int64 `json:"active_announcements"`
+	TotalUsers              int64 `json:"total_users" nullable:"false" format:"int64"`
+	AdminCount              int64 `json:"admin_count" nullable:"false" format:"int64"`
+	TotalFolders            int64 `json:"total_folders" nullable:"false" format:"int64"`
+	TotalFavorites          int64 `json:"total_favorites" nullable:"false" format:"int64"`
+	TotalInviteCodes        int64 `json:"total_invite_codes" nullable:"false" format:"int64"`
+	UsedInviteCodes         int64 `json:"used_invite_codes" nullable:"false" format:"int64"`
+	UnusedInviteCodes       int64 `json:"unused_invite_codes" nullable:"false" format:"int64"`
+	ActiveTokens            int64 `json:"active_tokens" nullable:"false" format:"int64"`
+	NotificationSubscribers int64 `json:"notification_subscribers" nullable:"false" format:"int64"`
+	ScheduledTasks          int64 `json:"scheduled_tasks" nullable:"false" format:"int64"`
+	ActiveAnnouncements     int64 `json:"active_announcements" nullable:"false" format:"int64"`
 }
 type indexDatabaseStats struct {
-	DbName   string `json:"db_name"`
-	Articles int64  `json:"articles"`
-	Journals int64  `json:"journals"`
-	Issues   int64  `json:"issues"`
-	Error    *bool  `json:"error,omitempty"`
+	DbName   string `json:"db_name" nullable:"false"`
+	Articles int64  `json:"articles" nullable:"false" format:"int64"`
+	Journals int64  `json:"journals" nullable:"false" format:"int64"`
+	Issues   int64  `json:"issues" nullable:"false" format:"int64"`
+	Error    *bool  `json:"error,omitempty" required:"false" nullable:"true"`
 }
 type indexStats struct {
-	Databases     []indexDatabaseStats `json:"databases"`
-	TotalArticles int64                `json:"total_articles"`
-	TotalJournals int64                `json:"total_journals"`
+	Databases     []indexDatabaseStats `json:"databases" nullable:"false"`
+	TotalArticles int64                `json:"total_articles" nullable:"false" format:"int64"`
+	TotalJournals int64                `json:"total_journals" nullable:"false" format:"int64"`
 }
 type pushStats struct {
-	DbName         string  `json:"db_name"`
-	Status         string  `json:"status"`
-	LastCompleted  *string `json:"last_completed"`
-	DeliveredCount *int    `json:"delivered_count,omitempty"`
-	UserResults    *int    `json:"user_results,omitempty"`
+	DbName         string  `json:"db_name" nullable:"false"`
+	Status         string  `json:"status" nullable:"false" enum:"idle,running,completed,failed,skipped,unknown,error"`
+	LastCompleted  *string `json:"last_completed" required:"false" nullable:"true"`
+	DeliveredCount *int    `json:"delivered_count,omitempty" required:"false" nullable:"true" minimum:"0" format:"int64"`
+	UserResults    *int    `json:"user_results,omitempty" required:"false" nullable:"true" minimum:"0" format:"int64"`
 }
 type adminStats struct {
-	Auth  authStats   `json:"auth"`
-	Index indexStats  `json:"index"`
-	Push  []pushStats `json:"push"`
+	Auth  authStats   `json:"auth" nullable:"false"`
+	Index indexStats  `json:"index" nullable:"false"`
+	Push  []pushStats `json:"push" nullable:"false"`
 }
 
 func readAdminStats(ctx context.Context, repository *storageauth.Repository, configuration config.Config) (adminStats, error) {

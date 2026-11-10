@@ -64,29 +64,29 @@ type Source struct {
 }
 
 type Date struct {
-	Date         string `json:"date"`
-	Stage        Stage  `json:"stage"`
-	OriginalText string `json:"originalText"`
-	IsExclusive  bool   `json:"isExclusive"`
-	IsOptional   bool   `json:"isOptional"`
+	Date         string `json:"date" nullable:"false"`
+	Stage        Stage  `json:"stage" nullable:"false" enum:"paper,abstract,proposal,opens,revision,decision,publication,event,registration"`
+	OriginalText string `json:"originalText" nullable:"false"`
+	IsExclusive  bool   `json:"isExclusive" nullable:"false"`
+	IsOptional   bool   `json:"isOptional" nullable:"false"`
 }
 
 // Notice stores normalized source content; State evaluates availability at read time.
 type Notice struct {
-	Id           string  `json:"id"`
-	Title        string  `json:"title"`
-	Scope        string  `json:"scope"`
-	Requirements string  `json:"requirements"`
-	Kind         Kind    `json:"kind"`
-	SourceUrl    string  `json:"sourceUrl"`
-	CheckedOn    string  `json:"checkedOn"`
-	Dates        []Date  `json:"dates"`
-	EntryStage   Stage   `json:"entryStage"`
-	TopicYear    *int32  `json:"topicYear"`
-	TimeZone     *string `json:"timeZone"`
-	SourceStatus *State  `json:"sourceStatus"`
-	IsHistorical bool    `json:"isHistorical"`
-	RawDateText  string  `json:"rawDateText"`
+	Id           string  `json:"id" nullable:"false"`
+	Title        string  `json:"title" nullable:"false"`
+	Scope        string  `json:"scope" nullable:"false"`
+	Requirements string  `json:"requirements" nullable:"false"`
+	Kind         Kind    `json:"kind" nullable:"false" enum:"special_issue,general,proposal,conference_linked"`
+	SourceUrl    string  `json:"sourceUrl" nullable:"false"`
+	CheckedOn    string  `json:"checkedOn" nullable:"false"`
+	Dates        []Date  `json:"dates" nullable:"false"`
+	EntryStage   Stage   `json:"entryStage" nullable:"false" enum:"paper,abstract,proposal,opens,revision,decision,publication,event,registration"`
+	TopicYear    *int32  `json:"topicYear" required:"false" nullable:"true" format:"int32"`
+	TimeZone     *string `json:"timeZone" required:"false" nullable:"true"`
+	SourceStatus *State  `json:"sourceStatus" required:"false" nullable:"true" enum:"open,upcoming,closed,historical,invitation_only,undated,uncertain"`
+	IsHistorical bool    `json:"isHistorical" nullable:"false"`
+	RawDateText  string  `json:"rawDateText" nullable:"false"`
 }
 
 type EmptyJournal struct {
