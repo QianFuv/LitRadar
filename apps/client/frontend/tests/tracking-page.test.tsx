@@ -152,9 +152,7 @@ async function rendersSectionsWithSharedTextareas(): Promise<void> {
   const primaryPrompt = await screen.findByLabelText('System Prompt');
   const backupPrompt = screen.getByLabelText('Backup System Prompt');
   expect(primaryPrompt).toHaveAttribute('data-slot', 'textarea');
-  expect(primaryPrompt).toHaveClass('shadow-vercel-ring');
   expect(backupPrompt).toHaveAttribute('data-slot', 'textarea');
-  expect(backupPrompt).toHaveClass('shadow-vercel-ring');
 
   rerender(<TrackingSettingsContent userId={51} section="notifications" />);
   expect(await screen.findByRole('heading', { name: '推送方式' })).toBeInTheDocument();

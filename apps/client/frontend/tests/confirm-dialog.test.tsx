@@ -2,11 +2,13 @@
  * Shared destructive confirmation pending and failure coverage.
  */
 
+import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vite-plus/test';
 
+import { buttonStyles } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 type ConfirmHarnessProps = {
@@ -76,7 +78,9 @@ async function keepsFailedPendingActionOpen(): Promise<void> {
 
   await user.click(screen.getByRole('button', { name: '删除项目' }));
   const actionButton = screen.getByRole('button', { name: '确认删除' });
-  expect(actionButton).toHaveClass('bg-destructive');
+  expect(actionButton).toHaveClass(
+    ...(stylex.props(buttonStyles(), buttonStyles('destructive')).className ?? '').split(' '),
+  );
   await user.click(actionButton);
 
   const pendingButton = screen.getByRole('button', { name: '删除中…' });

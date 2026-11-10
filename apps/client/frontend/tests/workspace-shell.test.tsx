@@ -134,7 +134,7 @@ async function rendersWorkspaceRegions(): Promise<void> {
 
   expect(within(list).getByRole('textbox', { name: '测试搜索' })).toBeInTheDocument();
   expect(within(list).getByRole('button', { name: '第一篇' })).toBeInTheDocument();
-  expect(scrollContainer).toHaveClass('overflow-y-auto', 'workspace-bottom-space');
+  expect(scrollContainer).toContainElement(within(list).getByRole('button', { name: '第一篇' }));
   expect(screen.queryByRole('region', { name: '阅读台' })).toBeNull();
 }
 

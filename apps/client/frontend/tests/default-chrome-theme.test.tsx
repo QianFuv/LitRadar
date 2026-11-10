@@ -9,29 +9,26 @@ import { describe, expect, test } from 'vite-plus/test';
 const PROJECT_ROOT = process.cwd();
 
 const DEFAULT_CHROME_TOKENS = [
-  '--background',
-  '--foreground',
-  '--card',
-  '--card-foreground',
-  '--popover',
-  '--popover-foreground',
-  '--primary-foreground',
-  '--secondary',
-  '--secondary-foreground',
-  '--muted',
-  '--muted-foreground',
-  '--accent',
-  '--accent-foreground',
-  '--border',
-  '--input',
-  '--sidebar',
-  '--sidebar-foreground',
-  '--sidebar-primary-foreground',
-  '--sidebar-accent',
-  '--sidebar-accent-foreground',
-  '--sidebar-border',
-  '--scrollbar-thumb',
-  '--scrollbar-thumb-hover',
+  'background',
+  'foreground',
+  'card',
+  'cardForeground',
+  'popover',
+  'popoverForeground',
+  'primaryForeground',
+  'secondary',
+  'secondaryForeground',
+  'muted',
+  'mutedForeground',
+  'accent',
+  'accentForeground',
+  'border',
+  'input',
+  'rail',
+  'railForeground',
+  'railActive',
+  'railHover',
+  'railBorder',
 ] as const;
 
 const DEFAULT_CHROME_COMPONENTS = [
@@ -49,31 +46,36 @@ const DEFAULT_CHROME_COMPONENTS = [
 
 const MAX_NEUTRAL_CHANNEL_SPREAD = 12;
 
-const CHROMATIC_UTILITY_PATTERN =
-  /(?:bg|text|border|ring|outline|fill|stroke)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)(?:-\d+)?/g;
+const LITERAL_COLOR_PATTERN = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab)\(/gi;
+
+const LIGHT_DARK_HEX_PATTERN = /light-dark\((#[0-9a-f]{6}), (#[0-9a-f]{6})\)/gi;
 
 const SEMANTIC_COLOR_FIXTURES = [
   {
     path: 'lib/fts-highlight.tsx',
-    utilities: ['text-info-foreground', 'bg-info'],
+    tokens: ['colors.infoForeground', 'colors.info'],
   },
   {
     path: 'components/ui/state-message.tsx',
-    utilities: ['text-destructive', 'text-success-foreground', 'text-warning-foreground'],
+    tokens: ['colors.destructive', 'colors.successForeground', 'colors.warningForeground'],
   },
   {
     path: 'components/feature/favorite-button.tsx',
-    utilities: ['text-warning-foreground', 'fill-current'],
+    tokens: ['colors.warningForeground', "fill: 'currentcolor'"],
   },
   {
     path: 'components/admin/scheduled-tasks-card.tsx',
-    utilities: ['border-warning-border', 'text-warning-foreground'],
+    tokens: ['colors.warningBorder', 'colors.warningForeground'],
   },
   {
     path: 'components/tracking/tracking-settings-content.tsx',
-    utilities: ['text-success-foreground'],
+    tokens: ['colors.successForeground'],
   },
 ] as const;
+
+type ColorScheme = 'light' | 'dark';
+
+type SchemeColors = { light: string; dark: string };
 
 /**
  * Read one UTF-8 project file relative to the frontend package root.
@@ -86,49 +88,53 @@ function readProjectFile(relativePath: string): string {
 }
 
 /**
- * Extract the declarations inside one top-level CSS selector.
+ * Split a `light-dark()` token value into its two colors; other values apply to both schemes.
  *
- * @param stylesheet - Complete CSS source.
- * @param selector - Selector whose declaration block is required.
- * @returns Declaration block without braces.
+ * @param value - Token value.
+ * @returns Light and dark colors.
  */
-function extractDeclarationBlock(stylesheet: string, selector: ':root' | '.dark'): string {
-  const selectorIndex = stylesheet.indexOf(`${selector} {`);
-  if (selectorIndex < 0) {
-    throw new Error(`Missing ${selector} declaration block`);
-  }
-
-  const openingBraceIndex = stylesheet.indexOf('{', selectorIndex);
-  let depth = 0;
-  for (let index = openingBraceIndex; index < stylesheet.length; index += 1) {
-    if (stylesheet[index] === '{') {
-      depth += 1;
-    } else if (stylesheet[index] === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return stylesheet.slice(openingBraceIndex + 1, index);
-      }
-    }
-  }
-
-  throw new Error(`Unclosed ${selector} declaration block`);
+function splitLightDark(value: string): SchemeColors {
+  const match = /^light-dark\((#[0-9a-f]{6}), (#[0-9a-f]{6})\)$/i.exec(value);
+  return match ? { light: match[1], dark: match[2] } : { light: value, dark: value };
 }
 
 /**
- * Parse custom-property declarations from one CSS block.
+ * Parse the single-line color tokens of `stylex.defineVars` in lib/theme.stylex.tsx.
  *
- * @param declarationBlock - CSS declarations without outer braces.
- * @returns Custom properties keyed by their complete names.
+ * @returns Light and dark colors keyed by token name.
  */
-function parseCustomProperties(declarationBlock: string): ReadonlyMap<string, string> {
-  const variables = new Map<string, string>();
-  const declarationPattern = /^\s*(--[a-z0-9-]+):\s*([^;]+);/gim;
+function readThemeColors(): ReadonlyMap<string, SchemeColors> {
+  const source = readProjectFile('lib/theme.stylex.tsx');
+  const colorsBlock = source.slice(
+    source.indexOf('export const colors'),
+    source.indexOf('export const shadows'),
+  );
+  return new Map(
+    Array.from(colorsBlock.matchAll(/^\s+(\w+): '([^']+)',$/gm), (match) => [
+      match[1],
+      splitLightDark(match[2]),
+    ]),
+  );
+}
 
-  for (const match of declarationBlock.matchAll(declarationPattern)) {
-    variables.set(match[1], match[2].trim());
+/**
+ * Read one theme color for one color scheme.
+ *
+ * @param colors - Parsed theme colors.
+ * @param token - Token name.
+ * @param scheme - Color scheme.
+ * @returns Color value.
+ */
+function themeColor(
+  colors: ReadonlyMap<string, SchemeColors>,
+  token: string,
+  scheme: ColorScheme,
+): string {
+  const value = colors.get(token);
+  if (!value) {
+    throw new Error(`Missing theme color ${token}`);
   }
-
-  return variables;
+  return value[scheme];
 }
 
 /**
@@ -154,32 +160,58 @@ function expectNeutralHex(value: string, context: string): void {
 }
 
 /**
- * Verify structural surfaces and text stay neutral while interaction colors use the blue accent.
+ * Verify structural surfaces, text, and scrollbars stay neutral while interaction colors use the
+ * blue accent.
  */
 function keepsDefaultChromeTokensNeutral(): void {
-  const stylesheet = readProjectFile('src/globals.css');
-
-  for (const selector of [':root', '.dark'] as const) {
-    const variables = parseCustomProperties(extractDeclarationBlock(stylesheet, selector));
+  const colors = readThemeColors();
+  for (const scheme of ['light', 'dark'] as const) {
     for (const token of DEFAULT_CHROME_TOKENS) {
-      const value = variables.get(token);
-      expect(value).toBeDefined();
-      expectNeutralHex(value ?? '', `${selector} ${token}`);
+      expectNeutralHex(themeColor(colors, token, scheme), `${scheme} ${token}`);
     }
   }
 
-  const darkVariables = parseCustomProperties(extractDeclarationBlock(stylesheet, '.dark'));
-  expect(darkVariables.get('--sidebar-primary')).toBe('#346bf1');
-  expect(darkVariables.get('--sidebar-primary-foreground')).toBe('#ffffff');
+  const scrollbarColors = readProjectFile('src/globals.css').matchAll(
+    /scrollbar[^{]*\{[^}]*?light-dark\((#[0-9a-f]{6}), (#[0-9a-f]{6})\)/gi,
+  );
+  for (const [declaration, light, dark] of scrollbarColors) {
+    expectNeutralHex(light, `light ${declaration}`);
+    expectNeutralHex(dark, `dark ${declaration}`);
+  }
+
+  expect(themeColor(colors, 'primary', 'dark')).toBe('#346bf1');
+  expect(themeColor(colors, 'primaryForeground', 'dark')).toBe('#ffffff');
 }
 
 /**
- * Verify shell, navigation, account, and settings chrome contain no palette hue utilities.
+ * Verify shell, navigation, account, and settings chrome take every color from theme tokens.
  */
-function keepsChromeComponentUtilitiesNeutral(): void {
+function keepsChromeComponentColorsOnTokens(): void {
   for (const relativePath of DEFAULT_CHROME_COMPONENTS) {
     const source = readProjectFile(relativePath);
-    expect(source.match(CHROMATIC_UTILITY_PATTERN) ?? []).toEqual([]);
+    expect(source.match(LITERAL_COLOR_PATTERN) ?? []).toEqual([]);
+  }
+}
+
+/**
+ * Verify every document-level color pair in globals.css repeats a theme token, apart from the
+ * scrollbar thumb colors that only the document stylesheet uses.
+ */
+function keepsGlobalColorsInSync(): void {
+  const colors = readThemeColors();
+  const tokenPairs = new Set(Array.from(colors.values(), ({ light, dark }) => `${light} ${dark}`));
+  const globals = readProjectFile('src/globals.css');
+  const scrollbarThumbPairs = new Set(
+    Array.from(
+      globals.matchAll(
+        /scrollbar-thumb(?::hover)? \{\s*background: light-dark\((#\w{6}), (#\w{6})\)/g,
+      ),
+      ([, light, dark]) => `${light} ${dark}`,
+    ),
+  );
+  for (const [, light, dark] of globals.matchAll(LIGHT_DARK_HEX_PATTERN)) {
+    const pair = `${light} ${dark}`;
+    expect(tokenPairs.has(pair) || scrollbarThumbPairs.has(pair), pair).toBe(true);
   }
 }
 
@@ -191,7 +223,7 @@ function sharesSectionedDialogChrome(): void {
 
   expect(frameSource).toContain('placement="takeover"');
   expect(frameSource).toContain("aria-current={isActive ? 'page' : undefined}");
-  expect(frameSource).toContain('overflow-x-auto');
+  expect(frameSource).toMatch(/overflowX: \{\s*default: 'auto',/);
   expect(settingsSource).toContain('<SectionedDialogFrame');
   expect(settingsSource).not.toContain('<DialogContent');
   expect(settingsSource).not.toContain('SettingsCenterNavigation');
@@ -203,25 +235,23 @@ function sharesSectionedDialogChrome(): void {
  * Verify semantic status colors and raster identity assets remain explicit exceptions.
  */
 function retainsSemanticColorsAndRasterAssets(): void {
-  const stylesheet = readProjectFile('src/globals.css');
-  const lightVariables = parseCustomProperties(extractDeclarationBlock(stylesheet, ':root'));
-  const darkVariables = parseCustomProperties(extractDeclarationBlock(stylesheet, '.dark'));
+  const colors = readThemeColors();
 
   expect({
-    destructive: lightVariables.get('--destructive'),
-    info: lightVariables.get('--info'),
-    infoForeground: lightVariables.get('--info-foreground'),
+    destructive: themeColor(colors, 'destructive', 'light'),
+    info: themeColor(colors, 'info', 'light'),
+    infoForeground: themeColor(colors, 'infoForeground', 'light'),
   }).toEqual({ destructive: '#c10007', info: '#dbe1f2', infoForeground: '#1b4ed8' });
   expect({
-    destructive: darkVariables.get('--destructive'),
-    info: darkVariables.get('--info'),
-    infoForeground: darkVariables.get('--info-foreground'),
+    destructive: themeColor(colors, 'destructive', 'dark'),
+    info: themeColor(colors, 'info', 'dark'),
+    infoForeground: themeColor(colors, 'infoForeground', 'dark'),
   }).toEqual({ destructive: '#fb414a', info: '#1b2440', infoForeground: '#51a2ff' });
 
   for (const fixture of SEMANTIC_COLOR_FIXTURES) {
     const source = readProjectFile(fixture.path);
-    for (const utility of fixture.utilities) {
-      expect(source).toContain(utility);
+    for (const token of fixture.tokens) {
+      expect(source).toContain(token);
     }
   }
 
@@ -241,31 +271,30 @@ function colorLuminance(value: string): number {
 
 /** Keep small text legible on both neutral and semantic surfaces. */
 function keepsThemeTextLegible(): void {
-  const stylesheet = readProjectFile('src/globals.css');
+  const colors = readThemeColors();
   const pairs = [
-    ['--foreground', '--background'],
-    ['--muted-foreground', '--card'],
-    ['--primary-foreground', '--primary'],
-    ['--primary-foreground', '--primary-hover'],
-    ['--primary-foreground', '--primary-pressed'],
-    ['--primary-text', '--background'],
-    ['--destructive', '--card'],
-    ['--destructive-foreground', '--destructive'],
-    ['--destructive-foreground', '--destructive-hover'],
-    ['--info-foreground', '--info'],
-    ['--success-foreground', '--success'],
-    ['--warning-foreground', '--warning'],
+    ['foreground', 'background'],
+    ['mutedForeground', 'card'],
+    ['primaryForeground', 'primary'],
+    ['primaryForeground', 'primaryHover'],
+    ['primaryForeground', 'primaryPressed'],
+    ['primaryText', 'background'],
+    ['destructive', 'card'],
+    ['destructiveForeground', 'destructive'],
+    ['destructiveForeground', 'destructiveHover'],
+    ['infoForeground', 'info'],
+    ['successForeground', 'success'],
+    ['warningForeground', 'warning'],
   ];
-  for (const selector of [':root', '.dark'] as const) {
-    const variables = parseCustomProperties(extractDeclarationBlock(stylesheet, selector));
+  for (const scheme of ['light', 'dark'] as const) {
     for (const [foreground, background] of pairs) {
       const luminances = [foreground, background].map((token) => {
-        const value = variables.get(token);
-        expect(value, `${selector} ${token}`).toMatch(/^#[0-9a-f]{6}$/i);
-        return colorLuminance(value!);
+        const value = themeColor(colors, token, scheme);
+        expect(value, `${scheme} ${token}`).toMatch(/^#[0-9a-f]{6}$/i);
+        return colorLuminance(value);
       });
       const contrast = (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05);
-      expect(contrast, `${selector} ${foreground} on ${background}`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast, `${scheme} ${foreground} on ${background}`).toBeGreaterThanOrEqual(4.5);
     }
   }
 }
@@ -276,10 +305,8 @@ describe('default chrome theme contract', () => {
     keepsThemeTextLegible,
   );
   test('keeps ordinary light and dark tokens neutral', keepsDefaultChromeTokensNeutral);
-  test(
-    'keeps shell component utilities free of palette hues',
-    keepsChromeComponentUtilitiesNeutral,
-  );
+  test('keeps shell component colors on theme tokens', keepsChromeComponentColorsOnTokens);
+  test('keeps document-level colors in sync with theme tokens', keepsGlobalColorsInSync);
   test('shares responsive sectioned dialog chrome', sharesSectionedDialogChrome);
   test(
     'retains semantic status colors and raster identity assets',

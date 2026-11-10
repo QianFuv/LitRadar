@@ -94,12 +94,11 @@ function activatesGlobalLocalFontWeights(): void {
 
   expect(globals).toContain("@import '../assets/JetBrainsLxgwNerdMono-Regular/result.css';");
   expect(globals).toContain("@import '../assets/JetBrainsLxgwNerdMono-Bold/result.css';");
-  expect(globals).toContain(`--font-sans: '${FONT_FAMILY}', monospace;`);
-  expect(globals).toContain(`--font-mono: '${FONT_FAMILY}', monospace;`);
   expect(globals.match(new RegExp(`font-family: '${FONT_FAMILY}', monospace`, 'g'))).toHaveLength(
-    2,
+    4,
   );
-  expect(rootDocument).toContain('<body class="antialiased">');
+  expect(globals).toContain('-webkit-font-smoothing: antialiased;');
+  expect(rootDocument).toContain('<body>');
   expect(activeFontSources).not.toMatch(
     /Maple Mono|MapleMono|font-geist|next\/font\/google|Geist_Mono/,
   );

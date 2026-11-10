@@ -268,7 +268,7 @@ async function rendersTypedResultContent(): Promise<void> {
   expect(screen.getAllByRole('status')).toHaveLength(1);
   expect(within(article).getAllByText('Fixture')).toHaveLength(2);
   for (const highlight of within(article).getAllByText('Fixture')) {
-    expect(highlight).toHaveClass('font-bold');
+    expect(highlight).toHaveAttribute('data-slot', 'search-highlight');
   }
   expect(article).toHaveAttribute('data-database', 'scenario.sqlite');
   expect(article).toHaveAttribute('data-folder-ids', '7');

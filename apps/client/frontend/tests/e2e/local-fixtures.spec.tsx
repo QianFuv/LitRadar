@@ -105,21 +105,26 @@ async function expectElementChromeToBeGrayscale(
 }
 
 /**
- * Assert the active theme uses its approved blue keyboard-focus color.
+ * Assert the active theme draws keyboard focus rings in its approved blue.
  *
  * @param page - Playwright browser page.
+ * @param control - Control whose keyboard focus ring is inspected.
  */
-async function expectThemeFocusTokensToUseBlue(page: Page): Promise<void> {
-  const values = await page.locator('html').evaluate((element) => {
-    const styles = window.getComputedStyle(element);
-    return ['--ring', '--sidebar-ring'].map((token) => styles.getPropertyValue(token).trim());
-  });
-
-  for (const value of values) {
-    const isDark = await page
-      .locator('html')
-      .evaluate((element) => element.classList.contains('dark'));
-    expect(value).toBe(isDark ? '#346bf1' : '#1b4ed8');
+async function expectThemeFocusRingToUseBlue(page: Page, control: Locator): Promise<void> {
+  const isDark = await page
+    .locator('html')
+    .evaluate((element) => element.classList.contains('dark'));
+  const wasFocused = await control.evaluate((element) => element === document.activeElement);
+  await control.focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(control).toBeFocused();
+  await expect(control).toHaveCSS(
+    'box-shadow',
+    isDark ? /rgb\(52, 107, 241\)/ : /rgb\(27, 78, 216\)/,
+  );
+  if (!wasFocused) {
+    await control.blur();
   }
 }
 
@@ -1035,7 +1040,7 @@ async function verifiesDesktopNavigation(
     'color',
   ]);
   await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
-  await expectThemeFocusTokensToUseBlue(page);
+  await expectThemeFocusRingToUseBlue(page, trigger);
   await page.screenshot({ path: '../../../output/ui/default-chrome-dark.png', fullPage: true });
   return { currentNavigationLink, trigger };
 }
@@ -1140,7 +1145,7 @@ async function verifiesLightAndSystemTheme(
     'color',
   ]);
   await expectElementChromeToBeGrayscale(trigger, ['backgroundColor', 'borderColor', 'color']);
-  await expectThemeFocusTokensToUseBlue(page);
+  await expectThemeFocusRingToUseBlue(page, trigger);
   await page.screenshot({ path: '../../../output/ui/default-chrome-light.png', fullPage: true });
 
   await trigger.click();
@@ -1716,9 +1721,6 @@ async function expectConsistentDialogClose(dialog: Locator, size: number): Promi
         const dialogBox = element.getBoundingClientRect();
         const closeBox = close.getBoundingClientRect();
         const dialogStyle = getComputedStyle(element);
-        const standardRadius = getComputedStyle(document.documentElement)
-          .getPropertyValue('--radius')
-          .trim();
         return {
           top: Math.round(
             closeBox.top - dialogBox.top - Number.parseFloat(dialogStyle.borderTopWidth),
@@ -1728,7 +1730,7 @@ async function expectConsistentDialogClose(dialog: Locator, size: number): Promi
           ),
           width: Math.round(closeBox.width),
           height: Math.round(closeBox.height),
-          hasSharedRadius: getComputedStyle(close).borderTopLeftRadius === standardRadius,
+          hasSharedRadius: getComputedStyle(close).borderTopLeftRadius === '8px',
         };
       }),
     )
@@ -1788,7 +1790,7 @@ async function expectReadableControlText(control: Locator): Promise<void> {
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Canvas is required to resolve computed CSS colors');
     const styles = getComputedStyle(element);
-    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--background');
+    context.fillStyle = getComputedStyle(document.body).backgroundColor;
     context.fillRect(0, 0, 1, 1);
     context.fillStyle = styles.backgroundColor;
     context.fillRect(0, 0, 1, 1);

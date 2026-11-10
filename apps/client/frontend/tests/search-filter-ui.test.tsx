@@ -578,7 +578,7 @@ async function defersClosedJournalOptions(): Promise<void> {
   const mapOptions = vi.spyOn(options, 'map');
   view.rerender(
     <AuthProvider>
-      <SearchFilters className="updated" />
+      <SearchFilters />
     </AuthProvider>,
   );
   expect(mapOptions).not.toHaveBeenCalled();
@@ -649,7 +649,7 @@ async function indexesSelectedJournalMembership(): Promise<void> {
   try {
     view.rerender(
       <AuthProvider>
-        <SearchFilters className="updated" />
+        <SearchFilters />
       </AuthProvider>,
     );
     await openFilterPanel(user, /^期刊：已选 100 本/);

@@ -172,10 +172,13 @@ async function highlightsSearchTermsInDetails(): Promise<void> {
   await user.click(screen.getByRole('button', { name: /^查看文章详情：/ }));
   const dialog = await screen.findByRole('dialog');
 
-  const highlights = Array.from(dialog.querySelectorAll('span.bg-info'), (mark) => [
-    mark.closest('[data-slot="article-detail-title"]') ? 'title' : 'abstract',
-    mark.textContent,
-  ]);
+  const highlights = Array.from(
+    dialog.querySelectorAll('[data-slot="search-highlight"]'),
+    (mark) => [
+      mark.closest('[data-slot="article-detail-title"]') ? 'title' : 'abstract',
+      mark.textContent,
+    ],
+  );
   expect(highlights).toEqual([
     ['title', 'XGB'],
     ['abstract', 'XGB'],
