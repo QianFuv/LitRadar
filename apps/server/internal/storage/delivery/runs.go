@@ -3,6 +3,9 @@ package delivery
 import (
 	"context"
 	"database/sql"
+
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/deliverydb"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
 // RunOutcome distinguishes successful admission/claim from idempotent, busy and unavailable observations.
@@ -38,7 +41,7 @@ func (repository *Repository) EnqueueRun(ctx context.Context, run RunCreate) (*R
 }
 
 func admitRun(ctx context.Context, connection *sql.Conn, run RunCreate) (RunOutcome, error) {
-	result, err := connection.ExecContext(ctx, `INSERT INTO delivery_runs(external_id,workflow,scope_key,db_name,trigger_kind,mode,user_id,status,legacy_status,owner_id,lease_expires_at,deadline_at,cancellation_requested,result_json,error_code,revision,created_at,started_at,updated_at,finished_at) VALUES(?,?,?,?,?,?,?,'queued',NULL,NULL,NULL,?,0,NULL,NULL,0,?,NULL,?,NULL) ON CONFLICT DO NOTHING`, run.ExternalId, run.Workflow, run.ScopeKey, run.DbName, run.TriggerKind, run.Mode, run.UserId, run.DeadlineAt, run.CreatedAt, run.CreatedAt)
+	result, err := queries.AdmitRun(ctx, connection, deliverydb.AdmitRunParams{ExternalID: sqlite.Text(run.ExternalId), Workflow: sqlite.Text(run.Workflow), ScopeKey: sqlite.Text(run.ScopeKey), DBName: (*sqlite.Text)(run.DbName), TriggerKind: sqlite.Text(run.TriggerKind), Mode: sqlite.Text(run.Mode), UserID: (*sqlite.Integer)(run.UserId), DeadlineAt: (*sqlite.Number)(run.DeadlineAt), CreatedAt: sqlite.Number(run.CreatedAt), UpdatedAt: sqlite.Number(run.CreatedAt)})
 	if err != nil {
 		return RunOutcome{}, storageError(err)
 	}
@@ -54,7 +57,7 @@ func admitRun(ctx context.Context, connection *sql.Conn, run RunCreate) (RunOutc
 		record, err := requireRecord(loadRunRecord(ctx, connection, id))
 		return RunOutcome{"enqueued", record}, err
 	}
-	record, err := scanRunRecord(connection.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE workflow=? AND scope_key=? AND external_id=?", run.Workflow, run.ScopeKey, run.ExternalId))
+	record, err := decodeRunRecord(queries.RunIdentity(ctx, connection, deliverydb.RunIdentityParams{Workflow: sqlite.Text(run.Workflow), ScopeKey: sqlite.Text(run.ScopeKey), ExternalID: sqlite.Text(run.ExternalId)}))
 	if err != nil {
 		return RunOutcome{}, err
 	}
@@ -62,7 +65,7 @@ func admitRun(ctx context.Context, connection *sql.Conn, run RunCreate) (RunOutc
 		return RunOutcome{"existing", record}, nil
 	}
 	if run.TriggerKind == TriggerKindManual {
-		record, err = scanRunRecord(connection.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE trigger_kind='manual' AND user_id=? AND status IN ('queued','claimed','running','cancelling') ORDER BY id LIMIT 1", run.UserId))
+		record, err = decodeRunRecord(queries.ActiveManualRun(ctx, connection, deliverydb.ActiveManualRunParams{UserID: (*sqlite.Integer)(run.UserId)}))
 		if err != nil {
 			return RunOutcome{}, err
 		}
@@ -78,7 +81,7 @@ func (repository *Repository) LoadRun(ctx context.Context, id int64) (*RunRecord
 	if err := validatePositiveId(id, "Delivery run id is invalid"); err != nil {
 		return nil, err
 	}
-	return scanRunRecord(repository.database.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE id=?", id))
+	return decodeRunRecord(queries.Run(ctx, repository.database, deliverydb.RunParams{ID: sqlite.Integer(id)}))
 }
 
 // ClaimRun claims queued work or takes over expired active work after checking competing database owners.
@@ -110,7 +113,7 @@ func (repository *Repository) ClaimRun(ctx context.Context, id int64, owner stri
 			return nil
 		}
 		if run.DbName != nil {
-			active, err := scanRunRecord(connection.QueryRowContext(ctx, "SELECT "+runColumns+" FROM delivery_runs WHERE id<>? AND workflow=? AND db_name=? AND status IN ('claimed','running','cancelling') ORDER BY id LIMIT 1", id, run.Workflow, *run.DbName))
+			active, err := decodeRunRecord(queries.ActiveRun(ctx, connection, deliverydb.ActiveRunParams{ID: sqlite.Integer(id), Workflow: sqlite.Text(run.Workflow), DBName: new(sqlite.Text(*run.DbName))}))
 			if err != nil {
 				return err
 			}
@@ -123,7 +126,7 @@ func (repository *Repository) ClaimRun(ctx context.Context, id int64, owner stri
 		if run.CancellationRequested {
 			status = RunStatusCancelling
 		}
-		if err := executeCas(ctx, connection, `UPDATE delivery_runs SET status=?,owner_id=?,lease_expires_at=?,started_at=COALESCE(started_at,?),updated_at=?,revision=revision+1 WHERE id=? AND revision=?`, status, owner, now+seconds, now, now, id, revision); err != nil {
+		if err := checkCAS(queries.ClaimRun(ctx, connection, deliverydb.ClaimRunParams{Status: sqlite.Text(status), OwnerID: new(sqlite.Text(owner)), LeaseExpiresAt: new(sqlite.Number(now + seconds)), StartedAt: new(sqlite.Number(now)), UpdatedAt: sqlite.Number(now), ID: sqlite.Integer(id), Revision: sqlite.Integer(revision)})); err != nil {
 			return err
 		}
 		run, err = requireRecord(loadRunRecord(ctx, connection, id))
@@ -203,7 +206,7 @@ func (repository *Repository) CancelRun(ctx context.Context, id, revision int64,
 		} else if !current.Status.IsActive() {
 			return ErrConflict
 		}
-		if err := executeCas(ctx, connection, `UPDATE delivery_runs SET status=?,cancellation_requested=1,updated_at=?,finished_at=?,revision=revision+1 WHERE id=? AND revision=?`, status, now, finished, id, revision); err != nil {
+		if err := checkCAS(queries.CancelRun(ctx, connection, deliverydb.CancelRunParams{Status: sqlite.Text(status), UpdatedAt: sqlite.Number(now), FinishedAt: (*sqlite.Number)(finished), ID: sqlite.Integer(id), Revision: sqlite.Integer(revision)})); err != nil {
 			return err
 		}
 		run, err = requireRecord(loadRunRecord(ctx, connection, id))

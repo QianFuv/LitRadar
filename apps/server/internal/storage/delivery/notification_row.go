@@ -2,22 +2,15 @@ package delivery
 
 import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/secrets"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/notificationdb"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
+
+var notificationQueries notificationdb.Queries
 
 type notificationRow struct {
 	values []any
 	err    error
-}
-
-func readNotificationRow(row rowScanner, count int) *notificationRow {
-	result := &notificationRow{values: make([]any, count)}
-	targets := make([]any, count)
-	for index := range result.values {
-		targets[index] = &result.values[index]
-	}
-	result.err = row.Scan(targets...)
-	return result
 }
 
 func (row *notificationRow) text(index int) string {

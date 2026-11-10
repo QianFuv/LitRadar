@@ -107,7 +107,10 @@ func (repository *Repository) immediate(ctx context.Context, mutate func(*sql.Co
 }
 
 func executeCas(ctx context.Context, connection *sql.Conn, query string, args ...any) error {
-	result, err := connection.ExecContext(ctx, query, args...)
+	return checkCAS(connection.ExecContext(ctx, query, args...))
+}
+
+func checkCAS(result sql.Result, err error) error {
 	if err != nil {
 		return storageError(err)
 	}
