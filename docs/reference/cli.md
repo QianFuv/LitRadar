@@ -151,7 +151,7 @@ litradar admin index optimize-storage
     [--project-root PATH]
 ```
 
-这是显式、离线、整目录替换操作，不接受 `--auth-db` 或部署密钥。它把受支持的精确 v6/v7/v8/v9/v10 内容库从规范关系表重建为当前 v10，使用 `simple 0` 生成搜索投影、移除重复 FTS 内容并压缩空闲页。普通服务或索引启动对现有 v6/v7/v8/v9/v10 只做结构预检，不自动升级旧分词器。
+这是显式、离线、整目录替换操作，不接受 `--auth-db` 或部署密钥。它把受支持的精确 v6/v7/v8/v9/v10 内容库从规范关系表重建为当前 v10，用 Go 切词和 FTS5 `ascii` 声明生成搜索投影、移除重复 FTS 内容并压缩空闲页。普通服务或索引启动也会把 FTS 声明不是当前 `ascii` 声明的 v6/v7/v8/v9/v10 内容库在一个事务内迁移到 v10 并重建检索投影；本命令另外完成整目录替换和压缩。
 
 运行前必须停止 `serve`、独立 `index`/投递命令和计划任务子进程，等待 API/worker/调度心跳超过 90 秒，并等待所有 batch/catalog lease 到期或由正常退出释放。先创建并独立验证带 `--include-indexes` 的备份；需要旧二进制降级时，必须保留受目标旧二进制支持的优化前索引备份。可用空间至少按 `2 × source_bytes + 64 MiB` 预留；命令也会在复制前记录 `temporary_bytes_required` 估计。
 
@@ -466,4 +466,4 @@ litradar openapi [--output PATH]
 
 <a id="search-tokenizer-upgrade"></a>
 
-分词升级统一见[索引存储优化](#索引存储优化)，原生库与旧版行为见[分词器说明](../../third_party/simple-prebuilt/README.md)。
+分词升级统一见[索引存储优化](#索引存储优化)，分词规则见[数据库参考](database.md#article_search)。

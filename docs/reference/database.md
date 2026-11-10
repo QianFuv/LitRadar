@@ -50,7 +50,7 @@ core 仍以内容事务和控制事务确认进度。工作集超前一页时重
 
 非空 v0 以及 v1–v3 返回 `IndexRebuildRequired`，文件保持字节不变。未来版本也在业务访问前拒绝。v4 会先新增期刊身份键，再与 v5 一样迁移到 v10。迁移保留期刊、期次、文章、投影、outbox、身份键和稳定 ID；唯一有意丢弃的是旧 `articles.retraction_doi`，因为旧适配器无法区分真正撤稿与通用 Crossref relation。不要手工修改 `user_version` 或拼接表结构。
 
-普通服务启动和业务访问对精确 v6/v7/v8/v9/v10 只做只读 schema preflight，不会在启动时改写现有旧版文件。新建内容库使用 v10；现有 v6/v7/v8/v9 只有在停机并显式运行 `litradar admin index optimize-storage --confirm-index-maintenance` 时才重建为 v10。该离线命令的门禁和恢复路径见 [CLI 参考](cli.md#索引存储优化)。
+普通服务启动和业务访问对精确 v6/v7/v8/v9/v10 先做只读 schema preflight。`article_search` 声明不是当前 v10 `ascii` 声明的文件（v6/v7/v8 的 `unicode61`、旧 v9/v10 的 `simple 0`）会在一个事务内迁移到 v10，并从规范表重建检索投影；失败时回滚，原声明保持不变。声明已是当前形式的 v10 不会被改写。新建内容库使用 v10；停机后显式运行 `litradar admin index optimize-storage --confirm-index-maintenance` 可整目录重建并压缩。该离线命令的门禁和恢复路径见 [CLI 参考](cli.md#索引存储优化)。
 
 处理步骤：
 
@@ -150,7 +150,7 @@ Provider 写入前使用真实 Gregorian 日历校验日期，年/月信息不�
 
 物化高频筛选字段：文章、期刊、issue ID，出版年份/日期，OA/in-press，DOI、PMID 和领域。`/api/articles` 的过滤、计数和游标分页基于该表。
 
-Schema v10 adds nonunique covering indexes on `(doi, date, article_id)` and `(pmid, date, article_id)` for exact identifier filters and date pagination. Explicit migration from v9 adds only these indexes and updates the schema version; it preserves stored FTS data without rebuilding it. Ordinary startup keeps supported v6-v9 files unchanged.
+Schema v10 adds nonunique covering indexes on `(doi, date, article_id)` and `(pmid, date, article_id)` for exact identifier filters and date pagination. Migration to v10 also replaces an obsolete `article_search` declaration and rebuilds the search projection from canonical rows; ordinary startup runs it automatically when the declaration is obsolete.
 
 ### `article_search`
 
@@ -172,9 +172,25 @@ contentless_delete = 1,
 tokenize = 'unicode61 remove_diacritics 2'
 ```
 
-v7/v8 不创建 `article_search_content`，详情和列表字段继续以 `articles`、`journals` 和 `article_listing` 为权威来源；全文查询只依赖 FTS `rowid`/`MATCH` 结果，因此短语、布尔、否定、前缀和列限定语义不变。这三种旧版本不依赖外部 `simple` tokenizer。v9/v10 保留 contentless 布局，但使用 `tokenize = 'simple 0'`，明确禁用拼音别名。检索投影和查询操作数使用一致的重音、大小写及标点边界规范化；规范标题、摘要和身份不变。
+v7/v8 不创建 `article_search_content`，详情和列表字段继续以 `articles`、`journals` 和 `article_listing` 为权威来源；全文查询只依赖 FTS `rowid`/`MATCH` 结果，因此短语、布尔、否定、前缀和列限定语义不变。旧 v9/v10 保留 contentless 布局，但使用已移除的 Simple 扩展 `tokenize = 'simple 0'`。
 
-内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7 的只读 preflight 保留原文件和历史索引；显式迁移或离线优化才升级到当前 v10。当前 DDL、版本和公共结构验证统一由 `apps/server/internal/storage/indexschema` 提供。
+当前 v10 使用 FTS5 内置的 `ascii` 分词器，并把全部 ASCII 标点设为词内字符，因此 FTS 只按空格拆分：
+
+```sql
+content = '',
+contentless_delete = 1,
+tokenize = "ascii tokenchars '!""#$%&()*+,-./:;<=>?@[\]^_`{|}~''' "
+```
+
+切词在 Go 中完成（`apps/server/internal/storage/search`），写入投影和检索操作数经过同一流程：
+
+1. 折叠：NFD 分解并去掉组合附加符号，非 ASCII 字母按 Unicode 规则转小写；不是字母或数字的字符（包括 ASCII 标点）变成空格。只含 ASCII 字母、数字和空白的文本跳过这一步。
+2. 按 Simple `simple 0` 的字节规则切词：连续 ASCII 字母为一个词并转小写，连续 ASCII 数字为一个词，空白和控制字符丢弃，ASCII 标点各自成词，每个非 ASCII 字符按 UTF-8 首字节长度单独成词。
+3. 用空格连接后写入 FTS；检索时组成短语 `"t1 t2 …"`，其中的双引号写成 `""`。
+
+因此检索不区分重音和大小写（`resume` 命中 `Résumé`），中文逐字成词、短语匹配连续文字，DOI 等标识符按字母和数字片段组成短语（`10.1000/abc` 命中 `10.1000/ABC`）；不提供拼音别名。规范标题、摘要和身份不变。
+
+内容 v8 保留 v7 的表、数据和 FTS 选项，只删除与 `event_id INTEGER PRIMARY KEY` 重复的 `idx_article_change_events_order`。v6/v7/v8 的 `unicode61` 声明不是当前声明，启动预检会把它们迁移到 v10。当前 DDL、版本和公共结构验证统一由 `apps/server/internal/storage/indexschema` 提供。
 
 当前二进制读写精确 v6/v7/v8/v9/v10。旧二进制未必支持 v10；需要降级时，必须停机并恢复优化前已验证、且受目标二进制支持的旧索引备份。不得降低 `user_version`、直接把新版索引交给不支持它的旧二进制，或手工拼接影子表。
 

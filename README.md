@@ -13,7 +13,7 @@ LitRadar 是面向学术期刊的自托管检索与订阅平台。它从 Crossre
 
 ## 运行组成
 
-Go 服务端入口为 `apps/server`，`litradar serve` 提供 REST、Swagger/OpenAPI、MCP 和持久化调度。Wails v3 客户端位于 `apps/client`，与服务端共用根 Go 模块，共享唯一 Vite 前端 `apps/client/frontend`。Web 部署通过 Caddy 将同一 Origin 的接口请求转发给服务端、页面转发给 Linux amd64 Wails Server Build；服务端根路径返回 404。只有服务端访问数据与部署密钥。Simple 分词器静态链接进服务端，Obscura、Poppler 和期刊元数据仍随服务端部署。见[系统架构](docs/architecture/README.md)。
+Go 服务端入口为 `apps/server`，`litradar serve` 提供 REST、Swagger/OpenAPI、MCP 和持久化调度。Wails v3 客户端位于 `apps/client`，与服务端共用根 Go 模块，共享唯一 Vite 前端 `apps/client/frontend`。Web 部署通过 Caddy 将同一 Origin 的接口请求转发给服务端、页面转发给 Linux amd64 Wails Server Build；服务端根路径返回 404。只有服务端访问数据与部署密钥。检索分词在 Go 中完成，Obscura、Poppler 和期刊元数据仍随服务端部署。见[系统架构](docs/architecture/README.md)。
 
 ## Docker 快速开始
 
@@ -94,7 +94,7 @@ curl --fail --output /dev/null http://localhost:8000/
 
 ## 本地开发
 
-项目使用 Go 1.27.3（启用 CGO）、Node.js 26.11.1 和 pnpm 12.16.1；构建静态 Simple 还需要与 Go 目标匹配的 C/C++14 编译器、CMake、curl 和 tar，Windows 另需 MinGW 和 Ninja。环境准备、原生分词器和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](apps/client/frontend/README.md)。
+项目使用 Go 1.27.3（启用 CGO，需要与 Go 目标匹配的 C 编译器，Windows 使用 MinGW GCC）、Node.js 26.11.1 和 pnpm 12.16.1。环境准备和开发命令见[开发指南](docs/guides/development.md)，前端内部结构见[前端说明](apps/client/frontend/README.md)。
 
 开发时在根目录运行 `pnpm dev`，由 `scripts/dev.mjs` 一起启动 Vite（8000）和 Go 服务端（8001）。根目录维护唯一 `pnpm-lock.yaml`。
 

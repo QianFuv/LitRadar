@@ -57,11 +57,9 @@
 ## 包级文档
 
 - [前端包说明](../apps/client/frontend/README.md)：`apps/client/frontend/` 的启动、目录、API 契约和测试
-- [simple 分词器](../third_party/simple-prebuilt/README.md)：静态构建、兼容性 oracle、旧库升级和上游许可证
-- [Simple 静态构建输入](../third_party/simple-static/README.md)：固定上游源码与 CMake 构建
 - [go-sdk 补丁](../third_party/go-sdk-patches/README.md)、[go-sqlite3 补丁](../third_party/go-sqlite3-patches/README.md)：vendored 依赖的本地补丁说明
 
-`third_party/simple-prebuilt/{linux,windows}/dict/README.md` 是第三方词典说明，不属于 LitRadar 的项目文档，保持上游内容。`docs/third-party/` 保存随镜像和发行包分发的第三方许可证与固定发行记录，不是阅读文档。
+`docs/third-party/` 保存随镜像和发行包分发的第三方许可证与固定发行记录，不是阅读文档。
 
 ## 事实来源
 

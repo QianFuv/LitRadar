@@ -6,16 +6,16 @@
 
 CI 和容器使用以下主版本：
 
-| 工具    | 版本/来源                                        |
-| ------- | ------------------------------------------------ |
-| Go      | 1.27.3，CGO_ENABLED=1，需 C/C++14 编译器及 CMake |
-| Node.js | 26.11.1                                          |
-| pnpm    | 12.16.1                                          |
-| Docker  | 当前 Docker Engine / Docker Desktop 与 Compose   |
+| 工具    | 版本/来源                                      |
+| ------- | ---------------------------------------------- |
+| Go      | 1.27.3，CGO_ENABLED=1，需 C 编译器             |
+| Node.js | 26.11.1                                        |
+| pnpm    | 12.16.1                                        |
+| Docker  | 当前 Docker Engine / Docker Desktop 与 Compose |
 
 Go 依赖由 `go.mod` / `go.sum` 与 `third_party/` 的固定补丁锁定，前端依赖由根目录 `pnpm-lock.yaml` 锁定。不要在普通开发任务中绕过 lockfile。
 
-Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.3`。Windows 原生构建要求 PATH 中有匹配的 MinGW GCC/G++ 和 Ninja；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
+Go 命令固定使用 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、`GOFLAGS=""`、`GOTOOLCHAIN=go1.27.3`。Windows 原生构建要求 PATH 中有匹配的 MinGW GCC；生产镜像直接使用 Obscura 官方 v0.2.4 的 render + stealth 二进制及配套 worker。
 
 pnpm 会转发已有的 `NODE_OPTIONS`，并为子进程关闭 Node.js 实验性 Web Storage，使测试中的 jsdom 浏览器存储与 Node.js 宿主存储隔离。
 
@@ -36,19 +36,6 @@ wc -c secrets/litradar.key
 ```
 
 最后一条命令输出的字节数应为 `32`，后面还会显示文件名。测试使用临时密钥和临时数据库，不应读取本机 `secrets/` 或仓库中的真实 `data/auth.sqlite`。
-
-### 原生分词器
-
-Windows 和 Linux 构建都静态链接 Simple，需要安装 curl、tar、CMake，以及与 Go `CC`/`CXX` 匹配的 C++14 编译器；Linux 使用 Make，Windows 使用 MinGW 和 Ninja。开发、构建和测试脚本会自动准备静态库。
-
-直接运行 Go 命令（包括 `go run`、`go test` 和 `pnpm generate:api`）前，先在同一 shell 中准备原生输入并导出其缓存标识：
-
-```bash
-node apps/server/scripts/build-simple-tokenizer.mjs --compatibility-oracle
-export CGO_CFLAGS="$(node --input-type=module -e 'import {simpleBuildEnvironment} from "./apps/server/scripts/build-simple-tokenizer.mjs"; process.stdout.write(simpleBuildEnvironment().CGO_CFLAGS)')"
-```
-
-静态库位于 `target/simple-tokenizer/libsimple.a`，运行时不再查找 DLL/SO。`--compatibility-oracle` 只为兼容性测试额外准备旧版分词器。构建输入见 [Simple 静态构建](../../third_party/simple-static/README.md)。
 
 ### 前端依赖
 
@@ -166,7 +153,7 @@ Scholarly 索引需要先在管理后台配置 Crossref 联系邮箱、OpenAlex 
 
 ## OpenAPI 与前端类型
 
-`apps/server/internal/openapi/` 中的声明及 `apps/server/internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，先确保已按[原生分词器](#原生分词器)准备 `target/simple-tokenizer/libsimple.a`，再在 `apps/client/frontend/` 运行：
+`apps/server/internal/openapi/` 中的声明及 `apps/server/internal/api/` 的真实路由绑定是控制面 API schema 的来源；它不拥有可执行入口或 OS 信号。修改路由、DTO 或响应 schema 后，在 `apps/client/frontend/` 运行：
 
 ```bash
 pnpm generate:api
@@ -219,7 +206,7 @@ node tests/test.mjs integration
 node tests/test.mjs all
 ```
 
-Backend CI 在 Windows 和 Linux 执行 `node apps/server/scripts/check-go.mjs`，固定 Go 1.27.3、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。脚本会自行构建静态 Simple 及兼容性 oracle。
+Backend CI 在 Windows 和 Linux 执行 `node apps/server/scripts/check-go.mjs`，固定 Go 1.27.3、CGO 与两个 SQLite tags，运行格式、模块/补丁完整性、vet、无缓存常规和 race 测试，以及两个补丁依赖在自身模块和根模块中的测试。全模块常规与 race 测试每条最多 25 分钟（单包 `-timeout=20m`），其他命令每条最多 15 分钟；失败即停止，不会自动重试。
 
 覆盖率只在每周/手动诊断中分别生成 Go 和前端报告，不设阈值：
 

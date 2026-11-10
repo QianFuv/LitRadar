@@ -103,7 +103,7 @@ litradar admin backup verify \
 4. 独立运行 `backup verify`，并把成功备份保持只读、与活动 `data/` 分离。
 5. 统计 `data/index/*.sqlite` 的总字节数，确认同一文件系统至少有 `2 × source_bytes + 64 MiB` 可用空间。
 6. 运行带显式确认的优化命令，保存完整 stdout JSON 和日志；检查 `status=optimized`、`optimized_bytes`、`reclaimed_bytes`、每库 schema/影子表/freelist/FTS 分配和行计数。
-7. 启动当前二进制，检查 `/`、`/health/live`、`/health/ready`、`/openapi.json` 和代表性检索、详情、分页。原文、身份和权威行数必须保持；检索结果按[新分词契约](../../third_party/simple-prebuilt/README.md)核对，不能要求旧 unicode61 的全部匹配结果不变。继续保留优化前备份直到降级窗口结束。
+7. 启动当前二进制，检查 `/`、`/health/live`、`/health/ready`、`/openapi.json` 和代表性检索、详情、分页。原文、身份和权威行数必须保持；检索结果按[当前分词契约](../reference/database.md#article_search)核对，不能要求旧 `unicode61` 或 `simple 0` 的全部匹配结果不变。继续保留优化前备份直到降级窗口结束。
 
 本机命令骨架：
 

@@ -333,6 +333,6 @@ warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litra
 | `data/push_state`        | `.changes.json` 候选和只读旧状态导入源  |
 | `data/folder_push_state` | 只读旧 push 状态导入源                  |
 
-Simple 静态链接进应用，并在每个准入的 SQLite 连接上直接注册；不存在选择分词库的运行时路径或环境变量，见[构建输入与兼容性](../../third_party/simple-prebuilt/README.md)。
+检索分词在 Go 中完成，不注册 SQLite 分词扩展；不存在选择分词库的运行时路径或环境变量，规则见[数据库参考](database.md#article_search)。
 
 `/usr/share/litradar/meta` 不在 `project-root` 下，只是发布镜像中的固定官方只读 bundle；`data/meta` 才是需要备份和恢复的运行时目录。

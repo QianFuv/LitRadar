@@ -251,7 +251,7 @@ AI 只重试连接失败、timeout 和 `429/502/503/504`；数值 `Retry-After` 
 
 `server` 使用原服务端镜像，`client-web` 和 `gateway` 独立运行：
 
-- 使用 UID/GID `10001:10001`；应用入口为 `/usr/local/bin/litradar`，并打包 Obscura 和 `pdftotext`；Simple 分词器静态链接进应用，没有 Node.js 运行时
+- 使用 UID/GID `10001:10001`；应用入口为 `/usr/local/bin/litradar`，并打包 Obscura 和 `pdftotext`；检索分词在 Go 中完成，没有 Node.js 运行时
 - 根文件系统只读
 - `/tmp` 使用 `noexec,nosuid,nodev` tmpfs
 - 只允许 `/app/data` 持久写入；客户端不挂载业务数据或部署密钥

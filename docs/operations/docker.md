@@ -37,7 +37,7 @@ Wails Server Build 的 runtime 端点未经认证；Web host 不注册任何服�
 
 ## 镜像内容与源码构建
 
-服务端 Dockerfile 使用固定 Ubuntu digest、Go/Node 归档校验和与 CA 包版本；Node 仅用于静态 Simple 分词器构建，不构建 UI。`apps/server` 使用 CGO、`sqlite_fts5,sqlite_dbstat` 编译，服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs/`、API、MCP、健康检查可用。
+服务端 Dockerfile 使用固定 Ubuntu digest、Go 归档校验和与 CA 包版本，不安装 Node.js，也不构建 UI。`apps/server` 使用 CGO、`sqlite_fts5,sqlite_dbstat` 编译，服务端镜像包含 Obscura v0.2.4、Poppler、不可变 Meta bundle、许可证和 Go 构建清单。服务端 `/` 与 UI 路径返回 404，`/docs/`、API、MCP、健康检查可用。
 
 客户端先在根目录构建 Vite，再由独立 Dockerfile 将 `frontend/dist` 嵌入 linux/amd64 Wails Web host，并放入 distroless 镜像。两个应用运行镜像均不需要 Node.js。
 
@@ -161,7 +161,7 @@ Scholarly 增量使用成功期次 anchor 年份的 1 月 1 日作为日期下�
 
 CNKI 的 2xx 正文解码失败会在现有三次上限内记录并重试；持续失败仍应作为上游/工作流失败处理，不能因为当时内存较低就算作验收通过。
 
-旧 v6/v7/v8 备份与恢复验证不依赖平台原生 tokenizer；v9/v10 验证使用二进制内静态注册的 simple 读取其 FTS 表。若历史快照的 `sqlite_schema` 仍声明 `tokenize='simple'`，它不是可直接服务的当前内容库；必须先走受支持的迁移或重建并完成完整性、外键、schema 和投影计数检查，不能通过向运行镜像临时复制 DLL/SO 绕过版本边界。
+备份与恢复验证不依赖任何 SQLite 分词扩展。恢复的快照若仍声明 `unicode61` 或 `simple 0`，启动预检会在一个事务内把它迁移到 v10、从规范表重建检索投影，再执行完整性、外键、schema 和投影计数检查。不要向运行镜像复制历史 DLL/SO。
 
 ## 数据和秘密
 
@@ -509,9 +509,9 @@ curl --fail http://localhost:8000/openapi.json
 3. 确认没有长时间阻塞的任务；调度心跳健康窗口为 90 秒。
 4. 用 `docker compose run --rm server scheduler validate --secret-key-file /run/secrets/litradar_key` 验证已保存任务。
 
-### 历史 `simple` tokenizer 索引
+### 旧分词器索引
 
-先区分数据库版本与 FTS 定义：受支持的精确 v6/v7/v8 使用内建 `unicode61`，v7/v8 采用无内容影子表的投影；新建 v10 使用镜像提供的 `simple 0`。旧快照中的 `tokenize='simple'` 不能仅凭名称视为当前 v10。恢复前按[数据库参考](../reference/database.md#内容库破坏性切换)确认受支持的迁移或重建路径，完成后复核版本、FTS 定义和代表性查询。不得降低版本号或临时复制历史 DLL/SO 绕过校验。
+先区分数据库版本与 FTS 定义：受支持的精确 v6/v7/v8 使用内建 `unicode61`，旧 v9/v10 使用已移除的 Simple `simple 0`；当前 v10 使用 FTS5 内建的 `ascii` 分词器，由 Go 切词。启动预检按 `article_search` 声明判断，声明不是当前形式的内容库会在一个事务内迁移到 v10 并重建检索投影；失败时回滚，原声明保持不变。迁移路径见[数据库参考](../reference/database.md#内容库破坏性切换)，完成后复核版本、FTS 定义和代表性查询。不得降低版本号或复制历史 DLL/SO。
 
 ### 通知没有结果
 
@@ -519,8 +519,6 @@ curl --fail http://localhost:8000/openapi.json
 
 <a id="native-chinese-search-runtime"></a>
 
-### 中文检索原生运行库
+### 中文检索分词
 
-镜像为目标架构把固定版本的 Simple 按驱动自带的 SQLite 头文件静态链接进应用，不分发 `libsimple.so`；仍保留系统 `libstdc++6` 和 MIT 许可声明，Obscura 与 Poppler 是独立辅助程序。运行时不启用 Jieba 或拼音别名。新建 v10 索引使用 `simple 0`；旧 unicode61 索引仍需显式离线迁移。容器冒烟测试覆盖打包迁移，以及认证后的中文、拉丁文和无拼音查询。详见 [Simple](../../third_party/simple-prebuilt/README.md)。
-
-v9/v10 的 simple 静态注册失败时会明确报错，不回退到 unicode61。先核对镜像版本和目标架构；不存在可补装的外部扩展，也不要从未知来源复制 DLL/SO。
+检索分词在 Go 中完成，镜像不包含 Simple、`libsimple.so` 或任何 SQLite 分词扩展；Obscura 与 Poppler 是独立辅助程序。中文逐字成词，短语匹配连续文字；拉丁文不区分重音和大小写；不提供 Jieba 分词或拼音别名。旧 `unicode61` 或 `simple 0` 索引在启动时自动迁移并重建。容器冒烟测试覆盖打包迁移，以及认证后的中文、拉丁文、DOI 和无拼音查询。规则见[数据库参考](../reference/database.md#article_search)。

@@ -44,9 +44,9 @@ tests, source-bound frontend verification or platform smoke acceptance.
 - Backend jobs run independent `regular` and `race` lanes on Linux and Windows.
   The regular lane owns formatting, module/dependency verification, explicit vet,
   full root tests and replacement-module regular tests. The race lane runs the
-  full root and replacement-module race suites. Both initialize and verify native
-  tokenizer inputs, compiler identity and diagnostics. Integration/SQLite/process
-  tests remain in the full Go suites; neither lane uses `-short`.
+  full root and replacement-module race suites. Both record compiler identity and
+  diagnostics. Integration/SQLite/process tests remain in the full Go suites;
+  neither lane uses `-short`.
 - The two existing `Backend / Go checks (<os>)` names remain aggregate gates. Each
   requires the entire four-job matrix to succeed; failure, cancellation or skip
   cannot become a passing release prerequisite.

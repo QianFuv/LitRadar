@@ -254,7 +254,7 @@ API 用 `307 Temporary Redirect` 或文档响应返回结果，并设置 `Cache-
 7. 运行 Provider switch fixture，证明共享 alias 复用同一 ID，且新 Provider 使用独立 anchor/run namespace。
 8. 对发出 HTTP 的实现覆盖受管直连、显式代理失败不直连回退，以及多进程 request/参数/环境/日志不含代理秘密。
 
-修改内置实现后，先按[开发指南](../guides/development.md#原生分词器)准备静态 Simple 与 `CGO_CFLAGS`，再在仓库根目录运行以下检查；应通过相关测试且 `go vet` 无告警：
+修改内置实现后，在仓库根目录运行以下检查（需要 CGO 与 C 编译器）；应通过相关测试且 `go vet` 无告警：
 
 ```bash
 go test -count=1 -tags sqlite_fts5,sqlite_dbstat ./apps/server/internal/domain/... ./apps/server/internal/provider/... ./apps/server/internal/sources/... ./apps/server/internal/index/...
@@ -283,9 +283,9 @@ go vet -tags sqlite_fts5,sqlite_dbstat ./apps/server/internal/provider/... ./app
 - schema 精确匹配、可在一个事务内迁移的 v4 或 v5 内容库；
 - schema 精确匹配的 v6/v7/v8/v9/v10 内容库。
 
-v4 会先增加 `journal_identity_keys` 及其索引，再与 v5 一样完成后续迁移到 v10。历史 v5 到 v6 步骤把撤稿关系规范化为 `article_retraction_dois`，不携带旧单值 `articles.retraction_doi`；v7 使用 contentless-delete FTS，v8 删除重复的 outbox 主键索引。这些步骤不重映射内容 ID，并保留 projection 和 outbox 记录。v9 改用关闭拼音别名的 `simple 0`，流式重建 FTS 投影并保留规范原文、ID 和 outbox。现有 v6/v7/v8/v9 的运行时 preflight 保持只读，只有显式迁移或离线优化才升级到 v10。v0 非空库及 v1–v3 索引库不会迁移到 v10。
+v4 会先增加 `journal_identity_keys` 及其索引，再与 v5 一样完成后续迁移到 v10。历史 v5 到 v6 步骤把撤稿关系规范化为 `article_retraction_dois`，不携带旧单值 `articles.retraction_doi`；v7 使用 contentless-delete FTS，v8 删除重复的 outbox 主键索引。这些步骤不重映射内容 ID，并保留 projection 和 outbox 记录。v9 曾改用关闭拼音别名的 `simple 0`；当前 v10 改为 Go 切词加 FTS5 `ascii` 声明。运行时 preflight 发现 `article_search` 声明不是当前形式时（v6/v7/v8 的 `unicode61`、旧 v9/v10 的 `simple 0`），在一个事务内迁移到 v10，流式重建 FTS 投影并保留规范原文、ID 和 outbox。v0 非空库及 v1–v3 索引库不会迁移到 v10。
 
-Schema v10 adds covering DOI/PMID indexes to `article_listing`. Explicit v9-to-v10 migration preserves the existing FTS projection; fresh databases and offline storage optimization produce v10.
+Schema v10 adds covering DOI/PMID indexes to `article_listing`. Migration to v10 rebuilds an obsolete FTS projection; fresh databases and offline storage optimization produce v10.
 
 只有需要重建 v1–v3 时，才在执行任何移动或删除前确认以下影响：旧内容不会导入 v10；重建会使用新的规范身份空间；旧 favorite/tracking 中的 article ID 可能变成陈旧引用。应用不会自动删除、重命名或改写旧库，也不会迁移或清理这些引用。
 

@@ -98,7 +98,7 @@ original workflow resumes publication and updates latest only after publication.
 ## Run a binary archive
 
 The Linux package targets Ubuntu 26.04 on amd64. It contains the native Go
-server binary (with the statically linked Simple tokenizer),
+server binary,
 the catalog bundle, Obscura and its worker, and third-party notices. It is a
 dynamically linked distribution, not a standalone static binary. Install the system dependencies first:
 
@@ -131,7 +131,7 @@ CFP and scheduling commands remain available through `run.sh`.
 Extract the ZIP into a writable directory. Windows 10/11 or Windows Server with
 PowerShell 5.1 is required; Go, Node.js, Docker and development tools are not
 required. The distribution contains Obscura render/stealth, Poppler PDF extraction and
-their native runtime libraries; the search tokenizer is linked into the executable. Normal Windows system
+their native runtime libraries; search tokenization is built into the executable. Normal Windows system
 fonts are used for rendering.
 
 In PowerShell, verify the ZIP against `SHA256SUMS`, then extract it:
@@ -156,7 +156,7 @@ selects its own directory and packaged helpers while preserving explicit helper
 overrides. All CLI commands remain available. Keep `data/` and `secrets/` across
 upgrades; do not unpack over a running service.
 
-Server executables statically link Simple and contain no UI. Client binaries embed the shared Vite build. Release archives contain no external `web/`, `simple.dll` or `libsimple.so`. Windows packaging statically links the GCC/C++ runtime; Linux retains system C/C++ runtime dependencies. Obscura, Poppler, CA certificates and metadata catalogs retain their documented separate deployment requirements. Go inventory includes the static archive/source/compiler/header identity. Smoke tests relocate the executable into a fresh root and verify authenticated v9 migration/search without tokenizer libraries.
+Server executables tokenize search text in Go and contain no UI. Client binaries embed the shared Vite build. Release archives contain no external `web/` or SQLite tokenizer libraries. Windows packaging statically links the GCC runtime; Linux retains system C/C++ runtime dependencies. Obscura, Poppler, CA certificates and metadata catalogs retain their documented separate deployment requirements. Go inventory includes the toolchain, compiler and module identity. Smoke tests relocate the executable into a fresh root and verify migration of a legacy `unicode61` v8 index and authenticated search.
 
 ## Run the Web client binary
 

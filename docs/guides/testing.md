@@ -88,7 +88,7 @@ Playwright 有两个独立角色：
 
 ## 统一命令
 
-先安装 Go 1.27.3、Node.js 26.11.1 和前端锁定依赖，以及构建静态 Simple 所需的 curl、tar、CMake 和与 Go 目标匹配的 C/C++14 编译器（Linux 使用 Make，Windows 另需 MinGW 和 Ninja）。`tests/test.mjs` 与 `apps/server/scripts/check-go.mjs` 会自动构建静态 Simple 及兼容性 oracle；Windows 仓库内的旧 DLL 只作为兼容性 oracle。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.3`。
+先安装 Go 1.27.3、Node.js 26.11.1 和前端锁定依赖，以及 CGO 所需、与 Go 目标匹配的 C 编译器（Windows 使用 MinGW GCC）。Go 检查固定 `CGO_ENABLED=1`、`GOWORK=off`、`GOENV=off`、空 `GOFLAGS` 和 `GOTOOLCHAIN=go1.27.3`。
 
 ```bash
 npm install --global pnpm@12.16.1
@@ -139,16 +139,16 @@ docker compose \
 
 | 报告                                               | 路径                                                                                                                                               |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Go 发布检查                                        | `test-results/go/results.json`、各项 `.log` 与 `native-inputs.json`                                                                                |
-| Vitest jsdom JUnit                                 | `apps/client/frontend/test-results/vitest/junit.xml`                                                                                                                |
-| Vitest Browser Mode JUnit                          | `apps/client/frontend/test-results/vitest-browser/junit.xml`                                                                                                        |
-| Browser Mode 截图                                  | `apps/client/frontend/test-results/browser-components/screenshots/`                                                                                                 |
-| fixture Playwright JUnit/trace/screenshot/video    | `apps/client/frontend/test-results/playwright-fixtures/`                                                                                                            |
-| fixture Playwright HTML                            | `apps/client/frontend/playwright-report/fixtures/`                                                                                                                  |
-| full-stack Playwright JUnit/trace/screenshot/video | `apps/client/frontend/test-results/playwright-full-stack/`                                                                                                          |
-| full-stack Playwright HTML                         | `apps/client/frontend/playwright-report/full-stack/`                                                                                                                |
+| Go 发布检查                                        | `test-results/go/results.json` 与各项 `.log`                                                                                                       |
+| Vitest jsdom JUnit                                 | `apps/client/frontend/test-results/vitest/junit.xml`                                                                                               |
+| Vitest Browser Mode JUnit                          | `apps/client/frontend/test-results/vitest-browser/junit.xml`                                                                                       |
+| Browser Mode 截图                                  | `apps/client/frontend/test-results/browser-components/screenshots/`                                                                                |
+| fixture Playwright JUnit/trace/screenshot/video    | `apps/client/frontend/test-results/playwright-fixtures/`                                                                                           |
+| fixture Playwright HTML                            | `apps/client/frontend/playwright-report/fixtures/`                                                                                                 |
+| full-stack Playwright JUnit/trace/screenshot/video | `apps/client/frontend/test-results/playwright-full-stack/`                                                                                         |
+| full-stack Playwright HTML                         | `apps/client/frontend/playwright-report/full-stack/`                                                                                               |
 | Go coverage                                        | `target/go-coverage/coverage.out`、`target/go-coverage/index.html`                                                                                 |
-| Frontend coverage                                  | `apps/client/frontend/coverage/`、`apps/client/frontend/coverage/lcov.info`                                                                                                          |
+| Frontend coverage                                  | `apps/client/frontend/coverage/`、`apps/client/frontend/coverage/lcov.info`                                                                        |
 | Container smoke                                    | `test-results/container-smoke/summary.json` 和失败时的 `failure.log`                                                                               |
 | Release                                            | workflow artifact `linux-release`、`windows-release`、`release-publication`，失败诊断为 `linux-release-diagnostics`、`windows-release-diagnostics` |
 

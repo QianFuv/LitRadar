@@ -79,7 +79,7 @@ HTTP 外层先移除不受信的 `X-Request-Id`，再生成并返回服务器 UU
 
 ## 源码归属
 
-`apps/server/` 拥有服务端代码、`assets/`、Dockerfile、构建检查脚本和专用测试；`apps/client/` 拥有客户端代码、构建脚本和专用测试。根 `scripts/`、`tests/` 只保留跨应用工具、发布协调与共享 `tests/data/`。历史分词器 oracle 位于 `third_party/simple-prebuilt/`。根 Go/pnpm 工作区、部署入口和运行时 `data/` 保持共享；源码资源迁移不改变发行包的 `assets/meta` 布局。
+`apps/server/` 拥有服务端代码、`assets/`、Dockerfile、构建检查脚本和专用测试；`apps/client/` 拥有客户端代码、构建脚本和专用测试。根 `scripts/`、`tests/` 只保留跨应用工具、发布协调与共享 `tests/data/`。根 Go/pnpm 工作区、部署入口和运行时 `data/` 保持共享；源码资源迁移不改变发行包的 `assets/meta` 布局。
 
 ## Go 包
 
@@ -174,9 +174,9 @@ Provider 只能返回规范 `JournalDraft`、`IssueDraft`、`ArticleDraft` 和 `
 
 ### 索引数据库
 
-每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v10 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v9/v10 沿用 contentless FTS 布局，使用关闭拼音的 `simple 0` 分词；检索仍走全字段 FTS MATCH，并仅在检索投影和查询参数上规范化拉丁重音及大小写，原始元数据保持不变。运行时仍支持精确 v6/v7/v8/v9 内容库，其中 v6/v7/v8 的 unicode61 索引只在显式离线维护时升级。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
+每个 CSV 对应 `data/index/<csv_stem>.sqlite`。当前 v10 内容库只包含规范期刊、期次、文章、identity aliases、撤稿关系、查询/FTS 投影和事务性文章变更 outbox。v10 沿用 contentless FTS 布局：Go 先折叠重音和大小写，再按 `simple 0` 的字节规则切词并以空格连接，FTS5 内置的 `ascii` 分词器只按空格拆分；检索仍走全字段 FTS MATCH，查询操作数经过同一流程，原始元数据保持不变。启动预检仍接受精确 v6/v7/v8/v9 内容库；FTS 声明不是当前 `ascii` 声明的内容库（v6/v7/v8 的 `unicode61`、旧 v9/v10 的 `simple 0`）会在一个事务内迁移到 v10 并重建检索投影。内容库不包含 Provider、URL、anchor、checkpoint、lease 或运行统计。
 
-Simple 按未修改的驱动头文件编译，并在每个准入的物理连接上直接注册；不使用全局自动注册或运行时 DLL/SO 发现。普通/认证连接和版本优先迁移角色仍需显式启用；SQL 扩展加载保持关闭。
+分词不依赖 SQLite 扩展：连接上不注册自定义分词器，SQL 扩展加载保持关闭。
 
 `data/index-control/index-batches.sqlite` 是项目级可丢弃 batch schema v2；`data/index-control/<csv_stem>.sqlite` 是 Provider-scoped v5 控制库。前者保存冻结输入指纹、catalog phase/outcome、精确 manifest intent、typed notify handoff/Unknown acknowledgement 和全局 lease，后者把成功 anchor 与运行中的 traversal checkpoint 分表保存并绑定 batch ID。v1 active Notifying 行迁移为保守 Unknown，不丢弃 manifest。删除全部控制状态后没有可信 batch、成功边界、handoff 或 traversal，下一次运行安全退回完整抓取，但不会改变内容 ID 或复制已有文章；operator 也同时承担失去待完成 handoff 证明的风险。切换 Provider 使用新的 namespace，同样从无 anchor 状态开始。内容库需要备份，两类控制库都明确不备份。详见[数据库参考](../reference/database.md)。
 
@@ -287,7 +287,7 @@ browser -> stable LitRadar action URL -> load ArticleLocator
 
 正式子命令在业务访问前完成各自需要的存储准备：先解析路径和参数，检查 `PRAGMA user_version`，再执行受支持的迁移或结构预检。认证库按版本在独立的 `BEGIN IMMEDIATE` 事务中迁移；普通查询仓库不负责数据定义操作。
 
-新建内容库使用 v10。精确匹配的 v4/v5 可事务迁移到 v10；现有 v6/v7/v8/v9/v10 在普通启动时只做结构预检，旧版分词器不会被自动替换。非空 v0 及 v1 至 v3 要求先备份，再按错误中点名的文件执行重建。内容库、项目批次账本和目录控制库分别维护版本，当前版本与迁移边界统一见[数据库参考](../reference/database.md#连接和版本)。
+新建内容库使用 v10。精确匹配的 v4/v5 可事务迁移到 v10；现有 v6/v7/v8/v9/v10 在普通启动时做结构预检；FTS 声明不是当前 `ascii` 声明时，在一个事务内迁移到 v10 并重建检索投影。非空 v0 及 v1 至 v3 要求先备份，再按错误中点名的文件执行重建。内容库、项目批次账本和目录控制库分别维护版本，当前版本与迁移边界统一见[数据库参考](../reference/database.md#连接和版本)。
 
 项目批次账本与目录控制库可以重建，但删除它们会丢失恢复进度和已发布通知的交接记录。遇到未来版本或迁移失败时，命令会退出，不会自动删除文件。`serve` 完成存储迁移、密钥验证和 HTTP 准备后，才启动监听器及首轮调度。
 
