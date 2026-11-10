@@ -35,7 +35,8 @@ func (handlers *adminHandlers) loadTelemetry(writer http.ResponseWriter, request
 	report, err := handlers.telemetry.Read(request.Context(), to.Add(-time.Duration(hours)*time.Hour), to, kind)
 	if err != nil {
 		slog.WarnContext(request.Context(), "telemetry.read.failed", "component", "telemetry")
-		(&apiError{status: http.StatusServiceUnavailable, detail: "Load telemetry temporarily unavailable"}).write(writer)
+		retry := uint64(5)
+		(&apiError{status: http.StatusServiceUnavailable, detail: "Load telemetry temporarily unavailable", retryAfter: &retry}).write(writer)
 		return
 	}
 	writeResponse(writer, report)

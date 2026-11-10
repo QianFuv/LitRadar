@@ -4264,28 +4264,36 @@ export interface operations {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
       };
       /** @description Authentication required */
       401: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
       };
       /** @description Administrator required */
       403: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
       };
       /** @description Telemetry unavailable */
       503: {
         headers: {
           [name: string]: unknown;
         };
-        content?: never;
+        content: {
+          'application/json': components['schemas']['ErrorEnvelope'];
+        };
       };
     };
   };

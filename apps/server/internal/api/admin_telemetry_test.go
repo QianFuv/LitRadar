@@ -120,3 +120,27 @@ func TestHttpSearchTelemetryPrivacyStoredRows(t *testing.T) {
 		t.Fatal(count, hasSearch, hasTemplate, err)
 	}
 }
+
+// TestAdminTelemetryUnavailableIsRetryable keeps store-read failures on the retryable 503 contract.
+func TestAdminTelemetryUnavailableIsRetryable(t *testing.T) {
+	auth, _, token := authFixture(t)
+	filename := filepath.Join(t.TempDir(), "telemetry.sqlite")
+	collector, err := telemetry.Open(context.Background(), filename, 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(collector.Close)
+	database, err := sqlite.Open(filename, false, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("DROP TABLE hourly_load"); err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+	handlers := adminHandlers{auth: auth, telemetry: collector}
+	response := authRequest(httpTelemetryHandler(&handlers), "GET", "/api/admin/telemetry", "", token)
+	if response.Code != 503 || response.Header().Get("Retry-After") == "" || !strings.Contains(response.Body.String(), "Load telemetry temporarily unavailable") {
+		t.Fatal(response.Code, response.Header(), response.Body.String())
+	}
+}

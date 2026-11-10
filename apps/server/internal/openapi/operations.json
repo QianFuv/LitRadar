@@ -5378,16 +5378,44 @@
           }
         },
         "400": {
-          "description": "Invalid period or kind"
+          "description": "Invalid period or kind",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
         },
         "401": {
-          "description": "Authentication required"
+          "description": "Authentication required",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
         },
         "403": {
-          "description": "Administrator required"
+          "description": "Administrator required",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
         },
         "503": {
-          "description": "Telemetry unavailable"
+          "description": "Telemetry unavailable",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErrorEnvelope"
+              }
+            }
+          }
         }
       },
       "security": [
