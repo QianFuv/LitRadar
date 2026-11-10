@@ -114,7 +114,7 @@ function useRelationGraphFavorite({
     savedGraph !== null &&
     relationGraphSignature(savedGraph) !== relationGraphSignature(graph);
   const snapshot = {
-    graph: graph as unknown as Record<string, unknown>,
+    graph: { ...graph },
     node_count: Object.keys(graph.nodes).length,
   };
 

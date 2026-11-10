@@ -1,6 +1,6 @@
 /** Validate enum fields without coercing malformed JSON response values. */
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 import {
   ApiContractError,

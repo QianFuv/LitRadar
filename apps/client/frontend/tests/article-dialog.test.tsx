@@ -5,7 +5,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vite-plus/test';
 
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import type { Article } from '@/lib/api';
@@ -205,7 +205,7 @@ async function showsAuthorsBeforeJournal(): Promise<void> {
   const subtitle = screen
     .getByRole('button', { name: /^查看文章详情：/ })
     .querySelector('[data-slot="article-list-meta"]');
-  expect(subtitle).toHaveTextContent(/^Ada Lovelace; Grace Hopper.*Journal of Tests/);
+  expect(subtitle?.textContent).toMatch(/^Ada Lovelace; Grace Hopper.*Journal of Tests/);
 }
 
 /** Verify missing authors leave the existing journal metadata available. */
@@ -215,7 +215,7 @@ async function showsJournalWithoutAuthors(authors: Article['authors']): Promise<
   const subtitle = screen
     .getByRole('button', { name: /^查看文章详情：/ })
     .querySelector('[data-slot="article-list-meta"]');
-  expect(subtitle).toHaveTextContent(/^Journal of Tests/);
+  expect(subtitle?.textContent).toMatch(/^Journal of Tests/);
 }
 
 /** Verify text selection and a sibling selection checkbox do not open article details. */

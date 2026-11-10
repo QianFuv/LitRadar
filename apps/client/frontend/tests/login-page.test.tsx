@@ -5,7 +5,7 @@
 import { MemoryRouter } from 'react-router';
 import { render, screen, waitFor, type RenderResult } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import LoginClient from '@/src/routes/login-client';
 import { MotionProvider } from '@/components/ui/motion';

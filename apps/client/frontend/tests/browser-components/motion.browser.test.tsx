@@ -7,8 +7,8 @@ import '@/src/globals.css';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { Circle } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { page, userEvent } from 'vitest/browser';
-import { describe, expect, test } from 'vitest';
+import { page, userEvent } from 'vite-plus/test/browser';
+import { describe, expect, test } from 'vite-plus/test';
 
 import {
   SectionedDialogFrame,

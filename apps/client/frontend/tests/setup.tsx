@@ -6,7 +6,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { MotionGlobalConfig } from 'motion/react';
 import * as React from 'react';
-import { afterAll, afterEach, beforeAll } from 'vitest';
+import { afterAll, afterEach, beforeAll } from 'vite-plus/test';
 
 import { server } from '@/tests/mocks/server';
 

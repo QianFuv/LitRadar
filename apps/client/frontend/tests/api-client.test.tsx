@@ -2,7 +2,7 @@
  * Same-origin API URL resolution coverage.
  */
 
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { buildApiUrl, resolveApiBase } from '@/lib/api/client';
 

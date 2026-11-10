@@ -15,7 +15,7 @@ const WORKSPACE_ROOT = path.resolve(
   fileURLToPath(new URL("..", import.meta.url)),
 );
 const APP_ROOT = path.join(WORKSPACE_ROOT, "apps", "client", "frontend");
-const VITE_CLI = path.join(APP_ROOT, "node_modules", "vite", "bin", "vite.js");
+const VP_CLI = path.join(APP_ROOT, "node_modules", "vite-plus", "bin", "vp");
 const READY_TIMEOUT_MS = 300_000;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 const CHILDREN = [];
@@ -254,7 +254,7 @@ async function main() {
   const projectRoot = resolveDevProjectRoot();
   if (!projectRoot) return;
   const secretKeyFile = path.join(projectRoot, "secrets", "litradar.key");
-  await access(VITE_CLI).catch(() => {
+  await access(VP_CLI).catch(() => {
     throw new Error(
       "Install frontend dependencies with pnpm install --frozen-lockfile.",
     );
@@ -287,7 +287,7 @@ async function main() {
   const frontend = startChild(
     "Vite",
     process.execPath,
-    [VITE_CLI, "--host", "127.0.0.1", "--port", "8000", "--strictPort"],
+    [VP_CLI, "dev", "--host", "127.0.0.1", "--port", "8000", "--strictPort"],
     APP_ROOT,
   );
   await superviseDevServices(backend, frontend);

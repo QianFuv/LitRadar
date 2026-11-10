@@ -5,7 +5,7 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 import { TrackingSettingsContent } from '@/components/tracking/tracking-settings-content';
 import type { ManualPushState, ManualPushStatus } from '@/lib/api';

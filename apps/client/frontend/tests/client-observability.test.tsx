@@ -5,7 +5,7 @@
 import { MemoryRouter } from 'react-router';
 import { render } from '@testing-library/react';
 import { StrictMode, type ReactNode } from 'react';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, expect, test, vi } from 'vite-plus/test';
 
 import RouteError from '@/src/route-error';
 import GlobalError from '@/src/global-error';

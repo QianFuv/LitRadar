@@ -6,7 +6,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
@@ -194,18 +194,16 @@ beforeEach(() => {
   });
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
-    value: vi.fn(
-      (query: string): MediaQueryList => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addEventListener: () => undefined,
-        addListener: () => undefined,
-        dispatchEvent: () => false,
-        removeEventListener: () => undefined,
-        removeListener: () => undefined,
-      }),
-    ),
+    value: vi.fn((query: string): MediaQueryList => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      addListener: () => undefined,
+      dispatchEvent: () => false,
+      removeEventListener: () => undefined,
+      removeListener: () => undefined,
+    })),
   });
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
     this: HTMLAnchorElement,

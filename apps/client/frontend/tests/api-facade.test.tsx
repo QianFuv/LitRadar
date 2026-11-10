@@ -2,7 +2,7 @@
  * Compatibility coverage for the domain-oriented API facade.
  */
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 import * as facade from '@/lib/api';
 import { adminGetStats } from '@/lib/api/admin';

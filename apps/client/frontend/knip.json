@@ -1,0 +1,9 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["scripts/*.mjs", "tests/e2e/support/*.mjs", "tests/native-smoke/*-smoke.mjs"],
+  "playwright": {
+    "config": ["playwright.config.tsx", "playwright.full-stack.config.tsx"]
+  },
+  "ignoreBinaries": ["go"],
+  "ignoreDependencies": ["@typescript/typescript6"]
+}

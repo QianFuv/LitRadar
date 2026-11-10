@@ -3,7 +3,7 @@
  */
 
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { REVEAL_WAIT_LIMIT_MS, RevealItem, RevealScope } from '@/components/ui/reveal';
 

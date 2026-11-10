@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const WORKSPACE_ROOT = path.resolve(APP_ROOT, '../../..');
-const VITE_CLI = path.join(APP_ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
+const VP_CLI = path.join(APP_ROOT, 'node_modules', 'vite-plus', 'bin', 'vp');
 const TARGET_ROOT = path.join(WORKSPACE_ROOT, 'target', 'go');
 const EXECUTABLE_SUFFIX = process.platform === 'win32' ? '.exe' : '';
 const SERVICE_BINARY = path.join(TARGET_ROOT, `litradar${EXECUTABLE_SUFFIX}`);
@@ -324,7 +324,7 @@ async function removeFixtureRoot() {
 function startPreview(port, backendUrl) {
   const child = spawn(
     process.execPath,
-    [VITE_CLI, 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
+    [VP_CLI, 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
     {
       cwd: APP_ROOT,
       env: { ...process.env, LITRADAR_BACKEND_URL: backendUrl },

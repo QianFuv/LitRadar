@@ -8,7 +8,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { FavoriteButton } from '@/components/feature/favorite-button';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
@@ -686,18 +686,16 @@ beforeEach(() => {
   });
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
-    value: vi.fn(
-      (query: string): MediaQueryList => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addEventListener: () => undefined,
-        addListener: () => undefined,
-        dispatchEvent: () => false,
-        removeEventListener: () => undefined,
-        removeListener: () => undefined,
-      }),
-    ),
+    value: vi.fn((query: string): MediaQueryList => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      addListener: () => undefined,
+      dispatchEvent: () => false,
+      removeEventListener: () => undefined,
+      removeListener: () => undefined,
+    })),
   });
 });
 

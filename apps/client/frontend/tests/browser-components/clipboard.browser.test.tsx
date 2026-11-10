@@ -3,8 +3,8 @@
  */
 
 import { act, render } from '@testing-library/react';
-import { page } from 'vitest/browser';
-import { describe, expect, test } from 'vitest';
+import { page } from 'vite-plus/test/browser';
+import { describe, expect, test } from 'vite-plus/test';
 
 import { useSettingsCopy } from '@/components/settings/use-settings-copy';
 

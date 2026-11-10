@@ -4,8 +4,8 @@
 
 import { act, render } from '@testing-library/react';
 import { useState } from 'react';
-import { page, userEvent } from 'vitest/browser';
-import { describe, expect, test } from 'vitest';
+import { page, userEvent } from 'vite-plus/test/browser';
+import { describe, expect, test } from 'vite-plus/test';
 
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 

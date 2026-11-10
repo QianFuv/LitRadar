@@ -2,7 +2,7 @@
  * Theme changes grow from where they were picked and still apply without view transitions.
  */
 
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { getFocusedOrigin, revealThemeChange } from '@/lib/theme-transition';
 

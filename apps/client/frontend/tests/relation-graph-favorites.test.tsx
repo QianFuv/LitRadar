@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { Link } from 'react-router';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { RelationGraphFavoritesContent } from '@/components/favorites/relation-graph-favorites-content';
 import { RelationGraphFavoriteControls } from '@/components/relations/relation-graph-favorite-controls';
@@ -134,7 +134,7 @@ async function flagsUpdatesAndResetsChangedGraph(): Promise<void> {
     name: '已收藏的关系图操作（有未保存的改动）',
   });
   await user.hover(trigger);
-  expect(await screen.findByRole('tooltip')).toHaveTextContent(
+  expect((await screen.findByRole('tooltip')).textContent).toMatch(
     /^已收藏：以「Article 1」为中心的关系图（有未保存的改动）$/,
   );
   await user.unhover(trigger);
@@ -176,7 +176,7 @@ async function ignoresLayoutDrift(): Promise<void> {
 
   await userEvent.setup().hover(await screen.findByRole('button', { name: '已收藏的关系图操作' }));
   await waitFor(() =>
-    expect(screen.getByRole('tooltip')).toHaveTextContent(
+    expect(screen.getByRole('tooltip').textContent).toMatch(
       /^已收藏：以「Article 1」为中心的关系图$/,
     ),
   );

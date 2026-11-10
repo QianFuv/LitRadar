@@ -2,7 +2,7 @@
  * Safe DOI and external-link coverage.
  */
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 import { getDoiUrl, getSafeHttpUrl } from '@/lib/citation';
 

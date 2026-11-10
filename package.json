@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "pnpm --filter litradar-frontend build",
+    "check": "pnpm --filter litradar-frontend check",
     "lint": "pnpm --filter litradar-frontend lint",
     "typecheck": "pnpm --filter litradar-frontend typecheck",
     "test": "pnpm --filter litradar-frontend test",

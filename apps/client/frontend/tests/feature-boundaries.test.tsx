@@ -5,7 +5,7 @@
 import { screen } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vite-plus/test';
 
 import { AdminOverviewCard } from '@/components/admin/overview-card';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';

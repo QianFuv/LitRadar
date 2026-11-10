@@ -5,7 +5,7 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { createAuthUserScenario, createLoginScenario } from '@/tests/mocks/scenarios';

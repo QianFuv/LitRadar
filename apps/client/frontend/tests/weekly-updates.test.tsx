@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse, type HttpResponseResolver } from 'msw';
 import { parseAsString, useQueryState } from 'nuqs';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { WeeklyUpdatesView } from '@/components/weekly/weekly-updates-view';
 import { SELECTED_DATABASE_KEY, readSelectedDatabase } from '@/lib/api';

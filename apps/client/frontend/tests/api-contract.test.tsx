@@ -2,7 +2,7 @@
  * Runtime contract validation tests for generated control-plane aliases.
  */
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 import {
   ApiContractError,

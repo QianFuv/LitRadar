@@ -6,7 +6,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { AnnouncementToasts } from '@/components/announcement-toasts';
 import type { AnnouncementInfo } from '@/lib/api';

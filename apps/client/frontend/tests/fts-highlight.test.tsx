@@ -2,7 +2,7 @@
  * Regression tests for extracting and matching visual FTS highlights.
  */
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 import { createFtsHighlightPattern, parseFtsHighlightTerms } from '@/lib/fts-highlight';
 

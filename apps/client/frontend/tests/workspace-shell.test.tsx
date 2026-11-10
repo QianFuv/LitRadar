@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { createPortal } from 'react-dom';
 import { useState } from 'react';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import Home from '@/src/routes/home-page';
 import {

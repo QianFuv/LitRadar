@@ -3,7 +3,7 @@
  * external links, and server setup errors, with the Wails runtime replaced by a fake.
  */
 
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { ApiError } from '@/lib/api/client';
 import { loginUser, loginWithNativeOidc, logoutUser } from '@/lib/api/auth';

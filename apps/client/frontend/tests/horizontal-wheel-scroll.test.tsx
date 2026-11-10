@@ -2,7 +2,7 @@
  * Vertical wheel input glides horizontal strips only while they can move that way.
  */
 
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import { attachHorizontalWheelScroll, scrollStripOnWheel } from '@/lib/horizontal-wheel-scroll';
 

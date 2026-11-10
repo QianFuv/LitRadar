@@ -2,7 +2,7 @@
  * Platform API transport timeout, cancellation, bounded retry, and error-envelope coverage.
  */
 
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 
 import {
   ApiError,

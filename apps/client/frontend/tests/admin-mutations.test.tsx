@@ -5,7 +5,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vite-plus/test';
 
 import { AnnouncementsCard } from '@/components/admin/announcements-card';
 import { AdminInviteCodesCard } from '@/components/admin/invite-codes-card';

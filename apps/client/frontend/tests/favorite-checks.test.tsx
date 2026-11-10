@@ -6,7 +6,7 @@ import { QueryClientProvider, QueryObserver, type QueryClient } from '@tanstack/
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import type { ReactNode } from 'react';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vite-plus/test';
 
 import {
   useFavoriteChecks,

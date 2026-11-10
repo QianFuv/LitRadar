@@ -5,8 +5,8 @@
 import '@/src/globals.css';
 
 import { render, screen, waitFor } from '@testing-library/react';
-import { userEvent } from 'vitest/browser';
-import { describe, expect, test } from 'vitest';
+import { userEvent } from 'vite-plus/test/browser';
+import { describe, expect, test } from 'vite-plus/test';
 
 import {
   Combobox,

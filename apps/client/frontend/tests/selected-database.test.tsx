@@ -6,7 +6,7 @@ import { act } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { hydrateRoot, type Root } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vite-plus/test';
 
 import { DEFAULT_DATABASE, SELECTED_DATABASE_KEY } from '@/lib/api/client';
 import {

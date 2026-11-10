@@ -7,7 +7,7 @@ import { render, waitFor, type RenderOptions, type RenderResult } from '@testing
 import type { UserEvent } from '@testing-library/user-event';
 import type { ReactElement, ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
-import { expect } from 'vitest';
+import { expect } from 'vite-plus/test';
 
 import { MotionProvider } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';

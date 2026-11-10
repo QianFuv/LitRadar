@@ -3,7 +3,7 @@
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 import { IconTriggerProvider, Search, useIconTrigger } from '@/components/ui/animated-icons';
 import { Button } from '@/components/ui/button';

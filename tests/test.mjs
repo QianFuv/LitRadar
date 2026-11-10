@@ -90,10 +90,9 @@ function integrationSteps() {
     pnpmStep("Generated OpenAPI idempotence", ["generate:api:check"]),
     pnpmStep("Shared frontend API contract", [
       "exec",
-      "vitest",
+      "vp",
+      "test",
       "run",
-      "--config",
-      "vitest.config.tsx",
       "tests/api-contract.test.tsx",
       "--project",
       "unit-jsdom",
@@ -125,7 +124,7 @@ function allSteps(isCi) {
     step("Go vet", "go", ["vet", "-mod=readonly", ...SERVER_PACKAGES]),
     pnpmStep("Frontend lint", ["lint"]),
     pnpmStep("Frontend formatting", ["format:check"]),
-    pnpmStep("Frontend type checking", ["exec", "tsc", "--noEmit"]),
+    pnpmStep("Frontend type checking", ["typecheck"]),
     ...integrationSteps(),
     pnpmStep(
       "Vitest jsdom",

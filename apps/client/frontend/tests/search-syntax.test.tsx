@@ -6,7 +6,7 @@ import { useQueryState, parseAsString } from 'nuqs';
 import { NuqsTestingAdapter } from 'nuqs/adapters/testing';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test } from 'vite-plus/test';
 
 import { SearchBar } from '@/components/feature/search-bar';
 import {

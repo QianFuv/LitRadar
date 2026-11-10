@@ -6,7 +6,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vite-plus/test';
 
 import { getNextArticlePageParam } from '@/components/feature/results-list';
 import { getArticles, getFolderArticlePage, type ArticlePage } from '@/lib/api';
