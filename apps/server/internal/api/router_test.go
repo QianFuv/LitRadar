@@ -29,57 +29,57 @@ import (
 
 const fixtureCsp = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
 
-func TestRouteCompatibilityOrderingAndCaptures(t *testing.T) {
+// fixtureMux installs synthetic handlers using the production router's matching semantics.
+func fixtureMux(routes []route) *http.ServeMux {
+	mux := http.NewServeMux()
+	for _, candidate := range routes {
+		mux.HandleFunc(candidate.operation.Method+" "+candidate.operation.Path, candidate.handler)
+	}
+	return mux
+}
+
+// TestServeMuxRoutingAndCaptures checks method routing, HEAD and escaped captures.
+func TestServeMuxRoutingAndCaptures(t *testing.T) {
 	routes := []route{}
 	for index, operation := range []openapi.Operation{
 		{Method: "GET", Path: "/api/x/{id}"},
-		{Method: "HEAD", Path: "/api/x/{id}"},
-		{Method: "GET", Path: "/api/x/{id}"},
-		{Method: "POST", Path: "/api/x/{name}"},
-		{Method: "POST", Path: "/api/x/fixed"},
-		{Method: "GET", Path: "/api/pair/{id}/{id}"},
+		{Method: "POST", Path: "/api/x/{id}"},
+		{Method: "GET", Path: "/api/x/fixed"},
 	} {
-		routes = append(routes, route{operation, func(writer http.ResponseWriter, request *http.Request) { fmt.Fprint(writer, index) }})
+		routes = append(routes, route{operation, func(writer http.ResponseWriter, request *http.Request) {
+			if _, err := fmt.Fprintf(writer, "%d:%s", index, request.PathValue("id")); err != nil {
+				t.Error(err)
+			}
+		}})
 	}
-	handler := &Handler{routes: compileRoutes(routes)}
-	for _, scenario := range []struct {
-		method, path, selected, label, allow, id, name string
-	}{
-		{"GET", "/api/x/a", "2", "/api/x/{id}", "", "a", ""},
-		{"HEAD", "/api/x/a", "2", "/api/x/{id}", "", "a", ""},
-		{"POST", "/api/x/a", "3", "/api/x/{name}", "", "", "a"},
-		{"DELETE", "/api/x/a", "", "/api/x/{id}", "GET,HEAD,HEAD,GET,HEAD", "", ""},
-		{"GET", "/api/x/fixed", "", "/api/x/fixed", "POST", "", ""},
-		{"GET", "/api/x/%2F", "2", "/api/x/{id}", "", "/", ""},
-		{"GET", "/api/x/%252F", "2", "/api/x/{id}", "", "%2F", ""},
-		{"GET", "/api/x/+", "2", "/api/x/{id}", "", "+", ""},
-		{"GET", "/api/x/%FF", "2", "/api/x/{id}", "", string([]byte{0xff}), ""},
-		{"GET", "/api/x/", "", "api.unmatched", "", "", ""},
-		{"GET", "/api/x/a/", "", "api.unmatched", "", "", ""},
-		{"GET", "/api/pair/first/last", "5", "/api/pair/{id}/{id}", "", "last", ""},
-		{"GET", "/page", "", "http.unmatched", "", "", ""},
+	handler := &Handler{mux: fixtureMux(routes)}
+	for _, scenario := range []struct{ method, path, body, pattern string }{
+		{"GET", "/api/x/a", "0:a", "/api/x/{id}"},
+		{"HEAD", "/api/x/a", "0:a", "/api/x/{id}"},
+		{"POST", "/api/x/a", "1:a", "/api/x/{id}"},
+		{"GET", "/api/x/fixed", "2:", "/api/x/fixed"},
+		{"GET", "/api/x/%252F", "0:%2F", "/api/x/{id}"},
+		{"GET", "/api/x/+", "0:+", "/api/x/{id}"},
 	} {
 		request := httptest.NewRequest(scenario.method, scenario.path, nil)
-		request.SetPathValue("prior", "preserved")
-		selected, label, allow := handler.route(request)
+		selected, pattern, allow := handler.route(request)
 		response := httptest.NewRecorder()
-		if selected != nil {
-			selected.ServeHTTP(response, request)
+		if selected == nil {
+			t.Fatal("missing route", scenario)
 		}
-		if response.Body.String() != scenario.selected || label != scenario.label || allow != scenario.allow || request.PathValue("id") != scenario.id || request.PathValue("name") != scenario.name || request.PathValue("prior") != "preserved" {
-			t.Fatalf("%+v: selected=%q label=%q allow=%q id=%q name=%q", scenario, response.Body.String(), label, allow, request.PathValue("id"), request.PathValue("name"))
+		selected.ServeHTTP(response, request)
+		if response.Body.String() != scenario.body || pattern != scenario.pattern || allow != "" {
+			t.Fatal(scenario, response.Body.String(), pattern, allow)
 		}
 	}
-	assertLastExplicitHeadDeclaration(t, handler, routes)
-
 }
 
-func TestRouteMalformedCapturesAreRejected(t *testing.T) {
-	for _, path := range []string{"/x/%", "/x/%2", "/x/%GG"} {
-		candidate := compileRoutes([]route{{openapi.Operation{Path: "/x/{id}"}, nil}})[0]
-		if candidate.matches(strings.Split(path, "/")) {
-			t.Fatal("malformed percent escape matched", path)
-		}
+// TestServeMuxMethodRejectionIncludesAllow checks method metadata and safe unmatched labels.
+func TestServeMuxMethodRejectionIncludesAllow(t *testing.T) {
+	handler := &Handler{mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/api/x/{id}"}, func(http.ResponseWriter, *http.Request) {}}})}
+	selected, label, allow := handler.route(httptest.NewRequest("DELETE", "/api/x/private", nil))
+	if selected != nil || label != "api.unmatched" || allow != "GET, HEAD" {
+		t.Fatal(selected, label, allow)
 	}
 }
 
@@ -141,7 +141,7 @@ func TestRouterSecurityCorsCacheAndPrivateLogs(t *testing.T) {
 		{"GET", "/page", "", "other=1", "", 404},
 		{"GET", "/api/auth/unknown", "present", "", "no-store", 404},
 		{"GET", "/api/unknown-private?secret=private-query", "", "", "", 404},
-		{"HEAD", "/page///?secret=private-query", "present", "", "private, no-store", 404},
+		{"HEAD", "/page///?secret=private-query", "present", "", "private, no-store", 307},
 		{"OPTIONS", "/api/auth/me", "present", "", "", 200},
 	} {
 		request := httptest.NewRequest(scenario.method, scenario.path, nil)
@@ -166,13 +166,14 @@ func TestRouterSecurityCorsCacheAndPrivateLogs(t *testing.T) {
 	}
 }
 
-func TestRouteStaticPriorityBacktrackingAndRawPath(t *testing.T) {
+// TestServeMuxMatchesMethodAndDecodedPath checks method-specific routing on decoded paths.
+func TestServeMuxMatchesMethodAndDecodedPath(t *testing.T) {
 	write := func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = writer.Write([]byte(request.PathValue("id")))
 	}
-	handler := &Handler{routes: compileRoutes([]route{{openapi.Operation{Method: "GET", Path: "/x/{id}/fixed/fixed"}, write}, {openapi.Operation{Method: "POST", Path: "/x/static/{id}/{tail}"}, write}})}
+	handler := &Handler{mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/x/{id}/fixed/fixed"}, write}, {openapi.Operation{Method: "POST", Path: "/x/static/{id}/{tail}"}, write}})}
 	for _, scenario := range []struct{ method, path, route, allow string }{
-		{"GET", "/x/static/fixed/fixed", "/x/static/{id}/{tail}", "POST"},
+		{"GET", "/x/static/fixed/fixed", "/x/{id}/fixed/fixed", ""},
 		{"GET", "/x/other/fixed/fixed", "/x/{id}/fixed/fixed", ""},
 		{"GET", "/x/%73tatic/fixed/fixed", "/x/{id}/fixed/fixed", ""},
 	} {
@@ -239,7 +240,7 @@ func TestCompleteRouterMcpAuthenticationAndStreaming(t *testing.T) {
 
 func TestMiddlewareFlushesBeforeStreamCompletion(t *testing.T) {
 	release := make(chan struct{})
-	handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, routes: compileRoutes([]route{{openapi.Operation{Method: "GET", Path: "/stream"}, func(writer http.ResponseWriter, request *http.Request) {
+	handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/stream"}, func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		_, _ = writer.Write([]byte("data: first\n\n"))
 		if err := http.NewResponseController(writer).Flush(); err != nil {
@@ -265,18 +266,6 @@ func TestMiddlewareFlushesBeforeStreamCompletion(t *testing.T) {
 	line, err := bufio.NewReader(response.Body).ReadString('\n')
 	if err != nil || line != "data: first\n" {
 		t.Fatal(line, err)
-	}
-}
-
-// assertLastExplicitHeadDeclaration checks declaration-order selection of an explicit HEAD handler.
-func assertLastExplicitHeadDeclaration(t *testing.T, handler *Handler, routes []route) {
-	t.Helper()
-	handler.routes = compileRoutes(routes[:2])
-	selected, _, _ := handler.route(httptest.NewRequest("HEAD", "/api/x/a", nil))
-	response := httptest.NewRecorder()
-	selected.ServeHTTP(response, httptest.NewRequest("HEAD", "/api/x/a", nil))
-	if response.Body.String() != "1" {
-		t.Fatal("last explicit HEAD declaration lost", response.Body.String())
 	}
 }
 

@@ -1,103 +1,118 @@
-// Package openapi owns the public schema declarations and checks their runtime bindings.
+// Package openapi registers Go-owned API contracts with Huma and net/http.
 package openapi
 
 import (
 	"bytes"
-	_ "embed"
+	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"io"
+	"net/http"
+	"reflect"
+	"strconv"
+
+	"github.com/QianFuv/LitRadar"
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
 )
 
-//go:embed definitions.json
-var definitions []byte
-
-//go:embed operations.json
-var operations []byte
-
-// Operation identifies a concrete registered handler and its stable public operation ID.
+// Operation identifies a live handler and its stable public operation ID.
 type Operation struct{ Method, Path, Id string }
 
-type declaration struct {
-	Method    string          `json:"method"`
-	Path      string          `json:"path"`
-	Operation json.RawMessage `json:"operation"`
+type noBody struct{}
+type replayBodyKey struct{}
+
+type replayReader struct {
+	io.Reader
+	io.Closer
 }
 
-// Generate emits the complete public document only when every declared operation
-// has exactly one matching live binding and no undocumented operation is supplied.
-// Declarations are Go-owned inputs; frozen migration expectations are never loaded.
+// New configures the public documentation and disables response schema injection.
+func New(mux *http.ServeMux) huma.API {
+	config := huma.DefaultConfig("LitRadar API", litradar.Version())
+	config.CreateHooks = nil
+	config.SchemasPath = ""
+	config.Info.Description = "LitRadar HTTP API, generated from Go request and response types."
+	config.Info.License = &huma.License{Name: "MIT", Identifier: "MIT"}
+	config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+		"bearer_auth":    {Type: "http", Scheme: "bearer"},
+		"session_cookie": {Type: "apiKey", In: "cookie", Name: "litradar_session"},
+	}
+	return humago.New(mux, config)
+}
+
+// Generate registers the same typed operations as the live API without deployment resources.
 func Generate(bindings []Operation) ([]byte, error) {
-	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal(definitions, &metadata); err != nil {
-		return nil, err
-	}
-	var declared []declaration
-	if err := json.Unmarshal(operations, &declared); err != nil {
-		return nil, err
-	}
-	remaining, err := indexOperationBindings(bindings)
-	if err != nil {
-		return nil, err
-	}
-	paths, err := bindDeclaredPaths(declared, remaining)
-	if err != nil {
-		return nil, err
-	}
-	if len(remaining) != 0 {
-		return nil, fmt.Errorf("undocumented API bindings: %d", len(remaining))
-	}
-	encodedPaths, err := json.Marshal(paths)
-	if err != nil {
-		return nil, err
-	}
-	metadata["paths"] = encodedPaths
-	var output bytes.Buffer
-	encoder := json.NewEncoder(&output)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(metadata); err != nil {
-		return nil, err
-	}
-	return output.Bytes(), nil
-}
-
-// indexOperationBindings rejects duplicate live routes before declaration matching.
-func indexOperationBindings(bindings []Operation) (map[string]Operation, error) {
-	remaining := make(map[string]Operation, len(bindings))
+	api := New(http.NewServeMux())
+	seen := make(map[string]bool, len(bindings))
 	for _, binding := range bindings {
 		key := binding.Method + " " + binding.Path
-		if _, exists := remaining[key]; exists {
+		if seen[key] {
 			return nil, fmt.Errorf("duplicate API binding: %s", key)
 		}
-		remaining[key] = binding
-	}
-	return remaining, nil
-}
-
-// bindDeclaredPaths consumes each route once after its operation identity is validated.
-func bindDeclaredPaths(declared []declaration, remaining map[string]Operation) (map[string]map[string]json.RawMessage, error) {
-	paths := make(map[string]map[string]json.RawMessage)
-	for _, item := range declared {
-		key := item.Method + " " + item.Path
-		binding, exists := remaining[key]
-		if !exists {
-			return nil, fmt.Errorf("missing API binding: %s", key)
-		}
-		var identity struct {
-			OperationId string `json:"operationId"`
-		}
-		if err := json.Unmarshal(item.Operation, &identity); err != nil {
+		seen[key] = true
+		if err := Register(api, binding, nil); err != nil {
 			return nil, err
 		}
-		if binding.Id != identity.OperationId {
-			return nil, fmt.Errorf("API binding identity mismatch: %s", key)
-		}
-		delete(remaining, key)
-		if paths[item.Path] == nil {
-			paths[item.Path] = make(map[string]json.RawMessage)
-		}
-		paths[item.Path][strings.ToLower(item.Method)] = item.Operation
 	}
-	return paths, nil
+	return json.Marshal(api.OpenAPI())
+}
+
+// registerOperation validates typed inputs and retains the handler's wire representation.
+func registerOperation[Input, Body any](api huma.API, operation huma.Operation, handler http.HandlerFunc) {
+	if reflect.TypeFor[Body]() != reflect.TypeFor[noBody]() {
+		schema := api.OpenAPI().Components.Schemas.Schema(reflect.TypeFor[Body](), true, operation.OperationID+"Response")
+		schema.Nullable = false
+		if reflect.TypeFor[Body]().Kind() == reflect.Pointer {
+			schema = nullableSchema(schema)
+		}
+		operation.Responses[strconv.Itoa(operation.DefaultStatus)] = &huma.Response{
+			Description: http.StatusText(operation.DefaultStatus),
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: schema},
+			},
+		}
+	}
+	if field, hasBody := reflect.TypeFor[Input]().FieldByName("Body"); hasBody {
+		operation.Middlewares = append(operation.Middlewares, replayRequestBody)
+		if field.Type.Kind() == reflect.Pointer {
+			operation.RequestBody = &huma.RequestBody{Content: map[string]*huma.MediaType{
+				"application/json": {Schema: nullableSchema(api.OpenAPI().Components.Schemas.Schema(field.Type, true, operation.OperationID+"Request"))},
+			}}
+		}
+	}
+	huma.Register[Input, huma.StreamResponse](api, operation, func(_ context.Context, _ *Input) (*huma.StreamResponse, error) {
+		return &huma.StreamResponse{Body: func(ctx huma.Context) {
+			request, writer := humago.Unwrap(ctx)
+			if buffer, ok := ctx.Context().Value(replayBodyKey{}).(*bytes.Buffer); ok {
+				request.Body = io.NopCloser(bytes.NewReader(buffer.Bytes()))
+			}
+			handler(writer, request)
+		}}, nil
+	})
+	for _, code := range []string{"429", "503"} {
+		if response := operation.Responses[code]; response != nil {
+			response.Headers = map[string]*huma.Param{
+				"Retry-After": {Description: "Seconds before retrying the request.", Schema: &huma.Schema{Type: "string"}},
+			}
+		}
+	}
+}
+
+// nullableSchema permits an explicit JSON null without changing a shared object definition.
+func nullableSchema(schema *huma.Schema) *huma.Schema {
+	return &huma.Schema{AnyOf: []*huma.Schema{schema, {Type: "null"}}}
+}
+
+// replayRequestBody retains the bounded Huma input bytes for the business decoder.
+func replayRequestBody(ctx huma.Context, next func(huma.Context)) {
+	// ponytail: bodies are decoded twice; remove replay when handlers consume typed inputs.
+	request, _ := humago.Unwrap(ctx)
+	buffer := &bytes.Buffer{}
+	original := request.Body
+	if original != nil {
+		request.Body = replayReader{Reader: io.TeeReader(original, buffer), Closer: original}
+	}
+	defer func() { request.Body = original }()
+	next(huma.WithContext(ctx, context.WithValue(ctx.Context(), replayBodyKey{}, buffer)))
 }

@@ -33,7 +33,9 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	response.prepare = func(status int) {
 		headers := writer.Header()
 		headers.Set("X-Request-Id", id)
-		headers.Set("Content-Security-Policy", handler.options.ContentSecurityPolicy)
+		if request.URL.Path != "/docs" || headers.Get("Content-Security-Policy") == "" {
+			headers.Set("Content-Security-Policy", handler.options.ContentSecurityPolicy)
+		}
 		headers.Set("X-Content-Type-Options", "nosniff")
 		headers.Set("Referrer-Policy", "same-origin")
 		headers.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
@@ -67,9 +69,9 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		selected.ServeHTTP(response, request)
 	case allow != "":
 		response.Header().Set("Allow", allow)
-		response.WriteHeader(http.StatusMethodNotAllowed)
+		(&apiError{status: http.StatusMethodNotAllowed, detail: http.StatusText(http.StatusMethodNotAllowed)}).write(response)
 	default:
-		response.WriteHeader(http.StatusNotFound)
+		(&apiError{status: http.StatusNotFound, detail: http.StatusText(http.StatusNotFound)}).write(response)
 	}
 	response.finish()
 	duration := time.Since(started)

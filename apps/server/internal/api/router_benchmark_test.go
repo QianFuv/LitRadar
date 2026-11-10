@@ -16,15 +16,15 @@ func BenchmarkRoute(b *testing.B) {
 	for _, group := range groups {
 		routes = append(routes, group...)
 	}
-	handler := &Handler{routes: compileRoutes(routes)}
+	handler := &Handler{mux: fixtureMux(routes)}
 	for _, scenario := range []struct {
 		name  string
 		index int
-	}{{"First", 0}, {"Middle", len(handler.routes) / 2}, {"Last", len(handler.routes) - 1}, {"Missing", -1}} {
+	}{{"First", 0}, {"Middle", len(routes) / 2}, {"Last", len(routes) - 1}, {"Missing", -1}} {
 		b.Run(scenario.name, func(b *testing.B) {
 			method, path, expected := "GET", "/api/benchmark-missing", ""
 			if scenario.index >= 0 {
-				operation := handler.routes[scenario.index].operation
+				operation := routes[scenario.index].operation
 				method, path, expected = operation.Method, operation.Path, operation.Path
 				parts := strings.Split(path, "/")
 				for index, part := range parts {

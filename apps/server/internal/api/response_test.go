@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/danielgtaylor/huma/v2"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -13,29 +15,49 @@ import (
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/query"
 )
 
-func TestErrorEnvelopesRetainStructuredDetailsAndRetrySemantics(t *testing.T) {
+// requireProblem checks the standard error body and rejects the retired envelope fields.
+func requireProblem(t testing.TB, response *httptest.ResponseRecorder, status int, detail string) huma.ErrorModel {
+	t.Helper()
+	var problem huma.ErrorModel
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err, response.Body.String())
+	}
+	if response.Code != status || problem.Status != status || problem.Title != http.StatusText(status) || response.Header().Get("Content-Type") != "application/problem+json" {
+		t.Fatal(response.Code, response.Header(), problem)
+	}
+	if detail != "" && problem.Detail != detail {
+		t.Fatalf("detail %q; want %q", problem.Detail, detail)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["code"] != nil || fields["retryable"] != nil {
+		t.Fatal("retired envelope", response.Body.String())
+	}
+	return problem
+}
+
+// TestProblemResponsesRetainDetailsAndRetryHeaders checks business failures against Huma's model.
+func TestProblemResponsesRetainDetailsAndRetryHeaders(t *testing.T) {
 	for _, scenario := range []struct {
 		failure *apiError
 		retry   string
-		fields  int
-		code    string
 	}{
-		{badRequest("bad filter"), "", 3, "bad_request"},
-		{serviceUnavailable(), "5", 3, "service_unavailable"},
-		{&apiError{status: 428, structured: map[string]any{"code": "login_required"}}, "", 1, ""},
-		{&apiError{status: 408, detail: "timed out"}, "", 3, "request_failed"},
+		{badRequest("bad filter"), ""},
+		{serviceUnavailable(), "5"},
+		{&apiError{status: 429, detail: "rate limited"}, "5"},
+		{&apiError{status: 428, structured: map[string]string{"code": "login_required", "message": "Sign in first", "phase": "fulltext"}}, ""},
+		{&apiError{status: 408, detail: "timed out"}, ""},
 	} {
-		recorder := httptest.NewRecorder()
-		scenario.failure.write(recorder)
-		var payload map[string]any
-		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-			t.Fatal(err)
+		response := httptest.NewRecorder()
+		scenario.failure.write(response)
+		problem := requireProblem(t, response, scenario.failure.status, "")
+		if response.Header().Get("Retry-After") != scenario.retry {
+			t.Fatal(response.Header())
 		}
-		if recorder.Code != scenario.failure.status || recorder.Header().Get("Content-Type") != "application/json" || recorder.Header().Get("Retry-After") != scenario.retry || len(payload) != scenario.fields {
-			t.Fatalf("response: %d %v %v", recorder.Code, recorder.Header(), payload)
-		}
-		if scenario.fields == 3 && (payload["code"] != scenario.code || payload["retryable"] != (scenario.retry != "")) {
-			t.Fatalf("envelope: %v", payload)
+		if scenario.failure.structured != nil && (problem.Detail != "Sign in first" || len(problem.Errors) != 2 || problem.Errors[0].Location != "code" || problem.Errors[0].Message != "login_required") {
+			t.Fatal(problem)
 		}
 	}
 }

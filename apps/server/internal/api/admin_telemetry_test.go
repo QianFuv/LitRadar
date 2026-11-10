@@ -59,7 +59,7 @@ func TestAdminTelemetryAuthorizationAndShape(t *testing.T) {
 
 // httpTelemetryHandler exposes the concrete administrator handler for focused admission checks.
 func httpTelemetryHandler(handlers *adminHandlers) *Handler {
-	return &Handler{routes: compileRoutes([]route{{operation: handlers.routes()[0].operation, handler: handlers.loadTelemetry}})}
+	return &Handler{mux: fixtureMux([]route{{operation: handlers.routes()[0].operation, handler: handlers.loadTelemetry}})}
 }
 
 // TestHttpSearchTelemetryPrivacyStoredRows exercises real auth, routes and MATCH execution before inspecting SQLite.
@@ -75,7 +75,7 @@ func TestHttpSearchTelemetryPrivacyStoredRows(t *testing.T) {
 	}
 	defer collector.Close()
 	indexes := indexHandlers{storage: configuration, authenticator: auth.authenticator, pool: auth.pool}
-	handler := &Handler{routes: compileRoutes(indexes.routes()), telemetry: collector}
+	handler := &Handler{mux: fixtureMux(indexes.routes()), telemetry: collector}
 	secret := "private_search_canary"
 	for _, path := range []string{"/api/articles?q=" + url.QueryEscape(secret), "/api/articles/private_identifier_canary", "/api/private_path_canary?token=private_query_canary"} {
 		request := httptest.NewRequest("GET", path, nil)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/danielgtaylor/huma/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -147,11 +148,11 @@ func TestRestListenerWireContract(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/articles", func(writer http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer synthetic-fixture" {
-			_ = JSON(writer, 401, ErrorEnvelope{"Authentication required", "unauthorized", false})
+			_ = JSON(writer, 401, huma.NewError(401, "Authentication required"))
 			return
 		}
 		if _, err := strconv.ParseInt(request.URL.Query().Get("limit"), 10, 64); err != nil {
-			_ = JSON(writer, 400, ErrorEnvelope{"Invalid integer for limit", "bad_request", false})
+			_ = JSON(writer, 400, huma.NewError(400, "Invalid integer for limit"))
 			return
 		}
 		_ = JSON(writer, 200, page)
@@ -174,8 +175,8 @@ func TestRestListenerWireContract(t *testing.T) {
 		body                                           string
 		isJson                                         bool
 	}{
-		{"auth-before-query", "/api/articles?limit=abc", "GET", "", "", 401, `{"detail":"Authentication required","code":"unauthorized","retryable":false}`, true},
-		{"query-error", "/api/articles?limit=abc", "GET", "Bearer synthetic-fixture", "", 400, `{"detail":"Invalid integer for limit","code":"bad_request","retryable":false}`, true},
+		{"auth-before-query", "/api/articles?limit=abc", "GET", "", "", 401, `{"title":"Unauthorized","status":401,"detail":"Authentication required"}`, true},
+		{"query-error", "/api/articles?limit=abc", "GET", "Bearer synthetic-fixture", "", 400, `{"title":"Bad Request","status":400,"detail":"Invalid integer for limit"}`, true},
 		{"page", "/api/articles?db=scenario.sqlite&limit=10&offset=0&include_total=true", "GET", "Bearer synthetic-fixture", "", 200, string(expected), true},
 		{"empty-array", "/api/announcements", "GET", "", "", 200, `[]`, false},
 		{"redirect", "/api/articles/9001/abstract?db=fixture", "GET", "", "", 307, "", false},
@@ -206,7 +207,11 @@ func TestRestListenerWireContract(t *testing.T) {
 				if !reflect.DeepEqual(actual, decoded(t, []byte(scenario.body))) {
 					t.Fatalf("contract mismatch: %s", body)
 				}
-				if response.Header.Get("Content-Type") != "application/json" {
+				expectedType := "application/json"
+				if scenario.status >= 400 {
+					expectedType = "application/problem+json"
+				}
+				if response.Header.Get("Content-Type") != expectedType {
 					t.Fatal(response.Header)
 				}
 			} else if string(body) != scenario.body {

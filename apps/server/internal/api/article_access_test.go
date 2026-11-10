@@ -116,8 +116,11 @@ func TestArticleFallbackErrorPriorityAndSafeResponse(t *testing.T) {
 				if scenario.status == 503 && writer.Header().Get("Retry-After") != "5" {
 					t.Fatal(writer.Header())
 				}
-				if scenario.status == 428 && !strings.Contains(writer.Body.String(), `"action":"`+action+`"`) {
-					t.Fatal(writer.Body.String())
+				if scenario.status == 428 {
+					problem := requireProblem(t, writer, 428, "")
+					if len(problem.Errors) != 2 || problem.Errors[0].Location != "action" || problem.Errors[0].Message != action {
+						t.Fatal(problem)
+					}
 				}
 			}
 		})

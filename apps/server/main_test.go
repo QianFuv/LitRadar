@@ -63,7 +63,7 @@ func TestServerProductionWithoutUI(t *testing.T) {
 		status int
 	}{
 		{"/", 404}, {"/login", 404}, {"/missing-page", 404}, {"/page/", 404}, {"/_next/static/asset.js", 404},
-		{"/health/ready", 200}, {"/docs", 303}, {"/docs/", 200}, {"/openapi.json", 200}, {"/api/auth/me", 401},
+		{"/health/ready", 200}, {"/docs", 200}, {"/docs/", 303}, {"/openapi.json", 200}, {"/api/auth/me", 401},
 	} {
 		response, err := client.Get(base + scenario.path)
 		if err != nil {

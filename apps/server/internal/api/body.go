@@ -87,7 +87,7 @@ func extractBodyWithLimit(request *http.Request, kind bodyType, isOptional bool,
 		contentType = contentTypes[0]
 	}
 	if !isJsonContentType(contentType) {
-		return nil, &apiError{status: 415, detail: "Expected request with `Content-Type: application/json`", isPlain: true}
+		return nil, &apiError{status: 415, detail: "Expected request with `Content-Type: application/json`"}
 	}
 	body, failure := bufferRequestBodyLimit(request, limit)
 	if failure != nil {
@@ -108,10 +108,10 @@ func extractBodyWithLimit(request *http.Request, kind bodyType, isOptional bool,
 func bufferRequestBodyLimit(request *http.Request, limit int64) ([]byte, *apiError) {
 	body, err := io.ReadAll(io.LimitReader(request.Body, limit+1))
 	if int64(len(body)) > limit {
-		return nil, &apiError{status: 413, detail: "Failed to buffer the request body: length limit exceeded", isPlain: true}
+		return nil, &apiError{status: 413, detail: "Failed to buffer the request body: length limit exceeded"}
 	}
 	if err != nil {
-		return nil, &apiError{status: 400, detail: "Failed to buffer the request body: " + err.Error(), isPlain: true}
+		return nil, &apiError{status: 400, detail: "Failed to buffer the request body: " + err.Error()}
 	}
 	return body, nil
 }
@@ -125,7 +125,7 @@ func bodyRejection(failure *bodyFailure) *apiError {
 	if failure.path != "" {
 		prefix += failure.path + ": "
 	}
-	return &apiError{status: status, detail: prefix + failure.detail, isPlain: true}
+	return &apiError{status: status, detail: prefix + failure.detail}
 }
 
 func (scanner *bodyScanner) dataFailure(message string) error {

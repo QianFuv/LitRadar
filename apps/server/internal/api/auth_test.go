@@ -203,7 +203,8 @@ func TestLogoutUnconfirmedClearsCookieAndKeepsDedicatedError(t *testing.T) {
 	request = request.WithContext(context.WithValue(request.Context(), requestIdKey{}, "logout-request"))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != 503 || !strings.Contains(response.Body.String(), `"code":"session_revocation_unconfirmed"`) || response.Header().Get("Retry-After") != "" || !strings.Contains(response.Header().Get("Set-Cookie"), "Max-Age=0") {
+	problem := requireProblem(t, response, 503, "Session revocation could not be confirmed")
+	if len(problem.Errors) != 2 || problem.Errors[0].Location != "code" || problem.Errors[0].Message != "session_revocation_unconfirmed" || response.Header().Get("Retry-After") != "5" || !strings.Contains(response.Header().Get("Set-Cookie"), "Max-Age=0") {
 		t.Fatal(response.Code, response.Header(), response.Body.String())
 	}
 	if !strings.Contains(logs.String(), "security.auth.revocation_unconfirmed") || !strings.Contains(logs.String(), "security.audit.persistence_failed") {

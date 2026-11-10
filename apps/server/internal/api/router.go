@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"slices"
 	"strings"
 
@@ -55,8 +54,7 @@ type Options struct {
 // Handler serves the complete REST and stateful MCP surface using borrowed services.
 type Handler struct {
 	telemetry *telemetry.Collector
-	routes    []compiledRoute
-	document  []byte
+	mux       *http.ServeMux
 	mcp       *mcpcompat.Handler
 	options   Options
 }
@@ -93,17 +91,14 @@ func New(services Services, options Options) (*Handler, error) {
 		(&articleHandlers{storage: services.Storage, authenticator: authenticator, settings: settingsRepository, sessions: sessions, providers: providers, pool: services.StoragePool, upstream: services.UpstreamPool}).routes(),
 		(&trackingHandlers{storage: services.Storage, repository: services.Delivery, favorites: favoriteRepository, settings: settingsRepository, codec: services.Codec, authenticator: authenticator, pool: services.StoragePool}).routes(),
 	}
-	routes := []route{}
-	bindings := []openapi.Operation{}
+	mux := http.NewServeMux()
+	contract := openapi.New(mux)
 	for _, group := range groups {
-		routes = append(routes, group...)
-		for _, route := range group {
-			bindings = append(bindings, route.operation)
+		for _, candidate := range group {
+			if err := openapi.Register(contract, candidate.operation, candidate.handler); err != nil {
+				return nil, err
+			}
 		}
-	}
-	document, err := openapi.Generate(bindings)
-	if err != nil {
-		return nil, err
 	}
 	server, err := mcp.NewServer(mcp.Services{Storage: services.Storage, Favorites: favoriteRepository, Pool: services.StoragePool, Telemetry: services.Telemetry})
 	if err != nil {
@@ -114,7 +109,12 @@ func New(services Services, options Options) (*Handler, error) {
 	options.McpHosts = slices.Clone(options.McpHosts)
 	options.McpOrigins = slices.Clone(options.McpOrigins)
 	handler := mcpcompat.NewWithPolicy(server, authenticator.McpAuthorize, mcpcompat.HostOriginPolicy{AllowedHosts: options.McpHosts, AllowedOrigins: options.McpOrigins})
-	return &Handler{telemetry: services.Telemetry, routes: compileRoutes(routes), document: document, mcp: handler, options: options}, nil
+	mux.Handle("/mcp", handler)
+	mux.Handle("/mcp/", handler)
+	mux.HandleFunc("GET /docs/{$}", func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, "/docs", http.StatusSeeOther)
+	})
+	return &Handler{telemetry: services.Telemetry, mux: mux, mcp: handler, options: options}, nil
 }
 
 // validateApiServices checks borrowed resources before validating router options.
@@ -145,144 +145,40 @@ func GenerateOpenAPI() ([]byte, error) {
 	return openapi.Generate(bindings)
 }
 
-// route selects reserved endpoints before ranked application routes.
+// route obtains bounded telemetry labels and method policy from ServeMux.
 func (handler *Handler) route(request *http.Request) (http.Handler, string, string) {
-	path := request.URL.EscapedPath()
-	if endpoint, pattern, allow, isHandled := handler.reservedRoute(request, path); isHandled {
-		return endpoint, pattern, allow
-	}
-	pathParts := strings.Split(path, "/")
-	selected := handler.selectRoute(pathParts, request.Method)
-	if selected != nil {
-		if !selected.matchesMethod(request.Method) {
-			return nil, selected.operation.Path, selected.allow
+	selected, pattern := handler.mux.Handler(request)
+	if pattern == "" {
+		response := &routeResponse{headers: make(http.Header)}
+		selected.ServeHTTP(response, request)
+		switch response.status {
+		case http.StatusNotFound:
+			return nil, unmatchedRoute(request.URL.EscapedPath()), ""
+		case http.StatusMethodNotAllowed:
+			return nil, unmatchedRoute(request.URL.EscapedPath()), response.headers.Get("Allow")
+		default:
+			return selected, unmatchedRoute(request.URL.EscapedPath()), ""
 		}
-		selected.bindParameters(request, pathParts)
-		return selected.handler, selected.operation.Path, ""
 	}
-	return nil, unmatchedRoute(path), ""
+	if _, path, hasMethod := strings.Cut(pattern, " "); hasMethod {
+		pattern = path
+	}
+	return http.HandlerFunc(handler.mux.ServeHTTP), pattern, ""
 }
 
-// reservedRoute retains the method policy of MCP, documentation and schema endpoints.
-func (handler *Handler) reservedRoute(request *http.Request, path string) (http.Handler, string, string, bool) {
-	if path == "/mcp" || strings.HasPrefix(path, "/mcp/") {
-		return handler.mcp, "/mcp", "", true
-	}
-	if path == "/docs" || strings.HasPrefix(path, "/docs/") {
-		if request.Method != "GET" && request.Method != "HEAD" {
-			return nil, "/docs/{*rest}", "GET,HEAD", true
-		}
-		return http.HandlerFunc(openapi.ServeDocs), "/docs/{*rest}", "", true
-	}
-	if path == "/openapi.json" {
-		if request.Method != "GET" && request.Method != "HEAD" {
-			return nil, path, "GET,HEAD", true
-		}
-		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			writer.Header().Set("Content-Type", "application/json")
-			_, _ = writer.Write(handler.document)
-		}), path, "", true
-	}
-	return nil, "", "", false
+type routeResponse struct {
+	headers http.Header
+	status  int
 }
 
-// selectRoute prefers static specificity, then the last matching method at that score.
-func (handler *Handler) selectRoute(pathParts []string, method string) *compiledRoute {
-	var selected *compiledRoute
-	best := ""
-	for index := range handler.routes {
-		candidate := &handler.routes[index]
-		score := candidate.score
-		if score < best || !candidate.matches(pathParts) {
-			continue
-		}
-		if score > best {
-			selected = candidate
-			best = score
-		}
-		if candidate.matchesMethod(method) {
-			selected = candidate
-		}
-	}
-	return selected
-}
+// Header retains the standard router's method metadata.
+func (response *routeResponse) Header() http.Header { return response.headers }
 
-// matchesMethod includes the GET fallback for HEAD requests.
-func (candidate *compiledRoute) matchesMethod(method string) bool {
-	return candidate.operation.Method == method || method == "HEAD" && candidate.operation.Method == "GET"
-}
+// WriteHeader records a router rejection without committing the public response.
+func (response *routeResponse) WriteHeader(status int) { response.status = status }
 
-// bindParameters decodes each capture once, retaining last-wins duplicate names.
-func (candidate *compiledRoute) bindParameters(request *http.Request, pathParts []string) {
-	for index, part := range candidate.parts {
-		if part.isParameter {
-			value, _ := url.PathUnescape(pathParts[index])
-			request.SetPathValue(part.text, value)
-		}
-	}
-}
-
-type routePart struct {
-	text        string
-	isParameter bool
-}
-
-type compiledRoute struct {
-	route
-	parts []routePart
-	score string
-	allow string
-}
-
-func compileRoutes(routes []route) []compiledRoute {
-	methods := make(map[string][]string)
-	for _, candidate := range routes {
-		path := candidate.operation.Path
-		methods[path] = append(methods[path], candidate.operation.Method)
-		if candidate.operation.Method == "GET" {
-			methods[path] = append(methods[path], "HEAD")
-		}
-	}
-	result := make([]compiledRoute, len(routes))
-	for index, candidate := range routes {
-		compiled := compiledRoute{route: candidate, allow: strings.Join(methods[candidate.operation.Path], ",")}
-		var score strings.Builder
-		for _, text := range strings.Split(candidate.operation.Path, "/") {
-			part := routePart{text: text, isParameter: strings.HasPrefix(text, "{") && strings.HasSuffix(text, "}")}
-			if part.isParameter {
-				part.text = text[1 : len(text)-1]
-				score.WriteByte('0')
-			} else {
-				score.WriteByte('1')
-			}
-			compiled.parts = append(compiled.parts, part)
-		}
-		compiled.score = score.String()
-		result[index] = compiled
-	}
-	return result
-}
-
-func (candidate *compiledRoute) matches(pathParts []string) bool {
-	if len(candidate.parts) != len(pathParts) {
-		return false
-	}
-	for index, part := range candidate.parts {
-		if part.isParameter {
-			if pathParts[index] == "" {
-				return false
-			}
-			if strings.Contains(pathParts[index], "%") {
-				if _, err := url.PathUnescape(pathParts[index]); err != nil {
-					return false
-				}
-			}
-		} else if part.text != pathParts[index] {
-			return false
-		}
-	}
-	return true
-}
+// Write discards the standard router's plain-text rejection body.
+func (response *routeResponse) Write(data []byte) (int, error) { return len(data), nil }
 
 func unmatchedRoute(path string) string {
 	for _, prefix := range []string{"/api", "/mcp", "/health"} {

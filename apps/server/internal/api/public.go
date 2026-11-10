@@ -7,7 +7,6 @@ import (
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/openapi"
 	"github.com/QianFuv/LitRadar/apps/server/internal/platform/executor"
-	"github.com/QianFuv/LitRadar/apps/server/internal/platform/httpwire"
 	"github.com/QianFuv/LitRadar/apps/server/internal/scheduler"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/announcements"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/config"
@@ -30,6 +29,7 @@ func (handlers *publicHandlers) routes() []route {
 	}
 }
 
+// ready reports scheduler admission failures using the retryable problem contract.
 func (handlers *publicHandlers) ready(writer http.ResponseWriter, request *http.Request) {
 	now := currentTimestamp()
 	isHealthy, err := executor.RunWithQueueTimeout(request.Context(), handlers.pool, time.Second, func() (bool, error) {
@@ -44,11 +44,13 @@ func (handlers *publicHandlers) ready(writer http.ResponseWriter, request *http.
 		}
 		return false, nil
 	})
-	status, label := 503, "unhealthy"
-	if err == nil && isHealthy {
-		status, label = 200, "ok"
+	if err != nil || !isHealthy {
+		failure := serviceUnavailable()
+		failure.detail = "Scheduler is not ready"
+		failure.write(writer)
+		return
 	}
-	_ = httpwire.JSON(writer, status, map[string]string{"status": label})
+	writeResponse(writer, map[string]string{"status": "ok"})
 }
 
 func (handlers *publicHandlers) announcements(writer http.ResponseWriter, request *http.Request) {

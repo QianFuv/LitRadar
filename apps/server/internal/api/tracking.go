@@ -58,7 +58,7 @@ func (handlers *trackingHandlers) routes() []route {
 func (handlers *trackingHandlers) handle(writer http.ResponseWriter, request *http.Request, operation string) {
 	runId := request.PathValue("run_id")
 	if !utf8.ValidString(runId) {
-		(&apiError{status: 400, detail: "Invalid URL: Invalid UTF-8 in `run_id`", isPlain: true}).write(writer)
+		(&apiError{status: 400, detail: "Invalid URL: Invalid UTF-8 in `run_id`"}).write(writer)
 		return
 	}
 	var update domain.NotificationSettingsUpdate

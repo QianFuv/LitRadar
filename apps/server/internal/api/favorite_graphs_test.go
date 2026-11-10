@@ -98,9 +98,7 @@ func TestRelationGraphFavoriteLifecycle(t *testing.T) {
 	}
 	for _, operation := range []struct{ method, body string }{{"GET", ""}, {"PUT", `{"title":"missing"}`}, {"DELETE", ""}} {
 		response = requireGraphRequest(t, router, token, operation.method, path, operation.body, 404)
-		if response.Body.String() != `{"detail":"Graph not found","code":"not_found","retryable":false}` {
-			t.Fatal(response.Body.String())
-		}
+		requireProblem(t, response, 404, "Graph not found")
 	}
 }
 
@@ -181,15 +179,11 @@ func TestRelationGraphFavoriteValidation(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			response := requireGraphRequest(t, router, token, scenario.method, scenario.path, scenario.body, scenario.status)
-			if response.Header().Get("Content-Type") == "application/json" && (!strings.Contains(response.Body.String(), `"code":"bad_request"`) || !strings.Contains(response.Body.String(), `"retryable":false`)) {
-				t.Fatal(response.Body.String())
-			}
+			requireProblem(t, response, scenario.status, "")
 		})
 	}
 	response := requireGraphRequest(t, router, token, "GET", base+"?cursor=bad", "", 400)
-	if response.Body.String() != `{"detail":"Invalid favorite pagination cursor","code":"bad_request","retryable":false}` {
-		t.Fatal(response.Body.String())
-	}
+	requireProblem(t, response, 400, "Invalid favorite pagination cursor")
 }
 
 // TestRelationGraphFavoriteSizeBoundary accepts full snapshots and rejects byte oversize.
@@ -209,14 +203,10 @@ func TestRelationGraphFavoriteSizeBoundary(t *testing.T) {
 		{"PUT", path, `{"node_count":1,"graph":` + oversize + `}`},
 	} {
 		response := requireGraphRequest(t, router, token, operation.method, operation.path, operation.body, 413)
-		if response.Body.String() != `{"detail":"graph must be at most 2 MiB","code":"payload_too_large","retryable":false}` {
-			t.Fatal(response.Body.String())
-		}
+		requireProblem(t, response, 413, "graph must be at most 2 MiB")
 	}
 	response := requireGraphRequest(t, router, token, "POST", base, strings.Repeat(" ", 3*1024*1024+1), 413)
-	if response.Header().Get("Content-Type") != "text/plain; charset=utf-8" || response.Body.String() != "Failed to buffer the request body: length limit exceeded" {
-		t.Fatal(response.Body.String())
-	}
+	requireProblem(t, response, 413, "Failed to buffer the request body: length limit exceeded")
 }
 
 // TestRelationGraphFavoriteRegisteredRoutesAndContract checks production routing and offline generation.
@@ -224,7 +214,10 @@ func TestRelationGraphFavoriteRegisteredRoutesAndContract(t *testing.T) {
 	router, _, token := completeRouter(t)
 	const base = "/api/favorites/graphs"
 	requireGraphRequest(t, router, token, "GET", "/api/favorites/folders", "", 200)
-	created := decodeGraphResponse(t, requireGraphRequest(t, router, token, "POST", base, graphRequestBody("production", 1, `{}`), 200))
+	created := decodeGraphResponse(t, requireGraphRequest(t, router, token, "POST", base, graphRequestBody("production", 1, `{"large":9007199254740993}`), 200))
+	if string(created.Graph) != `{"large":9007199254740993}` {
+		t.Fatal("validated request lost snapshot precision", string(created.Graph))
+	}
 	path := fmt.Sprintf("%s/%d", base, created.Id)
 	requireGraphRequest(t, router, token, "GET", base, "", 200)
 	requireGraphRequest(t, router, token, "GET", path, "", 200)

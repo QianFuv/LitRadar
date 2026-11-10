@@ -6,6 +6,7 @@ toolchain go1.27.3
 
 require (
 	github.com/PuerkitoBio/goquery v1.13.0
+	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/danieljoos/wincred v1.2.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/nlnwa/whatwg-url v0.6.2

@@ -942,7 +942,7 @@ async function verifyCfpHelpers() {
       containerName,
       "obscura",
       "fetch",
-      "http://127.0.0.1:8000/docs/",
+      "http://127.0.0.1:8000/docs",
       "--stealth",
       "--timeout",
       "5",
@@ -964,7 +964,7 @@ async function verifyCfpHelpers() {
     containerName,
     "obscura",
     "fetch",
-    "http://127.0.0.1:8000/docs/",
+    "http://127.0.0.1:8000/docs",
     "--stealth",
     "--timeout",
     "30",
@@ -990,9 +990,9 @@ async function verifyCfpHelpers() {
   );
   assertInvariant(
     page.protocol === "litradar.cfp.page.v1" &&
-      page.finalUrl === "http://127.0.0.1:8000/docs/" &&
+      page.finalUrl === "http://127.0.0.1:8000/docs" &&
       typeof page.html === "string" &&
-      page.html.includes("swagger-ui"),
+      page.html.includes("elements-api"),
     "CFP browser did not evaluate the original-HTML protocol",
   );
   await runDocker(["exec", containerName, "rm", "/tmp/cfp-browser-smoke.json"]);
@@ -1116,9 +1116,9 @@ async function verifySmokeHttpResponses(
       `server UI route must return 404: ${route}`,
     );
   }
-  const docs = await fetchRuntime(`${baseUrl}/docs/`);
+  const docs = await fetchRuntime(`${baseUrl}/docs`);
   assertInvariant(
-    docs.ok && (await docs.text()).includes("Swagger"),
+    docs.ok && (await docs.text()).includes("elements-api"),
     "docs unavailable",
   );
   const openApi = await openApiResponse.json();

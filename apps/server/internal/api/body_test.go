@@ -82,7 +82,7 @@ func TestBodyHeadersAndBufferFailuresPreserveAdmissionOrder(t *testing.T) {
 		request.Header["Content-Type"] = test.headers
 		request.Body = io.NopCloser(&bodyErrorReader{remaining: test.size})
 		_, failure := extractBody(request, requestBodies["TokenCreateRequest"], true)
-		if failure == nil || failure.status != test.status || !failure.isPlain {
+		if failure == nil || failure.status != test.status {
 			t.Fatalf("failure=%+v", failure)
 		}
 	}

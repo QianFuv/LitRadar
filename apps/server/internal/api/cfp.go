@@ -157,7 +157,7 @@ func (handlers *cfpHandlers) catalog(writer http.ResponseWriter, request *http.R
 func (handlers *cfpHandlers) notices(writer http.ResponseWriter, request *http.Request) {
 	catalogId := request.PathValue("catalog_id")
 	if !utf8.ValidString(catalogId) {
-		(&apiError{status: 400, detail: "Invalid URL: Invalid UTF-8 in `catalog_id`", isPlain: true}).write(writer)
+		(&apiError{status: 400, detail: "Invalid URL: Invalid UTF-8 in `catalog_id`"}).write(writer)
 		return
 	}
 	query, failure := extractQuery(request.URL.RawQuery, map[string]queryKind{"db": queryText, "include_closed": queryBoolean, "limit": queryUnsigned, "cursor": queryText})

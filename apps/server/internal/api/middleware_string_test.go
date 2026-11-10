@@ -146,7 +146,7 @@ func TestPolicyLargeStringHttpResponse(t *testing.T) {
 	value := strings.Repeat("中<&>", 262144)
 	expected := "prefix" + value + "suffix"
 	for _, hasLength := range []bool{false, true} {
-		handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, routes: compileRoutes([]route{{openapi.Operation{Method: "GET", Path: "/api/large-string"}, func(writer http.ResponseWriter, request *http.Request) {
+		handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/api/large-string"}, func(writer http.ResponseWriter, request *http.Request) {
 			writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			if hasLength {
 				writer.Header().Set("Content-Length", strconv.Itoa(len(expected)))
@@ -266,7 +266,7 @@ func BenchmarkPolicyHttpStringResponses(b *testing.B) {
 					if format == "JSON" {
 						expectedLength = len(encoded)
 					}
-					handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, routes: compileRoutes([]route{{openapi.Operation{Method: "GET", Path: "/api/benchmark"}, func(writer http.ResponseWriter, request *http.Request) {
+					handler := &Handler{options: Options{ContentSecurityPolicy: fixtureCsp}, mux: fixtureMux([]route{{openapi.Operation{Method: "GET", Path: "/api/benchmark"}, func(writer http.ResponseWriter, request *http.Request) {
 						if !usesStrings {
 							writer = struct{ http.ResponseWriter }{writer}
 						}

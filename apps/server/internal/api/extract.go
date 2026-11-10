@@ -112,7 +112,7 @@ func decodeUnsignedQuery(name, value string) (any, *apiError) {
 }
 
 func queryRejection(detail string) *apiError {
-	return &apiError{status: 400, detail: "Failed to deserialize query string: " + detail, isPlain: true}
+	return &apiError{status: 400, detail: "Failed to deserialize query string: " + detail}
 }
 
 // formDecode reuses valid unescaped text and retains permissive decoding for all other bytes.
@@ -144,11 +144,11 @@ func formDecode(value string) string {
 func extractPathInteger(request *http.Request, name string) (int64, *apiError) {
 	value := request.PathValue(name)
 	if !utf8.ValidString(value) {
-		return 0, &apiError{status: 400, detail: "Invalid URL: Invalid UTF-8 in `" + name + "`", isPlain: true}
+		return 0, &apiError{status: 400, detail: "Invalid URL: Invalid UTF-8 in `" + name + "`"}
 	}
 	number, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		return 0, &apiError{status: 400, detail: "Invalid URL: Cannot parse `" + value + "` to a `i64`", isPlain: true}
+		return 0, &apiError{status: 400, detail: "Invalid URL: Cannot parse `" + value + "` to a `i64`"}
 	}
 	return number, nil
 }

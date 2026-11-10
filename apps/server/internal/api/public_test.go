@@ -41,6 +41,13 @@ func TestPublicHealthAndAnnouncementsRemainUnauthenticated(t *testing.T) {
 	check := func(path string, status int, body string) {
 		t.Helper()
 		response := authRequest(router, "GET", path, "", "")
+		if status == 503 {
+			requireProblem(t, response, status, "Scheduler is not ready")
+			if response.Header().Get("Retry-After") != "5" {
+				t.Fatal(response.Header())
+			}
+			return
+		}
 		if response.Code != status || response.Body.String() != body {
 			t.Fatal(path, response.Code, response.Body.String())
 		}
