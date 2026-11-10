@@ -23,7 +23,7 @@ func (connection *Connection) Close() error {
 	return errors.Join(connection.Conn.Close(), connection.database.Close())
 }
 
-// OpenContent opens the runtime content role without creating parent directories or upgrading legacy schemas.
+// OpenContent opens runtime content and rebuilds obsolete search storage on supported layouts.
 func OpenContent(ctx context.Context, path string) (*Connection, error) {
 	database, err := sqlite.Open(path, false, 1)
 	if err != nil {
@@ -60,17 +60,8 @@ func (err *InvalidContentSchema) Error() string {
 	return fmt.Sprintf("invalid content schema v%d: %s", indexschema.Version, err.Message)
 }
 
-// InitContent accepts existing v6-v10 schemas or atomically initializes a completely empty database.
+// InitContent rebuilds obsolete search on supported layouts or initializes an empty database.
 func InitContent(ctx context.Context, connection *sql.Conn) error {
-	isSimple, err := search.UsesSimple(ctx, connection)
-	if err != nil {
-		return err
-	}
-	if isSimple {
-		if err := sqlite.LoadSimple(connection); err != nil {
-			return err
-		}
-	}
 	if _, err := connection.ExecContext(ctx, "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"); err != nil {
 		return err
 	}
@@ -79,6 +70,18 @@ func InitContent(ctx context.Context, connection *sql.Conn) error {
 		return err
 	}
 	if version >= 6 && version <= sqlite.Integer(indexschema.Version) {
+		shouldRebuild, err := search.NeedsRebuild(ctx, connection)
+		if err != nil {
+			return err
+		}
+		if shouldRebuild {
+			if err := indexschema.ValidateRebuildSource(ctx, connection, int(version)); err != nil {
+				return &InvalidContentSchema{err.Error()}
+			}
+			if err := immediate(ctx, connection, func() error { return search.Ensure(ctx, connection) }); err != nil {
+				return err
+			}
+		}
 		return validateContent(ctx, connection, int(version))
 	}
 	if version != 0 || count != 0 {
@@ -139,9 +142,6 @@ func jsonArray(value any) (string, error) {
 func isTrimmed(value string) bool { return value != "" && strings.TrimSpace(value) == value }
 
 func initializeEmptyContent(ctx context.Context, connection *sql.Conn) error {
-	if err := sqlite.LoadSimple(connection); err != nil {
-		return err
-	}
 	if err := immediate(ctx, connection, func() error {
 		_, err := connection.ExecContext(ctx, indexschema.ContentTables+fmt.Sprintf("\nPRAGMA user_version=%d;", indexschema.Version))
 		return err

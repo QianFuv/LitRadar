@@ -80,11 +80,7 @@ type resultDigest struct {
 }
 
 func searchDigest(ctx context.Context, connection *sql.Conn, query string) (resultDigest, error) {
-	usesSimple, err := search.UsesSimple(ctx, connection)
-	if err != nil {
-		return resultDigest{}, err
-	}
-	query = search.PrepareQuery(query, usesSimple, domain.SearchAdvanced)
+	query = search.PrepareQuery(query, domain.SearchAdvanced)
 	rows, err := connection.QueryContext(ctx, "SELECT rowid FROM article_search WHERE article_search MATCH ? ORDER BY rowid", query)
 	if err != nil {
 		return resultDigest{}, err

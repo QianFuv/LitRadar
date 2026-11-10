@@ -1,29 +1,13 @@
 package query
 
-import (
-	"context"
-	"testing"
+import "testing"
 
-	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
-)
-
-// BenchmarkNormalizeArticleParams isolates repeated search-schema work on a warm catalog.
-func BenchmarkNormalizeArticleParams(b *testing.B) {
-	_, filename := benchmarkCatalog(b)
-	database, err := storage.Open(filename, false, 1)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer database.Close()
-	if err := database.Ping(); err != nil {
-		b.Fatal(err)
-	}
-	ctx := context.Background()
+// BenchmarkPreparedMatch isolates query tokenization and phrase construction.
+func BenchmarkPreparedMatch(b *testing.B) {
 	params := DefaultArticleListParams()
+	params.Query = new("研究 Deep-Learning")
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, err := normalizeArticleParams(ctx, database, params); err != nil {
-			b.Fatal(err)
-		}
+		_ = preparedMatch(params)
 	}
 }

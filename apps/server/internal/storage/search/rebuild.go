@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/QianFuv/LitRadar/apps/server/internal/compat/jsonvalue"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/indexschema"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -37,29 +38,10 @@ func DecodeAuthorNames(payload string) ([]string, error) {
 	return result, nil
 }
 
-// UsesSimple inspects the actual table declaration without initializing the virtual table.
-func UsesSimple(ctx context.Context, connection *sql.Conn) (bool, error) {
-	var declaration storage.Text
-	err := connection.QueryRowContext(ctx, "SELECT sql FROM sqlite_schema WHERE type='table' AND name='article_search'").Scan(&declaration)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return strings.Contains(storage.CompactSchema(string(declaration)), "tokenize='simple0'"), nil
-}
-
 // Rebuild streams canonical rows into search inside the caller's existing transaction and write exclusion.
 func Rebuild(ctx context.Context, connection *sql.Conn) error {
-	usesSimple, err := UsesSimple(ctx, connection)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if usesSimple {
-		if err := storage.LoadSimple(connection); err != nil {
-			return err
-		}
 	}
 	if _, err := connection.ExecContext(ctx, "DELETE FROM article_search"); err != nil {
 		return err
@@ -75,7 +57,7 @@ func Rebuild(ctx context.Context, connection *sql.Conn) error {
 	}
 	defer insert.Close()
 	for rows.Next() {
-		if err := insertSearchRow(ctx, rows, insert, usesSimple); err != nil {
+		if err := insertSearchRow(ctx, rows, insert); err != nil {
 			return err
 		}
 	}
@@ -132,7 +114,7 @@ func decodeObjectAuthor(author json.RawMessage) (string, error) {
 }
 
 // insertSearchRow preserves typed scan, complete author decoding and one ordered projection insertion.
-func insertSearchRow(ctx context.Context, rows *sql.Rows, insert *sql.Stmt, usesSimple bool) error {
+func insertSearchRow(ctx context.Context, rows *sql.Rows, insert *sql.Stmt) error {
 	var id int64
 	var title, abstract, doi, pmid, authors, journal storage.Text
 	if err := rows.Scan(&id, &title, &abstract, &doi, &pmid, &authors, &journal); err != nil {
@@ -142,8 +124,32 @@ func insertSearchRow(ctx context.Context, rows *sql.Rows, insert *sql.Stmt, uses
 	if err != nil {
 		return err
 	}
-	if _, err := insert.ExecContext(ctx, id, PrepareText(string(title), usesSimple), PrepareText(string(abstract), usesSimple), PrepareText(string(doi), usesSimple), PrepareText(string(pmid), usesSimple), PrepareText(strings.Join(names, "; "), usesSimple), PrepareText(string(journal), usesSimple)); err != nil {
+	if _, err := insert.ExecContext(ctx, id, PrepareText(string(title)), PrepareText(string(abstract)), PrepareText(string(doi)), PrepareText(string(pmid)), PrepareText(strings.Join(names, "; ")), PrepareText(string(journal))); err != nil {
 		return err
 	}
 	return nil
+}
+
+// NeedsRebuild compares the persisted declaration without opening an obsolete virtual table.
+func NeedsRebuild(ctx context.Context, connection *sql.Conn) (bool, error) {
+	var declaration string
+	if err := connection.QueryRowContext(ctx, "SELECT sql FROM sqlite_schema WHERE type='table' AND name='article_search'").Scan(&declaration); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return storage.CompactSchema(declaration) != storage.CompactSchema(strings.TrimSuffix(indexschema.SearchTable, ";")), nil
+}
+
+// Ensure replaces obsolete search storage within the caller's transaction and write exclusion.
+func Ensure(ctx context.Context, connection *sql.Conn) error {
+	shouldRebuild, err := NeedsRebuild(ctx, connection)
+	if err != nil || !shouldRebuild {
+		return err
+	}
+	if _, err := connection.ExecContext(ctx, "DROP TABLE article_search;"+indexschema.SearchTable); err != nil {
+		return err
+	}
+	return Rebuild(ctx, connection)
 }

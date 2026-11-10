@@ -11,6 +11,7 @@ import (
 
 	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/sources"
 	"github.com/QianFuv/LitRadar/apps/server/internal/storage/indexschema"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
 
@@ -44,29 +45,18 @@ func Create(filename string, version int) error {
 	return writeFixtureContent(ctx, connection, version)
 }
 
-// fixtureContentSchema selects the historical search layout before any schema writes.
-func fixtureContentSchema(connection *sql.Conn, version int) (string, error) {
+// fixtureContentSchema selects historical relational indexes with the current search declaration.
+func fixtureContentSchema(version int) string {
 	schema := indexschema.ContentTables
 	if version < 10 {
 		schema = strings.ReplaceAll(schema, indexschema.IdentifierIndexes, "")
 	}
-	if version < 9 {
-		schema = strings.ReplaceAll(schema, "tokenize = 'simple 0'", "tokenize = 'unicode61 remove_diacritics 2'")
-	} else if err := storage.LoadSimple(connection); err != nil {
-		return "", err
-	}
-	if version < 7 {
-		schema = strings.ReplaceAll(schema, "        content = '',\n        contentless_delete = 1,\n", "")
-	}
-	return schema, nil
+	return schema
 }
 
 // writeFixtureContent creates the schema and publishes fixed seed records in the original order.
 func writeFixtureContent(ctx context.Context, connection *sql.Conn, version int) error {
-	schema, err := fixtureContentSchema(connection, version)
-	if err != nil {
-		return err
-	}
+	schema := fixtureContentSchema(version)
 
 	if _, err := connection.ExecContext(ctx, schema); err != nil {
 		return err
@@ -76,9 +66,14 @@ func writeFixtureContent(ctx context.Context, connection *sql.Conn, version int)
 		INSERT INTO journal_identity_keys VALUES('catalog_id','journal-one','journal-one'),('catalog_id','journal-two','journal-two'),('issn','1234-5679','journal-one'),('issn','2049-3630','journal-two');
 		INSERT INTO articles(article_id,journal_id,title,authors_json,date)
 		VALUES(1001,1,'Synthetic first article','[{"display_name":"Author One"}]','2026-01-01'),(1012,2,'Synthetic second article','[{"display_name":"Author Two"}]','2026-01-02');
-		INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journal_id,date FROM articles;
-		INSERT INTO article_search(rowid,article_id,title,authors,journal_title)
-		SELECT article_id,article_id,articles.title,'Author',journals.title FROM articles JOIN journals USING(journal_id);`
+		INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journal_id,date FROM articles;`
+	if _, err := connection.ExecContext(ctx, statements); err != nil {
+		return err
+	}
+	if err := search.Rebuild(ctx, connection); err != nil {
+		return err
+	}
+	statements = ""
 	if version < 8 {
 		statements += "CREATE INDEX idx_article_change_events_order ON article_change_events(event_id);"
 	}
@@ -88,6 +83,6 @@ func writeFixtureContent(ctx context.Context, connection *sql.Conn, version int)
 	if version < 5 {
 		statements += "DROP TABLE journal_identity_keys;"
 	}
-	_, err = connection.ExecContext(ctx, statements+fmt.Sprintf("PRAGMA user_version=%d", version))
+	_, err := connection.ExecContext(ctx, statements+fmt.Sprintf("PRAGMA user_version=%d", version))
 	return err
 }

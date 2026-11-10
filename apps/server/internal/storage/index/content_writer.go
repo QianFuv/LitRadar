@@ -88,22 +88,18 @@ func WriteContentBatchWithEvents(ctx context.Context, connection *sql.Conn, cata
 }
 
 type contentWriter struct {
-	ctx                          context.Context
-	connection                   *sql.Conn
-	isSimple, shouldRecordEvents bool
-	observedIssues               map[int64]bool
-	statements                   map[string]*sql.Stmt
-	journalTitle                 string
-	isJournalTitlePrepared       bool
+	ctx                    context.Context
+	connection             *sql.Conn
+	shouldRecordEvents     bool
+	observedIssues         map[int64]bool
+	statements             map[string]*sql.Stmt
+	journalTitle           string
+	isJournalTitlePrepared bool
 }
 
-// prepareWriter binds shared statements and tokenizer mode to one content transaction.
+// prepareWriter binds shared statements to one content transaction.
 func prepareWriter(ctx context.Context, connection *sql.Conn, shouldRecordEvents bool) (*contentWriter, error) {
-	isSimple, err := search.UsesSimple(ctx, connection)
-	if err != nil {
-		return nil, err
-	}
-	writer := &contentWriter{ctx: ctx, connection: connection, isSimple: isSimple, shouldRecordEvents: shouldRecordEvents, observedIssues: map[int64]bool{}, statements: map[string]*sql.Stmt{}}
+	writer := &contentWriter{ctx: ctx, connection: connection, shouldRecordEvents: shouldRecordEvents, observedIssues: map[int64]bool{}, statements: map[string]*sql.Stmt{}}
 	for _, statement := range []string{journalProjectionSql, journalUpsertSql, issueUpsertSql, identityLookupSql, articleLookupSql, retractionLookupSql, articleUpsertSql, retractionDeleteSql, retractionInsertSql, listingUpsertSql, searchDeleteSql, searchInsertSql, identityClaimSql, changeEventInsertSql} {
 		prepared, err := connection.PrepareContext(ctx, statement)
 		if err != nil {
@@ -317,10 +313,10 @@ func (writer *contentWriter) projectArticle(id, journal int64, issue *int64, cat
 	values := make([]any, 1, 7)
 	values[0] = id
 	for _, value := range []string{article.Title, optionalString(article.AbstractText), optionalString(article.Doi), optionalString(article.Pmid), strings.Join(authors, "; ")} {
-		values = append(values, search.PrepareText(value, writer.isSimple))
+		values = append(values, search.PrepareText(value))
 	}
 	if !writer.isJournalTitlePrepared {
-		writer.journalTitle = search.PrepareText(catalog.Title, writer.isSimple)
+		writer.journalTitle = search.PrepareText(catalog.Title)
 		writer.isJournalTitlePrepared = true
 	}
 	values = append(values, writer.journalTitle)

@@ -1,4 +1,4 @@
-// Package search preserves canonical records while preparing legacy-compatible FTS projections and operands.
+// Package search prepares byte-compatible FTS projections and query operands.
 package search
 
 import (
@@ -9,17 +9,58 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-func asciiSpace(character rune) bool {
+// Tokenize implements Simple's byte classes with truncated characters clamped to the input.
+// Only ASCII letters are folded; non-ASCII bytes retain their original spelling.
+func Tokenize(value string) []string {
+	tokens := []string{}
+	for position := 0; position < len(value); {
+		character := value[position]
+		if character <= 32 || character == 127 {
+			position++
+			continue
+		}
+		start := position
+		switch {
+		case isAsciiLetter(character):
+			for position < len(value) && isAsciiLetter(value[position]) {
+				position++
+			}
+			tokens = append(tokens, strings.ToLower(value[start:position]))
+			continue
+		case character >= '0' && character <= '9':
+			for position < len(value) && value[position] >= '0' && value[position] <= '9' {
+				position++
+			}
+		case character >= 0xf0:
+			position += 4
+		case character >= 0xe0:
+			position += 3
+		case character >= 0xc0:
+			position += 2
+		default:
+			position++
+		}
+		position = min(position, len(value))
+		tokens = append(tokens, value[start:position])
+	}
+	return tokens
+}
+
+func isAsciiLetter(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+}
+
+// asciiSpace retains the legacy projection and column-lookahead whitespace set.
+func asciiSpace(character byte) bool {
 	return character == ' ' || character == '\t' || character == '\n' || character == '\r' || character == '\f'
 }
-
-func asciiAlphanumeric(character rune) bool {
-	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9'
+func asciiAlphanumeric(character byte) bool {
+	return character < 128 && (isAsciiLetter(character) || character >= '0' && character <= '9')
 }
 
-// PrepareText folds non-ASCII case and accents only for the Simple projection, preserving source text.
-func PrepareText(value string, usesSimple bool) string {
-	if !usesSimple || isAsciiProjection(value) {
+// FoldText preserves the legacy search projection before byte tokenization or related-term extraction.
+func FoldText(value string) string {
+	if isAsciiProjection(value) {
 		return value
 	}
 	decomposed := strings.TrimLeftFunc(norm.NFD.String(value), unicode.IsMark)
@@ -29,7 +70,7 @@ func PrepareText(value string, usesSimple bool) string {
 // isAsciiProjection admits only the original ASCII alphanumeric and whitespace fast path.
 func isAsciiProjection(value string) bool {
 	for _, character := range value {
-		if !asciiAlphanumeric(character) && !asciiSpace(character) {
+		if character > 127 || !asciiAlphanumeric(byte(character)) && !asciiSpace(byte(character)) {
 			return false
 		}
 	}
@@ -41,10 +82,10 @@ func isPrivateProjectionRune(character rune) bool {
 	return character >= 0xe000 && character <= 0xf8ff || character >= 0xf0000 && character <= 0xffffd || character >= 0x100000 && character <= 0x10fffd
 }
 
-// projectionRune classifies ASCII directly and retains Unicode mark, case and separator rules.
+// projectionRune retains the original mark, separator and Unicode case rules.
 func projectionRune(character rune) rune {
 	if character < 128 {
-		if asciiAlphanumeric(character) {
+		if asciiAlphanumeric(byte(character)) {
 			return character
 		}
 		return ' '
@@ -59,36 +100,36 @@ func projectionRune(character rune) rune {
 	return unicode.ToLower(character)
 }
 
-// PrepareQuery normalizes advanced operands without changing operators, columns or malformed quote handling.
-func PrepareQuery(value string, usesSimple bool, mode domain.SearchMode) string {
-	if !usesSimple {
-		return value
-	}
+// PrepareText folds canonical text and joins byte tokens for the ASCII FTS tokenizer.
+func PrepareText(value string) string { return strings.Join(Tokenize(FoldText(value)), " ") }
+
+// Phrase quotes a simple operand, retaining nonblank input whose folded projection is blank.
+func Phrase(value string) string {
+	return `"` + strings.ReplaceAll(PrepareQuery(value, domain.SearchSimple), `"`, `""`) + `"`
+}
+
+// PrepareQuery folds and tokenizes operands while preserving advanced syntax and simple blank fallback.
+func PrepareQuery(value string, mode domain.SearchMode) string {
 	if mode != domain.SearchAdvanced {
-		return prepareSimpleQuery(value)
+		folded := FoldText(value)
+		if strings.TrimSpace(folded) == "" && strings.TrimSpace(value) != "" {
+			folded = value
+		}
+		return strings.Join(Tokenize(folded), " ")
 	}
 	return prepareAdvancedQuery(value)
 }
 
-// prepareSimpleQuery preserves nonblank input when projection produces only whitespace.
-func prepareSimpleQuery(value string) string {
-	normalized := PrepareText(value, true)
-	if strings.TrimSpace(normalized) == "" && strings.TrimSpace(value) != "" {
-		return value
-	}
-	return normalized
-}
-
-// advancedQuery retains rune position, column-set admission and output for one query.
+// advancedQuery retains byte position, column-set admission and output for one query.
 type advancedQuery struct {
-	characters  []rune
+	characters  string
 	position    int
 	output      strings.Builder
 	isColumnSet bool
 }
 
 // isAdvancedOperand preserves the original ASCII and unrestricted non-ASCII operand admission.
-func isAdvancedOperand(character rune) bool {
+func isAdvancedOperand(character byte) bool {
 	return asciiAlphanumeric(character) || character == '_' || character == 0x1a || character > 127
 }
 
@@ -125,7 +166,7 @@ func (query *advancedQuery) readQuotedOperand() (string, bool) {
 				return operand.String(), true
 			}
 		} else {
-			operand.WriteRune(next)
+			operand.WriteByte(next)
 		}
 	}
 	return operand.String(), false
@@ -141,20 +182,22 @@ func (query *advancedQuery) writeQuotedOperand() bool {
 	if query.isColumn() {
 		query.output.WriteString(string(query.characters[start:query.position]))
 	} else {
-		query.quote(PrepareText(operand, true))
+		query.quote(PrepareText(operand))
 	}
 	return true
 }
 
-// writeBareOperand preserves unchanged operands and columns before quoting normalized text.
+// writeBareOperand preserves operators and columns while quoting tokenized text.
 func (query *advancedQuery) writeBareOperand() {
 	start := query.position - 1
 	for query.position < len(query.characters) && isAdvancedOperand(query.characters[query.position]) {
 		query.position++
 	}
 	operand := string(query.characters[start:query.position])
-	normalized := PrepareText(operand, true)
-	if query.isColumn() || normalized == operand {
+	normalized := PrepareText(operand)
+	isOperator := operand == "AND" || operand == "OR" || operand == "NOT"
+	isNear := operand == "NEAR" && strings.HasPrefix(strings.TrimLeft(query.characters[query.position:], " \t\n\r\f\v"), "(")
+	if query.isColumn() || isOperator || isNear || isNearDistance(query.characters, start) {
 		query.output.WriteString(operand)
 	} else {
 		query.quote(normalized)
@@ -163,7 +206,7 @@ func (query *advancedQuery) writeBareOperand() {
 
 // prepareAdvancedQuery retains ordinary syntax and returns the whole original input after a late open quote.
 func prepareAdvancedQuery(value string) string {
-	query := advancedQuery{characters: []rune(value)}
+	query := advancedQuery{characters: value}
 	for query.position < len(query.characters) {
 		character := query.characters[query.position]
 		query.position++
@@ -180,8 +223,17 @@ func prepareAdvancedQuery(value string) string {
 			if character == '}' {
 				query.isColumnSet = false
 			}
-			query.output.WriteRune(character)
+			query.output.WriteByte(character)
 		}
 	}
 	return query.output.String()
+}
+
+// isNearDistance leaves the numeric distance after a NEAR comma as syntax.
+func isNearDistance(characters string, start int) bool {
+	position := start - 1
+	for position >= 0 && asciiSpace(characters[position]) {
+		position--
+	}
+	return position >= 0 && characters[position] == ','
 }

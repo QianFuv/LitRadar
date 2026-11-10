@@ -34,7 +34,7 @@ func TestExistingOnlyModesNeverCreateMissingFile(t *testing.T) {
 
 // TestConcurrentPhysicalInitialization retains simultaneous physical opens and distinct live connection ownership.
 func TestConcurrentPhysicalInitialization(t *testing.T) {
-	database, err := Open(Config{Filename: filepath.Join(t.TempDir(), "simultaneous.sqlite"), Mode: "rwc", HasSimpleTokenizer: true, MaxConnections: 2})
+	database, err := Open(Config{Filename: filepath.Join(t.TempDir(), "simultaneous.sqlite"), Mode: "rwc", MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,14 +71,14 @@ func checkedConnection(t *testing.T, database *sql.DB) *sql.Conn {
 	return connection
 }
 
-// TestEveryPhysicalConnectionLoadsSimpleAndDisablesExtensionSql checks every open and recreation against native tokenizer policy.
-func TestEveryPhysicalConnectionLoadsSimpleAndDisablesExtensionSql(t *testing.T) {
+// TestEveryPhysicalConnectionSearchesAndDisablesExtensionSql checks every open and recreation against built-in tokenizer policy.
+func TestEveryPhysicalConnectionSearchesAndDisablesExtensionSql(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "中文 space # % ? &.sqlite")
 	if runtime.GOOS == "windows" {
 		filename = filepath.Join(root, "中文 space # % &.sqlite")
 	}
-	database, err := Open(Config{Filename: filename, Mode: "rwc", NoFollow: true, HasSimpleTokenizer: true, MaxConnections: 2})
+	database, err := Open(Config{Filename: filename, Mode: "rwc", NoFollow: true, MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestEveryPhysicalConnectionLoadsSimpleAndDisablesExtensionSql(t *testing.T)
 	first := checkedConnection(t, database)
 	second := checkedConnection(t, database)
 	ctx := context.Background()
-	if _, err := first.ExecContext(ctx, "CREATE VIRTUAL TABLE search USING fts5(text, tokenize='simple 0', content='', contentless_delete=1); INSERT INTO search(rowid,text) VALUES(1,'中文期刊 migration')"); err != nil {
+	if _, err := first.ExecContext(ctx, "CREATE VIRTUAL TABLE search USING fts5(text, tokenize='ascii', content='', contentless_delete=1); INSERT INTO search(rowid,text) VALUES(1,'中 文 期 刊 migration')"); err != nil {
 		t.Fatal(err)
 	}
 	for _, connection := range []*sql.Conn{first, second} {
@@ -206,28 +206,17 @@ func assertPhysicalConnectionPolicy(t *testing.T, connection *sql.Conn) {
 	if err := connection.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&journal); err != nil {
 		t.Fatal(err)
 	}
-	query := physicalSimpleQuery(t, connection)
-	if timeout != 30000 || foreignKeys != 1 || synchronous != 1 || journal != "wal" || query == "" {
-		t.Fatalf("connection policy %d %d %d %s %q", timeout, foreignKeys, synchronous, journal, query)
+	if timeout != 30000 || foreignKeys != 1 || synchronous != 1 || journal != "wal" {
+		t.Fatalf("connection policy %d %d %d %s", timeout, foreignKeys, synchronous, journal)
 	}
-}
-
-// physicalSimpleQuery checks tokenizer execution after the physical policy queries.
-func physicalSimpleQuery(t *testing.T, connection *sql.Conn) string {
-	t.Helper()
-	var query string
-	if err := connection.QueryRowContext(context.Background(), "SELECT simple_query('中文')").Scan(&query); err != nil {
-		t.Fatal(err)
-	}
-	return query
 }
 
 // assertPhysicalTokenizer checks search, constraints and disabled SQL extension loading on a live owner.
 func assertPhysicalTokenizer(t *testing.T, ctx context.Context, connection *sql.Conn) {
 	t.Helper()
 	var count, foreignKeys int
-	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM search WHERE search MATCH '中文'").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("Per-connection Simple failed: %d %v", count, err)
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM search WHERE search MATCH '\"中 文\"'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("Per-connection ASCII search failed: %d %v", count, err)
 	}
 	if err := connection.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil || foreignKeys != 1 {
 		t.Fatalf("Foreign keys disabled: %d %v", foreignKeys, err)
@@ -244,7 +233,7 @@ func logNativeCapabilities(t *testing.T, ctx context.Context, third *sql.Conn) {
 	if err := third.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("native SQLite %s; %s/%s; statically registered Simple", version, runtime.GOOS, runtime.GOARCH)
+	t.Logf("native SQLite %s; %s/%s; built-in ASCII tokenizer", version, runtime.GOOS, runtime.GOARCH)
 	rows, err := third.QueryContext(ctx, "PRAGMA compile_options")
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 	native "github.com/mattn/go-sqlite3"
 )
@@ -71,15 +70,6 @@ func copyDatabase(ctx context.Context, source, destination string) error {
 	})
 	if err != nil {
 		return err
-	}
-	hasSimple, err := search.UsesSimple(ctx, destinationConnection)
-	if err != nil {
-		return err
-	}
-	if hasSimple {
-		if err := storage.LoadSimple(destinationConnection); err != nil {
-			return err
-		}
 	}
 	_, err = destinationConnection.ExecContext(ctx, "PRAGMA journal_mode=DELETE")
 	return err

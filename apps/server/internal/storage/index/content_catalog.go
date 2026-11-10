@@ -226,10 +226,6 @@ func refreshJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jo
 	if err != nil {
 		return err
 	}
-	isSimple, err := search.UsesSimple(ctx, connection)
-	if err != nil {
-		return err
-	}
 	if len(projections) == 0 {
 		return nil
 	}
@@ -243,12 +239,12 @@ func refreshJournal(ctx context.Context, connection *sql.Conn, catalog domain.Jo
 		return err
 	}
 	defer insertProjection.Close()
-	journalTitle := search.PrepareText(catalog.Title, isSimple)
+	journalTitle := search.PrepareText(catalog.Title)
 	for _, value := range projections {
 		if _, err := deleteProjection.ExecContext(ctx, value.id); err != nil {
 			return err
 		}
-		if _, err := insertProjection.ExecContext(ctx, value.id, search.PrepareText(string(value.title), isSimple), search.PrepareText(optionalString(value.abstract.Value), isSimple), search.PrepareText(optionalString(value.doi.Value), isSimple), search.PrepareText(optionalString(value.pmid.Value), isSimple), search.PrepareText(string(value.authors), isSimple), journalTitle); err != nil {
+		if _, err := insertProjection.ExecContext(ctx, value.id, search.PrepareText(string(value.title)), search.PrepareText(optionalString(value.abstract.Value)), search.PrepareText(optionalString(value.doi.Value)), search.PrepareText(optionalString(value.pmid.Value)), search.PrepareText(string(value.authors)), journalTitle); err != nil {
 			return err
 		}
 	}

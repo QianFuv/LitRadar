@@ -16,13 +16,12 @@ import (
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
-// Config describes a database role with explicit per-connection static tokenizer admission.
+// Config describes a database role and its physical connection policy.
 type Config struct {
-	Filename           string
-	Mode               string
-	NoFollow           bool
-	HasSimpleTokenizer bool
-	MaxConnections     int
+	Filename       string
+	Mode           string
+	NoFollow       bool
+	MaxConnections int
 }
 
 type connector struct {
@@ -84,7 +83,7 @@ func FileUri(filename, mode string) (string, error) {
 	return location.String(), nil
 }
 
-// Open constructs a lazy pool whose hooks run on all physical opens and reconnects.
+// Open constructs a lazy pool with policy applied on physical opens and reconnects.
 func Open(config Config) (*sql.DB, error) {
 	dsn, err := FileUri(config.Filename, config.Mode)
 	if err != nil {
@@ -94,14 +93,6 @@ func Open(config Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("SQLite pool capacity must be positive")
 	}
 	instance := &sqlite3.SQLiteDriver{NoFollow: config.NoFollow}
-	instance.ConnectHook = func(connection *sqlite3.SQLiteConn) error {
-		if config.HasSimpleTokenizer {
-			if err := connection.RegisterSimple(); err != nil {
-				return fmt.Errorf("register static Simple tokenizer: %w", err)
-			}
-		}
-		return nil
-	}
 	database := sql.OpenDB(&connector{driver: instance, dsn: dsn, filename: config.Filename, rejectLinks: config.NoFollow, opening: make(chan struct{}, 1)})
 	database.SetMaxOpenConns(config.MaxConnections)
 	database.SetMaxIdleConns(config.MaxConnections)

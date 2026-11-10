@@ -94,7 +94,7 @@ func assertFixtureSchema(t *testing.T, database *sql.DB, version int) {
 	assertFixtureSchemaObject(t, database, "index", "idx_article_change_events_order", version < 8)
 	assertFixtureSchemaObject(t, database, "index", "idx_article_listing_doi", version >= 10)
 	assertFixtureSchemaObject(t, database, "index", "idx_article_listing_pmid", version >= 10)
-	assertFixtureSchemaObject(t, database, "table", "article_search_content", version < 7)
+	assertFixtureSchemaObject(t, database, "table", "article_search_content", false)
 	assertFixtureLegacyColumn(t, database, version)
 	assertFixtureTokenizer(t, database, version)
 	if version >= 5 {
@@ -142,11 +142,7 @@ func assertFixtureTokenizer(t *testing.T, database *sql.DB, version int) {
 	if err := database.QueryRow("SELECT sql FROM sqlite_schema WHERE name='article_search'").Scan(&declaration); err != nil {
 		t.Fatal(err)
 	}
-	tokenizer := "tokenize = 'unicode61 remove_diacritics 2'"
-	if version >= 9 {
-		tokenizer = "tokenize = 'simple 0'"
-	}
-	if !strings.Contains(declaration, tokenizer) || strings.Contains(declaration, "contentless_delete = 1") != (version >= 7) {
+	if !strings.Contains(declaration, "ascii tokenchars") || !strings.Contains(declaration, "contentless_delete = 1") {
 		t.Fatal("historical search options changed", version, declaration)
 	}
 }

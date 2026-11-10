@@ -47,6 +47,15 @@ func names(ctx context.Context, connection *sql.Conn, statement string) ([]strin
 
 // ValidateStructure checks only the inventories, column ordering and search storage required by the application.
 func ValidateStructure(ctx context.Context, connection *sql.Conn, version int) error {
+	return validateStructure(ctx, connection, version, false)
+}
+
+// ValidateRebuildSource validates canonical storage without opening an obsolete search table.
+func ValidateRebuildSource(ctx context.Context, connection *sql.Conn, version int) error {
+	return validateStructure(ctx, connection, version, true)
+}
+
+func validateStructure(ctx context.Context, connection *sql.Conn, version int, shouldRebuildSearch bool) error {
 	declaration, err := loadSearchDeclaration(ctx, connection)
 	if err != nil {
 		return err
@@ -62,11 +71,14 @@ func ValidateStructure(ctx context.Context, connection *sql.Conn, version int) e
 	if !slices.Equal(actual, expected) {
 		return InvalidStructure{"table inventory mismatch: " + quoteList(actual, true)}
 	}
-	if err := validateContentColumns(ctx, connection, version, expected); err != nil {
+	if err := validateContentColumns(ctx, connection, version, expected, shouldRebuildSearch); err != nil {
 		return err
 	}
 	if err := validateContentIndexes(ctx, connection, version); err != nil {
 		return err
+	}
+	if shouldRebuildSearch {
+		return nil
 	}
 	return validateSearchStorage(ctx, connection, version, declaration)
 }
@@ -94,11 +106,6 @@ func loadSearchDeclaration(ctx context.Context, connection *sql.Conn) (string, e
 	if err != nil && err != sql.ErrNoRows {
 		return "", err
 	}
-	if strings.Contains(storage.CompactSchema(declaration), "tokenize='simple0'") {
-		if err := storage.LoadSimple(connection); err != nil {
-			return "", err
-		}
-	}
 	return declaration, nil
 }
 
@@ -114,8 +121,11 @@ func requiredContentTables(version int) []string {
 	return expected
 }
 
-func validateContentColumns(ctx context.Context, connection *sql.Conn, version int, expected []string) error {
+func validateContentColumns(ctx context.Context, connection *sql.Conn, version int, expected []string, shouldRebuildSearch bool) error {
 	for _, table := range columns {
+		if shouldRebuildSearch && table.name == "article_search" {
+			continue
+		}
 		if !slices.Contains(expected, table.name) {
 			continue
 		}
@@ -159,16 +169,8 @@ func validateSearchStorage(ctx context.Context, connection *sql.Conn, version in
 	if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='article_search_content')").Scan(&hasContent); err != nil {
 		return err
 	}
-	tokenizer := "unicode61remove_diacritics2"
-	content := ""
-	if version >= 7 {
-		content = "content='',contentless_delete=1,"
-	}
-	if version >= 9 {
-		tokenizer = "simple0"
-	}
-	expectedSearch := "createvirtualtablearticle_searchusingfts5(article_idunindexed,title,abstract_text,doi,pmid,authors,journal_title," + content + "tokenize='" + tokenizer + "')"
-	if hasContent != (version <= 6) || storage.CompactSchema(declaration) != expectedSearch {
+	expectedSearch := storage.CompactSchema(strings.TrimSuffix(SearchTable, ";"))
+	if hasContent || storage.CompactSchema(declaration) != expectedSearch {
 		return InvalidStructure{"article_search storage options do not match the declared schema version"}
 	}
 	return nil

@@ -79,7 +79,7 @@ func relatedTerms(title string) []string {
 		terms = append(terms, term)
 		return len(terms) < relatedTermLimit
 	}
-	runes := []rune(strings.ToLower(title))
+	runes := []rune(strings.ToLower(search.FoldText(title)))
 	for index := 0; index < len(runes); {
 		character := runes[index]
 		switch {
@@ -137,7 +137,7 @@ func relatedMatch(terms []string) string {
 func relatedAny(terms []string) string {
 	quoted := make([]string, len(terms))
 	for index, term := range terms {
-		quoted[index] = `"` + strings.ReplaceAll(term, `"`, `""`) + `"`
+		quoted[index] = search.Phrase(term)
 	}
 	return strings.Join(quoted, " OR ")
 }
@@ -282,11 +282,7 @@ func relatedArticleIds(ctx context.Context, database *sql.DB, filename string, t
 		return nil, err
 	}
 	defer connection.Close()
-	usesSimple, err := search.UsesSimple(ctx, connection)
-	if err != nil {
-		return nil, err
-	}
-	terms := relatedTerms(search.PrepareText(title, usesSimple))
+	terms := relatedTerms(title)
 	if len(terms) == 0 {
 		return []int64{}, nil
 	}

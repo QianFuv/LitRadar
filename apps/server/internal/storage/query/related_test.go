@@ -2,7 +2,9 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/search"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,6 +21,9 @@ func TestRelatedTermsKeepContentWordsAndHanBigrams(t *testing.T) {
 		{"农村 三维性 X", []string{"农村", "三维性"}},
 		{"Of the and a", []string{}},
 		{"Graph graph GRAPH", []string{"graph"}},
+		{"Ünïcode École", []string{"unicode", "ecole"}},
+		{"Résumé resume RÉSUMÉ", []string{"resume"}},
+		{"数字经济的研究与发展：ÉTUDES", []string{"数字", "字经", "经济", "etudes"}},
 	}
 	for _, testCase := range cases {
 		if got := relatedTerms(testCase.title); !reflect.DeepEqual(got, testCase.want) {
@@ -29,7 +34,7 @@ func TestRelatedTermsKeepContentWordsAndHanBigrams(t *testing.T) {
 	if len(long) != relatedTermLimit {
 		t.Fatalf("expected %d terms, got %d", relatedTermLimit, len(long))
 	}
-	if got := relatedMatch([]string{"graph", `say "hi"`}); got != `{title abstract_text} : ("graph" OR "say ""hi""")` {
+	if got := relatedMatch([]string{"graph", `say "hi"`}); got != `{title abstract_text} : ("graph" OR "say hi")` {
 		t.Fatalf("unexpected match expression %q", got)
 	}
 }
@@ -54,10 +59,10 @@ INSERT INTO articles(article_id,journal_id,title,abstract_text,authors_json,date
  (2014,2,'Bird song learning','Vocal development.','[]','2020-01-01'),
  (2015,2,'Volcanic ash dispersal','Plume dynamics.','[]','2020-01-01');
 INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journal_id,date FROM articles WHERE article_id>=2001;
-INSERT INTO article_search(rowid,article_id,title,abstract_text,authors,journal_title)
- SELECT article_id,article_id,title,abstract_text,'','' FROM articles WHERE article_id>=2001;`); err != nil {
+`); err != nil {
 		t.Fatal(err)
 	}
+	rebuildQueryFixtureSearch(t, database)
 	ctx := context.Background()
 	related, err := RelatedArticles(ctx, configuration, nil, 2001, 10)
 	if err != nil {
@@ -110,7 +115,7 @@ func TestRelatedExpressionRecallsWithRareTermsWithinBudget(t *testing.T) {
 		want  string
 	}{
 		{[]string{"a", "b", "c", "d"}, []int{100, 29000, 50, 3000}, `{title abstract_text} : (("c" OR "a" OR "d") AND ("c" OR "a" OR "d" OR "b"))`},
-		{[]string{"经济", "物元", "增长"}, []int{40000, 400, 40000}, `{title abstract_text} : ("物元")`},
+		{[]string{"经济", "物元", "增长"}, []int{40000, 400, 40000}, `{title abstract_text} : ("物 元")`},
 		{[]string{"a", "b", "c"}, []int{40000, 31000, 50000}, `{title abstract_text} : ("b" AND ("a" OR "c"))`},
 		{[]string{"a"}, []int{90000}, `{title abstract_text} : ("a")`},
 	}
@@ -135,10 +140,10 @@ INSERT INTO articles(article_id,journal_id,title,abstract_text,authors_json,date
  (3012,2,'Medieval trade guilds','Economic history.','[]','2020-01-01'),
  (3013,2,'Glacier mass balance','Climate records.','[]','2020-01-01');
 INSERT INTO article_listing(article_id,journal_id,date) SELECT article_id,journal_id,date FROM articles WHERE article_id>=3001;
-INSERT INTO article_search(rowid,article_id,title,abstract_text,authors,journal_title)
- SELECT article_id,article_id,title,abstract_text,'','' FROM articles WHERE article_id>=3001;`); err != nil {
+`); err != nil {
 		t.Fatal(err)
 	}
+	rebuildQueryFixtureSearch(t, database)
 	related, err := RelatedArticles(context.Background(), configuration, nil, 3001, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -149,5 +154,18 @@ INSERT INTO article_search(rowid,article_id,title,abstract_text,authors,journal_
 	}
 	if !reflect.DeepEqual(ids, []int64{3002, 3003}) {
 		t.Fatalf("expected title overlap before abstract mentions, got %v", ids)
+	}
+}
+
+// rebuildQueryFixtureSearch publishes raw canonical fixture fields through the production tokenizer.
+func rebuildQueryFixtureSearch(test testing.TB, database *sql.DB) {
+	test.Helper()
+	connection, err := database.Conn(context.Background())
+	if err != nil {
+		test.Fatal(err)
+	}
+	defer connection.Close()
+	if err := search.Rebuild(context.Background(), connection); err != nil {
+		test.Fatal(err)
 	}
 }

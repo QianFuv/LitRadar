@@ -138,9 +138,9 @@ func preparedMatch(params ArticleListParams) string {
 		return ""
 	}
 	if params.SearchMode == domain.SearchAdvanced {
-		return query
+		return search.PrepareQuery(query, domain.SearchAdvanced)
 	}
-	return `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
+	return search.Phrase(query)
 }
 
 func classifySearchError(err error, params ArticleListParams) error {
@@ -205,10 +205,6 @@ func ListArticles(ctx context.Context, configuration config.Config, name *string
 		return empty, err
 	}
 	defer database.Close()
-	params, err = normalizeArticleParams(ctx, database, params)
-	if err != nil {
-		return empty, err
-	}
 	base, ratings, match, err := articleFilters(params)
 	if err != nil {
 		return empty, err
@@ -316,25 +312,6 @@ func fetchArticles(ctx context.Context, database rowQuerier, ids []int64) ([]dom
 		return nil, err
 	}
 	return orderRequestedArticles(byId, ids), nil
-}
-
-// normalizeArticleParams inspects search storage only when a query operand needs normalization.
-func normalizeArticleParams(ctx context.Context, database *sql.DB, params ArticleListParams) (ArticleListParams, error) {
-	if params.Query == nil {
-		return params, nil
-	}
-	connection, err := database.Conn(ctx)
-	if err != nil {
-		return params, err
-	}
-	usesSimple, err := search.UsesSimple(ctx, connection)
-	connection.Close()
-	if err != nil {
-		return params, err
-	}
-	normalized := search.PrepareQuery(*params.Query, usesSimple, params.SearchMode)
-	params.Query = &normalized
-	return params, nil
 }
 
 // articleFilters constructs rating and listing clauses in their original argument order.

@@ -119,8 +119,18 @@ func preflight(ctx context.Context, filename string) (string, error) {
 			return "", UnsupportedVersion{observed.version}
 		}
 		if observed.version >= indexschema.MinimumSupportedVersion {
-			err := withReadOnly(ctx, filename, func(connection *sql.Conn) error { return validate(ctx, connection, observed.version, false) })
-			return "schema_only", err
+			shouldRebuild := false
+			err := withReadOnly(ctx, filename, func(connection *sql.Conn) error {
+				var err error
+				shouldRebuild, err = search.NeedsRebuild(ctx, connection)
+				if err != nil || shouldRebuild {
+					return err
+				}
+				return validate(ctx, connection, observed.version, false)
+			})
+			if err != nil || !shouldRebuild {
+				return "schema_only", err
+			}
 		}
 	}
 	_, err = Migrate(ctx, filename)
@@ -170,12 +180,20 @@ func inspectMigrationEntrance(ctx context.Context, filename string, observed *in
 		if from > indexschema.Version {
 			return from, true, UnsupportedVersion{from}
 		}
-		if from == indexschema.Version {
-			err := withReadOnly(ctx, filename, func(connection *sql.Conn) error { return validate(ctx, connection, from, true) })
-			return from, true, err
-		}
 		if from >= 4 {
-			if err := withReadOnly(ctx, filename, func(connection *sql.Conn) error { return validate(ctx, connection, from, true) }); err != nil {
+			shouldRebuild := false
+			err := withReadOnly(ctx, filename, func(connection *sql.Conn) error {
+				var err error
+				shouldRebuild, err = search.NeedsRebuild(ctx, connection)
+				if err != nil {
+					return err
+				}
+				if shouldRebuild {
+					return indexschema.ValidateRebuildSource(ctx, connection, from)
+				}
+				return validate(ctx, connection, from, true)
+			})
+			if err != nil || from == indexschema.Version && !shouldRebuild {
 				return from, true, err
 			}
 		} else if from != 0 || observed.objects != 0 {
@@ -214,7 +232,7 @@ func migrateContentConnection(ctx context.Context, connection *sql.Conn, from in
 	return summary, validate(ctx, connection, indexschema.Version, true)
 }
 
-// apply preserves v9 search publications while adding covering indexes after historical upgrades.
+// apply upgrades canonical storage and rebuilds obsolete search declarations once.
 func apply(ctx context.Context, connection *sql.Conn, version int, isUpgrade bool) error {
 	if !isUpgrade {
 		return createContentSchema(ctx, connection)
@@ -229,30 +247,38 @@ func apply(ctx context.Context, connection *sql.Conn, version int, isUpgrade boo
 			return err
 		}
 	}
-	if version <= 6 {
-		if err := replaceSearch(ctx, connection, false); err != nil {
-			return err
-		}
-	}
 	if version < 8 {
 		if _, err := connection.ExecContext(ctx, "DROP INDEX idx_article_change_events_order"); err != nil {
 			return err
 		}
 	}
-	if version < 9 {
-		if err := replaceSearch(ctx, connection, true); err != nil {
+	shouldRebuild, err := search.NeedsRebuild(ctx, connection)
+	if err != nil {
+		return err
+	}
+	if !shouldRebuild && version < 9 {
+		if err := search.Rebuild(ctx, connection); err != nil {
+			if errors.Is(err, search.ErrInvalidAuthors) {
+				return ErrInvalidQuery
+			}
 			return err
 		}
 	}
-	_, err := connection.ExecContext(ctx, indexschema.IdentifierIndexes)
+	if err := search.Ensure(ctx, connection); err != nil {
+		if errors.Is(err, search.ErrInvalidAuthors) {
+			return ErrInvalidQuery
+		}
+		return err
+	}
+	if version >= 10 {
+		return nil
+	}
+	_, err = connection.ExecContext(ctx, indexschema.IdentifierIndexes)
 	return err
 }
 
-// createContentSchema loads the fresh database tokenizer before creating its tables.
+// createContentSchema creates the canonical tables with built-in SQLite tokenization.
 func createContentSchema(ctx context.Context, connection *sql.Conn) error {
-	if err := storage.LoadSimple(connection); err != nil {
-		return err
-	}
 	_, err := connection.ExecContext(ctx, indexschema.ContentTables)
 	return err
 }
@@ -268,30 +294,6 @@ func versionSix(ctx context.Context, connection *sql.Conn) error {
 	}
 	if violations != 0 {
 		return ErrInvalidQuery
-	}
-	return nil
-}
-
-func replaceSearch(ctx context.Context, connection *sql.Conn, isSimple bool) error {
-	tokenizer := "unicode61 remove_diacritics 2"
-	if isSimple {
-		if err := storage.LoadSimple(connection); err != nil {
-			return err
-		}
-		tokenizer = "simple 0"
-	}
-	if _, err := connection.ExecContext(ctx, "DROP TABLE article_search; CREATE VIRTUAL TABLE article_search USING fts5(article_id UNINDEXED,title,abstract_text,doi,pmid,authors,journal_title,content='',contentless_delete=1,tokenize='"+tokenizer+"');"); err != nil {
-		return err
-	}
-	if err := search.Rebuild(ctx, connection); err != nil {
-		if errors.Is(err, search.ErrInvalidAuthors) {
-			return ErrInvalidQuery
-		}
-		return err
-	}
-	if !isSimple {
-		_, err := connection.ExecContext(ctx, "INSERT INTO article_search(article_search) VALUES('optimize')")
-		return err
 	}
 	return nil
 }

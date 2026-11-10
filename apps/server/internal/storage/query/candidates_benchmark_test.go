@@ -47,13 +47,11 @@ SELECT id,(id-1)%8+1,CASE WHEN id%4=0 THEN NULL ELSE (id-1)%32+1 END,
 printf('10.0000/synthetic.%d',id),printf('%d',id),id%2,id%4=0 FROM sequence;
 INSERT INTO article_listing(article_id,journal_id,issue_id,publication_year,date,open_access,in_press,doi,pmid)
 SELECT article_id,journal_id,issue_id,publication_year,date,open_access,in_press,doi,pmid FROM articles;
-INSERT INTO article_search(rowid,article_id,title,abstract_text,doi,pmid,authors,journal_title)
-SELECT a.article_id,a.article_id,a.title,a.abstract_text,a.doi,a.pmid,'Synthetic Author',j.title
-FROM articles a JOIN journals j ON j.journal_id=a.journal_id;
 COMMIT;`, count)
 	if err != nil {
 		benchmark.Fatal(err)
 	}
+	rebuildQueryFixtureSearch(benchmark, database)
 	return configuration, filename
 }
 

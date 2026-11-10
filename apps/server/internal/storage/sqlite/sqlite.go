@@ -1,4 +1,4 @@
-// Package sqlite composes native connections with schema-dependent tokenizer and storage role policy.
+// Package sqlite composes native connections with storage role policy.
 package sqlite
 
 import (
@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"io"
 	"net/url"
 	"strings"
 	"unicode"
@@ -51,49 +50,7 @@ func CompactSchema(value string) string {
 	}, value)
 }
 
-func usesSimple(connection *native.SQLiteConn) (bool, error) {
-	rows, err := connection.Query("SELECT sql FROM sqlite_schema WHERE type='table' AND name='article_search'", nil)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	values := make([]driver.Value, 1)
-	if err := rows.Next(values); errors.Is(err, io.EOF) {
-		return false, nil
-	} else if err != nil {
-		return false, err
-	}
-	declaration, ok := values[0].(string)
-	if !ok {
-		return false, errors.New("invalid search table declaration")
-	}
-	return strings.Contains(CompactSchema(declaration), "tokenize='simple0'"), nil
-}
-
-// loadSimple registers static code only when this physical connection needs it.
-func loadSimple(connection *native.SQLiteConn) error {
-	rows, err := connection.Query("SELECT EXISTS(SELECT 1 FROM pragma_function_list WHERE name='simple_highlight')", nil)
-	if err != nil {
-		return err
-	}
-	values := make([]driver.Value, 1)
-	err = rows.Next(values)
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	if values[0] == int64(1) {
-		return nil
-	}
-	return connection.RegisterSimple()
-}
-
-// LoadSimple enables the fixed native tokenizer for an imminent schema creation on this connection.
-func LoadSimple(connection *sql.Conn) error {
-	return connection.Raw(func(value any) error { return loadSimple(value.(*native.SQLiteConn)) })
-}
-
-// Open opens a regular storage pool and detects native search independently on every physical connection.
+// Open opens a regular storage pool and initializes policy on every physical connection.
 func Open(filename string, isReadOnly bool, capacity int) (*sql.DB, error) {
 	mode := "rwc"
 	if isReadOnly {
@@ -101,15 +58,7 @@ func Open(filename string, isReadOnly bool, capacity int) (*sql.DB, error) {
 	}
 	instance := &native.SQLiteDriver{}
 	instance.ConnectHook = func(connection *native.SQLiteConn) error {
-		hasSimple, err := usesSimple(connection)
-		if err != nil {
-			return err
-		}
-		if hasSimple {
-			if err := loadSimple(connection); err != nil {
-				return err
-			}
-		}
+		var err error
 		if !isReadOnly {
 			_, err = connection.Exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;", nil)
 		}

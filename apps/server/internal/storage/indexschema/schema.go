@@ -13,6 +13,21 @@ const IdentifierIndexes = `
     CREATE INDEX idx_article_listing_pmid ON article_listing(pmid, date, article_id);
 `
 
+// SearchTable declares the contentless index for Go-tokenized field values.
+const SearchTable = `CREATE VIRTUAL TABLE article_search
+    USING fts5(
+        article_id UNINDEXED,
+        title,
+        abstract_text,
+        doi,
+        pmid,
+        authors,
+        journal_title,
+        content = '',
+        contentless_delete = 1,
+        tokenize = "ascii tokenchars '!""#$%&()*+,-./:;<=>?@[\]^_` + "`" + `{|}~''' "
+    );`
+
 // ContentTables defines the canonical persisted schema and table identities.
 const ContentTables = `
     CREATE TABLE journals (
@@ -102,19 +117,7 @@ const ContentTables = `
         FOREIGN KEY (issue_id) REFERENCES issues(issue_id) ON DELETE SET NULL
     );
 
-    CREATE VIRTUAL TABLE article_search
-    USING fts5(
-        article_id UNINDEXED,
-        title,
-        abstract_text,
-        doi,
-        pmid,
-        authors,
-        journal_title,
-        content = '',
-        contentless_delete = 1,
-        tokenize = 'simple 0'
-    );
+` + SearchTable + `
 
     CREATE TABLE article_change_events (
         event_id INTEGER PRIMARY KEY,

@@ -23,9 +23,6 @@ func schemaFixture(t *testing.T, version int) *sql.Conn {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { connection.Close() })
-	if err := storage.LoadSimple(connection); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := connection.ExecContext(context.Background(), schemaFixtureSql(version)); err != nil {
 		t.Fatal(err)
 	}
@@ -36,12 +33,6 @@ func schemaFixtureSql(version int) string {
 	statement := ContentTables
 	if version < 10 {
 		statement = strings.ReplaceAll(statement, IdentifierIndexes, "")
-	}
-	if version < 9 {
-		statement = strings.ReplaceAll(statement, "tokenize = 'simple 0'", "tokenize = 'unicode61 remove_diacritics 2'")
-	}
-	if version < 7 {
-		statement = strings.ReplaceAll(statement, "        content = '',\n        contentless_delete = 1,\n", "")
 	}
 	if version < 8 {
 		statement += "CREATE INDEX idx_article_change_events_order ON article_change_events(event_id);"

@@ -8,57 +8,8 @@ import (
 	"reflect"
 	"testing"
 
-	domain "github.com/QianFuv/LitRadar/apps/server/internal/domain/storage"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
-
-// TestProjectionTextPreservesFastPathAndUnicodeRules checks source-independent normalization boundaries.
-func TestProjectionTextPreservesFastPathAndUnicodeRules(t *testing.T) {
-	cases := []struct{ value, expected string }{
-		{"ABC\tDEF", "ABC\tDEF"},
-		{"ABC\tDEF!", "ABC DEF "},
-		{"École Ö 中文!", "Ecole O 中文 "},
-		{"\u0301\u0345", ""},
-		{"a\vB", "a B"},
-		{"\ue000\uf8ff\U000f0000\U000ffffd\U00100000\U0010fffd", "\ue000\uf8ff\U000f0000\U000ffffd\U00100000\U0010fffd"},
-		{"\ufffd\xff", "  "},
-	}
-	for _, item := range cases {
-		if actual := PrepareText(item.value, true); actual != item.expected {
-			t.Fatalf("projection %q: %q expected %q", item.value, actual, item.expected)
-		}
-		if actual := PrepareText(item.value, false); actual != item.value {
-			t.Fatalf("plain source changed: %q", actual)
-		}
-	}
-}
-
-// TestQueryProjectionPreservesGrammarAndWholeInputFallback checks advanced and simple mode boundaries.
-func TestQueryProjectionPreservesGrammarAndWholeInputFallback(t *testing.T) {
-	cases := []struct{ value, expected string }{
-		{"Résumé AND title:Résumé", "\"Resume\" AND title:\"Resume\""},
-		{"\"Résumé \"\"中文\"\"\"", "\"Resume  中文 \""},
-		{"\"Résumé\":Résumé", "\"Résumé\":\"Resume\""},
-		{"{Résumé title}:Résumé", "{Résumé title}:\"Resume\""},
-		{"Résumé AND \"late", "Résumé AND \"late"},
-		{"NEAR(Résumé* OR 中文, 2)", "NEAR(\"Resume\"* OR 中文, 2)"},
-		{"_ \x1a", "\" \" \" \""},
-	}
-	for _, item := range cases {
-		if actual := PrepareQuery(item.value, true, domain.SearchAdvanced); actual != item.expected {
-			t.Fatalf("advanced %q: %q expected %q", item.value, actual, item.expected)
-		}
-		if actual := PrepareQuery(item.value, false, domain.SearchAdvanced); actual != item.value {
-			t.Fatalf("plain query changed: %q", actual)
-		}
-	}
-	if actual := PrepareQuery("!!!", true, domain.SearchSimple); actual != "!!!" {
-		t.Fatalf("nonblank punctuation fallback changed: %q", actual)
-	}
-	if actual := PrepareQuery("École", true, domain.SearchMode("unknown")); actual != "Ecole" {
-		t.Fatalf("nonadvanced mode changed: %q", actual)
-	}
-}
 
 // TestAuthorDecodingPreservesCompleteRepresentations checks shape selection, nil failure and nonnil empty output.
 func TestAuthorDecodingPreservesCompleteRepresentations(t *testing.T) {
@@ -93,7 +44,7 @@ func TestAuthorDecodingPreservesCompleteRepresentations(t *testing.T) {
 }
 
 // searchFixture keeps one caller-owned physical connection with seeded canonical and stale projected rows.
-func searchFixture(t *testing.T, usesSimple bool) (*sql.Conn, context.Context) {
+func searchFixture(t *testing.T) (*sql.Conn, context.Context) {
 	t.Helper()
 	ctx := context.Background()
 	database, err := storage.OpenPlain(filepath.Join(t.TempDir(), "search.sqlite"))
@@ -112,20 +63,14 @@ INSERT INTO journals VALUES(1,'JÖURNAL');
 INSERT INTO articles VALUES(1,'Résumé 中文!',NULL,NULL,NULL,'["Émile"]',1),(2,'SECOND','Abstract','DOI','PMID','[{"display_name":"B"}]',1);`); err != nil {
 		t.Fatal(err)
 	}
-	createSearchFixture(t, ctx, connection, usesSimple)
+	createSearchFixture(t, ctx, connection)
 	return connection, ctx
 }
 
-// createSearchFixture uses the actual bundled tokenizer when the native role is selected.
-func createSearchFixture(t *testing.T, ctx context.Context, connection *sql.Conn, usesSimple bool) {
+// createSearchFixture uses a plain table so tests can inspect the complete projected field values.
+func createSearchFixture(t *testing.T, ctx context.Context, connection *sql.Conn) {
 	t.Helper()
 	declaration := "CREATE TABLE article_search(article_id,title,abstract_text,doi,pmid,authors,journal_title)"
-	if usesSimple {
-		if err := storage.LoadSimple(connection); err != nil {
-			t.Fatal(err)
-		}
-		declaration = "CREATE VIRTUAL TABLE article_search USING fts5(article_id UNINDEXED,title,abstract_text,doi,pmid,authors,journal_title,tokenize='simple 0')"
-	}
 	if _, err := connection.ExecContext(ctx, declaration+"; INSERT INTO article_search(rowid,article_id,title) VALUES(99,99,'stale')"); err != nil {
 		t.Fatal(err)
 	}
@@ -143,31 +88,23 @@ func assertProjectedRow(t *testing.T, ctx context.Context, connection *sql.Conn,
 	}
 }
 
-// TestRebuildPreservesCanonicalRowsAndNativeProjection checks both real native and plain roles.
+// TestRebuildPreservesCanonicalRowsAndNativeProjection checks tokenized projection and canonical text.
 func TestRebuildPreservesCanonicalRowsAndNativeProjection(t *testing.T) {
-	for _, usesSimple := range []bool{false, true} {
-		connection, ctx := searchFixture(t, usesSimple)
-		if actual, err := UsesSimple(ctx, connection); err != nil || actual != usesSimple {
-			t.Fatalf("actual declaration changed: %t %v", actual, err)
-		}
-		if err := Rebuild(ctx, connection); err != nil {
-			t.Fatal(err)
-		}
-		title, authors, journal := "Résumé 中文!", "Émile", "JÖURNAL"
-		if usesSimple {
-			title, authors, journal = "Resume 中文 ", "Emile", "JOURNAL"
-		}
-		assertProjectedRow(t, ctx, connection, title, authors, journal)
-		var canonical string
-		if err := connection.QueryRowContext(ctx, "SELECT title FROM articles WHERE article_id=1").Scan(&canonical); err != nil || canonical != "Résumé 中文!" {
-			t.Fatalf("canonical source changed: %q %v", canonical, err)
-		}
+	connection, ctx := searchFixture(t)
+	if err := Rebuild(ctx, connection); err != nil {
+		t.Fatal(err)
 	}
+	assertProjectedRow(t, ctx, connection, "resume 中 文", "emile", "journal")
+	var canonical string
+	if err := connection.QueryRowContext(ctx, "SELECT title FROM articles WHERE article_id=1").Scan(&canonical); err != nil || canonical != "Résumé 中文!" {
+		t.Fatalf("canonical source changed: %q %v", canonical, err)
+	}
+
 }
 
 // TestRebuildLeavesPartialWritesForCallerRollback checks late author failure and prior projection recovery.
 func TestRebuildLeavesPartialWritesForCallerRollback(t *testing.T) {
-	connection, ctx := searchFixture(t, false)
+	connection, ctx := searchFixture(t)
 	if _, err := connection.ExecContext(ctx, "UPDATE articles SET authors_json='null' WHERE article_id=2; BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +112,7 @@ func TestRebuildLeavesPartialWritesForCallerRollback(t *testing.T) {
 	if err := Rebuild(ctx, connection); !errors.Is(err, ErrInvalidAuthors) {
 		t.Fatalf("late author error changed: %v", err)
 	}
-	assertProjectedRow(t, ctx, connection, "Résumé 中文!", "Émile", "JÖURNAL")
+	assertProjectedRow(t, ctx, connection, "resume 中 文", "emile", "journal")
 	if _, err := connection.ExecContext(ctx, "ROLLBACK"); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +124,7 @@ func TestRebuildLeavesPartialWritesForCallerRollback(t *testing.T) {
 
 // TestRebuildRejectsNativeTextBeforeAuthorDecoding checks typed row validation precedence.
 func TestRebuildRejectsNativeTextBeforeAuthorDecoding(t *testing.T) {
-	connection, ctx := searchFixture(t, false)
+	connection, ctx := searchFixture(t)
 	if _, err := connection.ExecContext(ctx, "UPDATE articles SET title=x'ff',authors_json='null' WHERE article_id=2; BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
@@ -196,12 +133,12 @@ func TestRebuildRejectsNativeTextBeforeAuthorDecoding(t *testing.T) {
 	if err == nil || errors.Is(err, ErrInvalidAuthors) {
 		t.Fatalf("native text failure was bypassed: %v", err)
 	}
-	assertProjectedRow(t, ctx, connection, "Résumé 中文!", "Émile", "JÖURNAL")
+	assertProjectedRow(t, ctx, connection, "resume 中 文", "emile", "journal")
 }
 
-// TestUsesSimpleMissingTableAndCanceledRebuildRetainExistingRows checks pre-deletion boundaries.
-func TestUsesSimpleMissingTableAndCanceledRebuildRetainExistingRows(t *testing.T) {
-	connection, ctx := searchFixture(t, false)
+// TestCanceledRebuildRetainsExistingRows checks pre-deletion boundaries.
+func TestCanceledRebuildRetainsExistingRows(t *testing.T) {
+	connection, ctx := searchFixture(t)
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	if err := Rebuild(canceled, connection); !errors.Is(err, context.Canceled) {
@@ -211,10 +148,5 @@ func TestUsesSimpleMissingTableAndCanceledRebuildRetainExistingRows(t *testing.T
 	if err := connection.QueryRowContext(ctx, "SELECT rowid FROM article_search").Scan(&identifier); err != nil || identifier != 99 {
 		t.Fatalf("canceled rebuild deleted rows: %d %v", identifier, err)
 	}
-	if _, err := connection.ExecContext(ctx, "DROP TABLE article_search"); err != nil {
-		t.Fatal(err)
-	}
-	if actual, err := UsesSimple(ctx, connection); err != nil || actual {
-		t.Fatalf("missing declaration changed: %t %v", actual, err)
-	}
+
 }

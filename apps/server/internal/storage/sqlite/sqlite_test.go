@@ -18,30 +18,6 @@ func TestProductionBuildProvidesFtsAndStorageMeasurement(t *testing.T) {
 	assertPlainConnectionRole(t, database)
 }
 
-func TestTokenizerDetectionDoesNotConfuseAuthVersionWithContent(t *testing.T) {
-	ctx := context.Background()
-	for _, version := range []string{"6", "9", "20"} {
-		filename := filepath.Join(t.TempDir(), "ordinary.sqlite")
-		database, err := Open(filename, false, 2)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := database.ExecContext(ctx, "CREATE VIRTUAL TABLE article_search USING fts5(title,tokenize='unicode61 remove_diacritics 2'); PRAGMA user_version="+version); err != nil {
-			t.Fatal(err)
-		}
-		database.Close()
-		database, err = Open(filename, false, 2)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var count int
-		if err := database.QueryRowContext(ctx, "SELECT count(*) FROM pragma_function_list WHERE name='simple_highlight'").Scan(&count); err != nil || count != 0 {
-			t.Fatalf("unexpected native requirement for version %s: %d %v", version, count, err)
-		}
-		database.Close()
-	}
-}
-
 // TestSidecarCleanupPreservesActiveWriterAndCleansIdleReader checks cleanup across explicit owner closes.
 func TestSidecarCleanupPreservesActiveWriterAndCleansIdleReader(t *testing.T) {
 	ctx := context.Background()

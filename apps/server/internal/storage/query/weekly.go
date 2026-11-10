@@ -385,18 +385,9 @@ func weeklyArticleFilters(ctx context.Context, configuration config.Config, para
 	if err := installWeeklyMembership(ctx, connection, ids); err != nil {
 		return filter{}, err
 	}
-	usesSimple, err := search.UsesSimple(ctx, connection)
-	if err != nil {
-		return filter{}, err
-	}
-	query := params.Query
-	if query != nil {
-		value := search.PrepareQuery(*query, usesSimple, domain.SearchSimple)
-		query = &value
-	}
 	filters := filter{}
 	filters.add("l.journal_id=?", params.JournalId)
-	if match := preparedMatch(ArticleListParams{Query: query}); match != "" {
+	if match := preparedMatch(ArticleListParams{Query: params.Query}); match != "" {
 		filters.add("l.article_id IN (SELECT rowid FROM article_search WHERE article_search MATCH ?)", match)
 	} else if len(ids) == 0 {
 		filters.add("0")

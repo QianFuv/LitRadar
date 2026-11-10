@@ -22,9 +22,6 @@ func TestNewSchemaInventoryAndForeignKeyValidationHaveDifferentScopes(t *testing
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	if err := storage.LoadSimple(connection); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := connection.ExecContext(ctx, ContentTables); err != nil {
 		t.Fatal(err)
 	}
