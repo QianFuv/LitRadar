@@ -2,6 +2,7 @@
  * Typed builders for stable cross-stack API scenarios.
  */
 
+import type { ProblemDetails } from '@/lib/api/client';
 import type { components } from '@/lib/generated/api-schema';
 
 import articlePageJson from '../../../../../tests/data/scenarios/api/article-page.json';
@@ -24,7 +25,7 @@ export type WeeklyUpdatesScenario = ApiSchemas['WeeklyUpdatesResponse'];
 export type WeeklyUpdateSummaryScenario = ApiSchemas['WeeklyUpdatesSummaryResponse'];
 export type WeeklyArticlePageScenario = ApiSchemas['WeeklyArticlePage'];
 export type MaskedNotificationSettingsScenario = ApiSchemas['NotificationSettingsResponse'];
-export type ErrorScenario = ApiSchemas['ErrorEnvelope'];
+export type ErrorScenario = ProblemDetails;
 
 /**
  * Narrow a JSON-imported account kind to the generated enum.

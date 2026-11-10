@@ -1,5 +1,5 @@
 {
-  "detail": "Authentication required",
-  "code": "unauthorized",
-  "retryable": false
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "Authentication required"
 }

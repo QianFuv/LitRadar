@@ -13,7 +13,10 @@ import { setupServer } from 'msw/node';
  */
 const BASELINE_HANDLERS: RequestHandler[] = [
   http.get('http://localhost/api/journals/:journalId', () =>
-    HttpResponse.json({ detail: 'Journal not found' }, { status: 404 }),
+    HttpResponse.json(
+      { title: 'Not Found', status: 404, detail: 'Journal not found' },
+      { status: 404, headers: { 'Content-Type': 'application/problem+json' } },
+    ),
   ),
 ];
 

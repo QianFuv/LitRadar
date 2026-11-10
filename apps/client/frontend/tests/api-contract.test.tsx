@@ -2,7 +2,10 @@
  * Runtime contract validation tests for generated control-plane aliases.
  */
 
+import { http, HttpResponse } from 'msw';
 import { describe, expect, test } from 'vite-plus/test';
+
+import { requestJson } from '@/lib/api/client';
 
 import {
   ApiContractError,
@@ -31,7 +34,7 @@ import {
   createMaskedNotificationSettingsScenario,
   createWeeklyUpdatesScenario,
 } from '@/tests/mocks/scenarios';
-import { installScenarioHandlers } from '@/tests/mocks/server';
+import { installScenarioHandlers, server } from '@/tests/mocks/server';
 
 /**
  * Verify valid generated auth payloads are accepted without coercion.
@@ -353,18 +356,30 @@ function acceptsMaskedNotificationContract(): void {
 }
 
 /**
- * Verify generic errors retain string detail while requiring recovery metadata.
+ * Verify the shared error scenario is an RFC 9457 problem the client reads into an ApiError.
  */
-function acceptsGenericErrorRecoveryContract(): void {
+async function acceptsGenericErrorRecoveryContract(): Promise<void> {
   const payload = createErrorScenario();
 
   expect(payload).toEqual({
+    title: 'Unauthorized',
+    status: 401,
     detail: 'Authentication required',
-    code: 'unauthorized',
-    retryable: false,
   });
-  const legacyConsumerDetail: string = payload.detail;
-  expect(legacyConsumerDetail).toBe('Authentication required');
+  server.use(
+    http.get('http://localhost/api/problem', () =>
+      HttpResponse.json(payload, {
+        status: 401,
+        headers: { 'Content-Type': 'application/problem+json' },
+      }),
+    ),
+  );
+  await expect(requestJson('http://localhost/api/problem')).rejects.toMatchObject({
+    message: 'Authentication required',
+    retryable: false,
+    status: 401,
+    title: 'Unauthorized',
+  });
 }
 
 /**
@@ -405,7 +420,7 @@ describe('generated API runtime contracts', () => {
   );
   test('validates Provider proxy policy metadata and JSON', validatesProviderProxyPolicyContract);
   test('accepts only the masked notification response contract', acceptsMaskedNotificationContract);
-  test('accepts compatible generic error recovery metadata', acceptsGenericErrorRecoveryContract);
+  test('reads the shared problem details scenario', acceptsGenericErrorRecoveryContract);
   test('rejects malformed control-plane responses', rejectsMalformedControlPlaneContracts);
   test(
     'serves explicitly installed shared scenario handlers',

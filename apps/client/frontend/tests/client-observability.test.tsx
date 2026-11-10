@@ -158,15 +158,11 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
   vi.spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          detail: detailSentinel,
-          code: 'service_unavailable',
-          retryable: true,
-        }),
+        JSON.stringify({ title: 'Service Unavailable', status: 503, detail: detailSentinel }),
         {
           status: 503,
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/problem+json',
             'Retry-After': '7',
             'X-Request-Id': requestId,
           },
@@ -176,35 +172,37 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
     .mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          detail: {
-            code: 'cnki_login_timeout',
-            message: 'second failure',
-            phase: 'login',
-          },
+          title: 'Bad Request',
+          status: 400,
+          detail: 'second failure',
+          errors: [
+            { location: 'code', message: 'cnki_login_timeout' },
+            { location: 'phase', message: 'login' },
+          ],
         }),
         {
           status: 400,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/problem+json' },
         },
       ),
     )
     .mockResolvedValueOnce(
-      new Response(JSON.stringify({ detail: 'legacy failure' }), {
+      new Response(JSON.stringify({ title: 'Bad Gateway', status: 502 }), {
         status: 502,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/problem+json' },
       }),
     )
     .mockResolvedValueOnce(
       new Response(
         JSON.stringify({
+          title: 'Service Unavailable',
+          status: 503,
           detail: 'download temporarily unavailable',
-          code: 'service_unavailable',
-          retryable: true,
         }),
         {
           status: 503,
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/problem+json',
             'Retry-After': '11',
           },
         },
@@ -226,7 +224,7 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
     throw new TypeError('expected ApiError fixture');
   }
   expect(correlatedError.requestId).toBe(requestId);
-  expect(correlatedError.code).toBe('service_unavailable');
+  expect(correlatedError.title).toBe('Service Unavailable');
   expect(correlatedError.retryable).toBe(true);
   expect(correlatedError.retryAfterSeconds).toBe(7);
 
@@ -255,8 +253,9 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
     throw new TypeError('expected ApiError fixture without request id');
   }
   expect(uncorrelatedError.requestId).toBeNull();
-  expect(uncorrelatedError.code).toBe('cnki_login_timeout');
-  expect(uncorrelatedError.phase).toBe('login');
+  expect(uncorrelatedError.message).toBe('second failure');
+  expect(uncorrelatedError.findErrorDetail('code')).toBe('cnki_login_timeout');
+  expect(uncorrelatedError.findErrorDetail('phase')).toBe('login');
   expect(uncorrelatedError.retryable).toBe(false);
   expect(uncorrelatedError.retryAfterSeconds).toBeNull();
 
@@ -270,7 +269,8 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
   if (!(legacyError instanceof ApiError)) {
     throw new TypeError('expected legacy ApiError fixture');
   }
-  expect(legacyError.code).toBeNull();
+  expect(legacyError.message).toBe('请求失败');
+  expect(legacyError.errors).toEqual([]);
   expect(legacyError.retryable).toBe(false);
   expect(legacyError.retryAfterSeconds).toBeNull();
 
@@ -284,7 +284,7 @@ async function capturesFailedResponseRecoveryMetadata(): Promise<void> {
   if (!(downloadError instanceof ApiError)) {
     throw new TypeError('expected download ApiError fixture');
   }
-  expect(downloadError.code).toBe('service_unavailable');
+  expect(downloadError.message).toBe('download temporarily unavailable');
   expect(downloadError.retryable).toBe(true);
   expect(downloadError.retryAfterSeconds).toBe(11);
 }

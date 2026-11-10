@@ -122,7 +122,7 @@ async function restoresServerSession(): Promise<void> {
   );
   server.use(http.get('http://localhost/api/auth/me', currentUserResponse));
 
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthProbe />
     </AuthProvider>,
@@ -146,7 +146,7 @@ async function requiresAuthoritativeServerSession(): Promise<void> {
     ),
   );
 
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthProbe />
     </AuthProvider>,
@@ -176,7 +176,7 @@ async function logsInAndClearsStaleClientState(): Promise<void> {
   );
   window.sessionStorage.setItem('litradar:v1:session_access_token', 'stale-secret');
   const user = userEvent.setup();
-  const { queryClient } = renderWithQuery(
+  const { queryClient } = await renderWithQuery(
     <AuthProvider>
       <AuthActionProbe />
     </AuthProvider>,
@@ -214,7 +214,7 @@ async function registersThenAuthenticates(): Promise<void> {
     http.post('http://localhost/api/auth/login', () => HttpResponse.json(loginScenario)),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthActionProbe />
     </AuthProvider>,
@@ -255,7 +255,7 @@ async function registersWithOptionalEmail(): Promise<void> {
     http.post('http://localhost/api/auth/login', () => HttpResponse.json(loginScenario)),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthActionProbe />
     </AuthProvider>,
@@ -279,7 +279,7 @@ async function registersWithOptionalEmail(): Promise<void> {
 async function adoptsUpdatedProjectionForVerifiedUser(): Promise<void> {
   server.use(http.get('http://localhost/api/auth/me', currentUserResponse));
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthActionProbe />
     </AuthProvider>,
@@ -306,19 +306,23 @@ async function preservesLogoutFailureAcrossRefresh(): Promise<void> {
     http.post('http://localhost/api/auth/logout', () =>
       HttpResponse.json(
         {
-          detail: {
-            code: 'session_revocation_unconfirmed',
-            message: 'Session revocation could not be confirmed',
-            request_id: 'logout-request-1',
+          title: 'Service Unavailable',
+          status: 503,
+          detail: 'Session revocation could not be confirmed',
+        },
+        {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/problem+json',
+            'X-Request-Id': 'logout-request-1',
           },
         },
-        { status: 503, headers: { 'X-Request-Id': 'logout-request-1' } },
       ),
     ),
   );
   window.sessionStorage.setItem('litradar:v1:session_access_token', 'stale-secret');
   const user = userEvent.setup();
-  const view = renderWithQuery(
+  const view = await renderWithQuery(
     <AuthProvider>
       <AuthActionProbe />
     </AuthProvider>,
@@ -344,7 +348,7 @@ async function preservesLogoutFailureAcrossRefresh(): Promise<void> {
       HttpResponse.json({ detail: 'Authentication required' }, { status: 401 }),
     ),
   );
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthProbe />
     </AuthProvider>,
@@ -365,7 +369,7 @@ async function acceptsAlreadyExpiredSessionLogout(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthActionProbe />
     </AuthProvider>,
@@ -407,7 +411,7 @@ async function recoversLogoutAfterFreshAuthentication(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthActionProbe />
     </AuthProvider>,
@@ -436,7 +440,7 @@ async function reconcilesExternalSessions(): Promise<void> {
         : HttpResponse.json({ detail: 'Authentication required' }, { status: 401 }),
     ),
   );
-  const { queryClient } = renderWithQuery(
+  const { queryClient } = await renderWithQuery(
     <AuthProvider>
       <AuthProbe />
     </AuthProvider>,
@@ -480,7 +484,7 @@ async function ignoresStaleSessionRestoration(): Promise<void> {
           );
     }),
   );
-  renderWithQuery(
+  await renderWithQuery(
     <AuthProvider>
       <AuthProbe />
     </AuthProvider>,
@@ -504,7 +508,7 @@ async function preservesUnchangedVisibleSession(): Promise<void> {
       return HttpResponse.json(RESTORED_USER);
     }),
   );
-  const { queryClient } = renderWithQuery(
+  const { queryClient } = await renderWithQuery(
     <AuthProvider>
       <AuthProbe />
     </AuthProvider>,

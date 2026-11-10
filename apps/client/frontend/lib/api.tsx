@@ -40,7 +40,6 @@ export {
   readSelectedDatabase,
   resolveApiBase,
   storeSelectedDatabase,
-  type ApiErrorInfo,
 } from '@/lib/api/client';
 export * from '@/lib/api/admin';
 export * from '@/lib/api/auth';

@@ -2,6 +2,8 @@
  * Shared API transport, error, URL, and database-selection helpers.
  */
 
+import { z } from 'zod';
+
 import {
   readLocalStorageValue,
   removeLocalStorageValue,
@@ -10,12 +12,51 @@ import {
 import type { ContractParser } from '@/lib/api-contract';
 import { CLIENT_PLATFORM } from '@/lib/platform';
 
-export interface ApiErrorInfo {
-  code: string | null;
-  message: string;
-  phase: string | null;
-  retryable: boolean;
-}
+/** Problem type of a request attempt that exceeded {@link REQUEST_TIMEOUT_MS}. */
+export const REQUEST_TIMEOUT_TYPE = 'urn:litradar:problem:request-timeout';
+
+const PROBLEM_ERROR_DETAIL_SCHEMA = z.object({
+  message: z.string().optional().catch(undefined),
+  location: z.string().optional().catch(undefined),
+  value: z.unknown().optional(),
+});
+
+/**
+ * RFC 9457 problem details returned with `application/problem+json` error responses.
+ * Malformed members are treated as absent so one bad field keeps the rest of the problem.
+ */
+const PROBLEM_DETAILS_SCHEMA = z.object({
+  type: z.string().optional().catch(undefined),
+  title: z.string().optional().catch(undefined),
+  status: z.int().optional().catch(undefined),
+  detail: z.string().optional().catch(undefined),
+  instance: z.string().optional().catch(undefined),
+  errors: z.array(PROBLEM_ERROR_DETAIL_SCHEMA).optional().catch(undefined),
+});
+
+/** One entry of the problem `errors` array: a message and the input location it refers to. */
+export type ProblemErrorDetail = z.output<typeof PROBLEM_ERROR_DETAIL_SCHEMA>;
+
+/** RFC 9457 problem details as read from an error response body. */
+export type ProblemDetails = z.output<typeof PROBLEM_DETAILS_SCHEMA>;
+
+/** Classification of a failed request beyond its message and HTTP status. */
+export type ApiErrorInit = {
+  /** Problem type URI. */
+  type?: string | null;
+  /** Short summary of the problem type. */
+  title?: string | null;
+  /** URI reference that identifies this occurrence. */
+  instance?: string | null;
+  /** Detailed entries, such as invalid fields or classified business failures. */
+  errors?: readonly ProblemErrorDetail[];
+  /** Server-generated request identifier exposed by CORS. */
+  requestId?: string | null;
+  /** Whether retrying may succeed without user correction. */
+  retryable?: boolean;
+  /** Server-provided retry delay in seconds. */
+  retryAfterSeconds?: number | null;
+};
 
 /** Completed browser download response. */
 export interface ApiDownload {
@@ -26,45 +67,47 @@ export interface ApiDownload {
 }
 
 /**
- * Error raised for non-2xx API responses.
+ * Error raised for non-2xx API responses and failed request attempts.
  */
 export class ApiError extends Error {
-  readonly code: string | null;
-  readonly phase: string | null;
+  readonly errors: readonly ProblemErrorDetail[];
+  readonly instance: string | null;
   readonly requestId: string | null;
   readonly retryable: boolean;
   readonly retryAfterSeconds: number | null;
   readonly status: number;
+  readonly title: string | null;
+  readonly type: string | null;
 
   /**
-   * Create an API error with optional backend classification.
+   * Create an API error from a display message, an HTTP status, and optional problem details.
    *
    * @param message - Displayable error message.
-   * @param status - HTTP status code.
-   * @param code - Stable backend error code.
-   * @param phase - Backend workflow phase that failed.
-   * @param requestId - Server-generated request identifier exposed by CORS.
-   * @param retryable - Whether retrying may succeed without user correction.
-   * @param retryAfterSeconds - Server-provided retry delay in seconds.
+   * @param status - HTTP status code, or 0 when no response arrived.
+   * @param init - Problem details and retry classification.
    */
-  constructor(
-    message: string,
-    status: number,
-    code: string | null,
-    phase: string | null,
-    requestId: string | null = null,
-    retryable = false,
-    retryAfterSeconds: number | null = null,
-  ) {
+  constructor(message: string, status: number, init: ApiErrorInit = {}) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
-    this.code = code;
-    this.phase = phase;
-    this.requestId = requestId;
-    this.retryable = retryable;
-    this.retryAfterSeconds = retryAfterSeconds;
+    this.type = init.type ?? null;
+    this.title = init.title ?? null;
+    this.instance = init.instance ?? null;
+    this.errors = init.errors ?? [];
+    this.requestId = init.requestId ?? null;
+    this.retryable = init.retryable ?? false;
+    this.retryAfterSeconds = init.retryAfterSeconds ?? null;
     Object.setPrototypeOf(this, ApiError.prototype);
+  }
+
+  /**
+   * Read the message of the first problem detail reported at one location.
+   *
+   * @param location - Detail location, such as a field path or a classification key.
+   * @returns Detail message, or null when no entry has that location.
+   */
+  findErrorDetail(location: string): string | null {
+    return this.errors.find((detail) => detail.location === location)?.message ?? null;
   }
 }
 export const DEFAULT_DATABASE = 'ccf_computer_journals.sqlite';
@@ -82,8 +125,6 @@ export const MAX_IDEMPOTENT_RETRIES = 2;
 export const MAX_RETRY_AFTER_MS = 5_000;
 /** First backoff delay after a network failure; doubles for each later attempt. */
 export const NETWORK_RETRY_BASE_DELAY_MS = 300;
-/** Stable error code for a request attempt that exceeded {@link REQUEST_TIMEOUT_MS}. */
-export const REQUEST_TIMEOUT_CODE = 'request_timeout';
 
 const RETRY_AFTER_STATUSES = new Set([429, 503]);
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD']);
@@ -168,59 +209,6 @@ export function buildDatabaseUrl(path: string, dbName: string, params?: URLSearc
 }
 
 /**
- * Check whether an unknown value is a string-keyed object.
- *
- * @param value - Value to inspect.
- * @returns Whether the value is a record.
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object');
-}
-
-/**
- * Convert an unknown backend error payload into structured error info.
- *
- * @param payload - Parsed backend error payload.
- * @param fallback - Fallback message.
- * @returns Structured API error info.
- */
-function extractErrorInfo(payload: unknown, fallback: string): ApiErrorInfo {
-  if (isRecord(payload) && 'detail' in payload) {
-    const topLevelCode = typeof payload.code === 'string' ? payload.code : null;
-    const retryable = payload.retryable === true;
-    const detail = payload.detail;
-    if (typeof detail === 'string') {
-      return { code: topLevelCode, message: detail, phase: null, retryable };
-    }
-    if (isRecord(detail)) {
-      return extractDetailedErrorInfo(detail, fallback, topLevelCode, retryable);
-    }
-  }
-  return { code: null, message: fallback, phase: null, retryable: false };
-}
-
-/**
- * Read a structured detail envelope with nested strings taking precedence.
- *
- * @param detail - Admitted object-valued detail, including array records.
- * @param fallback - Message when the nested message is not a string.
- * @param topLevelCode - Code retained when the nested code is not a string.
- * @param retryable - Strict top-level retry decision.
- * @returns Error fields without trimming or coercing nested values.
- */
-function extractDetailedErrorInfo(
-  detail: Record<string, unknown>,
-  fallback: string,
-  topLevelCode: string | null,
-  retryable: boolean,
-): ApiErrorInfo {
-  const code = typeof detail.code === 'string' ? detail.code : topLevelCode;
-  const message = typeof detail.message === 'string' ? detail.message : fallback;
-  const phase = typeof detail.phase === 'string' ? detail.phase : null;
-  return { code, message, phase, retryable };
-}
-
-/**
  * Parse a Retry-After delay expressed as seconds or an HTTP date.
  *
  * @param value - Retry-After response header.
@@ -243,25 +231,27 @@ function parseRetryAfterSeconds(value: string | null): number | null {
 }
 
 /**
- * Build one typed API error from a failed response.
+ * Build one typed API error from a failed response and its RFC 9457 problem details.
+ *
+ * Retrying is worthwhile only for 429 and 503 responses that state a Retry-After delay.
  *
  * @param response - Failed fetch response.
- * @param fallback - Fallback display message.
+ * @param fallback - Display message when the problem carries no detail.
  * @returns Typed API error with request correlation metadata.
  */
 async function createApiError(response: Response, fallback: string): Promise<ApiError> {
-  const payload = await response.json().catch(() => null);
-  const errorInfo = extractErrorInfo(payload, fallback);
+  const payload: unknown = await response.json().catch(() => null);
+  const problem = PROBLEM_DETAILS_SCHEMA.catch({}).parse(payload);
   const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('Retry-After'));
-  return new ApiError(
-    errorInfo.message,
-    response.status,
-    errorInfo.code,
-    errorInfo.phase,
-    response.headers.get(REQUEST_ID_HEADER),
-    errorInfo.retryable || retryAfterSeconds !== null,
+  return new ApiError(problem.detail || fallback, response.status, {
+    type: problem.type,
+    title: problem.title,
+    instance: problem.instance,
+    errors: problem.errors,
+    requestId: response.headers.get(REQUEST_ID_HEADER),
+    retryable: RETRY_AFTER_STATUSES.has(response.status) && retryAfterSeconds !== null,
     retryAfterSeconds,
-  );
+  });
 }
 
 /**
@@ -285,7 +275,7 @@ function buildRequestInit(init?: RequestInit): RequestInit {
  * @returns Retryable timeout API error.
  */
 function createTimeoutError(): ApiError {
-  return new ApiError('请求超时，请稍后重试', 0, REQUEST_TIMEOUT_CODE, null, null, true, null);
+  return new ApiError('请求超时，请稍后重试', 0, { type: REQUEST_TIMEOUT_TYPE, retryable: true });
 }
 
 /**

@@ -147,25 +147,27 @@ function getCnkiMessageClassName(tone: CnkiMessageTone): string {
  */
 function getCnkiApiErrorMessage(error: unknown, fallback: string): CnkiMessageState {
   if (error instanceof ApiError) {
-    if (error.code === 'cnki_login_timeout') {
+    const code = error.findErrorDetail('code');
+    const phase = error.findErrorDetail('phase');
+    if (code === 'cnki_login_timeout') {
       return {
         text: '未检测到扫码确认。请确认已在支付宝完成扫码授权，然后再次点击“完成登录”。',
         tone: 'error',
       };
     }
-    if (error.code === 'cnki_login_not_started') {
+    if (code === 'cnki_login_not_started') {
       return {
         text: '当前没有可确认的二维码。请重新生成二维码后再完成登录。',
         tone: 'error',
       };
     }
-    if (error.code === 'cnki_login_failed' || error.phase === 'login') {
+    if (code === 'cnki_login_failed' || phase === 'login') {
       return {
         text: `扫码登录未完成：${error.message}`,
         tone: 'error',
       };
     }
-    if (error.code === 'cnki_warmup_failed' || error.phase === 'warmup') {
+    if (code === 'cnki_warmup_failed' || phase === 'warmup') {
       return {
         text: `扫码登录已通过，但全文权限预热失败：${error.message}。请稍后再次点击“完成登录”；如果仍失败，请重新扫码。`,
         tone: 'error',

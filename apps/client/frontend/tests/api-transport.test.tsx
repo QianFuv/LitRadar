@@ -1,5 +1,5 @@
 /**
- * Platform API transport timeout, cancellation, bounded retry, and error-envelope coverage.
+ * Platform API transport timeout, cancellation, bounded retry, and problem-details coverage.
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
@@ -8,7 +8,7 @@ import {
   ApiError,
   MAX_IDEMPOTENT_RETRIES,
   NETWORK_RETRY_BASE_DELAY_MS,
-  REQUEST_TIMEOUT_CODE,
+  REQUEST_TIMEOUT_TYPE,
   REQUEST_TIMEOUT_MS,
   requestDownload,
   requestJson,
@@ -30,6 +30,27 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json', ...headers },
+  });
+}
+
+/**
+ * Create an RFC 9457 problem response fixture in the backend's default error format.
+ *
+ * @param status - HTTP status.
+ * @param detail - Problem detail message.
+ * @param headers - Extra response headers.
+ * @param extras - Extra problem members, such as `errors`.
+ * @returns Problem response fixture.
+ */
+function problemResponse(
+  status: number,
+  detail: string,
+  headers: Record<string, string> = {},
+  extras: Record<string, unknown> = {},
+): Response {
+  return new Response(JSON.stringify({ title: 'Problem', status, detail, ...extras }), {
+    status,
+    headers: { 'Content-Type': 'application/problem+json', ...headers },
   });
 }
 
@@ -90,7 +111,7 @@ async function timesOutStalledRequests(): Promise<void> {
 
   const error = await outcome;
   expect(error).toBeInstanceOf(ApiError);
-  expect(error).toMatchObject({ status: 0, code: REQUEST_TIMEOUT_CODE, retryable: true });
+  expect(error).toMatchObject({ status: 0, type: REQUEST_TIMEOUT_TYPE, retryable: true });
   expect(fetchSpy).toHaveBeenCalledTimes(1);
 }
 
@@ -112,7 +133,7 @@ async function timesOutStalledBodies(): Promise<void> {
 
   await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
 
-  expect(await outcome).toMatchObject({ code: REQUEST_TIMEOUT_CODE });
+  expect(await outcome).toMatchObject({ type: REQUEST_TIMEOUT_TYPE });
 }
 
 /**
@@ -139,7 +160,7 @@ async function propagatesCallerCancellation(): Promise<void> {
  */
 async function cancelsDuringRetryWait(): Promise<void> {
   const fetchSpy = scriptFetch([
-    jsonResponse({ detail: 'busy' }, 503, { 'Retry-After': '2' }),
+    problemResponse(503, 'busy', { 'Retry-After': '2' }),
     jsonResponse({ ok: true }),
   ]);
   const controller = new AbortController();
@@ -158,7 +179,7 @@ async function cancelsDuringRetryWait(): Promise<void> {
  */
 async function honorsRetryAfterForIdempotentRequests(): Promise<void> {
   const fetchSpy = scriptFetch([
-    jsonResponse({ detail: 'busy' }, 503, { 'Retry-After': '1' }),
+    problemResponse(503, 'busy', { 'Retry-After': '1' }),
     jsonResponse({ value: 7 }),
   ]);
   const outcome = requestJson<{ value: number }>(ENDPOINT);
@@ -193,9 +214,7 @@ async function boundsNetworkRetries(): Promise<void> {
 async function surfacesExhaustedRetryAfter(): Promise<void> {
   const fetchSpy = scriptFetch(
     Array.from({ length: MAX_IDEMPOTENT_RETRIES + 1 }, () =>
-      jsonResponse({ detail: 'still busy', code: 'service_unavailable' }, 503, {
-        'Retry-After': '0',
-      }),
+      problemResponse(503, 'still busy', { 'Retry-After': '0' }),
     ),
   );
 
@@ -204,7 +223,12 @@ async function surfacesExhaustedRetryAfter(): Promise<void> {
   const error = await outcome;
 
   expect(error).toBeInstanceOf(ApiError);
-  expect(error).toMatchObject({ status: 503, code: 'service_unavailable', retryAfterSeconds: 0 });
+  expect(error).toMatchObject({
+    status: 503,
+    message: 'still busy',
+    retryable: true,
+    retryAfterSeconds: 0,
+  });
   expect(fetchSpy).toHaveBeenCalledTimes(MAX_IDEMPOTENT_RETRIES + 1);
 }
 
@@ -212,38 +236,47 @@ async function surfacesExhaustedRetryAfter(): Promise<void> {
  * Verify non-idempotent requests, long Retry-After delays, and non-retry statuses fail at once.
  */
 async function skipsUnsafeRetries(): Promise<void> {
-  const postSpy = scriptFetch([jsonResponse({ detail: 'busy' }, 503, { 'Retry-After': '1' })]);
+  const postSpy = scriptFetch([problemResponse(503, 'busy', { 'Retry-After': '1' })]);
   await expect(requestJson(ENDPOINT, { method: 'POST', body: '{}' })).rejects.toMatchObject({
     status: 503,
+    retryable: true,
     retryAfterSeconds: 1,
   });
   expect(postSpy).toHaveBeenCalledTimes(1);
   postSpy.mockRestore();
 
-  const longDelaySpy = scriptFetch([
-    jsonResponse({ detail: 'later' }, 429, { 'Retry-After': '30' }),
-  ]);
+  const longDelaySpy = scriptFetch([problemResponse(429, 'later', { 'Retry-After': '30' })]);
   await expect(requestJson(ENDPOINT)).rejects.toMatchObject({
     status: 429,
+    retryable: true,
     retryAfterSeconds: 30,
   });
   expect(longDelaySpy).toHaveBeenCalledTimes(1);
   longDelaySpy.mockRestore();
 
-  const gatewaySpy = scriptFetch([jsonResponse({ detail: 'bad gateway' }, 502)]);
+  const gatewaySpy = scriptFetch([problemResponse(502, 'bad gateway')]);
   await expect(requestDownload(ENDPOINT)).rejects.toMatchObject({ status: 502 });
   expect(gatewaySpy).toHaveBeenCalledTimes(1);
 }
 
 /**
- * Verify structured error envelopes keep their code, phase, message, and request id.
+ * Verify problem details keep their detail, type, classified entries, and request id.
  */
-async function preservesErrorEnvelope(): Promise<void> {
+async function preservesProblemDetails(): Promise<void> {
   scriptFetch([
-    jsonResponse(
-      { detail: { code: 'cnki_login_timeout', message: '知网登录超时', phase: 'login' } },
+    problemResponse(
       408,
+      '知网登录超时',
       { 'X-Request-Id': 'request-42' },
+      {
+        type: 'about:blank',
+        title: 'Request Timeout',
+        instance: '/api/cnki/login/confirm',
+        errors: [
+          { location: 'code', message: 'cnki_login_timeout' },
+          { location: 'phase', message: 'login' },
+        ],
+      },
     ),
   ]);
 
@@ -252,13 +285,62 @@ async function preservesErrorEnvelope(): Promise<void> {
   expect(error).toBeInstanceOf(ApiError);
   expect(error).toMatchObject({
     status: 408,
-    code: 'cnki_login_timeout',
     message: '知网登录超时',
-    phase: 'login',
+    type: 'about:blank',
+    title: 'Request Timeout',
+    instance: '/api/cnki/login/confirm',
     requestId: 'request-42',
     retryable: false,
     retryAfterSeconds: null,
   });
+  expect(error instanceof ApiError && error.findErrorDetail('code')).toBe('cnki_login_timeout');
+  expect(error instanceof ApiError && error.findErrorDetail('phase')).toBe('login');
+  expect(error instanceof ApiError && error.findErrorDetail('field')).toBeNull();
+}
+
+/**
+ * Verify only 429 and 503 responses that state Retry-After are classified as retryable.
+ */
+async function classifiesRetryableStatuses(): Promise<void> {
+  const cases: [Response, boolean][] = [
+    [problemResponse(503, 'busy'), false],
+    [problemResponse(500, 'failed', { 'Retry-After': '1' }), false],
+    [problemResponse(429, 'slow down', { 'Retry-After': 'invalid' }), false],
+    [problemResponse(429, 'slow down', { 'Retry-After': '120' }), true],
+  ];
+  for (const [response, isRetryable] of cases) {
+    const fetchSpy = scriptFetch([response]);
+    const error = await settle(requestJson(ENDPOINT, { method: 'POST', body: '{}' }));
+    expect(error).toMatchObject({ status: response.status, retryable: isRetryable });
+    fetchSpy.mockRestore();
+  }
+}
+
+/**
+ * Verify malformed or missing problem bodies fall back without losing valid members.
+ */
+async function toleratesMalformedProblems(): Promise<void> {
+  const textSpy = scriptFetch([new Response('upstream exploded', { status: 500 })]);
+  await expect(
+    requestJson(ENDPOINT, { method: 'POST', body: '{}' }, '保存失败'),
+  ).rejects.toMatchObject({ status: 500, message: '保存失败', errors: [] });
+  textSpy.mockRestore();
+
+  const malformedSpy = scriptFetch([
+    jsonResponse({ detail: 'kept detail', errors: 'not-a-list', status: 'bad' }, 400),
+  ]);
+  await expect(
+    requestJson(ENDPOINT, { method: 'POST', body: '{}' }, '保存失败'),
+  ).rejects.toMatchObject({ status: 400, message: 'kept detail', errors: [] });
+  malformedSpy.mockRestore();
+
+  const legacySpy = scriptFetch([
+    jsonResponse({ detail: { code: 'legacy', message: 'legacy' }, retryable: true }, 503),
+  ]);
+  await expect(
+    requestJson(ENDPOINT, { method: 'POST', body: '{}' }, '保存失败'),
+  ).rejects.toMatchObject({ status: 503, message: '保存失败', retryable: false });
+  legacySpy.mockRestore();
 }
 
 beforeEach(() => {
@@ -278,5 +360,7 @@ describe('platform API transport', () => {
   test('bounds network failure retries', boundsNetworkRetries);
   test('surfaces the final Retry-After failure', surfacesExhaustedRetryAfter);
   test('skips retries that are unsafe or too slow', skipsUnsafeRetries);
-  test('preserves the structured error envelope', preservesErrorEnvelope);
+  test('preserves RFC 9457 problem details', preservesProblemDetails);
+  test('classifies retryable statuses by Retry-After', classifiesRetryableStatuses);
+  test('tolerates malformed problem bodies', toleratesMalformedProblems);
 });

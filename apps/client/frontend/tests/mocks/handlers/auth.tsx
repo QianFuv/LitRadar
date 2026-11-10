@@ -57,7 +57,10 @@ export function createAccountScenarioHandlers(
     http.put(`${API_URL}/auth/email`, async ({ request }) => {
       const { email } = (await request.json()) as { email: string | null };
       if (email === 'taken@example.test') {
-        return HttpResponse.json({ detail: 'Email already exists' }, { status: 409 });
+        return HttpResponse.json(
+          { title: 'Conflict', status: 409, detail: 'Email already exists' },
+          { status: 409, headers: { 'Content-Type': 'application/problem+json' } },
+        );
       }
       currentUser = { ...currentUser, email: email?.toLowerCase() ?? null };
       return HttpResponse.json(currentUser);

@@ -95,8 +95,8 @@ function createActiveCnkiPoll(): CnkiLoginPollResponse {
 /**
  * Render the CNKI settings owner with shared copy feedback disabled.
  */
-function renderCnkiSettings(): void {
-  renderWithQuery(
+async function renderCnkiSettings(): Promise<void> {
+  await renderWithQuery(
     <CnkiSettingsCard userId={21} copyFeedback={null} handleCopy={accountSettingsMocks.copy} />,
   );
 }
@@ -128,7 +128,7 @@ async function managesLocalAccountEmail(): Promise<void> {
     }
   });
   const user = userEvent.setup();
-  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+  await renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
 
   const emailInput = screen.getByLabelText('邮箱');
   const saveButton = screen.getByRole('button', { name: '保存邮箱' });
@@ -173,7 +173,7 @@ async function startsSingleSignOnLink(): Promise<void> {
   vi.stubGlobal('location', { ...window.location, assign });
   installAccountUser();
   const user = userEvent.setup();
-  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+  await renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
 
   const linkButton = await screen.findByRole('button', { name: '绑定 authentik' });
   await waitFor(() => expect(linkButton).toBeEnabled());
@@ -188,7 +188,7 @@ async function startsSingleSignOnLink(): Promise<void> {
  */
 async function disablesLinkWhenSingleSignOnIsOff(): Promise<void> {
   installAccountUser({}, { oidc_enabled: false });
-  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+  await renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
 
   expect(await screen.findByText('服务器尚未启用单点登录')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /^绑定/ })).toBeDisabled();
@@ -206,7 +206,7 @@ async function unlinksSingleSignOnAfterConfirmation(): Promise<void> {
     }
   });
   const user = userEvent.setup();
-  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+  await renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
 
   expect(screen.getByText('已绑定')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '解除绑定' }));
@@ -226,9 +226,9 @@ async function unlinksSingleSignOnAfterConfirmation(): Promise<void> {
 /**
  * Verify single sign-on accounts see a read-only email and cannot unlink or change it.
  */
-function showsReadOnlyOidcAccount(): void {
+async function showsReadOnlyOidcAccount(): Promise<void> {
   installAccountUser({ auth_kind: 'oidc', email: 'sso@example.test', is_oidc_linked: true });
-  renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
+  await renderWithQuery(<AccountSignInCard oidcLinkResult={null} />);
 
   expect(screen.getByText('sso@example.test')).toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: '邮箱' })).not.toBeInTheDocument();
@@ -240,14 +240,14 @@ function showsReadOnlyOidcAccount(): void {
 /**
  * Verify the link callback result is announced as success or a readable failure.
  */
-function announcesLinkCallbackResult(): void {
+async function announcesLinkCallbackResult(): Promise<void> {
   installAccountUser({ is_oidc_linked: true });
-  const view = renderWithQuery(<AccountSignInCard oidcLinkResult="linked" />);
+  const view = await renderWithQuery(<AccountSignInCard oidcLinkResult="linked" />);
   expect(screen.getByRole('status')).toHaveTextContent('之后可以使用它登录');
   view.unmount();
 
   installAccountUser();
-  renderWithQuery(<AccountSignInCard oidcLinkResult="account_conflict" />);
+  await renderWithQuery(<AccountSignInCard oidcLinkResult="account_conflict" />);
   expect(screen.getByRole('alert')).toHaveTextContent('已绑定其他 LitRadar 账号');
 }
 
@@ -268,7 +268,7 @@ async function changesPasswordThenLogsOut(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<PasswordCard />);
+  await renderWithQuery(<PasswordCard />);
 
   await user.type(screen.getByLabelText('原密码'), 'old-password');
   await user.type(screen.getByLabelText('新密码'), 'new-password-123');
@@ -297,7 +297,7 @@ async function reportsPasswordChangeFailure(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(<PasswordCard />);
+  await renderWithQuery(<PasswordCard />);
 
   await user.type(screen.getByLabelText('原密码'), 'wrong-password');
   await user.type(screen.getByLabelText('新密码'), 'new-password-123');
@@ -354,7 +354,9 @@ async function generatesAndCopiesPersonalInvite(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderWithQuery(<InviteCodeCard copyFeedback={null} handleCopy={accountSettingsMocks.copy} />);
+  await renderWithQuery(
+    <InviteCodeCard copyFeedback={null} handleCopy={accountSettingsMocks.copy} />,
+  );
 
   await user.click(await screen.findByRole('button', { name: '生成邀请码' }));
   expect(await screen.findByText('personal-invite')).toBeInTheDocument();
@@ -387,7 +389,9 @@ async function reportsPersonalInviteFailure(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(<InviteCodeCard copyFeedback={null} handleCopy={accountSettingsMocks.copy} />);
+  await renderWithQuery(
+    <InviteCodeCard copyFeedback={null} handleCopy={accountSettingsMocks.copy} />,
+  );
 
   await user.click(await screen.findByRole('button', { name: '生成邀请码' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Invite quota reached');
@@ -424,7 +428,9 @@ async function createsTokenAndRetainsFailedRevocation(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderWithQuery(<AccessTokensCard copyFeedback={null} handleCopy={accountSettingsMocks.copy} />);
+  await renderWithQuery(
+    <AccessTokensCard copyFeedback={null} handleCopy={accountSettingsMocks.copy} />,
+  );
 
   expect(await screen.findByText('automation')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '新建' }));
@@ -479,7 +485,7 @@ async function completesCnkiQrLogin(): Promise<void> {
     }),
   );
   const user = userEvent.setup();
-  renderCnkiSettings();
+  await renderCnkiSettings();
 
   await user.click(await screen.findByRole('button', { name: '扫码登录' }));
   expect(await screen.findByText('qr-payload-1')).toBeInTheDocument();
@@ -515,29 +521,33 @@ async function reportsCnkiTimeoutAndWarmupFailures(): Promise<void> {
       if (pollAttempt === 1) {
         return HttpResponse.json(
           {
-            detail: {
-              code: 'cnki_login_timeout',
-              phase: 'login',
-              message: 'scan not confirmed',
-            },
+            title: 'Gateway Timeout',
+            status: 504,
+            detail: 'scan not confirmed',
+            errors: [
+              { location: 'code', message: 'cnki_login_timeout' },
+              { location: 'phase', message: 'login' },
+            ],
           },
-          { status: 504 },
+          { status: 504, headers: { 'Content-Type': 'application/problem+json' } },
         );
       }
       return HttpResponse.json(
         {
-          detail: {
-            code: 'cnki_warmup_failed',
-            phase: 'warmup',
-            message: 'proxy unavailable',
-          },
+          title: 'Bad Gateway',
+          status: 502,
+          detail: 'proxy unavailable',
+          errors: [
+            { location: 'code', message: 'cnki_warmup_failed' },
+            { location: 'phase', message: 'warmup' },
+          ],
         },
-        { status: 502 },
+        { status: 502, headers: { 'Content-Type': 'application/problem+json' } },
       );
     }),
   );
   const user = userEvent.setup();
-  renderCnkiSettings();
+  await renderCnkiSettings();
 
   await user.click(await screen.findByRole('button', { name: '扫码登录' }));
   await user.click(await screen.findByRole('button', { name: '完成登录' }));
@@ -563,7 +573,7 @@ async function retainsCnkiSessionWhenClearFails(): Promise<void> {
     ),
   );
   const user = userEvent.setup();
-  renderCnkiSettings();
+  await renderCnkiSettings();
 
   await user.click(await screen.findByRole('button', { name: '清除' }));
   const confirmation = screen.getByRole('alertdialog', { name: '清除 CNKI 登录状态？' });
