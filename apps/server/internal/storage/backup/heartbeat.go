@@ -7,8 +7,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlc/backupdb"
 	storage "github.com/QianFuv/LitRadar/apps/server/internal/storage/sqlite"
 )
+
+var heartbeatQueries backupdb.Queries
 
 // RecordHeartbeat retains process start time on renewal and expires seven-day-old rows.
 func RecordHeartbeat(ctx context.Context, filename string, service ServiceKind, instance string, at float64) error {
@@ -20,10 +23,10 @@ func RecordHeartbeat(ctx context.Context, filename string, service ServiceKind, 
 		return err
 	}
 	defer database.Close()
-	if _, err := database.ExecContext(ctx, "INSERT INTO service_heartbeats(service,instance_id,started_at,heartbeat_at) VALUES(?,?,?,?) ON CONFLICT(service,instance_id) DO UPDATE SET heartbeat_at=excluded.heartbeat_at", service, instance, at, at); err != nil {
+	if _, err := heartbeatQueries.RecordHeartbeat(ctx, database, backupdb.RecordHeartbeatParams{Service: string(service), InstanceID: instance, StartedAt: at, HeartbeatAt: at}); err != nil {
 		return err
 	}
-	_, err = database.ExecContext(ctx, "DELETE FROM service_heartbeats WHERE heartbeat_at<?", at-604800)
+	_, err = heartbeatQueries.PruneHeartbeats(ctx, database, at-604800)
 	return err
 }
 
@@ -34,7 +37,7 @@ func DeleteHeartbeat(ctx context.Context, filename string, service ServiceKind, 
 		return err
 	}
 	defer database.Close()
-	_, err = database.ExecContext(ctx, "DELETE FROM service_heartbeats WHERE service=? AND instance_id=?", service, instance)
+	_, err = heartbeatQueries.DeleteHeartbeat(ctx, database, backupdb.DeleteHeartbeatParams{Service: string(service), InstanceID: instance})
 	return err
 }
 
