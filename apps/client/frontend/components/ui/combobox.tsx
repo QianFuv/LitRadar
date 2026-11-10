@@ -7,10 +7,11 @@ import * as React from 'react';
 import { Combobox as ComboboxPrimitive } from '@animate-ui/react/primitives/base-ui/combobox';
 import { CheckIcon, Search } from 'lucide-react';
 
-import { LIST_ITEM_CLASS, LIST_POPUP_CLASS } from '@/components/ui/multi-select';
+import { listStyles } from '@/components/ui/multi-select';
 import { PresenceBoundary } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 const Combobox = ComboboxPrimitive.Root;
 const ComboboxTrigger = ComboboxPrimitive.Trigger;
@@ -30,16 +31,20 @@ type ComboboxContentProps = React.ComponentProps<typeof ComboboxPrimitive.Popup>
 function ComboboxContent({
   align = 'start',
   sideOffset = 6,
-  className,
+  xstyle,
   children,
   ...props
-}: ComboboxContentProps) {
+}: Omit<ComboboxContentProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
     <ComboboxPrimitive.Portal>
-      <ComboboxPrimitive.Positioner align={align} sideOffset={sideOffset} className="z-50">
+      <ComboboxPrimitive.Positioner
+        align={align}
+        sideOffset={sideOffset}
+        {...stylex.props(styles.comboboxContentComboboxPrimitivePositioner)}
+      >
         <PresenceBoundary>
           <RevealScope>
-            <ComboboxPrimitive.Popup className={cn(LIST_POPUP_CLASS, className)} {...props}>
+            <ComboboxPrimitive.Popup {...stylex.props(listStyles.popup, xstyle)} {...props}>
               {children}
             </ComboboxPrimitive.Popup>
           </RevealScope>
@@ -56,22 +61,18 @@ function ComboboxContent({
  * @returns Search input with a leading icon.
  */
 function ComboboxInput({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof ComboboxPrimitive.Input>) {
+}: Omit<React.ComponentProps<typeof ComboboxPrimitive.Input>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
-    <div className="relative shrink-0 border-b p-2">
-      <Search
-        className="pointer-events-none absolute top-1/2 left-4.5 size-4 -translate-y-1/2 text-muted-foreground"
-        aria-hidden="true"
-      />
+    <div {...stylex.props(styles.comboboxInputDiv)}>
+      <Search {...stylex.props(styles.comboboxInputSearch)} aria-hidden="true" />
       <ComboboxPrimitive.Input
         autoComplete="off"
         spellCheck={false}
-        className={cn(
-          'h-9 w-full min-w-0 rounded-lg bg-transparent pr-3 pl-9 text-sm shadow-vercel-ring outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50',
-          className,
-        )}
+        {...stylex.props(styles.comboboxInputComboboxPrimitiveInput, xstyle)}
         {...props}
       />
     </div>
@@ -85,15 +86,14 @@ function ComboboxInput({
  * @returns Scrollable option list.
  */
 function ComboboxList({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof ComboboxPrimitive.List>) {
+}: Omit<React.ComponentProps<typeof ComboboxPrimitive.List>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <ComboboxPrimitive.List
-      className={cn(
-        'min-h-0 flex-1 overflow-y-auto overscroll-contain py-1.5 pr-3 pl-1.5 empty:hidden',
-        className,
-      )}
+      {...stylex.props(styles.comboboxListComboboxPrimitiveList, xstyle)}
       {...props}
     />
   );
@@ -106,12 +106,14 @@ function ComboboxList({
  * @returns Empty-state message.
  */
 function ComboboxEmpty({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof ComboboxPrimitive.Empty>) {
+}: Omit<React.ComponentProps<typeof ComboboxPrimitive.Empty>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <ComboboxPrimitive.Empty
-      className={cn('px-4 py-3 text-xs text-muted-foreground empty:hidden', className)}
+      {...stylex.props(styles.comboboxEmptyComboboxPrimitiveEmpty, xstyle)}
       {...props}
     />
   );
@@ -128,16 +130,23 @@ type ComboboxItemProps = React.ComponentProps<typeof ComboboxPrimitive.Item> & {
  * @param props - Base UI item properties, label, and optional trailing detail.
  * @returns Selectable option row.
  */
-function ComboboxItem({ className, children, detail, ...props }: ComboboxItemProps) {
+function ComboboxItem({
+  xstyle,
+  children,
+  detail,
+  ...props
+}: Omit<ComboboxItemProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
-    <ComboboxPrimitive.Item className={cn(LIST_ITEM_CLASS, className)} {...props}>
-      <ComboboxPrimitive.ItemIndicator className="flex size-4 shrink-0 items-center justify-center">
-        <CheckIcon className="size-4" aria-hidden="true" />
+    <ComboboxPrimitive.Item {...stylex.props(listStyles.item, xstyle)} {...props}>
+      <ComboboxPrimitive.ItemIndicator
+        {...stylex.props(styles.comboboxItemComboboxPrimitiveItemIndicator)}
+      >
+        <CheckIcon {...stylex.props(styles.comboboxItemCheckIcon)} aria-hidden="true" />
       </ComboboxPrimitive.ItemIndicator>
-      <span className="min-w-0 flex-1 break-words">{children}</span>
+      <span {...stylex.props(styles.comboboxItemSpan)}>{children}</span>
       {detail !== undefined && (
-        <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
-          <span className="sr-only"> · </span>
+        <span {...stylex.props(styles.comboboxItemSpan2)}>
+          <span {...stylex.props(styles.comboboxItemSpan3)}> · </span>
           {detail}
         </span>
       )}
@@ -155,3 +164,105 @@ export {
   ComboboxTrigger,
   ComboboxValue,
 };
+
+const styles = stylex.create({
+  comboboxContentComboboxPrimitivePositioner: {
+    zIndex: 50,
+  },
+  comboboxInputDiv: {
+    position: 'relative',
+    flexShrink: 0,
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    padding: '0.5rem',
+  },
+  comboboxInputSearch: {
+    pointerEvents: 'none',
+    position: 'absolute',
+    top: 'calc(1 / 2 * 100%)',
+    left: '1.125rem',
+    width: '1rem',
+    height: '1rem',
+    translate: '0 calc(calc(1 / 2 * 100%) * -1)',
+    color: colors.mutedForeground,
+  },
+  comboboxInputComboboxPrimitiveInput: {
+    height: '2.25rem',
+    width: '100%',
+    minWidth: '0px',
+    borderRadius: '8px',
+    backgroundColor: 'transparent',
+    paddingRight: '0.75rem',
+    paddingLeft: '2.25rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    boxShadow: {
+      default: shadows.vercelRing,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), ${shadows.vercelRing}`,
+    },
+    outlineStyle: 'none',
+    '::placeholder': {
+      color: colors.mutedForeground,
+    },
+  },
+  comboboxListComboboxPrimitiveList: {
+    minHeight: '0px',
+    flex: '1',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    paddingBlock: '0.375rem',
+    paddingRight: '0.75rem',
+    paddingLeft: '0.375rem',
+    display: {
+      default: null,
+      ':empty': 'none',
+    },
+  },
+  comboboxEmptyComboboxPrimitiveEmpty: {
+    paddingInline: '1rem',
+    paddingBlock: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    display: {
+      default: null,
+      ':empty': 'none',
+    },
+  },
+  comboboxItemComboboxPrimitiveItemIndicator: {
+    display: 'flex',
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  comboboxItemCheckIcon: {
+    width: '1rem',
+    height: '1rem',
+  },
+  comboboxItemSpan: {
+    minWidth: '0px',
+    flex: '1',
+    overflowWrap: 'break-word',
+  },
+  comboboxItemSpan2: {
+    flexShrink: 0,
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 400,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  comboboxItemSpan3: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+});

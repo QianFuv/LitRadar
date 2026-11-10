@@ -19,6 +19,7 @@ import {
 } from 'react';
 
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
+import * as stylex from '@stylexjs/stylex';
 
 /** Longest time a block that is still loading may hold back the ready blocks after it. */
 export const REVEAL_WAIT_LIMIT_MS = 1500;
@@ -189,14 +190,14 @@ export function RevealScope({ children }: { children: ReactNode }) {
 type RevealItemProps = {
   /** Loaded content; only rendered once the block is revealed. */
   children: ReactNode;
-  /** Classes for the content element. */
-  className?: string;
+  /** Styles of the content element. */
+  xstyle?: stylex.StyleXStyles;
   /** Whether the block's first data for its current subject has settled, including failures. */
   isReady: boolean;
   /** Placeholder shown immediately and until the block is revealed. */
   placeholder: ReactNode;
-  /** Classes for the placeholder element; defaults to the content classes. */
-  placeholderClassName?: string;
+  /** Styles of the placeholder element; defaults to the content styles. */
+  placeholderXstyle?: stylex.StyleXStyles;
 };
 
 /**
@@ -206,15 +207,15 @@ type RevealItemProps = {
  * remove the outgoing element at once and blur-fade the incoming one in, so a swap never waits on
  * an exit animation.
  *
- * @param props - Readiness, placeholder, content, and element classes.
+ * @param props - Readiness, placeholder, content, and element styles.
  * @returns Animated placeholder or content element.
  */
 export function RevealItem({
   children,
-  className,
+  xstyle,
   isReady,
   placeholder,
-  placeholderClassName,
+  placeholderXstyle,
 }: RevealItemProps) {
   const sequence = useContext(RevealSequenceContext);
   const id = useId();
@@ -252,7 +253,7 @@ export function RevealItem({
         <MotionDiv
           key="content"
           ref={trackElement}
-          className={className}
+          {...stylex.props(xstyle)}
           variants={PANEL_VARIANTS}
           initial="hidden"
           animate="visible"
@@ -263,7 +264,7 @@ export function RevealItem({
         <MotionDiv
           key="placeholder"
           ref={trackElement}
-          className={placeholderClassName ?? className}
+          {...stylex.props(placeholderXstyle === undefined ? xstyle : placeholderXstyle)}
           variants={PANEL_VARIANTS}
           initial="hidden"
           animate="visible"

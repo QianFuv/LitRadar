@@ -59,7 +59,8 @@ import { Highlight, HighlightItem } from '@animate-ui/react/primitives/effects/h
 import { ScrollFade } from '@animate-ui/react/primitives/effects/scroll-fade';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type FavoritesFeedback = {
   message: string;
@@ -84,7 +85,7 @@ function AnimatedFeedback({ feedback, scope }: AnimatedFeedbackProps) {
         <p
           key={`${scope}-${feedback.tone}-${feedback.message}`}
           data-testid={`${scope}-feedback-announcement`}
-          className="sr-only"
+          {...stylex.props(styles.animatedFeedbackP)}
           role={feedback.tone === 'error' ? 'alert' : 'status'}
         >
           {feedback.message}
@@ -96,9 +97,11 @@ function AnimatedFeedback({ feedback, scope }: AnimatedFeedbackProps) {
             key={`${scope}-${feedback.tone}-${feedback.message}`}
             data-motion-feedback-key={`${scope}-${feedback.tone}`}
             aria-hidden="true"
-            className={cn(
-              'text-xs leading-5',
-              feedback.tone === 'error' ? 'text-destructive' : 'text-success-foreground',
+            {...stylex.props(
+              styles.animatedFeedbackMotionParagraph,
+              feedback.tone === 'error'
+                ? styles.animatedFeedbackMotionParagraphError
+                : styles.animatedFeedbackMotionParagraphNotError,
             )}
             variants={REVEAL_VARIANTS}
             initial="hidden"
@@ -148,7 +151,7 @@ export function FavoritesPageContent({ userId }: { userId: number }) {
         <p
           key={`${favoritesState}-${favoritesAnnouncement}`}
           data-testid="favorites-state-announcement"
-          className="sr-only"
+          {...stylex.props(styles.animatedFeedbackP)}
           role={favoritesAnnouncementRole}
           aria-label={favoritesAnnouncement}
           aria-live={favoritesAnnouncementRole === 'alert' ? 'assertive' : 'polite'}
@@ -188,21 +191,21 @@ function renderFavoritesHeader(state: FavoritesViewState) {
   const { selectedFolder, setDialogOpen } = state;
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-lg leading-7 font-bold">我的收藏</h1>
-          <p className="text-xs text-muted-foreground">按收藏夹整理、批量管理并导出引用</p>
+    <div {...stylex.props(styles.renderFavoritesHeaderDiv)}>
+      <div {...stylex.props(styles.renderFavoritesHeaderDiv2)}>
+        <div {...stylex.props(styles.renderFavoritesHeaderDiv3)}>
+          <h1 {...stylex.props(styles.renderFavoritesHeaderH1)}>我的收藏</h1>
+          <p {...stylex.props(styles.renderFavoritesHeaderP)}>按收藏夹整理、批量管理并导出引用</p>
         </div>
         <Button
           variant="outline"
           size="sm"
-          className="shrink-0 rounded-lg"
+          xstyle={styles.renderFavoritesHeaderButton}
           aria-label="新建收藏夹"
           onClick={() => setDialogOpen(true)}
         >
           <Plus aria-hidden="true" />
-          <span className="hidden sm:inline">新建</span>
+          <span {...stylex.props(styles.renderFavoritesHeaderSpan)}>新建</span>
         </Button>
       </div>
       <FavoriteKindSwitch />
@@ -222,15 +225,15 @@ function renderFolderTabs(state: FavoritesViewState) {
     <RevealItem
       isReady={!isLoading}
       placeholder={
-        <div aria-hidden="true" className="flex gap-2">
-          <Skeleton className="h-8 w-24 rounded-full" />
-          <Skeleton className="h-8 w-32 rounded-full" />
-          <Skeleton className="h-8 w-20 rounded-full" />
+        <div aria-hidden="true" {...stylex.props(styles.renderFolderTabsDiv)}>
+          <Skeleton xstyle={styles.renderFolderTabsSkeleton} />
+          <Skeleton xstyle={styles.renderFolderTabsSkeleton2} />
+          <Skeleton xstyle={styles.renderFolderTabsSkeleton3} />
         </div>
       }
     >
       {folders.length === 0 ? (
-        <p className="text-xs text-muted-foreground">暂无收藏夹，点击「新建」创建第一个。</p>
+        <p {...stylex.props(styles.renderFavoritesHeaderP)}>暂无收藏夹，点击「新建」创建第一个。</p>
       ) : (
         <ScrollFade orientation="horizontal" shrink={0} asChild>
           <div
@@ -238,18 +241,22 @@ function renderFolderTabs(state: FavoritesViewState) {
             role="group"
             aria-label="收藏夹"
             data-slot="favorite-folder-tabs"
-            className="scrollbar-none -mx-4 -my-1 flex gap-1.5 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5"
+            {...stylex.props(styles.favoriteFolderTabs)}
           >
             <Highlight
               controlledItems
               value={activeFolderId === null ? null : String(activeFolderId)}
               click={false}
-              className="rounded-full bg-foreground"
+              {...stylex.props(styles.renderFolderTabsHighlight)}
             >
               {folders.map((folder) => {
                 const isActive = activeFolderId === folder.id;
                 return (
-                  <HighlightItem key={folder.id} value={String(folder.id)} className="shrink-0">
+                  <HighlightItem
+                    key={folder.id}
+                    value={String(folder.id)}
+                    {...stylex.props(styles.renderFolderTabsHighlightItem)}
+                  >
                     <button
                       type="button"
                       data-motion-folder-key={folder.id}
@@ -257,28 +264,32 @@ function renderFolderTabs(state: FavoritesViewState) {
                       aria-label={folder.name}
                       title={folder.is_tracking ? `${folder.name}（追踪文件夹）` : folder.name}
                       onClick={() => handleSelectFolder(folder.id)}
-                      className={cn(
-                        'motion-control inline-flex h-11 max-w-[13rem] shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] md:h-8 md:px-3 outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring',
+                      {...stylex.props(
+                        styles.renderFolderTabsButton,
                         isActive
-                          ? 'font-bold text-background'
-                          : 'bg-background text-foreground/80 shadow-[inset_0_0_0_1px_var(--border)] hover:bg-accent',
+                          ? styles.renderFolderTabsButtonActive
+                          : styles.renderFolderTabsButtonNotActive,
                       )}
                     >
                       {folder.is_tracking && (
                         <Radar
-                          className={cn(
-                            'size-3.5 shrink-0',
-                            isActive ? 'text-background' : 'text-primary-text',
+                          {...stylex.props(
+                            styles.renderFolderTabsRadar,
+                            isActive
+                              ? styles.renderFolderTabsRadarActive
+                              : styles.renderFolderTabsRadarNotActive,
                           )}
                           aria-hidden="true"
                         />
                       )}
-                      <span className="truncate">{folder.name}</span>
+                      <span {...stylex.props(styles.renderFolderTabsSpan)}>{folder.name}</span>
                       <span
                         aria-hidden="true"
-                        className={cn(
-                          'shrink-0 text-[11px] tabular-nums',
-                          isActive ? 'text-background/70' : 'text-muted-foreground',
+                        {...stylex.props(
+                          styles.renderFolderTabsSpan2,
+                          isActive
+                            ? styles.renderFolderTabsSpanActive
+                            : styles.renderFolderTabsSpanNotActive,
                         )}
                       >
                         {folder.article_count}
@@ -303,20 +314,22 @@ function renderFolderToolbar(
   const { deleteMut, trackMut, setEditingId, setEditName, setFolderToDelete } = state;
 
   return (
-    <div className="flex items-center justify-between gap-2 rounded-xl bg-muted px-3 py-2">
-      <div className="min-w-0">
-        <p className="flex min-w-0 items-center gap-1.5 text-[13px] font-bold">
-          <span className="truncate" title={selectedFolder.name}>
+    <div {...stylex.props(styles.renderFolderToolbarDiv)}>
+      <div {...stylex.props(styles.renderFavoritesHeaderDiv3)}>
+        <p {...stylex.props(styles.renderFolderToolbarP)}>
+          <span {...stylex.props(styles.renderFolderTabsSpan)} title={selectedFolder.name}>
             {selectedFolder.name}
           </span>
-          {selectedFolder.is_tracking && <Badge className="shrink-0">追踪</Badge>}
+          {selectedFolder.is_tracking && (
+            <Badge xstyle={styles.renderFolderTabsHighlightItem}>追踪</Badge>
+          )}
         </p>
-        <p className="text-[11px] text-muted-foreground">
+        <p {...stylex.props(styles.renderFolderToolbarP2)}>
           {selectedFolder.article_count} 篇
           {selectedFolder.is_tracking && ' · 每周推送会自动收藏到此处'}
         </p>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div {...stylex.props(styles.renderFolderToolbarDiv2)}>
         {renderFavoriteExport(state, selectedFolder)}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -329,8 +342,10 @@ function renderFolderToolbar(
               <MoreHorizontal aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel className="truncate">{selectedFolder.name}</DropdownMenuLabel>
+          <DropdownMenuContent align="end" xstyle={styles.renderFolderToolbarDropdownMenuContent}>
+            <DropdownMenuLabel xstyle={styles.renderFolderTabsSpan}>
+              {selectedFolder.name}
+            </DropdownMenuLabel>
             <DropdownMenuItem
               aria-label={`设 ${selectedFolder.name} 为追踪文件夹`}
               disabled={selectedFolder.is_tracking}
@@ -399,14 +414,14 @@ function renderFavoriteArticle(
         dbName={favorite.db_name}
         initialFolderIds={[favorite.folder_id]}
         favoriteToggleFolderId={favorite.folder_id}
-        className={cn(isSelected && 'bg-accent/50')}
+        xstyle={isSelected && styles.renderFavoriteArticleArticleDialogCardSelected}
         preview={
           favorite.metadata_status === 'missing' ? (
-            <span className="text-warning-foreground">
+            <span {...stylex.props(styles.renderFavoriteArticleSpan)}>
               来源数据库或文章已不存在。收藏仍保留；可移动、移除，导出时会保留空元数据条目。
             </span>
           ) : favorite.metadata_status === 'unavailable' ? (
-            <span className="text-destructive">
+            <span {...stylex.props(styles.animatedFeedbackMotionParagraphError)}>
               文章元数据暂时无法读取，请稍后重试。收藏仍保留，可移动或移除；当前导出会明确报错。
             </span>
           ) : undefined
@@ -449,15 +464,24 @@ function renderFavoriteExport(
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-8 px-2.5" aria-label="导出收藏夹">
+        <Button
+          variant="ghost"
+          size="sm"
+          xstyle={styles.renderFavoriteExportButton}
+          aria-label="导出收藏夹"
+        >
           <Download aria-hidden="true" />
-          <span className="hidden sm:inline">导出</span>
+          <span {...stylex.props(styles.renderFavoritesHeaderSpan)}>导出</span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 space-y-3" aria-label="导出引用">
+      <PopoverContent
+        align="end"
+        xstyle={styles.renderFavoriteExportPopoverContent}
+        aria-label="导出引用"
+      >
         <div>
-          <p className="text-sm font-bold">导出引用</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p {...stylex.props(styles.renderFavoriteExportP)}>导出引用</p>
+          <p {...stylex.props(styles.renderFavoriteExportP2)}>
             导出当前收藏夹为 BibTeX、RIS 或 EndNote 格式
           </p>
         </div>
@@ -466,7 +490,7 @@ function renderFavoriteExport(
           onValueChange={(value: string) => setExportFormat(value as CitationFormat)}
           disabled={exportMut.isPending}
         >
-          <SelectTrigger className="w-full" aria-label="导出格式">
+          <SelectTrigger xstyle={styles.renderFavoriteExportSelectTrigger} aria-label="导出格式">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -477,7 +501,7 @@ function renderFavoriteExport(
         </Select>
         <Button
           type="button"
-          className="w-full"
+          xstyle={styles.renderFavoriteExportSelectTrigger}
           disabled={exportMut.isPending}
           onClick={() =>
             exportMut.mutate({
@@ -486,7 +510,7 @@ function renderFavoriteExport(
             })
           }
         >
-          <Download className="h-4 w-4" aria-hidden="true" />
+          <Download {...stylex.props(styles.renderFavoriteExportDownload)} aria-hidden="true" />
           {exportMut.isPending ? '导出中…' : '导出引用'}
         </Button>
         <AnimatedFeedback feedback={exportFeedback} scope="export" />
@@ -519,13 +543,13 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
   return (
     <section
       aria-label="选择与批量操作"
-      className={cn(
-        'sticky top-0 z-10 border-b bg-background px-4 py-2.5 sm:px-5',
-        hasSelection && 'bg-info/80',
+      {...stylex.props(
+        styles.renderFavoriteBulkActionsSection,
+        hasSelection && styles.renderFavoriteBulkActionsSectionSelection,
       )}
     >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div {...stylex.props(styles.renderFavoriteBulkActionsDiv)}>
+        <div {...stylex.props(styles.renderFavoriteBulkActionsDiv2)}>
           <Checkbox
             checked={allLoadedSelected || (hasSelection && 'indeterminate')}
             onCheckedChange={(checked: boolean | 'indeterminate') =>
@@ -533,16 +557,18 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
             }
             aria-label="选择当前已加载文章"
           />
-          <div className="min-w-0 leading-tight">
-            <p className="text-[13px] font-bold">已选 {selectedFavorites.length} 篇</p>
-            <p className="text-[11px] text-muted-foreground">当前列表共 {favorites.length} 篇</p>
+          <div {...stylex.props(styles.renderFavoriteBulkActionsDiv3)}>
+            <p {...stylex.props(styles.renderFavoriteBulkActionsP)}>
+              已选 {selectedFavorites.length} 篇
+            </p>
+            <p {...stylex.props(styles.renderFolderToolbarP2)}>当前列表共 {favorites.length} 篇</p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div {...stylex.props(styles.renderFavoriteBulkActionsDiv4)}>
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 px-2"
+            xstyle={styles.renderFavoriteBulkActionsButton}
             onClick={() => handleSelectAllLoaded(true)}
             disabled={favorites.length === 0 || allLoadedSelected}
           >
@@ -551,7 +577,7 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 px-2"
+            xstyle={styles.renderFavoriteBulkActionsButton}
             onClick={() => handleSelectAllLoaded(false)}
             disabled={!hasSelection}
           >
@@ -561,10 +587,17 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
         <div
           role="group"
           aria-label="批量操作"
-          className={cn('flex w-full items-center gap-1.5', !hasSelection && 'hidden')}
+          {...stylex.props(
+            styles.renderFavoriteBulkActionsDiv5,
+            !hasSelection && styles.renderFavoriteBulkActionsDivSelection,
+          )}
         >
           <Select value={effectiveMoveTargetFolderId} onValueChange={setMoveTargetFolderId}>
-            <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label="选择目标收藏夹">
+            <SelectTrigger
+              size="sm"
+              xstyle={styles.renderFavoriteBulkActionsSelectTrigger}
+              aria-label="选择目标收藏夹"
+            >
               <SelectValue placeholder="选择目标收藏夹" />
             </SelectTrigger>
             <SelectContent>
@@ -586,7 +619,7 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
           <Button
             variant="outline"
             size="sm"
-            className="text-destructive"
+            xstyle={styles.bulkRemoveButton}
             onClick={handleBulkRemove}
             disabled={isFavoriteBulkRemoveDisabled(state)}
           >
@@ -595,7 +628,7 @@ function renderFavoriteBulkActions(state: FavoritesViewState) {
         </div>
       </div>
       {(hasNextPage || visiblePageCount < loadedPages) && (
-        <p className="mt-1 text-[11px] text-muted-foreground">
+        <p {...stylex.props(styles.renderFavoriteBulkActionsP2)}>
           批量操作仅作用于当前列表中的 {favorites.length} 篇文章
         </p>
       )}
@@ -676,7 +709,7 @@ function renderCreateFavoriteFolderDialog(
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-      <DialogContent className="md:max-w-md">
+      <DialogContent xstyle={styles.renderCreateFavoriteFolderDialogDialogContent}>
         <DialogHeader>
           <DialogTitle>新建收藏夹</DialogTitle>
           <DialogDescription>输入收藏夹名称</DialogDescription>
@@ -686,9 +719,9 @@ function renderCreateFavoriteFolderDialog(
             event.preventDefault();
             if (newFolderName.trim()) createMut.mutate(newFolderName.trim());
           }}
-          className="space-y-4"
         >
           <Input
+            xstyle={styles.renderCreateFavoriteFolderDialogFormItem}
             aria-label="收藏夹名称"
             name="favorite_folder_name"
             autoComplete="off"
@@ -696,7 +729,7 @@ function renderCreateFavoriteFolderDialog(
             onChange={(event) => setNewFolderName(event.target.value)}
             placeholder="收藏夹名称"
           />
-          <DialogFooter>
+          <DialogFooter xstyle={styles.renderCreateFavoriteFolderDialogFormItem}>
             <Button type="submit" disabled={createMut.isPending}>
               创建
             </Button>
@@ -722,13 +755,12 @@ function renderRenameFavoriteFolderDialog(state: FavoritesViewState) {
         }
       }}
     >
-      <DialogContent className="md:max-w-md">
+      <DialogContent xstyle={styles.renderCreateFavoriteFolderDialogDialogContent}>
         <DialogHeader>
           <DialogTitle>重命名收藏夹</DialogTitle>
           <DialogDescription>为“{editingFolder?.name ?? ''}”输入新的名称</DialogDescription>
         </DialogHeader>
         <form
-          className="space-y-4"
           data-motion-folder-mode="edit"
           onSubmit={(event) => {
             event.preventDefault();
@@ -738,6 +770,7 @@ function renderRenameFavoriteFolderDialog(state: FavoritesViewState) {
           }}
         >
           <Input
+            xstyle={styles.renderCreateFavoriteFolderDialogFormItem}
             ref={editInputRef}
             aria-label={`重命名收藏夹 ${editingFolder?.name ?? ''}`}
             name="favorite_folder_rename"
@@ -745,7 +778,7 @@ function renderRenameFavoriteFolderDialog(state: FavoritesViewState) {
             value={editName}
             onChange={(event) => setEditName(event.target.value)}
           />
-          <DialogFooter>
+          <DialogFooter xstyle={styles.renderCreateFavoriteFolderDialogFormItem}>
             <Button type="submit" disabled={renameMut.isPending || !editName.trim()}>
               {renameMut.isPending ? '保存中…' : '保存'}
             </Button>
@@ -822,20 +855,32 @@ function renderFavoritesArticlePanel(state: FavoritesViewState) {
     >
       {renderFavoriteBulkActions(state)}
       {renderFavoriteArticles(state)}
-      {(visiblePageCount < loadedPages || hasNextPage) && <div ref={loadMoreRef} className="h-1" />}
+      {(visiblePageCount < loadedPages || hasNextPage) && (
+        <div ref={loadMoreRef} {...stylex.props(styles.renderFavoritesArticlePanelDiv)} />
+      )}
       <MotionPresence>
         {isFetchingNextPage && (
           <MotionDiv
             key="favorites-next-page"
             aria-hidden="true"
-            className="space-y-2 px-4 py-4 sm:px-5"
+            {...stylex.props(styles.renderFavoritesArticlePanelMotionDiv)}
             variants={REVEAL_VARIANTS}
             initial="hidden"
             animate="visible"
             exit="exit"
           >
-            <Skeleton className="h-4 w-11/12" />
-            <Skeleton className="h-3 w-1/2" />
+            <Skeleton
+              xstyle={[
+                styles.renderFavoritesArticlePanelMotionDivItem,
+                styles.renderFavoritesArticlePanelSkeleton,
+              ]}
+            />
+            <Skeleton
+              xstyle={[
+                styles.renderFavoritesArticlePanelMotionDivItem,
+                styles.renderFavoritesArticlePanelSkeleton2,
+              ]}
+            />
           </MotionDiv>
         )}
       </MotionPresence>
@@ -947,3 +992,353 @@ function isFavoriteBulkMoveDisabled(state: FavoritesViewState): boolean {
 function isFavoriteBulkRemoveDisabled(state: FavoritesViewState): boolean {
   return state.selectedFavorites.length === 0 || state.bulkRemoveMut.isPending;
 }
+
+const styles = stylex.create({
+  bulkRemoveButton: {
+    color: {
+      default: colors.destructive,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  animatedFeedbackP: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  animatedFeedbackMotionParagraph: {
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+  },
+  animatedFeedbackMotionParagraphError: {
+    color: colors.destructive,
+  },
+  animatedFeedbackMotionParagraphNotError: {
+    color: colors.successForeground,
+  },
+  renderFavoritesHeaderDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+  },
+  renderFavoritesHeaderDiv2: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+  },
+  renderFavoritesHeaderDiv3: {
+    minWidth: '0px',
+  },
+  renderFavoritesHeaderH1: {
+    fontSize: '1.125rem',
+    lineHeight: '1.75rem',
+    fontWeight: 700,
+  },
+  renderFavoritesHeaderP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderFavoritesHeaderButton: {
+    flexShrink: 0,
+    borderRadius: '8px',
+  },
+  renderFavoritesHeaderSpan: {
+    display: {
+      default: 'none',
+      '@media (min-width: 40rem)': 'inline',
+    },
+  },
+  renderFolderTabsDiv: {
+    display: 'flex',
+    gap: '0.5rem',
+  },
+  renderFolderTabsSkeleton: {
+    height: '2rem',
+    width: '6rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  renderFolderTabsSkeleton2: {
+    height: '2rem',
+    width: '8rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  renderFolderTabsSkeleton3: {
+    height: '2rem',
+    width: '5rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  favoriteFolderTabs: {
+    marginInline: {
+      default: '-1rem',
+      '@media (min-width: 40rem)': '-1.25rem',
+    },
+    marginBlock: '-0.25rem',
+    display: 'flex',
+    gap: '0.375rem',
+    overflowX: 'auto',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.25rem',
+    scrollbarWidth: 'none',
+    '::-webkit-scrollbar': {
+      display: 'none',
+    },
+  },
+  renderFolderTabsHighlight: {
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.foreground,
+  },
+  renderFolderTabsHighlightItem: {
+    flexShrink: 0,
+  },
+  renderFolderTabsButton: {
+    display: 'inline-flex',
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    maxWidth: '13rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.375rem',
+    borderRadius: 'calc(infinity * 1px)',
+    paddingInline: {
+      default: '0.875rem',
+      '@media (min-width: 48rem)': '0.75rem',
+    },
+    fontSize: '13px',
+    transitionProperty: 'background-color, color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  renderFolderTabsButtonActive: {
+    fontWeight: 700,
+    color: colors.background,
+  },
+  renderFolderTabsButtonNotActive: {
+    backgroundColor: {
+      default: colors.background,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    color: `color-mix(in oklab, ${colors.foreground} 80%, transparent)`,
+    boxShadow: {
+      default: `inset 0 0 0 1px ${colors.border}`,
+      ':focus-visible': `0 0 0 2px ${colors.ring}, inset 0 0 0 1px ${colors.border}`,
+    },
+  },
+  renderFolderTabsRadar: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+  },
+  renderFolderTabsRadarActive: {
+    color: colors.background,
+  },
+  renderFolderTabsRadarNotActive: {
+    color: colors.primaryText,
+  },
+  renderFolderTabsSpan: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  renderFolderTabsSpan2: {
+    flexShrink: 0,
+    fontSize: '11px',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderFolderTabsSpanActive: {
+    color: `color-mix(in oklab, ${colors.background} 70%, transparent)`,
+  },
+  renderFolderTabsSpanNotActive: {
+    color: colors.mutedForeground,
+  },
+  renderFolderToolbarDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+    borderRadius: '12px',
+    backgroundColor: colors.muted,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+  },
+  renderFolderToolbarP: {
+    display: 'flex',
+    minWidth: '0px',
+    alignItems: 'center',
+    gap: '0.375rem',
+    fontSize: '13px',
+    fontWeight: 700,
+  },
+  renderFolderToolbarP2: {
+    fontSize: '11px',
+    color: colors.mutedForeground,
+  },
+  renderFolderToolbarDiv2: {
+    display: 'flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.25rem',
+  },
+  renderFolderToolbarDropdownMenuContent: {
+    width: '14rem',
+  },
+  renderFavoriteArticleArticleDialogCardSelected: {
+    backgroundColor: `color-mix(in oklab, ${colors.accent} 50%, transparent)`,
+  },
+  renderFavoriteArticleSpan: {
+    color: colors.warningForeground,
+  },
+  renderFavoriteExportButton: {
+    height: '2rem',
+    paddingInline: '0.625rem',
+  },
+  renderFavoriteExportPopoverContent: {
+    display: 'flex',
+    width: '18rem',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+  },
+  renderFavoriteExportP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  renderFavoriteExportP2: {
+    marginTop: '0.125rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderFavoriteExportSelectTrigger: {
+    width: '100%',
+  },
+  renderFavoriteExportDownload: {
+    height: '1rem',
+    width: '1rem',
+  },
+  renderFavoriteBulkActionsSection: {
+    position: 'sticky',
+    top: '0px',
+    zIndex: 10,
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    backgroundColor: colors.background,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.625rem',
+  },
+  renderFavoriteBulkActionsSectionSelection: {
+    backgroundColor: `color-mix(in oklab, ${colors.info} 80%, transparent)`,
+  },
+  renderFavoriteBulkActionsDiv: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    columnGap: '0.75rem',
+    rowGap: '0.5rem',
+  },
+  renderFavoriteBulkActionsDiv2: {
+    display: 'flex',
+    minWidth: '0px',
+    alignItems: 'center',
+    gap: '0.625rem',
+  },
+  renderFavoriteBulkActionsDiv3: {
+    minWidth: '0px',
+    lineHeight: 1.25,
+  },
+  renderFavoriteBulkActionsP: {
+    fontSize: '13px',
+    fontWeight: 700,
+  },
+  renderFavoriteBulkActionsDiv4: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.25rem',
+  },
+  renderFavoriteBulkActionsButton: {
+    height: '2rem',
+    paddingInline: {
+      default: '0.5rem',
+      ':has( > svg)': '0.625rem',
+    },
+  },
+  renderFavoriteBulkActionsDiv5: {
+    display: 'flex',
+    width: '100%',
+    alignItems: 'center',
+    gap: '0.375rem',
+  },
+  renderFavoriteBulkActionsDivSelection: {
+    display: 'none',
+  },
+  renderFavoriteBulkActionsSelectTrigger: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  renderFavoriteBulkActionsP2: {
+    marginTop: '0.25rem',
+    fontSize: '11px',
+    color: colors.mutedForeground,
+  },
+  renderCreateFavoriteFolderDialogDialogContent: {
+    maxWidth: {
+      default: 'none',
+      '@media (min-width: 48rem)': '28rem',
+    },
+  },
+  renderCreateFavoriteFolderDialogFormItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '1rem',
+    },
+  },
+  renderFavoritesArticlePanelDiv: {
+    height: '0.25rem',
+  },
+  renderFavoritesArticlePanelMotionDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  renderFavoritesArticlePanelMotionDiv: {
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+  },
+  renderFavoritesArticlePanelSkeleton: {
+    height: '1rem',
+    width: 'calc(11 / 12 * 100%)',
+  },
+  renderFavoritesArticlePanelSkeleton2: {
+    height: '0.75rem',
+    width: 'calc(1 / 2 * 100%)',
+  },
+});

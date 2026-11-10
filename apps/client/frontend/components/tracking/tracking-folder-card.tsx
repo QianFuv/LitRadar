@@ -21,8 +21,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { cn } from '@/lib/utils';
 import { Folder, Plus } from '@/components/ui/animated-icons';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type TrackingFolderCardProps = {
   model: TrackingPageViewModel['folder'];
@@ -50,20 +51,20 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
           设置追踪文件夹后，每周推送的新文章将自动收藏到该文件夹中
         </SettingsSectionDescription>
       </SettingsSectionHeader>
-      <SettingsSectionContent className="space-y-2">
-        <SettingsGroup>
+      <SettingsSectionContent>
+        <SettingsGroup xstyle={styles.trackingFolderCardSettingsSectionContentItem}>
           <SettingsRow
             leading={
               <span
                 aria-hidden="true"
-                className={cn(
-                  'flex size-10 shrink-0 items-center justify-center rounded-xl',
+                {...stylex.props(
+                  styles.trackingFolderCardSpan,
                   model.trackingFolder
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground',
+                    ? styles.trackingFolderCardSpanTrackingFolder
+                    : styles.trackingFolderCardSpanNotTrackingFolder,
                 )}
               >
-                <Folder className="size-5" />
+                <Folder {...stylex.props(styles.trackingFolderCardFolder)} />
               </span>
             }
             title="当前文件夹"
@@ -81,7 +82,10 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
                 value={model.trackingFolder?.id?.toString() || ''}
                 onValueChange={(value: string) => model.setTrackingMutation.mutate(Number(value))}
               >
-                <SelectTrigger className="w-full sm:w-60" aria-label="选择追踪文件夹">
+                <SelectTrigger
+                  xstyle={styles.trackingFolderCardSelectTrigger}
+                  aria-label="选择追踪文件夹"
+                >
                   <SelectValue placeholder="选择追踪文件夹" />
                 </SelectTrigger>
                 <SelectContent>
@@ -95,7 +99,7 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
             )}
           </SettingsRow>
           <SettingsRow title="新建追踪文件夹" description="创建一个新的收藏夹并立即设为追踪目标">
-            <div className="flex w-full gap-2 sm:w-auto">
+            <div {...stylex.props(styles.trackingFolderCardDiv)}>
               <Input
                 aria-label="新建追踪文件夹名称"
                 name="tracking_folder_name"
@@ -103,22 +107,28 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
                 value={model.name}
                 onChange={(event) => model.setName(event.target.value)}
                 placeholder="文件夹名称"
-                className="min-w-0 flex-1 sm:w-44"
+                xstyle={styles.trackingFolderCardInput}
               />
               <Button
                 variant="outline"
-                className="shrink-0"
+                xstyle={styles.trackingFolderCardButton}
                 disabled={!model.name.trim() || model.createAndSetMutation.isPending}
                 onClick={() => model.createAndSetMutation.mutate(model.name.trim())}
               >
-                <Plus className="size-4" />
+                <Plus {...stylex.props(styles.trackingFolderCardPlus)} />
                 创建并设为追踪
               </Button>
             </div>
           </SettingsRow>
         </SettingsGroup>
         {mutationError && (
-          <p role="alert" className="px-1 text-sm text-destructive">
+          <p
+            role="alert"
+            {...stylex.props(
+              styles.trackingFolderCardSettingsSectionContentItem,
+              styles.trackingFolderCardP,
+            )}
+          >
             {mutationError}
           </p>
         )}
@@ -126,3 +136,68 @@ export function TrackingFolderCard({ model }: TrackingFolderCardProps) {
     </SettingsSection>
   );
 }
+
+const styles = stylex.create({
+  trackingFolderCardSettingsSectionContentItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  trackingFolderCardSpan: {
+    display: 'flex',
+    width: '2.5rem',
+    height: '2.5rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '12px',
+  },
+  trackingFolderCardSpanTrackingFolder: {
+    backgroundColor: colors.primary,
+    color: colors.primaryForeground,
+  },
+  trackingFolderCardSpanNotTrackingFolder: {
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  trackingFolderCardFolder: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  trackingFolderCardSelectTrigger: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': '15rem',
+    },
+  },
+  trackingFolderCardDiv: {
+    display: 'flex',
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': 'auto',
+    },
+    gap: '0.5rem',
+  },
+  trackingFolderCardInput: {
+    minWidth: '0px',
+    flex: '1',
+    width: {
+      default: null,
+      '@media (min-width: 40rem)': '11rem',
+    },
+  },
+  trackingFolderCardButton: {
+    flexShrink: 0,
+  },
+  trackingFolderCardPlus: {
+    width: '1rem',
+    height: '1rem',
+  },
+  trackingFolderCardP: {
+    paddingInline: '0.25rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+});

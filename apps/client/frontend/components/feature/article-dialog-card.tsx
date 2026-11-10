@@ -17,7 +17,8 @@ import {
 import { Dialog, DialogTrigger } from '@/components/ui/dialog';
 import { type Article } from '@/lib/api';
 import { getArticleDisplayTitle, hasArticleTitle } from '@/lib/article-title';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 type ArticleDialogCardProps = {
   article: Article;
@@ -32,7 +33,7 @@ type ArticleDialogCardProps = {
   extraActions?: ReactNode;
   leading?: ReactNode;
   triggerRef?: (node?: Element | null) => void;
-  className?: string;
+  xstyle?: stylex.StyleXStyles;
 };
 
 /**
@@ -83,7 +84,7 @@ export function ArticleDialogCard({
   extraActions,
   leading,
   triggerRef,
-  className,
+  xstyle,
 }: ArticleDialogCardProps) {
   const reader = useArticleReader();
   const [open, setOpen] = useState(false);
@@ -125,12 +126,9 @@ export function ArticleDialogCard({
     <Dialog open={open && !isDocked} onOpenChange={setOpen}>
       <div
         data-selected={isSelected ? 'true' : 'false'}
-        className={cn(
-          'motion-control group/article relative flex items-start border-b border-border/60 transition-[background-color] hover:bg-accent/50 data-[selected=true]:bg-accent',
-          className,
-        )}
+        {...stylex.props(styles.articleDialogCardDiv, stylex.defaultMarker(), xstyle)}
       >
-        {leading && <div className="shrink-0 pt-[22px] pl-5 sm:pl-7">{leading}</div>}
+        {leading && <div {...stylex.props(styles.articleDialogCardDiv2)}>{leading}</div>}
         <DialogTrigger asChild>
           <div
             ref={triggerRef}
@@ -140,7 +138,7 @@ export function ArticleDialogCard({
             data-selected={isSelected ? 'true' : 'false'}
             aria-current={isSelected ? 'true' : undefined}
             aria-label={`查看文章详情：${displayTitle}`}
-            className="min-w-0 flex-1 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            {...stylex.props(styles.articleDialogCardDiv3)}
             onClick={handleClick}
             onKeyDown={handleArticleTriggerKeyDown}
           >
@@ -154,7 +152,7 @@ export function ArticleDialogCard({
               preview={resolvedPreview}
               openAccess={article.open_access}
               inPress={article.in_press}
-              className={leading ? 'pl-3 sm:pl-3' : undefined}
+              xstyle={leading ? styles.articleDialogCardArticleListCardLeading : null}
             />
           </div>
         </DialogTrigger>
@@ -164,3 +162,52 @@ export function ArticleDialogCard({
     </Dialog>
   );
 }
+
+const styles = stylex.create({
+  articleDialogCardDiv: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'flex-start',
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.border} 60%, transparent)`,
+    transitionProperty: 'background-color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    backgroundColor: {
+      default: null,
+      ':is([data-selected="true"])': colors.accent,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': {
+          default: `color-mix(in oklab, ${colors.accent} 50%, transparent)`,
+          ':is([data-selected="true"])': colors.accent,
+        },
+      },
+    },
+  },
+  articleDialogCardDiv2: {
+    flexShrink: 0,
+    paddingTop: '22px',
+    paddingLeft: {
+      default: '1.25rem',
+      '@media (min-width: 40rem)': '1.75rem',
+    },
+  },
+  articleDialogCardDiv3: {
+    minWidth: '0px',
+    flex: '1',
+    cursor: 'pointer',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `inset 0 0 0 2px ${colors.ring}`,
+    },
+  },
+  articleDialogCardArticleListCardLeading: {
+    paddingLeft: {
+      default: '0.75rem',
+      '@media (min-width: 40rem)': '0.75rem',
+    },
+  },
+});

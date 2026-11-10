@@ -8,6 +8,7 @@ import { ResultsList } from '@/components/feature/results-list';
 import { SearchBar } from '@/components/feature/search-bar';
 import { SearchFilters } from '@/components/feature/search-filters';
 import { WorkspaceShell } from '@/components/feature/workspace-shell';
+import * as stylex from '@stylexjs/stylex';
 
 /**
  * Render the article search field, filter pills, announcements, results, and reading desk.
@@ -21,9 +22,9 @@ export function SearchWorkspaceView() {
       emphasis="list"
       shouldAutoSelectFirst
       header={
-        <div className="space-y-3">
-          <SearchBar hasSyntaxAssist />
-          <SearchFilters />
+        <div>
+          <SearchBar xstyle={styles.searchWorkspaceViewDivItem} hasSyntaxAssist />
+          <SearchFilters xstyle={styles.searchWorkspaceViewDivItem} />
         </div>
       }
       readerPlaceholder={
@@ -38,3 +39,12 @@ export function SearchWorkspaceView() {
     </WorkspaceShell>
   );
 }
+
+const styles = stylex.create({
+  searchWorkspaceViewDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+});

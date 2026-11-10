@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { createPreloadableComponent } from '@/lib/lazy-component';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import type { WorkspaceView } from '@/lib/workspace-view';
+import * as stylex from '@stylexjs/stylex';
 
 /** Favorites workspace, loaded on its first visit. */
 export const FAVORITES_WORKSPACE = createPreloadableComponent(
@@ -68,11 +69,11 @@ export const preloadAdminCenter = ADMIN_CENTER_DIALOG.preload;
  */
 export function WorkspaceViewFallback() {
   return (
-    <div role="status" className="flex h-full min-h-0 flex-col gap-4 p-4 md:p-6">
-      <span className="sr-only">加载中…</span>
-      <Skeleton aria-hidden="true" className="h-10 w-full max-w-xl rounded-xl" />
-      <Skeleton aria-hidden="true" className="h-36 w-full rounded-2xl" />
-      <Skeleton aria-hidden="true" className="h-72 w-full rounded-2xl" />
+    <div role="status" {...stylex.props(styles.workspaceViewFallbackDiv)}>
+      <span {...stylex.props(styles.workspaceViewFallbackSpan)}>加载中…</span>
+      <Skeleton aria-hidden="true" xstyle={styles.workspaceViewFallbackSkeleton} />
+      <Skeleton aria-hidden="true" xstyle={styles.workspaceViewFallbackSkeleton2} />
+      <Skeleton aria-hidden="true" xstyle={styles.workspaceViewFallbackSkeleton3} />
     </div>
   );
 }
@@ -144,8 +145,49 @@ export function LazyAdminCenterDialog() {
  */
 function CenterLoadingStatus({ label }: { label: string }) {
   return (
-    <div role="status" className="sr-only">
+    <div role="status" {...stylex.props(styles.workspaceViewFallbackSpan)}>
       {label}
     </div>
   );
 }
+
+const styles = stylex.create({
+  workspaceViewFallbackDiv: {
+    display: 'flex',
+    height: '100%',
+    minHeight: '0px',
+    flexDirection: 'column',
+    gap: '1rem',
+    padding: {
+      default: '1rem',
+      '@media (min-width: 48rem)': '1.5rem',
+    },
+  },
+  workspaceViewFallbackSpan: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  workspaceViewFallbackSkeleton: {
+    height: '2.5rem',
+    width: '100%',
+    maxWidth: '36rem',
+    borderRadius: '12px',
+  },
+  workspaceViewFallbackSkeleton2: {
+    height: '9rem',
+    width: '100%',
+    borderRadius: '16px',
+  },
+  workspaceViewFallbackSkeleton3: {
+    height: '18rem',
+    width: '100%',
+    borderRadius: '16px',
+  },
+});

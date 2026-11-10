@@ -7,8 +7,9 @@ import * as DialogPrimitive from '@animate-ui/react/primitives/radix-ui/dialog';
 import { X as XIcon } from '@/components/ui/animated-icons';
 
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import { RevealScope } from '@/components/ui/reveal';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 /**
  * Render the Dialog state root.
@@ -57,13 +58,15 @@ function DialogClose({ ...props }: React.ComponentProps<typeof DialogPrimitive.C
  * @returns Styled Dialog overlay.
  */
 function DialogOverlay({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+}: Omit<React.ComponentProps<typeof DialogPrimitive.Overlay>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
-      className={cn('fixed inset-0 z-50 bg-black/40', className)}
+      {...stylex.props(styles.dialogOverlay, xstyle)}
       {...props}
     />
   );
@@ -93,11 +96,11 @@ const PLACEMENT_SIDES: Record<DialogPlacement, 'left' | 'right' | 'bottom' | und
  * @returns Portaled Dialog content.
  */
 function DialogContent({
-  className,
+  xstyle,
   children,
   placement = 'center',
   ...props
-}: DialogContentProps) {
+}: Omit<DialogContentProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
@@ -106,19 +109,14 @@ function DialogContent({
           data-slot="dialog-content"
           data-motion-placement={placement}
           data-side={PLACEMENT_SIDES[placement]}
-          className={cn(
-            'bg-background fixed z-50 grid gap-4 overscroll-contain p-6 shadow-overlay outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-            placement === 'center' &&
-              'dialog-centered w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] rounded-2xl md:max-w-xl',
-            placement === 'left' &&
-              'inset-y-0 left-0 h-dvh w-80 max-w-[calc(100vw-2rem)] rounded-none',
-            placement === 'right' &&
-              'inset-y-0 right-0 h-dvh w-full max-w-full rounded-none p-0 md:w-[min(46rem,calc(100vw-5rem))]',
-            placement === 'bottom' &&
-              'inset-x-0 bottom-0 max-h-[85dvh] w-full rounded-t-2xl rounded-b-none p-0 pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))]',
-            placement === 'takeover' &&
-              'inset-0 h-dvh w-screen max-w-none rounded-none p-0 shadow-none',
-            className,
+          {...stylex.props(
+            styles.dialogContent,
+            placement === 'center' && styles.dialogContentCenter,
+            placement === 'left' && styles.dialogContentLeft,
+            placement === 'right' && styles.dialogContentRight,
+            placement === 'bottom' && styles.dialogContentBottom,
+            placement === 'takeover' && styles.dialogContentTakeover,
+            xstyle,
           )}
           {...props}
         >
@@ -131,9 +129,13 @@ function DialogContent({
                 size="icon"
                 static
                 aria-label="关闭"
-                className="absolute right-4 top-4 z-10 size-11 text-muted-foreground hover:text-foreground md:size-10"
+                xstyle={styles.dialogContentButton}
               >
-                <XIcon className="size-4" strokeWidth={1.5} aria-hidden="true" />
+                <XIcon
+                  {...stylex.props(styles.dialogContentXIcon)}
+                  strokeWidth={1.5}
+                  aria-hidden="true"
+                />
               </Button>
             </DialogPrimitive.Close>
           )}
@@ -149,13 +151,12 @@ function DialogContent({
  * @param props - Header container properties.
  * @returns Styled heading group.
  */
-function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
+function DialogHeader({
+  xstyle,
+  ...props
+}: Omit<React.ComponentProps<'div'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
-    <div
-      data-slot="dialog-header"
-      className={cn('flex flex-col gap-2 pr-12 text-center sm:text-left', className)}
-      {...props}
-    />
+    <div data-slot="dialog-header" {...stylex.props(styles.dialogHeader, xstyle)} {...props} />
   );
 }
 
@@ -165,13 +166,12 @@ function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
  * @param props - Footer container properties.
  * @returns Styled action group.
  */
-function DialogFooter({ className, ...props }: React.ComponentProps<'div'>) {
+function DialogFooter({
+  xstyle,
+  ...props
+}: Omit<React.ComponentProps<'div'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
-    <div
-      data-slot="dialog-footer"
-      className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)}
-      {...props}
-    />
+    <div data-slot="dialog-footer" {...stylex.props(styles.dialogFooter, xstyle)} {...props} />
   );
 }
 
@@ -181,11 +181,16 @@ function DialogFooter({ className, ...props }: React.ComponentProps<'div'>) {
  * @param props - Radix Dialog title properties.
  * @returns Styled title.
  */
-function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
+function DialogTitle({
+  xstyle,
+  ...props
+}: Omit<React.ComponentProps<typeof DialogPrimitive.Title>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('text-balance text-lg leading-snug font-bold', className)}
+      {...stylex.props(styles.dialogTitle, xstyle)}
       {...props}
     />
   );
@@ -198,13 +203,15 @@ function DialogTitle({ className, ...props }: React.ComponentProps<typeof Dialog
  * @returns Styled description.
  */
 function DialogDescription({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Description>) {
+}: Omit<React.ComponentProps<typeof DialogPrimitive.Description>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn('text-pretty text-muted-foreground text-sm', className)}
+      {...stylex.props(styles.dialogDescription, xstyle)}
       {...props}
     />
   );
@@ -222,3 +229,140 @@ export {
   DialogTitle,
   DialogTrigger,
 };
+
+const styles = stylex.create({
+  dialogOverlay: {
+    position: 'fixed',
+    inset: '0px',
+    zIndex: 50,
+    backgroundColor: 'color-mix(in oklab, #000 40%, transparent)',
+  },
+  dialogContent: {
+    position: 'fixed',
+    zIndex: 50,
+    display: 'grid',
+    gap: '1rem',
+    overscrollBehavior: 'contain',
+    backgroundColor: colors.background,
+    padding: '1.5rem',
+    boxShadow: {
+      default: shadows.overlay,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), ${shadows.overlay}`,
+    },
+    outlineStyle: 'none',
+  },
+  dialogContentCenter: {
+    width: 'calc(100% - 2rem)',
+    maxWidth: {
+      default: 'calc(100% - 2rem)',
+      '@media (min-width: 48rem)': '36rem',
+    },
+    borderRadius: '16px',
+    left: '50%',
+    top: '50%',
+    translate: '-50% -50%',
+  },
+  dialogContentLeft: {
+    insetBlock: '0px',
+    left: '0px',
+    height: '100dvh',
+    width: '20rem',
+    maxWidth: 'calc(100vw - 2rem)',
+    borderRadius: 0,
+  },
+  dialogContentRight: {
+    insetBlock: '0px',
+    right: '0px',
+    height: '100dvh',
+    width: {
+      default: '100%',
+      '@media (min-width: 48rem)': 'min(46rem, calc(100vw - 5rem))',
+    },
+    maxWidth: '100%',
+    borderRadius: 0,
+    padding: '0px',
+  },
+  dialogContentBottom: {
+    insetInline: '0px',
+    bottom: '0px',
+    maxHeight: '85dvh',
+    width: '100%',
+    borderTopLeftRadius: '16px',
+    borderTopRightRadius: '16px',
+    borderBottomRightRadius: 0,
+    borderBottomLeftRadius: 0,
+    padding: '0px',
+    paddingBottom: 'var(--safe-area-inset-bottom, env(safe-area-inset-bottom,0px))',
+  },
+  dialogContentTakeover: {
+    inset: '0px',
+    height: '100dvh',
+    width: '100vw',
+    maxWidth: 'none',
+    borderRadius: 0,
+    padding: '0px',
+    boxShadow: {
+      default: shadows.overlay,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), ${shadows.overlay}`,
+    },
+  },
+  dialogContentButton: {
+    position: 'absolute',
+    top: '1rem',
+    right: '1rem',
+    zIndex: 10,
+    width: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2.5rem',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2.5rem',
+    },
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+  },
+  dialogContentXIcon: {
+    width: '1rem',
+    height: '1rem',
+  },
+  dialogHeader: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+    paddingRight: '3rem',
+    textAlign: {
+      default: 'center',
+      '@media (min-width: 40rem)': 'left',
+    },
+  },
+  dialogFooter: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column-reverse',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.5rem',
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-end',
+    },
+  },
+  dialogTitle: {
+    fontSize: '1.125rem',
+    lineHeight: 1.375,
+    fontWeight: 700,
+    textWrap: 'balance',
+  },
+  dialogDescription: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    textWrap: 'pretty',
+    color: colors.mutedForeground,
+  },
+});

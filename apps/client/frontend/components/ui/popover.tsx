@@ -5,8 +5,9 @@
 import * as React from 'react';
 import * as PopoverPrimitive from '@animate-ui/react/primitives/radix-ui/popover';
 
-import { cn } from '@/lib/utils';
 import { RevealScope } from '@/components/ui/reveal';
+import * as stylex from '@stylexjs/stylex';
+import { colors, shadows } from '@/lib/theme.stylex';
 
 /**
  * Render the Popover state root.
@@ -35,20 +36,19 @@ function PopoverTrigger({ ...props }: React.ComponentProps<typeof PopoverPrimiti
  * @returns Portaled Popover content.
  */
 function PopoverContent({
-  className,
+  xstyle,
   align = 'center',
   sideOffset = 4,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+}: Omit<React.ComponentProps<typeof PopoverPrimitive.Content>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   const content = (
     <PopoverPrimitive.Content
       data-slot="popover-content"
       align={align}
       sideOffset={sideOffset}
-      className={cn(
-        'bg-popover text-popover-foreground z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-xl p-4 shadow-overlay outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50',
-        className,
-      )}
+      {...stylex.props(styles.popoverContent, xstyle)}
       {...props}
     />
   );
@@ -71,3 +71,35 @@ function PopoverAnchor({ ...props }: React.ComponentProps<typeof PopoverPrimitiv
 }
 
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor };
+
+const styles = stylex.create({
+  popoverContent: {
+    zIndex: 50,
+    width: '18rem',
+    transformOrigin: 'var(--radix-popover-content-transform-origin)',
+    borderRadius: '12px',
+    backgroundColor: colors.popover,
+    padding: '1rem',
+    color: colors.popoverForeground,
+    boxShadow: {
+      default: shadows.overlay,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), ${shadows.overlay}`,
+    },
+    outlineStyle: {
+      default: 'none',
+      '@media (forced-colors: active)': 'solid',
+    },
+    outlineWidth: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+    outlineColor: {
+      default: null,
+      '@media (forced-colors: active)': 'transparent',
+    },
+    outlineOffset: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+  },
+});

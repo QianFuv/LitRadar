@@ -15,24 +15,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { cn } from '@/lib/utils';
-
-/** Neutral filter pill styles, open for both Radix (`data-state`) and Base UI (`data-popup-open`). */
-const FILTER_PILL_CLASS =
-  'motion-control inline-flex h-11 max-w-[15rem] shrink-0 items-center gap-1.5 rounded-full bg-background px-3.5 md:h-8 md:px-3 text-[13px] whitespace-nowrap text-foreground/85 shadow-[inset_0_0_0_1px_var(--border)] outline-none transition-[background-color,color,box-shadow] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent data-[popup-open]:bg-accent';
-
-/** Applied filter pill styles. */
-const FILTER_PILL_ACTIVE_CLASS =
-  'bg-info font-bold text-info-foreground shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--primary)_35%,transparent)] hover:bg-info data-[state=open]:bg-info data-[popup-open]:bg-info';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /**
- * Build the class list of one filter pill trigger.
+ * Build the styles of one filter pill trigger.
+ *
+ * Pills stay open-styled for both Radix (`data-state`) and Base UI (`data-popup-open`) triggers.
  *
  * @param isActive - Whether the filter currently narrows results.
- * @returns Pill class list.
+ * @returns Pill styles.
  */
-export function getFilterPillClassName(isActive: boolean): string {
-  return cn(FILTER_PILL_CLASS, isActive && FILTER_PILL_ACTIVE_CLASS);
+export function filterPillStyles(isActive: boolean) {
+  return [styles.filterPill, isActive && styles.filterPillActive];
 }
 
 /**
@@ -47,7 +42,7 @@ export function FilterPillLabel({ text }: { text: string }) {
       <MotionPresence mode="wait">
         <MotionSpan
           key={text}
-          className="min-w-0 truncate"
+          {...stylex.props(styles.filterPillLabelMotionSpan)}
           variants={SWAP_VARIANTS}
           initial="hidden"
           animate="visible"
@@ -56,7 +51,7 @@ export function FilterPillLabel({ text }: { text: string }) {
           {text}
         </MotionSpan>
       </MotionPresence>
-      <ChevronDown className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
+      <ChevronDown {...stylex.props(styles.filterPillLabelChevronDown)} aria-hidden="true" />
     </>
   );
 }
@@ -103,17 +98,17 @@ export function FilterPanelHeader({
   onClear,
 }: FilterPanelHeaderProps) {
   return (
-    <div className="flex shrink-0 items-start justify-between gap-3 border-b px-4 py-3">
-      <div className="min-w-0">
-        <p className="text-sm font-bold">{label}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+    <div {...stylex.props(styles.filterPanelHeaderDiv)}>
+      <div {...stylex.props(styles.filterPanelHeaderDiv2)}>
+        <p {...stylex.props(styles.filterPanelHeaderP)}>{label}</p>
+        <p {...stylex.props(styles.filterPanelHeaderP2)}>{description}</p>
       </div>
       {isActive && onClear && (
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="-my-1 h-8 shrink-0 px-2 text-xs text-muted-foreground"
+          xstyle={styles.filterPanelHeaderButton}
           onClick={onClear}
         >
           清除
@@ -126,7 +121,6 @@ export function FilterPanelHeader({
 type FilterFacetProps = {
   accessibleSummary?: string;
   children: ReactNode;
-  contentClassName?: string;
   description: string;
   isActive: boolean;
   label: string;
@@ -143,7 +137,6 @@ type FilterFacetProps = {
 export function FilterFacet({
   accessibleSummary,
   children,
-  contentClassName,
   description,
   isActive,
   label,
@@ -165,7 +158,7 @@ export function FilterFacet({
           aria-label={accessibleName}
           title={accessibleName}
           data-active={isActive ? 'true' : 'false'}
-          className={getFilterPillClassName(isActive)}
+          {...stylex.props(filterPillStyles(isActive))}
         >
           <FilterPillLabel text={visibleText} />
         </button>
@@ -174,7 +167,7 @@ export function FilterFacet({
         align="start"
         sideOffset={6}
         aria-label={label}
-        className={cn('w-80 max-w-[calc(100vw-2rem)] p-0', contentClassName)}
+        xstyle={styles.filterFacetPopoverContent}
       >
         <FilterPanelHeader
           description={description}
@@ -182,7 +175,7 @@ export function FilterFacet({
           label={label}
           onClear={onClear}
         />
-        <div className="p-2">{children}</div>
+        <div {...stylex.props(styles.filterFacetDiv)}>{children}</div>
       </PopoverContent>
     </Popover>
   );
@@ -226,9 +219,13 @@ export function DatabasePill({
       <SelectTrigger
         aria-label={ariaLabel}
         size="sm"
-        className="h-11 max-w-[16rem] shrink-0 gap-1.5 rounded-full bg-foreground px-3.5 text-[13px] font-bold data-[size=sm]:h-11 md:px-3 md:data-[size=sm]:h-8 text-background !shadow-none hover:bg-foreground/85 active:bg-foreground/80 [&_svg:not([class*='text-'])]:text-background/70"
+        xstyle={styles.databasePillSelectTrigger}
+        iconXstyle={styles.databasePillIcon}
       >
-        <Layers className="size-3.5" aria-hidden="true" />
+        <Layers
+          {...stylex.props(styles.databasePillLayers, styles.databasePillIcon)}
+          aria-hidden="true"
+        />
         <SelectValue placeholder="选择数据库" />
       </SelectTrigger>
       <SelectContent position="popper" align="start">
@@ -241,3 +238,175 @@ export function DatabasePill({
     </Select>
   );
 }
+
+const styles = stylex.create({
+  filterPill: {
+    display: 'inline-flex',
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    maxWidth: '15rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.375rem',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: {
+      default: colors.background,
+      ':is([data-popup-open])': colors.accent,
+      ':is([data-state="open"])': colors.accent,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    paddingInline: {
+      default: '0.875rem',
+      '@media (min-width: 48rem)': '0.75rem',
+    },
+    fontSize: '13px',
+    whiteSpace: 'nowrap',
+    color: `color-mix(in oklab, ${colors.foreground} 85%, transparent)`,
+    boxShadow: {
+      default: `inset 0 0 0 1px ${colors.border}`,
+      ':focus-visible': `0 0 0 2px ${colors.ring}, inset 0 0 0 1px ${colors.border}`,
+    },
+    transitionProperty: 'background-color, color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+  },
+  filterPillActive: {
+    backgroundColor: {
+      default: colors.info,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.info,
+      },
+      ':is([data-popup-open])': colors.info,
+      ':is([data-state="open"])': colors.info,
+    },
+    fontWeight: 700,
+    color: colors.infoForeground,
+    boxShadow: {
+      default: `inset 0 0 0 1px color-mix(in oklab,${colors.primary} 35%,transparent)`,
+      ':focus-visible': `0 0 0 2px ${colors.ring}, inset 0 0 0 1px color-mix(in oklab,${colors.primary} 35%,transparent)`,
+    },
+  },
+  filterFacetPopoverContent: {
+    width: '20rem',
+    maxWidth: 'calc(100vw - 2rem)',
+    padding: '0px',
+  },
+  filterPillLabelMotionSpan: {
+    minWidth: '0px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  filterPillLabelChevronDown: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+    opacity: '70%',
+  },
+  filterPanelHeaderDiv: {
+    display: 'flex',
+    flexShrink: 0,
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    paddingInline: '1rem',
+    paddingBlock: '0.75rem',
+  },
+  filterPanelHeaderDiv2: {
+    minWidth: '0px',
+  },
+  filterPanelHeaderP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  filterPanelHeaderP2: {
+    marginTop: '0.125rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  filterPanelHeaderButton: {
+    marginBlock: '-0.25rem',
+    height: '2rem',
+    flexShrink: 0,
+    paddingInline: {
+      default: '0.5rem',
+      ':has( > svg)': '0.625rem',
+    },
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  filterFacetDiv: {
+    padding: '0.5rem',
+  },
+  databasePillSelectTrigger: {
+    height: {
+      default: '2.75rem',
+      ':is([data-size="default"])': '2.25rem',
+      '@media (min-width: 48rem)': {
+        default: null,
+        ':is([data-size="sm"])': '2rem',
+      },
+    },
+    maxWidth: '16rem',
+    flexShrink: 0,
+    gap: '0.375rem',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: {
+      default: colors.foreground,
+      ':active': {
+        default: `color-mix(in oklab, ${colors.foreground} 80%, transparent)`,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': `color-mix(in oklab, ${colors.foreground} 80%, transparent)`,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.foreground} 85%, transparent)`,
+      },
+    },
+    paddingInline: {
+      default: '0.875rem',
+      '@media (min-width: 48rem)': '0.75rem',
+    },
+    fontSize: '13px',
+    fontWeight: 700,
+    color: {
+      default: colors.background,
+      ':is([data-placeholder])': colors.mutedForeground,
+    },
+    boxShadow: {
+      default: 'none',
+      ':focus-visible': {
+        default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+        ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}`,
+      },
+    },
+    lineHeight: 'inherit',
+  },
+  databasePillLayers: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+  databasePillIcon: {
+    color: `color-mix(in oklab, ${colors.background} 70%, transparent)`,
+  },
+});

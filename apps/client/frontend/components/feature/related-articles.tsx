@@ -10,6 +10,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { getRelatedArticles, type Article } from '@/lib/api';
 import { getArticleDisplayTitle } from '@/lib/article-title';
 import { LinkIcon } from '@/components/ui/animated-icons';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /** Number of related articles requested from the backend. */
 const RELATED_ARTICLE_LIMIT = 6;
@@ -44,46 +46,59 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
   const related = relatedQuery.data ?? [];
 
   return (
-    <section ref={ref} aria-label="相关文章" className="mt-8">
-      <h3 className="flex items-center gap-3 text-[11px] font-bold tracking-[0.16em] text-muted-foreground after:h-px after:flex-1 after:bg-border">
-        <span className="flex items-center gap-1.5">
-          <LinkIcon animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+    <section ref={ref} aria-label="相关文章" {...stylex.props(styles.relatedArticlesSection)}>
+      <h3 {...stylex.props(styles.relatedArticlesH3)}>
+        <span {...stylex.props(styles.relatedArticlesSpan)}>
+          <LinkIcon
+            animateOnView
+            {...stylex.props(styles.relatedArticlesLinkIcon)}
+            aria-hidden="true"
+          />
           相关文章
         </span>
       </h3>
       <RevealItem
         isReady={!relatedQuery.isLoading}
         placeholder={
-          <div role="status" className="mt-3 space-y-3">
-            <span className="sr-only">正在查找相关文章</span>
+          <div role="status" {...stylex.props(styles.relatedArticlesDiv)}>
+            <span {...stylex.props(styles.relatedArticlesDivItem, styles.relatedArticlesSpan2)}>
+              正在查找相关文章
+            </span>
             {[0, 1, 2].map((index) => (
-              <div key={index} className="space-y-1.5">
-                <Skeleton className="h-4 w-11/12" />
-                <Skeleton className="h-3 w-1/2" />
+              <div key={index} {...stylex.props(styles.relatedArticlesDivItem)}>
+                <Skeleton
+                  xstyle={[styles.relatedArticlesDivItem2, styles.relatedArticlesSkeleton]}
+                />
+                <Skeleton
+                  xstyle={[styles.relatedArticlesDivItem2, styles.relatedArticlesSkeleton2]}
+                />
               </div>
             ))}
           </div>
         }
       >
         {relatedQuery.isError ? (
-          <p className="mt-3 text-[13px] text-muted-foreground">暂时无法加载相关文章。</p>
+          <p {...stylex.props(styles.relatedArticlesP)}>暂时无法加载相关文章。</p>
         ) : !relatedQuery.isSuccess ? (
-          <div aria-hidden="true" className="h-16" />
+          <div aria-hidden="true" {...stylex.props(styles.relatedArticlesDiv2)} />
         ) : related.length === 0 ? (
-          <p className="mt-3 text-[13px] text-muted-foreground">暂未找到相关文章。</p>
+          <p {...stylex.props(styles.relatedArticlesP)}>暂未找到相关文章。</p>
         ) : (
-          <ul className="mt-1 divide-y divide-border/70">
+          <ul {...stylex.props(styles.relatedArticlesUl)}>
             {related.map((candidate) => (
-              <li key={String(candidate.article_id)}>
+              <li
+                {...stylex.props(styles.relatedArticlesUlItem)}
+                key={String(candidate.article_id)}
+              >
                 <button
                   type="button"
-                  className="motion-control -mx-2 block w-[calc(100%+1rem)] rounded-md px-2 py-3 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                  {...stylex.props(styles.relatedArticlesButton)}
                   onClick={() => onOpen(candidate)}
                 >
-                  <span className="line-clamp-2 text-[13.5px] leading-[1.5] font-bold">
+                  <span {...stylex.props(styles.relatedArticlesSpan3)}>
                     {getArticleDisplayTitle(candidate)}
                   </span>
-                  <span className="mt-1 block truncate text-xs text-muted-foreground">
+                  <span {...stylex.props(styles.relatedArticlesSpan4)}>
                     {[candidate.journal_title, candidate.date].filter(Boolean).join(' · ')}
                   </span>
                 </button>
@@ -95,3 +110,145 @@ export function RelatedArticles({ article, dbName, onOpen }: RelatedArticlesProp
     </section>
   );
 }
+
+const styles = stylex.create({
+  relatedArticlesSection: {
+    marginTop: '2rem',
+  },
+  relatedArticlesH3: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '0.16em',
+    color: colors.mutedForeground,
+    '::after': {
+      content: '""',
+      height: '1px',
+      flex: '1',
+      backgroundColor: colors.border,
+    },
+  },
+  relatedArticlesSpan: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.375rem',
+  },
+  relatedArticlesLinkIcon: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+  },
+  relatedArticlesDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  relatedArticlesDiv: {
+    marginTop: '0.75rem',
+  },
+  relatedArticlesSpan2: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  relatedArticlesDivItem2: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.375rem',
+    },
+  },
+  relatedArticlesSkeleton: {
+    height: '1rem',
+    width: 'calc(11 / 12 * 100%)',
+  },
+  relatedArticlesSkeleton2: {
+    height: '0.75rem',
+    width: 'calc(1 / 2 * 100%)',
+  },
+  relatedArticlesP: {
+    marginTop: '0.75rem',
+    fontSize: '13px',
+    color: colors.mutedForeground,
+  },
+  relatedArticlesDiv2: {
+    height: '4rem',
+  },
+  relatedArticlesUlItem: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+    },
+    borderColor: {
+      default: null,
+      ':not(:last-child)': `color-mix(in oklab, ${colors.border} 70%, transparent)`,
+    },
+  },
+  relatedArticlesUl: {
+    marginTop: '0.25rem',
+  },
+  relatedArticlesButton: {
+    marginInline: '-0.5rem',
+    display: 'block',
+    width: 'calc(100% + 1rem)',
+    borderRadius: '6px',
+    paddingInline: '0.5rem',
+    paddingBlock: '0.75rem',
+    textAlign: 'left',
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  relatedArticlesSpan3: {
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 2,
+    fontSize: '13.5px',
+    lineHeight: 1.5,
+    fontWeight: 700,
+  },
+  relatedArticlesSpan4: {
+    marginTop: '0.25rem',
+    display: 'block',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+});

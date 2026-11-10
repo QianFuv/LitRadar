@@ -41,6 +41,8 @@ import {
   type RelationGraphFavoriteSummary,
 } from '@/lib/api';
 import { buildSavedRelationSearch } from '@/lib/relation-graph';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /** Saved graphs fetched per page. */
 const RELATION_GRAPH_PAGE_SIZE = 50;
@@ -115,10 +117,12 @@ export function RelationGraphFavoritesContent() {
         listLabel="收藏的关系图"
         emphasis="list"
         header={
-          <div className="space-y-3">
-            <div className="min-w-0">
-              <h1 className="text-lg leading-7 font-bold">我的收藏</h1>
-              <p className="text-xs text-muted-foreground">保存的关系图会记住展开的分支和位置</p>
+          <div {...stylex.props(styles.relationGraphFavoritesContentDiv)}>
+            <div {...stylex.props(styles.relationGraphFavoritesContentDiv2)}>
+              <h1 {...stylex.props(styles.relationGraphFavoritesContentH1)}>我的收藏</h1>
+              <p {...stylex.props(styles.relationGraphFavoritesContentP)}>
+                保存的关系图会记住展开的分支和位置
+              </p>
             </div>
             <FavoriteKindSwitch />
           </div>
@@ -133,10 +137,27 @@ export function RelationGraphFavoritesContent() {
         <RevealItem
           isReady={!pagesQuery.isPending}
           placeholder={
-            <div role="status" className="space-y-3 px-4 py-4 sm:px-5">
-              <span className="sr-only">正在加载收藏的关系图</span>
-              <Skeleton className="h-14 w-full" />
-              <Skeleton className="h-14 w-full" />
+            <div role="status" {...stylex.props(styles.relationGraphFavoritesContentDiv3)}>
+              <span
+                {...stylex.props(
+                  styles.relationGraphFavoritesContentDivItem,
+                  styles.relationGraphFavoritesContentSpan,
+                )}
+              >
+                正在加载收藏的关系图
+              </span>
+              <Skeleton
+                xstyle={[
+                  styles.relationGraphFavoritesContentDivItem,
+                  styles.relationGraphFavoritesContentSkeleton,
+                ]}
+              />
+              <Skeleton
+                xstyle={[
+                  styles.relationGraphFavoritesContentDivItem,
+                  styles.relationGraphFavoritesContentSkeleton,
+                ]}
+              />
             </div>
           }
         >
@@ -149,13 +170,12 @@ export function RelationGraphFavoritesContent() {
           if (!nextOpen && !renameMut.isPending) setRenameTarget(null);
         }}
       >
-        <DialogContent className="md:max-w-md">
+        <DialogContent xstyle={styles.relationGraphFavoritesContentDialogContent}>
           <DialogHeader>
             <DialogTitle>重命名关系图</DialogTitle>
             <DialogDescription>为“{renameTarget?.title ?? ''}”输入新的名称</DialogDescription>
           </DialogHeader>
           <form
-            className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
               if (renameTarget && renameDraft.trim()) {
@@ -164,6 +184,7 @@ export function RelationGraphFavoritesContent() {
             }}
           >
             <Input
+              xstyle={styles.relationGraphFavoritesContentFormItem}
               aria-label="关系图名称"
               name="relation_graph_title"
               autoComplete="off"
@@ -172,11 +193,17 @@ export function RelationGraphFavoritesContent() {
               onChange={(event) => setRenameDraft(event.target.value)}
             />
             {renameMut.error instanceof Error && (
-              <p role="alert" className="text-sm text-destructive">
+              <p
+                role="alert"
+                {...stylex.props(
+                  styles.relationGraphFavoritesContentFormItem,
+                  styles.relationGraphFavoritesContentP2,
+                )}
+              >
                 {renameMut.error.message}
               </p>
             )}
-            <DialogFooter>
+            <DialogFooter xstyle={styles.relationGraphFavoritesContentFormItem}>
               <Button type="submit" disabled={renameMut.isPending || !renameDraft.trim()}>
                 {renameMut.isPending ? '保存中…' : '保存'}
               </Button>
@@ -249,23 +276,20 @@ function renderRelationGraphFavoriteList(
         {favorites.map((favorite) => (
           <li
             key={favorite.id}
-            className="motion-control group/graph relative flex items-start gap-3 border-b border-border/60 px-4 py-4 transition-[background-color] hover:bg-accent/50 sm:px-5"
+            {...stylex.props(styles.renderRelationGraphFavoriteListLi, stylex.defaultMarker())}
           >
-            <span
-              aria-hidden="true"
-              className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-muted-foreground"
-            >
-              <Share2 className="size-4" />
+            <span aria-hidden="true" {...stylex.props(styles.renderRelationGraphFavoriteListSpan)}>
+              <Share2 {...stylex.props(styles.renderRelationGraphFavoriteListShare2)} />
             </span>
-            <div className="min-w-0 flex-1">
+            <div {...stylex.props(styles.renderRelationGraphFavoriteListDiv)}>
               <Link
                 to="/"
                 search={buildSavedRelationSearch(favorite)}
-                className="line-clamp-2 text-[15px] leading-6 font-bold text-foreground outline-none after:absolute after:inset-0 focus-visible:underline"
+                {...stylex.props(styles.renderRelationGraphFavoriteListLink)}
               >
                 {favorite.title}
               </Link>
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p {...stylex.props(styles.renderRelationGraphFavoriteListP)}>
                 {favorite.node_count} 篇 · {favorite.db_name} · 更新于{' '}
                 {formatSavedTime(favorite.updated_at)}
               </p>
@@ -276,10 +300,13 @@ function renderRelationGraphFavoriteList(
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="relative z-10 size-11 shrink-0 md:size-8"
+                  xstyle={styles.renderRelationGraphFavoriteListButton}
                   aria-label={`管理关系图 ${favorite.title}`}
                 >
-                  <MoreHorizontal className="size-4" aria-hidden="true" />
+                  <MoreHorizontal
+                    {...stylex.props(styles.renderRelationGraphFavoriteListShare2)}
+                    aria-hidden="true"
+                  />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -293,7 +320,7 @@ function renderRelationGraphFavoriteList(
         ))}
       </ul>
       {pagesQuery.hasNextPage && (
-        <div className="flex justify-center py-4">
+        <div {...stylex.props(styles.renderRelationGraphFavoriteListDiv2)}>
           <Button
             type="button"
             variant="outline"
@@ -308,3 +335,157 @@ function renderRelationGraphFavoriteList(
     </>
   );
 }
+
+const styles = stylex.create({
+  relationGraphFavoritesContentDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+  },
+  relationGraphFavoritesContentDiv2: {
+    minWidth: '0px',
+  },
+  relationGraphFavoritesContentH1: {
+    fontSize: '1.125rem',
+    lineHeight: '1.75rem',
+    fontWeight: 700,
+  },
+  relationGraphFavoritesContentP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  relationGraphFavoritesContentDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  relationGraphFavoritesContentDiv3: {
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+  },
+  relationGraphFavoritesContentSpan: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  relationGraphFavoritesContentSkeleton: {
+    height: '3.5rem',
+    width: '100%',
+  },
+  relationGraphFavoritesContentDialogContent: {
+    maxWidth: {
+      default: 'none',
+      '@media (min-width: 48rem)': '28rem',
+    },
+  },
+  relationGraphFavoritesContentFormItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '1rem',
+    },
+  },
+  relationGraphFavoritesContentP2: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderRelationGraphFavoriteListLi: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '0.75rem',
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.border} 60%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+    transitionProperty: 'background-color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.accent} 50%, transparent)`,
+      },
+    },
+  },
+  renderRelationGraphFavoriteListSpan: {
+    marginTop: '0.125rem',
+    display: 'flex',
+    width: '2rem',
+    height: '2rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+    backgroundColor: colors.accent,
+    color: colors.mutedForeground,
+  },
+  renderRelationGraphFavoriteListShare2: {
+    width: '1rem',
+    height: '1rem',
+  },
+  renderRelationGraphFavoriteListDiv: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  renderRelationGraphFavoriteListLink: {
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 2,
+    fontSize: '15px',
+    lineHeight: '1.5rem',
+    fontWeight: 700,
+    color: colors.foreground,
+    outlineStyle: 'none',
+    textDecorationLine: {
+      default: null,
+      ':focus-visible': 'underline',
+    },
+    '::after': {
+      content: '""',
+      position: 'absolute',
+      inset: '0px',
+    },
+  },
+  renderRelationGraphFavoriteListP: {
+    marginTop: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderRelationGraphFavoriteListButton: {
+    position: 'relative',
+    zIndex: 10,
+    width: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    flexShrink: 0,
+  },
+  renderRelationGraphFavoriteListDiv2: {
+    display: 'flex',
+    justifyContent: 'center',
+    paddingBlock: '1rem',
+  },
+});

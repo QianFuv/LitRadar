@@ -39,6 +39,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const PROVIDER_PROXY_POLICY_FIELD = 'provider_proxy_policy';
 const INDEX_PROVIDER_FIELD = 'index_provider_routes';
@@ -256,12 +258,9 @@ function ProviderCapabilityBadges({ provider }: { provider: ProviderCapabilityIn
   ].filter((capability): capability is string => capability !== null);
 
   return (
-    <span className="mt-1 flex flex-wrap items-center gap-1">
+    <span {...stylex.props(styles.providerCapabilityBadgesSpan)}>
       {capabilities.map((capability) => (
-        <span
-          key={capability}
-          className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-        >
+        <span key={capability} {...stylex.props(styles.providerCapabilityBadgesSpan2)}>
           {capability}
         </span>
       ))}
@@ -297,17 +296,17 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
   const nextAvailableProvider = providers.find((provider) => !order.includes(provider.name));
 
   return (
-    <ol className="space-y-2">
+    <ol>
       {order.map((providerName, index) => {
         const selectableProviders = providers.filter(
           (provider) => provider.name === providerName || !order.includes(provider.name),
         );
         return (
-          <li key={providerName} className="flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className="flex size-6 shrink-0 items-center justify-center rounded-full bg-foreground text-[11px] font-bold text-background tabular-nums"
-            >
+          <li
+            key={providerName}
+            {...stylex.props(styles.providerOrderEditorOlItem, styles.providerOrderEditorLi)}
+          >
+            <span aria-hidden="true" {...stylex.props(styles.providerOrderEditorSpan)}>
               {index + 1}
             </span>
             <Select
@@ -318,7 +317,10 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
                 onChange(nextOrder);
               }}
             >
-              <SelectTrigger className="min-w-0 flex-1" aria-label={`${label}第 ${index + 1} 项`}>
+              <SelectTrigger
+                xstyle={styles.providerOrderEditorSelectTrigger}
+                aria-label={`${label}第 ${index + 1} 项`}
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -329,7 +331,7 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
                 ))}
               </SelectContent>
             </Select>
-            <div className="flex shrink-0 items-center">
+            <div {...stylex.props(styles.providerOrderEditorDiv)}>
               <Button
                 type="button"
                 variant="ghost"
@@ -338,7 +340,7 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
                 aria-label={`上移${label}第 ${index + 1} 项`}
                 onClick={() => onChange(moveProvider(order, index, -1))}
               >
-                <ArrowUp className="h-4 w-4" />
+                <ArrowUp {...stylex.props(styles.providerOrderEditorArrowUp)} />
               </Button>
               <Button
                 type="button"
@@ -348,34 +350,34 @@ function ProviderOrderEditor({ label, providers, order, onChange }: ProviderOrde
                 aria-label={`下移${label}第 ${index + 1} 项`}
                 onClick={() => onChange(moveProvider(order, index, 1))}
               >
-                <ArrowDown className="h-4 w-4" />
+                <ArrowDown {...stylex.props(styles.providerOrderEditorArrowUp)} />
               </Button>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                xstyle={styles.providerOrderEditorButton}
                 aria-label={`删除${label}第 ${index + 1} 项`}
                 onClick={() => onChange(order.filter((_, itemIndex) => itemIndex !== index))}
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 {...stylex.props(styles.providerOrderEditorArrowUp)} />
               </Button>
             </div>
           </li>
         );
       })}
-      <li>
+      <li {...stylex.props(styles.providerOrderEditorOlItem)}>
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="text-primary hover:text-primary"
+          xstyle={styles.providerOrderEditorButton2}
           disabled={!nextAvailableProvider}
           onClick={() => {
             if (nextAvailableProvider) onChange([...order, nextAvailableProvider.name]);
           }}
         >
-          <Plus className="size-4" />
+          <Plus {...stylex.props(styles.providerOrderEditorPlus)} />
           添加 Provider
         </Button>
       </li>
@@ -399,13 +401,16 @@ function DefaultProviderOrder({
   const isDisabled = order.length === 0;
 
   return (
-    <div className="space-y-3 px-4 py-4 sm:px-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Label className="font-bold" htmlFor={`default-${capabilityLabel}-disabled`}>
+    <div {...stylex.props(styles.defaultProviderOrderGroupItem, styles.defaultProviderOrderDiv)}>
+      <div {...stylex.props(styles.defaultProviderOrderDiv2)}>
+        <Label
+          xstyle={styles.defaultProviderOrderLabel}
+          htmlFor={`default-${capabilityLabel}-disabled`}
+        >
           {label}
         </Label>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">默认禁用</span>
+        <div {...stylex.props(styles.providerOrderEditorLi)}>
+          <span {...stylex.props(styles.defaultProviderOrderSpan)}>默认禁用</span>
           <Switch
             id={`default-${capabilityLabel}-disabled`}
             aria-label={`默认禁用${capabilityLabel}`}
@@ -422,7 +427,7 @@ function DefaultProviderOrder({
         </div>
       </div>
       {isDisabled ? (
-        <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+        <p {...stylex.props(styles.defaultProviderOrderP)}>
           所有未覆盖目录均不提供{capabilityLabel}。
         </p>
       ) : (
@@ -456,11 +461,11 @@ function CatalogProviderOrder({
   const isDisabled = !isInherited && order.length === 0;
 
   return (
-    <div className="space-y-3 px-4 py-3.5 sm:px-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="text-sm font-bold">{capabilityLabel}</span>
-        <div className="flex items-center gap-2">
-          <Label className="text-xs font-normal" htmlFor={`${label}-inherit`}>
+    <div {...stylex.props(styles.catalogProviderOrderDiv)}>
+      <div {...stylex.props(styles.defaultProviderOrderDiv2)}>
+        <span {...stylex.props(styles.catalogProviderOrderSpan)}>{capabilityLabel}</span>
+        <div {...stylex.props(styles.providerOrderEditorLi)}>
+          <Label xstyle={styles.catalogProviderOrderLabel} htmlFor={`${label}-inherit`}>
             继承默认顺序
           </Label>
           <Switch
@@ -472,13 +477,13 @@ function CatalogProviderOrder({
         </div>
       </div>
       {isInherited ? (
-        <p className="text-xs text-muted-foreground">
+        <p {...stylex.props(styles.defaultProviderOrderSpan)}>
           {defaultOrder.length > 0 ? defaultOrder.join(' → ') : `默认已禁用${capabilityLabel}`}
         </p>
       ) : (
         <>
-          <div className="flex items-center justify-between gap-3">
-            <Label className="text-xs font-normal" htmlFor={`${label}-disabled`}>
+          <div {...stylex.props(styles.catalogProviderOrderDiv2)}>
+            <Label xstyle={styles.catalogProviderOrderLabel} htmlFor={`${label}-disabled`}>
               禁用此目录的{capabilityLabel}
             </Label>
             <Switch
@@ -522,7 +527,7 @@ function CatalogProviderOrder({
  */
 function CatalogPresenceBadges({ catalog }: { catalog: ProviderCatalogInfo }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div {...stylex.props(styles.catalogPresenceBadgesDiv)}>
       <StatusPill tone={catalog.csv_filename ? 'success' : 'neutral'}>
         {catalog.csv_filename ? 'CSV 已发现' : '无 CSV'}
       </StatusPill>
@@ -551,7 +556,7 @@ export function ProviderConfigurationEditor({
   );
   if (!configuration) {
     return (
-      <p role="alert" className="text-sm text-destructive">
+      <p role="alert" {...stylex.props(styles.providerConfigurationEditorP)}>
         Provider 配置与后端能力目录不一致，已停止编辑以避免覆盖有效配置。
       </p>
     );
@@ -602,8 +607,11 @@ export function ProviderConfigurationEditor({
   };
 
   return (
-    <div className="space-y-10">
-      <SettingsSection data-runtime-setting-field={configuration.proxySetting.field}>
+    <div>
+      <SettingsSection
+        xstyle={styles.providerConfigurationEditorDivItem}
+        data-runtime-setting-field={configuration.proxySetting.field}
+      >
         <SettingsSectionHeader>
           <SettingsSectionTitle>{configuration.proxySetting.label}</SettingsSectionTitle>
           <SettingsSectionDescription>
@@ -611,19 +619,22 @@ export function ProviderConfigurationEditor({
             <span>{getApplyModeLabel(configuration.proxySetting.apply_mode)}</span>
           </SettingsSectionDescription>
         </SettingsSectionHeader>
-        <SettingsGroup className="sm:grid sm:grid-cols-2 sm:divide-y-0 sm:gap-px sm:bg-border">
+        <SettingsGroup xstyle={styles.providerConfigurationEditorSettingsGroup}>
           {catalog.providers.map((provider) => (
             <div
               key={provider.name}
               role="group"
               aria-labelledby={`provider-proxy-label-${provider.name}`}
-              className="flex items-center justify-between gap-3 bg-background px-4 py-3 sm:px-5"
+              {...stylex.props(
+                styles.providerConfigurationEditorSettingsGroupItem,
+                styles.providerConfigurationEditorDiv,
+              )}
             >
-              <div className="min-w-0">
+              <div {...stylex.props(styles.providerConfigurationEditorDiv2)}>
                 <Label
                   id={`provider-proxy-label-${provider.name}`}
                   htmlFor={`provider-proxy-${provider.name}`}
-                  className="font-bold"
+                  xstyle={styles.defaultProviderOrderLabel}
                 >
                   {provider.name}
                 </Label>
@@ -640,9 +651,15 @@ export function ProviderConfigurationEditor({
         </SettingsGroup>
       </SettingsSection>
 
-      <section className="space-y-3" aria-labelledby="provider-configuration-title">
-        <SettingsSectionHeader>
-          <h3 id="provider-configuration-title" className="text-sm leading-6 font-bold">
+      <section
+        {...stylex.props(styles.providerConfigurationEditorDivItem)}
+        aria-labelledby="provider-configuration-title"
+      >
+        <SettingsSectionHeader xstyle={styles.providerConfigurationEditorSectionItem}>
+          <h3
+            id="provider-configuration-title"
+            {...stylex.props(styles.providerConfigurationEditorH3)}
+          >
             Provider 路由
           </h3>
           <SettingsSectionDescription>
@@ -650,7 +667,12 @@ export function ProviderConfigurationEditor({
           </SettingsSectionDescription>
         </SettingsSectionHeader>
 
-        <div className="flex flex-wrap gap-1.5 px-1">
+        <div
+          {...stylex.props(
+            styles.providerConfigurationEditorSectionItem,
+            styles.providerConfigurationEditorDiv3,
+          )}
+        >
           {[
             configuration.indexSetting,
             configuration.abstractSetting,
@@ -659,15 +681,22 @@ export function ProviderConfigurationEditor({
             <span
               key={setting.field}
               data-runtime-setting-field={setting.field}
-              className="inline-flex items-center gap-1.5 rounded-md bg-background px-2 py-1 text-xs shadow-[inset_0_0_0_1px_var(--border)]"
+              {...stylex.props(styles.providerConfigurationEditorSpan)}
             >
-              <span className="font-bold">{setting.label}</span>
-              <span className="text-muted-foreground">{getApplyModeLabel(setting.apply_mode)}</span>
+              <span {...stylex.props(styles.defaultProviderOrderLabel)}>{setting.label}</span>
+              <span {...stylex.props(styles.providerConfigurationEditorSpan2)}>
+                {getApplyModeLabel(setting.apply_mode)}
+              </span>
             </span>
           ))}
         </div>
 
-        <SettingsGroup className="lg:grid lg:grid-cols-2 lg:divide-y-0 lg:gap-px lg:bg-border [&>*]:bg-background">
+        <SettingsGroup
+          xstyle={[
+            styles.providerConfigurationEditorSectionItem,
+            styles.providerConfigurationEditorSettingsGroup2,
+          ]}
+        >
           <DefaultProviderOrder
             capabilityLabel="摘要页"
             label="默认摘要页 Provider 顺序"
@@ -688,32 +717,40 @@ export function ProviderConfigurationEditor({
           />
         </SettingsGroup>
 
-        <div className="space-y-3 pt-3">
+        <div
+          {...stylex.props(
+            styles.providerConfigurationEditorSectionItem,
+            styles.providerConfigurationEditorDiv4,
+          )}
+        >
           {catalog.catalogs.map((catalogInfo) => {
             const abstractOverride = configuration.abstractOrders.catalogs[catalogInfo.stem];
             const fulltextOverride = configuration.fulltextOrders.catalogs[catalogInfo.stem];
             return (
               <SettingsGroup
+                xstyle={styles.providerConfigurationEditorSectionItem}
                 key={catalogInfo.stem}
                 role="region"
                 aria-labelledby={`provider-catalog-${catalogInfo.stem}`}
               >
-                <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/40 px-4 py-3 sm:px-5">
-                  <div className="flex min-w-0 items-center gap-3">
+                <div {...stylex.props(styles.providerConfigurationEditorDiv5)}>
+                  <div {...stylex.props(styles.providerConfigurationEditorDiv6)}>
                     <span
                       aria-hidden="true"
-                      className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-foreground text-background"
+                      {...stylex.props(styles.providerConfigurationEditorSpan3)}
                     >
-                      <Layers className="size-4" />
+                      <Layers {...stylex.props(styles.providerOrderEditorPlus)} />
                     </span>
-                    <div className="min-w-0">
+                    <div {...stylex.props(styles.providerConfigurationEditorDiv2)}>
                       <h4
                         id={`provider-catalog-${catalogInfo.stem}`}
-                        className="truncate text-sm font-bold"
+                        {...stylex.props(styles.providerConfigurationEditorH4)}
                       >
                         {catalogInfo.stem}
                       </h4>
-                      <p className="text-xs text-muted-foreground">CSV stem / 数据库目录键</p>
+                      <p {...stylex.props(styles.defaultProviderOrderSpan)}>
+                        CSV stem / 数据库目录键
+                      </p>
                     </div>
                   </div>
                   <CatalogPresenceBadges catalog={catalogInfo} />
@@ -727,7 +764,7 @@ export function ProviderConfigurationEditor({
                   >
                     <SelectTrigger
                       id={`index-provider-${catalogInfo.stem}`}
-                      className="w-full sm:w-60"
+                      xstyle={styles.providerConfigurationEditorSelectTrigger}
                       aria-label={`${catalogInfo.stem} 索引 Provider`}
                     >
                       <SelectValue placeholder="请选择索引 Provider" />
@@ -829,3 +866,342 @@ function hasProviderSettingControls(
     fulltextSetting.control !== 'provider_order'
   );
 }
+
+const styles = stylex.create({
+  defaultProviderOrderGroupItem: {
+    backgroundColor: colors.background,
+    borderBottomWidth: {
+      default: null,
+      '@media (min-width: 64rem)': {
+        default: null,
+        ':not(:last-child)': '0px',
+      },
+    },
+  },
+  providerCapabilityBadgesSpan: {
+    marginTop: '0.25rem',
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.25rem',
+  },
+  providerCapabilityBadgesSpan2: {
+    borderRadius: '6px',
+    backgroundColor: colors.muted,
+    paddingInline: '0.375rem',
+    paddingBlock: '0.125rem',
+    fontSize: '11px',
+    color: colors.mutedForeground,
+  },
+  providerOrderEditorOlItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  providerOrderEditorLi: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  providerOrderEditorSpan: {
+    display: 'flex',
+    width: '1.5rem',
+    height: '1.5rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.foreground,
+    fontSize: '11px',
+    fontWeight: 700,
+    color: colors.background,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  providerOrderEditorSelectTrigger: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  providerOrderEditorDiv: {
+    display: 'flex',
+    flexShrink: 0,
+    alignItems: 'center',
+  },
+  providerOrderEditorArrowUp: {
+    height: '1rem',
+    width: '1rem',
+  },
+  providerOrderEditorButton: {
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+  providerOrderEditorButton2: {
+    color: {
+      default: colors.primary,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.primary,
+      },
+    },
+  },
+  providerOrderEditorPlus: {
+    width: '1rem',
+    height: '1rem',
+  },
+  defaultProviderOrderDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+  },
+  defaultProviderOrderDiv2: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+  },
+  defaultProviderOrderLabel: {
+    fontWeight: 700,
+  },
+  defaultProviderOrderSpan: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  defaultProviderOrderP: {
+    borderRadius: '8px',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 60%, transparent)`,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  catalogProviderOrderDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.875rem',
+  },
+  catalogProviderOrderSpan: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  catalogProviderOrderLabel: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 400,
+  },
+  catalogProviderOrderDiv2: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+  },
+  catalogPresenceBadgesDiv: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.375rem',
+  },
+  providerConfigurationEditorP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  providerConfigurationEditorDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '2.5rem',
+    },
+  },
+  providerConfigurationEditorSettingsGroupItem: {
+    borderTopStyle: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderTopWidth: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '0px',
+      },
+    },
+    borderBottomStyle: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderBottomWidth: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '0px',
+      },
+    },
+  },
+  providerConfigurationEditorSettingsGroup: {
+    display: {
+      default: null,
+      '@media (min-width: 40rem)': 'grid',
+    },
+    gridTemplateColumns: {
+      default: null,
+      '@media (min-width: 40rem)': 'repeat(2, minmax(0, 1fr))',
+    },
+    gap: {
+      default: null,
+      '@media (min-width: 40rem)': '1px',
+    },
+    backgroundColor: {
+      default: null,
+      '@media (min-width: 40rem)': colors.border,
+    },
+  },
+  providerConfigurationEditorDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    backgroundColor: colors.background,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+  },
+  providerConfigurationEditorDiv2: {
+    minWidth: '0px',
+  },
+  providerConfigurationEditorSectionItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  providerConfigurationEditorH3: {
+    fontSize: '0.875rem',
+    lineHeight: '1.5rem',
+    fontWeight: 700,
+  },
+  providerConfigurationEditorDiv3: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '0.375rem',
+    paddingInline: '0.25rem',
+  },
+  providerConfigurationEditorSpan: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.375rem',
+    borderRadius: '6px',
+    backgroundColor: colors.background,
+    paddingInline: '0.5rem',
+    paddingBlock: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    boxShadow: `inset 0 0 0 1px ${colors.border}`,
+  },
+  providerConfigurationEditorSpan2: {
+    color: colors.mutedForeground,
+  },
+  providerConfigurationEditorSettingsGroup2: {
+    display: {
+      default: null,
+      '@media (min-width: 64rem)': 'grid',
+    },
+    gridTemplateColumns: {
+      default: null,
+      '@media (min-width: 64rem)': 'repeat(2, minmax(0, 1fr))',
+    },
+    gap: {
+      default: null,
+      '@media (min-width: 64rem)': '1px',
+    },
+    backgroundColor: {
+      default: null,
+      '@media (min-width: 64rem)': colors.border,
+    },
+  },
+  providerConfigurationEditorDiv4: {
+    paddingTop: '0.75rem',
+  },
+  providerConfigurationEditorDiv5: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 40%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+  },
+  providerConfigurationEditorDiv6: {
+    display: 'flex',
+    minWidth: '0px',
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  providerConfigurationEditorSpan3: {
+    display: 'flex',
+    width: '2rem',
+    height: '2rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+    backgroundColor: colors.foreground,
+    color: colors.background,
+  },
+  providerConfigurationEditorH4: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  providerConfigurationEditorSelectTrigger: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': '15rem',
+    },
+  },
+});

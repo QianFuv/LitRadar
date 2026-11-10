@@ -14,7 +14,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { buttonVariants } from '@/components/ui/button';
+import { buttonStyles } from '@/components/ui/button';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 export type ConfirmDialogProps = {
   actionLabel?: string;
@@ -82,14 +84,14 @@ export function ConfirmDialog({
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         {error && (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" {...stylex.props(styles.confirmDialogP)}>
             {error}
           </p>
         )}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction
-            className={buttonVariants({ variant: 'destructive' })}
+            xstyle={buttonStyles('destructive')}
             disabled={isPending}
             onClick={(event) => {
               event.preventDefault();
@@ -105,3 +107,11 @@ export function ConfirmDialog({
     </AlertDialog>
   );
 }
+
+const styles = stylex.create({
+  confirmDialogP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+});

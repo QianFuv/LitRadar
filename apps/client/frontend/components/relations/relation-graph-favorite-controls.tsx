@@ -40,6 +40,8 @@ import {
   relationGraphSignature,
   type RelationGraph,
 } from '@/lib/relation-graph';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 /** Longest saved title accepted by the server, in characters. */
 const RELATION_GRAPH_TITLE_LIMIT = 200;
@@ -266,15 +268,21 @@ function RelationGraphFavoriteButtons({
             type="button"
             variant="ghost"
             size="icon"
-            className="size-11 md:size-8"
+            xstyle={styles.relationGraphFavoriteButtonsButton}
             aria-label="收藏关系图"
             disabled={isBusy}
             onClick={favorite.create}
           >
             {isBusy ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              <Loader2
+                {...stylex.props(styles.relationGraphFavoriteButtonsLoader2)}
+                aria-hidden="true"
+              />
             ) : (
-              <Bookmark className="size-4" aria-hidden="true" />
+              <Bookmark
+                {...stylex.props(styles.relationGraphFavoriteButtonsBookmark)}
+                aria-hidden="true"
+              />
             )}
           </Button>
         </IconTooltip>
@@ -290,27 +298,36 @@ function RelationGraphFavoriteButtons({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="relative size-11 text-primary-text md:size-8"
+                xstyle={styles.relationGraphFavoriteButtonsButton2}
                 aria-label={isDirty ? '已收藏的关系图操作（有未保存的改动）' : '已收藏的关系图操作'}
                 disabled={isBusy}
               >
                 {isBusy ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  <Loader2
+                    {...stylex.props(styles.relationGraphFavoriteButtonsLoader2)}
+                    aria-hidden="true"
+                  />
                 ) : (
-                  <BookmarkCheck className="size-4" aria-hidden="true" />
+                  <BookmarkCheck
+                    {...stylex.props(styles.relationGraphFavoriteButtonsBookmark)}
+                    aria-hidden="true"
+                  />
                 )}
                 {isDirty && (
                   <span
                     aria-hidden="true"
                     data-testid="relation-graph-unsaved-dot"
-                    className="absolute top-1.5 right-1.5 size-2 rounded-full bg-warning-foreground ring-2 ring-background md:top-1 md:right-1"
+                    {...stylex.props(styles.relationGraphFavoriteButtonsSpan)}
                   />
                 )}
               </Button>
             </DropdownMenuTrigger>
           </IconTooltip>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuLabel className="truncate">
+          <DropdownMenuContent
+            align="end"
+            xstyle={styles.relationGraphFavoriteButtonsDropdownMenuContent}
+          >
+            <DropdownMenuLabel xstyle={styles.relationGraphFavoriteButtonsDropdownMenuLabel}>
               {savedTitle ?? '已收藏的关系图'}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
@@ -328,7 +345,11 @@ function RelationGraphFavoriteButtons({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-      <span role="status" className="sr-only" data-testid="relation-graph-favorite-status">
+      <span
+        role="status"
+        {...stylex.props(styles.relationGraphFavoriteButtonsSpan2)}
+        data-testid="relation-graph-favorite-status"
+      >
         {status}
       </span>
     </>
@@ -423,7 +444,7 @@ function RelationGraphLeaveGuard({ favorite }: { favorite: RelationGraphFavorite
         if (!nextOpen && !isBusy) setPendingHref(null);
       }}
     >
-      <DialogContent className="md:max-w-md">
+      <DialogContent xstyle={styles.relationGraphLeaveGuardDialogContent}>
         <DialogHeader>
           <DialogTitle>关系图有未保存的改动</DialogTitle>
           <DialogDescription>
@@ -432,7 +453,7 @@ function RelationGraphLeaveGuard({ favorite }: { favorite: RelationGraphFavorite
               : '这张关系图在收藏后又有改动。离开前要把改动保存到收藏吗？'}
           </DialogDescription>
         </DialogHeader>
-        <DialogFooter className="gap-2 sm:justify-between">
+        <DialogFooter xstyle={styles.relationGraphLeaveGuardDialogFooter}>
           <Button
             type="button"
             variant="ghost"
@@ -441,7 +462,7 @@ function RelationGraphLeaveGuard({ favorite }: { favorite: RelationGraphFavorite
           >
             继续编辑
           </Button>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+          <div {...stylex.props(styles.relationGraphLeaveGuardDiv)}>
             <Button
               type="button"
               variant="outline"
@@ -469,3 +490,104 @@ function RelationGraphLeaveGuard({ favorite }: { favorite: RelationGraphFavorite
     </Dialog>
   );
 }
+
+const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
+
+const styles = stylex.create({
+  relationGraphFavoriteButtonsButton: {
+    width: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+  },
+  relationGraphFavoriteButtonsLoader2: {
+    width: '1rem',
+    height: '1rem',
+    animationName: spinKeyframes,
+    animationDuration: '1s',
+    animationTimingFunction: 'linear',
+    animationIterationCount: 'infinite',
+  },
+  relationGraphFavoriteButtonsBookmark: {
+    width: '1rem',
+    height: '1rem',
+  },
+  relationGraphFavoriteButtonsButton2: {
+    position: 'relative',
+    width: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    color: {
+      default: colors.primaryText,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  relationGraphFavoriteButtonsSpan: {
+    position: 'absolute',
+    top: {
+      default: '0.375rem',
+      '@media (min-width: 48rem)': '0.25rem',
+    },
+    right: {
+      default: '0.375rem',
+      '@media (min-width: 48rem)': '0.25rem',
+    },
+    width: '0.5rem',
+    height: '0.5rem',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.warningForeground,
+    boxShadow: `0 0 0 2px ${colors.background}`,
+  },
+  relationGraphFavoriteButtonsDropdownMenuContent: {
+    width: '13rem',
+  },
+  relationGraphFavoriteButtonsDropdownMenuLabel: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  relationGraphFavoriteButtonsSpan2: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  relationGraphLeaveGuardDialogContent: {
+    maxWidth: {
+      default: 'none',
+      '@media (min-width: 48rem)': '28rem',
+    },
+  },
+  relationGraphLeaveGuardDialogFooter: {
+    gap: '0.5rem',
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'space-between',
+    },
+  },
+  relationGraphLeaveGuardDiv: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column-reverse',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.5rem',
+  },
+});

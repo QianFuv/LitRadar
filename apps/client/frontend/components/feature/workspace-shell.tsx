@@ -20,7 +20,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { READER_DOCK_MEDIA_QUERY, useMediaQuery } from '@/lib/use-media-query';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 type ExplicitReader = {
   /** Reader content for the current selection. */
@@ -37,8 +38,6 @@ type ExplicitReader = {
 
 type WorkspaceShellProps = {
   children: ReactNode;
-  /** Optional classes for the list scroll body. */
-  contentClassName?: string;
   /** Sticky list header with page title, search, and filters. */
   header: ReactNode;
   /** Accessible list-column name. */
@@ -117,7 +116,6 @@ function moveReaderSelection(container: HTMLElement, direction: 1 | -1, isDocked
  */
 export function WorkspaceShell({
   children,
-  contentClassName,
   header,
   listLabel,
   isListSelfScrolling = false,
@@ -218,32 +216,26 @@ export function WorkspaceShell({
 
   return (
     <ArticleReaderContext.Provider value={readerContext}>
-      <div className="flex h-full min-h-0 w-full">
+      <div {...stylex.props(styles.workspaceShellDiv)}>
         <section
           ref={listRef}
           aria-label={listLabel}
           data-slot="workspace-list"
-          className={cn(
-            'flex h-full min-h-0 w-full min-w-0 flex-col bg-background',
+          {...stylex.props(
+            styles.workspaceList,
             isListEmphasized
-              ? 'xl:w-auto xl:flex-[3_1_0%]'
-              : 'xl:w-[460px] xl:shrink-0 xl:border-r 2xl:w-[520px]',
+              ? styles.workspaceListListEmphasized
+              : styles.workspaceListNotListEmphasized,
           )}
         >
-          <header
-            data-slot="workspace-list-header"
-            className="z-20 shrink-0 border-b bg-background px-4 pt-4 pb-3 sm:px-5 md:pt-5"
-          >
+          <header data-slot="workspace-list-header" {...stylex.props(styles.workspaceListHeader)}>
             {header}
           </header>
           {isListSelfScrolling ? (
-            <div className={cn('flex min-h-0 flex-1 flex-col', contentClassName)}>{children}</div>
+            <div {...stylex.props(styles.listContent)}>{children}</div>
           ) : (
-            <div
-              id="results-scroll-container"
-              className="workspace-bottom-space min-h-0 flex-1 overflow-y-auto overscroll-contain"
-            >
-              <div className={cn('min-w-0', contentClassName)}>{children}</div>
+            <div id="results-scroll-container" {...stylex.props(styles.workspaceShellDiv3)}>
+              <div {...stylex.props(styles.listContentFlow)}>{children}</div>
             </div>
           )}
         </section>
@@ -254,18 +246,18 @@ export function WorkspaceShell({
             aria-label="阅读台"
             data-slot="reading-desk"
             data-emphasis={emphasis}
-            className={cn(
-              'relative hidden min-h-0 min-w-0 overflow-y-auto xl:block',
+            {...stylex.props(
+              styles.readingDesk,
               isListEmphasized
-                ? 'flex-[2_1_0%] border-l bg-background'
-                : 'flex-1 border-l bg-background',
+                ? styles.readingDeskListEmphasized
+                : styles.readingDeskNotListEmphasized,
             )}
           >
             {reader ? (
               reader.content
             ) : (
               <>
-                <div ref={setReaderNode} className="contents" />
+                <div ref={setReaderNode} {...stylex.props(styles.workspaceShellDiv5)} />
                 {!hasArticleSelection && !isListEmphasized && readerPlaceholder}
               </>
             )}
@@ -277,7 +269,7 @@ export function WorkspaceShell({
         <Dialog open={reader.isSheetOpen} onOpenChange={reader.onSheetOpenChange}>
           <DialogContent
             placement="right"
-            className="flex flex-col gap-0 overflow-hidden bg-canvas"
+            xstyle={styles.workspaceShellDialogContent}
             onOpenAutoFocus={() => {
               sheetReturnFocusRef.current =
                 document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -291,7 +283,7 @@ export function WorkspaceShell({
               }
             }}
           >
-            <div className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-1.5">
+            <div {...stylex.props(styles.workspaceShellDiv6)}>
               <DialogClose asChild>
                 <Button
                   type="button"
@@ -299,15 +291,17 @@ export function WorkspaceShell({
                   size="icon"
                   static
                   aria-label="关闭"
-                  className="size-11"
+                  xstyle={styles.workspaceShellButton}
                 >
-                  <X className="size-5" aria-hidden="true" />
+                  <X {...stylex.props(styles.workspaceShellX)} aria-hidden="true" />
                 </Button>
               </DialogClose>
-              <DialogTitle className="min-w-0 truncate text-[15px]">{reader.title}</DialogTitle>
-              <DialogDescription className="sr-only">{reader.description}</DialogDescription>
+              <DialogTitle xstyle={styles.workspaceShellDialogTitle}>{reader.title}</DialogTitle>
+              <DialogDescription xstyle={styles.workspaceShellDialogDescription}>
+                {reader.description}
+              </DialogDescription>
             </div>
-            <div data-slot="reader-sheet-body" className="min-h-0 flex-1 overflow-y-auto">
+            <div data-slot="reader-sheet-body" {...stylex.props(styles.readerSheetBody)}>
               {reader.content}
             </div>
           </DialogContent>
@@ -316,3 +310,169 @@ export function WorkspaceShell({
     </ArticleReaderContext.Provider>
   );
 }
+
+const styles = stylex.create({
+  listContent: {
+    display: 'flex',
+    minHeight: '0px',
+    flex: '1',
+    flexDirection: 'column',
+  },
+  listContentFlow: {
+    minWidth: '0px',
+  },
+  workspaceShellDiv: {
+    display: 'flex',
+    height: '100%',
+    minHeight: '0px',
+    width: '100%',
+  },
+  workspaceList: {
+    display: 'flex',
+    height: '100%',
+    minHeight: '0px',
+    width: '100%',
+    minWidth: '0px',
+    flexDirection: 'column',
+    backgroundColor: colors.background,
+  },
+  workspaceListListEmphasized: {
+    width: {
+      default: '100%',
+      '@media (min-width: 80rem)': 'auto',
+    },
+    flexGrow: {
+      default: null,
+      '@media (min-width: 80rem)': 3,
+    },
+    flexShrink: {
+      default: null,
+      '@media (min-width: 80rem)': 1,
+    },
+    flexBasis: {
+      default: null,
+      '@media (min-width: 80rem)': '0%',
+    },
+  },
+  workspaceListNotListEmphasized: {
+    width: {
+      default: '100%',
+      '@media (min-width: 80rem)': '460px',
+      '@media (min-width: 96rem)': '520px',
+    },
+    flexShrink: {
+      default: null,
+      '@media (min-width: 80rem)': 0,
+    },
+    borderRightStyle: {
+      default: null,
+      '@media (min-width: 80rem)': 'solid',
+    },
+    borderRightWidth: {
+      default: null,
+      '@media (min-width: 80rem)': '1px',
+    },
+  },
+  workspaceListHeader: {
+    zIndex: 20,
+    flexShrink: 0,
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    backgroundColor: colors.background,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingTop: {
+      default: '1rem',
+      '@media (min-width: 48rem)': '1.25rem',
+    },
+    paddingBottom: '0.75rem',
+  },
+  workspaceShellDiv3: {
+    minHeight: '0px',
+    flex: '1',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    paddingBottom: {
+      default: 'calc(5.5rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
+      '@media (min-width: 48rem)': '2rem',
+    },
+  },
+  readingDesk: {
+    position: 'relative',
+    display: {
+      default: 'none',
+      '@media (min-width: 80rem)': 'block',
+    },
+    minHeight: '0px',
+    minWidth: '0px',
+    overflowY: 'auto',
+  },
+  readingDeskListEmphasized: {
+    flexGrow: 2,
+    flexShrink: 1,
+    flexBasis: '0%',
+    borderLeftStyle: 'solid',
+    borderLeftWidth: '1px',
+    backgroundColor: colors.background,
+  },
+  readingDeskNotListEmphasized: {
+    flex: '1',
+    borderLeftStyle: 'solid',
+    borderLeftWidth: '1px',
+    backgroundColor: colors.background,
+  },
+  workspaceShellDiv5: {
+    display: 'contents',
+  },
+  workspaceShellDialogContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0px',
+    overflow: 'hidden',
+    backgroundColor: colors.canvas,
+  },
+  workspaceShellDiv6: {
+    display: 'flex',
+    height: '3.5rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.5rem',
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    backgroundColor: colors.background,
+    paddingInline: '0.375rem',
+  },
+  workspaceShellButton: {
+    width: '2.75rem',
+    height: '2.75rem',
+  },
+  workspaceShellX: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  workspaceShellDialogTitle: {
+    minWidth: '0px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    fontSize: '15px',
+    lineHeight: 'inherit',
+  },
+  workspaceShellDialogDescription: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  readerSheetBody: {
+    minHeight: '0px',
+    flex: '1',
+    overflowY: 'auto',
+  },
+});

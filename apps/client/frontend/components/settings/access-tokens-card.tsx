@@ -41,6 +41,8 @@ import type {
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 const TTL_OPTIONS = [
   { label: '7天', value: 7 * 86400 },
@@ -82,8 +84,8 @@ export function AccessTokensCard(props: {
   return (
     <SettingsSection>
       <SettingsSectionHeader>
-        <div className="flex w-full items-end justify-between gap-4">
-          <div className="min-w-0">
+        <div {...stylex.props(styles.accessTokensCardDiv)}>
+          <div {...stylex.props(styles.accessTokensCardDiv2)}>
             <SettingsSectionTitle icon={Key}>访问令牌</SettingsSectionTitle>
             <SettingsSectionDescription>
               创建访问令牌，用于接口访问或第三方集成
@@ -97,8 +99,8 @@ export function AccessTokensCard(props: {
             }}
           >
             <DialogTrigger asChild>
-              <Button size="sm" className="shrink-0">
-                <Plus className="size-4" />
+              <Button size="sm" xstyle={styles.accessTokensCardButton}>
+                <Plus {...stylex.props(styles.accessTokensCardPlus)} />
                 新建
               </Button>
             </DialogTrigger>
@@ -119,7 +121,7 @@ export function AccessTokensCard(props: {
       <SettingsSectionContent>
         <RevealItem
           isReady={!state.isTokensLoading}
-          placeholder={<Skeleton className="h-16 w-full rounded-xl" />}
+          placeholder={<Skeleton xstyle={styles.accessTokensCardSkeleton} />}
         >
           <SettingsGroup>{renderAccessTokenList(state)}</SettingsGroup>
         </RevealItem>
@@ -204,25 +206,27 @@ function renderCreatedAccessToken(
     <MotionDiv
       key="token-created"
       data-motion-token-dialog-state="created"
-      className="space-y-3"
+      {...stylex.props(styles.renderCreatedAccessTokenMotionDiv)}
       initial="hidden"
       animate="visible"
       exit="exit"
       variants={PANEL_VARIANTS}
     >
-      <p className="flex items-center gap-2 text-sm font-bold text-success-foreground">
-        <span className="flex size-5 items-center justify-center rounded-full bg-success">
-          <Check className="size-3" strokeWidth={3} aria-hidden="true" />
+      <p {...stylex.props(styles.renderCreatedAccessTokenP)}>
+        <span {...stylex.props(styles.renderCreatedAccessTokenSpan)}>
+          <Check
+            {...stylex.props(styles.renderCreatedAccessTokenCheck)}
+            strokeWidth={3}
+            aria-hidden="true"
+          />
         </span>
         新令牌已创建：
       </p>
-      <div className="flex items-stretch gap-2">
-        <code className="min-w-0 flex-1 rounded-lg border border-dashed border-primary/50 bg-info px-3 py-2.5 text-xs leading-5 break-all text-info-foreground">
-          {newTokenValue}
-        </code>
+      <div {...stylex.props(styles.renderCreatedAccessTokenDiv)}>
+        <code {...stylex.props(styles.renderCreatedAccessTokenCode)}>{newTokenValue}</code>
         <CopyButton
           variant="outline"
-          className="h-auto w-11 shrink-0"
+          xstyle={styles.renderCreatedAccessTokenCopyButton}
           aria-label="复制新访问令牌"
           isCopied={copyFeedback?.scope === 'token' && copyFeedback.tone === 'success'}
           onCopy={() => void handleCopy(newTokenValue, '访问令牌已复制。', 'token')}
@@ -234,7 +238,11 @@ function renderCreatedAccessToken(
             key="token-copy-feedback"
             data-motion-feedback="token-copy"
             role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-            className={copyFeedback.tone === 'error' ? 'text-sm text-destructive' : 'sr-only'}
+            {...stylex.props(
+              copyFeedback.tone === 'error'
+                ? styles.renderCreatedAccessTokenMotionParagraphError
+                : styles.renderCreatedAccessTokenMotionParagraphNotError,
+            )}
             initial="hidden"
             animate="visible"
             exit="exit"
@@ -270,15 +278,18 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
         if (tokenNameError) return;
         createTokenMut.mutate();
       }}
-      className="space-y-4"
+      {...stylex.props(styles.renderAccessTokenFormMotionForm)}
       initial="hidden"
       animate="visible"
       exit="exit"
       variants={PANEL_VARIANTS}
     >
-      <div className="space-y-2">
-        <Label htmlFor="access-token-name">名称</Label>
+      <div>
+        <Label xstyle={styles.renderAccessTokenFormDivItem} htmlFor="access-token-name">
+          名称
+        </Label>
         <Input
+          xstyle={styles.renderAccessTokenFormDivItem}
           id="access-token-name"
           name="access_token_name"
           autoComplete="off"
@@ -288,16 +299,20 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
           aria-invalid={creationError ? true : undefined}
           placeholder="例如：接口集成"
         />
-        <p className="text-xs text-muted-foreground">
+        <p {...stylex.props(styles.renderAccessTokenFormDivItem, styles.renderAccessTokenFormP)}>
           {tokenNameCodePointCount}/{ACCESS_TOKEN_NAME_MAX_CODE_POINTS} Unicode code points
         </p>
       </div>
-      <div className="space-y-2">
-        <div className="text-sm font-medium">有效期</div>
+      <div>
+        <div
+          {...stylex.props(styles.renderAccessTokenFormDivItem, styles.renderAccessTokenFormDiv)}
+        >
+          有效期
+        </div>
         <ToggleGroup
           type="single"
           aria-label="访问令牌有效期"
-          className="grid w-full grid-cols-4 gap-1 border-0 bg-muted p-1"
+          xstyle={[styles.renderAccessTokenFormDivItem, styles.renderAccessTokenFormToggleGroup]}
           value={String(tokenTtl)}
           onValueChange={(value) => {
             if (value) setTokenTtl(Number(value));
@@ -307,7 +322,7 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
             <ToggleGroupItem
               key={opt.value}
               value={String(opt.value)}
-              className="h-9 justify-center text-sm md:h-9 data-[state=on]:bg-background data-[state=on]:font-bold data-[state=on]:text-foreground data-[state=on]:shadow-paper data-[state=on]:hover:text-foreground"
+              xstyle={styles.renderAccessTokenFormToggleGroupItem}
             >
               {opt.label}
             </ToggleGroupItem>
@@ -320,7 +335,7 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
             key="token-creation-error"
             data-motion-feedback="token-creation"
             role="alert"
-            className="text-sm text-destructive"
+            {...stylex.props(styles.renderCreatedAccessTokenMotionParagraphError)}
             initial="hidden"
             animate="visible"
             exit="exit"
@@ -332,7 +347,7 @@ function renderAccessTokenForm(state: AccessTokenViewState) {
       </MotionPresence>
       <Button
         type="submit"
-        className="w-full"
+        xstyle={styles.renderAccessTokenFormButton}
         disabled={createTokenMut.isPending || tokenNameError !== null}
       >
         创建
@@ -353,18 +368,18 @@ function renderAccessTokenList(
       {tokens.length === 0 ? (
         <MotionDiv
           key="empty-tokens"
-          className="flex flex-col items-center gap-3 px-6 py-10 text-center"
+          {...stylex.props(styles.renderAccessTokenListMotionDiv)}
           initial="hidden"
           animate="visible"
           exit="exit"
           variants={REVEAL_VARIANTS}
         >
-          <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <KeyRound className="size-5" aria-hidden="true" />
+          <span {...stylex.props(styles.renderAccessTokenListSpan)}>
+            <KeyRound {...stylex.props(styles.renderAccessTokenListKeyRound)} aria-hidden="true" />
           </span>
           <div>
-            <p className="text-sm font-bold">暂无访问令牌</p>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p {...stylex.props(styles.renderAccessTokenListP)}>暂无访问令牌</p>
+            <p {...stylex.props(styles.renderAccessTokenListP2)}>
               令牌可用于脚本、自动化或第三方工具调用 LitRadar 接口
             </p>
           </div>
@@ -376,31 +391,31 @@ function renderAccessTokenList(
             <MotionDiv
               key={t.id}
               data-motion-token-key={t.id}
-              className="flex items-center gap-3 overflow-hidden px-4 py-3.5 sm:px-5"
+              {...stylex.props(styles.renderAccessTokenListMotionDiv2)}
               initial="hidden"
               animate="visible"
               exit="exit"
               variants={DISCLOSURE_VARIANTS}
             >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                <Key className="size-4" aria-hidden="true" />
+              <span {...stylex.props(styles.renderAccessTokenListSpan2)}>
+                <Key {...stylex.props(styles.accessTokensCardPlus)} aria-hidden="true" />
               </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold">{t.name || '（未命名）'}</p>
-                <p className="text-xs text-muted-foreground tabular-nums">
+              <div {...stylex.props(styles.renderAccessTokenListDiv)}>
+                <p {...stylex.props(styles.renderAccessTokenListP3)}>{t.name || '（未命名）'}</p>
+                <p {...stylex.props(styles.renderAccessTokenListP4)}>
                   到 {formatExpiry(t.expires_at)} 过期
                 </p>
               </div>
               <StatusPill
                 tone={remainingDays === 0 ? 'danger' : remainingDays <= 7 ? 'warning' : 'neutral'}
-                className="hidden sm:inline-flex"
+                xstyle={styles.renderAccessTokenListStatusPill}
               >
                 {remainingDays === 0 ? '已过期' : `剩余 ${remainingDays} 天`}
               </StatusPill>
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-9 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                xstyle={styles.renderAccessTokenListButton}
                 aria-label={`撤销访问令牌 ${t.name || t.id}`}
                 disabled={revokeMut.isPending}
                 onClick={() => {
@@ -408,7 +423,7 @@ function renderAccessTokenList(
                   setTokenToRevoke(t);
                 }}
               >
-                <Trash2 className="size-4" />
+                <Trash2 {...stylex.props(styles.accessTokensCardPlus)} />
               </Button>
             </MotionDiv>
           );
@@ -446,3 +461,269 @@ function renderAccessTokenRevocation(
     />
   );
 }
+
+const styles = stylex.create({
+  accessTokensCardDiv: {
+    display: 'flex',
+    width: '100%',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: '1rem',
+  },
+  accessTokensCardDiv2: {
+    minWidth: '0px',
+  },
+  accessTokensCardButton: {
+    flexShrink: 0,
+  },
+  accessTokensCardPlus: {
+    width: '1rem',
+    height: '1rem',
+  },
+  accessTokensCardSkeleton: {
+    height: '4rem',
+    width: '100%',
+    borderRadius: '12px',
+  },
+  renderCreatedAccessTokenMotionDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+  },
+  renderCreatedAccessTokenP: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+    color: colors.successForeground,
+  },
+  renderCreatedAccessTokenSpan: {
+    display: 'flex',
+    width: '1.25rem',
+    height: '1.25rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.success,
+  },
+  renderCreatedAccessTokenCheck: {
+    width: '0.75rem',
+    height: '0.75rem',
+  },
+  renderCreatedAccessTokenDiv: {
+    display: 'flex',
+    alignItems: 'stretch',
+    gap: '0.5rem',
+  },
+  renderCreatedAccessTokenCode: {
+    minWidth: '0px',
+    flex: '1',
+    borderRadius: '8px',
+    borderStyle: 'dashed',
+    borderWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.primary} 50%, transparent)`,
+    backgroundColor: colors.info,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.625rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    wordBreak: 'break-all',
+    color: colors.infoForeground,
+  },
+  renderCreatedAccessTokenCopyButton: {
+    height: 'auto',
+    width: '2.75rem',
+    flexShrink: 0,
+  },
+  renderCreatedAccessTokenMotionParagraphError: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderCreatedAccessTokenMotionParagraphNotError: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  renderAccessTokenFormMotionForm: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '1rem',
+  },
+  renderAccessTokenFormDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  renderAccessTokenFormP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderAccessTokenFormDiv: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 500,
+  },
+  renderAccessTokenFormToggleGroup: {
+    display: 'grid',
+    width: '100%',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: '0.25rem',
+    borderStyle: 'solid',
+    borderWidth: '0px',
+    backgroundColor: colors.muted,
+    padding: '0.25rem',
+  },
+  renderAccessTokenFormToggleGroupItem: {
+    height: {
+      default: '2.25rem',
+      '@media (min-width: 48rem)': '2.25rem',
+    },
+    justifyContent: 'center',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    backgroundColor: {
+      default: null,
+      ':is([data-state="on"])': colors.background,
+    },
+    fontWeight: {
+      default: null,
+      ':is([data-state="on"])': 700,
+    },
+    color: {
+      default: colors.mutedForeground,
+      ':is([data-state="on"])': colors.foreground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': {
+        default: `0 0 0 2px ${colors.ring}`,
+        ':is([data-state="on"])': `0 0 0 2px ${colors.ring}, ${shadows.paper}`,
+      },
+      ':is([data-state="on"])': shadows.paper,
+    },
+  },
+  renderAccessTokenFormButton: {
+    width: '100%',
+  },
+  renderAccessTokenListMotionDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '0.75rem',
+    paddingInline: '1.5rem',
+    paddingBlock: '2.5rem',
+    textAlign: 'center',
+  },
+  renderAccessTokenListSpan: {
+    display: 'flex',
+    width: '3rem',
+    height: '3rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  renderAccessTokenListKeyRound: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  renderAccessTokenListP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  renderAccessTokenListP2: {
+    marginTop: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderAccessTokenListMotionDiv2: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+    overflow: 'hidden',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.875rem',
+  },
+  renderAccessTokenListSpan2: {
+    display: 'flex',
+    width: '2.25rem',
+    height: '2.25rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  renderAccessTokenListDiv: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  renderAccessTokenListP3: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  renderAccessTokenListP4: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderAccessTokenListStatusPill: {
+    display: {
+      default: 'none',
+      '@media (min-width: 40rem)': 'inline-flex',
+    },
+  },
+  renderAccessTokenListButton: {
+    width: '2.25rem',
+    height: '2.25rem',
+    flexShrink: 0,
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+});

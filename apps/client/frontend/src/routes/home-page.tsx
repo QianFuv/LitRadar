@@ -17,6 +17,7 @@ import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motio
 import { useAuth } from '@/lib/auth-context';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { DEFAULT_WORKSPACE_VIEW } from '@/lib/workspace-view';
+import * as stylex from '@stylexjs/stylex';
 
 /**
  * Render the article search workspace with responsive filters and results.
@@ -48,7 +49,7 @@ export default function Home() {
       <MotionDiv
         key={view}
         data-workspace-view={view}
-        className="h-full min-h-0"
+        {...stylex.props(styles.homeMotionDiv)}
         variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
@@ -59,3 +60,10 @@ export default function Home() {
     </MotionPresence>
   );
 }
+
+const styles = stylex.create({
+  homeMotionDiv: {
+    height: '100%',
+    minHeight: '0px',
+  },
+});

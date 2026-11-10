@@ -22,7 +22,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { ArticleDialogCard } from '@/components/feature/article-dialog-card';
 import { ArticleListSkeleton } from '@/components/feature/article-list-card';
-import { DatabasePill, getFilterPillClassName } from '@/components/feature/filter-pill';
+import { DatabasePill, filterPillStyles } from '@/components/feature/filter-pill';
 import {
   Select,
   SelectContent,
@@ -47,8 +47,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StateMessage } from '@/components/ui/state-message';
 import { Button } from '@/components/ui/button';
 import { useFavoriteChecks } from '@/components/feature/use-favorite-checks';
-import { cn } from '@/lib/utils';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
@@ -220,11 +221,11 @@ function WeeklyJournalFacet({
         aria-label={accessibleName}
         title={accessibleName}
         size="sm"
-        className={cn(
-          getFilterPillClassName(false),
-          'h-11 data-[size=sm]:h-11 md:data-[size=sm]:h-8 !shadow-[inset_0_0_0_1px_var(--border)]',
-          selectedJournal && 'font-bold text-foreground',
-        )}
+        xstyle={[
+          filterPillStyles(false),
+          styles.weeklyJournalTrigger,
+          selectedJournal && styles.weeklyJournalTriggerSelected,
+        ]}
       >
         <SelectValue placeholder="期刊" />
       </SelectTrigger>
@@ -232,8 +233,8 @@ function WeeklyJournalFacet({
         position="popper"
         align="start"
         aria-label={`本周有 ${journals.length} 本期刊更新`}
-        className="max-h-[min(60vh,24rem)] w-[24rem] max-w-[calc(100vw-2rem)]"
-        viewportClassName="pr-3"
+        xstyle={styles.weeklyJournalFacetSelectContent}
+        viewportXstyle={styles.weeklyJournalViewport}
       >
         {journals.map((journal) => (
           <SelectItem
@@ -286,15 +287,15 @@ export function WeeklyUpdatesView() {
       emphasis="list"
       shouldAutoSelectFirst
       header={
-        <div className="space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h1 className="text-lg leading-7 font-bold">期刊每周更新</h1>
+        <div>
+          <div {...stylex.props(styles.weeklyUpdatesViewDivItem, styles.weeklyUpdatesViewDiv)}>
+            <div {...stylex.props(styles.weeklyUpdatesViewDiv2)}>
+              <h1 {...stylex.props(styles.weeklyUpdatesViewH1)}>期刊每周更新</h1>
               <RevealItem
                 isReady={weeklyState !== 'loading'}
-                placeholder={<p className="text-xs text-muted-foreground">正在读取统计窗口…</p>}
+                placeholder={<p {...stylex.props(styles.weeklyUpdatesViewP)}>正在读取统计窗口…</p>}
               >
-                <p className="text-xs tabular-nums text-muted-foreground">
+                <p {...stylex.props(styles.weeklyUpdatesViewP2)}>
                   {weeklySummary
                     ? `统计窗口 ${formatDate(weeklySummary.window_start)} – ${formatDate(weeklySummary.window_end)}`
                     : '正在读取统计窗口…'}
@@ -303,35 +304,42 @@ export function WeeklyUpdatesView() {
             </div>
             <RevealItem
               isReady={weeklyState !== 'loading'}
-              className="shrink-0"
-              placeholder={<Skeleton className="h-8 w-20" />}
+              xstyle={styles.weeklyUpdatesViewRevealItem}
+              placeholder={<Skeleton xstyle={styles.weeklyUpdatesViewSkeleton} />}
             >
               {weeklySummary && (
                 <div
                   data-weekly-summary-key={weeklySummary.window_end}
-                  className="flex flex-col items-end gap-0.5 text-[11px] leading-4 text-muted-foreground"
+                  {...stylex.props(styles.weeklyUpdatesViewDiv3)}
                 >
-                  <span className="inline-flex items-center gap-1">
-                    <Layers className="size-3" aria-hidden="true" />
+                  <span {...stylex.props(styles.weeklyUpdatesViewSpan)}>
+                    <Layers {...stylex.props(styles.weeklyUpdatesViewLayers)} aria-hidden="true" />
                     {totalDatabases} 个数据库
                   </span>
-                  <span className="inline-flex items-center gap-1 font-bold text-foreground">
-                    <FileText className="size-3" aria-hidden="true" />
+                  <span {...stylex.props(styles.weeklyUpdatesViewSpan2)}>
+                    <FileText
+                      {...stylex.props(styles.weeklyUpdatesViewLayers)}
+                      aria-hidden="true"
+                    />
                     {totalArticles} 篇新文章
                   </span>
                 </div>
               )}
             </RevealItem>
           </div>
-          <SearchBar queryParam="weekly_q" placeholder="在本周新文章中检索…" />
+          <SearchBar
+            xstyle={styles.weeklyUpdatesViewDivItem}
+            queryParam="weekly_q"
+            placeholder="在本周新文章中检索…"
+          />
           <div
             ref={attachHorizontalWheelScroll}
-            className="scrollbar-none -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5"
+            {...stylex.props(styles.weeklyUpdatesViewDivItem, styles.weeklyUpdatesViewDiv4)}
           >
             <RevealItem
               isReady={weeklyState !== 'loading'}
-              className="shrink-0"
-              placeholder={<Skeleton className="h-11 w-40 rounded-full md:h-8" />}
+              xstyle={styles.weeklyUpdatesViewRevealItem}
+              placeholder={<Skeleton xstyle={styles.weeklyUpdatesViewSkeleton2} />}
             >
               {availableDatabases.length > 0 && (
                 <DatabasePill
@@ -344,8 +352,8 @@ export function WeeklyUpdatesView() {
             </RevealItem>
             <RevealItem
               isReady={weeklyState !== 'loading'}
-              className="shrink-0"
-              placeholder={<Skeleton className="h-11 w-32 rounded-full md:h-8" />}
+              xstyle={styles.weeklyUpdatesViewRevealItem}
+              placeholder={<Skeleton xstyle={styles.weeklyUpdatesViewSkeleton3} />}
             >
               <WeeklyJournalFacet
                 journals={journals}
@@ -366,7 +374,7 @@ export function WeeklyUpdatesView() {
       <p
         key={`${weeklyState}-${articleState}-${announcement}`}
         data-testid="weekly-state-announcement"
-        className="sr-only"
+        {...stylex.props(styles.weeklyUpdatesViewP3)}
         role={announcementRole}
         aria-label={announcement}
         aria-live={announcementRole === 'alert' ? 'assertive' : 'polite'}
@@ -375,10 +383,7 @@ export function WeeklyUpdatesView() {
         {announcement}
       </p>
       {favoriteStateError && (
-        <div
-          role="alert"
-          className="m-4 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-[13px] sm:mx-5"
-        >
+        <div role="alert" {...stylex.props(styles.weeklyUpdatesViewDiv5)}>
           <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
           <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
             重试收藏状态
@@ -740,7 +745,7 @@ function renderWeeklyArticleResults(state: WeeklyViewState) {
           <MotionDiv
             key="weekly-next-page"
             aria-hidden="true"
-            className="py-4 text-center text-xs text-muted-foreground"
+            {...stylex.props(styles.renderWeeklyArticleResultsMotionDiv)}
             variants={REVEAL_VARIANTS}
             initial="hidden"
             animate="visible"
@@ -751,7 +756,7 @@ function renderWeeklyArticleResults(state: WeeklyViewState) {
         )}
       </MotionPresence>
       {(visiblePageCount < articlePages.length || hasNextPage) && (
-        <div ref={loadMoreRef} className="h-1" />
+        <div ref={loadMoreRef} {...stylex.props(styles.renderWeeklyArticleResultsDiv)} />
       )}
     </>
   );
@@ -842,7 +847,7 @@ function renderWeeklyArticlePanel(state: WeeklyViewState) {
       key="weekly-articles-results"
       data-weekly-article-key={articleListKey}
       data-weekly-article-state="results"
-      className="min-w-0"
+      {...stylex.props(styles.weeklyUpdatesViewDiv2)}
       variants={PANEL_VARIANTS}
       initial="hidden"
       animate="visible"
@@ -861,20 +866,22 @@ function renderWeeklyJournalHeader(state: WeeklyViewState) {
       <MotionDiv
         key={`${effectiveSelectedDb}:${effectiveSelectedJournalId ?? 'none'}`}
         data-weekly-journal={effectiveSelectedJournalId ?? 'none'}
-        className="flex items-start justify-between gap-3 border-b bg-muted/60 px-4 py-2.5 sm:px-5"
+        {...stylex.props(styles.renderWeeklyJournalHeaderMotionDiv)}
         variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
         exit="exit"
       >
-        <div className="min-w-0">
-          <h2 className="truncate text-[13px] font-bold">
+        <div {...stylex.props(styles.weeklyUpdatesViewDiv2)}>
+          <h2 {...stylex.props(styles.renderWeeklyJournalHeaderH2)}>
             {selectedJournal ? getJournalLabel(selectedJournal) : '选择期刊'}
           </h2>
-          <p className="text-[11px] text-muted-foreground">{getWeeklyJournalDescription(state)}</p>
+          <p {...stylex.props(styles.renderWeeklyJournalHeaderP)}>
+            {getWeeklyJournalDescription(state)}
+          </p>
         </div>
         {selectedJournal && (
-          <span className="shrink-0 rounded-full bg-info px-2 py-0.5 text-[11px] font-bold text-info-foreground tabular-nums">
+          <span {...stylex.props(styles.renderWeeklyJournalHeaderSpan)}>
             {selectedJournal.new_article_count} 篇
           </span>
         )}
@@ -891,7 +898,7 @@ function renderWeeklyPresentation(state: WeeklyViewState) {
       isReady={weeklyState !== 'loading'}
       placeholder={
         <div data-weekly-state="loading" aria-hidden="true">
-          <Skeleton className="m-4 h-10 sm:mx-5" />
+          <Skeleton xstyle={styles.renderWeeklyPresentationSkeleton} />
           <ArticleListSkeleton count={4} />
         </div>
       }
@@ -925,7 +932,7 @@ function renderWeeklyPresentation(state: WeeklyViewState) {
               animate="visible"
               exit="exit"
             >
-              <section className="min-w-0" aria-label="每周文章">
+              <section {...stylex.props(styles.weeklyUpdatesViewDiv2)} aria-label="每周文章">
                 {renderWeeklyJournalHeader(state)}
 
                 {renderWeeklyArticleStates(state)}
@@ -957,3 +964,247 @@ function getWeeklyArticleListKey(
 ): string {
   return `${database}:${journal ?? 'none'}:${query}:${summary?.window_end ?? ''}`;
 }
+
+const styles = stylex.create({
+  weeklyJournalViewport: {
+    paddingRight: '0.75rem',
+  },
+  weeklyJournalTrigger: {
+    height: {
+      default: '2.75rem',
+      ':is([data-size="default"])': '2.25rem',
+      '@media (min-width: 48rem)': {
+        default: '2rem',
+        ':is([data-size="default"])': '2.25rem',
+      },
+    },
+    boxShadow: {
+      default: `inset 0 0 0 1px ${colors.border}`,
+      ':focus-visible': {
+        default: `0 0 0 2px ${colors.ring}, inset 0 0 0 1px ${colors.border}`,
+        ':is([aria-invalid="true"])': `0 0 0 2px ${colors.destructiveRing}, inset 0 0 0 1px ${colors.border}`,
+      },
+    },
+    color: {
+      default: `color-mix(in oklab, ${colors.foreground} 85%, transparent)`,
+      ':is([data-placeholder])': colors.mutedForeground,
+    },
+    backgroundColor: {
+      default: colors.background,
+      ':active': {
+        default: colors.accentPressed,
+        ':is([data-popup-open])': colors.accent,
+        ':is([data-state="open"])': colors.accent,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': {
+            default: colors.accentPressed,
+            ':is([data-popup-open])': colors.accent,
+            ':is([data-state="open"])': colors.accent,
+          },
+        },
+      },
+      ':is([data-popup-open])': colors.accent,
+      ':is([data-state="open"])': colors.accent,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    lineHeight: 'inherit',
+  },
+  weeklyJournalTriggerSelected: {
+    fontWeight: 700,
+    color: {
+      default: colors.foreground,
+      ':is([data-placeholder])': colors.mutedForeground,
+    },
+  },
+  weeklyJournalFacetSelectContent: {
+    maxHeight: 'min(60vh, 24rem)',
+    width: '24rem',
+    maxWidth: 'calc(100vw - 2rem)',
+  },
+  weeklyUpdatesViewDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  weeklyUpdatesViewDiv: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+  },
+  weeklyUpdatesViewDiv2: {
+    minWidth: '0px',
+  },
+  weeklyUpdatesViewH1: {
+    fontSize: '1.125rem',
+    lineHeight: '1.75rem',
+    fontWeight: 700,
+  },
+  weeklyUpdatesViewP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  weeklyUpdatesViewP2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  weeklyUpdatesViewRevealItem: {
+    flexShrink: 0,
+  },
+  weeklyUpdatesViewSkeleton: {
+    height: '2rem',
+    width: '5rem',
+  },
+  weeklyUpdatesViewDiv3: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: '0.125rem',
+    fontSize: '11px',
+    lineHeight: '1rem',
+    color: colors.mutedForeground,
+  },
+  weeklyUpdatesViewSpan: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.25rem',
+  },
+  weeklyUpdatesViewLayers: {
+    width: '0.75rem',
+    height: '0.75rem',
+  },
+  weeklyUpdatesViewSpan2: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.25rem',
+    fontWeight: 700,
+    color: colors.foreground,
+  },
+  weeklyUpdatesViewDiv4: {
+    marginInline: {
+      default: '-1rem',
+      '@media (min-width: 40rem)': '-1.25rem',
+    },
+    marginBlock: '-0.25rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    overflowX: 'auto',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.25rem',
+    scrollbarWidth: 'none',
+    '::-webkit-scrollbar': {
+      display: 'none',
+    },
+  },
+  weeklyUpdatesViewSkeleton2: {
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    width: '10rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  weeklyUpdatesViewSkeleton3: {
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    width: '8rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  weeklyUpdatesViewP3: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  weeklyUpdatesViewDiv5: {
+    margin: '1rem',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.destructive} 40%, transparent)`,
+    backgroundColor: `color-mix(in oklab, ${colors.destructive} 5%, transparent)`,
+    padding: '0.75rem',
+    fontSize: '13px',
+    marginInline: {
+      default: null,
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+  },
+  renderWeeklyArticleResultsMotionDiv: {
+    paddingBlock: '1rem',
+    textAlign: 'center',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderWeeklyArticleResultsDiv: {
+    height: '0.25rem',
+  },
+  renderWeeklyJournalHeaderMotionDiv: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 60%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.625rem',
+  },
+  renderWeeklyJournalHeaderH2: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '13px',
+    fontWeight: 700,
+  },
+  renderWeeklyJournalHeaderP: {
+    fontSize: '11px',
+    color: colors.mutedForeground,
+  },
+  renderWeeklyJournalHeaderSpan: {
+    flexShrink: 0,
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.info,
+    paddingInline: '0.5rem',
+    paddingBlock: '0.125rem',
+    fontSize: '11px',
+    fontWeight: 700,
+    color: colors.infoForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderWeeklyPresentationSkeleton: {
+    margin: '1rem',
+    height: '2.5rem',
+    marginInline: {
+      default: null,
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+  },
+});

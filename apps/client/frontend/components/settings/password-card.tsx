@@ -15,6 +15,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MotionParagraph, MotionPresence, REVEAL_VARIANTS } from '@/components/ui/motion';
 import { KeyRound } from '@/components/ui/animated-icons';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /**
  * Render and manage the active user's password change form.
@@ -60,7 +62,7 @@ export function PasswordCard() {
               value={oldPwd}
               onChange={(e) => setOldPwd(e.target.value)}
               aria-invalid={changePwdMut.isError}
-              className="sm:w-64"
+              xstyle={styles.passwordCardInput}
               required
             />
           </SettingsRow>
@@ -75,19 +77,23 @@ export function PasswordCard() {
               placeholder="至少12位"
               minLength={12}
               aria-invalid={changePwdMut.isError}
-              className="sm:w-64"
+              xstyle={styles.passwordCardInput}
               required
             />
           </SettingsRow>
-          <div className="flex flex-col gap-3 bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-            <div className="min-h-5 text-sm">
+          <div {...stylex.props(styles.passwordCardDiv)}>
+            <div {...stylex.props(styles.passwordCardDiv2)}>
               <MotionPresence>
                 {pwdMsg && (
                   <MotionParagraph
                     key="password-feedback"
                     data-motion-feedback="password"
                     role={changePwdMut.isError ? 'alert' : 'status'}
-                    className={changePwdMut.isError ? 'text-destructive' : 'text-muted-foreground'}
+                    {...stylex.props(
+                      changePwdMut.isError
+                        ? styles.passwordCardMotionParagraphError
+                        : styles.passwordCardMotionParagraphNotError,
+                    )}
                     initial="hidden"
                     animate="visible"
                     exit="exit"
@@ -107,3 +113,45 @@ export function PasswordCard() {
     </SettingsSection>
   );
 }
+
+const styles = stylex.create({
+  passwordCardInput: {
+    width: {
+      default: null,
+      '@media (min-width: 40rem)': '16rem',
+    },
+  },
+  passwordCardDiv: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.75rem',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 40%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'center',
+    },
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'space-between',
+    },
+  },
+  passwordCardDiv2: {
+    minHeight: '1.25rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  passwordCardMotionParagraphError: {
+    color: colors.destructive,
+  },
+  passwordCardMotionParagraphNotError: {
+    color: colors.mutedForeground,
+  },
+});

@@ -16,8 +16,9 @@ import {
 import { RevealItem } from '@/components/ui/reveal';
 import { RadioGroup, RadioGroupIndicator, RadioGroupItem } from '@/components/ui/radio-group';
 import { getFocusedOrigin, revealThemeChange, type ScreenPoint } from '@/lib/theme-transition';
-import { cn } from '@/lib/utils';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -108,13 +109,13 @@ export function GeneralSettingsSection() {
         <RevealItem
           isReady={isMounted}
           placeholder={
-            <p role="status" className="text-sm text-muted-foreground">
+            <p role="status" {...stylex.props(styles.generalSettingsSectionP)}>
               <LoadingText text="正在读取主题偏好…" />
             </p>
           }
         >
           <RadioGroup
-            className="grid grid-cols-3 gap-3 sm:gap-4"
+            xstyle={styles.generalSettingsSectionRadioGroup}
             aria-label="外观主题"
             value={selectedTheme}
             onValueChange={handleThemeChange}
@@ -127,33 +128,43 @@ export function GeneralSettingsSection() {
                   key={option.value}
                   value={option.value}
                   aria-label={option.label}
-                  className="group flex flex-col gap-2.5 rounded-xl text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  {...stylex.props(
+                    styles.generalSettingsSectionRadioGroupItem,
+                    stylex.defaultMarker(),
+                  )}
                 >
                   <span
-                    className={cn(
-                      'motion-control block aspect-[4/3] w-full overflow-hidden rounded-xl border bg-background transition-[box-shadow,border-color]',
+                    {...stylex.props(
+                      styles.generalSettingsSectionSpan,
                       isSelected
-                        ? 'border-primary shadow-[0_0_0_2px_var(--primary)]'
-                        : 'group-hover:border-foreground/30',
+                        ? styles.generalSettingsSectionSpanSelected
+                        : styles.generalSettingsSectionSpanNotSelected,
                     )}
                   >
                     <ThemeThumbnail preference={option.value} />
                   </span>
-                  <span className="flex items-start gap-2 px-0.5">
+                  <span {...stylex.props(styles.generalSettingsSectionSpan2)}>
                     <span
                       aria-hidden="true"
-                      className={cn(
-                        'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
-                        isSelected && 'border-primary bg-primary text-primary-foreground',
+                      {...stylex.props(
+                        styles.generalSettingsSectionSpan3,
+                        isSelected && styles.generalSettingsSectionSpanSelected2,
                       )}
                     >
-                      <RadioGroupIndicator className="flex items-center justify-center">
-                        <Check className="size-2.5" strokeWidth={3} />
+                      <RadioGroupIndicator
+                        {...stylex.props(styles.generalSettingsSectionRadioGroupIndicator)}
+                      >
+                        <Check
+                          {...stylex.props(styles.generalSettingsSectionCheck)}
+                          strokeWidth={3}
+                        />
                       </RadioGroupIndicator>
                     </span>
-                    <span className="min-w-0">
-                      <span className="block text-sm leading-5 font-bold">{option.label}</span>
-                      <span className="hidden text-xs leading-relaxed text-muted-foreground sm:block">
+                    <span {...stylex.props(styles.generalSettingsSectionSpan4)}>
+                      <span {...stylex.props(styles.generalSettingsSectionSpan5)}>
+                        {option.label}
+                      </span>
+                      <span {...stylex.props(styles.generalSettingsSectionSpan6)}>
                         {option.description}
                       </span>
                     </span>
@@ -177,45 +188,64 @@ export function GeneralSettingsSection() {
 function ThemeMiniature({ scheme }: { scheme: 'light' | 'dark' }) {
   const isDark = scheme === 'dark';
   return (
-    <span className={cn('flex h-full w-full', isDark ? 'bg-[#141414]' : 'bg-[#f6f6f6]')}>
-      <span className="flex w-[16%] flex-col items-center gap-1.5 bg-[#1c1c1c] pt-2.5">
-        <i className="size-2 rounded-[3px] bg-[#346bf1]" />
-        <i className="h-1 w-3 rounded-full bg-white/40" />
-        <i className="h-1 w-3 rounded-full bg-white/20" />
-        <i className="h-1 w-3 rounded-full bg-white/20" />
+    <span
+      {...stylex.props(
+        styles.themeMiniatureSpan,
+        isDark ? styles.themeMiniatureSpanDark : styles.themeMiniatureSpanNotDark,
+      )}
+    >
+      <span {...stylex.props(styles.themeMiniatureSpan2)}>
+        <i {...stylex.props(styles.themeMiniatureI)} />
+        <i {...stylex.props(styles.themeMiniatureI2)} />
+        <i {...stylex.props(styles.themeMiniatureI3)} />
+        <i {...stylex.props(styles.themeMiniatureI3)} />
       </span>
-      <span className="flex flex-1 gap-1.5 p-2">
-        <span className="flex flex-[3] flex-col gap-1.5">
+      <span {...stylex.props(styles.themeMiniatureSpan3)}>
+        <span {...stylex.props(styles.themeMiniatureSpan4)}>
           {[0, 1, 2].map((index) => (
             <span
               key={index}
-              className={cn(
-                'flex flex-col gap-1 rounded-[3px] p-1.5',
-                isDark ? 'bg-[#1b1b1b]' : 'bg-[#fbfbfb]',
+              {...stylex.props(
+                styles.themeMiniatureSpan5,
+                isDark ? styles.themeMiniatureSpanDark2 : styles.themeMiniatureSpanNotDark2,
               )}
             >
               <i
-                className={cn(
-                  'h-1 rounded-full',
-                  index === 0 ? 'w-4/5 bg-[#346bf1]' : 'w-3/4',
-                  index !== 0 && (isDark ? 'bg-white/50' : 'bg-black/45'),
+                {...stylex.props(
+                  styles.themeMiniatureI4,
+                  index === 0 ? styles.themeMiniatureIIndex : styles.themeMiniatureINotIndex,
+                  index !== 0 &&
+                    (isDark ? styles.themeMiniatureIIndexDark : styles.themeMiniatureIIndexNotDark),
                 )}
               />
-              <i className={cn('h-1 w-1/2 rounded-full', isDark ? 'bg-white/20' : 'bg-black/15')} />
+              <i
+                {...stylex.props(
+                  styles.themeMiniatureI5,
+                  isDark ? styles.themeMiniatureIDark : styles.themeMiniatureINotDark,
+                )}
+              />
             </span>
           ))}
         </span>
         <span
-          className={cn(
-            'flex flex-[2] flex-col gap-1 rounded-[3px] p-1.5',
-            isDark ? 'bg-[#1b1b1b]' : 'bg-[#fbfbfb]',
+          {...stylex.props(
+            styles.themeMiniatureSpan6,
+            isDark ? styles.themeMiniatureSpanDark2 : styles.themeMiniatureSpanNotDark2,
           )}
         >
-          <i className={cn('h-1.5 w-4/5 rounded-full', isDark ? 'bg-white/60' : 'bg-black/55')} />
+          <i
+            {...stylex.props(
+              styles.themeMiniatureI6,
+              isDark ? styles.themeMiniatureIDark2 : styles.themeMiniatureINotDark2,
+            )}
+          />
           {[0, 1, 2, 3].map((index) => (
             <i
               key={index}
-              className={cn('h-1 w-full rounded-full', isDark ? 'bg-white/15' : 'bg-black/10')}
+              {...stylex.props(
+                styles.themeMiniatureI7,
+                isDark ? styles.themeMiniatureIDark3 : styles.themeMiniatureINotDark3,
+              )}
             />
           ))}
         </span>
@@ -233,11 +263,248 @@ function ThemeMiniature({ scheme }: { scheme: 'light' | 'dark' }) {
 function ThemeThumbnail({ preference }: { preference: ThemePreference }) {
   if (preference !== 'system') return <ThemeMiniature scheme={preference} />;
   return (
-    <span className="relative block h-full w-full">
+    <span {...stylex.props(styles.themeThumbnailSpan)}>
       <ThemeMiniature scheme="light" />
-      <span className="absolute inset-0 [clip-path:polygon(62%_0,100%_0,100%_100%,38%_100%)]">
+      <span {...stylex.props(styles.themeThumbnailSpan2)}>
         <ThemeMiniature scheme="dark" />
       </span>
     </span>
   );
 }
+
+const styles = stylex.create({
+  generalSettingsSectionP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  generalSettingsSectionRadioGroup: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: {
+      default: '0.75rem',
+      '@media (min-width: 40rem)': '1rem',
+    },
+  },
+  generalSettingsSectionRadioGroupItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.625rem',
+    borderRadius: '12px',
+    textAlign: 'left',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+    },
+  },
+  generalSettingsSectionSpan: {
+    display: 'block',
+    aspectRatio: '4/3',
+    width: '100%',
+    overflow: 'hidden',
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    backgroundColor: colors.background,
+    transitionProperty: 'box-shadow, border-color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+  },
+  generalSettingsSectionSpanSelected: {
+    borderColor: colors.primary,
+    boxShadow: `0 0 0 2px ${colors.primary}`,
+  },
+  generalSettingsSectionSpanNotSelected: {
+    borderColor: {
+      default: null,
+      '@media (hover: hover)': {
+        default: null,
+        [stylex.when.ancestor(':hover')]:
+          `color-mix(in oklab, ${colors.foreground} 30%, transparent)`,
+      },
+    },
+  },
+  generalSettingsSectionSpan2: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '0.5rem',
+    paddingInline: '0.125rem',
+  },
+  generalSettingsSectionSpan3: {
+    marginTop: '0.125rem',
+    display: 'flex',
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+  },
+  generalSettingsSectionSpanSelected2: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+    color: colors.primaryForeground,
+  },
+  generalSettingsSectionRadioGroupIndicator: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  generalSettingsSectionCheck: {
+    width: '0.625rem',
+    height: '0.625rem',
+  },
+  generalSettingsSectionSpan4: {
+    minWidth: '0px',
+  },
+  generalSettingsSectionSpan5: {
+    display: 'block',
+    fontSize: '0.875rem',
+    lineHeight: '1.25rem',
+    fontWeight: 700,
+  },
+  generalSettingsSectionSpan6: {
+    display: {
+      default: 'none',
+      '@media (min-width: 40rem)': 'block',
+    },
+    fontSize: '0.75rem',
+    lineHeight: 1.625,
+    color: colors.mutedForeground,
+  },
+  themeMiniatureSpan: {
+    display: 'flex',
+    height: '100%',
+    width: '100%',
+  },
+  themeMiniatureSpanDark: {
+    backgroundColor: '#141414',
+  },
+  themeMiniatureSpanNotDark: {
+    backgroundColor: '#f6f6f6',
+  },
+  themeMiniatureSpan2: {
+    display: 'flex',
+    width: '16%',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '0.375rem',
+    backgroundColor: '#1c1c1c',
+    paddingTop: '0.625rem',
+  },
+  themeMiniatureI: {
+    width: '0.5rem',
+    height: '0.5rem',
+    borderRadius: '3px',
+    backgroundColor: '#346bf1',
+  },
+  themeMiniatureI2: {
+    height: '0.25rem',
+    width: '0.75rem',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: 'color-mix(in oklab, #fff 40%, transparent)',
+  },
+  themeMiniatureI3: {
+    height: '0.25rem',
+    width: '0.75rem',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: 'color-mix(in oklab, #fff 20%, transparent)',
+  },
+  themeMiniatureSpan3: {
+    display: 'flex',
+    flex: '1',
+    gap: '0.375rem',
+    padding: '0.5rem',
+  },
+  themeMiniatureSpan4: {
+    display: 'flex',
+    flex: '3',
+    flexDirection: 'column',
+    gap: '0.375rem',
+  },
+  themeMiniatureSpan5: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.25rem',
+    borderRadius: '3px',
+    padding: '0.375rem',
+  },
+  themeMiniatureSpanDark2: {
+    backgroundColor: '#1b1b1b',
+  },
+  themeMiniatureSpanNotDark2: {
+    backgroundColor: '#fbfbfb',
+  },
+  themeMiniatureI4: {
+    height: '0.25rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  themeMiniatureIIndex: {
+    width: 'calc(4 / 5 * 100%)',
+    backgroundColor: '#346bf1',
+  },
+  themeMiniatureINotIndex: {
+    width: 'calc(3 / 4 * 100%)',
+  },
+  themeMiniatureIIndexDark: {
+    backgroundColor: 'color-mix(in oklab, #fff 50%, transparent)',
+  },
+  themeMiniatureIIndexNotDark: {
+    backgroundColor: 'color-mix(in oklab, #000 45%, transparent)',
+  },
+  themeMiniatureI5: {
+    height: '0.25rem',
+    width: 'calc(1 / 2 * 100%)',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  themeMiniatureIDark: {
+    backgroundColor: 'color-mix(in oklab, #fff 20%, transparent)',
+  },
+  themeMiniatureINotDark: {
+    backgroundColor: 'color-mix(in oklab, #000 15%, transparent)',
+  },
+  themeMiniatureSpan6: {
+    display: 'flex',
+    flex: '2',
+    flexDirection: 'column',
+    gap: '0.25rem',
+    borderRadius: '3px',
+    padding: '0.375rem',
+  },
+  themeMiniatureI6: {
+    height: '0.375rem',
+    width: 'calc(4 / 5 * 100%)',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  themeMiniatureIDark2: {
+    backgroundColor: 'color-mix(in oklab, #fff 60%, transparent)',
+  },
+  themeMiniatureINotDark2: {
+    backgroundColor: 'color-mix(in oklab, #000 55%, transparent)',
+  },
+  themeMiniatureI7: {
+    height: '0.25rem',
+    width: '100%',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  themeMiniatureIDark3: {
+    backgroundColor: 'color-mix(in oklab, #fff 15%, transparent)',
+  },
+  themeMiniatureINotDark3: {
+    backgroundColor: 'color-mix(in oklab, #000 10%, transparent)',
+  },
+  themeThumbnailSpan: {
+    position: 'relative',
+    display: 'block',
+    height: '100%',
+    width: '100%',
+  },
+  themeThumbnailSpan2: {
+    position: 'absolute',
+    inset: '0px',
+    clipPath: 'polygon(62% 0,100% 0,100% 100%,38% 100%)',
+  },
+});

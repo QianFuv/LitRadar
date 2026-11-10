@@ -5,9 +5,10 @@
 import * as React from 'react';
 import * as AlertDialogPrimitive from '@animate-ui/react/primitives/radix-ui/alert-dialog';
 
-import { buttonVariants } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { buttonStyles } from '@/components/ui/button';
 import { RevealScope } from '@/components/ui/reveal';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /**
  * Render the AlertDialog state root.
@@ -36,13 +37,15 @@ function AlertDialogPortal({ ...props }: React.ComponentProps<typeof AlertDialog
  * @returns Styled AlertDialog overlay.
  */
 function AlertDialogOverlay({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Overlay>) {
+}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Overlay>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <AlertDialogPrimitive.Overlay
       data-slot="alert-dialog-overlay"
-      className={cn('fixed inset-0 z-50 bg-black/50', className)}
+      {...stylex.props(styles.alertDialogOverlay, xstyle)}
       {...props}
     />
   );
@@ -55,19 +58,18 @@ function AlertDialogOverlay({
  * @returns Portaled AlertDialog content.
  */
 function AlertDialogContent({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Content>) {
+}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Content>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
       <RevealScope>
         <AlertDialogPrimitive.Content
           data-slot="alert-dialog-content"
-          className={cn(
-            'dialog-centered bg-background fixed z-50 grid w-[calc(100%-2rem)] max-w-lg gap-4 rounded-lg border p-6 shadow-lg outline-none',
-            className,
-          )}
+          {...stylex.props(styles.alertDialogContent, xstyle)}
           {...props}
         />
       </RevealScope>
@@ -81,11 +83,14 @@ function AlertDialogContent({
  * @param props - Header container properties.
  * @returns Styled heading group.
  */
-function AlertDialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
+function AlertDialogHeader({
+  xstyle,
+  ...props
+}: Omit<React.ComponentProps<'div'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
     <div
       data-slot="alert-dialog-header"
-      className={cn('flex flex-col gap-2 text-center sm:text-left', className)}
+      {...stylex.props(styles.alertDialogHeader, xstyle)}
       {...props}
     />
   );
@@ -97,11 +102,14 @@ function AlertDialogHeader({ className, ...props }: React.ComponentProps<'div'>)
  * @param props - Footer container properties.
  * @returns Styled action group.
  */
-function AlertDialogFooter({ className, ...props }: React.ComponentProps<'div'>) {
+function AlertDialogFooter({
+  xstyle,
+  ...props
+}: Omit<React.ComponentProps<'div'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
     <div
       data-slot="alert-dialog-footer"
-      className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)}
+      {...stylex.props(styles.alertDialogFooter, xstyle)}
       {...props}
     />
   );
@@ -114,13 +122,15 @@ function AlertDialogFooter({ className, ...props }: React.ComponentProps<'div'>)
  * @returns Styled title.
  */
 function AlertDialogTitle({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Title>) {
+}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Title>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <AlertDialogPrimitive.Title
       data-slot="alert-dialog-title"
-      className={cn('text-lg font-semibold', className)}
+      {...stylex.props(styles.alertDialogTitle, xstyle)}
       {...props}
     />
   );
@@ -133,13 +143,15 @@ function AlertDialogTitle({
  * @returns Styled description.
  */
 function AlertDialogDescription({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Description>) {
+}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Description>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <AlertDialogPrimitive.Description
       data-slot="alert-dialog-description"
-      className={cn('text-sm text-muted-foreground', className)}
+      {...stylex.props(styles.alertDialogDescription, xstyle)}
       {...props}
     />
   );
@@ -152,12 +164,14 @@ function AlertDialogDescription({
  * @returns Styled action control.
  */
 function AlertDialogAction({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Action>) {
+}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Action>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <AlertDialogPrimitive.Action
-      className={cn(buttonVariants(), className)}
+      {...stylex.props(buttonStyles(), xstyle)}
       data-slot="alert-dialog-action"
       {...props}
     />
@@ -171,12 +185,14 @@ function AlertDialogAction({
  * @returns Styled cancel control.
  */
 function AlertDialogCancel({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Cancel>) {
+}: Omit<React.ComponentProps<typeof AlertDialogPrimitive.Cancel>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <AlertDialogPrimitive.Cancel
-      className={cn(buttonVariants({ variant: 'outline' }), className)}
+      {...stylex.props(buttonStyles('outline'), xstyle)}
       data-slot="alert-dialog-cancel"
       {...props}
     />
@@ -195,3 +211,61 @@ export {
   AlertDialogPortal,
   AlertDialogTitle,
 };
+
+const styles = stylex.create({
+  alertDialogOverlay: {
+    position: 'fixed',
+    inset: '0px',
+    zIndex: 50,
+    backgroundColor: 'color-mix(in oklab, #000 50%, transparent)',
+  },
+  alertDialogContent: {
+    position: 'fixed',
+    zIndex: 50,
+    display: 'grid',
+    width: 'calc(100% - 2rem)',
+    maxWidth: '32rem',
+    gap: '1rem',
+    borderRadius: '8px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    backgroundColor: colors.background,
+    padding: '1.5rem',
+    boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+    outlineStyle: 'none',
+    left: '50%',
+    top: '50%',
+    translate: '-50% -50%',
+  },
+  alertDialogHeader: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+    textAlign: {
+      default: 'center',
+      '@media (min-width: 40rem)': 'left',
+    },
+  },
+  alertDialogFooter: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column-reverse',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.5rem',
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-end',
+    },
+  },
+  alertDialogTitle: {
+    fontSize: '1.125rem',
+    lineHeight: lineHeights.textLg,
+    fontWeight: 600,
+  },
+  alertDialogDescription: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+});

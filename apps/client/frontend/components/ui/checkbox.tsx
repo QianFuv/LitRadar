@@ -3,28 +3,91 @@
 import * as React from 'react';
 import * as CheckboxPrimitive from '@animate-ui/react/primitives/radix-ui/checkbox';
 import { CheckIcon } from 'lucide-react';
-
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 /** Render checkbox borders and focus feedback inside the control so paint-contained lists cannot clip them. */
-function Checkbox({ className, ...props }: React.ComponentProps<typeof CheckboxPrimitive.Root>) {
+function Checkbox({
+  xstyle,
+  ...props
+}: Omit<React.ComponentProps<typeof CheckboxPrimitive.Root>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <CheckboxPrimitive.Root
       data-slot="checkbox"
-      className={cn(
-        'motion-control peer bg-card data-[state=unchecked]:hover:bg-accent data-[state=checked]:hover:bg-primary-hover data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive size-4 shrink-0 rounded-[4px] shadow-[inset_0_0_0_1px_var(--input)] transition-[background-color,color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50',
-        className,
-      )}
+      {...stylex.props(styles.checkbox, stylex.defaultMarker(), xstyle)}
       {...props}
     >
       <CheckboxPrimitive.Indicator
         data-slot="checkbox-indicator"
-        className="grid place-content-center text-current transition-none"
+        {...stylex.props(styles.checkboxIndicator)}
       >
-        <CheckIcon className="size-3.5" />
+        <CheckIcon {...stylex.props(styles.checkboxCheckIcon)} />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   );
 }
 
 export { Checkbox };
+
+const styles = stylex.create({
+  checkbox: {
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    borderRadius: '4px',
+    backgroundColor: {
+      default: colors.card,
+      ':is([data-state="checked"])': colors.primary,
+      ':hover': {
+        default: null,
+        ':is([data-state="checked"])': null,
+        '@media (hover: hover)': {
+          default: null,
+          ':is([data-state="checked"])': colors.primaryHover,
+          ':is([data-state="unchecked"])': colors.accent,
+        },
+        ':is([data-state="unchecked"])': null,
+      },
+      ':is([data-state="unchecked"])': null,
+    },
+    boxShadow: {
+      default: `inset 0 0 0 1px ${colors.input}`,
+      ':focus-visible': {
+        default: `inset 0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), inset 0 0 0 1px ${colors.input}`,
+        ':is([aria-invalid="true"])': `inset 0 0 0 3px ${colors.destructiveRing}, inset 0 0 0 1px ${colors.input}`,
+      },
+    },
+    transitionProperty: 'background-color, color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    cursor: {
+      default: null,
+      ':disabled': 'not-allowed',
+    },
+    opacity: {
+      default: null,
+      ':disabled': '50%',
+    },
+    borderColor: {
+      default: null,
+      ':is([aria-invalid="true"])': colors.destructive,
+    },
+    color: {
+      default: null,
+      ':is([data-state="checked"])': colors.primaryForeground,
+    },
+  },
+  checkboxIndicator: {
+    display: 'grid',
+    placeContent: 'center',
+    color: 'currentcolor',
+    transitionProperty: 'none',
+  },
+  checkboxCheckIcon: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+});

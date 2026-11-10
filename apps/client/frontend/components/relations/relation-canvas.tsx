@@ -38,6 +38,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FocusEvent,
   type PointerEvent,
 } from 'react';
@@ -54,7 +55,9 @@ import {
   type RelationGraph,
   type RelationPoint,
 } from '@/lib/relation-graph';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { nodeMarker } from '@/lib/markers.stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 /**
  * Node sizes in flow coordinates, with the dot centre measured from the node top. Fixed sizes keep
@@ -109,15 +112,18 @@ const FORCE = {
 };
 
 /**
- * Invisible tap area around the branch toggle. It reaches up and out to the right, away from the
- * dot on its left and the title below, so a finger can hit the toggle on a zoomed-out canvas.
+ * Invisible handle centred on the dot, so edges run from dot to dot. Inline, so it wins over React
+ * Flow's own handle styles.
  */
-const TOGGLE_HIT_AREA_CLASS_NAME =
-  "before:absolute before:-top-3 before:-right-4 before:-bottom-1 before:-left-1 before:content-['']";
-
-/** Invisible handle centred on the dot, so edges run from dot to dot. */
-const HANDLE_CLASS_NAME =
-  '!pointer-events-none !size-px !min-h-0 !min-w-0 !border-0 !bg-transparent';
+const HANDLE_STYLE = {
+  pointerEvents: 'none',
+  width: 1,
+  height: 1,
+  minWidth: 0,
+  minHeight: 0,
+  border: 0,
+  backgroundColor: 'transparent',
+} satisfies CSSProperties;
 
 type ArticleNodeData = {
   title: string;
@@ -187,6 +193,11 @@ function formatArticleAuthors(authors: Article['authors']): string {
  * @returns Expand or collapse button.
  */
 function NodeToggle({ data, dotCenter }: { data: ArticleNodeData; dotCenter: number }) {
+  const { className } = stylex.props(
+    styles.nodeToggleButton,
+    styles.toggleHitArea,
+    data.isExpanded && styles.nodeToggleButtonExpanded,
+  );
   return (
     <button
       type="button"
@@ -194,20 +205,16 @@ function NodeToggle({ data, dotCenter }: { data: ArticleNodeData; dotCenter: num
       title={data.isExpanded ? '收起分支' : '展开相关文章'}
       aria-expanded={data.isExpanded}
       disabled={data.isLoading}
-      className={cn(
-        'nodrag motion-control absolute flex size-4 -translate-y-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground outline-none transition-colors hover:border-foreground/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-6 pointer-coarse:[&_svg]:size-4',
-        TOGGLE_HIT_AREA_CLASS_NAME,
-        data.isExpanded && 'border-primary/60 text-primary',
-      )}
+      className={`nodrag ${className}`}
       style={{ top: dotCenter, left: `calc(50% + ${data.isRoot ? 15 : 11}px)` }}
       onClick={data.onToggle}
     >
       {data.isLoading ? (
-        <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+        <Loader2 {...stylex.props(styles.nodeToggleLoader2)} aria-hidden="true" />
       ) : data.isExpanded ? (
-        <Minus className="size-3" aria-hidden="true" />
+        <Minus {...stylex.props(styles.nodeToggleMinus)} aria-hidden="true" />
       ) : (
-        <Plus className="size-3" aria-hidden="true" />
+        <Plus {...stylex.props(styles.nodeToggleMinus)} aria-hidden="true" />
       )}
     </button>
   );
@@ -224,7 +231,7 @@ function NodeToggle({ data, dotCenter }: { data: ArticleNodeData; dotCenter: num
 const ArticleNode = memo(
   function ArticleNode({ data }: NodeProps<ArticleFlowNode>) {
     const size = data.isRoot ? ROOT_NODE_SIZE : NODE_SIZE;
-    const handleStyle = { top: size.dotCenter, left: '50%' };
+    const handleStyle = { ...HANDLE_STYLE, top: size.dotCenter, left: '50%' };
     const previewHandlers = {
       onPointerEnter: (event: PointerEvent<HTMLButtonElement>) =>
         data.onPreviewStart(event.currentTarget, false),
@@ -239,15 +246,13 @@ const ArticleNode = memo(
     };
     return (
       <div
-        className="pointer-events-auto relative flex cursor-grab flex-col items-center active:cursor-grabbing"
-        style={{ width: size.width, height: size.height }}
+        {...stylex.props(styles.articleNodeDiv, styles.box(`${size.width}px`, `${size.height}px`))}
       >
         <Handle
           id="center-source"
           type="source"
           position={Position.Top}
           isConnectable={false}
-          className={HANDLE_CLASS_NAME}
           style={handleStyle}
         />
         <Handle
@@ -255,41 +260,42 @@ const ArticleNode = memo(
           type="target"
           position={Position.Top}
           isConnectable={false}
-          className={HANDLE_CLASS_NAME}
           style={handleStyle}
         />
         <button
           type="button"
           aria-pressed={data.isSelected}
           aria-label={`${data.isRoot ? '中心文章' : '相关文章'}：${data.title}`}
-          className="group/node motion-control flex max-w-full cursor-pointer flex-col items-center gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          {...stylex.props(styles.articleNodeButton, nodeMarker)}
           onClick={data.onSelect}
           {...previewHandlers}
         >
           <span
-            className="flex shrink-0 items-center justify-center"
-            style={{ width: size.dotCenter * 2, height: size.dotCenter * 2 }}
+            {...stylex.props(
+              styles.articleNodeSpan,
+              styles.box(`${size.dotCenter * 2}px`, `${size.dotCenter * 2}px`),
+            )}
           >
             <span
               aria-hidden="true"
-              className={cn(
-                'block rounded-full border-[1.5px] transition-[background-color,border-color,box-shadow]',
-                data.isRoot ? 'size-[18px]' : 'size-3',
+              {...stylex.props(
+                styles.articleNodeSpan2,
+                data.isRoot ? styles.articleNodeSpanRoot : styles.nodeToggleMinus,
                 data.isSelected
-                  ? 'border-primary bg-primary shadow-[0_0_0_4px_color-mix(in_srgb,var(--primary)_22%,transparent)]'
+                  ? styles.articleNodeSpanSelected
                   : data.isRoot || data.isExpanded
-                    ? 'border-foreground bg-foreground'
-                    : 'border-foreground/55 bg-background group-hover/node:border-foreground',
+                    ? styles.articleNodeSpanNotSelectedExpanded
+                    : styles.articleNodeSpanNotSelectedNotExpanded,
               )}
             />
           </span>
           <span
-            className={cn(
-              'max-w-full rounded bg-background/85 px-1 text-center transition-colors group-hover/node:text-foreground',
-              data.isRoot
-                ? 'line-clamp-2 text-[12.5px] leading-[1.4] font-bold'
-                : 'truncate text-[12px] leading-[18px]',
-              data.isSelected ? 'font-bold text-primary' : !data.isRoot && 'text-foreground/80',
+            {...stylex.props(
+              styles.articleNodeSpan3,
+              data.isRoot ? styles.articleNodeSpanRoot2 : styles.articleNodeSpanNotRoot,
+              data.isSelected
+                ? styles.articleNodeSpanSelected2
+                : !data.isRoot && styles.articleNodeSpanNotSelectedRoot,
             )}
           >
             {data.title}
@@ -413,26 +419,21 @@ function RelationHoverCard({ article, anchor }: { article: Article; anchor: DOMR
       data-slot="relation-hover-card"
       data-state="open"
       data-side={isAbove ? 'top' : 'bottom'}
-      className="pointer-events-none fixed z-50 rounded-xl bg-popover p-3.5 text-popover-foreground shadow-overlay"
+      {...stylex.props(
+        styles.relationHoverCard,
+        isAbove
+          ? styles.hoverCardAbove(`${left}px`, `${window.innerHeight - anchor.top + 8}px`)
+          : styles.hoverCardBelow(`${left}px`, `${anchor.bottom + 8}px`),
+      )}
       variants={POPOVER_VARIANTS}
       initial="hidden"
       animate="visible"
       exit="exit"
-      style={{
-        width: HOVER_CARD_WIDTH,
-        left,
-        transformOrigin: isAbove ? 'center bottom' : 'center top',
-        ...(isAbove ? { bottom: window.innerHeight - anchor.top + 8 } : { top: anchor.bottom + 8 }),
-      }}
     >
-      <p className="text-[13px] leading-[1.45] font-bold">{getArticleDisplayTitle(article)}</p>
-      {authors && <p className="mt-1.5 truncate text-xs text-muted-foreground">{authors}</p>}
-      {source && <p className="mt-0.5 truncate text-xs text-muted-foreground">{source}</p>}
-      {article.abstract && (
-        <p className="mt-2 line-clamp-4 text-xs leading-[1.6] text-foreground/80">
-          {article.abstract}
-        </p>
-      )}
+      <p {...stylex.props(styles.relationHoverCardP)}>{getArticleDisplayTitle(article)}</p>
+      {authors && <p {...stylex.props(styles.relationHoverCardP2)}>{authors}</p>}
+      {source && <p {...stylex.props(styles.relationHoverCardP3)}>{source}</p>}
+      {article.abstract && <p {...stylex.props(styles.relationHoverCardP4)}>{article.abstract}</p>}
     </MotionDiv>,
     document.body,
   );
@@ -835,7 +836,7 @@ export function RelationCanvas({
         type: 'curved',
         focusable: false,
         style: {
-          stroke: isHighlighted ? 'var(--primary)' : 'var(--input-hover)',
+          stroke: isHighlighted ? colors.primary : colors.inputHover,
           strokeWidth: isHighlighted ? 1.75 : 1.25,
         },
       });
@@ -850,7 +851,7 @@ export function RelationCanvas({
         data: crossLinkLayout,
         focusable: false,
         style: {
-          stroke: isHighlighted ? 'var(--primary)' : 'var(--input-hover)',
+          stroke: isHighlighted ? colors.primary : colors.inputHover,
           strokeWidth: 1,
           strokeDasharray: '4 4',
         },
@@ -906,9 +907,8 @@ export function RelationCanvas({
           onPositionsSettle(readSimulationPositions(), node.id);
         }}
         aria-label="文献关系图"
-        className="relation-canvas"
       >
-        <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--border)" />
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1} color={colors.border} />
       </ReactFlow>
       <MotionPresence>
         {preview && previewArticle && (
@@ -922,3 +922,276 @@ export function RelationCanvas({
     </>
   );
 }
+
+const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
+
+const styles = stylex.create({
+  box: (width: string, height: string) => ({
+    width,
+    height,
+  }),
+  hoverCardAbove: (left: string, bottom: string) => ({
+    left,
+    bottom,
+    transformOrigin: 'center bottom',
+  }),
+  hoverCardBelow: (left: string, top: string) => ({
+    left,
+    top,
+    transformOrigin: 'center top',
+  }),
+  nodeToggleButton: {
+    position: 'absolute',
+    display: 'flex',
+    width: {
+      default: '1rem',
+      '@media (pointer: coarse)': '1.5rem',
+    },
+    height: {
+      default: '1rem',
+      '@media (pointer: coarse)': '1.5rem',
+    },
+    translate: '0 calc(calc(1 / 2 * 100%) * -1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    backgroundColor: colors.background,
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    borderColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.foreground} 40%, transparent)`,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  toggleHitArea: {
+    '::before': {
+      content: "''",
+      position: 'absolute',
+      top: '-0.75rem',
+      right: '-1rem',
+      bottom: '-0.25rem',
+      left: '-0.25rem',
+    },
+  },
+  nodeToggleButtonExpanded: {
+    borderColor: {
+      default: `color-mix(in oklab, ${colors.primary} 60%, transparent)`,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.foreground} 40%, transparent)`,
+      },
+    },
+    color: {
+      default: colors.primary,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+  },
+  nodeToggleLoader2: {
+    width: {
+      default: '0.75rem',
+      '@media (pointer: coarse)': '1rem',
+    },
+    height: {
+      default: '0.75rem',
+      '@media (pointer: coarse)': '1rem',
+    },
+    animationName: spinKeyframes,
+    animationDuration: '1s',
+    animationTimingFunction: 'linear',
+    animationIterationCount: 'infinite',
+  },
+  nodeToggleMinus: {
+    width: {
+      default: '0.75rem',
+      '@media (pointer: coarse)': '1rem',
+    },
+    height: {
+      default: '0.75rem',
+      '@media (pointer: coarse)': '1rem',
+    },
+  },
+  articleNodeDiv: {
+    pointerEvents: 'auto',
+    position: 'relative',
+    display: 'flex',
+    cursor: {
+      default: 'grab',
+      ':active': 'grabbing',
+    },
+    flexDirection: 'column',
+    alignItems: 'center',
+  },
+  articleNodeButton: {
+    display: 'flex',
+    maxWidth: '100%',
+    cursor: 'pointer',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '0.25rem',
+    borderRadius: '6px',
+    outlineStyle: 'none',
+    transitionDuration: '200ms',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  articleNodeSpan: {
+    display: 'flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  articleNodeSpan2: {
+    display: 'block',
+    borderRadius: 'calc(infinity * 1px)',
+    borderStyle: 'solid',
+    borderWidth: '1.5px',
+    transitionProperty: 'background-color, border-color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    transitionDuration: '150ms',
+  },
+  articleNodeSpanRoot: {
+    width: '18px',
+    height: '18px',
+  },
+  articleNodeSpanSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+    boxShadow: `0 0 0 4px color-mix(in srgb,${colors.primary} 22%,transparent)`,
+  },
+  articleNodeSpanNotSelectedExpanded: {
+    borderColor: colors.foreground,
+    backgroundColor: colors.foreground,
+  },
+  articleNodeSpanNotSelectedNotExpanded: {
+    borderColor: {
+      default: `color-mix(in oklab, ${colors.foreground} 55%, transparent)`,
+      '@media (hover: hover)': {
+        default: null,
+        [stylex.when.ancestor(':hover', nodeMarker)]: colors.foreground,
+      },
+    },
+    backgroundColor: colors.background,
+  },
+  articleNodeSpan3: {
+    maxWidth: '100%',
+    borderRadius: '0.25rem',
+    backgroundColor: `color-mix(in oklab, ${colors.background} 85%, transparent)`,
+    paddingInline: '0.25rem',
+    textAlign: 'center',
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    transitionDuration: '150ms',
+    color: {
+      default: null,
+      '@media (hover: hover)': {
+        default: null,
+        [stylex.when.ancestor(':hover', nodeMarker)]: colors.foreground,
+      },
+    },
+  },
+  articleNodeSpanRoot2: {
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 2,
+    fontSize: '12.5px',
+    lineHeight: 1.4,
+    fontWeight: 700,
+  },
+  articleNodeSpanNotRoot: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '12px',
+    lineHeight: '18px',
+  },
+  articleNodeSpanSelected2: {
+    fontWeight: 700,
+    color: {
+      default: colors.primary,
+      '@media (hover: hover)': {
+        default: null,
+        [stylex.when.ancestor(':hover', nodeMarker)]: colors.foreground,
+      },
+    },
+  },
+  articleNodeSpanNotSelectedRoot: {
+    color: {
+      default: `color-mix(in oklab, ${colors.foreground} 80%, transparent)`,
+      '@media (hover: hover)': {
+        default: null,
+        [stylex.when.ancestor(':hover', nodeMarker)]: colors.foreground,
+      },
+    },
+  },
+  relationHoverCard: {
+    pointerEvents: 'none',
+    position: 'fixed',
+    width: HOVER_CARD_WIDTH,
+    zIndex: 50,
+    borderRadius: '12px',
+    backgroundColor: colors.popover,
+    padding: '0.875rem',
+    color: colors.popoverForeground,
+    boxShadow: shadows.overlay,
+  },
+  relationHoverCardP: {
+    fontSize: '13px',
+    lineHeight: 1.45,
+    fontWeight: 700,
+  },
+  relationHoverCardP2: {
+    marginTop: '0.375rem',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  relationHoverCardP3: {
+    marginTop: '0.125rem',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  relationHoverCardP4: {
+    marginTop: '0.5rem',
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 4,
+    fontSize: '0.75rem',
+    lineHeight: 1.6,
+    color: `color-mix(in oklab, ${colors.foreground} 80%, transparent)`,
+  },
+});

@@ -4,8 +4,9 @@
 
 import * as React from 'react';
 import * as SwitchPrimitive from '@animate-ui/react/primitives/radix-ui/switch';
-
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { switchMarker } from '@/lib/markers.stylex';
+import { colors, shadows } from '@/lib/theme.stylex';
 
 /**
  * Render a binary control with a sliding state indicator.
@@ -14,30 +15,97 @@ import { cn } from '@/lib/utils';
  * @returns Styled Switch control.
  */
 function Switch({
-  className,
+  xstyle,
   size = 'default',
   ...props
-}: React.ComponentProps<typeof SwitchPrimitive.Root> & {
-  size?: 'sm' | 'default';
-}) {
+}: Omit<
+  React.ComponentProps<typeof SwitchPrimitive.Root> & {
+    size?: 'sm' | 'default';
+  },
+  'className'
+> & { xstyle?: stylex.StyleXStyles }) {
   return (
     <SwitchPrimitive.Root
       data-slot="switch"
       data-size={size}
-      className={cn(
-        'motion-control peer data-[state=checked]:bg-primary data-[state=unchecked]:bg-input focus-visible:ring-ring/50 data-[state=unchecked]:hover:bg-input-hover data-[state=checked]:hover:bg-primary-hover group/switch inline-flex shrink-0 items-center rounded-full shadow-vercel-ring transition-[background-color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-5 data-[size=default]:w-9 data-[size=sm]:h-3.5 data-[size=sm]:w-6',
-        className,
-      )}
+      {...stylex.props(styles.switch, stylex.defaultMarker(), switchMarker, xstyle)}
       {...props}
     >
-      <SwitchPrimitive.Thumb
-        data-slot="switch-thumb"
-        className={cn(
-          'bg-primary-foreground pointer-events-none block rounded-full ring-0 group-data-[size=default]/switch:size-[1.125rem] group-data-[size=sm]/switch:size-3 data-[state=checked]:translate-x-[calc(100%-2px)] data-[state=unchecked]:translate-x-0',
-        )}
-      />
+      <SwitchPrimitive.Thumb data-slot="switch-thumb" {...stylex.props(styles.switchThumb)} />
     </SwitchPrimitive.Root>
   );
 }
 
 export { Switch };
+
+const styles = stylex.create({
+  switch: {
+    display: 'inline-flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    boxShadow: {
+      default: shadows.vercelRing,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), ${shadows.vercelRing}`,
+    },
+    transitionProperty: 'background-color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    cursor: {
+      default: null,
+      ':disabled': 'not-allowed',
+    },
+    opacity: {
+      default: null,
+      ':disabled': '50%',
+    },
+    height: {
+      default: null,
+      ':is([data-size="default"])': '1.25rem',
+      ':is([data-size="sm"])': '0.875rem',
+    },
+    width: {
+      default: null,
+      ':is([data-size="default"])': '2.25rem',
+      ':is([data-size="sm"])': '1.5rem',
+    },
+    backgroundColor: {
+      default: null,
+      ':is([data-state="checked"])': colors.primary,
+      ':hover': {
+        default: null,
+        ':is([data-state="checked"])': null,
+        '@media (hover: hover)': {
+          default: null,
+          ':is([data-state="checked"])': colors.primaryHover,
+          ':is([data-state="unchecked"])': colors.inputHover,
+        },
+        ':is([data-state="unchecked"])': null,
+      },
+      ':is([data-state="unchecked"])': colors.input,
+    },
+  },
+  switchThumb: {
+    pointerEvents: 'none',
+    display: 'block',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.primaryForeground,
+    boxShadow: '0 0 0 0px currentcolor',
+    width: {
+      default: null,
+      [stylex.when.ancestor('[data-size="default"]', switchMarker)]: '1.125rem',
+      [stylex.when.ancestor('[data-size="sm"]', switchMarker)]: '0.75rem',
+    },
+    height: {
+      default: null,
+      [stylex.when.ancestor('[data-size="default"]', switchMarker)]: '1.125rem',
+      [stylex.when.ancestor('[data-size="sm"]', switchMarker)]: '0.75rem',
+    },
+    translate: {
+      default: null,
+      ':is([data-state="checked"])': 'calc(100% - 2px) 0',
+      ':is([data-state="unchecked"])': '0px 0',
+    },
+  },
+});

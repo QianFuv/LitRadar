@@ -4,8 +4,8 @@
 
 import * as React from 'react';
 import * as ProgressPrimitive from '@animate-ui/react/primitives/radix-ui/progress';
-
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 type ProgressProps = Omit<React.ComponentProps<typeof ProgressPrimitive.Root>, 'value'> & {
   /** Filled share from 0 to 100; values outside the range are clamped. */
@@ -18,22 +18,46 @@ type ProgressProps = Omit<React.ComponentProps<typeof ProgressPrimitive.Root>, '
  * @param props - Radix progress properties and the filled percentage.
  * @returns Progress bar.
  */
-function Progress({ className, value, ...props }: ProgressProps) {
+function Progress({
+  xstyle,
+  value,
+  ...props
+}: Omit<ProgressProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   const percent = Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
       value={percent}
-      className={cn('relative block h-1.5 overflow-hidden rounded-full bg-muted', className)}
+      {...stylex.props(styles.progress, xstyle)}
       {...props}
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className="block h-full w-full rounded-full bg-primary"
-        style={{ transform: `translateX(-${100 - percent}%)` }}
+        {...stylex.props(styles.progressIndicator, styles.fill(`translateX(-${100 - percent}%)`))}
       />
     </ProgressPrimitive.Root>
   );
 }
 
 export { Progress };
+
+const styles = stylex.create({
+  fill: (transform: string) => ({
+    transform,
+  }),
+  progress: {
+    position: 'relative',
+    display: 'block',
+    height: '0.375rem',
+    overflow: 'hidden',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.muted,
+  },
+  progressIndicator: {
+    display: 'block',
+    height: '100%',
+    width: '100%',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.primary,
+  },
+});

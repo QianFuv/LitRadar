@@ -40,6 +40,8 @@ import { LoadingText } from '@/components/ui/loading-text';
 import { useServerConnection } from '@/lib/server-connection';
 import { LOGIN_ROUTE_ID } from '@/lib/search-params';
 import { preloadWorkspaceRoutes } from '@/src/routes/lazy-routes';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const LOGIN_RETURN_ORIGIN = 'https://litradar.invalid';
 
@@ -50,17 +52,17 @@ const LOGIN_RETURN_ORIGIN = 'https://litradar.invalid';
  */
 function AuthBrand() {
   return (
-    <div className="mb-8 flex items-center gap-3 lg:hidden" aria-label="LitRadar">
+    <div {...stylex.props(styles.authBrandDiv)} aria-label="LitRadar">
       <img
         src="/litradar-logo.png"
         alt=""
         width={40}
         height={40}
-        className="size-10 rounded-xl object-cover"
+        {...stylex.props(styles.authBrandImg)}
       />
       <div>
-        <p className="text-base font-bold tracking-tight">LitRadar</p>
-        <p className="text-xs text-muted-foreground">文献雷达与持续追踪</p>
+        <p {...stylex.props(styles.authBrandP)}>LitRadar</p>
+        <p {...stylex.props(styles.authBrandP2)}>文献雷达与持续追踪</p>
       </div>
     </div>
   );
@@ -107,31 +109,28 @@ const AUTH_FEATURES: readonly { icon: ShowcaseIcon; title: string; description: 
  */
 function AuthShowcase() {
   return (
-    <aside
-      aria-hidden="true"
-      className="relative hidden min-h-dvh flex-col justify-between overflow-hidden bg-rail p-12 text-rail-active lg:flex"
-    >
-      <div className="flex items-center gap-3">
+    <aside aria-hidden="true" {...stylex.props(styles.authShowcaseAside)}>
+      <div {...stylex.props(styles.authShowcaseDiv)}>
         <img
           src="/litradar-logo.png"
           alt=""
           width={40}
           height={40}
-          className="size-10 rounded-xl object-cover"
+          {...stylex.props(styles.authBrandImg)}
         />
         <div>
-          <p className="text-base font-bold tracking-tight">LitRadar</p>
-          <p className="text-xs text-rail-foreground">文献雷达与持续追踪</p>
+          <p {...stylex.props(styles.authBrandP)}>LitRadar</p>
+          <p {...stylex.props(styles.authShowcaseP)}>文献雷达与持续追踪</p>
         </div>
       </div>
-      <RadarMark className="pointer-events-none absolute -right-24 top-1/2 size-[34rem] -translate-y-1/2 text-rail-foreground/50" />
-      <div className="relative max-w-md">
-        <p className="text-[32px] leading-[1.3] font-bold tracking-tight">
+      <RadarMark xstyle={styles.authShowcaseRadarMark} />
+      <div {...stylex.props(styles.authShowcaseDiv2)}>
+        <p {...stylex.props(styles.authShowcaseP2)}>
           {HEADLINE_LINES.map((line, index) => (
             <SplittingText
               key={line}
               text={line}
-              className="block"
+              {...stylex.props(styles.authShowcaseSplittingText)}
               stagger={HEADLINE_STAGGER_S}
               delay={HEADLINE_LINES.slice(0, index).join('').length * HEADLINE_STAGGER_S * 1000}
               initial={HEADLINE_CHARACTER_FROM}
@@ -139,30 +138,31 @@ function AuthShowcase() {
             />
           ))}
         </p>
-        <ul className="mt-10 space-y-5">
+        <ul {...stylex.props(styles.authShowcaseUl)}>
           {AUTH_FEATURES.map((feature, index) => {
             const Icon = feature.icon;
             return (
-              <li key={feature.title} className="flex items-start gap-4">
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-rail-hover">
+              <li
+                key={feature.title}
+                {...stylex.props(styles.authShowcaseUlItem, styles.authShowcaseLi)}
+              >
+                <span {...stylex.props(styles.authShowcaseSpan)}>
                   <Icon
-                    className="size-4"
+                    {...stylex.props(styles.authShowcaseIcon)}
                     animateOnView
                     delay={FEATURE_ICON_DELAY_MS + index * FEATURE_ICON_STAGGER_MS}
                   />
                 </span>
                 <span>
-                  <span className="block text-sm font-bold">{feature.title}</span>
-                  <span className="mt-0.5 block text-[13px] text-rail-foreground">
-                    {feature.description}
-                  </span>
+                  <span {...stylex.props(styles.authShowcaseSpan2)}>{feature.title}</span>
+                  <span {...stylex.props(styles.authShowcaseSpan3)}>{feature.description}</span>
                 </span>
               </li>
             );
           })}
         </ul>
       </div>
-      <p className="relative text-xs text-rail-foreground">LitRadar · QianFuv</p>
+      <p {...stylex.props(styles.authShowcaseP3)}>LitRadar · QianFuv</p>
     </aside>
   );
 }
@@ -395,18 +395,12 @@ function renderLoginPage(state: LoginViewState) {
   const { loading, user, isLogoutRecovery } = state;
   if (loading || (user && !isLogoutRecovery)) {
     return (
-      <main
-        id="main-content"
-        className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]"
-      >
+      <main id="main-content" {...stylex.props(styles.renderLoginPageMain)}>
         <AuthShowcase />
-        <div className="flex items-center justify-center px-6 py-12">
-          <div className="w-full max-w-sm">
+        <div {...stylex.props(styles.renderLoginPageDiv)}>
+          <div {...stylex.props(styles.renderLoginPageDiv2)}>
             <AuthBrand />
-            <div
-              role="status"
-              className="rounded-xl bg-muted px-5 py-4 text-sm text-muted-foreground"
-            >
+            <div role="status" {...stylex.props(styles.renderLoginPageDiv3)}>
               <LoadingText text="正在检查登录状态…" />
             </div>
           </div>
@@ -416,13 +410,10 @@ function renderLoginPage(state: LoginViewState) {
   }
 
   return (
-    <main
-      id="main-content"
-      className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]"
-    >
+    <main id="main-content" {...stylex.props(styles.renderLoginPageMain)}>
       <AuthShowcase />
-      <div className="flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-sm">
+      <div {...stylex.props(styles.renderLoginPageDiv)}>
+        <div {...stylex.props(styles.renderLoginPageDiv2)}>
           <AuthBrand />
           {renderLoginHeader(state)}
           {renderLoginCardContent(state)}
@@ -437,9 +428,11 @@ function renderLoginPassword(state: LoginViewState) {
   const { password, setPassword, error, isPasswordVisible, setIsPasswordVisible, mode } = state;
 
   return (
-    <div className="space-y-2">
-      <Label htmlFor="password">密码</Label>
-      <div className="relative">
+    <div>
+      <Label xstyle={styles.renderLoginPasswordDivItem} htmlFor="password">
+        密码
+      </Label>
+      <div {...stylex.props(styles.renderLoginPasswordDivItem, styles.renderLoginPasswordDiv)}>
         <Input
           id="password"
           name="password"
@@ -449,7 +442,7 @@ function renderLoginPassword(state: LoginViewState) {
           onChange={(event) => setPassword(event.target.value)}
           placeholder={mode === 'register' ? '至少12位' : '输入当前密码'}
           minLength={mode === 'register' ? 12 : undefined}
-          className="pr-10"
+          xstyle={styles.renderLoginPasswordInput}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? 'login-error' : undefined}
           required
@@ -458,15 +451,15 @@ function renderLoginPassword(state: LoginViewState) {
           type="button"
           variant="ghost"
           size="icon"
-          className="absolute inset-y-0 right-0 h-full rounded-l-none text-muted-foreground hover:text-foreground"
+          xstyle={styles.renderLoginPasswordButton}
           aria-label={isPasswordVisible ? '隐藏密码' : '显示密码'}
           aria-pressed={isPasswordVisible}
           onClick={() => setIsPasswordVisible((current) => !current)}
         >
           {isPasswordVisible ? (
-            <EyeOff className="h-4 w-4" aria-hidden="true" />
+            <EyeOff {...stylex.props(styles.renderLoginPasswordEyeOff)} aria-hidden="true" />
           ) : (
-            <Eye className="h-4 w-4" aria-hidden="true" />
+            <Eye {...stylex.props(styles.renderLoginPasswordEyeOff)} aria-hidden="true" />
           )}
         </Button>
       </div>
@@ -485,15 +478,18 @@ function renderLoginInvite(state: LoginViewState) {
       <MotionDiv
         key="invite-code"
         data-auth-conditional="invite-code"
-        className="overflow-hidden"
+        {...stylex.props(styles.renderLoginInviteMotionDiv)}
         variants={DISCLOSURE_VARIANTS}
         initial="hidden"
         animate="visible"
         exit="exit"
       >
-        <div className="space-y-2">
-          <Label htmlFor="invite-code">邀请码</Label>
+        <div>
+          <Label xstyle={styles.renderLoginPasswordDivItem} htmlFor="invite-code">
+            邀请码
+          </Label>
           <Input
+            xstyle={styles.renderLoginPasswordDivItem}
             id="invite-code"
             name="invite_code"
             type="text"
@@ -527,15 +523,18 @@ function renderLoginEmail(state: LoginViewState) {
       <MotionDiv
         key="email"
         data-auth-conditional="email"
-        className="overflow-hidden"
+        {...stylex.props(styles.renderLoginInviteMotionDiv)}
         variants={DISCLOSURE_VARIANTS}
         initial="hidden"
         animate="visible"
         exit="exit"
       >
-        <div className="space-y-2">
-          <Label htmlFor="email">邮箱（可选）</Label>
+        <div>
+          <Label xstyle={styles.renderLoginPasswordDivItem} htmlFor="email">
+            邮箱（可选）
+          </Label>
           <Input
+            xstyle={styles.renderLoginPasswordDivItem}
             id="email"
             name="email"
             type="email"
@@ -569,7 +568,7 @@ function renderLoginOidcError(state: Pick<LoginViewState, 'isLogoutRecovery' | '
         key="oidc-error"
         role="alert"
         data-auth-feedback="oidc-error"
-        className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        {...stylex.props(styles.renderLoginOidcErrorMotionDiv)}
         variants={REVEAL_VARIANTS}
         initial="hidden"
         animate="visible"
@@ -596,13 +595,17 @@ function renderLoginOidc(
   const displayName = authProviders.oidc_display_name.trim() || '单点登录';
 
   return (
-    <div data-auth-oidc="available" className="mt-4 space-y-4">
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span className="h-px flex-1 bg-border" aria-hidden="true" />
+    <div data-auth-oidc="available" {...stylex.props(styles.renderLoginOidcDiv)}>
+      <div {...stylex.props(styles.renderLoginOidcDivItem, styles.renderLoginOidcDiv2)}>
+        <span {...stylex.props(styles.renderLoginOidcSpan)} aria-hidden="true" />
         或
-        <span className="h-px flex-1 bg-border" aria-hidden="true" />
+        <span {...stylex.props(styles.renderLoginOidcSpan)} aria-hidden="true" />
       </div>
-      <Button asChild variant="outline" className="w-full">
+      <Button
+        asChild
+        variant="outline"
+        xstyle={[styles.renderLoginOidcDivItem, styles.renderLoginOidcButton]}
+      >
         <a href={buildOidcLoginUrl(nextPath)}>使用 {displayName} 登录</a>
       </Button>
     </div>
@@ -645,21 +648,29 @@ function renderLoginNativeOidc(
   const displayName = authProviders.oidc_display_name.trim() || '单点登录';
 
   return (
-    <div data-auth-oidc={isNativeOidcPending ? 'pending' : 'available'} className="mt-4 space-y-4">
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span className="h-px flex-1 bg-border" aria-hidden="true" />
+    <div
+      data-auth-oidc={isNativeOidcPending ? 'pending' : 'available'}
+      {...stylex.props(styles.renderLoginOidcDiv)}
+    >
+      <div {...stylex.props(styles.renderLoginOidcDivItem, styles.renderLoginOidcDiv2)}>
+        <span {...stylex.props(styles.renderLoginOidcSpan)} aria-hidden="true" />
         或
-        <span className="h-px flex-1 bg-border" aria-hidden="true" />
+        <span {...stylex.props(styles.renderLoginOidcSpan)} aria-hidden="true" />
       </div>
       {isNativeOidcPending ? (
-        <div className="space-y-3">
+        <div {...stylex.props(styles.renderLoginOidcDivItem)}>
           <div
             role="status"
-            className="rounded-xl bg-muted px-4 py-3 text-sm leading-6 text-muted-foreground"
+            {...stylex.props(styles.renderLoginNativeOidcDivItem, styles.renderLoginNativeOidcDiv)}
           >
             <LoadingText text={`已在浏览器中打开 ${displayName}，完成登录后将自动返回…`} />
           </div>
-          <Button type="button" variant="outline" className="w-full" onClick={cancelNativeOidc}>
+          <Button
+            type="button"
+            variant="outline"
+            xstyle={[styles.renderLoginNativeOidcDivItem, styles.renderLoginOidcButton]}
+            onClick={cancelNativeOidc}
+          >
             取消单点登录
           </Button>
         </div>
@@ -667,7 +678,7 @@ function renderLoginNativeOidc(
         <Button
           type="button"
           variant="outline"
-          className="w-full"
+          xstyle={[styles.renderLoginOidcDivItem, styles.renderLoginOidcButton]}
           disabled={isSubmitting}
           onClick={() => void startNativeOidc()}
         >
@@ -691,14 +702,11 @@ function renderLoginServer(state: Pick<LoginViewState, 'serverConnection'>) {
   }
 
   return (
-    <p
-      data-auth-server={serverConnection.origin}
-      className="mt-6 flex flex-wrap items-center justify-center gap-x-2 text-xs text-muted-foreground"
-    >
-      <span className="break-all">服务器：{serverConnection.origin}</span>
+    <p data-auth-server={serverConnection.origin} {...stylex.props(styles.renderLoginServerP)}>
+      <span {...stylex.props(styles.renderLoginServerSpan)}>服务器：{serverConnection.origin}</span>
       <button
         type="button"
-        className="motion-control font-medium text-foreground underline decoration-muted-foreground underline-offset-4 transition-[color,text-decoration-color] hover:text-primary hover:decoration-primary"
+        {...stylex.props(styles.renderLoginServerButton)}
         onClick={() => void serverConnection.switchServer().catch(() => undefined)}
       >
         更换服务器
@@ -721,7 +729,7 @@ function renderLoginBootstrap(
         key="bootstrap-required"
         role="status"
         data-auth-feedback="bootstrap-required"
-        className="rounded-md border border-warning-border bg-warning px-3 py-2 text-sm text-foreground"
+        {...stylex.props(styles.renderLoginBootstrapMotionDiv)}
         variants={REVEAL_VARIANTS}
         initial="hidden"
         animate="visible"
@@ -746,7 +754,7 @@ function renderLoginError(state: Pick<LoginViewState, 'error'>) {
         id="login-error"
         role="alert"
         data-auth-feedback="error"
-        className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        {...stylex.props(styles.renderLoginErrorMotionDiv)}
         variants={REVEAL_VARIANTS}
         initial="hidden"
         animate="visible"
@@ -771,18 +779,18 @@ function renderLoginLogoutWarning(
         key={`${logoutWarning.occurredAt}-${logoutWarning.requestId ?? 'unknown'}`}
         role="alert"
         data-auth-feedback="logout-warning"
-        className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-foreground"
+        {...stylex.props(styles.renderLoginLogoutWarningMotionDiv)}
         variants={REVEAL_VARIANTS}
         initial="hidden"
         animate="visible"
       >
-        <p className="font-medium">服务端会话撤销未确认</p>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p {...stylex.props(styles.renderLoginLogoutWarningP)}>服务端会话撤销未确认</p>
+        <p {...stylex.props(styles.renderLoginLogoutWarningP2)}>
           本地会话信息已清除，但旧令牌可能仍有效。
           {isLogoutRecovery ? ' 请重新输入账号密码以撤销全部会话。' : ' 请重新认证后撤销全部会话。'}
         </p>
         {logoutWarning.requestId && (
-          <p className="mt-1 break-all text-xs text-muted-foreground">
+          <p {...stylex.props(styles.renderLoginLogoutWarningP3)}>
             请求 ID：{logoutWarning.requestId}
           </p>
         )}
@@ -790,7 +798,7 @@ function renderLoginLogoutWarning(
           <Link
             to="/login"
             search={{ logout_recovery: '1' }}
-            className="motion-control mt-2 inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-[background-color,color] hover:bg-accent hover:text-accent-foreground"
+            {...stylex.props(styles.renderLoginLogoutWarningLink)}
           >
             重新认证并撤销全部会话
           </Link>
@@ -812,22 +820,22 @@ function renderLoginSubmit(state: LoginViewState) {
   } = state;
 
   return (
-    <Shine asChild enableOnHover color="var(--primary-foreground)" opacity={0.28}>
+    <Shine asChild enableOnHover color={colors.primaryForeground} opacity={0.28}>
       <Button
         type="submit"
         aria-label={submitLabel}
-        className="w-full"
+        xstyle={styles.renderLoginOidcButton}
         disabled={
           isSubmitting ||
           isNativeOidcPending ||
           (!isLogoutRecovery && mode === 'register' && bootstrapRequired)
         }
       >
-        <span className="grid" aria-hidden="true">
+        <span {...stylex.props(styles.renderLoginSubmitSpan)} aria-hidden="true">
           <MotionPresence>
             <MotionSpan
               key={submitLabel}
-              className="col-start-1 row-start-1"
+              {...stylex.props(styles.renderLoginSubmitMotionSpan)}
               variants={SWAP_VARIANTS}
               initial="hidden"
               animate="visible"
@@ -853,16 +861,19 @@ function renderLoginForm(state: LoginViewState) {
       data-auth-state="form"
       aria-label={isLogoutRecovery ? '会话撤销表单' : '身份验证表单'}
       onSubmit={handleSubmit}
-      className="space-y-4"
+      {...stylex.props(styles.renderLoginFormMotionForm)}
       aria-describedby={error ? 'login-error' : undefined}
       variants={PANEL_VARIANTS}
       initial="hidden"
       animate="visible"
       exit="exit"
     >
-      <div className="space-y-2">
-        <Label htmlFor="username">{isRegistering ? '用户名' : '用户名或邮箱'}</Label>
+      <div>
+        <Label xstyle={styles.renderLoginPasswordDivItem} htmlFor="username">
+          {isRegistering ? '用户名' : '用户名或邮箱'}
+        </Label>
         <Input
+          xstyle={styles.renderLoginPasswordDivItem}
           id="username"
           name="username"
           type="text"
@@ -894,9 +905,9 @@ function renderLoginHeader(
   const { isLogoutRecovery, authModeKey, title, description } = state;
 
   return (
-    <header className="mb-7">
-      <h1 className="sr-only">{title}</h1>
-      <p className="sr-only">{description}</p>
+    <header {...stylex.props(styles.renderLoginHeaderHeader)}>
+      <h1 {...stylex.props(styles.renderLoginHeaderH1)}>{title}</h1>
+      <p {...stylex.props(styles.renderLoginHeaderH1)}>{description}</p>
       <MotionPresence mode="wait">
         <MotionDiv
           key={authModeKey}
@@ -907,11 +918,11 @@ function renderLoginHeader(
           animate="visible"
           exit="exit"
         >
-          <p className="text-xs font-bold tracking-[0.18em] text-primary-text">
+          <p {...stylex.props(styles.renderLoginHeaderP)}>
             {isLogoutRecovery ? '账户安全' : '欢迎使用 LitRadar'}
           </p>
-          <div className="mt-2 text-[28px] leading-tight font-bold tracking-tight">{title}</div>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+          <div {...stylex.props(styles.renderLoginHeaderDiv)}>{title}</div>
+          <p {...stylex.props(styles.renderLoginHeaderP2)}>{description}</p>
         </MotionDiv>
       </MotionPresence>
     </header>
@@ -931,7 +942,7 @@ function renderLoginCardContent(state: LoginViewState) {
           <MotionDiv
             key="recovery-complete"
             data-auth-state="recovery-complete"
-            className="space-y-4"
+
             variants={PANEL_VARIANTS}
             initial="hidden"
             animate="visible"
@@ -939,11 +950,11 @@ function renderLoginCardContent(state: LoginViewState) {
           >
             <div
               role="status"
-              className="rounded-md border border-success-border bg-success px-3 py-2 text-sm text-foreground"
+              {...stylex.props(styles.renderLoginOidcDivItem, styles.renderLoginCardContentDiv)}
             >
               全部会话和个人访问令牌已撤销。现在可以重新登录。
             </div>
-            <Button asChild className="w-full">
+            <Button asChild xstyle={[styles.renderLoginOidcDivItem, styles.renderLoginOidcButton]}>
               <Link to="/login">返回登录</Link>
             </Button>
           </MotionDiv>
@@ -954,14 +965,11 @@ function renderLoginCardContent(state: LoginViewState) {
       {!isRecoveryComplete && renderLoginOidc(state)}
       {!isRecoveryComplete && renderLoginNativeOidc(state)}
       {!isLogoutRecovery && !isRecoveryComplete && (
-        <div
-          className="mt-6 border-t pt-5 text-center text-sm text-muted-foreground"
-          data-auth-mode-switch={mode}
-        >
+        <div {...stylex.props(styles.renderLoginCardContentDiv2)} data-auth-mode-switch={mode}>
           {mode === 'login' ? '没有账号？' : '已有账号？'}{' '}
           <button
             type="button"
-            className="motion-control font-medium text-foreground underline decoration-muted-foreground underline-offset-4 transition-[color,text-decoration-color] hover:text-primary hover:decoration-primary"
+            {...stylex.props(styles.renderLoginServerButton)}
             onClick={() => {
               setMode((current) => (current === 'login' ? 'register' : 'login'));
               setError(null);
@@ -996,3 +1004,429 @@ function getLoginSubmitLabel(
   if (isRecovery) return '重新认证并撤销全部会话';
   return mode === 'register' ? '注册' : '登录';
 }
+
+const styles = stylex.create({
+  authBrandDiv: {
+    marginBottom: '2rem',
+    display: {
+      default: 'flex',
+      '@media (min-width: 64rem)': 'none',
+    },
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  authBrandImg: {
+    width: '2.5rem',
+    height: '2.5rem',
+    borderRadius: '12px',
+    objectFit: 'cover',
+  },
+  authBrandP: {
+    fontSize: '1rem',
+    lineHeight: 1.5,
+    fontWeight: 700,
+    letterSpacing: '-0.025em',
+  },
+  authBrandP2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  authShowcaseAside: {
+    position: 'relative',
+    display: {
+      default: 'none',
+      '@media (min-width: 64rem)': 'flex',
+    },
+    minHeight: '100dvh',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+    overflow: 'hidden',
+    backgroundColor: colors.rail,
+    padding: '3rem',
+    color: colors.railActive,
+  },
+  authShowcaseDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  authShowcaseP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.railForeground,
+  },
+  authShowcaseRadarMark: {
+    pointerEvents: 'none',
+    position: 'absolute',
+    top: 'calc(1 / 2 * 100%)',
+    right: '-6rem',
+    width: '34rem',
+    height: '34rem',
+    translate: '0 calc(calc(1 / 2 * 100%) * -1)',
+    color: `color-mix(in oklab, ${colors.railForeground} 50%, transparent)`,
+  },
+  authShowcaseDiv2: {
+    position: 'relative',
+    maxWidth: '28rem',
+  },
+  authShowcaseP2: {
+    fontSize: '32px',
+    lineHeight: 1.3,
+    fontWeight: 700,
+    letterSpacing: '-0.025em',
+  },
+  authShowcaseSplittingText: {
+    display: 'block',
+  },
+  authShowcaseUlItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '1.25rem',
+    },
+  },
+  authShowcaseUl: {
+    marginTop: '2.5rem',
+  },
+  authShowcaseLi: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '1rem',
+  },
+  authShowcaseSpan: {
+    display: 'flex',
+    width: '2.25rem',
+    height: '2.25rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '12px',
+    backgroundColor: colors.railHover,
+  },
+  authShowcaseIcon: {
+    width: '1rem',
+    height: '1rem',
+  },
+  authShowcaseSpan2: {
+    display: 'block',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  authShowcaseSpan3: {
+    marginTop: '0.125rem',
+    display: 'block',
+    fontSize: '13px',
+    color: colors.railForeground,
+  },
+  authShowcaseP3: {
+    position: 'relative',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.railForeground,
+  },
+  renderLoginPageMain: {
+    display: 'grid',
+    minHeight: '100dvh',
+    backgroundColor: colors.background,
+    gridTemplateColumns: {
+      default: null,
+      '@media (min-width: 64rem)': 'minmax(0,1.05fr) minmax(0,1fr)',
+    },
+  },
+  renderLoginPageDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingInline: '1.5rem',
+    paddingBlock: '3rem',
+  },
+  renderLoginPageDiv2: {
+    width: '100%',
+    maxWidth: '24rem',
+  },
+  renderLoginPageDiv3: {
+    borderRadius: '12px',
+    backgroundColor: colors.muted,
+    paddingInline: '1.25rem',
+    paddingBlock: '1rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderLoginPasswordDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  renderLoginPasswordDiv: {
+    position: 'relative',
+  },
+  renderLoginPasswordInput: {
+    paddingRight: '2.5rem',
+  },
+  renderLoginPasswordButton: {
+    position: 'absolute',
+    insetBlock: '0px',
+    right: '0px',
+    height: '100%',
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+  },
+  renderLoginPasswordEyeOff: {
+    height: '1rem',
+    width: '1rem',
+  },
+  renderLoginInviteMotionDiv: {
+    overflow: 'hidden',
+  },
+  renderLoginOidcErrorMotionDiv: {
+    marginBottom: '1rem',
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.destructive} 30%, transparent)`,
+    backgroundColor: `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderLoginOidcDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '1rem',
+    },
+  },
+  renderLoginOidcDiv: {
+    marginTop: '1rem',
+  },
+  renderLoginOidcDiv2: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderLoginOidcSpan: {
+    height: '1px',
+    flex: '1',
+    backgroundColor: colors.border,
+  },
+  renderLoginOidcButton: {
+    width: '100%',
+  },
+  renderLoginNativeOidcDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  renderLoginNativeOidcDiv: {
+    borderRadius: '12px',
+    backgroundColor: colors.muted,
+    paddingInline: '1rem',
+    paddingBlock: '0.75rem',
+    fontSize: '0.875rem',
+    lineHeight: '1.5rem',
+    color: colors.mutedForeground,
+  },
+  renderLoginServerP: {
+    marginTop: '1.5rem',
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    columnGap: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderLoginServerSpan: {
+    wordBreak: 'break-all',
+  },
+  renderLoginServerButton: {
+    fontWeight: 500,
+    color: {
+      default: colors.foreground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.primary,
+      },
+    },
+    textDecorationLine: 'underline',
+    textDecorationColor: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.primary,
+      },
+    },
+    textUnderlineOffset: '4px',
+    transitionProperty: 'color, text-decoration-color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+  },
+  renderLoginBootstrapMotionDiv: {
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: colors.warningBorder,
+    backgroundColor: colors.warning,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.foreground,
+  },
+  renderLoginErrorMotionDiv: {
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.destructive} 30%, transparent)`,
+    backgroundColor: `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderLoginLogoutWarningMotionDiv: {
+    marginBottom: '1rem',
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.destructive} 30%, transparent)`,
+    backgroundColor: `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.foreground,
+  },
+  renderLoginLogoutWarningP: {
+    fontWeight: 500,
+  },
+  renderLoginLogoutWarningP2: {
+    marginTop: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderLoginLogoutWarningP3: {
+    marginTop: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    wordBreak: 'break-all',
+    color: colors.mutedForeground,
+  },
+  renderLoginLogoutWarningLink: {
+    marginTop: '0.5rem',
+    display: 'inline-flex',
+    height: '2rem',
+    alignItems: 'center',
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: colors.input,
+    backgroundColor: {
+      default: colors.background,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    paddingInline: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 500,
+    transitionProperty: 'background-color, color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    color: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  renderLoginSubmitSpan: {
+    display: 'grid',
+  },
+  renderLoginSubmitMotionSpan: {
+    gridColumnStart: 1,
+    gridRowStart: 1,
+  },
+  renderLoginFormMotionForm: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '1rem',
+  },
+  renderLoginHeaderHeader: {
+    marginBottom: '1.75rem',
+  },
+  renderLoginHeaderH1: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  renderLoginHeaderP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 700,
+    letterSpacing: '0.18em',
+    color: colors.primaryText,
+  },
+  renderLoginHeaderDiv: {
+    marginTop: '0.5rem',
+    fontSize: '28px',
+    lineHeight: 1.25,
+    fontWeight: 700,
+    letterSpacing: '-0.025em',
+  },
+  renderLoginHeaderP2: {
+    marginTop: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: '1.5rem',
+    color: colors.mutedForeground,
+  },
+  renderLoginCardContentDiv: {
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: colors.successBorder,
+    backgroundColor: colors.success,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.foreground,
+  },
+  renderLoginCardContentDiv2: {
+    marginTop: '1.5rem',
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingTop: '1.25rem',
+    textAlign: 'center',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+});

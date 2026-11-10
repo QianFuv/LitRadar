@@ -15,6 +15,8 @@ import {
   removeLocalStorageValue,
   writeLocalStorageValue,
 } from '@/lib/browser-storage';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const STORAGE_PREFIX = 'litradar:v1:announcement_dismissed:';
 /** Stored dismissal expiry: a finite millisecond timestamp, or `0` for a permanent dismissal. */
@@ -129,17 +131,17 @@ function AnnouncementToast({ toast }: { toast: Toast.Root.ToastObject<Announceme
   return (
     <Toast.Root
       toast={toast}
-      className="absolute right-0 bottom-0 h-[var(--toast-frontmost-height,var(--toast-height))] w-full rounded-xl border bg-popover text-popover-foreground shadow-lg select-none [z-index:calc(1000-var(--toast-index))] after:absolute after:top-full after:left-0 after:h-[calc(0.75rem+1px)] after:w-full after:content-[''] data-[expanded]:h-[var(--toast-height)]"
+      {...stylex.props(styles.announcementToastToastRoot, styles.stackOrder(TOAST_Z_INDEX))}
     >
-      <Toast.Content className="overflow-hidden p-4 data-[behind]:opacity-0 data-[expanded]:opacity-100">
-        <div className="flex items-start gap-2 pr-7">
-          <Toast.Title className="min-w-0 text-sm leading-6 font-bold [overflow-wrap:anywhere]" />
-          <span className="mt-0.5 shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+      <Toast.Content {...stylex.props(styles.announcementToastToastContent)}>
+        <div {...stylex.props(styles.announcementToastDiv)}>
+          <Toast.Title {...stylex.props(styles.announcementToastToastTitle)} />
+          <span {...stylex.props(styles.announcementToastSpan)}>
             {PRIORITY_LABELS[announcement.priority]}
           </span>
         </div>
-        <Toast.Description className="mt-1.5 max-h-40 overflow-y-auto overscroll-contain text-[13px] leading-6 whitespace-pre-wrap text-foreground/80" />
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <Toast.Description {...stylex.props(styles.announcementToastToastDescription)} />
+        <div {...stylex.props(styles.announcementToastDiv2)}>
           <Button
             size="xs"
             variant="outline"
@@ -158,11 +160,8 @@ function AnnouncementToast({ toast }: { toast: Toast.Root.ToastObject<Announceme
             永久关闭
           </Button>
         </div>
-        <Toast.Close
-          aria-label="关闭"
-          className="motion-control absolute top-3 right-3 flex size-7 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <X className="size-4" aria-hidden="true" />
+        <Toast.Close aria-label="关闭" {...stylex.props(styles.announcementToastToastClose)}>
+          <X {...stylex.props(styles.announcementToastX)} aria-hidden="true" />
         </Toast.Close>
       </Toast.Content>
     </Toast.Root>
@@ -222,7 +221,7 @@ export function AnnouncementToasts() {
       <Toast.Portal>
         <Toast.Viewport
           aria-label="系统公告"
-          className="fixed right-4 bottom-[calc(4.25rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] z-50 w-[min(24rem,calc(100vw-2rem))] md:bottom-4"
+          {...stylex.props(styles.announcementToastsToastViewport)}
         >
           <AnnouncementToastList />
         </Toast.Viewport>
@@ -230,3 +229,134 @@ export function AnnouncementToasts() {
     </Toast.Provider>
   );
 }
+
+/** Newer toasts stack above older ones; Base UI sets `--toast-index` on each toast. */
+const TOAST_Z_INDEX = 'calc(1000 - var(--toast-index))';
+
+const styles = stylex.create({
+  stackOrder: (zIndex: string) => ({
+    zIndex,
+  }),
+  announcementToastToastRoot: {
+    position: 'absolute',
+    right: '0px',
+    bottom: '0px',
+    height: {
+      default: 'var(--toast-frontmost-height, var(--toast-height))',
+      ':is([data-expanded])': 'var(--toast-height)',
+    },
+    width: '100%',
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    backgroundColor: colors.popover,
+    color: colors.popoverForeground,
+    boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+    userSelect: 'none',
+    '::after': {
+      content: "''",
+      position: 'absolute',
+      top: '100%',
+      left: '0px',
+      height: 'calc(0.75rem + 1px)',
+      width: '100%',
+    },
+  },
+  announcementToastToastContent: {
+    overflow: 'hidden',
+    padding: '1rem',
+    opacity: {
+      default: null,
+      ':is([data-behind])': '0%',
+      ':is([data-expanded])': '100%',
+    },
+  },
+  announcementToastDiv: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '0.5rem',
+    paddingRight: '1.75rem',
+  },
+  announcementToastToastTitle: {
+    minWidth: '0px',
+    fontSize: '0.875rem',
+    lineHeight: '1.5rem',
+    fontWeight: 700,
+    overflowWrap: 'anywhere',
+  },
+  announcementToastSpan: {
+    marginTop: '0.125rem',
+    flexShrink: 0,
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.muted,
+    paddingInline: '0.5rem',
+    paddingBlock: '0.125rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  announcementToastToastDescription: {
+    marginTop: '0.375rem',
+    maxHeight: '10rem',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    fontSize: '13px',
+    lineHeight: '1.5rem',
+    whiteSpace: 'pre-wrap',
+    color: `color-mix(in oklab, ${colors.foreground} 80%, transparent)`,
+  },
+  announcementToastDiv2: {
+    marginTop: '0.75rem',
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '0.375rem',
+  },
+  announcementToastToastClose: {
+    position: 'absolute',
+    top: '0.75rem',
+    right: '0.75rem',
+    display: 'flex',
+    width: '1.75rem',
+    height: '1.75rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '6px',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  announcementToastX: {
+    width: '1rem',
+    height: '1rem',
+  },
+  announcementToastsToastViewport: {
+    position: 'fixed',
+    right: '1rem',
+    bottom: {
+      default: 'calc(4.25rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom,0px)))',
+      '@media (min-width: 48rem)': '1rem',
+    },
+    zIndex: 50,
+    width: 'min(24rem, calc(100vw - 2rem))',
+  },
+});

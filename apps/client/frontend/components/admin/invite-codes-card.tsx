@@ -25,10 +25,11 @@ import {
   MotionPresence,
   REVEAL_VARIANTS,
 } from '@/components/ui/motion';
-import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
 import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
   active: '可用',
@@ -68,62 +69,76 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Gift className="h-5 w-5" />
+        <CardTitle xstyle={styles.adminInviteCodesCardCardTitle}>
+          <Gift {...stylex.props(styles.adminInviteCodesCardGift)} />
           邀请码管理
         </CardTitle>
         <CardDescription>创建有期限和使用次数上限的邀请码，并保留撤销历史</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent xstyle={styles.adminInviteCodesCardCardContent}>
         <SettingsGroup>
-          <div className="flex flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-end lg:justify-between">
-            <div className="flex items-center gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-                <Gift className="size-5" aria-hidden="true" />
+          <div {...stylex.props(styles.adminInviteCodesCardDiv)}>
+            <div {...stylex.props(styles.adminInviteCodesCardDiv2)}>
+              <span {...stylex.props(styles.adminInviteCodesCardSpan)}>
+                <Gift {...stylex.props(styles.adminInviteCodesCardGift2)} aria-hidden="true" />
               </span>
               <div>
-                <p className="text-sm font-bold">生成新邀请码</p>
-                <p className="text-xs text-muted-foreground">设置有效期与可注册次数</p>
+                <p {...stylex.props(styles.adminInviteCodesCardP)}>生成新邀请码</p>
+                <p {...stylex.props(styles.adminInviteCodesCardP2)}>设置有效期与可注册次数</p>
               </div>
             </div>
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="space-y-1" htmlFor="invite-valid-days">
-                <span className="block text-xs text-muted-foreground">有效天数</span>
+            <div {...stylex.props(styles.adminInviteCodesCardDiv3)}>
+              <label htmlFor="invite-valid-days">
+                <span
+                  {...stylex.props(
+                    styles.adminInviteCodesCardLabelItem,
+                    styles.adminInviteCodesCardSpan2,
+                  )}
+                >
+                  有效天数
+                </span>
                 <Input
                   id="invite-valid-days"
                   type="number"
                   min={1}
                   max={365}
-                  className="w-24 tabular-nums"
+                  xstyle={[styles.adminInviteCodesCardLabelItem, styles.adminInviteCodesCardInput]}
                   value={validDays}
                   onChange={(event) => setValidDays(event.target.value)}
                 />
               </label>
-              <label className="space-y-1" htmlFor="invite-max-uses">
-                <span className="block text-xs text-muted-foreground">最多使用次数</span>
+              <label htmlFor="invite-max-uses">
+                <span
+                  {...stylex.props(
+                    styles.adminInviteCodesCardLabelItem,
+                    styles.adminInviteCodesCardSpan2,
+                  )}
+                >
+                  最多使用次数
+                </span>
                 <Input
                   id="invite-max-uses"
                   type="number"
                   min={1}
                   max={1000}
-                  className="w-24 tabular-nums"
+                  xstyle={[styles.adminInviteCodesCardLabelItem, styles.adminInviteCodesCardInput]}
                   value={maxUses}
                   onChange={(event) => setMaxUses(event.target.value)}
                 />
               </label>
               <Button
-                className="flex-1 sm:flex-none"
+                xstyle={styles.adminInviteCodesCardButton}
                 onClick={() => createCodeMut.mutate()}
                 disabled={createCodeMut.isPending || !isPolicyValid}
               >
-                <Plus className="size-4" />
+                <Plus {...stylex.props(styles.adminInviteCodesCardPlus)} />
                 生成邀请码
               </Button>
             </div>
           </div>
         </SettingsGroup>
         {inviteCodesError instanceof Error && (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" {...stylex.props(styles.adminInviteCodesCardP3)}>
             {inviteCodesError.message}
           </p>
         )}
@@ -133,7 +148,7 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
               key="invite-create-error"
               data-motion-feedback="invite-create"
               role="alert"
-              className="text-sm text-destructive"
+              {...stylex.props(styles.adminInviteCodesCardP3)}
               initial="hidden"
               animate="visible"
               exit="exit"
@@ -146,9 +161,9 @@ export function AdminInviteCodesCard(props: { isEnabled: boolean }) {
         {renderAdminInviteCopyFeedback(state)}
         <RevealItem
           isReady={!isLoading}
-          className="space-y-4"
+          xstyle={styles.adminInviteCodesCardCardContent}
           placeholder={
-            <p role="status" className="text-sm text-muted-foreground">
+            <p role="status" {...stylex.props(styles.adminInviteCodesCardP4)}>
               <LoadingText text="加载中…" />
             </p>
           }
@@ -266,7 +281,11 @@ function renderAdminInviteCopyFeedback(state: Pick<AdminInviteViewState, 'copyFe
           key="invite-copy-feedback"
           data-motion-feedback="invite-copy"
           role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-          className={copyFeedback.tone === 'error' ? 'text-sm text-destructive' : 'sr-only'}
+          {...stylex.props(
+            copyFeedback.tone === 'error'
+              ? styles.adminInviteCodesCardP3
+              : styles.renderAdminInviteCopyFeedbackMotionParagraphNotError,
+          )}
           initial="hidden"
           animate="visible"
           exit="exit"
@@ -290,7 +309,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
         {inviteRows.length === 0 ? (
           <MotionDiv
             key="empty-invite-codes"
-            className="px-5 py-10 text-center text-sm text-muted-foreground"
+            {...stylex.props(styles.renderAdminInviteListMotionDiv)}
             initial="hidden"
             animate="visible"
             exit="exit"
@@ -307,28 +326,30 @@ function renderAdminInviteList(state: AdminInviteViewState) {
               <MotionDiv
                 key={inviteCode.id}
                 data-motion-invite-key={inviteCode.id}
-                className="flex flex-col gap-3 overflow-hidden px-4 py-4 sm:px-5 md:flex-row md:items-center md:gap-5"
+                {...stylex.props(styles.renderAdminInviteListMotionDiv2)}
                 initial="hidden"
                 animate="visible"
                 exit="exit"
                 variants={DISCLOSURE_VARIANTS}
               >
-                <div className="flex min-w-0 flex-1 items-start gap-3">
+                <div {...stylex.props(styles.renderAdminInviteListDiv)}>
                   <span
                     aria-hidden="true"
-                    className={cn(
-                      'mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg',
-                      isActive ? 'bg-info text-primary' : 'bg-muted text-muted-foreground',
+                    {...stylex.props(
+                      styles.renderAdminInviteListSpan,
+                      isActive
+                        ? styles.renderAdminInviteListSpanActive
+                        : styles.renderAdminInviteListSpanNotActive,
                     )}
                   >
-                    <Gift className="size-4" />
+                    <Gift {...stylex.props(styles.adminInviteCodesCardPlus)} />
                   </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1">
+                  <div {...stylex.props(styles.renderAdminInviteListDiv2)}>
+                    <div {...stylex.props(styles.renderAdminInviteListDiv3)}>
                       <code
-                        className={cn(
-                          'min-w-0 text-sm font-bold break-all',
-                          !isActive && 'text-muted-foreground line-through',
+                        {...stylex.props(
+                          styles.renderAdminInviteListCode,
+                          !isActive && styles.renderAdminInviteListCodeActive,
                         )}
                       >
                         {inviteCode.code}
@@ -337,8 +358,8 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                         <CopyButton
                           variant="ghost"
                           size="icon"
-                          className="size-7 shrink-0 text-muted-foreground"
-                          iconClassName="size-3.5"
+                          xstyle={styles.renderAdminInviteListCopyButton}
+                          iconXstyle={styles.copyIcon}
                           aria-label="复制邀请码"
                           disabled={!isActive}
                           isCopied={
@@ -349,33 +370,37 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                         />
                       </IconTooltip>
                     </div>
-                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                    <p {...stylex.props(styles.renderAdminInviteListP)}>
                       创建者 {inviteCode.created_by_name ?? '系统'} · 首位使用者{' '}
                       {inviteCode.used_by_name ?? '—'} · 创建于 <span>{createdAtLabel}</span> ·
                       有效期至 <span>{expiresAtLabel}</span>
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-4 pl-12 md:pl-0">
-                  <div className="w-20">
-                    <p className="text-xs text-muted-foreground tabular-nums">
+                <div {...stylex.props(styles.renderAdminInviteListDiv4)}>
+                  <div {...stylex.props(styles.renderAdminInviteListDiv5)}>
+                    <p {...stylex.props(styles.renderAdminInviteListP2)}>
                       已使用 {inviteCode.use_count}/{inviteCode.max_uses}
                     </p>
-                    <Progress aria-hidden="true" className="mt-1" value={usageRatio * 100} />
+                    <Progress
+                      aria-hidden="true"
+                      xstyle={styles.renderAdminInviteListProgress}
+                      value={usageRatio * 100}
+                    />
                   </div>
                   <StatusPill
                     tone={isActive ? 'success' : 'neutral'}
-                    className="w-20 justify-center"
+                    xstyle={styles.renderAdminInviteListStatusPill}
                   >
                     {INVITE_STATUS_LABELS[inviteCode.status]}
                   </StatusPill>
-                  <div className="ml-auto w-9 md:ml-0">
+                  <div {...stylex.props(styles.renderAdminInviteListDiv6)}>
                     {inviteCode.revoked_at === null && (
                       <IconTooltip label="撤销邀请码">
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          xstyle={styles.renderAdminInviteListButton}
                           aria-label={`撤销邀请码 ${inviteCode.code}`}
                           disabled={revokeCodeMut.isPending}
                           onClick={() => {
@@ -383,7 +408,7 @@ function renderAdminInviteList(state: AdminInviteViewState) {
                             setInviteCodeToRevoke(inviteCode);
                           }}
                         >
-                          <CircleX className="size-4" />
+                          <CircleX {...stylex.props(styles.adminInviteCodesCardPlus)} />
                         </Button>
                       </IconTooltip>
                     )}
@@ -429,3 +454,277 @@ function renderAdminInviteRevocation(
     />
   );
 }
+
+const styles = stylex.create({
+  copyIcon: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+  adminInviteCodesCardCardTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  adminInviteCodesCardGift: {
+    height: '1.25rem',
+    width: '1.25rem',
+  },
+  adminInviteCodesCardCardContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '1rem',
+  },
+  adminInviteCodesCardDiv: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 64rem)': 'row',
+    },
+    gap: '1rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+    alignItems: {
+      default: null,
+      '@media (min-width: 64rem)': 'flex-end',
+    },
+    justifyContent: {
+      default: null,
+      '@media (min-width: 64rem)': 'space-between',
+    },
+  },
+  adminInviteCodesCardDiv2: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  adminInviteCodesCardSpan: {
+    display: 'flex',
+    width: '2.5rem',
+    height: '2.5rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '12px',
+    backgroundColor: colors.primary,
+    color: colors.primaryForeground,
+  },
+  adminInviteCodesCardGift2: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  adminInviteCodesCardP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  adminInviteCodesCardP2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  adminInviteCodesCardDiv3: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'flex-end',
+    gap: '0.75rem',
+  },
+  adminInviteCodesCardLabelItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.25rem',
+    },
+  },
+  adminInviteCodesCardSpan2: {
+    display: 'block',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  adminInviteCodesCardInput: {
+    width: '6rem',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  adminInviteCodesCardButton: {
+    flex: {
+      default: '1',
+      '@media (min-width: 40rem)': 'none',
+    },
+  },
+  adminInviteCodesCardPlus: {
+    width: '1rem',
+    height: '1rem',
+  },
+  adminInviteCodesCardP3: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  adminInviteCodesCardP4: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderAdminInviteCopyFeedbackMotionParagraphNotError: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  renderAdminInviteListMotionDiv: {
+    paddingInline: '1.25rem',
+    paddingBlock: '2.5rem',
+    textAlign: 'center',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderAdminInviteListMotionDiv2: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 48rem)': 'row',
+    },
+    gap: {
+      default: '0.75rem',
+      '@media (min-width: 48rem)': '1.25rem',
+    },
+    overflow: 'hidden',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+    alignItems: {
+      default: null,
+      '@media (min-width: 48rem)': 'center',
+    },
+  },
+  renderAdminInviteListDiv: {
+    display: 'flex',
+    minWidth: '0px',
+    flex: '1',
+    alignItems: 'flex-start',
+    gap: '0.75rem',
+  },
+  renderAdminInviteListSpan: {
+    marginTop: '0.125rem',
+    display: 'flex',
+    width: '2.25rem',
+    height: '2.25rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+  },
+  renderAdminInviteListSpanActive: {
+    backgroundColor: colors.info,
+    color: colors.primary,
+  },
+  renderAdminInviteListSpanNotActive: {
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  renderAdminInviteListDiv2: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  renderAdminInviteListDiv3: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.25rem',
+  },
+  renderAdminInviteListCode: {
+    minWidth: '0px',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+    wordBreak: 'break-all',
+  },
+  renderAdminInviteListCodeActive: {
+    color: colors.mutedForeground,
+    textDecorationLine: 'line-through',
+  },
+  renderAdminInviteListCopyButton: {
+    width: '1.75rem',
+    height: '1.75rem',
+    flexShrink: 0,
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  renderAdminInviteListP: {
+    marginTop: '0.125rem',
+    fontSize: '0.75rem',
+    lineHeight: 1.625,
+    color: colors.mutedForeground,
+  },
+  renderAdminInviteListDiv4: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1rem',
+    paddingLeft: {
+      default: '3rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+  },
+  renderAdminInviteListDiv5: {
+    width: '5rem',
+  },
+  renderAdminInviteListP2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderAdminInviteListProgress: {
+    marginTop: '0.25rem',
+  },
+  renderAdminInviteListStatusPill: {
+    width: '5rem',
+    justifyContent: 'center',
+  },
+  renderAdminInviteListDiv6: {
+    marginLeft: {
+      default: 'auto',
+      '@media (min-width: 48rem)': '0px',
+    },
+    width: '2.25rem',
+  },
+  renderAdminInviteListButton: {
+    width: '2.25rem',
+    height: '2.25rem',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+});

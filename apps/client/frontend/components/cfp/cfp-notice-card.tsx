@@ -12,7 +12,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { CfpNoticeView, CfpState } from '@/lib/api';
 import { CFP_DATE_LABELS, CFP_KIND_LABELS } from '@/lib/cfp-display';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const STATE_LABELS: Readonly<Record<CfpState, string>> = {
   open: '征稿中',
@@ -22,15 +23,6 @@ const STATE_LABELS: Readonly<Record<CfpState, string>> = {
   invitation_only: '仅限受邀投稿',
   undated: '截止时间待确认',
   uncertain: '投稿时间待确认',
-};
-const STATE_CLASSES: Readonly<Record<CfpState, string>> = {
-  open: 'bg-success text-success-foreground',
-  upcoming: 'bg-info text-info-foreground',
-  closed: 'bg-muted text-muted-foreground',
-  historical: 'bg-muted text-muted-foreground',
-  invitation_only: 'bg-info text-info-foreground',
-  undated: 'bg-warning text-warning-foreground',
-  uncertain: 'bg-warning text-warning-foreground',
 };
 const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
@@ -55,23 +47,18 @@ export function CfpSourceFooter({
   label?: string;
 }) {
   return (
-    <footer
-      data-slot="cfp-source-footer"
-      className="flex flex-col gap-3 border-t border-dashed pt-4 sm:flex-row sm:items-center sm:justify-between sm:gap-5"
-    >
-      <span className="text-xs leading-5 text-muted-foreground">
+    <footer data-slot="cfp-source-footer" {...stylex.props(styles.cfpSourceFooter)}>
+      <span {...stylex.props(styles.cfpSourceFooterSpan)}>
         核验于 {checkedOn ? formatDate(checkedOn) : '—'}
       </span>
       {sourceUrl && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 w-full shrink-0 rounded-lg sm:w-auto"
-          asChild
-        >
+        <Button variant="outline" size="sm" xstyle={styles.cfpSourceFooterButton} asChild>
           <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
             {label}
-            <ExternalLink className="size-3.5" aria-hidden="true" />
+            <ExternalLink
+              {...stylex.props(styles.cfpSourceFooterExternalLink)}
+              aria-hidden="true"
+            />
           </a>
         </Button>
       )}
@@ -100,32 +87,27 @@ function CfpTimeline({ notice }: { notice: CfpNoticeView }) {
   ];
 
   return (
-    <aside
-      data-slot="cfp-timeline"
-      aria-label="时间安排"
-      className="min-w-0 self-start rounded-xl bg-muted p-4"
-    >
-      <h4 className="flex items-center gap-2 text-xs font-bold leading-5">
-        <CalendarDays className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+    <aside data-slot="cfp-timeline" aria-label="时间安排" {...stylex.props(styles.cfpTimeline)}>
+      <h4 {...stylex.props(styles.cfpTimelineH4)}>
+        <CalendarDays {...stylex.props(styles.cfpTimelineCalendarDays)} aria-hidden="true" />
         时间安排
       </h4>
-      <dl className="mt-2 divide-y divide-border/60">
+      <dl {...stylex.props(styles.cfpTimelineDl)}>
         {rows.map((row) => (
-          <div
-            key={row.key}
-            className="grid grid-cols-[minmax(0,1fr)_7.5rem] items-baseline gap-x-3 py-2.5"
-          >
-            <dt className="text-xs leading-5 text-muted-foreground">{row.label}</dt>
+          <div key={row.key} {...stylex.props(styles.cfpTimelineDlItem, styles.cfpTimelineDiv)}>
+            <dt {...stylex.props(styles.cfpSourceFooterSpan)}>{row.label}</dt>
             <dd
-              className={cn(
-                'm-0 whitespace-nowrap text-sm leading-5 tabular-nums',
-                row.isPrimary ? 'font-bold text-foreground' : 'text-muted-foreground',
+              {...stylex.props(
+                styles.cfpTimelineDd,
+                row.isPrimary ? styles.cfpTimelineDdPrimary : styles.cfpTimelineDdNotPrimary,
               )}
             >
               {row.value ? (
                 <>
                   <time dateTime={row.value.date}>{formatDate(row.value.date)}</time>
-                  {row.value.isExclusive && <span className="ml-1 text-xs">前</span>}
+                  {row.value.isExclusive && (
+                    <span {...stylex.props(styles.cfpTimelineSpan)}>前</span>
+                  )}
                 </>
               ) : (
                 '暂未确认'
@@ -135,7 +117,7 @@ function CfpTimeline({ notice }: { notice: CfpNoticeView }) {
         ))}
       </dl>
       {notice.dates.length > 0 && (
-        <p className="border-t border-border/60 pt-3 text-[11px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+        <p {...stylex.props(styles.cfpTimelineP)}>
           {notice.timeZone ? `时区：${notice.timeZone}` : '原文未注明时区'}
         </p>
       )}
@@ -146,15 +128,8 @@ function CfpTimeline({ notice }: { notice: CfpNoticeView }) {
 /** Show every supplied paragraph inside a fixed-height, keyboard-scrollable reading region. */
 function CfpOriginalText({ label, text }: { label: string; text: string }) {
   return (
-    <div
-      role="region"
-      aria-label={label}
-      tabIndex={0}
-      className="max-h-72 min-w-0 overflow-y-auto overscroll-contain rounded-sm pr-3 outline-none [scrollbar-gutter:stable] [scrollbar-width:thin] focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
-    >
-      <p className="whitespace-pre-wrap text-[13.5px] leading-[1.8] text-foreground/90 [overflow-wrap:anywhere]">
-        {text}
-      </p>
+    <div role="region" aria-label={label} tabIndex={0} {...stylex.props(styles.cfpOriginalTextDiv)}>
+      <p {...stylex.props(styles.cfpOriginalTextP)}>{text}</p>
     </div>
   );
 }
@@ -164,51 +139,56 @@ export function CfpNoticeCard({ notice }: { notice: CfpNoticeView }) {
   const hasOriginalText = Boolean(notice.scope || notice.requirements);
 
   return (
-    <article data-slot="cfp-notice" className="min-w-0 border-t pt-7 pb-8">
-      <header className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="h-6 px-2.5 leading-none">
+    <article data-slot="cfp-notice" {...stylex.props(styles.cfpNotice)}>
+      <header>
+        <div {...stylex.props(styles.cfpNoticeCardHeaderItem, styles.cfpNoticeCardDiv)}>
+          <Badge variant="outline" xstyle={styles.cfpNoticeCardBadge}>
             {CFP_KIND_LABELS[notice.kind]}
           </Badge>
-          <Badge
-            variant="secondary"
-            className={cn('h-6 px-2.5 leading-none', STATE_CLASSES[notice.state])}
-          >
-            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
+          <Badge variant="secondary" xstyle={[styles.stateBadge, STATE_STYLES[notice.state]]}>
+            <span {...stylex.props(styles.cfpNoticeCardSpan)} aria-hidden="true" />
             {STATE_LABELS[notice.state]}
           </Badge>
         </div>
-        <h3 className="text-[19px] leading-[1.45] font-bold text-foreground [overflow-wrap:anywhere]">
+        <h3 {...stylex.props(styles.cfpNoticeCardHeaderItem, styles.cfpNoticeCardH3)}>
           {notice.title}
         </h3>
       </header>
       <div
-        className={cn(
-          'grid min-w-0 gap-6 py-6',
-          hasOriginalText && '2xl:grid-cols-[minmax(0,1fr)_14rem] 2xl:gap-8',
+        {...stylex.props(
+          styles.cfpNoticeCardDiv2,
+          hasOriginalText && styles.cfpNoticeCardDivOriginalText,
         )}
       >
-        <div className={cn('min-w-0', hasOriginalText && '2xl:col-start-2 2xl:row-start-1')}>
+        <div
+          {...stylex.props(
+            styles.cfpNoticeCardDiv3,
+            hasOriginalText && styles.cfpNoticeCardDivOriginalText2,
+          )}
+        >
           <CfpTimeline notice={notice} />
         </div>
         {hasOriginalText && (
-          <div className="min-w-0 space-y-6 2xl:col-start-1 2xl:row-start-1">
+          <div {...stylex.props(styles.cfpNoticeCardDiv4)}>
             {notice.scope && (
-              <section data-slot="cfp-scope" className="space-y-3">
-                <h4 className="text-xs font-bold leading-5 tracking-[0.08em] text-muted-foreground">
-                  投稿范围
-                </h4>
+              <section
+                data-slot="cfp-scope"
+                {...stylex.props(styles.cfpNoticeCardDivItem, styles.cfpScope)}
+              >
+                <h4 {...stylex.props(styles.cfpNoticeCardH4)}>投稿范围</h4>
                 <CfpOriginalText label="投稿范围" text={notice.scope} />
               </section>
             )}
             {notice.requirements && (
               <section
                 data-slot="cfp-requirements"
-                className={cn('space-y-3', notice.scope && 'border-t pt-6')}
+                {...stylex.props(
+                  styles.cfpNoticeCardDivItem,
+                  styles.cfpScope,
+                  Boolean(notice.scope) && styles.cfpRequirementsScope,
+                )}
               >
-                <h4 className="text-xs font-bold leading-5 tracking-[0.08em] text-muted-foreground">
-                  投稿要求
-                </h4>
+                <h4 {...stylex.props(styles.cfpNoticeCardH4)}>投稿要求</h4>
                 <CfpOriginalText label="投稿要求" text={notice.requirements} />
               </section>
             )}
@@ -216,18 +196,15 @@ export function CfpNoticeCard({ notice }: { notice: CfpNoticeView }) {
         )}
       </div>
       {notice.rawDateText && (
-        <Collapsible className="border-t border-dashed py-4">
-          <CollapsibleTrigger className="group flex w-full cursor-pointer items-center justify-between gap-3 text-left text-xs font-medium leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <Collapsible {...stylex.props(styles.cfpNoticeCardCollapsible)}>
+          <CollapsibleTrigger
+            {...stylex.props(styles.cfpNoticeCardCollapsibleTrigger, stylex.defaultMarker())}
+          >
             查看原文时间说明
-            <ChevronDown
-              className="motion-chevron size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
-              aria-hidden="true"
-            />
+            <ChevronDown {...stylex.props(styles.cfpNoticeCardChevronDown)} aria-hidden="true" />
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <p className="pt-3 whitespace-pre-line text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
-              {notice.rawDateText}
-            </p>
+            <p {...stylex.props(styles.cfpNoticeCardP)}>{notice.rawDateText}</p>
           </CollapsibleContent>
         </Collapsible>
       )}
@@ -235,3 +212,336 @@ export function CfpNoticeCard({ notice }: { notice: CfpNoticeView }) {
     </article>
   );
 }
+
+const styles = stylex.create({
+  stateBadge: {
+    height: '1.5rem',
+    paddingInline: '0.625rem',
+    lineHeight: 1,
+  },
+  stateOpen: {
+    backgroundColor: colors.success,
+    color: colors.successForeground,
+  },
+  stateUpcoming: {
+    backgroundColor: colors.info,
+    color: colors.infoForeground,
+  },
+  stateClosed: {
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  stateHistorical: {
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  stateInvitationOnly: {
+    backgroundColor: colors.info,
+    color: colors.infoForeground,
+  },
+  stateUndated: {
+    backgroundColor: colors.warning,
+    color: colors.warningForeground,
+  },
+  stateUncertain: {
+    backgroundColor: colors.warning,
+    color: colors.warningForeground,
+  },
+  cfpSourceFooter: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: {
+      default: '0.75rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    borderTopStyle: 'dashed',
+    borderTopWidth: '1px',
+    paddingTop: '1rem',
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'center',
+    },
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'space-between',
+    },
+  },
+  cfpSourceFooterSpan: {
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    color: colors.mutedForeground,
+  },
+  cfpSourceFooterButton: {
+    height: '2.25rem',
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': 'auto',
+    },
+    flexShrink: 0,
+    borderRadius: '8px',
+  },
+  cfpSourceFooterExternalLink: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+  cfpTimeline: {
+    minWidth: '0px',
+    alignSelf: 'flex-start',
+    borderRadius: '12px',
+    backgroundColor: colors.muted,
+    padding: '1rem',
+  },
+  cfpTimelineH4: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    fontWeight: 700,
+  },
+  cfpTimelineCalendarDays: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+    color: colors.mutedForeground,
+  },
+  cfpTimelineDlItem: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+    },
+    borderColor: {
+      default: null,
+      ':not(:last-child)': `color-mix(in oklab, ${colors.border} 60%, transparent)`,
+    },
+  },
+  cfpTimelineDl: {
+    marginTop: '0.5rem',
+  },
+  cfpTimelineDiv: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0,1fr) 7.5rem',
+    alignItems: 'baseline',
+    columnGap: '0.75rem',
+    paddingBlock: '0.625rem',
+  },
+  cfpTimelineDd: {
+    margin: '0px',
+    fontSize: '0.875rem',
+    lineHeight: '1.25rem',
+    whiteSpace: 'nowrap',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  cfpTimelineDdPrimary: {
+    fontWeight: 700,
+    color: colors.foreground,
+  },
+  cfpTimelineDdNotPrimary: {
+    color: colors.mutedForeground,
+  },
+  cfpTimelineSpan: {
+    marginLeft: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+  },
+  cfpTimelineP: {
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.border} 60%, transparent)`,
+    paddingTop: '0.75rem',
+    fontSize: '11px',
+    lineHeight: '1.25rem',
+    overflowWrap: 'anywhere',
+    color: colors.mutedForeground,
+  },
+  cfpOriginalTextDiv: {
+    maxHeight: '18rem',
+    minWidth: '0px',
+    scrollbarWidth: 'thin',
+    scrollbarGutter: 'stable',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    borderRadius: '4px',
+    paddingRight: '0.75rem',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `inset 0 0 0 2px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+    },
+  },
+  cfpOriginalTextP: {
+    fontSize: '13.5px',
+    lineHeight: 1.8,
+    overflowWrap: 'anywhere',
+    whiteSpace: 'pre-wrap',
+    color: `color-mix(in oklab, ${colors.foreground} 90%, transparent)`,
+  },
+  cfpNotice: {
+    minWidth: '0px',
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingTop: '1.75rem',
+    paddingBottom: '2rem',
+  },
+  cfpNoticeCardHeaderItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  cfpNoticeCardDiv: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  cfpNoticeCardBadge: {
+    height: '1.5rem',
+    paddingInline: '0.625rem',
+    lineHeight: 1,
+  },
+  cfpNoticeCardSpan: {
+    width: '0.375rem',
+    height: '0.375rem',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: 'currentcolor',
+  },
+  cfpNoticeCardH3: {
+    fontSize: '19px',
+    lineHeight: 1.45,
+    fontWeight: 700,
+    overflowWrap: 'anywhere',
+    color: colors.foreground,
+  },
+  cfpNoticeCardDiv2: {
+    display: 'grid',
+    minWidth: '0px',
+    gap: '1.5rem',
+    paddingBlock: '1.5rem',
+  },
+  cfpNoticeCardDivOriginalText: {
+    gridTemplateColumns: {
+      default: null,
+      '@media (min-width: 96rem)': 'minmax(0,1fr) 14rem',
+    },
+    gap: {
+      default: '1.5rem',
+      '@media (min-width: 96rem)': '2rem',
+    },
+  },
+  cfpNoticeCardDiv3: {
+    minWidth: '0px',
+  },
+  cfpNoticeCardDivOriginalText2: {
+    gridColumnStart: {
+      default: null,
+      '@media (min-width: 96rem)': 2,
+    },
+    gridRowStart: {
+      default: null,
+      '@media (min-width: 96rem)': 1,
+    },
+  },
+  cfpNoticeCardDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '1.5rem',
+    },
+  },
+  cfpNoticeCardDiv4: {
+    minWidth: '0px',
+    gridColumnStart: {
+      default: null,
+      '@media (min-width: 96rem)': 1,
+    },
+    gridRowStart: {
+      default: null,
+      '@media (min-width: 96rem)': 1,
+    },
+  },
+  cfpScope: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+  },
+  cfpNoticeCardH4: {
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    color: colors.mutedForeground,
+  },
+  cfpRequirementsScope: {
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingTop: '1.5rem',
+  },
+  cfpNoticeCardCollapsible: {
+    borderTopStyle: 'dashed',
+    borderTopWidth: '1px',
+    paddingBlock: '1rem',
+  },
+  cfpNoticeCardCollapsibleTrigger: {
+    display: 'flex',
+    width: '100%',
+    cursor: 'pointer',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    textAlign: 'left',
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    fontWeight: 500,
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  cfpNoticeCardChevronDown: {
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    color: colors.mutedForeground,
+    transitionProperty: 'transform, translate, scale, rotate',
+    transitionTimingFunction: 'cubic-bezier(0.215, 0.61, 0.355, 1)',
+    transitionDuration: '350ms',
+    rotate: {
+      default: null,
+      [stylex.when.ancestor('[data-state="open"]')]: '180deg',
+    },
+  },
+  cfpNoticeCardP: {
+    paddingTop: '0.75rem',
+    fontSize: '0.875rem',
+    lineHeight: '1.5rem',
+    overflowWrap: 'anywhere',
+    whiteSpace: 'pre-line',
+    color: colors.mutedForeground,
+  },
+});
+
+const STATE_STYLES: Readonly<Record<CfpState, stylex.StyleXStyles>> = {
+  open: styles.stateOpen,
+  upcoming: styles.stateUpcoming,
+  closed: styles.stateClosed,
+  historical: styles.stateHistorical,
+  invitation_only: styles.stateInvitationOnly,
+  undated: styles.stateUndated,
+  uncertain: styles.stateUncertain,
+};

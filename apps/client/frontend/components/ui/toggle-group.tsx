@@ -6,7 +6,8 @@ import * as React from 'react';
 import * as ToggleGroupPrimitive from '@animate-ui/react/primitives/radix-ui/toggle-group';
 
 import { PresenceBoundary } from '@/components/ui/motion';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /**
  * Render the segmented control root.
@@ -15,13 +16,13 @@ import { cn } from '@/lib/utils';
  * @returns Segmented control root.
  */
 function ToggleGroup({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof ToggleGroupPrimitive.Root>) {
+}: React.ComponentProps<typeof ToggleGroupPrimitive.Root> & { xstyle?: stylex.StyleXStyles }) {
   return (
     <ToggleGroupPrimitive.Root
       data-slot="toggle-group"
-      className={cn('flex w-fit items-center rounded-lg border p-0.5', className)}
+      {...stylex.props(styles.toggleGroup, xstyle)}
       {...props}
     />
   );
@@ -34,17 +35,16 @@ function ToggleGroup({
  * @returns Segment button.
  */
 function ToggleGroupItem({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof ToggleGroupPrimitive.Item>) {
+}: Omit<React.ComponentProps<typeof ToggleGroupPrimitive.Item>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <PresenceBoundary>
       <ToggleGroupPrimitive.Item
         data-slot="toggle-group-item"
-        className={cn(
-          'motion-control flex h-10 items-center gap-1 rounded-md px-3 text-xs text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-foreground data-[state=on]:text-background data-[state=on]:hover:text-background md:h-7 md:px-2.5',
-          className,
-        )}
+        {...stylex.props(styles.toggleGroupItem, xstyle)}
         {...props}
       />
     </PresenceBoundary>
@@ -52,3 +52,56 @@ function ToggleGroupItem({
 }
 
 export { ToggleGroup, ToggleGroupItem };
+
+const styles = stylex.create({
+  toggleGroup: {
+    display: 'flex',
+    width: 'fit-content',
+    alignItems: 'center',
+    borderRadius: '8px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    padding: '0.125rem',
+  },
+  toggleGroupItem: {
+    display: 'flex',
+    height: {
+      default: '2.5rem',
+      '@media (min-width: 48rem)': '1.75rem',
+    },
+    alignItems: 'center',
+    gap: '0.25rem',
+    borderRadius: '6px',
+    paddingInline: {
+      default: '0.75rem',
+      '@media (min-width: 48rem)': '0.625rem',
+    },
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: {
+      default: colors.mutedForeground,
+      ':is([data-state="on"])': colors.background,
+      ':hover': {
+        default: null,
+        ':is([data-state="on"])': null,
+        '@media (hover: hover)': {
+          default: colors.foreground,
+          ':is([data-state="on"])': colors.background,
+        },
+      },
+    },
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+    backgroundColor: {
+      default: null,
+      ':is([data-state="on"])': colors.foreground,
+    },
+  },
+});

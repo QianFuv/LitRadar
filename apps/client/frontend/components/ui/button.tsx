@@ -8,12 +8,16 @@ import {
   type ButtonProps as PressButtonProps,
 } from '@animate-ui/react/primitives/buttons/button';
 import { transition } from '@animate-ui/react/utils/motion';
-import { cva, type VariantProps } from 'class-variance-authority';
 
 import { IconTriggerProvider, useIconTrigger } from '@/components/ui/animated-icons';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
-type ButtonSize = NonNullable<VariantProps<typeof buttonVariants>['size']>;
+/** Visual treatment of a shared button. */
+type ButtonVariant = keyof typeof VARIANT_STYLES;
+
+/** Size of a shared button. */
+type ButtonSize = keyof typeof SIZE_STYLES;
 
 /**
  * Press depth per button size: Animate UI's 0.97 on regular buttons, deeper on small ones so
@@ -52,40 +56,17 @@ function getButtonPressMotion(hasPress: boolean, size: ButtonSize | null = 'defa
   } as const;
 }
 
-/** Build the supported visual and size variants for shared buttons. */
-const buttonVariants = cva(
-  "motion-control inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-[background-color,border-color,color,box-shadow,opacity] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
-  {
-    variants: {
-      variant: {
-        default:
-          'bg-primary text-primary-foreground hover:bg-primary-hover active:bg-primary-pressed',
-        destructive:
-          'bg-destructive text-destructive-foreground hover:bg-destructive-hover active:bg-destructive-hover focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40',
-        outline:
-          'bg-card shadow-vercel-ring hover:bg-accent hover:text-accent-foreground active:bg-accent-pressed',
-        secondary:
-          'bg-secondary text-secondary-foreground hover:bg-accent-pressed active:bg-accent-pressed',
-        ghost: 'hover:bg-accent hover:text-accent-foreground active:bg-accent-pressed',
-        link: 'text-primary-text underline-offset-4 hover:underline active:text-primary-text/80',
-      },
-      size: {
-        default: 'h-9 px-4 py-2 has-[>svg]:px-3',
-        xs: "h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: 'h-8 gap-1.5 px-3 has-[>svg]:px-2.5',
-        lg: 'h-10 px-6 has-[>svg]:px-4',
-        icon: 'size-9',
-        'icon-xs': "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
-        'icon-sm': 'size-8',
-        'icon-lg': 'size-10',
-      },
-    },
-    defaultVariants: {
-      variant: 'default',
-      size: 'default',
-    },
-  },
-);
+/**
+ * Build the styles of a shared button for one variant and size, so other controls can look like
+ * buttons.
+ *
+ * @param variant - Visual treatment.
+ * @param size - Control size.
+ * @returns Styles to pass to `stylex.props` or an `xstyle` prop.
+ */
+function buttonStyles(variant: ButtonVariant = 'default', size: ButtonSize = 'default') {
+  return [styles.base, VARIANT_STYLES[variant], SIZE_STYLES[size]];
+}
 
 /**
  * Render a shared button or pass its behavior to one child element.
@@ -95,18 +76,20 @@ const buttonVariants = cva(
  * animated icons while hovered or pressed.
  */
 function Button({
-  className,
+  xstyle,
   variant = 'default',
   size = 'default',
   asChild = false,
   static: isStatic = false,
   disabled,
   ...props
-}: React.ComponentProps<'button'> &
-  VariantProps<typeof buttonVariants> & {
-    asChild?: boolean;
-    static?: boolean;
-  }) {
+}: Omit<React.ComponentProps<'button'>, 'className'> & {
+  variant?: ButtonVariant | null;
+  size?: ButtonSize | null;
+  asChild?: boolean;
+  static?: boolean;
+  xstyle?: stylex.StyleXStyles;
+}) {
   const hasPress = !isStatic && !disabled && variant !== 'link';
   const { isTriggered, triggerHandlers } = useIconTrigger(props);
 
@@ -117,7 +100,7 @@ function Button({
     ...getButtonPressMotion(hasPress, size),
     'data-variant': variant,
     'data-size': size,
-    className: cn(buttonVariants({ variant, size }), className),
+    ...stylex.props(buttonStyles(variant ?? 'default', size ?? 'default'), xstyle),
     disabled,
   } as PressButtonProps;
 
@@ -128,4 +111,223 @@ function Button({
   );
 }
 
-export { Button, buttonVariants, getButtonPressMotion };
+export { Button, buttonStyles, getButtonPressMotion, type ButtonSize, type ButtonVariant };
+
+const styles = stylex.create({
+  base: {
+    display: 'inline-flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '0.5rem',
+    borderRadius: '8px',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+    transitionProperty: 'background-color, border-color, color, box-shadow, opacity',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': {
+        default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+        ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}`,
+      },
+    },
+    pointerEvents: {
+      default: null,
+      ':disabled': 'none',
+    },
+    opacity: {
+      default: null,
+      ':disabled': '50%',
+    },
+    borderColor: {
+      default: null,
+      ':is([aria-invalid="true"])': colors.destructive,
+    },
+  },
+  variantDefault: {
+    backgroundColor: {
+      default: colors.primary,
+      ':active': {
+        default: colors.primaryPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.primaryPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.primaryHover,
+      },
+    },
+    color: colors.primaryForeground,
+  },
+  variantDestructive: {
+    backgroundColor: {
+      default: colors.destructive,
+      ':active': colors.destructiveHover,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructiveHover,
+      },
+    },
+    color: colors.destructiveForeground,
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 3px ${colors.destructiveRing}`,
+    },
+  },
+  variantOutline: {
+    backgroundColor: {
+      default: colors.card,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    boxShadow: {
+      default: shadows.vercelRing,
+      ':focus-visible': {
+        default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), ${shadows.vercelRing}`,
+        ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}, ${shadows.vercelRing}`,
+      },
+    },
+    color: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  variantSecondary: {
+    backgroundColor: {
+      default: colors.secondary,
+      ':active': colors.accentPressed,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentPressed,
+      },
+    },
+    color: colors.secondaryForeground,
+  },
+  variantGhost: {
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    color: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  variantLink: {
+    color: {
+      default: colors.primaryText,
+      ':active': `color-mix(in oklab, ${colors.primaryText} 80%, transparent)`,
+    },
+    textUnderlineOffset: '4px',
+    textDecorationLine: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': 'underline',
+      },
+    },
+  },
+  sizeDefault: {
+    height: '2.25rem',
+    paddingInline: {
+      default: '1rem',
+      ':has(> svg)': '0.75rem',
+    },
+    paddingBlock: '0.5rem',
+  },
+  sizeXs: {
+    height: '1.5rem',
+    gap: '0.25rem',
+    borderRadius: '6px',
+    paddingInline: {
+      default: '0.5rem',
+      ':has(> svg)': '0.375rem',
+    },
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+  },
+  sizeSm: {
+    height: '2rem',
+    gap: '0.375rem',
+    paddingInline: {
+      default: '0.75rem',
+      ':has(> svg)': '0.625rem',
+    },
+  },
+  sizeLg: {
+    height: '2.5rem',
+    paddingInline: {
+      default: '1.5rem',
+      ':has(> svg)': '1rem',
+    },
+  },
+  sizeIcon: {
+    width: '2.25rem',
+    height: '2.25rem',
+  },
+  sizeIconXs: {
+    width: '1.5rem',
+    height: '1.5rem',
+    borderRadius: '6px',
+  },
+  sizeIconSm: {
+    width: '2rem',
+    height: '2rem',
+  },
+  sizeIconLg: {
+    width: '2.5rem',
+    height: '2.5rem',
+  },
+});
+
+const VARIANT_STYLES = {
+  default: styles.variantDefault,
+  destructive: styles.variantDestructive,
+  outline: styles.variantOutline,
+  secondary: styles.variantSecondary,
+  ghost: styles.variantGhost,
+  link: styles.variantLink,
+};
+
+const SIZE_STYLES = {
+  default: styles.sizeDefault,
+  xs: styles.sizeXs,
+  sm: styles.sizeSm,
+  lg: styles.sizeLg,
+  icon: styles.sizeIcon,
+  'icon-xs': styles.sizeIconXs,
+  'icon-sm': styles.sizeIconSm,
+  'icon-lg': styles.sizeIconLg,
+};

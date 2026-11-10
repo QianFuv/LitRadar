@@ -26,6 +26,8 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { getAccountErrorMessage, getOidcErrorMessage } from '@/lib/auth-error';
 import { CLIENT_PLATFORM } from '@/lib/platform';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /** Successful `oidc_link` query result written by the link callback. */
 export const OIDC_LINK_SUCCESS = 'linked';
@@ -42,15 +44,13 @@ const DEFAULT_OIDC_DISPLAY_NAME = '单点登录';
 export function AccountCard({ user }: { user: AuthUser }) {
   return (
     <SettingsSection aria-label="账号信息">
-      <SettingsGroup className="flex items-center gap-4 px-4 py-5 sm:px-5">
-        <UserAvatar username={user.username} className="size-14 text-xl" />
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">用户名</p>
-          <p className="truncate text-lg leading-7 font-bold">{user.username}</p>
-          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-            <span className="truncate text-xs text-muted-foreground">
-              {user.email ?? '未设置邮箱'}
-            </span>
+      <SettingsGroup xstyle={styles.accountCardSettingsGroup}>
+        <UserAvatar username={user.username} xstyle={styles.accountCardUserAvatar} />
+        <div {...stylex.props(styles.accountCardDiv)}>
+          <p {...stylex.props(styles.accountCardP)}>用户名</p>
+          <p {...stylex.props(styles.accountCardP2)}>{user.username}</p>
+          <div {...stylex.props(styles.accountCardDiv2)}>
+            <span {...stylex.props(styles.accountCardSpan)}>{user.email ?? '未设置邮箱'}</span>
             {user.auth_kind === 'oidc' ? (
               <StatusPill tone="info">单点登录账号</StatusPill>
             ) : (
@@ -173,7 +173,7 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
                 onChange={(event) => setEmailDraft(event.target.value)}
                 placeholder="未设置"
                 aria-invalid={emailMutation.isError}
-                className="sm:w-64"
+                xstyle={styles.accountSignInCardInput}
               />
               <Button
                 type="submit"
@@ -186,7 +186,7 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
           </form>
         ) : (
           <SettingsRow title="邮箱" description={`由 ${displayName} 管理，无法在此修改`}>
-            <span className="text-sm">{user.email ?? '未设置'}</span>
+            <span {...stylex.props(styles.accountSignInCardSpan)}>{user.email ?? '未设置'}</span>
           </SettingsRow>
         )}
         <SettingsRow
@@ -228,14 +228,18 @@ export function AccountSignInCard({ oidcLinkResult }: { oidcLinkResult: string |
               </Button>
             ))}
         </SettingsRow>
-        <div className="min-h-5 bg-muted/40 px-4 py-3 text-sm sm:px-5">
+        <div {...stylex.props(styles.accountSignInCardDiv)}>
           <MotionPresence>
             {visibleFeedback && (
               <MotionParagraph
                 key={visibleFeedback.message}
                 data-motion-feedback="account-sign-in"
                 role={visibleFeedback.isError ? 'alert' : 'status'}
-                className={visibleFeedback.isError ? 'text-destructive' : 'text-muted-foreground'}
+                {...stylex.props(
+                  visibleFeedback.isError
+                    ? styles.accountSignInCardMotionParagraphError
+                    : styles.accountSignInCardMotionParagraphNotError,
+                )}
                 initial="hidden"
                 animate="visible"
                 exit="exit"
@@ -285,3 +289,81 @@ function describeOidcRow(user: AuthUser, isOidcEnabled: boolean): string {
   }
   return isOidcEnabled ? '绑定后可使用单点登录' : '服务器尚未启用单点登录';
 }
+
+const styles = stylex.create({
+  accountCardSettingsGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1.25rem',
+  },
+  accountCardUserAvatar: {
+    width: '3.5rem',
+    height: '3.5rem',
+    fontSize: '1.25rem',
+    lineHeight: 1.4,
+  },
+  accountCardDiv: {
+    minWidth: '0px',
+  },
+  accountCardP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  accountCardP2: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '1.125rem',
+    lineHeight: '1.75rem',
+    fontWeight: 700,
+  },
+  accountCardDiv2: {
+    marginTop: '0.25rem',
+    display: 'flex',
+    minWidth: '0px',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  accountCardSpan: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  accountSignInCardInput: {
+    width: {
+      default: null,
+      '@media (min-width: 40rem)': '16rem',
+    },
+  },
+  accountSignInCardSpan: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  accountSignInCardDiv: {
+    minHeight: '1.25rem',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 40%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  accountSignInCardMotionParagraphError: {
+    color: colors.destructive,
+  },
+  accountSignInCardMotionParagraphNotError: {
+    color: colors.mutedForeground,
+  },
+});

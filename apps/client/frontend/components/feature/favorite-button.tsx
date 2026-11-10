@@ -21,8 +21,9 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RevealItem } from '@/components/ui/reveal';
 import { readFreshFavoriteCheck } from '@/components/feature/use-favorite-checks';
-import { cn } from '@/lib/utils';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 /**
  * Render per-folder favorite membership controls for an authenticated user.
@@ -235,36 +236,39 @@ function renderFavoriteButton(state: FavoriteButtonViewState) {
             variant="outline"
             size="sm"
             static
-            className={cn(
-              'size-11 p-0 md:h-10 md:w-auto md:px-3',
-              isFav && 'text-warning-foreground hover:text-warning-foreground',
-            )}
+            xstyle={[
+              styles.renderFavoriteButtonButton,
+              isFav && styles.renderFavoriteButtonButtonFav,
+            ]}
             aria-label={favoriteLabel}
             title={favoriteLabel}
             onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}
           >
             <span
               data-favorite-state={isFavoriteUnknown ? 'unknown' : isFav ? 'active' : 'inactive'}
-              className="flex items-center gap-1"
+              {...stylex.props(styles.renderFavoriteButtonSpan)}
               aria-hidden="true"
             >
               <Star
-                className={cn('motion-control size-4 transition-[fill]', isFav && 'fill-current')}
+                {...stylex.props(
+                  styles.renderFavoriteButtonStar,
+                  isFav && styles.renderFavoriteButtonStarFav,
+                )}
               />
-              <span className="hidden md:grid">
-                <span className="invisible col-start-1 row-start-1">已收藏</span>
-                <span className="col-start-1 row-start-1">{favoriteLabel}</span>
+              <span {...stylex.props(styles.renderFavoriteButtonSpan2)}>
+                <span {...stylex.props(styles.renderFavoriteButtonSpan3)}>已收藏</span>
+                <span {...stylex.props(styles.renderFavoriteButtonSpan4)}>{favoriteLabel}</span>
               </span>
             </span>
           </Button>
         </PopoverTrigger>
         <PopoverContent
-          className="w-56 rounded-xl border-0 p-2 shadow-vercel-card"
+          xstyle={styles.renderFavoriteButtonPopoverContent}
           align="start"
           onClick={(event: MouseEvent<HTMLDivElement>) => event.stopPropagation()}
         >
-          <div className="space-y-1">
-            <div className="px-2 py-1 text-xs text-muted-foreground font-medium">选择收藏夹</div>
+          <div {...stylex.props(styles.renderFavoriteButtonDiv)}>
+            <div {...stylex.props(styles.renderFavoriteButtonDiv2)}>选择收藏夹</div>
             <FavoriteLookup state={state} />
           </div>
         </PopoverContent>
@@ -305,7 +309,7 @@ function renderFavoriteToggle(state: FavoriteButtonViewState, folderId: number) 
   const label = isFavoriteUnknown ? '收藏状态未知' : isInFolder ? '已收藏' : '收藏';
   const failure = addMut.error ?? removeMut.error;
   return (
-    <span className="inline-flex items-center gap-2">
+    <span {...stylex.props(styles.renderFavoriteToggleSpan)}>
       <Button
         ref={triggerRef}
         variant="outline"
@@ -314,10 +318,10 @@ function renderFavoriteToggle(state: FavoriteButtonViewState, folderId: number) 
         aria-pressed={isInFolder}
         aria-label={label}
         title={isInFolder ? '取消收藏' : '收藏到此收藏夹'}
-        className={cn(
-          'size-11 p-0 md:h-10 md:w-auto md:px-3',
-          isInFolder && 'text-warning-foreground hover:text-warning-foreground',
-        )}
+        xstyle={[
+          styles.renderFavoriteButtonButton,
+          isInFolder && styles.renderFavoriteButtonButtonFav,
+        ]}
         disabled={addMut.isPending || removeMut.isPending || isFavoriteUnknown}
         onClick={(event: MouseEvent<HTMLButtonElement>) => {
           event.stopPropagation();
@@ -332,20 +336,23 @@ function renderFavoriteToggle(state: FavoriteButtonViewState, folderId: number) 
       >
         <span
           data-favorite-state={isFavoriteUnknown ? 'unknown' : isInFolder ? 'active' : 'inactive'}
-          className="flex items-center gap-1"
+          {...stylex.props(styles.renderFavoriteButtonSpan)}
           aria-hidden="true"
         >
           <Star
-            className={cn('motion-control size-4 transition-[fill]', isInFolder && 'fill-current')}
+            {...stylex.props(
+              styles.renderFavoriteButtonStar,
+              isInFolder && styles.renderFavoriteButtonStarFav,
+            )}
           />
-          <span className="hidden md:grid">
-            <span className="invisible col-start-1 row-start-1">已收藏</span>
-            <span className="col-start-1 row-start-1">{label}</span>
+          <span {...stylex.props(styles.renderFavoriteButtonSpan2)}>
+            <span {...stylex.props(styles.renderFavoriteButtonSpan3)}>已收藏</span>
+            <span {...stylex.props(styles.renderFavoriteButtonSpan4)}>{label}</span>
           </span>
         </span>
       </Button>
       {failure && (
-        <span role="alert" className="text-xs text-destructive">
+        <span role="alert" {...stylex.props(styles.renderFavoriteToggleSpan2)}>
           {failure instanceof Error ? failure.message : '收藏操作失败'}
         </span>
       )}
@@ -370,11 +377,11 @@ function renderFavoriteFolderButton(state: FavoriteButtonViewState, folder: Fold
       key={folder.id}
       type="button"
       aria-pressed={isInFolder}
-      className={cn(
-        'motion-control flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 md:min-h-10',
+      {...stylex.props(
+        styles.renderFavoriteFolderButtonButton,
         isInFolder
-          ? 'bg-warning text-warning-foreground hover:bg-warning/70 active:bg-warning/50'
-          : 'hover:bg-accent active:bg-accent-pressed',
+          ? styles.renderFavoriteFolderButtonButtonInFolder
+          : styles.renderFavoriteFolderButtonButtonNotInFolder,
       )}
       disabled={addMut.isPending || removeMut.isPending || isCheckingFavorite || isFavoriteUnknown}
       onClick={() => {
@@ -387,14 +394,14 @@ function renderFavoriteFolderButton(state: FavoriteButtonViewState, folder: Fold
       }}
     >
       <Star
-        className={cn(
-          'motion-control size-4 shrink-0 transition-[fill]',
-          isInFolder && 'fill-current',
+        {...stylex.props(
+          styles.renderFavoriteFolderButtonStar,
+          isInFolder && styles.renderFavoriteButtonStarFav,
         )}
         strokeWidth={1.5}
         aria-hidden="true"
       />
-      <span className="truncate">{folder.name}</span>
+      <span {...stylex.props(styles.renderFavoriteFolderButtonSpan)}>{folder.name}</span>
     </button>
   );
 }
@@ -406,9 +413,9 @@ function FavoriteLookup({ state }: { state: FavoriteButtonViewState }) {
   return (
     <RevealItem
       isReady={Boolean(lookupError) || !isLookupPending}
-      className="space-y-1"
+      xstyle={styles.renderFavoriteButtonDiv}
       placeholder={
-        <div role="status" className="px-2 py-2 text-xs text-muted-foreground">
+        <div role="status" {...stylex.props(styles.favoriteLookupDiv)}>
           <LoadingText text="加载中…" />
         </div>
       }
@@ -423,9 +430,12 @@ function FavoriteLookupContent({ state }: { state: FavoriteButtonViewState }) {
   const { refetchChecks, folders, refetchFolders, lookupError } = state;
   if (lookupError)
     return (
-      <div role="alert" className="space-y-2 px-2 py-2 text-xs text-destructive">
-        <p>{lookupError instanceof Error ? lookupError.message : '无法读取收藏状态'}</p>
+      <div role="alert" {...stylex.props(styles.favoriteLookupContentDiv)}>
+        <p {...stylex.props(styles.favoriteLookupContentDivItem)}>
+          {lookupError instanceof Error ? lookupError.message : '无法读取收藏状态'}
+        </p>
         <Button
+          xstyle={styles.favoriteLookupContentDivItem}
           type="button"
           variant="outline"
           size="sm"
@@ -439,9 +449,7 @@ function FavoriteLookupContent({ state }: { state: FavoriteButtonViewState }) {
     );
   if (folders.length === 0)
     return (
-      <div className="px-2 py-2 text-xs text-muted-foreground">
-        暂无收藏夹，请先在「我的收藏」中创建
-      </div>
+      <div {...stylex.props(styles.favoriteLookupDiv)}>暂无收藏夹，请先在「我的收藏」中创建</div>
     );
   return folders.map((folder) => renderFavoriteFolderButton(state, folder));
 }
@@ -455,3 +463,203 @@ function getResolvedFavoriteFolderIds(
 ): number[] {
   return checks?.map((item) => item.folder_id) ?? optimistic ?? cached ?? initial;
 }
+
+const styles = stylex.create({
+  renderFavoriteButtonButton: {
+    backgroundColor: {
+      default: 'transparent',
+      ':hover': colors.accent,
+    },
+    boxShadow: {
+      default: 'none',
+      ':focus-visible': {
+        default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+        ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}`,
+      },
+    },
+    width: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': 'auto',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2.5rem',
+    },
+    padding: '0px',
+    paddingInline: {
+      default: null,
+      ':has( > svg)': '0.625rem',
+      '@media (min-width: 48rem)': {
+        default: '0.75rem',
+        ':has( > svg)': '0.625rem',
+      },
+    },
+  },
+  renderFavoriteButtonButtonFav: {
+    color: {
+      default: colors.warningForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.warningForeground,
+      },
+    },
+  },
+  renderFavoriteButtonSpan: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.25rem',
+  },
+  renderFavoriteButtonStar: {
+    width: '1rem',
+    height: '1rem',
+    transitionProperty: 'fill',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+  },
+  renderFavoriteButtonStarFav: {
+    fill: 'currentcolor',
+  },
+  renderFavoriteButtonSpan2: {
+    display: {
+      default: 'none',
+      '@media (min-width: 48rem)': 'grid',
+    },
+  },
+  renderFavoriteButtonSpan3: {
+    visibility: 'hidden',
+    gridColumnStart: 1,
+    gridRowStart: 1,
+  },
+  renderFavoriteButtonSpan4: {
+    gridColumnStart: 1,
+    gridRowStart: 1,
+  },
+  renderFavoriteButtonPopoverContent: {
+    width: '14rem',
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '0px',
+    padding: '0.5rem',
+    boxShadow: shadows.vercelCard,
+  },
+  renderFavoriteButtonDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.25rem',
+  },
+  renderFavoriteButtonDiv2: {
+    paddingInline: '0.5rem',
+    paddingBlock: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 500,
+    color: colors.mutedForeground,
+  },
+  renderFavoriteToggleSpan: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  renderFavoriteToggleSpan2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.destructive,
+  },
+  renderFavoriteFolderButtonButton: {
+    display: 'flex',
+    minHeight: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2.5rem',
+    },
+    width: '100%',
+    alignItems: 'center',
+    gap: '0.5rem',
+    borderRadius: '4px',
+    paddingInline: '0.5rem',
+    paddingBlock: '0.375rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    transitionProperty: 'background-color, color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+    },
+    pointerEvents: {
+      default: null,
+      ':disabled': 'none',
+    },
+    opacity: {
+      default: null,
+      ':disabled': '50%',
+    },
+  },
+  renderFavoriteFolderButtonButtonInFolder: {
+    backgroundColor: {
+      default: colors.warning,
+      ':active': {
+        default: `color-mix(in oklab, ${colors.warning} 50%, transparent)`,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': `color-mix(in oklab, ${colors.warning} 50%, transparent)`,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.warning} 70%, transparent)`,
+      },
+    },
+    color: colors.warningForeground,
+  },
+  renderFavoriteFolderButtonButtonNotInFolder: {
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+  },
+  renderFavoriteFolderButtonStar: {
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    transitionProperty: 'fill',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+  },
+  renderFavoriteFolderButtonSpan: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  favoriteLookupDiv: {
+    paddingInline: '0.5rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  favoriteLookupContentDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  favoriteLookupContentDiv: {
+    paddingInline: '0.5rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.destructive,
+  },
+});

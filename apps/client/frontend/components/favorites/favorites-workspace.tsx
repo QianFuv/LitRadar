@@ -6,6 +6,7 @@ import { useFavoriteKind } from '@/components/favorites/favorite-kind-switch';
 import { FavoritesPageContent } from '@/components/favorites/favorites-page-content';
 import { RelationGraphFavoritesContent } from '@/components/favorites/relation-graph-favorites-content';
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
+import * as stylex from '@stylexjs/stylex';
 
 /**
  * Render the favorites kind chosen in the URL, swapping kinds like tab panels.
@@ -21,7 +22,7 @@ export function FavoritesWorkspace({ userId }: { userId: number }) {
       <MotionDiv
         key={kind}
         data-favorite-kind={kind}
-        className="h-full min-h-0"
+        {...stylex.props(styles.favoritesWorkspaceMotionDiv)}
         variants={PANEL_VARIANTS}
         initial="hidden"
         animate="visible"
@@ -36,3 +37,10 @@ export function FavoritesWorkspace({ userId }: { userId: number }) {
     </MotionPresence>
   );
 }
+
+const styles = stylex.create({
+  favoritesWorkspaceMotionDiv: {
+    height: '100%',
+    minHeight: '0px',
+  },
+});

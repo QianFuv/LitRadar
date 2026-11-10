@@ -12,10 +12,11 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import tailwindcss from '@tailwindcss/vite';
 import babel from '@rolldown/plugin-babel';
+import stylex from '@stylexjs/unplugin';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import browserslist from 'browserslist';
+import { browserslistToTargets } from 'lightningcss';
 import { defineConfig, type ProxyOptions } from 'vite-plus';
 import { playwright } from 'vite-plus/test/browser-playwright';
 
@@ -28,7 +29,8 @@ const IS_GITHUB_ACTIONS = process.env.GITHUB_ACTIONS === 'true';
 const NATIVE_MODE = 'native';
 
 /**
- * Compatibility baseline: every browser release since January 1 of the previous year.
+ * Compatibility baseline: every browser release since January 1 of the previous year. It sets
+ * Vite's script and CSS targets and the targets StyleX passes to Lightning CSS.
  */
 const BROWSERSLIST_QUERY = `since ${new Date().getFullYear() - 1}-01-01`;
 
@@ -171,7 +173,16 @@ const OUTPUT_PATTERNS = [
 ];
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss()],
+  plugins: [
+    stylex.vite({
+      aliases: { '@/*': [path.join(PROJECT_ROOT, '*')] },
+      unstable_moduleResolution: { type: 'commonJS', rootDir: PROJECT_ROOT },
+      styleResolution: 'application-order',
+      lightningcssOptions: { targets: browserslistToTargets(browserslist(BROWSERSLIST_QUERY)) },
+    }),
+    react(),
+    babel({ presets: [reactCompilerPreset()] }),
+  ],
   resolve: {
     alias: [
       ...(mode === NATIVE_MODE

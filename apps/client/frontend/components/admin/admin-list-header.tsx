@@ -3,6 +3,8 @@
  */
 
 import type { ReactNode } from 'react';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /**
  * Render a list summary on the leading edge and optional actions on the trailing edge.
@@ -18,9 +20,31 @@ export function AdminListHeader({
   summary: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <p className="text-xs text-muted-foreground tabular-nums">{summary}</p>
-      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+    <div {...stylex.props(styles.adminListHeaderDiv)}>
+      <p {...stylex.props(styles.adminListHeaderP)}>{summary}</p>
+      {children && <div {...stylex.props(styles.adminListHeaderDiv2)}>{children}</div>}
     </div>
   );
 }
+
+const styles = stylex.create({
+  adminListHeaderDiv: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+  },
+  adminListHeaderP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  adminListHeaderDiv2: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+});

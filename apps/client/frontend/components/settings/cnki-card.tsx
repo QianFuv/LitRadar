@@ -35,7 +35,8 @@ import type {
   SettingsCopyFeedback,
   SettingsCopyScope,
 } from '@/components/settings/use-settings-copy';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type CnkiMessageTone = 'error' | 'success' | 'warning';
 
@@ -123,19 +124,19 @@ function isQrImageSource(value: string): boolean {
 }
 
 /**
- * Render a CNKI status message style from its tone.
+ * Pick the styles of a CNKI status message from its tone.
  *
  * @param tone - Message tone.
- * @returns CSS class name.
+ * @returns Message styles.
  */
-function getCnkiMessageClassName(tone: CnkiMessageTone): string {
+function getCnkiMessageStyle(tone: CnkiMessageTone) {
   if (tone === 'error') {
-    return 'text-sm text-destructive';
+    return styles.cnkiMessageError;
   }
   if (tone === 'warning') {
-    return 'text-sm text-warning-foreground';
+    return styles.cnkiMessageWarning;
   }
-  return 'text-sm text-muted-foreground';
+  return styles.cnkiMessageInfo;
 }
 
 /**
@@ -196,20 +197,22 @@ export function CnkiSettingsCard(props: {
   return (
     <SettingsSection aria-label="浙江图书馆 CNKI">
       <SettingsGroup>
-        <div className="flex items-start gap-4 px-4 py-5 sm:items-center sm:px-5">
+        <div {...stylex.props(styles.cnkiSettingsCardDiv)}>
           <span
             aria-hidden="true"
-            className={cn(
-              'flex size-12 shrink-0 items-center justify-center rounded-xl',
+            {...stylex.props(
+              styles.cnkiSettingsCardSpan,
               state.cnkiSession?.status === 'active'
-                ? 'bg-success text-success-foreground'
-                : 'bg-muted text-muted-foreground',
+                ? styles.cnkiSettingsCardSpanActive
+                : styles.cnkiSettingsCardSpanNotActive,
             )}
           >
-            <ShieldCheck className="size-6" />
+            <ShieldCheck {...stylex.props(styles.cnkiSettingsCardShieldCheck)} />
           </span>
-          <div className="min-w-0 flex-1">
-            <SettingsSectionTitle className="text-base">浙江图书馆 CNKI</SettingsSectionTitle>
+          <div {...stylex.props(styles.cnkiSettingsCardDiv2)}>
+            <SettingsSectionTitle xstyle={styles.cnkiSettingsCardSettingsSectionTitle}>
+              浙江图书馆 CNKI
+            </SettingsSectionTitle>
             <SettingsSectionDescription>用于中文数据库文章全文获取</SettingsSectionDescription>
           </div>
           {renderCnkiStatus(state)}
@@ -217,9 +220,9 @@ export function CnkiSettingsCard(props: {
         {renderCnkiSessionMetadata(state)}
         {renderCnkiLoginChallenge(state)}
         {(isCnkiSessionError || cnkiMessage) && (
-          <div className="space-y-1 px-4 py-3 sm:px-5">
+          <div {...stylex.props(styles.cnkiSettingsCardDiv3)}>
             {isCnkiSessionError && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" {...stylex.props(styles.cnkiSettingsCardP)}>
                 {cnkiSessionError instanceof Error ? cnkiSessionError.message : '获取知网状态失败'}
               </p>
             )}
@@ -229,7 +232,7 @@ export function CnkiSettingsCard(props: {
                   key="cnki-message"
                   data-motion-feedback="cnki"
                   role={cnkiMessage.tone === 'error' ? 'alert' : 'status'}
-                  className={getCnkiMessageClassName(cnkiMessage.tone)}
+                  {...stylex.props(getCnkiMessageStyle(cnkiMessage.tone))}
                   initial="hidden"
                   animate="visible"
                   exit="exit"
@@ -368,18 +371,37 @@ function renderCnkiSessionMetadata(state: Pick<CnkiViewState, 'cnkiSession'>) {
   const { cnkiSession } = state;
 
   return (
-    <dl className="grid divide-y text-sm sm:grid-cols-[1fr_1fr_1.4fr] sm:divide-x sm:divide-y-0">
-      <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">
-        <dt className="text-xs text-muted-foreground">有效期</dt>
-        <dd className="tabular-nums sm:mt-1">{formatOptionalTime(cnkiSession?.expires_at)}</dd>
+    <dl {...stylex.props(styles.renderCnkiSessionMetadataDl)}>
+      <div
+        {...stylex.props(
+          styles.renderCnkiSessionMetadataDlItem,
+          styles.renderCnkiSessionMetadataDiv,
+        )}
+      >
+        <dt {...stylex.props(styles.renderCnkiSessionMetadataDt)}>有效期</dt>
+        <dd {...stylex.props(styles.renderCnkiSessionMetadataDd)}>
+          {formatOptionalTime(cnkiSession?.expires_at)}
+        </dd>
       </div>
-      <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">
-        <dt className="text-xs text-muted-foreground">最近使用</dt>
-        <dd className="tabular-nums sm:mt-1">{formatOptionalTime(cnkiSession?.last_used_at)}</dd>
+      <div
+        {...stylex.props(
+          styles.renderCnkiSessionMetadataDlItem,
+          styles.renderCnkiSessionMetadataDiv,
+        )}
+      >
+        <dt {...stylex.props(styles.renderCnkiSessionMetadataDt)}>最近使用</dt>
+        <dd {...stylex.props(styles.renderCnkiSessionMetadataDd)}>
+          {formatOptionalTime(cnkiSession?.last_used_at)}
+        </dd>
       </div>
-      <div className="flex items-start justify-between gap-3 px-4 py-3 sm:block sm:px-5">
-        <dt className="shrink-0 text-xs text-muted-foreground">Cookie</dt>
-        <dd className="min-w-0 text-right break-all sm:mt-1 sm:text-left">
+      <div
+        {...stylex.props(
+          styles.renderCnkiSessionMetadataDlItem,
+          styles.renderCnkiSessionMetadataDiv2,
+        )}
+      >
+        <dt {...stylex.props(styles.renderCnkiSessionMetadataDt2)}>Cookie</dt>
+        <dd {...stylex.props(styles.renderCnkiSessionMetadataDd2)}>
           {cnkiSession?.cookie_names.length ? cnkiSession.cookie_names.join(', ') : '暂无'}
         </dd>
       </div>
@@ -397,56 +419,74 @@ function renderCnkiLoginChallenge(state: CnkiViewState) {
         <MotionDiv
           key="cnki-login"
           data-motion-cnki-login="qr"
-          className="overflow-hidden bg-muted/40"
+          {...stylex.props(styles.renderCnkiLoginChallengeMotionDiv)}
           initial="hidden"
           animate="visible"
           exit="exit"
           variants={DISCLOSURE_VARIANTS}
         >
-          <div className="flex flex-col gap-5 px-4 py-5 sm:flex-row sm:items-center sm:px-5">
+          <div {...stylex.props(styles.renderCnkiLoginChallengeDiv)}>
             {isQrImageSource(cnkiLogin.qr_code) ? (
               <div
                 role="img"
                 aria-label="浙江图书馆 CNKI 二维码"
-                className="size-44 shrink-0 self-center rounded-xl border bg-white bg-contain bg-center bg-no-repeat p-2 sm:self-auto"
-                style={{ backgroundImage: `url(${JSON.stringify(cnkiLogin.qr_code)})` }}
+                {...stylex.props(
+                  styles.renderCnkiLoginChallengeDiv2,
+                  styles.qrCode(`url(${JSON.stringify(cnkiLogin.qr_code)})`),
+                )}
               />
             ) : (
-              <code className="max-h-40 flex-1 overflow-auto rounded bg-muted p-3 text-xs break-all">
+              <code {...stylex.props(styles.renderCnkiLoginChallengeCode)}>
                 {cnkiLogin.qr_code}
               </code>
             )}
-            <div className="min-w-0 flex-1 space-y-3">
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center gap-2 font-bold">
+            <div {...stylex.props(styles.renderCnkiLoginChallengeDiv3)}>
+              <div {...stylex.props(styles.renderCnkiLoginChallengeDiv4)}>
+                <div
+                  {...stylex.props(
+                    styles.renderCnkiLoginChallengeDivItem,
+                    styles.renderCnkiLoginChallengeDiv5,
+                  )}
+                >
                   扫码登录
                   <StatusPill tone="warning">{cnkiLogin.status || '等待扫码'}</StatusPill>
                 </div>
-                <ol className="space-y-1.5 text-xs text-muted-foreground">
-                  <li className="flex gap-2">
-                    <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-foreground text-[10px] font-bold text-background">
-                      1
-                    </span>
+                <ol
+                  {...stylex.props(
+                    styles.renderCnkiLoginChallengeDivItem,
+                    styles.renderCnkiSessionMetadataDt,
+                  )}
+                >
+                  <li
+                    {...stylex.props(
+                      styles.renderCnkiLoginChallengeOlItem,
+                      styles.renderCnkiLoginChallengeLi,
+                    )}
+                  >
+                    <span {...stylex.props(styles.renderCnkiLoginChallengeSpan)}>1</span>
                     使用支付宝扫描左侧二维码并完成授权
                   </li>
-                  <li className="flex gap-2">
-                    <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-foreground text-[10px] font-bold text-background">
-                      2
-                    </span>
+                  <li
+                    {...stylex.props(
+                      styles.renderCnkiLoginChallengeOlItem,
+                      styles.renderCnkiLoginChallengeLi,
+                    )}
+                  >
+                    <span {...stylex.props(styles.renderCnkiLoginChallengeSpan)}>2</span>
                     回到这里点击“完成登录”，系统会预热全文权限
                   </li>
                 </ol>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div {...stylex.props(styles.renderCnkiLoginChallengeDiv6)}>
                 <Button
                   size="sm"
                   onClick={() => pollCnkiLoginMut.mutate()}
                   disabled={pollCnkiLoginMut.isPending}
                 >
                   {pollCnkiLoginMut.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Loader2 {...stylex.props(styles.renderCnkiLoginChallengeLoader2)} />
                   ) : (
-                    <CheckCircle2 className="h-4 w-4" />
+                    <CheckCircle2 {...stylex.props(styles.renderCnkiLoginChallengeCheckCircle2)} />
                   )}
                   {pollCnkiLoginMut.isPending ? '确认并预热…' : '完成登录'}
                 </Button>
@@ -468,9 +508,11 @@ function renderCnkiLoginChallenge(state: CnkiViewState) {
                     key="cnki-copy-feedback"
                     data-motion-feedback="cnki-copy"
                     role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-                    className={
-                      copyFeedback.tone === 'error' ? 'text-sm text-destructive' : 'sr-only'
-                    }
+                    {...stylex.props(
+                      copyFeedback.tone === 'error'
+                        ? styles.cnkiSettingsCardP
+                        : styles.renderCnkiLoginChallengeMotionParagraphNotError,
+                    )}
                     initial="hidden"
                     animate="visible"
                     exit="exit"
@@ -501,12 +543,12 @@ function renderCnkiSessionActions(state: CnkiViewState) {
   } = state;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 bg-muted/40 px-4 py-3 sm:px-5">
+    <div {...stylex.props(styles.renderCnkiSessionActionsDiv)}>
       {cnkiSession?.configured && (
         <Button
           variant="ghost"
           size="sm"
-          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          xstyle={styles.renderCnkiSessionActionsButton}
           onClick={() => {
             clearCnkiSessionMut.reset();
             setCnkiMessage(null);
@@ -514,18 +556,18 @@ function renderCnkiSessionActions(state: CnkiViewState) {
           }}
           disabled={clearCnkiSessionMut.isPending}
         >
-          <Unlink2 className="size-4" />
+          <Unlink2 {...stylex.props(styles.renderCnkiSessionActionsUnlink2)} />
           清除
         </Button>
       )}
-      <div className="ml-auto flex flex-wrap gap-2">
+      <div {...stylex.props(styles.renderCnkiSessionActionsDiv2)}>
         <Button
           variant="outline"
           size="sm"
           aria-label="刷新 CNKI 登录状态"
           onClick={() => void refetchCnkiSession()}
         >
-          <RefreshCw className="size-4" />
+          <RefreshCw {...stylex.props(styles.renderCnkiSessionActionsUnlink2)} />
           刷新
         </Button>
         <Button
@@ -535,9 +577,9 @@ function renderCnkiSessionActions(state: CnkiViewState) {
           disabled={startCnkiLoginMut.isPending}
         >
           {startCnkiLoginMut.isPending ? (
-            <Loader2 className="size-4 animate-spin" />
+            <Loader2 {...stylex.props(styles.renderCnkiSessionActionsLoader2)} />
           ) : (
-            <QrCode className="size-4" />
+            <QrCode {...stylex.props(styles.renderCnkiSessionActionsUnlink2)} />
           )}
           {cnkiLogin ? '重新生成' : '扫码登录'}
         </Button>
@@ -573,3 +615,388 @@ function renderCnkiClearConfirmation(
     />
   );
 }
+
+const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
+
+const styles = stylex.create({
+  qrCode: (backgroundImage: string) => ({
+    backgroundImage,
+  }),
+  cnkiMessageError: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  cnkiMessageWarning: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.warningForeground,
+  },
+  cnkiMessageInfo: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  cnkiSettingsCardDiv: {
+    display: 'flex',
+    alignItems: {
+      default: 'flex-start',
+      '@media (min-width: 40rem)': 'center',
+    },
+    gap: '1rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1.25rem',
+  },
+  cnkiSettingsCardSpan: {
+    display: 'flex',
+    width: '3rem',
+    height: '3rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '12px',
+  },
+  cnkiSettingsCardSpanActive: {
+    backgroundColor: colors.success,
+    color: colors.successForeground,
+  },
+  cnkiSettingsCardSpanNotActive: {
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  cnkiSettingsCardShieldCheck: {
+    width: '1.5rem',
+    height: '1.5rem',
+  },
+  cnkiSettingsCardDiv2: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  cnkiSettingsCardSettingsSectionTitle: {
+    fontSize: '1rem',
+    lineHeight: 1.5,
+  },
+  cnkiSettingsCardDiv3: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.25rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+  },
+  cnkiSettingsCardP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderCnkiSessionMetadataDlItem: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '0px',
+      },
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '0px',
+      },
+    },
+    borderInlineStartStyle: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderInlineStartWidth: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '0px',
+      },
+    },
+    borderInlineEndStyle: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderInlineEndWidth: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '1px',
+      },
+    },
+  },
+  renderCnkiSessionMetadataDl: {
+    display: 'grid',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    gridTemplateColumns: {
+      default: null,
+      '@media (min-width: 40rem)': '1fr 1fr 1.4fr',
+    },
+  },
+  renderCnkiSessionMetadataDiv: {
+    display: {
+      default: 'flex',
+      '@media (min-width: 40rem)': 'block',
+    },
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+  },
+  renderCnkiSessionMetadataDt: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderCnkiSessionMetadataDd: {
+    fontVariantNumeric: 'tabular-nums',
+    marginTop: {
+      default: null,
+      '@media (min-width: 40rem)': '0.25rem',
+    },
+  },
+  renderCnkiSessionMetadataDiv2: {
+    display: {
+      default: 'flex',
+      '@media (min-width: 40rem)': 'block',
+    },
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+  },
+  renderCnkiSessionMetadataDt2: {
+    flexShrink: 0,
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderCnkiSessionMetadataDd2: {
+    minWidth: '0px',
+    textAlign: {
+      default: 'right',
+      '@media (min-width: 40rem)': 'left',
+    },
+    wordBreak: 'break-all',
+    marginTop: {
+      default: null,
+      '@media (min-width: 40rem)': '0.25rem',
+    },
+  },
+  renderCnkiLoginChallengeMotionDiv: {
+    overflow: 'hidden',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 40%, transparent)`,
+  },
+  renderCnkiLoginChallengeDiv: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '1.25rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1.25rem',
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'center',
+    },
+  },
+  renderCnkiLoginChallengeDiv2: {
+    width: '11rem',
+    height: '11rem',
+    flexShrink: 0,
+    alignSelf: {
+      default: 'center',
+      '@media (min-width: 40rem)': 'auto',
+    },
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    backgroundColor: '#fff',
+    backgroundSize: 'contain',
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
+    padding: '0.5rem',
+  },
+  renderCnkiLoginChallengeCode: {
+    maxHeight: '10rem',
+    flex: '1',
+    overflow: 'auto',
+    borderRadius: '0.25rem',
+    backgroundColor: colors.muted,
+    padding: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    wordBreak: 'break-all',
+  },
+  renderCnkiLoginChallengeDiv3: {
+    display: 'flex',
+    minWidth: '0px',
+    flex: '1',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+  },
+  renderCnkiLoginChallengeDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  renderCnkiLoginChallengeDiv4: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderCnkiLoginChallengeDiv5: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontWeight: 700,
+  },
+  renderCnkiLoginChallengeOlItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.375rem',
+    },
+  },
+  renderCnkiLoginChallengeLi: {
+    display: 'flex',
+    gap: '0.5rem',
+  },
+  renderCnkiLoginChallengeSpan: {
+    display: 'flex',
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.foreground,
+    fontSize: '10px',
+    fontWeight: 700,
+    color: colors.background,
+  },
+  renderCnkiLoginChallengeDiv6: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '0.5rem',
+  },
+  renderCnkiLoginChallengeLoader2: {
+    height: '1rem',
+    width: '1rem',
+    animationName: spinKeyframes,
+    animationDuration: '1s',
+    animationTimingFunction: 'linear',
+    animationIterationCount: 'infinite',
+  },
+  renderCnkiLoginChallengeCheckCircle2: {
+    height: '1rem',
+    width: '1rem',
+  },
+  renderCnkiLoginChallengeMotionParagraphNotError: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  renderCnkiSessionActionsDiv: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.5rem',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 40%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+  },
+  renderCnkiSessionActionsButton: {
+    color: {
+      default: colors.destructive,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+  renderCnkiSessionActionsUnlink2: {
+    width: '1rem',
+    height: '1rem',
+  },
+  renderCnkiSessionActionsDiv2: {
+    marginLeft: 'auto',
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '0.5rem',
+  },
+  renderCnkiSessionActionsLoader2: {
+    width: '1rem',
+    height: '1rem',
+    animationName: spinKeyframes,
+    animationDuration: '1s',
+    animationTimingFunction: 'linear',
+    animationIterationCount: 'infinite',
+  },
+});

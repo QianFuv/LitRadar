@@ -33,6 +33,8 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const DATABASE_LABELS: Readonly<Record<string, string>> = {
   'ccf_computer_journals.sqlite': 'CCF 计算机期刊',
@@ -66,15 +68,23 @@ export function CfpTrackingView() {
       header={renderCfpHeader(state)}
       reader={{
         content: (
-          <div className="mx-auto w-full max-w-[44rem] space-y-6 px-5 pt-7 pb-14 sm:px-8 xl:pt-10">
+          <div {...stylex.props(styles.cfpTrackingViewDiv)}>
             <RevealItem
               isReady={!state.isLoading}
-              className="space-y-6"
+              xstyle={[styles.cfpTrackingViewDivItem, styles.cfpTrackingViewRevealItem]}
               placeholder={
-                <div role="status" className="space-y-4">
-                  <span className="sr-only">正在加载征稿期刊</span>
-                  <Skeleton className="h-36 w-full rounded-2xl" />
-                  <Skeleton className="h-72 w-full rounded-2xl" />
+                <div role="status">
+                  <span
+                    {...stylex.props(styles.cfpTrackingViewDivItem2, styles.cfpTrackingViewSpan)}
+                  >
+                    正在加载征稿期刊
+                  </span>
+                  <Skeleton
+                    xstyle={[styles.cfpTrackingViewDivItem2, styles.cfpTrackingViewSkeleton]}
+                  />
+                  <Skeleton
+                    xstyle={[styles.cfpTrackingViewDivItem2, styles.cfpTrackingViewSkeleton2]}
+                  />
                 </div>
               }
             >
@@ -279,10 +289,16 @@ function renderCfpNoticeContent(
     );
   if (selected.sourceStatement)
     return (
-      <div className="border-t pt-7">
-        <div className="space-y-3 pb-6">
-          <h3 className="text-sm font-bold leading-6">暂无已收录的征稿公告</h3>
-          <p className="whitespace-pre-line text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+      <div {...stylex.props(styles.renderCfpNoticeContentDiv)}>
+        <div {...stylex.props(styles.renderCfpNoticeContentDiv2)}>
+          <h3
+            {...stylex.props(styles.renderCfpNoticeContentDivItem, styles.renderCfpNoticeContentH3)}
+          >
+            暂无已收录的征稿公告
+          </h3>
+          <p
+            {...stylex.props(styles.renderCfpNoticeContentDivItem, styles.renderCfpNoticeContentP)}
+          >
             {selected.sourceStatement}
           </p>
         </div>
@@ -312,13 +328,17 @@ function renderCfpNotices(
   const { shouldShowClosed, setShouldShowClosed, noticesQuery } = state;
 
   return (
-    <section aria-label="征稿需求" className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <h2 className="flex items-center gap-2 text-sm font-bold">
-          <Megaphone animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+    <section aria-label="征稿需求">
+      <div {...stylex.props(styles.renderCfpNoticesSectionItem, styles.renderCfpNoticesDiv)}>
+        <h2 {...stylex.props(styles.renderCfpNoticesH2)}>
+          <Megaphone
+            animateOnView
+            {...stylex.props(styles.renderCfpNoticesMegaphone)}
+            aria-hidden="true"
+          />
           征稿需求
         </h2>
-        <label className="flex min-h-9 shrink-0 cursor-pointer items-center gap-2 text-xs leading-5 text-muted-foreground">
+        <label {...stylex.props(styles.renderCfpNoticesLabel)}>
           <Checkbox
             checked={shouldShowClosed}
             onCheckedChange={(value) => setShouldShowClosed(value === true)}
@@ -328,11 +348,11 @@ function renderCfpNotices(
       </div>
       <RevealItem
         isReady={!noticesQuery.isLoading}
-        className="space-y-2"
+        xstyle={[styles.renderCfpNoticesSectionItem, styles.renderCfpNoticesRevealItem]}
         placeholder={
           <div role="status">
-            <span className="sr-only">正在加载征稿需求</span>
-            <Skeleton className="h-72 w-full" />
+            <span {...stylex.props(styles.cfpTrackingViewSpan)}>正在加载征稿需求</span>
+            <Skeleton xstyle={styles.renderCfpNoticesSkeleton} />
           </div>
         }
       >
@@ -341,7 +361,7 @@ function renderCfpNotices(
       {noticesQuery.hasNextPage && !noticesQuery.isError && (
         <Button
           variant="outline"
-          className="w-full rounded-xl"
+          xstyle={[styles.renderCfpNoticesSectionItem, styles.renderCfpNoticesButton]}
           disabled={noticesQuery.isFetchingNextPage}
           onClick={() => void noticesQuery.fetchNextPage()}
         >
@@ -351,7 +371,7 @@ function renderCfpNotices(
       {selected.refreshStatus === 'failed' && (
         <p
           role="status"
-          className="rounded-xl border border-warning-border bg-warning px-5 py-3 text-xs leading-6 text-warning-foreground"
+          {...stylex.props(styles.renderCfpNoticesSectionItem, styles.renderCfpNoticesP)}
         >
           最近一次更新未成功，当前显示上次核验的内容。
         </p>
@@ -394,21 +414,19 @@ function renderCfpJournalHeader(
   const { database, currentCount } = state;
 
   return (
-    <section className="pb-2">
-      <div className="mb-3 flex items-center gap-2 text-xs leading-5 text-muted-foreground">
-        <Layers className="size-3.5 shrink-0" aria-hidden="true" />
+    <section {...stylex.props(styles.renderCfpJournalHeaderSection)}>
+      <div {...stylex.props(styles.renderCfpJournalHeaderDiv)}>
+        <Layers {...stylex.props(styles.renderCfpNoticesMegaphone)} aria-hidden="true" />
         <span>{formatCfpDatabase(database)}</span>
       </div>
-      <h2 className="text-[24px] leading-[1.35] font-bold tracking-[-0.01em] [overflow-wrap:anywhere]">
-        {selected.title}
-      </h2>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-t pt-4 text-xs leading-5">
-        <span className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
+      <h2 {...stylex.props(styles.renderCfpJournalHeaderH2)}>{selected.title}</h2>
+      <div {...stylex.props(styles.renderCfpJournalHeaderDiv2)}>
+        <span {...stylex.props(styles.renderCfpJournalHeaderSpan)}>
           {selected.allIssns.length > 0 ? `ISSN ${selected.allIssns.join(' / ')}` : '未登记 ISSN'}
         </span>
         <Badge
           variant={selected.coverage === 'adapted' && currentCount > 0 ? 'success' : 'secondary'}
-          className="h-6 px-2.5 leading-none tabular-nums"
+          xstyle={styles.renderCfpJournalHeaderBadge}
         >
           {selected.coverage === 'adapted' ? `${currentCount} 条已收录征稿` : '暂未适配'}
         </Badge>
@@ -453,16 +471,16 @@ function renderCfpHeader(state: CfpViewState) {
   } = state;
 
   return (
-    <div className="space-y-3">
-      <div>
-        <h1 className="text-lg leading-7 font-bold">征稿追踪</h1>
-        <p className="text-xs text-muted-foreground">按期刊发现征稿主题与投稿要求</p>
+    <div>
+      <div {...stylex.props(styles.renderCfpNoticeContentDivItem)}>
+        <h1 {...stylex.props(styles.renderCfpHeaderH1)}>征稿追踪</h1>
+        <p {...stylex.props(styles.renderCfpHeaderP)}>按期刊发现征稿主题与投稿要求</p>
       </div>
-      <div className="flex items-center justify-between gap-3">
+      <div {...stylex.props(styles.renderCfpNoticeContentDivItem, styles.renderCfpHeaderDiv)}>
         <RevealItem
           isReady={!databasesQuery.isLoading}
-          className="min-w-0"
-          placeholder={<Skeleton className="h-8 w-36 rounded-full" />}
+          xstyle={styles.renderCfpHeaderRevealItem}
+          placeholder={<Skeleton xstyle={styles.renderCfpHeaderSkeleton} />}
         >
           <DatabasePill
             ariaLabel="征稿数据库"
@@ -475,23 +493,18 @@ function renderCfpHeader(state: CfpViewState) {
         </RevealItem>
         <RevealItem
           isReady={!isLoading}
-          className="shrink-0"
-          placeholder={<Skeleton className="h-4 w-16" />}
+          xstyle={styles.renderCfpHeaderRevealItem2}
+          placeholder={<Skeleton xstyle={styles.renderCfpHeaderSkeleton2} />}
         >
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {journals.length} 本期刊
-          </span>
+          <span {...stylex.props(styles.renderCfpHeaderSpan)}>{journals.length} 本期刊</span>
         </RevealItem>
       </div>
-      <div className="relative">
-        <Search
-          className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
-          aria-hidden="true"
-        />
+      <div {...stylex.props(styles.renderCfpNoticeContentDivItem, styles.renderCfpHeaderDiv2)}>
+        <Search {...stylex.props(styles.renderCfpHeaderSearch)} aria-hidden="true" />
         <Input
           aria-label="搜索征稿期刊"
           placeholder="搜索刊名或 ISSN"
-          className="h-10 rounded-xl bg-muted pl-10 !shadow-[inset_0_0_0_1px_var(--border)] focus-visible:bg-background"
+          xstyle={styles.renderCfpHeaderInput}
           value={journalSearch}
           onChange={(event) => setJournalSearch(event.target.value)}
           {...{ [WORKSPACE_SEARCH_ATTRIBUTE]: '' }}
@@ -516,15 +529,21 @@ function renderCfpJournalPanel(state: CfpViewState, onOpenReader: () => void) {
   } = state;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col px-2 pt-2 pb-[calc(4.5rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] md:pb-2">
+    <div {...stylex.props(styles.renderCfpJournalPanelDiv)}>
       <RevealItem
         isReady={!isLoading}
-        className="flex min-h-0 flex-1 flex-col"
+        xstyle={styles.renderCfpJournalPanelRevealItem}
         placeholder={
-          <div className="space-y-2 p-2" aria-hidden="true">
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
+          <div {...stylex.props(styles.renderCfpJournalPanelDiv2)} aria-hidden="true">
+            <Skeleton
+              xstyle={[styles.renderCfpNoticesSectionItem, styles.renderCfpJournalPanelSkeleton]}
+            />
+            <Skeleton
+              xstyle={[styles.renderCfpNoticesSectionItem, styles.renderCfpJournalPanelSkeleton]}
+            />
+            <Skeleton
+              xstyle={[styles.renderCfpNoticesSectionItem, styles.renderCfpJournalPanelSkeleton]}
+            />
           </div>
         }
       >
@@ -586,3 +605,292 @@ function getSelectedCfpJournal(
 ): CfpJournalSummary | undefined {
   return data?.pages[0]?.journal ?? catalog;
 }
+
+const styles = stylex.create({
+  cfpTrackingViewDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '1.5rem',
+    },
+  },
+  cfpTrackingViewDiv: {
+    marginInline: 'auto',
+    width: '100%',
+    maxWidth: '44rem',
+    paddingInline: {
+      default: '1.25rem',
+      '@media (min-width: 40rem)': '2rem',
+    },
+    paddingTop: {
+      default: '1.75rem',
+      '@media (min-width: 80rem)': '2.5rem',
+    },
+    paddingBottom: '3.5rem',
+  },
+  cfpTrackingViewRevealItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '1.5rem',
+  },
+  cfpTrackingViewDivItem2: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '1rem',
+    },
+  },
+  cfpTrackingViewSpan: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  cfpTrackingViewSkeleton: {
+    height: '9rem',
+    width: '100%',
+    borderRadius: '16px',
+  },
+  cfpTrackingViewSkeleton2: {
+    height: '18rem',
+    width: '100%',
+    borderRadius: '16px',
+  },
+  renderCfpNoticeContentDiv: {
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingTop: '1.75rem',
+  },
+  renderCfpNoticeContentDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  renderCfpNoticeContentDiv2: {
+    paddingBottom: '1.5rem',
+  },
+  renderCfpNoticeContentH3: {
+    fontSize: '0.875rem',
+    lineHeight: '1.5rem',
+    fontWeight: 700,
+  },
+  renderCfpNoticeContentP: {
+    fontSize: '0.875rem',
+    lineHeight: '1.5rem',
+    overflowWrap: 'anywhere',
+    whiteSpace: 'pre-line',
+    color: colors.mutedForeground,
+  },
+  renderCfpNoticesSectionItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  renderCfpNoticesDiv: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    columnGap: '1rem',
+    rowGap: '0.5rem',
+  },
+  renderCfpNoticesH2: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  renderCfpNoticesMegaphone: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+  },
+  renderCfpNoticesLabel: {
+    display: 'flex',
+    minHeight: '2.25rem',
+    flexShrink: 0,
+    cursor: 'pointer',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    color: colors.mutedForeground,
+  },
+  renderCfpNoticesRevealItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.5rem',
+  },
+  renderCfpNoticesSkeleton: {
+    height: '18rem',
+    width: '100%',
+  },
+  renderCfpNoticesButton: {
+    width: '100%',
+    borderRadius: '12px',
+  },
+  renderCfpNoticesP: {
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: colors.warningBorder,
+    backgroundColor: colors.warning,
+    paddingInline: '1.25rem',
+    paddingBlock: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.5rem',
+    color: colors.warningForeground,
+  },
+  renderCfpJournalHeaderSection: {
+    paddingBottom: '0.5rem',
+  },
+  renderCfpJournalHeaderDiv: {
+    marginBottom: '0.75rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    color: colors.mutedForeground,
+  },
+  renderCfpJournalHeaderH2: {
+    fontSize: '24px',
+    lineHeight: 1.35,
+    fontWeight: 700,
+    letterSpacing: '-0.01em',
+    overflowWrap: 'anywhere',
+  },
+  renderCfpJournalHeaderDiv2: {
+    marginTop: '1rem',
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    columnGap: '1.25rem',
+    rowGap: '0.75rem',
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingTop: '1rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+  },
+  renderCfpJournalHeaderSpan: {
+    minWidth: '0px',
+    overflowWrap: 'anywhere',
+    color: colors.mutedForeground,
+  },
+  renderCfpJournalHeaderBadge: {
+    height: '1.5rem',
+    paddingInline: '0.625rem',
+    lineHeight: 1,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderCfpHeaderH1: {
+    fontSize: '1.125rem',
+    lineHeight: '1.75rem',
+    fontWeight: 700,
+  },
+  renderCfpHeaderP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderCfpHeaderDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+  },
+  renderCfpHeaderRevealItem: {
+    minWidth: '0px',
+  },
+  renderCfpHeaderSkeleton: {
+    height: '2rem',
+    width: '9rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  renderCfpHeaderRevealItem2: {
+    flexShrink: 0,
+  },
+  renderCfpHeaderSkeleton2: {
+    height: '1rem',
+    width: '4rem',
+  },
+  renderCfpHeaderSpan: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderCfpHeaderDiv2: {
+    position: 'relative',
+  },
+  renderCfpHeaderSearch: {
+    pointerEvents: 'none',
+    position: 'absolute',
+    top: 'calc(1 / 2 * 100%)',
+    left: '0.875rem',
+    width: '1rem',
+    height: '1rem',
+    translate: '0 calc(calc(1 / 2 * 100%) * -1)',
+    color: colors.mutedForeground,
+  },
+  renderCfpHeaderInput: {
+    height: '2.5rem',
+    borderRadius: '12px',
+    backgroundColor: {
+      default: colors.muted,
+      ':focus-visible': {
+        default: colors.background,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.background,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.accent} 50%, transparent)`,
+      },
+    },
+    paddingLeft: '2.5rem',
+    boxShadow: {
+      default: `inset 0 0 0 1px ${colors.border}`,
+      ':focus-visible': {
+        default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), inset 0 0 0 1px ${colors.border}`,
+        ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}, inset 0 0 0 1px ${colors.border}`,
+      },
+    },
+  },
+  renderCfpJournalPanelDiv: {
+    display: 'flex',
+    minHeight: '0px',
+    flex: '1',
+    flexDirection: 'column',
+    paddingInline: '0.5rem',
+    paddingTop: '0.5rem',
+    paddingBottom: {
+      default: 'calc(4.5rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom,0px)))',
+      '@media (min-width: 48rem)': '0.5rem',
+    },
+  },
+  renderCfpJournalPanelRevealItem: {
+    display: 'flex',
+    minHeight: '0px',
+    flex: '1',
+    flexDirection: 'column',
+  },
+  renderCfpJournalPanelDiv2: {
+    padding: '0.5rem',
+  },
+  renderCfpJournalPanelSkeleton: {
+    height: '3.5rem',
+    width: '100%',
+  },
+});

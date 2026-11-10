@@ -28,8 +28,9 @@ import { CopyButton } from '@/components/ui/copy-button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const INVITE_STATUS_LABELS: Record<InviteCodeStatus, string> = {
   active: '可用',
@@ -79,7 +80,7 @@ export function InviteCodeCard(props: {
       <SettingsSectionContent>
         <RevealItem
           isReady={!isInviteCodeLoading}
-          placeholder={<Skeleton className="h-16 w-full rounded-xl" />}
+          placeholder={<Skeleton xstyle={styles.inviteCodeCardSkeleton} />}
         >
           {inviteCodeData ? (
             renderCurrentInviteCode(state, inviteCodeData)
@@ -87,8 +88,8 @@ export function InviteCodeCard(props: {
             <SettingsGroup>
               <SettingsRow
                 leading={
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-info text-primary">
-                    <Gift className="size-5" aria-hidden="true" />
+                  <span {...stylex.props(styles.inviteCodeCardSpan)}>
+                    <Gift {...stylex.props(styles.inviteCodeCardGift)} aria-hidden="true" />
                   </span>
                 }
                 title="还没有邀请码"
@@ -110,7 +111,7 @@ export function InviteCodeCard(props: {
           )}
         </RevealItem>
         {mutationError && (
-          <p role="alert" className="mt-2 px-1 text-sm text-destructive">
+          <p role="alert" {...stylex.props(styles.inviteCodeCardP)}>
             {mutationError instanceof Error ? mutationError.message : '邀请码操作失败'}
           </p>
         )}
@@ -180,11 +181,11 @@ function renderInviteCopyFeedback(state: Pick<InviteViewState, 'copyFeedback'>) 
     copyFeedback?.scope === 'invite' && (
       <p
         role={copyFeedback.tone === 'error' ? 'alert' : 'status'}
-        className={
+        {...stylex.props(
           copyFeedback.tone === 'error'
-            ? 'text-sm text-destructive'
-            : 'text-sm text-muted-foreground'
-        }
+            ? styles.renderInviteCopyFeedbackPError
+            : styles.renderInviteCopyFeedbackPNotError,
+        )}
       >
         {copyFeedback.message}
       </p>
@@ -214,18 +215,22 @@ function renderCurrentInviteCode(
 
   return (
     <SettingsGroup>
-      <div className="flex items-stretch gap-3 px-4 py-4 sm:px-5">
+      <div {...stylex.props(styles.renderCurrentInviteCodeDiv)}>
         <div
-          className={cn(
-            'relative min-w-0 flex-1 rounded-lg border border-dashed px-4 py-3',
-            isActive ? 'border-primary/50 bg-info' : 'bg-muted/60',
+          {...stylex.props(
+            styles.renderCurrentInviteCodeDiv2,
+            isActive
+              ? styles.renderCurrentInviteCodeDivActive
+              : styles.renderCurrentInviteCodeDivNotActive,
           )}
         >
-          <p className="text-xs text-muted-foreground">当前邀请码</p>
+          <p {...stylex.props(styles.renderCurrentInviteCodeP)}>当前邀请码</p>
           <code
-            className={cn(
-              'mt-1 block text-base leading-6 font-bold tracking-wide break-all sm:text-lg',
-              isActive ? 'text-info-foreground' : 'text-muted-foreground line-through',
+            {...stylex.props(
+              styles.renderCurrentInviteCodeCode,
+              isActive
+                ? styles.renderCurrentInviteCodeCodeActive
+                : styles.renderCurrentInviteCodeCodeNotActive,
             )}
           >
             {inviteCodeData.code}
@@ -233,7 +238,7 @@ function renderCurrentInviteCode(
         </div>
         <CopyButton
           variant="outline"
-          className="h-auto w-12 shrink-0"
+          xstyle={styles.renderCurrentInviteCodeCopyButton}
           aria-label="复制邀请码"
           disabled={!isActive}
           isCopied={state.copyFeedback?.scope === 'invite' && state.copyFeedback.tone === 'success'}
@@ -241,43 +246,66 @@ function renderCurrentInviteCode(
         />
       </div>
       {state.copyFeedback?.scope === 'invite' && (
-        <div className={state.copyFeedback.tone === 'error' ? 'px-4 py-2.5 sm:px-5' : 'sr-only'}>
+        <div
+          {...stylex.props(
+            state.copyFeedback.tone === 'error'
+              ? styles.renderCurrentInviteCodeDivError
+              : styles.renderCurrentInviteCodeDivNotError,
+          )}
+        >
           {renderInviteCopyFeedback(state)}
         </div>
       )}
-      <dl className="grid grid-cols-1 divide-y text-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">
-          <dt className="text-xs text-muted-foreground">状态</dt>
-          <dd className="sm:mt-1.5">
+      <dl {...stylex.props(styles.renderCurrentInviteCodeDl)}>
+        <div
+          {...stylex.props(
+            styles.renderCurrentInviteCodeDlItem,
+            styles.renderCurrentInviteCodeDiv3,
+          )}
+        >
+          <dt {...stylex.props(styles.renderCurrentInviteCodeP)}>状态</dt>
+          <dd {...stylex.props(styles.renderCurrentInviteCodeDd)}>
             <StatusPill tone={isActive ? 'success' : 'neutral'}>
               {INVITE_STATUS_LABELS[inviteCodeData.status]}
             </StatusPill>
           </dd>
         </div>
-        <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">
-          <dt className="text-xs text-muted-foreground">使用情况</dt>
-          <dd className="flex items-center gap-2 sm:mt-1.5">
-            <span className="tabular-nums">
+        <div
+          {...stylex.props(
+            styles.renderCurrentInviteCodeDlItem,
+            styles.renderCurrentInviteCodeDiv3,
+          )}
+        >
+          <dt {...stylex.props(styles.renderCurrentInviteCodeP)}>使用情况</dt>
+          <dd {...stylex.props(styles.renderCurrentInviteCodeDd2)}>
+            <span {...stylex.props(styles.renderCurrentInviteCodeSpan)}>
               已使用 {inviteCodeData.use_count}/{inviteCodeData.max_uses} 次
             </span>
             <Progress
               aria-hidden="true"
-              className="hidden w-16 sm:block"
+              xstyle={styles.renderCurrentInviteCodeProgress}
               value={usageRatio * 100}
             />
           </dd>
         </div>
-        <div className="flex items-center justify-between gap-3 px-4 py-3 sm:block sm:px-5">
-          <dt className="text-xs text-muted-foreground">有效期至</dt>
-          <dd className="tabular-nums sm:mt-1.5">{formatInviteDate(inviteCodeData.expires_at)}</dd>
+        <div
+          {...stylex.props(
+            styles.renderCurrentInviteCodeDlItem,
+            styles.renderCurrentInviteCodeDiv3,
+          )}
+        >
+          <dt {...stylex.props(styles.renderCurrentInviteCodeP)}>有效期至</dt>
+          <dd {...stylex.props(styles.renderCurrentInviteCodeDd3)}>
+            {formatInviteDate(inviteCodeData.expires_at)}
+          </dd>
         </div>
       </dl>
-      <div className="flex flex-wrap justify-end gap-2 bg-muted/40 px-4 py-3 sm:px-5">
+      <div {...stylex.props(styles.renderCurrentInviteCodeDiv4)}>
         {inviteCodeData.revoked_at === null && (
           <Button
             variant="ghost"
             size="sm"
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            xstyle={styles.renderCurrentInviteCodeButton}
             disabled={isMutating}
             onClick={() => {
               generateInviteMut.reset();
@@ -286,7 +314,7 @@ function renderCurrentInviteCode(
               setIsRevokeOpen(true);
             }}
           >
-            <CircleX className="size-4" />
+            <CircleX {...stylex.props(styles.renderCurrentInviteCodeCircleX)} />
             撤销邀请码
           </Button>
         )}
@@ -300,7 +328,7 @@ function renderCurrentInviteCode(
             rotateInviteMut.mutate();
           }}
         >
-          <RotateCcw className="size-4" />
+          <RotateCcw {...stylex.props(styles.renderCurrentInviteCodeCircleX)} />
           轮换邀请码
         </Button>
       </div>
@@ -332,3 +360,276 @@ function renderInviteRevokeConfirmation(
     />
   );
 }
+
+const styles = stylex.create({
+  inviteCodeCardSkeleton: {
+    height: '4rem',
+    width: '100%',
+    borderRadius: '12px',
+  },
+  inviteCodeCardSpan: {
+    display: 'flex',
+    width: '2.5rem',
+    height: '2.5rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.info,
+    color: colors.primary,
+  },
+  inviteCodeCardGift: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  inviteCodeCardP: {
+    marginTop: '0.5rem',
+    paddingInline: '0.25rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderInviteCopyFeedbackPError: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderInviteCopyFeedbackPNotError: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderCurrentInviteCodeDiv: {
+    display: 'flex',
+    alignItems: 'stretch',
+    gap: '0.75rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+  },
+  renderCurrentInviteCodeDiv2: {
+    position: 'relative',
+    minWidth: '0px',
+    flex: '1',
+    borderRadius: '8px',
+    borderStyle: 'dashed',
+    borderWidth: '1px',
+    paddingInline: '1rem',
+    paddingBlock: '0.75rem',
+  },
+  renderCurrentInviteCodeDivActive: {
+    borderColor: `color-mix(in oklab, ${colors.primary} 50%, transparent)`,
+    backgroundColor: colors.info,
+  },
+  renderCurrentInviteCodeDivNotActive: {
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 60%, transparent)`,
+  },
+  renderCurrentInviteCodeP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderCurrentInviteCodeCode: {
+    marginTop: '0.25rem',
+    display: 'block',
+    fontSize: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.125rem',
+    },
+    lineHeight: {
+      default: '1.5rem',
+      '@media (min-width: 40rem)': '1.5rem',
+    },
+    fontWeight: 700,
+    letterSpacing: '0.025em',
+    wordBreak: 'break-all',
+  },
+  renderCurrentInviteCodeCodeActive: {
+    color: colors.infoForeground,
+  },
+  renderCurrentInviteCodeCodeNotActive: {
+    color: colors.mutedForeground,
+    textDecorationLine: 'line-through',
+  },
+  renderCurrentInviteCodeCopyButton: {
+    height: 'auto',
+    width: '3rem',
+    flexShrink: 0,
+  },
+  renderCurrentInviteCodeDivError: {
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.625rem',
+  },
+  renderCurrentInviteCodeDivNotError: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  renderCurrentInviteCodeDlItem: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '0px',
+      },
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '0px',
+      },
+    },
+    borderInlineStartStyle: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderInlineStartWidth: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '0px',
+      },
+    },
+    borderInlineEndStyle: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': 'solid',
+      },
+    },
+    borderInlineEndWidth: {
+      default: null,
+      '@media (min-width: 40rem)': {
+        default: null,
+        ':not(:last-child)': '1px',
+      },
+    },
+  },
+  renderCurrentInviteCodeDl: {
+    display: 'grid',
+    gridTemplateColumns: {
+      default: 'repeat(1, minmax(0, 1fr))',
+      '@media (min-width: 40rem)': 'repeat(3, minmax(0, 1fr))',
+    },
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderCurrentInviteCodeDiv3: {
+    display: {
+      default: 'flex',
+      '@media (min-width: 40rem)': 'block',
+    },
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+  },
+  renderCurrentInviteCodeDd: {
+    marginTop: {
+      default: null,
+      '@media (min-width: 40rem)': '0.375rem',
+    },
+  },
+  renderCurrentInviteCodeDd2: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    marginTop: {
+      default: null,
+      '@media (min-width: 40rem)': '0.375rem',
+    },
+  },
+  renderCurrentInviteCodeSpan: {
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderCurrentInviteCodeProgress: {
+    display: {
+      default: 'none',
+      '@media (min-width: 40rem)': 'block',
+    },
+    width: '4rem',
+  },
+  renderCurrentInviteCodeDd3: {
+    fontVariantNumeric: 'tabular-nums',
+    marginTop: {
+      default: null,
+      '@media (min-width: 40rem)': '0.375rem',
+    },
+  },
+  renderCurrentInviteCodeDiv4: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: '0.5rem',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 40%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+  },
+  renderCurrentInviteCodeButton: {
+    color: {
+      default: colors.destructive,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+  renderCurrentInviteCodeCircleX: {
+    width: '1rem',
+    height: '1rem',
+  },
+});

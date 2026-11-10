@@ -7,20 +7,29 @@ import {
   CopyButtonIcon,
   type CopyButtonProps as AnimateCopyButtonProps,
 } from '@animate-ui/react/primitives/buttons/copy';
-import type { VariantProps } from 'class-variance-authority';
 import type { ComponentProps, MouseEvent, ReactNode } from 'react';
 
 import { Check, Copy, IconTriggerProvider, useIconTrigger } from '@/components/ui/animated-icons';
-import { buttonVariants, getButtonPressMotion } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
 
-type CopyButtonProps = Omit<ComponentProps<'button'>, 'children' | 'onClick'> &
-  VariantProps<typeof buttonVariants> & {
-    children?: ReactNode;
-    iconClassName?: string;
-    isCopied: boolean;
-    onCopy: () => void;
-  };
+import {
+  buttonStyles,
+  getButtonPressMotion,
+  type ButtonSize,
+  type ButtonVariant,
+} from '@/components/ui/button';
+import { colors } from '@/lib/theme.stylex';
+
+type CopyButtonProps = Omit<ComponentProps<'button'>, 'children' | 'className' | 'onClick'> & {
+  children?: ReactNode;
+  /** Icon styles that override the button's icon size. */
+  iconXstyle?: stylex.StyleXStyles;
+  isCopied: boolean;
+  onCopy: () => void;
+  size?: ButtonSize;
+  variant?: ButtonVariant;
+  xstyle?: stylex.StyleXStyles;
+};
 
 /**
  * Render a styled copy button whose icon swaps to a check while the copy is confirmed.
@@ -33,9 +42,9 @@ type CopyButtonProps = Omit<ComponentProps<'button'>, 'children' | 'onClick'> &
  */
 export function CopyButton({
   children,
-  className,
+  xstyle,
   disabled,
-  iconClassName = 'size-4',
+  iconXstyle,
   isCopied,
   onCopy,
   size = 'default',
@@ -52,14 +61,12 @@ export function CopyButton({
     ...getButtonPressMotion(!disabled, size),
     'data-variant': variant,
     'data-size': size,
-    className: cn(buttonVariants({ variant, size }), className),
+    ...stylex.props(buttonStyles(variant, size), xstyle),
     children: (
       <>
         <CopyButtonIcon
-          icon={<Copy className={iconClassName} aria-hidden="true" />}
-          copiedIcon={
-            <Check className={cn(iconClassName, 'text-success-foreground')} aria-hidden="true" />
-          }
+          icon={<Copy {...stylex.props(iconXstyle)} aria-hidden="true" />}
+          copiedIcon={<Check {...stylex.props(iconXstyle, styles.copiedIcon)} aria-hidden="true" />}
         />
         {children}
       </>
@@ -76,3 +83,9 @@ export function CopyButton({
     </IconTriggerProvider>
   );
 }
+
+const styles = stylex.create({
+  copiedIcon: {
+    color: colors.successForeground,
+  },
+});

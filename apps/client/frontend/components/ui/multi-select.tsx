@@ -8,15 +8,8 @@ import { CheckIcon } from 'lucide-react';
 
 import { PresenceBoundary } from '@/components/ui/motion';
 import { RevealScope } from '@/components/ui/reveal';
-import { cn } from '@/lib/utils';
-
-/** Shared option row styles for Base UI list items. */
-export const LIST_ITEM_CLASS =
-  'motion-control relative flex min-h-10 w-full cursor-default items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] leading-5 outline-hidden select-none transition-[background-color,color] data-[highlighted]:bg-accent active:bg-accent-pressed data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[selected]:font-bold md:min-h-9';
-
-/** Shared popup surface styles for Base UI lists. */
-export const LIST_POPUP_CLASS =
-  'bg-popover text-popover-foreground flex max-h-(--available-height) w-(--anchor-width) min-w-56 origin-(--transform-origin) flex-col overflow-hidden rounded-xl shadow-overlay outline-hidden';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 const MultiSelect = SelectPrimitive.Root;
 const MultiSelectTrigger = SelectPrimitive.Trigger;
@@ -37,21 +30,21 @@ type MultiSelectContentProps = React.ComponentProps<typeof SelectPrimitive.Popup
 function MultiSelectContent({
   align = 'start',
   sideOffset = 6,
-  className,
+  xstyle,
   children,
   ...props
-}: MultiSelectContentProps) {
+}: Omit<MultiSelectContentProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
         align={align}
         sideOffset={sideOffset}
         alignItemWithTrigger={false}
-        className="z-50"
+        {...stylex.props(styles.multiSelectContentSelectPrimitivePositioner)}
       >
         <PresenceBoundary>
           <RevealScope>
-            <SelectPrimitive.Popup className={cn(LIST_POPUP_CLASS, className)} {...props}>
+            <SelectPrimitive.Popup {...stylex.props(styles.listPopup, xstyle)} {...props}>
               {children}
             </SelectPrimitive.Popup>
           </RevealScope>
@@ -68,15 +61,14 @@ function MultiSelectContent({
  * @returns Scrollable option list.
  */
 function MultiSelectList({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.List>) {
+}: Omit<React.ComponentProps<typeof SelectPrimitive.List>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <SelectPrimitive.List
-      className={cn(
-        'min-h-0 flex-1 overflow-y-auto overscroll-contain py-1.5 pr-3 pl-1.5',
-        className,
-      )}
+      {...stylex.props(styles.multiSelectListSelectPrimitiveList, xstyle)}
       {...props}
     />
   );
@@ -89,12 +81,14 @@ function MultiSelectList({
  * @returns Group heading.
  */
 function MultiSelectGroupLabel({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.GroupLabel>) {
+}: Omit<React.ComponentProps<typeof SelectPrimitive.GroupLabel>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <SelectPrimitive.GroupLabel
-      className={cn('px-2.5 pt-2 pb-1 text-xs font-bold text-muted-foreground', className)}
+      {...stylex.props(styles.multiSelectGroupLabelSelectPrimitiveGroupLabel, xstyle)}
       {...props}
     />
   );
@@ -111,18 +105,25 @@ type MultiSelectItemProps = React.ComponentProps<typeof SelectPrimitive.Item> & 
  * @param props - Base UI item properties, label, and optional trailing detail.
  * @returns Selectable option row.
  */
-function MultiSelectItem({ className, children, detail, ...props }: MultiSelectItemProps) {
+function MultiSelectItem({
+  xstyle,
+  children,
+  detail,
+  ...props
+}: Omit<MultiSelectItemProps, 'className'> & { xstyle?: stylex.StyleXStyles }) {
   return (
-    <SelectPrimitive.Item className={cn(LIST_ITEM_CLASS, className)} {...props}>
-      <SelectPrimitive.ItemIndicator className="flex size-4 shrink-0 items-center justify-center">
-        <CheckIcon className="size-4" aria-hidden="true" />
+    <SelectPrimitive.Item {...stylex.props(styles.listItem, xstyle)} {...props}>
+      <SelectPrimitive.ItemIndicator
+        {...stylex.props(styles.multiSelectItemSelectPrimitiveItemIndicator)}
+      >
+        <CheckIcon {...stylex.props(styles.multiSelectItemCheckIcon)} aria-hidden="true" />
       </SelectPrimitive.ItemIndicator>
-      <SelectPrimitive.ItemText className="min-w-0 flex-1 break-words">
+      <SelectPrimitive.ItemText {...stylex.props(styles.multiSelectItemSelectPrimitiveItemText)}>
         {children}
       </SelectPrimitive.ItemText>
       {detail !== undefined && (
-        <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
-          <span className="sr-only"> · </span>
+        <span {...stylex.props(styles.multiSelectItemSpan)}>
+          <span {...stylex.props(styles.multiSelectItemSpan2)}> · </span>
           {detail}
         </span>
       )}
@@ -140,3 +141,152 @@ export {
   MultiSelectTrigger,
   MultiSelectValue,
 };
+
+const styles = stylex.create({
+  multiSelectContentSelectPrimitivePositioner: {
+    zIndex: 50,
+  },
+  listPopup: {
+    display: 'flex',
+    maxHeight: 'var(--available-height)',
+    width: 'var(--anchor-width)',
+    minWidth: '14rem',
+    transformOrigin: 'var(--transform-origin)',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    borderRadius: '12px',
+    backgroundColor: colors.popover,
+    color: colors.popoverForeground,
+    boxShadow: shadows.overlay,
+    outlineStyle: {
+      default: 'none',
+      '@media (forced-colors: active)': 'solid',
+    },
+    outlineWidth: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+    outlineColor: {
+      default: null,
+      '@media (forced-colors: active)': 'transparent',
+    },
+    outlineOffset: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+  },
+  multiSelectListSelectPrimitiveList: {
+    minHeight: '0px',
+    flex: '1',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    paddingBlock: '0.375rem',
+    paddingRight: '0.75rem',
+    paddingLeft: '0.375rem',
+  },
+  multiSelectGroupLabelSelectPrimitiveGroupLabel: {
+    paddingInline: '0.625rem',
+    paddingTop: '0.5rem',
+    paddingBottom: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 700,
+    color: colors.mutedForeground,
+  },
+  listItem: {
+    position: 'relative',
+    display: 'flex',
+    minHeight: {
+      default: '2.5rem',
+      '@media (min-width: 48rem)': '2.25rem',
+    },
+    width: '100%',
+    cursor: 'default',
+    alignItems: 'center',
+    gap: '0.5rem',
+    borderRadius: '8px',
+    paddingInline: '0.625rem',
+    paddingBlock: '0.5rem',
+    fontSize: '13px',
+    lineHeight: '1.25rem',
+    outlineStyle: {
+      default: 'none',
+      '@media (forced-colors: active)': 'solid',
+    },
+    transitionProperty: 'background-color, color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    userSelect: 'none',
+    outlineWidth: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+    outlineColor: {
+      default: null,
+      '@media (forced-colors: active)': 'transparent',
+    },
+    outlineOffset: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':is([data-highlighted])': colors.accent,
+      },
+      ':is([data-highlighted])': colors.accent,
+    },
+    pointerEvents: {
+      default: null,
+      ':is([data-disabled])': 'none',
+    },
+    opacity: {
+      default: null,
+      ':is([data-disabled])': '50%',
+    },
+    fontWeight: {
+      default: null,
+      ':is([data-selected])': 700,
+    },
+  },
+  multiSelectItemSelectPrimitiveItemIndicator: {
+    display: 'flex',
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  multiSelectItemCheckIcon: {
+    width: '1rem',
+    height: '1rem',
+  },
+  multiSelectItemSelectPrimitiveItemText: {
+    minWidth: '0px',
+    flex: '1',
+    overflowWrap: 'break-word',
+  },
+  multiSelectItemSpan: {
+    flexShrink: 0,
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 400,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  multiSelectItemSpan2: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+});
+
+/** Popup and option styles shared with the combobox. */
+export const listStyles = { popup: styles.listPopup, item: styles.listItem };

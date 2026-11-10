@@ -5,7 +5,8 @@
 import { type ReactNode } from 'react';
 
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 type ArticleListCardProps = {
   title: ReactNode;
@@ -17,7 +18,7 @@ type ArticleListCardProps = {
   preview?: ReactNode;
   openAccess?: number | boolean | null;
   inPress?: number | boolean | null;
-  className?: string;
+  xstyle?: stylex.StyleXStyles;
 };
 
 /**
@@ -62,7 +63,7 @@ export function ArticleListCard({
   preview,
   openAccess,
   inPress,
-  className,
+  xstyle,
 }: ArticleListCardProps) {
   const hasPreview = hasPreviewContent(preview);
   const isOpenAccess = isEnabledFlag(openAccess);
@@ -73,47 +74,38 @@ export function ArticleListCard({
   const authorText = authors && authors.length > 0 ? authors.join('; ') : '';
 
   return (
-    <div
-      data-slot="article-list-card"
-      className={cn('content-visibility-card min-w-0 py-5 pr-5 pl-5 sm:pr-7 sm:pl-7', className)}
-    >
-      <h3
-        data-slot="article-list-title"
-        className="line-clamp-3 text-[15px] leading-[1.5] font-bold tracking-[-0.005em] text-wrap break-words text-foreground"
-      >
+    <div data-slot="article-list-card" {...stylex.props(styles.articleListCard, xstyle)}>
+      <h3 data-slot="article-list-title" {...stylex.props(styles.articleListTitle)}>
         {title}
       </h3>
-      <div data-slot="article-list-meta" className="mt-2 space-y-1 text-xs leading-5">
+      <div data-slot="article-list-meta" {...stylex.props(styles.articleListMeta)}>
         {authorText && (
-          <p className="truncate text-foreground/65" title={authorText}>
+          <p
+            {...stylex.props(styles.articleListMetaItem, styles.articleListCardP)}
+            title={authorText}
+          >
             {authorText}
           </p>
         )}
-        <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-muted-foreground">
-          <span className="min-w-0 truncate font-bold tracking-[0.02em] text-foreground/80">
-            {journalTitle || '未知期刊'}
-          </span>
-          {issueLabel && <span className="shrink-0">{issueLabel}</span>}
-          {date && <time className="shrink-0 tabular-nums">{date}</time>}
+        <p {...stylex.props(styles.articleListMetaItem, styles.articleListCardP2)}>
+          <span {...stylex.props(styles.articleListCardSpan)}>{journalTitle || '未知期刊'}</span>
+          {issueLabel && <span {...stylex.props(styles.articleListCardSpan2)}>{issueLabel}</span>}
+          {date && <time {...stylex.props(styles.articleListCardTime)}>{date}</time>}
           {isOpenAccess && (
-            <span className="inline-flex shrink-0 items-center gap-1 font-bold text-success-foreground">
-              <i aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+            <span {...stylex.props(styles.articleListCardSpan3)}>
+              <i aria-hidden="true" {...stylex.props(styles.articleListCardI)} />
               开放获取
             </span>
           )}
           {isInPress && (
-            <span className="inline-flex shrink-0 items-center gap-1 font-bold text-warning-foreground">
-              <i aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+            <span {...stylex.props(styles.articleListCardSpan4)}>
+              <i aria-hidden="true" {...stylex.props(styles.articleListCardI)} />
               预发表
             </span>
           )}
         </p>
       </div>
-      {hasPreview && (
-        <div className="mt-3 line-clamp-2 text-pretty text-[12.5px] leading-[1.75] text-muted-foreground/85">
-          {preview}
-        </div>
-      )}
+      {hasPreview && <div {...stylex.props(styles.articleListCardDiv)}>{preview}</div>}
     </div>
   );
 }
@@ -126,15 +118,183 @@ export function ArticleListCard({
  */
 export function ArticleListSkeleton({ count = 6 }: { count?: number }) {
   return (
-    <div className="divide-y divide-border/70" aria-hidden="true">
+    <div aria-hidden="true">
       {Array.from({ length: count }, (_, index) => (
-        <div key={index} className="space-y-2.5 px-5 py-5 sm:px-7">
-          <Skeleton className="h-4 w-11/12" />
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-3 w-1/2" />
-          <Skeleton className="h-3 w-full" />
+        <div
+          key={index}
+          {...stylex.props(styles.articleListSkeletonRow, styles.articleListSkeletonDiv)}
+        >
+          <Skeleton
+            xstyle={[styles.articleListSkeletonDivItem, styles.articleListSkeletonSkeleton]}
+          />
+          <Skeleton
+            xstyle={[styles.articleListSkeletonDivItem, styles.articleListSkeletonSkeleton2]}
+          />
+          <Skeleton
+            xstyle={[styles.articleListSkeletonDivItem, styles.articleListSkeletonSkeleton3]}
+          />
+          <Skeleton
+            xstyle={[styles.articleListSkeletonDivItem, styles.articleListSkeletonSkeleton4]}
+          />
         </div>
       ))}
     </div>
   );
 }
+
+const styles = stylex.create({
+  articleListSkeletonRow: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+    },
+    borderColor: {
+      default: null,
+      ':not(:last-child)': `color-mix(in oklab, ${colors.border} 70%, transparent)`,
+    },
+  },
+  articleListCard: {
+    minWidth: '0px',
+    paddingBlock: '1.25rem',
+    paddingRight: {
+      default: '1.25rem',
+      '@media (min-width: 40rem)': '1.75rem',
+    },
+    paddingLeft: {
+      default: '1.25rem',
+      '@media (min-width: 40rem)': '1.75rem',
+    },
+    contentVisibility: 'auto',
+    containIntrinsicSize: '0 220px',
+  },
+  articleListTitle: {
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 3,
+    fontSize: '15px',
+    lineHeight: 1.5,
+    fontWeight: 700,
+    letterSpacing: '-0.005em',
+    textWrap: 'wrap',
+    overflowWrap: 'break-word',
+    color: colors.foreground,
+  },
+  articleListMetaItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.25rem',
+    },
+  },
+  articleListMeta: {
+    marginTop: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+  },
+  articleListCardP: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    color: `color-mix(in oklab, ${colors.foreground} 65%, transparent)`,
+  },
+  articleListCardP2: {
+    display: 'flex',
+    minWidth: '0px',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    columnGap: '0.5rem',
+    rowGap: '0.25rem',
+    fontSize: '11.5px',
+    color: colors.mutedForeground,
+  },
+  articleListCardSpan: {
+    minWidth: '0px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontWeight: 700,
+    letterSpacing: '0.02em',
+    color: `color-mix(in oklab, ${colors.foreground} 80%, transparent)`,
+  },
+  articleListCardSpan2: {
+    flexShrink: 0,
+  },
+  articleListCardTime: {
+    flexShrink: 0,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  articleListCardSpan3: {
+    display: 'inline-flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.25rem',
+    fontWeight: 700,
+    color: colors.successForeground,
+  },
+  articleListCardI: {
+    width: '0.375rem',
+    height: '0.375rem',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: 'currentcolor',
+  },
+  articleListCardSpan4: {
+    display: 'inline-flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.25rem',
+    fontWeight: 700,
+    color: colors.warningForeground,
+  },
+  articleListCardDiv: {
+    marginTop: '0.75rem',
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 2,
+    fontSize: '12.5px',
+    lineHeight: 1.75,
+    textWrap: 'pretty',
+    color: `color-mix(in oklab, ${colors.mutedForeground} 85%, transparent)`,
+  },
+  articleListSkeletonDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.625rem',
+    },
+  },
+  articleListSkeletonDiv: {
+    paddingInline: {
+      default: '1.25rem',
+      '@media (min-width: 40rem)': '1.75rem',
+    },
+    paddingBlock: '1.25rem',
+  },
+  articleListSkeletonSkeleton: {
+    height: '1rem',
+    width: 'calc(11 / 12 * 100%)',
+  },
+  articleListSkeletonSkeleton2: {
+    height: '1rem',
+    width: 'calc(2 / 3 * 100%)',
+  },
+  articleListSkeletonSkeleton3: {
+    height: '0.75rem',
+    width: 'calc(1 / 2 * 100%)',
+  },
+  articleListSkeletonSkeleton4: {
+    height: '0.75rem',
+    width: '100%',
+  },
+});

@@ -20,7 +20,8 @@ import { parseAdminSection, withAdminSection } from '@/lib/admin-center';
 import { useAuth } from '@/lib/auth-context';
 import { WORKSPACE_ROUTE_ID, type WorkspaceSearch } from '@/lib/search-params';
 import { parseSettingsSection, withSettingsSection } from '@/lib/settings-center';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 /**
  * Mark a rail shortcut as the focus target restored after its sectioned dialog closes.
@@ -73,12 +74,9 @@ function RailShortcut({
           onIntent();
           triggerHandlers.onPointerDown(event);
         }}
-        className={cn(
-          'motion-control flex size-10 items-center justify-center rounded-xl text-rail-foreground outline-none transition-[background-color,color] hover:bg-rail-hover hover:text-rail-active focus-visible:ring-2 focus-visible:ring-ring',
-          isCurrent && 'bg-rail-hover text-rail-active',
-        )}
+        {...stylex.props(styles.railShortcutLink, isCurrent && styles.railShortcutLinkCurrent)}
       >
-        <Icon className="size-5" strokeWidth={1.7} aria-hidden="true" />
+        <Icon {...stylex.props(styles.railShortcutIcon)} strokeWidth={1.7} aria-hidden="true" />
       </Link>
     </IconTriggerProvider>
   );
@@ -96,16 +94,13 @@ function AppRail() {
   const isAdminOpen = parseAdminSection(search.admin) !== null;
 
   return (
-    <aside
-      data-slot="app-rail"
-      className="hidden h-dvh w-16 shrink-0 flex-col items-center border-r border-rail-border bg-rail py-3 md:flex"
-    >
+    <aside data-slot="app-rail" {...stylex.props(styles.appRail)}>
       <Link
         to="/"
         activeOptions={{ exact: true }}
         aria-label="LitRadar 首页"
         title="LitRadar"
-        className="motion-control mb-5 rounded-xl outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-ring"
+        {...stylex.props(styles.appRailLink)}
       >
         <img
           src="/litradar-logo.png"
@@ -114,13 +109,13 @@ function AppRail() {
           height={36}
           loading="eager"
           fetchPriority="high"
-          className="size-9 rounded-[10px] object-cover"
+          {...stylex.props(styles.appRailImg)}
         />
       </Link>
 
       <RailNavigation />
 
-      <div className="mt-auto flex flex-col items-center gap-1.5">
+      <div {...stylex.props(styles.appRailDiv)}>
         <RailShortcut
           search={withSettingsSection(search, 'general')}
           icon={Settings}
@@ -137,7 +132,7 @@ function AppRail() {
             onIntent={preloadAdminCenter}
           />
         )}
-        <div className="mt-2 border-t border-rail-border pt-3">
+        <div {...stylex.props(styles.appRailDiv2)}>
           <UserMenu placement="rail" />
         </div>
       </div>
@@ -152,11 +147,8 @@ function AppRail() {
  */
 function MobileTabBar() {
   return (
-    <div
-      data-slot="mobile-tab-bar"
-      className="mobile-tab-safe-area fixed inset-x-0 bottom-0 z-40 border-t bg-background md:hidden"
-    >
-      <div className="grid grid-cols-6">
+    <div data-slot="mobile-tab-bar" {...stylex.props(styles.mobileTabBar)}>
+      <div {...stylex.props(styles.mobileTabBarDiv)}>
         <TabNavigation />
         <UserMenu placement="tab" />
       </div>
@@ -172,12 +164,154 @@ function MobileTabBar() {
  */
 export function AppFrame({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
+    <div {...stylex.props(styles.appFrameDiv)}>
       <AppRail />
-      <main id="main-content" className="relative flex h-dvh min-w-0 flex-1 flex-col">
+      <main id="main-content" {...stylex.props(styles.appFrameMain)}>
         {children}
       </main>
       <MobileTabBar />
     </div>
   );
 }
+
+const styles = stylex.create({
+  railShortcutLink: {
+    display: 'flex',
+    width: '2.5rem',
+    height: '2.5rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '12px',
+    color: {
+      default: colors.railForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.railActive,
+      },
+    },
+    transitionProperty: 'background-color, color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.railHover,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  railShortcutLinkCurrent: {
+    backgroundColor: {
+      default: colors.railHover,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.railHover,
+      },
+    },
+    color: {
+      default: colors.railActive,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.railActive,
+      },
+    },
+  },
+  railShortcutIcon: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  appRail: {
+    display: {
+      default: 'none',
+      '@media (min-width: 48rem)': 'flex',
+    },
+    height: '100dvh',
+    width: '4rem',
+    flexShrink: 0,
+    flexDirection: 'column',
+    alignItems: 'center',
+    borderRightStyle: 'solid',
+    borderRightWidth: '1px',
+    borderColor: colors.railBorder,
+    backgroundColor: colors.rail,
+    paddingBlock: '0.75rem',
+  },
+  appRailLink: {
+    marginBottom: '1.25rem',
+    borderRadius: '12px',
+    transitionProperty: 'opacity',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    opacity: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': '85%',
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  appRailImg: {
+    width: '2.25rem',
+    height: '2.25rem',
+    borderRadius: '10px',
+    objectFit: 'cover',
+  },
+  appRailDiv: {
+    marginTop: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '0.375rem',
+  },
+  appRailDiv2: {
+    marginTop: '0.5rem',
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    borderColor: colors.railBorder,
+    paddingTop: '0.75rem',
+  },
+  mobileTabBar: {
+    position: 'fixed',
+    insetInline: '0px',
+    bottom: '0px',
+    zIndex: 40,
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    backgroundColor: colors.background,
+    paddingBottom: 'var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))',
+    display: {
+      default: null,
+      '@media (min-width: 48rem)': 'none',
+    },
+  },
+  mobileTabBarDiv: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+  },
+  appFrameDiv: {
+    display: 'flex',
+    height: '100dvh',
+    width: '100%',
+    overflow: 'hidden',
+    backgroundColor: colors.background,
+    color: colors.foreground,
+  },
+  appFrameMain: {
+    position: 'relative',
+    display: 'flex',
+    height: '100dvh',
+    minWidth: '0px',
+    flex: '1',
+    flexDirection: 'column',
+  },
+});

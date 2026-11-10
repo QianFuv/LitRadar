@@ -32,8 +32,10 @@ import {
   isAdvancedSearchQuery,
   type SearchRewriteSuggestion,
 } from '@/lib/search-syntax';
-import { cn } from '@/lib/utils';
 import { MotionDiv, MotionPresence, SWAP_VARIANTS } from '@/components/ui/motion';
+import * as stylex from '@stylexjs/stylex';
+import { searchMarker } from '@/lib/markers.stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 const SEARCH_HISTORY_KEY = 'litradar:v1:search_history';
 const LEGACY_SEARCH_HISTORY_KEY = 'search_history';
@@ -124,7 +126,7 @@ function clearSearchHistory(): void {
 }
 
 type SearchBarProps = {
-  className?: string;
+  xstyle?: stylex.StyleXStyles;
   placeholder?: string;
   /** Workspace search parameter that holds the submitted query. */
   queryParam?: 'q' | 'weekly_q';
@@ -190,11 +192,11 @@ function buildAssistOptions(
 /**
  * Render a submitted search query with a separate draft, search history, and syntax assistant.
  *
- * @param props - Optional class name, URL query parameter override, and syntax assistant flag.
+ * @param props - Optional styles, URL query parameter override, and syntax assistant flag.
  * @returns Search form and syntax-help popover.
  */
 export function SearchBar({
-  className,
+  xstyle,
   placeholder = '搜索文章…',
   queryParam = 'q',
   hasSyntaxAssist = false,
@@ -401,13 +403,13 @@ export function SearchBar({
    *
    * @param option - Option to render.
    * @param content - Row content.
-   * @param className - Additional row classes.
+   * @param optionXstyle - Additional row styles.
    * @returns Option button.
    */
   const renderOptionButton = (
     option: SearchAssistOption,
     content: ReactNode,
-    className?: string,
+    optionXstyle?: stylex.StyleXStyles,
   ) => {
     const optionIndex = options.indexOf(option);
     const isActive = activeOptionIndex === optionIndex;
@@ -418,10 +420,11 @@ export function SearchBar({
         type="button"
         role="option"
         aria-selected={isActive}
-        className={cn(
-          'motion-control group flex min-h-11 w-full min-w-0 items-center gap-3 rounded-md px-2.5 py-1.5 text-left text-sm outline-none transition-[background-color,color] hover:bg-accent md:min-h-9',
-          isActive && 'bg-accent',
-          className,
+        {...stylex.props(
+          styles.renderOptionButtonButton,
+          stylex.defaultMarker(),
+          isActive && styles.renderOptionButtonButtonActive,
+          optionXstyle,
         )}
         onMouseDown={(event) => {
           if (option.kind === 'rewrite') event.preventDefault();
@@ -435,17 +438,10 @@ export function SearchBar({
   };
 
   return (
-    <div className={cn('w-full min-w-0', className)}>
-      <form
-        role="search"
-        className="flex w-full min-w-0 items-center gap-2"
-        onSubmit={handleSubmit}
-      >
-        <div className="motion-control group/search relative min-w-0 flex-1 rounded-xl bg-muted shadow-[inset_0_0_0_1px_var(--border)] transition-[background-color,box-shadow] focus-within:bg-background focus-within:shadow-[inset_0_0_0_1px_var(--ring),0_0_0_3px_color-mix(in_oklab,var(--ring)_18%,transparent)] hover:shadow-[inset_0_0_0_1px_var(--input-hover)]">
-          <Search
-            className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
+    <div {...stylex.props(styles.searchBarDiv, xstyle)}>
+      <form role="search" {...stylex.props(styles.searchBarForm)} onSubmit={handleSubmit}>
+        <div {...stylex.props(styles.searchBarDiv2, searchMarker)}>
+          <Search {...stylex.props(styles.searchBarSearch)} aria-hidden="true" />
           <Popover
             open={isPanelOpen}
             onOpenChange={(isOpen) => {
@@ -472,10 +468,10 @@ export function SearchBar({
                 spellCheck={false}
                 placeholder={placeholder}
                 {...{ [WORKSPACE_SEARCH_ATTRIBUTE]: '' }}
-                className={cn(
-                  'search-input h-11 rounded-xl bg-transparent pr-11 pl-10 !shadow-none hover:bg-transparent hover:!shadow-none focus-visible:ring-0',
-                  isAdvancedDraft && 'text-primary',
-                )}
+                xstyle={[
+                  styles.searchBarInput,
+                  isAdvancedDraft && styles.searchBarInputAdvancedDraft,
+                ]}
                 value={inputValue}
                 onChange={(event) => {
                   setInputValue(event.target.value);
@@ -496,29 +492,24 @@ export function SearchBar({
             </PopoverAnchor>
             {options.length > 0 && (
               <PopoverContent
-                className="w-[var(--radix-popover-trigger-width)] min-w-72 p-0"
+                xstyle={styles.searchBarPopoverContent}
                 align="start"
                 onOpenAutoFocus={(event: Event) => event.preventDefault()}
               >
-                <div className="max-h-[min(28rem,70dvh)] overflow-y-auto overscroll-contain p-1.5">
+                <div {...stylex.props(styles.searchBarDiv3)}>
                   {rewriteOptions.length > 0 && (
-                    <section className="pb-1">
-                      <p className="px-2.5 pt-1.5 pb-1 text-[11px] font-bold tracking-[0.08em] text-muted-foreground">
-                        改写当前输入
-                      </p>
+                    <section {...stylex.props(styles.searchBarSection)}>
+                      <p {...stylex.props(styles.searchBarP)}>改写当前输入</p>
                       <div id={REWRITE_LISTBOX_ID} role="listbox" aria-label="改写当前输入">
                         {rewriteOptions.map((option) =>
                           renderOptionButton(
                             option,
                             <>
-                              <Wand2
-                                className="size-3.5 shrink-0 text-muted-foreground"
-                                aria-hidden="true"
-                              />
-                              <span className="min-w-0 flex-1 truncate text-foreground">
+                              <Wand2 {...stylex.props(styles.searchBarWand2)} aria-hidden="true" />
+                              <span {...stylex.props(styles.searchBarSpan)}>
                                 {option.suggestion.value}
                               </span>
-                              <span className="shrink-0 text-xs text-muted-foreground">
+                              <span {...stylex.props(styles.searchBarSpan2)}>
                                 {option.suggestion.label}
                               </span>
                             </>,
@@ -528,10 +519,15 @@ export function SearchBar({
                     </section>
                   )}
                   {historyOptions.length > 0 && (
-                    <section className={cn(rewriteOptions.length > 0 && 'border-t pt-1', 'pb-1')}>
-                      <div className="flex items-center justify-between px-2.5 pt-1">
-                        <span className="flex items-center gap-1.5 text-[11px] font-bold tracking-[0.08em] text-muted-foreground">
-                          <Clock className="size-3" aria-hidden="true" />
+                    <section
+                      {...stylex.props(
+                        rewriteOptions.length > 0 && styles.searchBarSectionLength,
+                        styles.searchBarSection,
+                      )}
+                    >
+                      <div {...stylex.props(styles.searchBarDiv4)}>
+                        <span {...stylex.props(styles.searchBarSpan3)}>
+                          <Clock {...stylex.props(styles.searchBarClock)} aria-hidden="true" />
                           最近搜索
                         </span>
                         <Button
@@ -539,7 +535,7 @@ export function SearchBar({
                           variant="ghost"
                           size="sm"
                           static
-                          className="min-h-11 px-2 text-xs text-muted-foreground md:min-h-8"
+                          xstyle={styles.searchBarButton}
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={handleClearHistory}
                         >
@@ -560,18 +556,20 @@ export function SearchBar({
                               {renderOptionButton(
                                 option,
                                 <>
-                                  <span className="min-w-0 flex-1 truncate">{option.query}</span>
+                                  <span {...stylex.props(styles.searchBarSpan4)}>
+                                    {option.query}
+                                  </span>
                                   <Search
                                     aria-hidden="true"
-                                    className={cn(
-                                      'motion-control size-4 shrink-0 text-muted-foreground transition-opacity',
+                                    {...stylex.props(
+                                      styles.searchBarSearch2,
                                       activeOption === option
-                                        ? 'opacity-100'
-                                        : 'opacity-0 group-hover:opacity-100',
+                                        ? styles.searchBarSearchOption
+                                        : styles.searchBarSearchNotOption,
                                     )}
                                   />
                                 </>,
-                                'justify-between',
+                                styles.optionButtonSpread,
                               )}
                             </MotionDiv>
                           ))}
@@ -580,19 +578,17 @@ export function SearchBar({
                     </section>
                   )}
                   {builderOption && (
-                    <section className={cn(options.length > 1 && 'border-t pt-1')}>
+                    <section {...stylex.props(options.length > 1 && styles.searchBarSectionLength)}>
                       <div id={BUILDER_LISTBOX_ID} role="listbox" aria-label="高级检索构建器">
                         {renderOptionButton(
                           builderOption,
                           <>
                             <SlidersHorizontal
-                              className="size-3.5 shrink-0 text-primary"
+                              {...stylex.props(styles.searchBarSlidersHorizontal)}
                               aria-hidden="true"
                             />
-                            <span className="min-w-0 flex-1 truncate font-bold">
-                              使用高级检索构建器
-                            </span>
-                            <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                            <span {...stylex.props(styles.searchBarSpan5)}>使用高级检索构建器</span>
+                            <span {...stylex.props(styles.searchBarSpan6)}>
                               按字段组合条件，无需手写语法
                             </span>
                           </>,
@@ -602,28 +598,29 @@ export function SearchBar({
                   )}
                 </div>
                 {hasSyntaxAssist && (
-                  <div className="flex items-center justify-between gap-3 border-t px-4 py-2 text-[11px] text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
+                  <div {...stylex.props(styles.searchBarDiv5)}>
+                    <span {...stylex.props(styles.searchBarSpan7)}>
                       <i
                         aria-hidden="true"
-                        className={cn(
-                          'size-1.5 rounded-full',
-                          isAdvancedDraft ? 'bg-primary' : 'bg-muted-foreground/40',
+                        {...stylex.props(
+                          styles.searchBarI,
+                          isAdvancedDraft
+                            ? styles.searchBarIAdvancedDraft
+                            : styles.searchBarINotAdvancedDraft,
                         )}
                       />
                       {isAdvancedDraft ? '将按高级语法检索' : '普通关键词检索'}
                     </span>
-                    <span className="hidden sm:inline">↑↓ 选择 · Enter 确认 · Esc 关闭</span>
+                    <span {...stylex.props(styles.searchBarSpan8)}>
+                      ↑↓ 选择 · Enter 确认 · Esc 关闭
+                    </span>
                   </div>
                 )}
               </PopoverContent>
             )}
           </Popover>
           {!inputValue && (
-            <kbd
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 right-3 hidden h-6 min-w-6 -translate-y-1/2 items-center justify-center rounded-md bg-background px-1.5 text-[11px] text-muted-foreground shadow-vercel-ring group-focus-within/search:hidden lg:inline-flex"
-            >
+            <kbd aria-hidden="true" {...stylex.props(styles.searchBarKbd)}>
               /
             </kbd>
           )}
@@ -639,24 +636,21 @@ export function SearchBar({
                 setActiveOptionIndex(-1);
                 inputRef.current?.focus();
               }}
-              className="absolute top-0 right-0 size-11 rounded-xl text-muted-foreground hover:bg-transparent hover:text-foreground"
+              xstyle={styles.searchBarButton2}
             >
-              <X className="size-4" aria-hidden="true" />
+              <X {...stylex.props(styles.searchBarX)} aria-hidden="true" />
             </Button>
           )}
         </div>
 
-        <Button
-          type="submit"
-          className="h-11 min-w-11 shrink-0 rounded-xl bg-foreground px-4 text-background hover:bg-foreground/85 active:bg-foreground/75"
-        >
+        <Button type="submit" xstyle={styles.searchBarButton3}>
           搜索
         </Button>
         {hasSyntaxAssist && (
           <Button
             type="button"
             variant="ghost"
-            className="h-11 min-w-11 shrink-0 gap-1.5 rounded-xl px-0 text-muted-foreground hover:text-foreground lg:px-3"
+            xstyle={styles.searchBarButton4}
             aria-label="高级检索"
             title="高级检索"
             onClick={() => {
@@ -664,32 +658,34 @@ export function SearchBar({
               setIsBuilderOpen(true);
             }}
           >
-            <SlidersHorizontal className="size-4" aria-hidden="true" />
-            <span className="hidden text-[13px] lg:inline">高级</span>
+            <SlidersHorizontal {...stylex.props(styles.searchBarX)} aria-hidden="true" />
+            <span {...stylex.props(styles.searchBarSpan9)}>高级</span>
           </Button>
         )}
       </form>
       {appliedConditions.length > 0 && (
-        <ul aria-label="已应用的检索条件" className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        <ul aria-label="已应用的检索条件" {...stylex.props(styles.searchBarUl)}>
           {appliedConditions.map((condition, index) => {
             const remaining = appliedConditions.filter((item) => item.id !== condition.id);
             const canRemove = remaining.length === 0 || !compileSearchConditions(remaining).error;
             return (
-              <li key={condition.id} className="flex items-center gap-1.5">
+              <li key={condition.id} {...stylex.props(styles.searchBarSpan7)}>
                 {index > 0 && (
                   <span
-                    className={cn(
-                      'text-[11px] font-bold',
-                      condition.connector === 'NOT' ? 'text-destructive' : 'text-primary',
+                    {...stylex.props(
+                      styles.searchBarSpan10,
+                      condition.connector === 'NOT'
+                        ? styles.searchBarSpanNOT
+                        : styles.searchBarInputAdvancedDraft,
                     )}
                   >
                     {describeSearchConnector(condition.connector)}
                   </span>
                 )}
-                <span className="inline-flex h-7 max-w-64 items-center rounded-md bg-muted text-xs">
+                <span {...stylex.props(styles.searchBarSpan11)}>
                   <button
                     type="button"
-                    className="min-w-0 truncate rounded-l-md pr-1 pl-2.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    {...stylex.props(styles.searchBarButton5)}
                     title="在高级检索中编辑"
                     onClick={() => setIsBuilderOpen(true)}
                   >
@@ -697,13 +693,13 @@ export function SearchBar({
                   </button>
                   <button
                     type="button"
-                    className="flex size-7 shrink-0 items-center justify-center rounded-r-md text-muted-foreground outline-none hover:bg-accent-pressed hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40"
+                    {...stylex.props(styles.searchBarButton6)}
                     aria-label={`移除条件：${describeSearchCondition(condition)}`}
                     title={canRemove ? '移除条件' : '“不含”条件前至少需要一个包含条件'}
                     disabled={!canRemove}
                     onClick={() => removeAppliedCondition(condition.id)}
                   >
-                    <X className="size-3.5" aria-hidden="true" />
+                    <X {...stylex.props(styles.searchBarX2)} aria-hidden="true" />
                   </button>
                 </span>
               </li>
@@ -722,3 +718,495 @@ export function SearchBar({
     </div>
   );
 }
+
+const styles = stylex.create({
+  optionButtonSpread: {
+    justifyContent: 'space-between',
+  },
+  renderOptionButtonButton: {
+    display: 'flex',
+    minHeight: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2.25rem',
+    },
+    width: '100%',
+    minWidth: '0px',
+    alignItems: 'center',
+    gap: '0.75rem',
+    borderRadius: '6px',
+    paddingInline: '0.625rem',
+    paddingBlock: '0.375rem',
+    textAlign: 'left',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    transitionProperty: 'background-color, color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+  },
+  renderOptionButtonButtonActive: {
+    backgroundColor: {
+      default: colors.accent,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+  },
+  searchBarDiv: {
+    width: '100%',
+    minWidth: '0px',
+  },
+  searchBarForm: {
+    display: 'flex',
+    width: '100%',
+    minWidth: '0px',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  searchBarDiv2: {
+    position: 'relative',
+    minWidth: '0px',
+    flex: '1',
+    borderRadius: '12px',
+    backgroundColor: {
+      default: colors.muted,
+      ':focus-within': colors.background,
+    },
+    boxShadow: {
+      default: `inset 0 0 0 1px ${colors.border}`,
+      ':focus-within': {
+        default: `inset 0 0 0 1px ${colors.ring}, 0 0 0 3px color-mix(in oklab,${colors.ring} 18%,transparent)`,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': `inset 0 0 0 1px ${colors.inputHover}`,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `inset 0 0 0 1px ${colors.inputHover}`,
+        ':focus-within': {
+          default: null,
+          '@media (hover: hover)': `inset 0 0 0 1px ${colors.inputHover}`,
+        },
+      },
+    },
+    transitionProperty: 'background-color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+  },
+  searchBarSearch: {
+    pointerEvents: 'none',
+    position: 'absolute',
+    top: 'calc(1 / 2 * 100%)',
+    left: '0.875rem',
+    width: '1rem',
+    height: '1rem',
+    translate: '0 calc(calc(1 / 2 * 100%) * -1)',
+    color: colors.mutedForeground,
+  },
+  searchBarInput: {
+    height: '2.75rem',
+    borderRadius: '12px',
+    backgroundColor: {
+      default: 'transparent',
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': 'transparent',
+      },
+    },
+    paddingRight: '2.75rem',
+    paddingLeft: '2.5rem',
+    boxShadow: {
+      default: 'none',
+      ':focus-visible': {
+        default: '0 0 0 0px currentcolor',
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': '0 0 0 0px currentcolor',
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': 'none',
+        ':focus-visible': {
+          default: null,
+          '@media (hover: hover)': '0 0 0 0px currentcolor',
+        },
+      },
+    },
+    '::-webkit-search-cancel-button': {
+      display: 'none',
+      appearance: 'none',
+    },
+  },
+  searchBarInputAdvancedDraft: {
+    color: colors.primary,
+  },
+  searchBarPopoverContent: {
+    width: 'var(--radix-popover-trigger-width)',
+    minWidth: '18rem',
+    padding: '0px',
+  },
+  searchBarDiv3: {
+    maxHeight: 'min(28rem, 70dvh)',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    padding: '0.375rem',
+  },
+  searchBarSection: {
+    paddingBottom: '0.25rem',
+  },
+  searchBarP: {
+    paddingInline: '0.625rem',
+    paddingTop: '0.375rem',
+    paddingBottom: '0.25rem',
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    color: colors.mutedForeground,
+  },
+  searchBarWand2: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+    color: colors.mutedForeground,
+  },
+  searchBarSpan: {
+    minWidth: '0px',
+    flex: '1',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    color: colors.foreground,
+  },
+  searchBarSpan2: {
+    flexShrink: 0,
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  searchBarSectionLength: {
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingTop: '0.25rem',
+  },
+  searchBarDiv4: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingInline: '0.625rem',
+    paddingTop: '0.25rem',
+  },
+  searchBarSpan3: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.375rem',
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    color: colors.mutedForeground,
+  },
+  searchBarClock: {
+    width: '0.75rem',
+    height: '0.75rem',
+  },
+  searchBarButton: {
+    minHeight: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    paddingInline: {
+      default: '0.5rem',
+      ':has( > svg)': '0.625rem',
+    },
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  searchBarSpan4: {
+    minWidth: '0px',
+    flex: '1',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  searchBarSearch2: {
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    color: colors.mutedForeground,
+    transitionProperty: 'opacity',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+  },
+  searchBarSearchOption: {
+    opacity: '100%',
+  },
+  searchBarSearchNotOption: {
+    opacity: {
+      default: '0%',
+      '@media (hover: hover)': {
+        default: null,
+        [stylex.when.ancestor(':hover')]: '100%',
+      },
+    },
+  },
+  searchBarSlidersHorizontal: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+    color: colors.primary,
+  },
+  searchBarSpan5: {
+    minWidth: '0px',
+    flex: '1',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontWeight: 700,
+  },
+  searchBarSpan6: {
+    display: {
+      default: 'none',
+      '@media (min-width: 40rem)': 'inline',
+    },
+    flexShrink: 0,
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  searchBarDiv5: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingInline: '1rem',
+    paddingBlock: '0.5rem',
+    fontSize: '11px',
+    color: colors.mutedForeground,
+  },
+  searchBarSpan7: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.375rem',
+  },
+  searchBarI: {
+    width: '0.375rem',
+    height: '0.375rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  searchBarIAdvancedDraft: {
+    backgroundColor: colors.primary,
+  },
+  searchBarINotAdvancedDraft: {
+    backgroundColor: `color-mix(in oklab, ${colors.mutedForeground} 40%, transparent)`,
+  },
+  searchBarSpan8: {
+    display: {
+      default: 'none',
+      '@media (min-width: 40rem)': 'inline',
+    },
+  },
+  searchBarKbd: {
+    pointerEvents: 'none',
+    position: 'absolute',
+    top: 'calc(1 / 2 * 100%)',
+    right: '0.75rem',
+    display: {
+      default: 'none',
+      [stylex.when.ancestor(':focus-within', searchMarker)]: 'none',
+      '@media (min-width: 64rem)': 'inline-flex',
+    },
+    height: '1.5rem',
+    minWidth: '1.5rem',
+    translate: '0 calc(calc(1 / 2 * 100%) * -1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '6px',
+    backgroundColor: colors.background,
+    paddingInline: '0.375rem',
+    fontSize: '11px',
+    color: colors.mutedForeground,
+    boxShadow: shadows.vercelRing,
+  },
+  searchBarButton2: {
+    position: 'absolute',
+    top: '0px',
+    right: '0px',
+    width: '2.75rem',
+    height: '2.75rem',
+    borderRadius: '12px',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': 'transparent',
+      },
+    },
+  },
+  searchBarX: {
+    width: '1rem',
+    height: '1rem',
+  },
+  searchBarButton3: {
+    height: '2.75rem',
+    minWidth: '2.75rem',
+    flexShrink: 0,
+    borderRadius: '12px',
+    backgroundColor: {
+      default: colors.foreground,
+      ':active': {
+        default: `color-mix(in oklab, ${colors.foreground} 75%, transparent)`,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': `color-mix(in oklab, ${colors.foreground} 75%, transparent)`,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.foreground} 85%, transparent)`,
+      },
+    },
+    paddingInline: {
+      default: '1rem',
+      ':has( > svg)': '0.75rem',
+    },
+    color: colors.background,
+  },
+  searchBarButton4: {
+    height: '2.75rem',
+    minWidth: '2.75rem',
+    flexShrink: 0,
+    gap: '0.375rem',
+    borderRadius: '12px',
+    paddingInline: {
+      default: '0px',
+      ':has( > svg)': '0.75rem',
+      '@media (min-width: 64rem)': '0.75rem',
+    },
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+  },
+  searchBarSpan9: {
+    display: {
+      default: 'none',
+      '@media (min-width: 64rem)': 'inline',
+    },
+    fontSize: '13px',
+  },
+  searchBarUl: {
+    marginTop: '0.625rem',
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.375rem',
+  },
+  searchBarSpan10: {
+    fontSize: '11px',
+    fontWeight: 700,
+  },
+  searchBarSpanNOT: {
+    color: colors.destructive,
+  },
+  searchBarSpan11: {
+    display: 'inline-flex',
+    height: '1.75rem',
+    maxWidth: '16rem',
+    alignItems: 'center',
+    borderRadius: '6px',
+    backgroundColor: colors.muted,
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+  },
+  searchBarButton5: {
+    minWidth: '0px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    borderTopLeftRadius: '6px',
+    borderBottomLeftRadius: '6px',
+    paddingRight: '0.25rem',
+    paddingLeft: '0.625rem',
+    outlineStyle: 'none',
+    color: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  searchBarButton6: {
+    display: 'flex',
+    width: '1.75rem',
+    height: '1.75rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderTopRightRadius: '6px',
+    borderBottomRightRadius: '6px',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    outlineStyle: 'none',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentPressed,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+    pointerEvents: {
+      default: null,
+      ':disabled': 'none',
+    },
+    opacity: {
+      default: null,
+      ':disabled': '40%',
+    },
+  },
+  searchBarX2: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+});

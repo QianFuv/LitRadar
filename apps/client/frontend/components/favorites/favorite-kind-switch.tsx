@@ -12,6 +12,7 @@ import {
   WORKSPACE_ROUTE_ID,
   type FavoriteKind,
 } from '@/lib/search-params';
+import * as stylex from '@stylexjs/stylex';
 
 const DEFAULT_FAVORITE_KIND = 'articles' satisfies FavoriteKind;
 
@@ -75,10 +76,17 @@ export function FavoriteKindSwitch() {
     >
       {FAVORITE_KIND_OPTIONS.map(({ kind: option, label, icon: Icon }) => (
         <ToggleGroupItem key={option} value={option}>
-          <Icon className="size-3.5" aria-hidden="true" />
+          <Icon {...stylex.props(styles.favoriteKindSwitchIcon)} aria-hidden="true" />
           {label}
         </ToggleGroupItem>
       ))}
     </ToggleGroup>
   );
 }
+
+const styles = stylex.create({
+  favoriteKindSwitchIcon: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+});

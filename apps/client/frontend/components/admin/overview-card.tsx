@@ -18,6 +18,8 @@ import { Progress } from '@/components/ui/progress';
 import { SlidingNumber } from '@animate-ui/react/primitives/texts/sliding-number';
 import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('zh-CN');
 
@@ -30,24 +32,21 @@ const NUMBER_FORMATTER = new Intl.NumberFormat('zh-CN');
 function StatCard({
   label,
   value,
-  icon,
+  icon: Icon,
 }: {
   label: string;
   value: string | number;
-  icon?: React.ReactNode;
+  icon?: AnimatedIcon;
 }) {
   return (
-    <div className="flex flex-col justify-between gap-4 bg-background px-4 py-4 sm:px-5">
-      <div className="flex items-start justify-between gap-2">
-        <dt className="text-xs text-muted-foreground">{label}</dt>
-        <span
-          aria-hidden="true"
-          className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-3.5"
-        >
-          {icon}
+    <div {...stylex.props(styles.statCardDiv)}>
+      <div {...stylex.props(styles.statCardDiv2)}>
+        <dt {...stylex.props(styles.statCardDt)}>{label}</dt>
+        <span aria-hidden="true" {...stylex.props(styles.statCardSpan)}>
+          {Icon && <Icon {...stylex.props(styles.statCardIcon)} />}
         </span>
       </div>
-      <dd className="text-[28px] leading-none font-bold text-foreground tabular-nums">
+      <dd {...stylex.props(styles.statCardDd)}>
         {typeof value === 'number' ? <SlidingNumber number={value} /> : value}
       </dd>
     </div>
@@ -70,14 +69,12 @@ function StatGroup({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-3">
-      <h3 className="flex items-center gap-2 text-sm font-bold">
-        <Icon animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+    <section>
+      <h3 {...stylex.props(styles.statGroupSectionItem, styles.statGroupH3)}>
+        <Icon animateOnView {...stylex.props(styles.statGroupIcon)} aria-hidden="true" />
         {title}
       </h3>
-      <dl className="-mx-4 grid grid-cols-2 gap-px border-y bg-border sm:-mx-5 lg:grid-cols-4">
-        {children}
-      </dl>
+      <dl {...stylex.props(styles.statGroupSectionItem, styles.statGroupDl)}>{children}</dl>
     </section>
   );
 }
@@ -100,9 +97,9 @@ export function AdminOverviewCard(props: { isEnabled: boolean }) {
       <CardContent>
         <RevealItem
           isReady={!statsLoading}
-          className="space-y-10"
+          xstyle={styles.adminOverviewCardRevealItem}
           placeholder={
-            <div className="text-muted-foreground" role="status">
+            <div {...stylex.props(styles.adminOverviewCardDiv)} role="status">
               <LoadingText text="加载中…" />
             </div>
           }
@@ -145,44 +142,44 @@ function renderAuthStatistics(state: Pick<OverviewViewState, 'authStats'>) {
         <StatCard
           label="用户总数"
           value={getAuthStatisticValue(authStats?.total_users)}
-          icon={<Users />}
+          icon={Users}
         />
         <StatCard
           label="管理员"
           value={getAuthStatisticValue(authStats?.admin_count)}
-          icon={<ShieldCheck />}
+          icon={ShieldCheck}
         />
         <StatCard
           label="活跃令牌"
           value={getAuthStatisticValue(authStats?.active_tokens)}
-          icon={<Key />}
+          icon={Key}
         />
         <StatCard
           label="推送订阅"
           value={getAuthStatisticValue(authStats?.notification_subscribers)}
-          icon={<BellRing />}
+          icon={BellRing}
         />
       </StatGroup>
       <StatGroup icon={Star} title="收藏与邀请">
         <StatCard
           label="收藏夹"
           value={getAuthStatisticValue(authStats?.total_folders)}
-          icon={<Folder />}
+          icon={Folder}
         />
         <StatCard
           label="收藏文章"
           value={getAuthStatisticValue(authStats?.total_favorites)}
-          icon={<Star />}
+          icon={Star}
         />
         <StatCard
           label="邀请码 (未使用)"
           value={getAuthStatisticValue(authStats?.unused_invite_codes)}
-          icon={<Gift />}
+          icon={Gift}
         />
         <StatCard
           label="邀请码 (已使用)"
           value={getAuthStatisticValue(authStats?.used_invite_codes)}
-          icon={<Gift />}
+          icon={Gift}
         />
       </StatGroup>
     </>
@@ -194,12 +191,12 @@ function renderIndexHero(state: Pick<OverviewViewState, 'indexStats'>) {
   const { indexStats } = state;
   return (
     indexStats && (
-      <div className="border-b pb-8">
-        <p className="text-xs text-muted-foreground">索引文献总量</p>
-        <p className="mt-2 text-4xl leading-none font-bold tabular-nums sm:text-5xl">
+      <div {...stylex.props(styles.renderIndexHeroDiv)}>
+        <p {...stylex.props(styles.statCardDt)}>索引文献总量</p>
+        <p {...stylex.props(styles.renderIndexHeroP)}>
           {NUMBER_FORMATTER.format(indexStats.total_articles)}
         </p>
-        <p className="mt-3 text-xs text-muted-foreground tabular-nums">
+        <p {...stylex.props(styles.renderIndexHeroP2)}>
           {NUMBER_FORMATTER.format(indexStats.total_journals)} 本期刊 ·{' '}
           {indexStats.databases.length} 个数据库
         </p>
@@ -213,37 +210,57 @@ function renderIndexStatistics(state: Pick<OverviewViewState, 'indexStats'>) {
   const { indexStats } = state;
   return (
     indexStats && (
-      <section className="space-y-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-          <h3 className="flex items-center gap-2 text-sm font-bold">
-            <Layers animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+      <section>
+        <div {...stylex.props(styles.statGroupSectionItem, styles.renderIndexStatisticsDiv)}>
+          <h3 {...stylex.props(styles.statGroupH3)}>
+            <Layers animateOnView {...stylex.props(styles.statGroupIcon)} aria-hidden="true" />
             索引数据库
           </h3>
-          <p className="text-xs text-muted-foreground tabular-nums">
+          <p {...stylex.props(styles.renderIndexStatisticsP)}>
             共 {NUMBER_FORMATTER.format(indexStats.total_articles)} 篇文章，
             {NUMBER_FORMATTER.format(indexStats.total_journals)} 本期刊
           </p>
         </div>
-        <ul className="-mx-4 divide-y border-y sm:-mx-5">
+        <ul {...stylex.props(styles.statGroupSectionItem, styles.renderIndexStatisticsUl)}>
           {indexStats.databases.map((db) => {
             const share =
               indexStats.total_articles > 0 ? db.articles / indexStats.total_articles : 0;
             return (
-              <li key={db.db_name} className="space-y-2.5 px-5 py-4 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-                  <span className="flex min-w-0 items-center gap-2 font-bold">
-                    <Layers className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="break-all">{db.db_name}</span>
+              <li
+                key={db.db_name}
+                {...stylex.props(
+                  styles.renderIndexStatisticsUlItem,
+                  styles.renderIndexStatisticsLi,
+                )}
+              >
+                <div
+                  {...stylex.props(
+                    styles.renderIndexStatisticsLiItem,
+                    styles.renderIndexStatisticsDiv2,
+                  )}
+                >
+                  <span {...stylex.props(styles.renderIndexStatisticsSpan)}>
+                    <Layers {...stylex.props(styles.renderIndexStatisticsLayers)} />
+                    <span {...stylex.props(styles.renderIndexStatisticsSpan2)}>{db.db_name}</span>
                   </span>
-                  <span className="text-xs text-muted-foreground tabular-nums">
+                  <span {...stylex.props(styles.renderIndexStatisticsP)}>
                     {NUMBER_FORMATTER.format(db.articles)} 文章 ·{' '}
                     {NUMBER_FORMATTER.format(db.journals)} 期刊 ·{' '}
                     {NUMBER_FORMATTER.format(db.issues)} 期
                   </span>
                 </div>
-                <div className="flex items-center gap-3">
-                  <Progress aria-hidden="true" className="flex-1" value={share * 100} />
-                  <span className="w-12 text-right text-xs text-muted-foreground tabular-nums">
+                <div
+                  {...stylex.props(
+                    styles.renderIndexStatisticsLiItem,
+                    styles.renderIndexStatisticsDiv3,
+                  )}
+                >
+                  <Progress
+                    aria-hidden="true"
+                    xstyle={styles.renderIndexStatisticsProgress}
+                    value={share * 100}
+                  />
+                  <span {...stylex.props(styles.renderIndexStatisticsSpan3)}>
                     {Math.round(share * 100)}%
                   </span>
                 </div>
@@ -262,22 +279,22 @@ function renderPushStatistics(state: Pick<OverviewViewState, 'pushStats'>) {
   return (
     pushStats &&
     pushStats.length > 0 && (
-      <section className="space-y-3">
-        <h3 className="flex items-center gap-2 text-sm font-bold">
-          <BellRing animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+      <section>
+        <h3 {...stylex.props(styles.statGroupSectionItem, styles.statGroupH3)}>
+          <BellRing animateOnView {...stylex.props(styles.statGroupIcon)} aria-hidden="true" />
           推送状态
         </h3>
-        <ul className="-mx-4 divide-y border-y sm:-mx-5">
+        <ul {...stylex.props(styles.statGroupSectionItem, styles.renderIndexStatisticsUl)}>
           {pushStats.map((ps) => (
             <li
               key={ps.db_name}
-              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3.5 text-sm"
+              {...stylex.props(styles.renderIndexStatisticsUlItem, styles.renderPushStatisticsLi)}
             >
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="font-bold break-all">{ps.db_name}</span>
+              <span {...stylex.props(styles.renderPushStatisticsSpan)}>
+                <span {...stylex.props(styles.renderPushStatisticsSpan2)}>{ps.db_name}</span>
                 <StatusPill>{ps.status}</StatusPill>
               </span>
-              <span className="text-xs text-muted-foreground tabular-nums">
+              <span {...stylex.props(styles.renderIndexStatisticsP)}>
                 {ps.delivered_count != null && `已推送 ${ps.delivered_count} 篇`}
                 {ps.delivered_count != null && ps.last_completed && ' · '}
                 {ps.last_completed && `最近完成: ${ps.last_completed}`}
@@ -294,3 +311,232 @@ function renderPushStatistics(state: Pick<OverviewViewState, 'pushStats'>) {
 function getAuthStatisticValue(value: number | null | undefined): number {
   return value ?? 0;
 }
+
+const styles = stylex.create({
+  statCardIcon: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+  statCardDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+    gap: '1rem',
+    backgroundColor: colors.background,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+  },
+  statCardDiv2: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+  },
+  statCardDt: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  statCardSpan: {
+    display: 'flex',
+    width: '1.75rem',
+    height: '1.75rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  statCardDd: {
+    fontSize: '28px',
+    lineHeight: 1,
+    fontWeight: 700,
+    color: colors.foreground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  statGroupSectionItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  statGroupH3: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  statGroupIcon: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+  },
+  statGroupDl: {
+    marginInline: {
+      default: '-1rem',
+      '@media (min-width: 40rem)': '-1.25rem',
+    },
+    display: 'grid',
+    gridTemplateColumns: {
+      default: 'repeat(2, minmax(0, 1fr))',
+      '@media (min-width: 64rem)': 'repeat(4, minmax(0, 1fr))',
+    },
+    gap: '1px',
+    borderBlockStyle: 'solid',
+    borderBlockWidth: '1px',
+    backgroundColor: colors.border,
+  },
+  adminOverviewCardRevealItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '2.5rem',
+  },
+  adminOverviewCardDiv: {
+    color: colors.mutedForeground,
+  },
+  renderIndexHeroDiv: {
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    paddingBottom: '2rem',
+  },
+  renderIndexHeroP: {
+    marginTop: '0.5rem',
+    fontSize: {
+      default: '2.25rem',
+      '@media (min-width: 40rem)': '3rem',
+    },
+    lineHeight: {
+      default: 1,
+      '@media (min-width: 40rem)': 1,
+    },
+    fontWeight: 700,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderIndexHeroP2: {
+    marginTop: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderIndexStatisticsDiv: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    columnGap: '1rem',
+    rowGap: '0.25rem',
+  },
+  renderIndexStatisticsP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderIndexStatisticsUlItem: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+    },
+  },
+  renderIndexStatisticsUl: {
+    marginInline: {
+      default: '-1rem',
+      '@media (min-width: 40rem)': '-1.25rem',
+    },
+    borderBlockStyle: 'solid',
+    borderBlockWidth: '1px',
+  },
+  renderIndexStatisticsLiItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.625rem',
+    },
+  },
+  renderIndexStatisticsLi: {
+    paddingInline: '1.25rem',
+    paddingBlock: '1rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderIndexStatisticsDiv2: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    columnGap: '1rem',
+    rowGap: '0.25rem',
+  },
+  renderIndexStatisticsSpan: {
+    display: 'flex',
+    minWidth: '0px',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontWeight: 700,
+  },
+  renderIndexStatisticsLayers: {
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    color: colors.mutedForeground,
+  },
+  renderIndexStatisticsSpan2: {
+    wordBreak: 'break-all',
+  },
+  renderIndexStatisticsDiv3: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  renderIndexStatisticsProgress: {
+    flex: '1',
+  },
+  renderIndexStatisticsSpan3: {
+    width: '3rem',
+    textAlign: 'right',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderPushStatisticsLi: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    columnGap: '1rem',
+    rowGap: '0.5rem',
+    paddingInline: '1.25rem',
+    paddingBlock: '0.875rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderPushStatisticsSpan: {
+    display: 'flex',
+    minWidth: '0px',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  renderPushStatisticsSpan2: {
+    fontWeight: 700,
+    wordBreak: 'break-all',
+  },
+});

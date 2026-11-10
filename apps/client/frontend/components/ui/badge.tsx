@@ -1,48 +1,125 @@
+/**
+ * Compact status badge with semantic color variants.
+ */
+
 import * as React from 'react';
 import { Slot } from '@radix-ui/react-slot';
-import { cva, type VariantProps } from 'class-variance-authority';
+import * as stylex from '@stylexjs/stylex';
 
-import { cn } from '@/lib/utils';
+import { colors, shadows } from '@/lib/theme.stylex';
 
-const badgeVariants = cva(
-  'inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden',
-  {
-    variants: {
-      variant: {
-        default: 'bg-info text-info-foreground [a&]:hover:bg-info/80',
-        secondary: 'bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90',
-        success: 'bg-success text-success-foreground',
-        warning: 'bg-warning text-warning-foreground',
-        destructive:
-          'bg-destructive text-destructive-foreground [a&]:hover:bg-destructive-hover focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40',
-        outline:
-          'shadow-vercel-ring text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
-        ghost: '[a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
-        link: 'text-primary-text underline-offset-4 [a&]:hover:underline',
-      },
-    },
-    defaultVariants: {
-      variant: 'default',
-    },
-  },
-);
+/** Semantic color treatment of a badge. */
+type BadgeVariant = keyof typeof VARIANT_STYLES;
 
+/**
+ * Render a compact status badge, or pass its styling to one child element.
+ *
+ * @param props - Native span properties, variant, polymorphic mode, and style overrides.
+ * @returns Badge element.
+ */
 function Badge({
-  className,
+  xstyle,
   variant = 'default',
   asChild = false,
   ...props
-}: React.ComponentProps<'span'> & VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
+}: Omit<React.ComponentProps<'span'>, 'className'> & {
+  variant?: BadgeVariant;
+  asChild?: boolean;
+  xstyle?: stylex.StyleXStyles;
+}) {
   const Comp = asChild ? Slot : 'span';
 
   return (
     <Comp
       data-slot="badge"
       data-variant={variant}
-      className={cn(badgeVariants({ variant }), className)}
+      {...stylex.props(styles.base, VARIANT_STYLES[variant], xstyle)}
       {...props}
     />
   );
 }
 
-export { Badge, badgeVariants };
+export { Badge, type BadgeVariant };
+
+const styles = stylex.create({
+  base: {
+    display: 'inline-flex',
+    width: 'fit-content',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '0.25rem',
+    overflow: 'hidden',
+    borderRadius: 'calc(infinity * 1px)',
+    paddingInline: '0.5rem',
+    paddingBlock: '0.125rem',
+    fontSize: '11px',
+    lineHeight: '1rem',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+    transitionProperty: 'color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    transitionDuration: '150ms',
+    boxShadow: {
+      default: null,
+      ':focus-visible': {
+        default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+        ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}`,
+      },
+    },
+    borderColor: {
+      default: null,
+      ':is([aria-invalid="true"])': colors.destructive,
+    },
+  },
+  variantDefault: {
+    backgroundColor: colors.info,
+    color: colors.infoForeground,
+  },
+  variantSecondary: {
+    backgroundColor: colors.secondary,
+    color: colors.secondaryForeground,
+  },
+  variantSuccess: {
+    backgroundColor: colors.success,
+    color: colors.successForeground,
+  },
+  variantWarning: {
+    backgroundColor: colors.warning,
+    color: colors.warningForeground,
+  },
+  variantDestructive: {
+    backgroundColor: colors.destructive,
+    color: colors.destructiveForeground,
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 3px ${colors.destructiveRing}`,
+    },
+  },
+  variantOutline: {
+    boxShadow: {
+      default: shadows.vercelRing,
+      ':focus-visible': {
+        default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), ${shadows.vercelRing}`,
+        ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}, ${shadows.vercelRing}`,
+      },
+    },
+    color: colors.foreground,
+  },
+  variantGhost: {},
+  variantLink: {
+    color: colors.primaryText,
+    textUnderlineOffset: '4px',
+  },
+});
+
+const VARIANT_STYLES = {
+  default: styles.variantDefault,
+  secondary: styles.variantSecondary,
+  success: styles.variantSuccess,
+  warning: styles.variantWarning,
+  destructive: styles.variantDestructive,
+  outline: styles.variantOutline,
+  ghost: styles.variantGhost,
+  link: styles.variantLink,
+};

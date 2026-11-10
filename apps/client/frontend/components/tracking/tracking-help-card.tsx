@@ -9,6 +9,8 @@ import {
   SettingsSectionHeader,
   SettingsSectionTitle,
 } from '@/components/settings/settings-section';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const TRACKING_STEPS = [
   {
@@ -37,32 +39,108 @@ const TRACKING_STEPS = [
 export function TrackingHelpCard() {
   return (
     <SettingsSection>
-      <SettingsSectionHeader className="sr-only">
+      <SettingsSectionHeader xstyle={styles.trackingHelpCardSettingsSectionHeader}>
         <SettingsSectionTitle icon={CircleQuestionMark}>文献追踪说明</SettingsSectionTitle>
       </SettingsSectionHeader>
-      <ol className="-mx-4 grid grid-cols-2 gap-px border-y bg-border sm:-mx-5 sm:grid-cols-4">
+      <ol {...stylex.props(styles.trackingHelpCardOl)}>
         {TRACKING_STEPS.map((step, index) => {
           const Icon = step.icon;
           return (
-            <li key={step.title} className="flex flex-col gap-2 bg-background p-4">
-              <div className="flex items-center justify-between">
-                <span className="flex size-8 items-center justify-center rounded-lg bg-info text-primary">
-                  <Icon className="size-4" aria-hidden="true" />
+            <li key={step.title} {...stylex.props(styles.trackingHelpCardLi)}>
+              <div {...stylex.props(styles.trackingHelpCardDiv)}>
+                <span {...stylex.props(styles.trackingHelpCardSpan)}>
+                  <Icon {...stylex.props(styles.trackingHelpCardIcon)} aria-hidden="true" />
                 </span>
-                <span className="text-xs font-bold text-muted-foreground tabular-nums">
-                  0{index + 1}
-                </span>
+                <span {...stylex.props(styles.trackingHelpCardSpan2)}>0{index + 1}</span>
               </div>
-              <p className="text-sm font-bold">{step.title}</p>
-              <p className="text-xs leading-relaxed text-muted-foreground">{step.detail}</p>
+              <p {...stylex.props(styles.trackingHelpCardP)}>{step.title}</p>
+              <p {...stylex.props(styles.trackingHelpCardP2)}>{step.detail}</p>
             </li>
           );
         })}
       </ol>
-      <p className="px-1 text-xs text-muted-foreground">
+      <p {...stylex.props(styles.trackingHelpCardP3)}>
         系统只会推送 AI 推荐出的文章；未配置偏好或 AI
         不可用时会跳过。在「我的收藏」中查看追踪到的文章。
       </p>
     </SettingsSection>
   );
 }
+
+const styles = stylex.create({
+  trackingHelpCardSettingsSectionHeader: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  trackingHelpCardOl: {
+    marginInline: {
+      default: '-1rem',
+      '@media (min-width: 40rem)': '-1.25rem',
+    },
+    display: 'grid',
+    gridTemplateColumns: {
+      default: 'repeat(2, minmax(0, 1fr))',
+      '@media (min-width: 40rem)': 'repeat(4, minmax(0, 1fr))',
+    },
+    gap: '1px',
+    borderBlockStyle: 'solid',
+    borderBlockWidth: '1px',
+    backgroundColor: colors.border,
+  },
+  trackingHelpCardLi: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+    backgroundColor: colors.background,
+    padding: '1rem',
+  },
+  trackingHelpCardDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  trackingHelpCardSpan: {
+    display: 'flex',
+    width: '2rem',
+    height: '2rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+    backgroundColor: colors.info,
+    color: colors.primary,
+  },
+  trackingHelpCardIcon: {
+    width: '1rem',
+    height: '1rem',
+  },
+  trackingHelpCardSpan2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 700,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  trackingHelpCardP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  trackingHelpCardP2: {
+    fontSize: '0.75rem',
+    lineHeight: 1.625,
+    color: colors.mutedForeground,
+  },
+  trackingHelpCardP3: {
+    paddingInline: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+});

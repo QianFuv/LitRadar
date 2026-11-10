@@ -6,8 +6,9 @@ import * as React from 'react';
 import * as SelectPrimitive from '@animate-ui/react/primitives/radix-ui/select';
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 
-import { cn } from '@/lib/utils';
 import { RevealScope } from '@/components/ui/reveal';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 /**
  * Render the Select state root.
@@ -32,31 +33,33 @@ function SelectValue({ ...props }: React.ComponentProps<typeof SelectPrimitive.V
 /**
  * Render the keyboard-accessible Select trigger.
  *
- * @param props - Radix Select trigger properties and control size.
+ * @param props - Radix Select trigger properties, control size, and style overrides for the
+ * trigger and its chevron.
  * @returns Styled Select trigger.
  */
 function SelectTrigger({
-  className,
+  xstyle,
+  iconXstyle,
   size = 'default',
   children,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Trigger> & {
-  size?: 'sm' | 'default';
-}) {
+}: Omit<
+  React.ComponentProps<typeof SelectPrimitive.Trigger> & {
+    size?: 'sm' | 'default';
+  },
+  'className'
+> & { xstyle?: stylex.StyleXStyles; iconXstyle?: stylex.StyleXStyles }) {
   return (
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       data-size={size}
-      className={cn(
-        "motion-control group data-[placeholder]:text-muted-foreground [&_svg:not([class*='text-'])]:text-muted-foreground focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive hover:bg-accent active:bg-accent-pressed flex w-fit items-center justify-between gap-2 rounded-lg shadow-vercel-ring bg-card px-3 py-2 text-sm whitespace-nowrap transition-[background-color,color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-9 data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-        className,
-      )}
+      {...stylex.props(styles.selectTrigger, stylex.defaultMarker(), xstyle)}
       {...props}
     >
       {children}
       <SelectPrimitive.Icon asChild>
         <ChevronDownIcon
-          className="motion-chevron-menu size-4 opacity-50 transition-transform group-data-[state=open]:rotate-180"
+          {...stylex.props(styles.selectTriggerChevronDownIcon, iconXstyle)}
           aria-hidden="true"
         />
       </SelectPrimitive.Icon>
@@ -71,26 +74,28 @@ function SelectTrigger({
  * @returns Portaled Select options.
  */
 function SelectContent({
-  className,
+  xstyle,
   children,
   position = 'popper',
   align = 'start',
-  viewportClassName,
+  viewportXstyle,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Content> & {
-  /** Extra classes for the scrolling option viewport. */
-  viewportClassName?: string;
-}) {
+}: Omit<
+  React.ComponentProps<typeof SelectPrimitive.Content> & {
+    /** Extra styles for the scrolling option viewport. */
+    viewportXstyle?: stylex.StyleXStyles;
+  },
+  'className'
+> & { xstyle?: stylex.StyleXStyles }) {
   return (
     <SelectPrimitive.Portal>
       <RevealScope>
         <SelectPrimitive.Content
           data-slot="select-content"
-          className={cn(
-            'bg-popover text-popover-foreground relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-xl shadow-overlay',
-            position === 'popper' &&
-              'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
-            className,
+          {...stylex.props(
+            styles.selectContent,
+            position === 'popper' && styles.selectContentPopper,
+            xstyle,
           )}
           position={position}
           align={align}
@@ -98,11 +103,10 @@ function SelectContent({
         >
           <SelectScrollUpButton />
           <SelectPrimitive.Viewport
-            className={cn(
-              'p-1',
-              viewportClassName,
-              position === 'popper' &&
-                'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)] scroll-my-1',
+            {...stylex.props(
+              styles.selectViewport,
+              viewportXstyle,
+              position === 'popper' && styles.selectViewportPopper,
             )}
           >
             {children}
@@ -121,35 +125,32 @@ function SelectContent({
  * @returns Styled Select item.
  */
 function SelectItem({
-  className,
+  xstyle,
   children,
   detail,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Item> & {
-  /** Trailing detail such as a count, kept out of the selected value text. */
-  detail?: React.ReactNode;
-}) {
+}: Omit<
+  React.ComponentProps<typeof SelectPrimitive.Item> & {
+    /** Trailing detail such as a count, kept out of the selected value text. */
+    detail?: React.ReactNode;
+  },
+  'className'
+> & { xstyle?: stylex.StyleXStyles }) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
-      className={cn(
-        "motion-control focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent active:bg-accent-pressed data-[highlighted]:active:bg-accent-pressed [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm transition-[background-color,color] outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
-        className,
-      )}
+      {...stylex.props(styles.selectItem, xstyle)}
       {...props}
     >
-      <span
-        data-slot="select-item-indicator"
-        className="absolute right-2 flex size-3.5 items-center justify-center"
-      >
+      <span data-slot="select-item-indicator" {...stylex.props(styles.selectItemIndicator)}>
         <SelectPrimitive.ItemIndicator>
-          <CheckIcon className="size-4" />
+          <CheckIcon {...stylex.props(styles.selectItemCheckIcon)} />
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
       {detail !== undefined && (
-        <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
-          <span className="sr-only"> · </span>
+        <span {...stylex.props(styles.selectItemSpan)}>
+          <span {...stylex.props(styles.selectItemSpan2)}> · </span>
           {detail}
         </span>
       )}
@@ -164,16 +165,18 @@ function SelectItem({
  * @returns Styled scroll-up control.
  */
 function SelectScrollUpButton({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.ScrollUpButton>) {
+}: Omit<React.ComponentProps<typeof SelectPrimitive.ScrollUpButton>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <SelectPrimitive.ScrollUpButton
       data-slot="select-scroll-up-button"
-      className={cn('flex cursor-default items-center justify-center py-1', className)}
+      {...stylex.props(styles.selectScrollUpButton, xstyle)}
       {...props}
     >
-      <ChevronUpIcon className="size-4" />
+      <ChevronUpIcon {...stylex.props(styles.selectItemCheckIcon)} />
     </SelectPrimitive.ScrollUpButton>
   );
 }
@@ -185,16 +188,18 @@ function SelectScrollUpButton({
  * @returns Styled scroll-down control.
  */
 function SelectScrollDownButton({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.ScrollDownButton>) {
+}: Omit<React.ComponentProps<typeof SelectPrimitive.ScrollDownButton>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <SelectPrimitive.ScrollDownButton
       data-slot="select-scroll-down-button"
-      className={cn('flex cursor-default items-center justify-center py-1', className)}
+      {...stylex.props(styles.selectScrollUpButton, xstyle)}
       {...props}
     >
-      <ChevronDownIcon className="size-4" />
+      <ChevronDownIcon {...stylex.props(styles.selectItemCheckIcon)} />
     </SelectPrimitive.ScrollDownButton>
   );
 }
@@ -208,3 +213,202 @@ export {
   SelectTrigger,
   SelectValue,
 };
+
+const styles = stylex.create({
+  selectViewport: {
+    padding: '0.25rem',
+  },
+  selectViewportPopper: {
+    height: 'var(--radix-select-trigger-height)',
+    width: '100%',
+    minWidth: 'var(--radix-select-trigger-width)',
+    scrollMarginBlock: '0.25rem',
+  },
+  selectTrigger: {
+    display: 'flex',
+    width: 'fit-content',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+    borderRadius: '8px',
+    backgroundColor: {
+      default: colors.card,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    whiteSpace: 'nowrap',
+    boxShadow: {
+      default: shadows.vercelRing,
+      ':focus-visible': {
+        default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), ${shadows.vercelRing}`,
+        ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}, ${shadows.vercelRing}`,
+      },
+    },
+    transitionProperty: 'background-color, color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    cursor: {
+      default: null,
+      ':disabled': 'not-allowed',
+    },
+    opacity: {
+      default: null,
+      ':disabled': '50%',
+    },
+    borderColor: {
+      default: null,
+      ':is([aria-invalid="true"])': colors.destructive,
+    },
+    color: {
+      default: null,
+      ':is([data-placeholder])': colors.mutedForeground,
+    },
+    height: {
+      default: null,
+      ':is([data-size="default"])': '2.25rem',
+      ':is([data-size="sm"])': '2rem',
+    },
+  },
+  selectTriggerChevronDownIcon: {
+    width: '1rem',
+    height: '1rem',
+    opacity: '50%',
+    transitionProperty: 'transform, translate, scale, rotate',
+    transitionTimingFunction: 'cubic-bezier(0.215, 0.61, 0.355, 1)',
+    transitionDuration: '220ms',
+    rotate: {
+      default: null,
+      [stylex.when.ancestor('[data-state="open"]')]: '180deg',
+    },
+  },
+  selectContent: {
+    position: 'relative',
+    zIndex: 50,
+    maxHeight: 'var(--radix-select-content-available-height)',
+    minWidth: '8rem',
+    transformOrigin: 'var(--radix-select-content-transform-origin)',
+    overflowX: 'hidden',
+    overflowY: 'auto',
+    borderRadius: '12px',
+    backgroundColor: colors.popover,
+    color: colors.popoverForeground,
+    boxShadow: shadows.overlay,
+  },
+  selectContentPopper: {
+    translate: {
+      default: null,
+      ':is([data-side="bottom"])': '0 0.25rem',
+      ':is([data-side="left"])': '-0.25rem 0',
+      ':is([data-side="right"])': '0.25rem 0',
+      ':is([data-side="top"])': '0 -0.25rem',
+    },
+  },
+  selectItem: {
+    position: 'relative',
+    display: 'flex',
+    width: '100%',
+    cursor: 'default',
+    alignItems: 'center',
+    gap: '0.5rem',
+    borderRadius: '4px',
+    paddingBlock: '0.375rem',
+    paddingRight: '2rem',
+    paddingLeft: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    outlineStyle: {
+      default: 'none',
+      '@media (forced-colors: active)': 'solid',
+    },
+    transitionProperty: 'background-color, color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    userSelect: 'none',
+    outlineWidth: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+    outlineColor: {
+      default: null,
+      '@media (forced-colors: active)': 'transparent',
+    },
+    outlineOffset: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+    backgroundColor: {
+      default: null,
+      ':focus': colors.accent,
+      ':active': {
+        default: colors.accentPressed,
+        ':is([data-highlighted])': colors.accentPressed,
+      },
+      ':is([data-highlighted])': colors.accent,
+    },
+    color: {
+      default: null,
+      ':focus': colors.accentForeground,
+    },
+    pointerEvents: {
+      default: null,
+      ':is([data-disabled])': 'none',
+    },
+    opacity: {
+      default: null,
+      ':is([data-disabled])': '50%',
+    },
+  },
+  selectItemIndicator: {
+    position: 'absolute',
+    right: '0.5rem',
+    display: 'flex',
+    width: '0.875rem',
+    height: '0.875rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectItemCheckIcon: {
+    width: '1rem',
+    height: '1rem',
+  },
+  selectItemSpan: {
+    marginLeft: 'auto',
+    flexShrink: 0,
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  selectItemSpan2: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  selectScrollUpButton: {
+    display: 'flex',
+    cursor: 'default',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBlock: '0.25rem',
+  },
+});

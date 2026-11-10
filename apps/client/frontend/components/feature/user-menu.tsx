@@ -18,13 +18,7 @@ import {
 } from '@/components/ui/animated-icons';
 import { useTheme } from 'next-themes';
 import { Link, useSearch } from '@tanstack/react-router';
-import {
-  useRef,
-  useSyncExternalStore,
-  type ComponentProps,
-  type CSSProperties,
-  type MouseEvent,
-} from 'react';
+import { useRef, useSyncExternalStore, type ComponentProps, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 
 import { SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE } from '@/components/feature/sectioned-dialog';
@@ -35,8 +29,10 @@ import { parseAdminSection, withAdminSection } from '@/lib/admin-center';
 import { useAuth, type LogoutRevocationWarning } from '@/lib/auth-context';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { withSettingsSection } from '@/lib/settings-center';
-import { cn } from '@/lib/utils';
 import { getFocusedOrigin, revealThemeChange } from '@/lib/theme-transition';
+import * as stylex from '@stylexjs/stylex';
+import { accountMenuMarker } from '@/lib/markers.stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 type ThemePreference = 'system' | 'light' | 'dark';
 
@@ -55,17 +51,6 @@ const THEME_ITEMS: readonly ThemeItem[] = [
   { icon: Sun, label: '浅色', value: 'light' },
   { icon: Moon, label: '深色', value: 'dark' },
 ];
-
-const MENU_ITEM_CLASS =
-  "motion-control focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent active:bg-accent-pressed data-[highlighted]:active:bg-accent-pressed [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-[background-color,color] outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
-
-const MENU_CONTENT_CLASS =
-  'bg-popover text-popover-foreground z-50 origin-(--radix-dropdown-menu-content-transform-origin) rounded-xl p-1.5 shadow-overlay outline-hidden';
-
-const LOGOUT_NOTICE_POSITION_STYLE: CSSProperties = {
-  bottom: 'calc(4.5rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
-  right: 'calc(1rem + env(safe-area-inset-right, 0px))',
-};
 
 /**
  * Subscribe to the immutable client-environment signal.
@@ -102,24 +87,40 @@ function getServerEnvironmentSnapshot(): boolean {
  */
 function LogoutRevocationNotice({ warning }: { warning: LogoutRevocationWarning }) {
   return (
-    <div
-      role="alert"
-      className="w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-destructive/30 bg-popover p-3 text-sm text-popover-foreground shadow-overlay"
-    >
-      <div className="flex items-start gap-2">
-        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
-        <div className="min-w-0 space-y-2">
-          <p className="font-medium">服务端会话撤销未确认</p>
-          <p className="text-xs text-muted-foreground">
+    <div role="alert" {...stylex.props(styles.logoutRevocationNoticeDiv)}>
+      <div {...stylex.props(styles.logoutRevocationNoticeDiv2)}>
+        <AlertTriangle
+          {...stylex.props(styles.logoutRevocationNoticeAlertTriangle)}
+          aria-hidden="true"
+        />
+        <div {...stylex.props(styles.logoutRevocationNoticeDiv3)}>
+          <p
+            {...stylex.props(styles.logoutRevocationNoticeDivItem, styles.logoutRevocationNoticeP)}
+          >
+            服务端会话撤销未确认
+          </p>
+          <p
+            {...stylex.props(styles.logoutRevocationNoticeDivItem, styles.logoutRevocationNoticeP2)}
+          >
             本地会话信息已清除，但旧令牌可能仍有效。请重新认证后撤销全部会话。
           </p>
           {warning.requestId && (
-            <p className="break-all text-xs text-muted-foreground">请求 ID：{warning.requestId}</p>
+            <p
+              {...stylex.props(
+                styles.logoutRevocationNoticeDivItem,
+                styles.logoutRevocationNoticeP3,
+              )}
+            >
+              请求 ID：{warning.requestId}
+            </p>
           )}
           <Link
             to="/login"
             search={{ logout_recovery: '1' }}
-            className="motion-control inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-[background-color,color] hover:bg-accent hover:text-accent-foreground"
+            {...stylex.props(
+              styles.logoutRevocationNoticeDivItem,
+              styles.logoutRevocationNoticeLink,
+            )}
           >
             重新认证并撤销全部会话
           </Link>
@@ -143,11 +144,7 @@ function FixedLogoutRevocationNotice({
   warning: LogoutRevocationWarning;
 }) {
   const notice = (
-    <div
-      data-slot="user-menu-position"
-      className="fixed z-40 md:!bottom-4"
-      style={LOGOUT_NOTICE_POSITION_STYLE}
-    >
+    <div data-slot="user-menu-position" {...stylex.props(styles.userMenuPosition)}>
       <LogoutRevocationNotice warning={warning} />
     </div>
   );
@@ -166,7 +163,7 @@ function UserMenuItem(props: ComponentProps<typeof RadixDropdownMenu.Item>) {
   const { isTriggered, triggerHandlers } = useIconTrigger(props);
   return (
     <IconTriggerProvider isTriggered={isTriggered}>
-      <RadixDropdownMenu.Item {...props} {...triggerHandlers} />
+      <RadixDropdownMenu.Item data-slot="user-menu-item" {...props} {...triggerHandlers} />
     </IconTriggerProvider>
   );
 }
@@ -264,25 +261,23 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
             type="button"
             data-slot="user-menu-trigger"
             data-placement={placement}
-            className={cn(
-              'group/account-menu motion-control outline-none',
-              placement === 'rail'
-                ? 'flex size-11 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:ring-ring'
-                : 'flex h-14 flex-col items-center justify-center gap-1 text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-[state=open]:text-primary-text',
+            {...stylex.props(
+              styles.userMenuTrigger,
+              accountMenuMarker,
+              placement === 'rail' ? styles.userMenuTriggerRail : styles.userMenuTriggerNotRail,
             )}
             aria-label={`打开账号菜单：${user.username}`}
           >
             <UserAvatar
               username={user.username}
               size={placement === 'rail' ? 'md' : 'sm'}
-              className={cn(
-                'transition-[box-shadow]',
-                placement === 'rail' &&
-                  'shadow-[0_0_0_2px_var(--rail),0_0_0_3px_var(--rail-border)] group-hover/account-menu:shadow-[0_0_0_2px_var(--rail),0_0_0_3px_var(--rail-foreground)] group-data-[state=open]/account-menu:shadow-[0_0_0_2px_var(--rail),0_0_0_3px_var(--primary)]',
-              )}
+              xstyle={[
+                styles.userMenuUserAvatar,
+                placement === 'rail' && styles.userMenuUserAvatarRail,
+              ]}
             />
-            {placement === 'tab' && <span className="text-[11px] leading-none">我的</span>}
-            <span className="sr-only">{user.username}</span>
+            {placement === 'tab' && <span {...stylex.props(styles.userMenuSpan)}>我的</span>}
+            <span {...stylex.props(styles.userMenuSpan2)}>{user.username}</span>
           </button>
         </DropdownMenuPrimitive.Trigger>
 
@@ -293,26 +288,30 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
             side={placement === 'rail' ? 'right' : 'top'}
             sideOffset={placement === 'rail' ? 14 : 6}
             collisionPadding={8}
-            className={cn(MENU_CONTENT_CLASS, 'w-64 max-w-[calc(100vw-1rem)]')}
+            {...stylex.props(styles.menuContent, styles.userMenuDropdownMenuPrimitiveContent)}
             onCloseAutoFocus={keepRadixCloseFocus}
           >
-            <DropdownMenuPrimitive.Label className="flex items-center gap-3 px-2 py-2">
+            <DropdownMenuPrimitive.Label
+              {...stylex.props(styles.userMenuDropdownMenuPrimitiveLabel)}
+            >
               <UserAvatar username={user.username} size="lg" />
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-bold">{user.username}</span>
-                <span className="block text-xs font-normal text-muted-foreground">
+              <span {...stylex.props(styles.logoutRevocationNoticeDiv3)}>
+                <span {...stylex.props(styles.userMenuSpan3)}>{user.username}</span>
+                <span {...stylex.props(styles.userMenuSpan4)}>
                   {user.is_admin ? '管理员' : '普通用户'}
                 </span>
               </span>
             </DropdownMenuPrimitive.Label>
 
-            <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
+            <DropdownMenuPrimitive.Separator
+              {...stylex.props(styles.userMenuDropdownMenuPrimitiveSeparator)}
+            />
 
             <UserMenuItem asChild>
               <Link
                 to="/"
                 search={settingsSearch}
-                className={MENU_ITEM_CLASS}
+                {...stylex.props(styles.menuItem)}
                 onClick={handleSectionedDialogOpen}
                 onFocus={preloadSettingsCenter}
                 onPointerEnter={preloadSettingsCenter}
@@ -330,7 +329,7 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
                   to="/"
                   search={adminSearch}
                   aria-current={isAdminOpen ? 'page' : undefined}
-                  className={cn(MENU_ITEM_CLASS, isAdminOpen && 'bg-accent')}
+                  {...stylex.props(styles.menuItem, isAdminOpen && styles.userMenuLinkAdminOpen)}
                   onClick={handleSectionedDialogOpen}
                   onFocus={preloadAdminCenter}
                   onPointerEnter={preloadAdminCenter}
@@ -341,16 +340,15 @@ export function UserMenu({ placement = 'rail' }: UserMenuProps) {
               </UserMenuItem>
             )}
 
-            <DropdownMenuPrimitive.Separator className="-mx-1 my-1 h-px bg-border" />
+            <DropdownMenuPrimitive.Separator
+              {...stylex.props(styles.userMenuDropdownMenuPrimitiveSeparator)}
+            />
 
             <UserMenuItem
-              className={cn(
-                MENU_ITEM_CLASS,
-                'text-destructive focus:bg-destructive/10 focus:text-destructive',
-              )}
+              {...stylex.props(styles.menuItem, styles.userMenuUserMenuItem)}
               onSelect={handleLogout}
             >
-              <LogOut className="text-destructive" />
+              <LogOut {...stylex.props(styles.userMenuLogOut)} />
               <span>退出登录</span>
             </UserMenuItem>
           </DropdownMenuPrimitive.Content>
@@ -374,12 +372,9 @@ function renderUserThemeControls(state: UserMenuViewState) {
   const { isMounted, selectedTheme, handleThemeChange } = state;
 
   return (
-    <div
-      data-slot="user-menu-theme-label"
-      className="flex items-center justify-between gap-2 px-2 py-1.5"
-    >
-      <span className="flex shrink-0 items-center gap-2 text-sm">
-        <SunMoon className="size-4 text-muted-foreground" aria-hidden="true" />
+    <div data-slot="user-menu-theme-label" {...stylex.props(styles.userMenuThemeLabel)}>
+      <span {...stylex.props(styles.renderUserThemeControlsSpan)}>
+        <SunMoon {...stylex.props(styles.renderUserThemeControlsSunMoon)} aria-hidden="true" />
         <span>外观主题</span>
       </span>
       {isMounted && (
@@ -387,7 +382,7 @@ function renderUserThemeControls(state: UserMenuViewState) {
           aria-label="外观主题"
           value={selectedTheme}
           onValueChange={handleThemeChange}
-          className="flex shrink-0 items-center gap-1"
+          {...stylex.props(styles.renderUserThemeControlsRadixDropdownMenuRadioGroup)}
         >
           {THEME_ITEMS.map((item) => {
             const Icon = item.icon;
@@ -400,9 +395,9 @@ function renderUserThemeControls(state: UserMenuViewState) {
                 onSelect={keepMenuOpenOnSelect}
                 aria-label={item.label}
                 title={item.label}
-                className="motion-control flex size-11 shrink-0 cursor-default items-center justify-center rounded-md text-muted-foreground outline-none transition-[background-color,color,box-shadow] focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-accent data-[highlighted]:text-foreground data-[state=checked]:bg-accent data-[state=checked]:text-foreground md:size-9"
+                {...stylex.props(styles.renderUserThemeControlsThemeRadioItem)}
               >
-                <Icon className="size-4" aria-hidden="true" />
+                <Icon {...stylex.props(styles.renderUserThemeControlsIcon)} aria-hidden="true" />
               </ThemeRadioItem>
             );
           })}
@@ -422,3 +417,367 @@ type UserMenuViewState = {
 function getUserMenuTheme(isMounted: boolean, theme: string | undefined): string {
   return isMounted ? (theme ?? 'system') : 'system';
 }
+
+const styles = stylex.create({
+  logoutRevocationNoticeDiv: {
+    width: 'min(24rem, calc(100vw - 2rem))',
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.destructive} 30%, transparent)`,
+    backgroundColor: colors.popover,
+    padding: '0.75rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.popoverForeground,
+    boxShadow: shadows.overlay,
+  },
+  logoutRevocationNoticeDiv2: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '0.5rem',
+  },
+  logoutRevocationNoticeAlertTriangle: {
+    marginTop: '0.125rem',
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    color: colors.destructive,
+  },
+  logoutRevocationNoticeDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  logoutRevocationNoticeDiv3: {
+    minWidth: '0px',
+  },
+  logoutRevocationNoticeP: {
+    fontWeight: 500,
+  },
+  logoutRevocationNoticeP2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  logoutRevocationNoticeP3: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    wordBreak: 'break-all',
+    color: colors.mutedForeground,
+  },
+  logoutRevocationNoticeLink: {
+    display: 'inline-flex',
+    height: '2rem',
+    alignItems: 'center',
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: colors.input,
+    backgroundColor: {
+      default: colors.background,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    paddingInline: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 500,
+    transitionProperty: 'background-color, color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    color: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  userMenuPosition: {
+    position: 'fixed',
+    zIndex: 40,
+    right: 'calc(1rem + env(safe-area-inset-right, 0px))',
+    bottom: {
+      default: 'calc(4.5rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))',
+      '@media (min-width: 48rem)': '1rem',
+    },
+  },
+  userMenuTrigger: {
+    outlineStyle: 'none',
+    transitionDuration: '200ms',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+  },
+  userMenuTriggerRail: {
+    display: 'flex',
+    width: '2.75rem',
+    height: '2.75rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  userMenuTriggerNotRail: {
+    display: 'flex',
+    height: '3.5rem',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '0.25rem',
+    color: {
+      default: colors.mutedForeground,
+      ':is([data-state="open"])': colors.primaryText,
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `inset 0 0 0 2px ${colors.ring}`,
+    },
+  },
+  userMenuUserAvatar: {
+    transitionProperty: 'box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    transitionDuration: '150ms',
+  },
+  userMenuUserAvatarRail: {
+    boxShadow: {
+      default: `0 0 0 2px ${colors.rail}, 0 0 0 3px ${colors.railBorder}`,
+      [stylex.when.ancestor('[data-state="open"]', accountMenuMarker)]:
+        `0 0 0 2px ${colors.rail}, 0 0 0 3px ${colors.primary}`,
+      '@media (hover: hover)': {
+        default: null,
+        [stylex.when.ancestor(':hover', accountMenuMarker)]:
+          `0 0 0 2px ${colors.rail}, 0 0 0 3px ${colors.railForeground}`,
+      },
+    },
+  },
+  userMenuSpan: {
+    fontSize: '11px',
+    lineHeight: 1,
+  },
+  userMenuSpan2: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  menuContent: {
+    zIndex: 50,
+    transformOrigin: 'var(--radix-dropdown-menu-content-transform-origin)',
+    borderRadius: '12px',
+    backgroundColor: colors.popover,
+    padding: '0.375rem',
+    color: colors.popoverForeground,
+    boxShadow: shadows.overlay,
+    outlineStyle: {
+      default: 'none',
+      '@media (forced-colors: active)': 'solid',
+    },
+    outlineWidth: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+    outlineColor: {
+      default: null,
+      '@media (forced-colors: active)': 'transparent',
+    },
+    outlineOffset: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+  },
+  userMenuDropdownMenuPrimitiveContent: {
+    width: '16rem',
+    maxWidth: 'calc(100vw - 1rem)',
+  },
+  userMenuDropdownMenuPrimitiveLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+    paddingInline: '0.5rem',
+    paddingBlock: '0.5rem',
+  },
+  userMenuSpan3: {
+    display: 'block',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  userMenuSpan4: {
+    display: 'block',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 400,
+    color: colors.mutedForeground,
+  },
+  userMenuDropdownMenuPrimitiveSeparator: {
+    marginInline: '-0.25rem',
+    marginBlock: '0.25rem',
+    height: '1px',
+    backgroundColor: colors.border,
+  },
+  menuItem: {
+    position: 'relative',
+    display: 'flex',
+    width: '100%',
+    cursor: 'default',
+    alignItems: 'center',
+    gap: '0.5rem',
+    borderRadius: '4px',
+    paddingInline: '0.5rem',
+    paddingBlock: '0.375rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    outlineStyle: {
+      default: 'none',
+      '@media (forced-colors: active)': 'solid',
+    },
+    transitionProperty: 'background-color, color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    userSelect: 'none',
+    outlineWidth: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+    outlineColor: {
+      default: null,
+      '@media (forced-colors: active)': 'transparent',
+    },
+    outlineOffset: {
+      default: null,
+      '@media (forced-colors: active)': '2px',
+    },
+    backgroundColor: {
+      default: null,
+      ':focus': colors.accent,
+      ':active': {
+        default: colors.accentPressed,
+        ':is([data-highlighted])': colors.accentPressed,
+      },
+      ':is([data-highlighted])': colors.accent,
+    },
+    color: {
+      default: null,
+      ':focus': colors.accentForeground,
+    },
+    pointerEvents: {
+      default: null,
+      ':is([data-disabled])': 'none',
+    },
+    opacity: {
+      default: null,
+      ':is([data-disabled])': '50%',
+    },
+  },
+  userMenuLinkAdminOpen: {
+    backgroundColor: {
+      default: colors.accent,
+      ':active': {
+        default: colors.accentPressed,
+        ':is([data-highlighted])': colors.accentPressed,
+      },
+      ':focus': colors.accent,
+      ':is([data-highlighted])': colors.accent,
+    },
+  },
+  userMenuUserMenuItem: {
+    color: {
+      default: colors.destructive,
+      ':focus': colors.destructive,
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':is([data-highlighted])': colors.accentPressed,
+      },
+      ':focus': {
+        default: `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+        ':is([data-highlighted])': colors.accent,
+      },
+      ':is([data-highlighted])': colors.accent,
+    },
+  },
+  userMenuLogOut: {
+    color: colors.destructive,
+  },
+  userMenuThemeLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+    paddingInline: '0.5rem',
+    paddingBlock: '0.375rem',
+  },
+  renderUserThemeControlsSpan: {
+    display: 'flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderUserThemeControlsSunMoon: {
+    width: '1rem',
+    height: '1rem',
+    color: colors.mutedForeground,
+  },
+  renderUserThemeControlsRadixDropdownMenuRadioGroup: {
+    display: 'flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.25rem',
+  },
+  renderUserThemeControlsThemeRadioItem: {
+    display: 'flex',
+    width: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2.25rem',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2.25rem',
+    },
+    flexShrink: 0,
+    cursor: 'default',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '6px',
+    color: {
+      default: colors.mutedForeground,
+      ':is([data-highlighted])': colors.foreground,
+      ':is([data-state="checked"])': colors.foreground,
+    },
+    transitionProperty: 'background-color, color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+    },
+    backgroundColor: {
+      default: null,
+      ':is([data-highlighted])': colors.accent,
+      ':is([data-state="checked"])': colors.accent,
+    },
+  },
+  renderUserThemeControlsIcon: {
+    width: '1rem',
+    height: '1rem',
+  },
+});

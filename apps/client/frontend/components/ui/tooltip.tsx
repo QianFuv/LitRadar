@@ -4,6 +4,8 @@
 
 import * as React from 'react';
 import * as TooltipPrimitive from '@animate-ui/react/primitives/radix-ui/tooltip';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 type IconTooltipProps = {
   /** Trigger element, usually an icon-only button that already has an accessible name. */
@@ -27,7 +29,7 @@ function IconTooltip({ children, label }: IconTooltipProps) {
           <TooltipPrimitive.Content
             data-slot="tooltip-content"
             sideOffset={6}
-            className="z-50 rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-overlay"
+            {...stylex.props(styles.tooltipContent)}
           >
             {label}
           </TooltipPrimitive.Content>
@@ -38,3 +40,17 @@ function IconTooltip({ children, label }: IconTooltipProps) {
 }
 
 export { IconTooltip };
+
+const styles = stylex.create({
+  tooltipContent: {
+    zIndex: 50,
+    borderRadius: '6px',
+    backgroundColor: colors.foreground,
+    paddingInline: '0.5rem',
+    paddingBlock: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.background,
+    boxShadow: shadows.overlay,
+  },
+});

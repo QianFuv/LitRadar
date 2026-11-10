@@ -40,7 +40,8 @@ import {
   type SearchBuilderCondition,
 } from '@/lib/search-builder';
 import { isAdvancedSearchQuery } from '@/lib/search-syntax';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type SearchBuilderDialogProps = {
   /** Query currently applied in the URL. */
@@ -92,8 +93,8 @@ export function SearchBuilderDialog({
 }: SearchBuilderDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90dvh] flex-col gap-0 p-0 md:max-w-3xl">
-        <DialogHeader className="border-b px-5 pt-5 pb-4 text-left sm:px-6">
+      <DialogContent xstyle={styles.searchBuilderDialogDialogContent}>
+        <DialogHeader xstyle={styles.searchBuilderDialogDialogHeader}>
           <DialogTitle>高级检索</DialogTitle>
           <DialogDescription>
             按条件组合检索，只需填写检索词，系统会自动生成正确的检索式。
@@ -170,14 +171,14 @@ function SearchBuilderBody({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
+    <form onSubmit={handleSubmit} {...stylex.props(styles.searchBuilderBodyForm)}>
+      <div {...stylex.props(styles.searchBuilderBodyDiv)}>
         {initialState.replacesHandwritten && (
-          <p className="mb-3 rounded-lg bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">
+          <p {...stylex.props(styles.searchBuilderBodyP)}>
             当前检索式是手写语法，构建器会生成新的检索式替换它。
           </p>
         )}
-        <ol className="divide-y" aria-label="检索条件">
+        <ol aria-label="检索条件">
           <MotionPresence>
             {conditions.map((condition, index) => {
               const position = index + 1;
@@ -185,22 +186,20 @@ function SearchBuilderBody({
                 <MotionListItem
                   key={condition.id}
                   data-search-condition={condition.id}
-                  className="overflow-hidden"
+                  {...stylex.props(styles.conditionRow, styles.searchBuilderBodyMotionListItem)}
                   variants={DISCLOSURE_VARIANTS}
                   initial="hidden"
                   animate="visible"
                   exit="exit"
                 >
-                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 py-3 sm:grid-cols-[8rem_7.5rem_8.75rem_minmax(0,1fr)_auto]">
+                  <div {...stylex.props(styles.searchBuilderBodyDiv2)}>
                     {index === 0 && condition.connector !== 'NOT' ? (
-                      <span className="flex h-9 items-center text-xs font-bold text-muted-foreground">
-                        检索
-                      </span>
+                      <span {...stylex.props(styles.searchBuilderBodySpan)}>检索</span>
                     ) : (
                       <ToggleGroup
                         type="single"
                         aria-label={`第 ${position} 个条件的连接方式`}
-                        className="inline-flex h-9 gap-0.5 border-0 bg-muted"
+                        xstyle={styles.searchBuilderBodyToggleGroup}
                         value={condition.connector}
                         onValueChange={(connector) => {
                           if (connector) {
@@ -214,11 +213,11 @@ function SearchBuilderBody({
                           <ToggleGroupItem
                             key={connector.value}
                             value={connector.value}
-                            className={cn(
-                              'h-8 px-2.5 text-[13px] whitespace-nowrap md:h-8 md:px-2.5 data-[state=on]:bg-background data-[state=on]:font-bold data-[state=on]:text-foreground data-[state=on]:shadow-[0_0_0_1px_var(--border)] data-[state=on]:hover:text-foreground',
+                            xstyle={[
+                              styles.searchBuilderBodyToggleGroupItem,
                               connector.value === 'NOT' &&
-                                'data-[state=on]:text-destructive data-[state=on]:hover:text-destructive',
-                            )}
+                                styles.searchBuilderBodyToggleGroupItemNOT,
+                            ]}
                           >
                             {connector.label}
                           </ToggleGroupItem>
@@ -229,13 +228,16 @@ function SearchBuilderBody({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="size-11 justify-self-end text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:order-last sm:size-9"
+                      xstyle={styles.searchBuilderBodyButton}
                       aria-label={`删除第 ${position} 个条件`}
                       onClick={() => removeCondition(condition.id)}
                     >
-                      <Trash2 className="size-4" aria-hidden="true" />
+                      <Trash2
+                        {...stylex.props(styles.searchBuilderBodyTrash2)}
+                        aria-hidden="true"
+                      />
                     </Button>
-                    <div className="col-span-2 grid grid-cols-2 gap-2 sm:contents">
+                    <div {...stylex.props(styles.searchBuilderBodyDiv3)}>
                       <Select
                         value={condition.field}
                         onValueChange={(value) =>
@@ -247,7 +249,7 @@ function SearchBuilderBody({
                         <SelectTrigger
                           size="sm"
                           aria-label={`第 ${position} 个条件的字段`}
-                          className="w-full"
+                          xstyle={styles.searchBuilderBodySelectTrigger}
                         >
                           <SelectValue />
                         </SelectTrigger>
@@ -270,7 +272,7 @@ function SearchBuilderBody({
                         <SelectTrigger
                           size="sm"
                           aria-label={`第 ${position} 个条件的匹配方式`}
-                          className="w-full"
+                          xstyle={styles.searchBuilderBodySelectTrigger}
                         >
                           <SelectValue />
                         </SelectTrigger>
@@ -293,7 +295,7 @@ function SearchBuilderBody({
                       onChange={(event) =>
                         updateCondition(condition.id, { value: event.target.value })
                       }
-                      className="col-span-2 h-11 sm:col-span-1 sm:h-9"
+                      xstyle={styles.searchBuilderBodyInput}
                     />
                   </div>
                 </MotionListItem>
@@ -305,32 +307,36 @@ function SearchBuilderBody({
           type="button"
           variant="ghost"
           size="sm"
-          className="mt-1 -ml-2 text-primary hover:text-primary"
+          xstyle={styles.searchBuilderBodyButton2}
           disabled={conditions.length >= SEARCH_BUILDER_MAX_CONDITIONS}
           onClick={() => setConditions((current) => [...current, createSearchCondition()])}
         >
-          <Plus className="size-4" aria-hidden="true" />
+          <Plus {...stylex.props(styles.searchBuilderBodyTrash2)} aria-hidden="true" />
           添加条件
         </Button>
 
         {result.error && activeConditions.length > 0 && (
-          <p role="alert" className="mt-2 text-xs text-destructive">
+          <p role="alert" {...stylex.props(styles.searchBuilderBodyP2)}>
             {result.error}
           </p>
         )}
 
-        <Collapsible className="mt-4 border-t pt-3 text-xs text-muted-foreground">
-          <CollapsibleTrigger className="group motion-control flex w-fit cursor-pointer items-center gap-1 font-bold text-foreground/80 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <Collapsible {...stylex.props(styles.searchBuilderBodyCollapsible)}>
+          <CollapsibleTrigger
+            {...stylex.props(styles.searchBuilderBodyCollapsibleTrigger, stylex.defaultMarker())}
+          >
             <ChevronRight
-              className="motion-chevron size-3.5 transition-transform group-data-[state=open]:rotate-90"
+              {...stylex.props(styles.searchBuilderBodyChevronRight)}
               aria-hidden="true"
             />
-            <span className="group-data-[state=open]:hidden">点击展开手写检索语法</span>
-            <span className="hidden group-data-[state=open]:inline">收起手写检索语法</span>
+            <span {...stylex.props(styles.searchBuilderBodySpan2)}>点击展开手写检索语法</span>
+            <span {...stylex.props(styles.searchBuilderBodySpan3)}>收起手写检索语法</span>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <p className="pt-2">在搜索框中直接输入以下语法同样有效：</p>
-            <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+            <p {...stylex.props(styles.searchBuilderBodyP3)}>
+              在搜索框中直接输入以下语法同样有效：
+            </p>
+            <ul {...stylex.props(styles.searchBuilderBodyUl)}>
               <li>
                 <code>a AND b</code> 同时包含
               </li>
@@ -362,16 +368,18 @@ function SearchBuilderBody({
                 <code>abstract_text:imaging</code> 摘要
               </li>
             </ul>
-            <p className="mt-2">运算符 AND / OR / NOT / NEAR 需要大写。</p>
+            <p {...stylex.props(styles.searchBuilderBodyP4)}>
+              运算符 AND / OR / NOT / NEAR 需要大写。
+            </p>
           </CollapsibleContent>
         </Collapsible>
       </div>
-      <div className="flex items-center gap-2 border-t px-5 py-3 sm:px-6">
+      <div {...stylex.props(styles.searchBuilderBodyDiv4)}>
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="mr-auto text-muted-foreground"
+          xstyle={styles.searchBuilderBodyButton3}
           onClick={() => setConditions([createSearchCondition(), createSearchCondition()])}
         >
           清空条件
@@ -382,7 +390,7 @@ function SearchBuilderBody({
         <Button
           type="submit"
           disabled={Boolean(result.error)}
-          className="bg-foreground text-background hover:bg-foreground/85"
+          xstyle={styles.searchBuilderBodyButton4}
         >
           检索
         </Button>
@@ -390,3 +398,346 @@ function SearchBuilderBody({
     </form>
   );
 }
+
+const styles = stylex.create({
+  conditionRow: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+    },
+  },
+  searchBuilderDialogDialogContent: {
+    display: 'flex',
+    maxHeight: '90dvh',
+    flexDirection: 'column',
+    gap: '0px',
+    padding: '0px',
+    maxWidth: {
+      default: 'none',
+      '@media (min-width: 48rem)': '48rem',
+    },
+  },
+  searchBuilderDialogDialogHeader: {
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    paddingInline: {
+      default: '1.25rem',
+      '@media (min-width: 40rem)': '1.5rem',
+    },
+    paddingTop: '1.25rem',
+    paddingBottom: '1rem',
+    textAlign: 'left',
+  },
+  searchBuilderBodyForm: {
+    display: 'flex',
+    minHeight: '0px',
+    flex: '1',
+    flexDirection: 'column',
+  },
+  searchBuilderBodyDiv: {
+    minHeight: '0px',
+    flex: '1',
+    overflowY: 'auto',
+    paddingInline: {
+      default: '1.25rem',
+      '@media (min-width: 40rem)': '1.5rem',
+    },
+    paddingBlock: '1rem',
+  },
+  searchBuilderBodyP: {
+    marginBottom: '0.75rem',
+    borderRadius: '8px',
+    backgroundColor: colors.muted,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    color: colors.mutedForeground,
+  },
+  searchBuilderBodyMotionListItem: {
+    overflow: 'hidden',
+  },
+  searchBuilderBodyDiv2: {
+    display: 'grid',
+    gridTemplateColumns: {
+      default: 'minmax(0,1fr) auto',
+      '@media (min-width: 40rem)': '8rem 7.5rem 8.75rem minmax(0,1fr) auto',
+    },
+    alignItems: 'center',
+    gap: '0.5rem',
+    paddingBlock: '0.75rem',
+  },
+  searchBuilderBodySpan: {
+    display: 'flex',
+    height: '2.25rem',
+    alignItems: 'center',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 700,
+    color: colors.mutedForeground,
+  },
+  searchBuilderBodyToggleGroup: {
+    display: 'inline-flex',
+    height: '2.25rem',
+    gap: '0.125rem',
+    borderStyle: 'solid',
+    borderWidth: '0px',
+    backgroundColor: colors.muted,
+  },
+  searchBuilderBodyToggleGroupItem: {
+    height: {
+      default: '2rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    paddingInline: {
+      default: '0.625rem',
+      '@media (min-width: 48rem)': '0.625rem',
+    },
+    fontSize: '13px',
+    whiteSpace: 'nowrap',
+    backgroundColor: {
+      default: null,
+      ':is([data-state="on"])': colors.background,
+    },
+    fontWeight: {
+      default: null,
+      ':is([data-state="on"])': 700,
+    },
+    color: {
+      default: colors.mutedForeground,
+      ':is([data-state="on"])': colors.foreground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': {
+        default: `0 0 0 2px ${colors.ring}`,
+        ':is([data-state="on"])': `0 0 0 2px ${colors.ring}, 0 0 0 1px ${colors.border}`,
+      },
+      ':is([data-state="on"])': `0 0 0 1px ${colors.border}`,
+    },
+    lineHeight: 'inherit',
+  },
+  searchBuilderBodyToggleGroupItemNOT: {
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': {
+          default: colors.foreground,
+          ':is([data-state="on"])': colors.destructive,
+        },
+      },
+      ':is([data-state="on"])': colors.destructive,
+    },
+  },
+  searchBuilderBodyButton: {
+    width: {
+      default: '2.75rem',
+      '@media (min-width: 40rem)': '2.25rem',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 40rem)': '2.25rem',
+    },
+    justifySelf: 'flex-end',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+    order: {
+      default: null,
+      '@media (min-width: 40rem)': 9999,
+    },
+  },
+  searchBuilderBodyTrash2: {
+    width: '1rem',
+    height: '1rem',
+  },
+  searchBuilderBodyDiv3: {
+    gridColumnStart: 'span 2',
+    gridColumnEnd: 'span 2',
+    display: {
+      default: 'grid',
+      '@media (min-width: 40rem)': 'contents',
+    },
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '0.5rem',
+  },
+  searchBuilderBodySelectTrigger: {
+    width: '100%',
+  },
+  searchBuilderBodyInput: {
+    gridColumnStart: {
+      default: 'span 2',
+      '@media (min-width: 40rem)': 'span 1',
+    },
+    gridColumnEnd: {
+      default: 'span 2',
+      '@media (min-width: 40rem)': 'span 1',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 40rem)': '2.25rem',
+    },
+  },
+  searchBuilderBodyButton2: {
+    marginTop: '0.25rem',
+    marginLeft: '-0.5rem',
+    color: {
+      default: colors.primary,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.primary,
+      },
+    },
+  },
+  searchBuilderBodyP2: {
+    marginTop: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.destructive,
+  },
+  searchBuilderBodyCollapsible: {
+    marginTop: '1rem',
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingTop: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  searchBuilderBodyCollapsibleTrigger: {
+    display: 'flex',
+    width: 'fit-content',
+    cursor: 'pointer',
+    alignItems: 'center',
+    gap: '0.25rem',
+    fontWeight: 700,
+    color: {
+      default: `color-mix(in oklab, ${colors.foreground} 80%, transparent)`,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  searchBuilderBodyChevronRight: {
+    width: '0.875rem',
+    height: '0.875rem',
+    transitionProperty: 'transform, translate, scale, rotate',
+    transitionTimingFunction: 'cubic-bezier(0.215, 0.61, 0.355, 1)',
+    transitionDuration: '350ms',
+    rotate: {
+      default: null,
+      [stylex.when.ancestor('[data-state="open"]')]: '90deg',
+    },
+  },
+  searchBuilderBodySpan2: {
+    display: {
+      default: null,
+      [stylex.when.ancestor('[data-state="open"]')]: 'none',
+    },
+  },
+  searchBuilderBodySpan3: {
+    display: {
+      default: 'none',
+      [stylex.when.ancestor('[data-state="open"]')]: 'inline',
+    },
+  },
+  searchBuilderBodyP3: {
+    paddingTop: '0.5rem',
+  },
+  searchBuilderBodyUl: {
+    marginTop: '0.5rem',
+    display: 'grid',
+    gap: '0.25rem',
+    gridTemplateColumns: {
+      default: null,
+      '@media (min-width: 40rem)': 'repeat(2, minmax(0, 1fr))',
+    },
+  },
+  searchBuilderBodyP4: {
+    marginTop: '0.5rem',
+  },
+  searchBuilderBodyDiv4: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingInline: {
+      default: '1.25rem',
+      '@media (min-width: 40rem)': '1.5rem',
+    },
+    paddingBlock: '0.75rem',
+  },
+  searchBuilderBodyButton3: {
+    marginRight: 'auto',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accentForeground,
+      },
+    },
+  },
+  searchBuilderBodyButton4: {
+    backgroundColor: {
+      default: colors.foreground,
+      ':active': {
+        default: colors.primaryPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.primaryPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.foreground} 85%, transparent)`,
+      },
+    },
+    color: colors.background,
+  },
+});

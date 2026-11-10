@@ -36,7 +36,8 @@ import {
   type KindTrend,
   type SearchShapeFeature,
 } from '@/lib/load-telemetry';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type KindFilter = TelemetryKind | 'all';
 
@@ -208,8 +209,10 @@ export function LoadTelemetryCard({ isEnabled }: { isEnabled: boolean }) {
         <CardTitle>负载统计</CardTitle>
         <CardDescription>接口调用量、错误率、延迟与检索形态</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-8">
-        <div className="flex flex-wrap items-center gap-3">
+      <CardContent>
+        <div
+          {...stylex.props(styles.loadTelemetryCardCardContentItem, styles.loadTelemetryCardDiv)}
+        >
           <ToggleGroup
             type="single"
             aria-label="统计时段"
@@ -242,9 +245,9 @@ export function LoadTelemetryCard({ isEnabled }: { isEnabled: boolean }) {
 
         <RevealItem
           isReady={!isLoading}
-          className="space-y-10"
+          xstyle={styles.loadTelemetryCardCardContentItem}
           placeholder={
-            <p role="status" className="text-sm text-muted-foreground">
+            <p role="status" {...stylex.props(styles.loadTelemetryCardP)}>
               <LoadingText text="加载中…" />
             </p>
           }
@@ -264,7 +267,7 @@ export function LoadTelemetryCard({ isEnabled }: { isEnabled: boolean }) {
           )}
         </RevealItem>
 
-        <p className="text-xs leading-relaxed text-muted-foreground">
+        <p {...stylex.props(styles.loadTelemetryCardCardContentItem, styles.loadTelemetryCardP2)}>
           统计为尽力而为的近似值：百分位取对数分桶的上界，高并发争用或存储失败时可能少计。
           仅记录接口模板、工具名与检索形态，不记录用户身份、IP 与检索文本。
         </p>
@@ -342,68 +345,71 @@ function SeriesSection({ report }: { report: TelemetryResponse }) {
           </Button>
         )}
       </AdminListHeader>
-      <div className="-mx-4 overflow-x-auto border-y sm:-mx-5">
-        <table className="w-full min-w-[640px] text-sm">
-          <caption className="sr-only">调用排行（延迟百分位为近似值，单位毫秒）</caption>
-          <thead className="text-xs text-muted-foreground">
-            <tr className="border-b">
-              <th scope="col" className="px-4 py-2.5 text-left font-medium sm:px-5">
+      <div {...stylex.props(styles.seriesSectionDiv)}>
+        <table {...stylex.props(styles.seriesSectionTable)}>
+          <caption {...stylex.props(styles.seriesSectionCaption)}>
+            调用排行（延迟百分位为近似值，单位毫秒）
+          </caption>
+          <thead {...stylex.props(styles.seriesSectionThead)}>
+            <tr {...stylex.props(styles.seriesSectionTr)}>
+              <th scope="col" {...stylex.props(styles.seriesSectionTh)}>
                 类型
               </th>
-              <th scope="col" className="px-2 py-2.5 text-left font-medium">
+              <th scope="col" {...stylex.props(styles.seriesSectionTh2)}>
                 标识
               </th>
-              <th scope="col" className="px-2 py-2.5 text-right font-medium">
+              <th scope="col" {...stylex.props(styles.seriesSectionTh3)}>
                 调用
               </th>
-              <th scope="col" className="px-2 py-2.5 text-right font-medium">
+              <th scope="col" {...stylex.props(styles.seriesSectionTh3)}>
                 错误率
               </th>
-              <th scope="col" className="px-2 py-2.5 text-right font-medium">
+              <th scope="col" {...stylex.props(styles.seriesSectionTh3)}>
                 P50 ≈ ms
               </th>
-              <th scope="col" className="px-2 py-2.5 text-right font-medium">
+              <th scope="col" {...stylex.props(styles.seriesSectionTh3)}>
                 P95 ≈ ms
               </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium sm:px-5">
+              <th scope="col" {...stylex.props(styles.seriesSectionTh4)}>
                 P99 ≈ ms
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y tabular-nums">
+          <tbody {...stylex.props(styles.seriesSectionTbody)}>
             {visibleSeries.map((series, index) => (
-              <tr key={`${index}:${JSON.stringify(series)}`}>
-                <td className="px-4 py-3 align-top text-xs text-muted-foreground sm:px-5">
-                  {KIND_LABELS[series.kind]}
-                </td>
-                <td className="px-2 py-3 align-top">
-                  <div className="font-mono text-[13px] break-all">{series.name}</div>
-                  <div className="mt-1 flex flex-wrap gap-1 text-xs text-muted-foreground">
+              <tr
+                {...stylex.props(styles.seriesSectionTbodyItem)}
+                key={`${index}:${JSON.stringify(series)}`}
+              >
+                <td {...stylex.props(styles.seriesSectionTd)}>{KIND_LABELS[series.kind]}</td>
+                <td {...stylex.props(styles.seriesSectionTd2)}>
+                  <div {...stylex.props(styles.seriesSectionDiv2)}>{series.name}</div>
+                  <div {...stylex.props(styles.seriesSectionDiv3)}>
                     {describeSeriesDimensions(series).map((dimension) => (
-                      <span key={dimension} className="rounded-md bg-muted px-1.5 py-0.5">
+                      <span key={dimension} {...stylex.props(styles.seriesSectionSpan)}>
                         {dimension}
                       </span>
                     ))}
                   </div>
                 </td>
-                <td className="px-2 py-3 text-right align-top">
+                <td {...stylex.props(styles.seriesSectionTd3)}>
                   {NUMBER_FORMATTER.format(series.calls)}
                 </td>
                 <td
-                  className={cn(
-                    'px-2 py-3 text-right align-top',
-                    series.errors > 0 && 'text-destructive',
+                  {...stylex.props(
+                    styles.seriesSectionTd3,
+                    series.errors > 0 && styles.seriesSectionTdErrors,
                   )}
                 >
                   {PERCENT_FORMATTER.format(series.error_rate)}
                 </td>
-                <td className="px-2 py-3 text-right align-top">
+                <td {...stylex.props(styles.seriesSectionTd3)}>
                   {formatMilliseconds(series.p50_ms)}
                 </td>
-                <td className="px-2 py-3 text-right align-top">
+                <td {...stylex.props(styles.seriesSectionTd3)}>
                   {formatMilliseconds(series.p95_ms)}
                 </td>
-                <td className="px-4 py-3 text-right align-top sm:px-5">
+                <td {...stylex.props(styles.seriesSectionTd4)}>
                   {formatMilliseconds(series.p99_ms)}
                 </td>
               </tr>
@@ -432,17 +438,17 @@ function TrendSection({ kind, report }: { kind: TelemetryKind | null; report: Te
           {formatHour(Date.parse(report.to))}。每个类型使用各自的纵轴峰值。
         </SettingsSectionDescription>
       </SettingsSectionHeader>
-      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5">
-          <span aria-hidden="true" className="size-2.5 rounded-sm bg-primary" />
+      <div {...stylex.props(styles.trendSectionDiv)}>
+        <span {...stylex.props(styles.trendSectionSpan)}>
+          <span aria-hidden="true" {...stylex.props(styles.trendSectionSpan2)} />
           调用
         </span>
-        <span className="flex items-center gap-1.5">
-          <span aria-hidden="true" className="size-2.5 rounded-sm bg-destructive" />
+        <span {...stylex.props(styles.trendSectionSpan)}>
+          <span aria-hidden="true" {...stylex.props(styles.trendSectionSpan3)} />
           错误
         </span>
       </div>
-      <div className="space-y-6">
+      <div {...stylex.props(styles.trendSectionDiv2)}>
         {trends.map((trend) => (
           <KindTrendChart key={trend.kind} trend={trend} />
         ))}
@@ -467,17 +473,19 @@ function KindTrendChart({ trend }: { trend: KindTrend }) {
   const summary = `共 ${NUMBER_FORMATTER.format(trend.totalCalls)} 次调用 · ${NUMBER_FORMATTER.format(trend.totalErrors)} 次错误 · 峰值 ${NUMBER_FORMATTER.format(maxCalls)} 次/小时`;
 
   return (
-    <figure className="space-y-2" data-telemetry-trend={trend.kind}>
-      <figcaption className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <span className="text-sm font-bold">{label}</span>
-        <span className="text-xs text-muted-foreground tabular-nums">{summary}</span>
+    <figure data-telemetry-trend={trend.kind}>
+      <figcaption
+        {...stylex.props(styles.kindTrendChartFigureItem, styles.kindTrendChartFigcaption)}
+      >
+        <span {...stylex.props(styles.kindTrendChartSpan)}>{label}</span>
+        <span {...stylex.props(styles.kindTrendChartSpan2)}>{summary}</span>
       </figcaption>
       <svg
         role="img"
         aria-label={`${label}每小时调用趋势：${summary}`}
         viewBox={`0 0 ${Math.max(hours.length, 1)} 100`}
         preserveAspectRatio="none"
-        className="h-24 w-full rounded-md bg-muted/50"
+        {...stylex.props(styles.kindTrendChartFigureItem, styles.kindTrendChartSvg)}
       >
         {hours.map((hour, index) => {
           const callsHeight = scale(hour.calls);
@@ -485,45 +493,51 @@ function KindTrendChart({ trend }: { trend: KindTrend }) {
           return (
             <g key={hour.hourMs}>
               <title>{`${formatHour(hour.hourMs)} · 调用 ${NUMBER_FORMATTER.format(hour.calls)} · 错误 ${NUMBER_FORMATTER.format(hour.errors)}`}</title>
-              <rect x={index} y={0} width={1} height={100} className="fill-transparent" />
+              <rect
+                x={index}
+                y={0}
+                width={1}
+                height={100}
+                {...stylex.props(styles.kindTrendChartRect)}
+              />
               <rect
                 x={index + gap / 2}
                 y={100 - callsHeight}
                 width={1 - gap}
                 height={callsHeight}
-                className="fill-primary"
+                {...stylex.props(styles.kindTrendChartRect2)}
               />
               <rect
                 x={index + gap / 2}
                 y={100 - errorsHeight}
                 width={1 - gap}
                 height={errorsHeight}
-                className="fill-destructive"
+                {...stylex.props(styles.kindTrendChartRect3)}
               />
             </g>
           );
         })}
       </svg>
-      <div className="flex justify-between text-[11px] text-muted-foreground tabular-nums">
+      <div {...stylex.props(styles.kindTrendChartFigureItem, styles.kindTrendChartDiv)}>
         <span>{hours.length > 0 && formatHour(hours[0].hourMs)}</span>
         <span>{hours.length > 0 && formatHour(hours[hours.length - 1].hourMs)}</span>
       </div>
       {observedHours.length > 0 && (
-        <details className="text-xs">
-          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-            查看{label}每小时数据
-          </summary>
-          <table className="mt-2 w-full max-w-md tabular-nums">
-            <caption className="sr-only">{label}每小时调用与错误（仅列出有记录的小时）</caption>
-            <thead className="text-muted-foreground">
+        <details {...stylex.props(styles.kindTrendChartFigureItem, styles.kindTrendChartDetails)}>
+          <summary {...stylex.props(styles.kindTrendChartSummary)}>查看{label}每小时数据</summary>
+          <table {...stylex.props(styles.kindTrendChartTable)}>
+            <caption {...stylex.props(styles.seriesSectionCaption)}>
+              {label}每小时调用与错误（仅列出有记录的小时）
+            </caption>
+            <thead {...stylex.props(styles.kindTrendChartThead)}>
               <tr>
-                <th scope="col" className="py-1 text-left font-medium">
+                <th scope="col" {...stylex.props(styles.kindTrendChartTh)}>
                   时间（本地）
                 </th>
-                <th scope="col" className="py-1 text-right font-medium">
+                <th scope="col" {...stylex.props(styles.kindTrendChartTh2)}>
                   调用
                 </th>
-                <th scope="col" className="py-1 text-right font-medium">
+                <th scope="col" {...stylex.props(styles.kindTrendChartTh2)}>
                   错误
                 </th>
               </tr>
@@ -531,9 +545,13 @@ function KindTrendChart({ trend }: { trend: KindTrend }) {
             <tbody>
               {observedHours.map((hour) => (
                 <tr key={hour.hourMs}>
-                  <td className="py-0.5">{formatHour(hour.hourMs)}</td>
-                  <td className="py-0.5 text-right">{NUMBER_FORMATTER.format(hour.calls)}</td>
-                  <td className="py-0.5 text-right">{NUMBER_FORMATTER.format(hour.errors)}</td>
+                  <td {...stylex.props(styles.kindTrendChartTd)}>{formatHour(hour.hourMs)}</td>
+                  <td {...stylex.props(styles.kindTrendChartTd2)}>
+                    {NUMBER_FORMATTER.format(hour.calls)}
+                  </td>
+                  <td {...stylex.props(styles.kindTrendChartTd2)}>
+                    {NUMBER_FORMATTER.format(hour.errors)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -562,7 +580,7 @@ function SearchShapeSection({ report }: { report: TelemetryResponse }) {
           不同口径不可直接比较。
         </SettingsSectionDescription>
       </SettingsSectionHeader>
-      <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+      <div {...stylex.props(styles.searchShapeSectionDiv)}>
         {features.map((distribution) => (
           <DistributionList
             key={distribution.feature}
@@ -604,23 +622,32 @@ function DistributionList({
   values: DistributionValue[];
 }) {
   return (
-    <section className="space-y-2" aria-label={title}>
-      <h4 className="flex items-center gap-2 text-xs font-bold">
-        <Layers className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+    <section aria-label={title}>
+      <h4 {...stylex.props(styles.kindTrendChartFigureItem, styles.distributionListH4)}>
+        <Layers {...stylex.props(styles.distributionListLayers)} aria-hidden="true" />
         {title}
       </h4>
-      <ul className="space-y-2">
+      <ul {...stylex.props(styles.kindTrendChartFigureItem)}>
         {values.map((entry) => {
           const share = totalCalls > 0 ? entry.calls / totalCalls : 0;
           return (
-            <li key={entry.value} className="space-y-1 text-xs">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 break-all">{formatValue(entry.value)}</span>
-                <span className="shrink-0 text-muted-foreground tabular-nums">
+            <li
+              key={entry.value}
+              {...stylex.props(styles.kindTrendChartFigureItem, styles.kindTrendChartDetails)}
+            >
+              <div {...stylex.props(styles.distributionListLiItem, styles.distributionListDiv)}>
+                <span {...stylex.props(styles.distributionListSpan)}>
+                  {formatValue(entry.value)}
+                </span>
+                <span {...stylex.props(styles.distributionListSpan2)}>
                   {NUMBER_FORMATTER.format(entry.calls)} · {PERCENT_FORMATTER.format(share)}
                 </span>
               </div>
-              <Progress aria-hidden="true" value={share * 100} />
+              <Progress
+                xstyle={styles.distributionListLiItem}
+                aria-hidden="true"
+                value={share * 100}
+              />
             </li>
           );
         })}
@@ -628,3 +655,329 @@ function DistributionList({
     </section>
   );
 }
+
+const styles = stylex.create({
+  loadTelemetryCardCardContentItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '2rem',
+    },
+  },
+  loadTelemetryCardDiv: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  loadTelemetryCardP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  loadTelemetryCardP2: {
+    fontSize: '0.75rem',
+    lineHeight: 1.625,
+    color: colors.mutedForeground,
+  },
+  seriesSectionDiv: {
+    marginInline: {
+      default: '-1rem',
+      '@media (min-width: 40rem)': '-1.25rem',
+    },
+    overflowX: 'auto',
+    borderBlockStyle: 'solid',
+    borderBlockWidth: '1px',
+  },
+  seriesSectionTable: {
+    width: '100%',
+    minWidth: '640px',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  seriesSectionCaption: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  seriesSectionThead: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  seriesSectionTr: {
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+  },
+  seriesSectionTh: {
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.625rem',
+    textAlign: 'left',
+    fontWeight: 500,
+  },
+  seriesSectionTh2: {
+    paddingInline: '0.5rem',
+    paddingBlock: '0.625rem',
+    textAlign: 'left',
+    fontWeight: 500,
+  },
+  seriesSectionTh3: {
+    paddingInline: '0.5rem',
+    paddingBlock: '0.625rem',
+    textAlign: 'right',
+    fontWeight: 500,
+  },
+  seriesSectionTh4: {
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.625rem',
+    textAlign: 'right',
+    fontWeight: 500,
+  },
+  seriesSectionTbodyItem: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+    },
+  },
+  seriesSectionTbody: {
+    fontVariantNumeric: 'tabular-nums',
+  },
+  seriesSectionTd: {
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+    verticalAlign: 'top',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  seriesSectionTd2: {
+    paddingInline: '0.5rem',
+    paddingBlock: '0.75rem',
+    verticalAlign: 'top',
+  },
+  seriesSectionDiv2: {
+    fontFamily: "'JetBrainsLxgwNerdMono', monospace",
+    fontSize: '13px',
+    wordBreak: 'break-all',
+  },
+  seriesSectionDiv3: {
+    marginTop: '0.25rem',
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  seriesSectionSpan: {
+    borderRadius: '6px',
+    backgroundColor: colors.muted,
+    paddingInline: '0.375rem',
+    paddingBlock: '0.125rem',
+  },
+  seriesSectionTd3: {
+    paddingInline: '0.5rem',
+    paddingBlock: '0.75rem',
+    textAlign: 'right',
+    verticalAlign: 'top',
+  },
+  seriesSectionTdErrors: {
+    color: colors.destructive,
+  },
+  seriesSectionTd4: {
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+    textAlign: 'right',
+    verticalAlign: 'top',
+  },
+  trendSectionDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  trendSectionSpan: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.375rem',
+  },
+  trendSectionSpan2: {
+    width: '0.625rem',
+    height: '0.625rem',
+    borderRadius: '4px',
+    backgroundColor: colors.primary,
+  },
+  trendSectionSpan3: {
+    width: '0.625rem',
+    height: '0.625rem',
+    borderRadius: '4px',
+    backgroundColor: colors.destructive,
+  },
+  trendSectionDiv2: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '1.5rem',
+  },
+  kindTrendChartFigureItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  kindTrendChartFigcaption: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    columnGap: '1rem',
+    rowGap: '0.25rem',
+  },
+  kindTrendChartSpan: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  kindTrendChartSpan2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  kindTrendChartSvg: {
+    height: '6rem',
+    width: '100%',
+    borderRadius: '6px',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 50%, transparent)`,
+  },
+  kindTrendChartRect: {
+    fill: 'transparent',
+  },
+  kindTrendChartRect2: {
+    fill: colors.primary,
+  },
+  kindTrendChartRect3: {
+    fill: colors.destructive,
+  },
+  kindTrendChartDiv: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: '11px',
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  kindTrendChartDetails: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+  },
+  kindTrendChartSummary: {
+    cursor: 'pointer',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+  },
+  kindTrendChartTable: {
+    marginTop: '0.5rem',
+    width: '100%',
+    maxWidth: '28rem',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  kindTrendChartThead: {
+    color: colors.mutedForeground,
+  },
+  kindTrendChartTh: {
+    paddingBlock: '0.25rem',
+    textAlign: 'left',
+    fontWeight: 500,
+  },
+  kindTrendChartTh2: {
+    paddingBlock: '0.25rem',
+    textAlign: 'right',
+    fontWeight: 500,
+  },
+  kindTrendChartTd: {
+    paddingBlock: '0.125rem',
+  },
+  kindTrendChartTd2: {
+    paddingBlock: '0.125rem',
+    textAlign: 'right',
+  },
+  searchShapeSectionDiv: {
+    display: 'grid',
+    columnGap: '2rem',
+    rowGap: '1.5rem',
+    gridTemplateColumns: {
+      default: null,
+      '@media (min-width: 40rem)': 'repeat(2, minmax(0, 1fr))',
+    },
+  },
+  distributionListH4: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 700,
+  },
+  distributionListLayers: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+    color: colors.mutedForeground,
+  },
+  distributionListLiItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.25rem',
+    },
+  },
+  distributionListDiv: {
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+  },
+  distributionListSpan: {
+    minWidth: '0px',
+    wordBreak: 'break-all',
+  },
+  distributionListSpan2: {
+    flexShrink: 0,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+});

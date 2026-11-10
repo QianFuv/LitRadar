@@ -66,8 +66,9 @@ import {
 import { useUpdateWorkspaceSearch, WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { useSelectedDatabase } from '@/lib/selected-database';
 import { READER_DOCK_MEDIA_QUERY, useMediaQuery } from '@/lib/use-media-query';
-import { cn } from '@/lib/utils';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /** Related lists are shared with the article reader and change only when the index updates. */
 const RELATED_STALE_TIME_MS = 10 * 60 * 1000;
@@ -219,45 +220,45 @@ function RelationPicker({ onPick }: { onPick: (article: Article, dbName: string)
         description: '选择中心文章',
       }}
     >
-      <div className="mx-auto w-full max-w-xl px-4 py-8 sm:px-5">
-        <form role="search" className="flex gap-2" onSubmit={handleSubmit}>
+      <div {...stylex.props(styles.relationPickerDiv)}>
+        <form role="search" {...stylex.props(styles.relationPickerForm)} onSubmit={handleSubmit}>
           <Input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder="输入标题、作者或关键词"
             aria-label="检索中心文章"
           />
-          <Button type="submit" className="shrink-0 gap-1.5">
-            <Search className="size-4" aria-hidden="true" />
+          <Button type="submit" xstyle={styles.relationPickerButton}>
+            <Search {...stylex.props(styles.relationPickerSearch)} aria-hidden="true" />
             检索
           </Button>
         </form>
         {resultsQuery.isFetching && (
-          <p role="status" className="mt-4 text-sm text-muted-foreground">
+          <p role="status" {...stylex.props(styles.relationPickerP)}>
             <LoadingText text="正在检索…" />
           </p>
         )}
         {resultsQuery.isError && (
-          <p role="alert" className="mt-4 text-sm text-destructive">
+          <p role="alert" {...stylex.props(styles.relationPickerP2)}>
             检索失败，请稍后重试。
           </p>
         )}
         {resultsQuery.data && resultsQuery.data.items.length === 0 && (
-          <p className="mt-4 text-sm text-muted-foreground">没有找到匹配的文章。</p>
+          <p {...stylex.props(styles.relationPickerP)}>没有找到匹配的文章。</p>
         )}
         {resultsQuery.data && resultsQuery.data.items.length > 0 && (
-          <ul aria-label="候选中心文章" className="mt-4 divide-y border-y">
+          <ul aria-label="候选中心文章" {...stylex.props(styles.relationPickerUl)}>
             {resultsQuery.data.items.map((article) => (
-              <li key={relationNodeId(article)}>
+              <li {...stylex.props(styles.relationPickerUlItem)} key={relationNodeId(article)}>
                 <button
                   type="button"
-                  className="motion-control block w-full px-1 py-3 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  {...stylex.props(styles.relationPickerButton2)}
                   onClick={() => onPick(article, dbName)}
                 >
-                  <span className="line-clamp-2 text-[13.5px] leading-[1.5] font-bold">
+                  <span {...stylex.props(styles.relationPickerSpan)}>
                     {getArticleDisplayTitle(article)}
                   </span>
-                  <span className="mt-1 block truncate text-xs text-muted-foreground">
+                  <span {...stylex.props(styles.relationPickerSpan2)}>
                     {[article.journal_title, article.date].filter(Boolean).join(' · ')}
                   </span>
                 </button>
@@ -285,16 +286,16 @@ function RelationHeading({
   isSubtitleReady?: boolean;
   children?: ReactNode;
 }) {
-  const subtitleElement = <p className="truncate text-xs text-muted-foreground">{subtitle}</p>;
+  const subtitleElement = <p {...stylex.props(styles.subtitleElementP)}>{subtitle}</p>;
   return (
-    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-      <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
-        <h1 className="text-lg leading-7 font-bold">文献关系图</h1>
+    <div {...stylex.props(styles.relationHeadingDiv)}>
+      <div {...stylex.props(styles.relationHeadingDiv2)}>
+        <h1 {...stylex.props(styles.relationHeadingH1)}>文献关系图</h1>
         <RevealItem isReady={isSubtitleReady} placeholder={subtitleElement}>
           {subtitleElement}
         </RevealItem>
       </div>
-      {children && <div className="flex shrink-0 items-center gap-1">{children}</div>}
+      {children && <div {...stylex.props(styles.relationHeadingDiv3)}>{children}</div>}
     </div>
   );
 }
@@ -466,7 +467,7 @@ function RelationExplorer({
   const nodeCount = currentGraph ? Object.keys(currentGraph.nodes).length : 0;
 
   const header = (
-    <div className="space-y-2">
+    <div {...stylex.props(styles.headerDiv)}>
       <RelationHeading
         isSubtitleReady={Boolean(root) || initialQuery.isError}
         subtitle={
@@ -478,7 +479,7 @@ function RelationExplorer({
         <ToggleGroup
           type="single"
           aria-label="显示方式"
-          className="mr-1"
+          xstyle={styles.headerToggleGroup}
           value={viewMode}
           onValueChange={(mode) => {
             if (mode) setViewMode(mode as typeof viewMode);
@@ -490,8 +491,8 @@ function RelationExplorer({
               ['list', '列表', List],
             ] as const
           ).map(([mode, label, Icon]) => (
-            <ToggleGroupItem key={mode} value={mode} className="md:px-2">
-              <Icon className="size-3.5" aria-hidden="true" />
+            <ToggleGroupItem key={mode} value={mode} xstyle={styles.headerToggleGroupItem}>
+              <Icon {...stylex.props(styles.headerIcon)} aria-hidden="true" />
               {label}
             </ToggleGroupItem>
           ))}
@@ -502,11 +503,11 @@ function RelationExplorer({
               type="button"
               variant="ghost"
               size="icon"
-              className="size-11 md:size-8"
+              xstyle={styles.headerButton}
               aria-label="重新排列"
               onClick={relayout}
             >
-              <RotateCcw className="size-4" aria-hidden="true" />
+              <RotateCcw {...stylex.props(styles.relationPickerSearch)} aria-hidden="true" />
             </Button>
           </IconTooltip>
         )}
@@ -516,11 +517,11 @@ function RelationExplorer({
               type="button"
               variant="ghost"
               size="icon"
-              className="size-11 md:size-8"
+              xstyle={styles.headerButton}
               aria-label="适应窗口"
               onClick={() => void fitView({ duration: 300, padding: 0.2 })}
             >
-              <Maximize className="size-4" aria-hidden="true" />
+              <Maximize {...stylex.props(styles.relationPickerSearch)} aria-hidden="true" />
             </Button>
           </IconTooltip>
         )}
@@ -539,12 +540,12 @@ function RelationExplorer({
         </RevealItem>
       </RelationHeading>
       {failure && (
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" {...stylex.props(styles.headerP)}>
           {failure}
         </p>
       )}
       {nodeCount >= RELATION_NODE_LIMIT && (
-        <p className="text-xs text-muted-foreground">
+        <p {...stylex.props(styles.headerP2)}>
           图中已有 {RELATION_NODE_LIMIT} 篇文章，收起部分分支后可继续展开。
         </p>
       )}
@@ -554,7 +555,7 @@ function RelationExplorer({
   let body: ReactNode;
   if (initialQuery.isError && currentGraph === null) {
     body = (
-      <p role="alert" className="px-5 py-8 text-sm text-destructive">
+      <p role="alert" {...stylex.props(styles.relationExplorerP)}>
         无法读取中心文章，它可能已不在当前数据库中。
       </p>
     );
@@ -562,7 +563,7 @@ function RelationExplorer({
     body = null;
   } else if (viewMode === 'graph') {
     body = (
-      <div data-slot="relation-canvas" className="min-h-0 flex-1">
+      <div data-slot="relation-canvas" {...stylex.props(styles.relationCanvas)}>
         <RelationCanvas
           graph={currentGraph}
           selectedId={selectedId}
@@ -611,13 +612,10 @@ function RelationExplorer({
       >
         <RevealItem
           isReady={currentGraph !== null || initialQuery.isError}
-          className="flex min-h-0 flex-1 flex-col"
+          xstyle={styles.relationExplorerRevealItem}
           placeholder={
-            <p
-              role="status"
-              className="flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground"
-            >
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            <p role="status" {...stylex.props(styles.relationExplorerP2)}>
+              <Loader2 {...stylex.props(styles.relationExplorerLoader2)} aria-hidden="true" />
               <LoadingText text="正在构建关系图…" />
             </p>
           }
@@ -659,7 +657,7 @@ function RelationList({
 }) {
   const nodes = useMemo(() => listRelationNodes(graph), [graph]);
   return (
-    <ul aria-label="关系节点列表" className="min-h-0 flex-1 overflow-y-auto py-2">
+    <ul aria-label="关系节点列表" {...stylex.props(styles.relationListUl)}>
       {nodes.map((node) => {
         const title = getArticleDisplayTitle(node.article);
         const isExpanded = graph.expandedIds.includes(node.id);
@@ -667,43 +665,42 @@ function RelationList({
         return (
           <li
             key={node.id}
-            className="flex items-start gap-1 pr-4"
-            style={{ paddingLeft: `${16 + node.depth * 22}px` }}
+            {...stylex.props(styles.relationListLi, styles.indent(`${16 + node.depth * 22}px`))}
           >
             <button
               type="button"
               aria-label={`${isExpanded ? '收起' : '展开'}相关文章：${title}`}
               aria-expanded={isExpanded}
               disabled={isLoading}
-              className="motion-control mt-2 flex size-6 shrink-0 items-center justify-center rounded-full border text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              {...stylex.props(styles.relationListButton)}
               onClick={() => onToggle(node.id)}
             >
               {isLoading ? (
-                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                <Loader2 {...stylex.props(styles.relationListLoader2)} aria-hidden="true" />
               ) : isExpanded ? (
-                <Minus className="size-3.5" aria-hidden="true" />
+                <Minus {...stylex.props(styles.headerIcon)} aria-hidden="true" />
               ) : (
-                <Plus className="size-3.5" aria-hidden="true" />
+                <Plus {...stylex.props(styles.headerIcon)} aria-hidden="true" />
               )}
             </button>
             <button
               type="button"
               aria-pressed={node.id === selectedId}
-              className={cn(
-                'motion-control min-w-0 flex-1 rounded-md px-2 py-1.5 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
-                node.id === selectedId && 'bg-accent',
+              {...stylex.props(
+                styles.relationListButton2,
+                node.id === selectedId && styles.relationListButtonSelectedId,
               )}
               onClick={() => onSelect(node.id)}
             >
               <span
-                className={cn(
-                  'line-clamp-2 text-[13px] leading-[1.5]',
-                  node.depth === 0 ? 'font-bold' : 'font-medium',
+                {...stylex.props(
+                  styles.relationListSpan,
+                  node.depth === 0 ? styles.relationListSpanDepth : styles.relationListSpanNotDepth,
                 )}
               >
                 {title}
               </span>
-              <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+              <span {...stylex.props(styles.relationListSpan2)}>
                 {[node.article.journal_title, node.article.date].filter(Boolean).join(' · ')}
               </span>
             </button>
@@ -713,3 +710,329 @@ function RelationList({
     </ul>
   );
 }
+
+const spinKeyframes = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
+
+const styles = stylex.create({
+  indent: (paddingLeft: string) => ({
+    paddingLeft,
+  }),
+  relationPickerDiv: {
+    marginInline: 'auto',
+    width: '100%',
+    maxWidth: '36rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '2rem',
+  },
+  relationPickerForm: {
+    display: 'flex',
+    gap: '0.5rem',
+  },
+  relationPickerButton: {
+    flexShrink: 0,
+    gap: '0.375rem',
+  },
+  relationPickerSearch: {
+    width: '1rem',
+    height: '1rem',
+  },
+  relationPickerP: {
+    marginTop: '1rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  relationPickerP2: {
+    marginTop: '1rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  relationPickerUlItem: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+    },
+  },
+  relationPickerUl: {
+    marginTop: '1rem',
+    borderBlockStyle: 'solid',
+    borderBlockWidth: '1px',
+  },
+  relationPickerButton2: {
+    display: 'block',
+    width: '100%',
+    paddingInline: '0.25rem',
+    paddingBlock: '0.75rem',
+    textAlign: 'left',
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `inset 0 0 0 2px ${colors.ring}`,
+    },
+  },
+  relationPickerSpan: {
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 2,
+    fontSize: '13.5px',
+    lineHeight: 1.5,
+    fontWeight: 700,
+  },
+  relationPickerSpan2: {
+    marginTop: '0.25rem',
+    display: 'block',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  subtitleElementP: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  relationHeadingDiv: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    columnGap: '0.75rem',
+    rowGap: '0.5rem',
+  },
+  relationHeadingDiv2: {
+    minWidth: '0px',
+    flexGrow: {
+      default: null,
+      '@media (min-width: 40rem)': 1,
+    },
+    flexShrink: {
+      default: null,
+      '@media (min-width: 40rem)': 1,
+    },
+    flexBasis: {
+      default: '100%',
+      '@media (min-width: 40rem)': '0%',
+    },
+  },
+  relationHeadingH1: {
+    fontSize: '1.125rem',
+    lineHeight: '1.75rem',
+    fontWeight: 700,
+  },
+  relationHeadingDiv3: {
+    display: 'flex',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.25rem',
+  },
+  headerDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.5rem',
+  },
+  headerToggleGroup: {
+    marginRight: '0.25rem',
+  },
+  headerToggleGroupItem: {
+    paddingInline: {
+      default: '0.75rem',
+      '@media (min-width: 48rem)': '0.5rem',
+    },
+  },
+  headerIcon: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+  headerButton: {
+    width: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+  },
+  headerP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.destructive,
+  },
+  headerP2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  relationExplorerP: {
+    paddingInline: '1.25rem',
+    paddingBlock: '2rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  relationCanvas: {
+    minHeight: '0px',
+    flex: '1',
+  },
+  relationExplorerRevealItem: {
+    display: 'flex',
+    minHeight: '0px',
+    flex: '1',
+    flexDirection: 'column',
+  },
+  relationExplorerP2: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    paddingInline: '1.25rem',
+    paddingBlock: '2rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  relationExplorerLoader2: {
+    width: '1rem',
+    height: '1rem',
+    animationName: spinKeyframes,
+    animationDuration: '1s',
+    animationTimingFunction: 'linear',
+    animationIterationCount: 'infinite',
+  },
+  relationListUl: {
+    minHeight: '0px',
+    flex: '1',
+    overflowY: 'auto',
+    paddingBlock: '0.5rem',
+  },
+  relationListLi: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '0.25rem',
+    paddingRight: '1rem',
+  },
+  relationListButton: {
+    marginTop: '0.5rem',
+    display: 'flex',
+    width: '1.5rem',
+    height: '1.5rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  relationListLoader2: {
+    width: '0.875rem',
+    height: '0.875rem',
+    animationName: spinKeyframes,
+    animationDuration: '1s',
+    animationTimingFunction: 'linear',
+    animationIterationCount: 'infinite',
+  },
+  relationListButton2: {
+    minWidth: '0px',
+    flex: '1',
+    borderRadius: '6px',
+    paddingInline: '0.5rem',
+    paddingBlock: '0.375rem',
+    textAlign: 'left',
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  relationListButtonSelectedId: {
+    backgroundColor: {
+      default: colors.accent,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+  },
+  relationListSpan: {
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 2,
+    fontSize: '13px',
+    lineHeight: 1.5,
+  },
+  relationListSpanDepth: {
+    fontWeight: 700,
+  },
+  relationListSpanNotDepth: {
+    fontWeight: 500,
+  },
+  relationListSpan2: {
+    marginTop: '0.125rem',
+    display: 'block',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '11px',
+    color: colors.mutedForeground,
+  },
+});

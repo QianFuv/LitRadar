@@ -28,6 +28,8 @@ import {
 } from '@/lib/journal-ratings';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import { describeSearchError } from '@/lib/search-syntax';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 type HighlightedArticleCardProps = Omit<
   ComponentProps<typeof ArticleDialogCard>,
@@ -101,7 +103,7 @@ export function ResultsList() {
       <p
         key={`${resultState}-${resultAnnouncement}`}
         data-testid="results-state-announcement"
-        className="sr-only"
+        {...stylex.props(styles.resultsListP)}
         role={resultAnnouncementRole}
         aria-label={resultAnnouncement}
         aria-live={resultAnnouncementRole === 'alert' ? 'assertive' : 'polite'}
@@ -110,10 +112,7 @@ export function ResultsList() {
         {resultAnnouncement}
       </p>
       {favoriteStateError && (
-        <div
-          role="alert"
-          className="m-4 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-[13px] sm:mx-5"
-        >
+        <div role="alert" {...stylex.props(styles.resultsListDiv)}>
           <span>收藏状态暂时不可用，未能确认文章的收藏状态。</span>
           <Button type="button" variant="outline" size="sm" onClick={retryFavoriteChecks}>
             重试收藏状态
@@ -122,7 +121,7 @@ export function ResultsList() {
       )}
       <RevealItem
         isReady={resultState !== 'loading'}
-        className="min-w-0"
+        xstyle={styles.resultsListRevealItem}
         placeholder={
           <div data-testid="results-state-loading">
             <ArticleListSkeleton />
@@ -133,7 +132,7 @@ export function ResultsList() {
           <MotionDiv
             key={resultState}
             data-testid={`results-state-${resultState}`}
-            className="min-w-0"
+            {...stylex.props(styles.resultsListRevealItem)}
             variants={{
               ...PANEL_VARIANTS,
               visible: { ...PANEL_VARIANTS.visible, pointerEvents: 'inherit' },
@@ -323,20 +322,30 @@ function getResultsPresentation(state: ResultsViewState) {
           ))}
         </MotionPresence>
 
-        <div ref={loadMoreRef} className="h-1" />
+        <div ref={loadMoreRef} {...stylex.props(styles.getResultsPresentationDiv)} />
         <MotionPresence>
           {isFetchingNextPage && (
             <MotionDiv
               key="next-page-loading"
               aria-hidden="true"
-              className="space-y-2 px-4 py-4 sm:px-5"
+              {...stylex.props(styles.getResultsPresentationMotionDiv)}
               variants={REVEAL_VARIANTS}
               initial="hidden"
               animate="visible"
               exit="exit"
             >
-              <Skeleton className="h-4 w-11/12" />
-              <Skeleton className="h-3 w-1/2" />
+              <Skeleton
+                xstyle={[
+                  styles.getResultsPresentationMotionDivItem,
+                  styles.getResultsPresentationSkeleton,
+                ]}
+              />
+              <Skeleton
+                xstyle={[
+                  styles.getResultsPresentationMotionDivItem,
+                  styles.getResultsPresentationSkeleton2,
+                ]}
+              />
             </MotionDiv>
           )}
         </MotionPresence>
@@ -374,3 +383,62 @@ function getResultsArticleParams(
 
   return params;
 }
+
+const styles = stylex.create({
+  resultsListP: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  resultsListDiv: {
+    margin: '1rem',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.destructive} 40%, transparent)`,
+    backgroundColor: `color-mix(in oklab, ${colors.destructive} 5%, transparent)`,
+    padding: '0.75rem',
+    fontSize: '13px',
+    marginInline: {
+      default: null,
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+  },
+  resultsListRevealItem: {
+    minWidth: '0px',
+  },
+  getResultsPresentationDiv: {
+    height: '0.25rem',
+  },
+  getResultsPresentationMotionDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  getResultsPresentationMotionDiv: {
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+  },
+  getResultsPresentationSkeleton: {
+    height: '1rem',
+    width: 'calc(11 / 12 * 100%)',
+  },
+  getResultsPresentationSkeleton2: {
+    height: '0.75rem',
+    width: 'calc(1 / 2 * 100%)',
+  },
+});

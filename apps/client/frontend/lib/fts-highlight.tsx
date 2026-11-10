@@ -3,6 +3,8 @@
  */
 
 import { useCallback, useMemo, type ReactNode } from 'react';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 /**
  * Describes how one extracted FTS operand should match article text.
@@ -408,7 +410,11 @@ export function useFtsHighlighter(
 
       return text.split(highlightPattern).map((part, index) =>
         index % 2 === 1 ? (
-          <span key={index} className="rounded-[3px] bg-info px-0.5 font-bold text-info-foreground">
+          <span
+            key={index}
+            data-slot="search-highlight"
+            {...stylex.props(styles.useFtsHighlighterSpan)}
+          >
             {part}
           </span>
         ) : (
@@ -419,3 +425,13 @@ export function useFtsHighlighter(
     [highlightPattern],
   );
 }
+
+const styles = stylex.create({
+  useFtsHighlighterSpan: {
+    borderRadius: '3px',
+    backgroundColor: colors.info,
+    paddingInline: '0.125rem',
+    fontWeight: 700,
+    color: colors.infoForeground,
+  },
+});

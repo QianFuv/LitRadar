@@ -5,7 +5,8 @@ import { ChevronDown } from '@/components/ui/animated-icons';
 
 import { READER_ITEM_ATTRIBUTE } from '@/components/feature/article-reader-context';
 import type { CfpJournalSummary } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type CfpJournalGroupId = 'current' | 'inactive' | 'unadapted';
 
@@ -59,9 +60,9 @@ export function CfpJournalList({
   const [mountedGroups, setMountedGroups] = useState(expandedGroups);
 
   return (
-    <div data-slot="cfp-journal-groups" className="flex min-h-0 flex-1 flex-col gap-1">
+    <div data-slot="cfp-journal-groups" {...stylex.props(styles.cfpJournalGroups)}>
       {isSearching && groups.every((group) => group.journals.length === 0) && (
-        <p className="py-3 text-center text-xs text-muted-foreground">未找到匹配期刊</p>
+        <p {...stylex.props(styles.cfpJournalListP)}>未找到匹配期刊</p>
       )}
       {groups.map((group) => {
         const isExpanded = expandedGroups[group.id] && (!isSearching || group.journals.length > 0);
@@ -70,10 +71,12 @@ export function CfpJournalList({
           <section
             key={group.id}
             data-cfp-group={group.id}
-            className={cn(
-              'flex min-h-0 flex-col overflow-hidden',
-              group.id === 'current' && 'mb-auto',
-              isExpanded ? 'flex-1' : 'shrink-0',
+            {...stylex.props(
+              styles.cfpJournalListSection,
+              group.id === 'current' && styles.cfpJournalListSectionCurrent,
+              isExpanded
+                ? styles.cfpJournalListSectionExpanded
+                : styles.cfpJournalListSectionNotExpanded,
             )}
           >
             <button
@@ -86,19 +89,17 @@ export function CfpJournalList({
                   setMountedGroups((previous) => ({ ...previous, [group.id]: true }));
                 }
               }}
-              className="motion-control flex min-h-10 w-full shrink-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-bold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              {...stylex.props(styles.cfpJournalListButton)}
             >
               <ChevronDown
-                className={cn(
-                  'motion-chevron size-3.5 shrink-0 transition-transform',
-                  !isExpanded && '-rotate-90',
+                {...stylex.props(
+                  styles.cfpJournalListChevronDown,
+                  !isExpanded && styles.cfpJournalListChevronDownExpanded,
                 )}
                 aria-hidden="true"
               />
-              <span className="min-w-0 flex-1">{group.label}</span>
-              <span className="rounded-full bg-muted px-1.5 font-normal tabular-nums text-muted-foreground">
-                {group.journals.length}
-              </span>
+              <span {...stylex.props(styles.cfpJournalListSpan)}>{group.label}</span>
+              <span {...stylex.props(styles.cfpJournalListSpan2)}>{group.journals.length}</span>
             </button>
             <div
               id={panelId}
@@ -106,20 +107,18 @@ export function CfpJournalList({
               aria-label={`${group.label}期刊`}
               hidden={!isExpanded}
               data-slot="cfp-journal-list"
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-3 pb-1 pl-1"
+              {...stylex.props(styles.cfpJournalList)}
             >
               {mountedGroups[group.id] &&
                 (group.journals.length === 0 ? (
-                  <p className="px-2 py-3 text-xs leading-5 text-muted-foreground">
-                    暂无符合条件的期刊
-                  </p>
+                  <p {...stylex.props(styles.cfpJournalListP2)}>暂无符合条件的期刊</p>
                 ) : (
-                  <ul className="divide-y divide-border/70">
+                  <ul>
                     {group.journals.map((journal) => {
                       const isSelected = selectedCatalogId === journal.catalogId;
                       const isCurrent = journal.coverage === 'adapted' && journal.currentCount > 0;
                       return (
-                        <li key={journal.catalogId}>
+                        <li {...stylex.props(styles.cfpJournalListUlItem)} key={journal.catalogId}>
                           <button
                             type="button"
                             {...{ [READER_ITEM_ATTRIBUTE]: '' }}
@@ -129,32 +128,34 @@ export function CfpJournalList({
                             onClick={() => onSelect(journal.catalogId)}
                             onPointerEnter={() => onIntent?.(journal.catalogId)}
                             onFocus={() => onIntent?.(journal.catalogId)}
-                            className={cn(
-                              'motion-control relative my-1 flex w-full items-start gap-3 rounded-lg px-2.5 py-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                              isSelected && 'bg-accent hover:bg-accent',
+                            {...stylex.props(
+                              styles.cfpJournalListButton2,
+                              isSelected && styles.cfpJournalListButtonSelected,
                             )}
                           >
                             <span
                               aria-hidden="true"
-                              className={cn(
-                                'flex size-9 shrink-0 flex-col items-center justify-center rounded-lg text-[13px] leading-none font-bold tabular-nums',
+                              {...stylex.props(
+                                styles.cfpJournalListSpan3,
                                 isCurrent
-                                  ? 'bg-success text-success-foreground'
-                                  : 'bg-muted text-muted-foreground',
+                                  ? styles.cfpJournalListSpanCurrent
+                                  : styles.cfpJournalListSpanNotCurrent,
                               )}
                             >
                               {journal.coverage === 'unadapted' ? '–' : journal.currentCount}
                             </span>
-                            <span className="min-w-0 flex-1">
+                            <span {...stylex.props(styles.cfpJournalListSpan)}>
                               <span
-                                className={cn(
-                                  'line-clamp-2 text-[13.5px] leading-5 [overflow-wrap:anywhere]',
-                                  isSelected || isCurrent ? 'font-bold' : 'text-foreground/85',
+                                {...stylex.props(
+                                  styles.cfpJournalListSpan4,
+                                  isSelected || isCurrent
+                                    ? styles.cfpJournalListSpanCurrent2
+                                    : styles.cfpJournalListSpanNotCurrent2,
                                 )}
                               >
                                 {journal.title}
                               </span>
-                              <span className="mt-1 block truncate text-[11px] leading-4 text-muted-foreground">
+                              <span {...stylex.props(styles.cfpJournalListSpan5)}>
                                 {journal.coverage === 'unadapted'
                                   ? '暂未适配'
                                   : journal.currentCount > 0
@@ -178,3 +179,224 @@ export function CfpJournalList({
     </div>
   );
 }
+
+const styles = stylex.create({
+  cfpJournalGroups: {
+    display: 'flex',
+    minHeight: '0px',
+    flex: '1',
+    flexDirection: 'column',
+    gap: '0.25rem',
+  },
+  cfpJournalListP: {
+    paddingBlock: '0.75rem',
+    textAlign: 'center',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  cfpJournalListSection: {
+    display: 'flex',
+    minHeight: '0px',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  cfpJournalListSectionCurrent: {
+    marginBottom: 'auto',
+  },
+  cfpJournalListSectionExpanded: {
+    flex: '1',
+  },
+  cfpJournalListSectionNotExpanded: {
+    flexShrink: 0,
+  },
+  cfpJournalListButton: {
+    display: 'flex',
+    minHeight: '2.5rem',
+    width: '100%',
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.5rem',
+    borderRadius: '8px',
+    paddingInline: '0.625rem',
+    paddingBlock: '0.5rem',
+    textAlign: 'left',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    fontWeight: 700,
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `inset 0 0 0 2px ${colors.ring}`,
+    },
+    outlineStyle: {
+      default: null,
+      ':focus-visible': 'none',
+    },
+  },
+  cfpJournalListChevronDown: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+    transitionProperty: 'transform, translate, scale, rotate',
+    transitionTimingFunction: 'cubic-bezier(0.215, 0.61, 0.355, 1)',
+    transitionDuration: '350ms',
+  },
+  cfpJournalListChevronDownExpanded: {
+    rotate: 'calc(90deg * -1)',
+  },
+  cfpJournalListSpan: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  cfpJournalListSpan2: {
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.muted,
+    paddingInline: '0.375rem',
+    fontWeight: 400,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  cfpJournalList: {
+    minHeight: '0px',
+    flex: '1',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
+    paddingRight: '0.75rem',
+    paddingBottom: '0.25rem',
+    paddingLeft: '0.25rem',
+  },
+  cfpJournalListP2: {
+    paddingInline: '0.5rem',
+    paddingBlock: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    color: colors.mutedForeground,
+  },
+  cfpJournalListUlItem: {
+    borderTopStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderTopWidth: {
+      default: null,
+      ':not(:last-child)': '0px',
+    },
+    borderBottomStyle: {
+      default: null,
+      ':not(:last-child)': 'solid',
+    },
+    borderBottomWidth: {
+      default: null,
+      ':not(:last-child)': '1px',
+    },
+    borderColor: {
+      default: null,
+      ':not(:last-child)': `color-mix(in oklab, ${colors.border} 70%, transparent)`,
+    },
+  },
+  cfpJournalListButton2: {
+    position: 'relative',
+    marginBlock: '0.25rem',
+    display: 'flex',
+    width: '100%',
+    alignItems: 'flex-start',
+    gap: '0.75rem',
+    borderRadius: '8px',
+    paddingInline: '0.625rem',
+    paddingBlock: '0.75rem',
+    textAlign: 'left',
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `inset 0 0 0 2px ${colors.ring}`,
+    },
+    outlineStyle: {
+      default: null,
+      ':focus-visible': 'none',
+    },
+  },
+  cfpJournalListButtonSelected: {
+    backgroundColor: {
+      default: colors.accent,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+  },
+  cfpJournalListSpan3: {
+    display: 'flex',
+    width: '2.25rem',
+    height: '2.25rem',
+    flexShrink: 0,
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+    fontSize: '13px',
+    lineHeight: 1,
+    fontWeight: 700,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  cfpJournalListSpanCurrent: {
+    backgroundColor: colors.success,
+    color: colors.successForeground,
+  },
+  cfpJournalListSpanNotCurrent: {
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  cfpJournalListSpan4: {
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 2,
+    fontSize: '13.5px',
+    lineHeight: '1.25rem',
+    overflowWrap: 'anywhere',
+  },
+  cfpJournalListSpanCurrent2: {
+    fontWeight: 700,
+  },
+  cfpJournalListSpanNotCurrent2: {
+    color: `color-mix(in oklab, ${colors.foreground} 85%, transparent)`,
+  },
+  cfpJournalListSpan5: {
+    marginTop: '0.25rem',
+    display: 'block',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '11px',
+    lineHeight: '1rem',
+    color: colors.mutedForeground,
+  },
+});

@@ -20,6 +20,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 /**
  * Format a Unix timestamp for administrator tables.
@@ -99,20 +101,26 @@ export function AdminUsersCard({
     <>
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
+          <CardTitle xstyle={styles.adminUsersCardCardTitle}>
+            <Users {...stylex.props(styles.adminUsersCardUsers)} />
             账号管理
           </CardTitle>
           <CardDescription>查看和管理所有用户账号</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent>
           {usersError instanceof Error && (
-            <p role="alert" className="text-sm text-destructive">
+            <p
+              role="alert"
+              {...stylex.props(styles.adminUsersCardCardContentItem, styles.adminUsersCardP)}
+            >
               {usersError.message}
             </p>
           )}
           {toggleAdminMut.isError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p
+              role="alert"
+              {...stylex.props(styles.adminUsersCardCardContentItem, styles.adminUsersCardP)}
+            >
               {toggleAdminMut.error instanceof Error
                 ? toggleAdminMut.error.message
                 : '更新管理员状态失败'}
@@ -120,9 +128,9 @@ export function AdminUsersCard({
           )}
           <RevealItem
             isReady={!isUsersLoading}
-            className="space-y-4"
+            xstyle={[styles.adminUsersCardCardContentItem, styles.adminUsersCardRevealItem]}
             placeholder={
-              <p role="status" className="text-sm text-muted-foreground">
+              <p role="status" {...stylex.props(styles.adminUsersCardP2)}>
                 <LoadingText text="加载中…" />
               </p>
             }
@@ -134,18 +142,15 @@ export function AdminUsersCard({
             )}
             <SettingsGroup>
               {userRows.map(({ user: u, registrationDate }) => (
-                <div
-                  key={u.id}
-                  className="content-visibility-card flex flex-col gap-3 px-4 py-4 sm:px-5 md:flex-row md:items-center md:gap-6"
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                <div key={u.id} {...stylex.props(styles.adminUsersCardDiv)}>
+                  <div {...stylex.props(styles.adminUsersCardDiv2)}>
                     <UserAvatar
                       username={u.username}
-                      className={u.is_admin ? undefined : 'bg-muted text-foreground'}
+                      xstyle={u.is_admin ? null : styles.adminUsersCardUserAvatarNotIsAdmin}
                     />
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-bold">{u.username}</span>
+                    <div {...stylex.props(styles.adminUsersCardDiv3)}>
+                      <div {...stylex.props(styles.adminUsersCardDiv4)}>
+                        <span {...stylex.props(styles.adminUsersCardSpan)}>{u.username}</span>
                         {u.is_admin ? (
                           <StatusPill tone="info">管理员</StatusPill>
                         ) : (
@@ -157,45 +162,45 @@ export function AdminUsersCard({
                           u.is_oidc_linked && <StatusPill>已绑定 SSO</StatusPill>
                         )}
                         {u.id === currentUserId && (
-                          <span className="text-xs text-muted-foreground">（你）</span>
+                          <span {...stylex.props(styles.adminUsersCardSpan2)}>（你）</span>
                         )}
                       </div>
-                      <div className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+                      <div {...stylex.props(styles.adminUsersCardDiv5)}>
                         #{u.id} · <span>注册时间: {registrationDate}</span>
                       </div>
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                      <div {...stylex.props(styles.adminUsersCardDiv6)}>
                         {u.email ?? '未设置邮箱'}
                       </div>
                     </div>
                   </div>
-                  <dl className="grid grid-cols-3 gap-2 text-xs md:flex md:gap-6">
-                    <div className="rounded-lg bg-muted/60 px-3 py-2 md:bg-transparent md:p-0 md:text-right">
-                      <dt className="text-muted-foreground">收藏夹</dt>
-                      <dd className="text-sm font-bold tabular-nums">{u.folder_count}</dd>
+                  <dl {...stylex.props(styles.adminUsersCardDl)}>
+                    <div {...stylex.props(styles.adminUsersCardDiv7)}>
+                      <dt {...stylex.props(styles.adminUsersCardDt)}>收藏夹</dt>
+                      <dd {...stylex.props(styles.adminUsersCardDd)}>{u.folder_count}</dd>
                     </div>
-                    <div className="rounded-lg bg-muted/60 px-3 py-2 md:bg-transparent md:p-0 md:text-right">
-                      <dt className="text-muted-foreground">收藏</dt>
-                      <dd className="text-sm font-bold tabular-nums">{u.favorite_count}</dd>
+                    <div {...stylex.props(styles.adminUsersCardDiv7)}>
+                      <dt {...stylex.props(styles.adminUsersCardDt)}>收藏</dt>
+                      <dd {...stylex.props(styles.adminUsersCardDd)}>{u.favorite_count}</dd>
                     </div>
-                    <div className="rounded-lg bg-muted/60 px-3 py-2 md:w-14 md:bg-transparent md:p-0 md:text-right">
-                      <dt className="text-muted-foreground">推送</dt>
+                    <div {...stylex.props(styles.adminUsersCardDiv8)}>
+                      <dt {...stylex.props(styles.adminUsersCardDt)}>推送</dt>
                       <dd
-                        className={
+                        {...stylex.props(
                           u.notify_enabled
-                            ? 'text-sm font-bold text-primary'
-                            : 'text-sm text-muted-foreground'
-                        }
+                            ? styles.adminUsersCardDdNotifyEnabled
+                            : styles.adminUsersCardP2,
+                        )}
                       >
                         {u.notify_enabled ? '已订阅' : '未订阅'}
                       </dd>
                     </div>
                   </dl>
-                  <div className="flex items-center justify-end gap-1 border-t pt-3 md:border-0 md:pt-0">
+                  <div {...stylex.props(styles.adminUsersCardDiv9)}>
                     <IconTooltip label={u.is_admin ? '取消管理员' : '设为管理员'}>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-9"
+                        xstyle={styles.adminUsersCardButton}
                         aria-label={
                           u.is_admin ? `取消 ${u.username} 的管理员` : `设为 ${u.username} 为管理员`
                         }
@@ -208,9 +213,9 @@ export function AdminUsersCard({
                         }
                       >
                         {u.is_admin ? (
-                          <ShieldOff className="size-4" />
+                          <ShieldOff {...stylex.props(styles.adminUsersCardShieldOff)} />
                         ) : (
-                          <ShieldCheck className="size-4" />
+                          <ShieldCheck {...stylex.props(styles.adminUsersCardShieldOff)} />
                         )}
                       </Button>
                     </IconTooltip>
@@ -220,7 +225,7 @@ export function AdminUsersCard({
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-9"
+                        xstyle={styles.adminUsersCardButton}
                         aria-label={`重置 ${u.username} 的密码`}
                         disabled={u.auth_kind === 'oidc'}
                         onClick={() => {
@@ -230,7 +235,7 @@ export function AdminUsersCard({
                           setResetDialogOpen(true);
                         }}
                       >
-                        <KeyRound className="size-4" />
+                        <KeyRound {...stylex.props(styles.adminUsersCardShieldOff)} />
                       </Button>
                     </IconTooltip>
                     <IconTooltip label="删除用户">
@@ -239,14 +244,14 @@ export function AdminUsersCard({
                         size="icon"
                         aria-label={`删除用户 ${u.username}`}
                         disabled={u.id === currentUserId}
-                        className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        xstyle={styles.adminUsersCardButton2}
                         onClick={() => {
                           deleteUserMut.reset();
                           setDeleteUserId(u.id);
                           setDeleteDialogOpen(true);
                         }}
                       >
-                        <Trash2 className="size-4" />
+                        <Trash2 {...stylex.props(styles.adminUsersCardShieldOff)} />
                       </Button>
                     </IconTooltip>
                   </div>
@@ -259,13 +264,14 @@ export function AdminUsersCard({
 
       {/* Password reset dialog */}
       <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent xstyle={styles.adminUsersCardDialogContent}>
           <DialogHeader>
             <DialogTitle>重置密码</DialogTitle>
             <DialogDescription>为用户 #{resetPwUserId} 设置新密码</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
+          <div {...stylex.props(styles.adminUsersCardDiv10)}>
             <Input
+              xstyle={styles.adminUsersCardDivItem}
               name="admin_new_password"
               type="password"
               aria-label="新密码"
@@ -275,16 +281,16 @@ export function AdminUsersCard({
               placeholder="新密码 (至少12位)"
               minLength={12}
             />
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <div {...stylex.props(styles.adminUsersCardDivItem, styles.adminUsersCardDiv11)}>
               <Button
                 variant="outline"
-                className="w-full sm:w-auto"
+                xstyle={styles.adminUsersCardButton3}
                 onClick={() => setResetDialogOpen(false)}
               >
                 取消
               </Button>
               <Button
-                className="w-full sm:w-auto"
+                xstyle={styles.adminUsersCardButton3}
                 disabled={resetPwValue.length < 12 || resetPwMut.isPending}
                 onClick={() => {
                   if (resetPwUserId != null) {
@@ -299,7 +305,10 @@ export function AdminUsersCard({
               </Button>
             </div>
             {resetPwMut.isError && (
-              <p role="alert" className="text-sm text-destructive">
+              <p
+                role="alert"
+                {...stylex.props(styles.adminUsersCardDivItem, styles.adminUsersCardP)}
+              >
                 {resetPwMut.error instanceof Error ? resetPwMut.error.message : '重置失败'}
               </p>
             )}
@@ -309,24 +318,24 @@ export function AdminUsersCard({
 
       {/* Delete user dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent xstyle={styles.adminUsersCardDialogContent}>
           <DialogHeader>
             <DialogTitle>确认删除用户</DialogTitle>
             <DialogDescription>
               删除用户 #{deleteUserId} 及其所有数据（收藏夹、收藏、设置）。此操作不可恢复。
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col-reverse gap-2 py-2 sm:flex-row sm:justify-end">
+          <div {...stylex.props(styles.adminUsersCardDiv12)}>
             <Button
               variant="outline"
-              className="w-full sm:w-auto"
+              xstyle={styles.adminUsersCardButton3}
               onClick={() => setDeleteDialogOpen(false)}
             >
               取消
             </Button>
             <Button
               variant="destructive"
-              className="w-full sm:w-auto"
+              xstyle={styles.adminUsersCardButton3}
               disabled={deleteUserMut.isPending}
               onClick={() => {
                 if (deleteUserId != null) {
@@ -338,7 +347,7 @@ export function AdminUsersCard({
             </Button>
           </div>
           {deleteUserMut.isError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" {...stylex.props(styles.adminUsersCardP)}>
               {deleteUserMut.error instanceof Error ? deleteUserMut.error.message : '删除失败'}
             </p>
           )}
@@ -347,3 +356,274 @@ export function AdminUsersCard({
     </>
   );
 }
+
+const styles = stylex.create({
+  adminUsersCardCardTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  adminUsersCardUsers: {
+    height: '1.25rem',
+    width: '1.25rem',
+  },
+  adminUsersCardCardContentItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '1rem',
+    },
+  },
+  adminUsersCardP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  adminUsersCardRevealItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '1rem',
+  },
+  adminUsersCardP2: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  adminUsersCardDiv: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 48rem)': 'row',
+    },
+    gap: {
+      default: '0.75rem',
+      '@media (min-width: 48rem)': '1.5rem',
+    },
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+    contentVisibility: 'auto',
+    containIntrinsicSize: '0 220px',
+    alignItems: {
+      default: null,
+      '@media (min-width: 48rem)': 'center',
+    },
+  },
+  adminUsersCardDiv2: {
+    display: 'flex',
+    minWidth: '0px',
+    flex: '1',
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  adminUsersCardUserAvatarNotIsAdmin: {
+    backgroundColor: colors.muted,
+    color: colors.foreground,
+  },
+  adminUsersCardDiv3: {
+    minWidth: '0px',
+  },
+  adminUsersCardDiv4: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  adminUsersCardSpan: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  adminUsersCardSpan2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  adminUsersCardDiv5: {
+    marginTop: '0.125rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  adminUsersCardDiv6: {
+    marginTop: '0.125rem',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  adminUsersCardDl: {
+    display: {
+      default: 'grid',
+      '@media (min-width: 48rem)': 'flex',
+    },
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: {
+      default: '0.5rem',
+      '@media (min-width: 48rem)': '1.5rem',
+    },
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+  },
+  adminUsersCardDiv7: {
+    borderRadius: '8px',
+    backgroundColor: {
+      default: `color-mix(in oklab, ${colors.muted} 60%, transparent)`,
+      '@media (min-width: 48rem)': 'transparent',
+    },
+    paddingInline: {
+      default: '0.75rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+    paddingBlock: {
+      default: '0.5rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+    textAlign: {
+      default: null,
+      '@media (min-width: 48rem)': 'right',
+    },
+  },
+  adminUsersCardDt: {
+    color: colors.mutedForeground,
+  },
+  adminUsersCardDd: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  adminUsersCardDiv8: {
+    borderRadius: '8px',
+    backgroundColor: {
+      default: `color-mix(in oklab, ${colors.muted} 60%, transparent)`,
+      '@media (min-width: 48rem)': 'transparent',
+    },
+    paddingInline: {
+      default: '0.75rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+    paddingBlock: {
+      default: '0.5rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+    width: {
+      default: null,
+      '@media (min-width: 48rem)': '3.5rem',
+    },
+    textAlign: {
+      default: null,
+      '@media (min-width: 48rem)': 'right',
+    },
+  },
+  adminUsersCardDdNotifyEnabled: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+    color: colors.primary,
+  },
+  adminUsersCardDiv9: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '0.25rem',
+    borderTopStyle: 'solid',
+    borderTopWidth: {
+      default: '1px',
+      '@media (min-width: 48rem)': '0px',
+    },
+    paddingTop: {
+      default: '0.75rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+  },
+  adminUsersCardButton: {
+    width: '2.25rem',
+    height: '2.25rem',
+  },
+  adminUsersCardShieldOff: {
+    width: '1rem',
+    height: '1rem',
+  },
+  adminUsersCardButton2: {
+    width: '2.25rem',
+    height: '2.25rem',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+  adminUsersCardDialogContent: {
+    maxHeight: '90vh',
+    overflowY: 'auto',
+    maxWidth: {
+      default: 'none',
+      '@media (min-width: 40rem)': '32rem',
+      '@media (min-width: 48rem)': '36rem',
+    },
+  },
+  adminUsersCardDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  adminUsersCardDiv10: {
+    paddingBlock: '0.5rem',
+  },
+  adminUsersCardDiv11: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column-reverse',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.5rem',
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-end',
+    },
+  },
+  adminUsersCardButton3: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': 'auto',
+    },
+  },
+  adminUsersCardDiv12: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column-reverse',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.5rem',
+    paddingBlock: '0.5rem',
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-end',
+    },
+  },
+});

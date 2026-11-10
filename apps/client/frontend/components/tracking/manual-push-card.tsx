@@ -14,6 +14,8 @@ import {
 import type { TrackingPageViewModel } from '@/components/tracking/use-tracking-page';
 import { Button } from '@/components/ui/button';
 import { MotionDiv, MotionPresence, REVEAL_VARIANTS } from '@/components/ui/motion';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type ManualPushCardProps = {
   model: TrackingPageViewModel['manualPush'];
@@ -34,16 +36,14 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
         <SettingsSectionDescription>{model.description}</SettingsSectionDescription>
       </SettingsSectionHeader>
       <SettingsGroup>
-        <div className="flex flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <div className="flex items-center gap-4">
-            <span className="text-4xl leading-none font-bold tabular-nums">
+        <div {...stylex.props(styles.manualPushCardDiv)}>
+          <div {...stylex.props(styles.manualPushCardDiv2)}>
+            <span {...stylex.props(styles.manualPushCardSpan)}>
               {model.weeklyArticlesAvailable ?? '…'}
             </span>
-            <span className="text-xs leading-relaxed text-muted-foreground">
-              本周可推送文章（篇）
-            </span>
+            <span {...stylex.props(styles.manualPushCardSpan2)}>本周可推送文章（篇）</span>
           </div>
-          <div className="flex w-full gap-2 sm:w-auto">
+          <div {...stylex.props(styles.manualPushCardDiv3)}>
             {model.status?.status === 'unknown' &&
               model.status.job_id &&
               renderUnknownPushAcknowledgement(state)}
@@ -57,11 +57,11 @@ export function ManualPushCard({ model }: ManualPushCardProps) {
               key="manual-push-result"
               data-motion-feedback="manual-push"
               role={model.hasError ? 'alert' : 'status'}
-              className={
+              {...stylex.props(
                 model.hasError
-                  ? 'bg-destructive/5 px-4 py-3 text-sm text-destructive sm:px-5'
-                  : 'bg-muted/40 px-4 py-3 text-sm sm:px-5'
-              }
+                  ? styles.manualPushCardMotionDivError
+                  : styles.manualPushCardMotionDivNotError,
+              )}
               initial="hidden"
               animate="visible"
               exit="exit"
@@ -82,12 +82,12 @@ function renderUnknownPushAcknowledgement(state: ManualPushViewState) {
 
   return (
     <Button
-      className="flex-1 sm:flex-none"
+      xstyle={styles.renderUnknownPushAcknowledgementButton}
       variant="outline"
       onClick={() => model.acknowledgeUnknownMutation.mutate(model.status?.job_id ?? '')}
       disabled={model.acknowledgeUnknownMutation.isPending}
     >
-      <ShieldCheck className="size-4" />
+      <ShieldCheck {...stylex.props(styles.renderUnknownPushAcknowledgementShieldCheck)} />
       {model.acknowledgeUnknownMutation.isPending ? '确认中…' : '确认未知并继续'}
     </Button>
   );
@@ -99,12 +99,12 @@ function renderManualPushCancel(state: ManualPushViewState) {
 
   return (
     <Button
-      className="flex-1 sm:flex-none"
+      xstyle={styles.renderUnknownPushAcknowledgementButton}
       variant="outline"
       onClick={() => model.cancelMutation.mutate(model.status?.job_id ?? '')}
       disabled={model.cancelMutation.isPending}
     >
-      <X className="size-4" />
+      <X {...stylex.props(styles.renderUnknownPushAcknowledgementShieldCheck)} />
       {model.cancelMutation.isPending ? '取消中…' : '取消任务'}
     </Button>
   );
@@ -116,7 +116,7 @@ function renderManualPushTrigger(state: ManualPushViewState) {
 
   return (
     <Button
-      className="flex-1 sm:flex-none"
+      xstyle={styles.renderUnknownPushAcknowledgementButton}
       onClick={() => model.mutation.mutate()}
       disabled={
         model.isLoading ||
@@ -127,10 +127,89 @@ function renderManualPushTrigger(state: ManualPushViewState) {
         (model.requiresTrackingFolder && !model.trackingFolder)
       }
     >
-      <Download className="size-4" />
+      <Download {...stylex.props(styles.renderUnknownPushAcknowledgementShieldCheck)} />
       {model.label}
     </Button>
   );
 }
 
 type ManualPushViewState = ManualPushCardProps & {};
+
+const styles = stylex.create({
+  manualPushCardDiv: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '1rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1.25rem',
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'center',
+    },
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'space-between',
+    },
+  },
+  manualPushCardDiv2: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1rem',
+  },
+  manualPushCardSpan: {
+    fontSize: '2.25rem',
+    lineHeight: 1,
+    fontWeight: 700,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  manualPushCardSpan2: {
+    fontSize: '0.75rem',
+    lineHeight: 1.625,
+    color: colors.mutedForeground,
+  },
+  manualPushCardDiv3: {
+    display: 'flex',
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': 'auto',
+    },
+    gap: '0.5rem',
+  },
+  manualPushCardMotionDivError: {
+    backgroundColor: `color-mix(in oklab, ${colors.destructive} 5%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  manualPushCardMotionDivNotError: {
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 40%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderUnknownPushAcknowledgementButton: {
+    flex: {
+      default: '1',
+      '@media (min-width: 40rem)': 'none',
+    },
+  },
+  renderUnknownPushAcknowledgementShieldCheck: {
+    width: '1rem',
+    height: '1rem',
+  },
+});

@@ -39,9 +39,10 @@ import {
   REVEAL_VARIANTS,
 } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
-import { cn } from '@/lib/utils';
 import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type AnnouncementFormState = {
   enabled: boolean;
@@ -69,12 +70,6 @@ const PRIORITY_TONES = {
   normal: 'info',
 } as const;
 
-const PRIORITY_ACCENT_CLASSES = {
-  high: 'bg-destructive',
-  low: 'bg-muted-foreground/40',
-  normal: 'bg-primary',
-} as const;
-
 function formatDateTime(value: number): string {
   return new Date(value * 1000).toLocaleString('zh-CN', {
     hour: '2-digit',
@@ -92,13 +87,13 @@ export function AnnouncementsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <BellRing className="h-5 w-5" />
+        <CardTitle xstyle={styles.announcementsCardCardTitle}>
+          <BellRing {...stylex.props(styles.announcementsCardBellRing)} />
           系统公告
         </CardTitle>
         <CardDescription>管理首页自动弹出的全局公告</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent xstyle={styles.announcementsCardCardContent}>
         <AdminListHeader
           summary={`共 ${state.announcements.length} 条公告 · ${
             state.announcements.filter((announcement) => announcement.enabled).length
@@ -108,17 +103,17 @@ export function AnnouncementsCard() {
         </AdminListHeader>
 
         {error instanceof Error && (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" {...stylex.props(styles.announcementsCardP)}>
             {error.message}
           </p>
         )}
 
         <RevealItem
           isReady={!isLoading}
-          className="border-t"
-          placeholderClassName=""
+          xstyle={styles.announcementsCardRevealItem}
+          placeholderXstyle={null}
           placeholder={
-            <p role="status" className="text-sm text-muted-foreground">
+            <p role="status" {...stylex.props(styles.announcementsCardP2)}>
               <LoadingText text="加载中…" />
             </p>
           }
@@ -252,19 +247,22 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <DialogTrigger asChild>
         <Button size="sm" onClick={openCreateDialog}>
-          <Plus className="size-4" />
+          <Plus {...stylex.props(styles.renderAnnouncementEditorPlus)} />
           新建公告
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent xstyle={styles.renderAnnouncementEditorDialogContent}>
         <DialogHeader>
           <DialogTitle>{editingAnnouncement ? '编辑公告' : '新建公告'}</DialogTitle>
           <DialogDescription>公告会在首页顶部轮询显示，用户可单独关闭。</DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="space-y-2">
-            <Label htmlFor="announcement-title">公告标题</Label>
+        <div {...stylex.props(styles.renderAnnouncementEditorDiv)}>
+          <div>
+            <Label xstyle={styles.renderAnnouncementEditorDivItem} htmlFor="announcement-title">
+              公告标题
+            </Label>
             <Input
+              xstyle={styles.renderAnnouncementEditorDivItem}
               id="announcement-title"
               name="announcement_title"
               autoComplete="off"
@@ -275,7 +273,7 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
               placeholder="公告标题"
             />
           </div>
-          <div className="space-y-2">
+          <div {...stylex.props(styles.renderAnnouncementEditorDiv2)}>
             <Label htmlFor="announcement-priority">优先级</Label>
             <Select
               value={form.priority}
@@ -283,7 +281,10 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
                 setForm((current) => ({ ...current, priority: value }))
               }
             >
-              <SelectTrigger id="announcement-priority" className="w-full">
+              <SelectTrigger
+                id="announcement-priority"
+                xstyle={styles.renderAnnouncementEditorSelectTrigger}
+              >
                 <SelectValue placeholder="选择优先级" />
               </SelectTrigger>
               <SelectContent>
@@ -293,8 +294,10 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="announcement-message">公告内容</Label>
+          <div>
+            <Label xstyle={styles.renderAnnouncementEditorDivItem} htmlFor="announcement-message">
+              公告内容
+            </Label>
             <textarea
               id="announcement-message"
               name="announcement_message"
@@ -304,11 +307,14 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
                 setForm((current) => ({ ...current, message: event.target.value }))
               }
               placeholder="公告内容"
-              className="min-h-32 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              {...stylex.props(
+                styles.renderAnnouncementEditorDivItem,
+                styles.renderAnnouncementEditorTextarea,
+              )}
             />
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/60 px-3 py-3">
-            <Label htmlFor="announcement-enabled" className="text-sm">
+          <div {...stylex.props(styles.renderAnnouncementEditorDiv3)}>
+            <Label htmlFor="announcement-enabled" xstyle={styles.renderAnnouncementEditorLabel}>
               启用公告
             </Label>
             <Switch
@@ -325,7 +331,7 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
                 key="announcement-error"
                 data-motion-feedback="announcement"
                 role="alert"
-                className="text-sm text-destructive"
+                {...stylex.props(styles.announcementsCardP)}
                 initial="hidden"
                 animate="visible"
                 exit="exit"
@@ -335,16 +341,16 @@ function renderAnnouncementEditor(state: AnnouncementsViewState) {
               </MotionParagraph>
             )}
           </MotionPresence>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <div {...stylex.props(styles.renderAnnouncementEditorDiv4)}>
             <Button
               variant="outline"
-              className="w-full sm:w-auto"
+              xstyle={styles.renderAnnouncementEditorButton}
               onClick={() => setDialogOpen(false)}
             >
               取消
             </Button>
             <Button
-              className="w-full sm:w-auto"
+              xstyle={styles.renderAnnouncementEditorButton}
               disabled={!form.title.trim() || !form.message.trim() || saveMutation.isPending}
               onClick={() => saveMutation.mutate()}
             >
@@ -367,25 +373,28 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
       {announcements.length === 0 ? (
         <MotionDiv
           key="empty-announcements"
-          className="flex flex-col items-center gap-3 px-6 py-12 text-center"
+          {...stylex.props(styles.renderAnnouncementListMotionDiv)}
           initial="hidden"
           animate="visible"
           exit="exit"
           variants={REVEAL_VARIANTS}
         >
-          <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <Megaphone className="size-5" aria-hidden="true" />
+          <span {...stylex.props(styles.renderAnnouncementListSpan)}>
+            <Megaphone
+              {...stylex.props(styles.renderAnnouncementListMegaphone)}
+              aria-hidden="true"
+            />
           </span>
-          <p className="text-sm text-muted-foreground">暂无公告</p>
+          <p {...stylex.props(styles.announcementsCardP2)}>暂无公告</p>
         </MotionDiv>
       ) : (
         announcements.map((announcement) => (
           <MotionDiv
             key={announcement.id}
             data-motion-announcement-key={announcement.id}
-            className={cn(
-              'relative overflow-hidden border-b',
-              !announcement.enabled && 'opacity-70',
+            {...stylex.props(
+              styles.renderAnnouncementListMotionDiv2,
+              !announcement.enabled && styles.renderAnnouncementListMotionDivEnabled,
             )}
             initial="hidden"
             animate="visible"
@@ -394,26 +403,43 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
           >
             <span
               aria-hidden="true"
-              className={cn(
-                'absolute inset-y-0 left-0 w-1',
-                PRIORITY_ACCENT_CLASSES[announcement.priority],
+              {...stylex.props(
+                styles.priorityAccent,
+                PRIORITY_ACCENT_STYLES[announcement.priority],
               )}
             />
-            <div className="space-y-2 px-5 pt-4 pb-3">
-              <div className="flex flex-wrap items-center gap-2">
+            <div {...stylex.props(styles.renderAnnouncementListDiv)}>
+              <div
+                {...stylex.props(
+                  styles.renderAnnouncementEditorDivItem,
+                  styles.renderAnnouncementListDiv2,
+                )}
+              >
                 <StatusPill tone={PRIORITY_TONES[announcement.priority]}>
                   {PRIORITY_LABELS[announcement.priority]}
                 </StatusPill>
-                <span className="text-xs text-muted-foreground tabular-nums">
+                <span {...stylex.props(styles.renderAnnouncementListSpan3)}>
                   更新于 {formatDateTime(announcement.updated_at)}
                 </span>
               </div>
-              <div className="text-[15px] leading-6 font-bold break-all">{announcement.title}</div>
-              <p className="text-sm leading-relaxed text-muted-foreground break-words whitespace-pre-wrap">
+              <div
+                {...stylex.props(
+                  styles.renderAnnouncementEditorDivItem,
+                  styles.renderAnnouncementListDiv3,
+                )}
+              >
+                {announcement.title}
+              </div>
+              <p
+                {...stylex.props(
+                  styles.renderAnnouncementEditorDivItem,
+                  styles.renderAnnouncementListP,
+                )}
+              >
                 {announcement.message}
               </p>
             </div>
-            <div className="flex items-center gap-2 px-5 pb-3">
+            <div {...stylex.props(styles.renderAnnouncementListDiv4)}>
               <Switch
                 checked={announcement.enabled}
                 aria-label={`${announcement.enabled ? '停用' : '启用'}公告 ${announcement.title}`}
@@ -424,23 +450,23 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
                   })
                 }
               />
-              <span aria-hidden="true" className="text-xs text-muted-foreground">
+              <span aria-hidden="true" {...stylex.props(styles.renderAnnouncementListSpan4)}>
                 {announcement.enabled ? '展示中' : '已停用'}
               </span>
-              <div className="ml-auto flex items-center gap-1">
+              <div {...stylex.props(styles.renderAnnouncementListDiv5)}>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-9"
+                  xstyle={styles.renderAnnouncementListButton}
                   aria-label={`编辑公告 ${announcement.title}`}
                   onClick={() => openEditDialog(announcement)}
                 >
-                  <Pencil className="size-4" />
+                  <Pencil {...stylex.props(styles.renderAnnouncementEditorPlus)} />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  xstyle={styles.renderAnnouncementListButton2}
                   aria-label={`删除公告 ${announcement.title}`}
                   disabled={deleteMutation.isPending}
                   onClick={() => {
@@ -448,7 +474,7 @@ function renderAnnouncementList(state: AnnouncementsViewState) {
                     setAnnouncementToDelete(announcement);
                   }}
                 >
-                  <Trash2 className="size-4" />
+                  <Trash2 {...stylex.props(styles.renderAnnouncementEditorPlus)} />
                 </Button>
               </div>
             </div>
@@ -490,3 +516,253 @@ function renderAnnouncementDeletion(
     />
   );
 }
+
+const styles = stylex.create({
+  priorityAccent: {
+    position: 'absolute',
+    insetBlock: '0px',
+    left: '0px',
+    width: '0.25rem',
+  },
+  priorityAccentHigh: {
+    backgroundColor: colors.destructive,
+  },
+  priorityAccentLow: {
+    backgroundColor: `color-mix(in oklab, ${colors.mutedForeground} 40%, transparent)`,
+  },
+  priorityAccentNormal: {
+    backgroundColor: colors.primary,
+  },
+  announcementsCardCardTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  announcementsCardBellRing: {
+    height: '1.25rem',
+    width: '1.25rem',
+  },
+  announcementsCardCardContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+  },
+  announcementsCardP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  announcementsCardRevealItem: {
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+  },
+  announcementsCardP2: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderAnnouncementEditorPlus: {
+    width: '1rem',
+    height: '1rem',
+  },
+  renderAnnouncementEditorDialogContent: {
+    maxHeight: '90vh',
+    overflowY: 'auto',
+    maxWidth: {
+      default: 'none',
+      '@media (min-width: 40rem)': '42rem',
+      '@media (min-width: 48rem)': '36rem',
+    },
+  },
+  renderAnnouncementEditorDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '1rem',
+    paddingBlock: '0.5rem',
+  },
+  renderAnnouncementEditorDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  renderAnnouncementEditorDiv2: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.5rem',
+  },
+  renderAnnouncementEditorSelectTrigger: {
+    width: '100%',
+  },
+  renderAnnouncementEditorTextarea: {
+    minHeight: '8rem',
+    width: '100%',
+    borderRadius: '8px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: {
+      default: colors.input,
+      ':focus-visible': colors.ring,
+    },
+    backgroundColor: 'transparent',
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+    },
+    '::placeholder': {
+      color: colors.mutedForeground,
+    },
+  },
+  renderAnnouncementEditorDiv3: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    borderRadius: '8px',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 60%, transparent)`,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.75rem',
+  },
+  renderAnnouncementEditorLabel: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderAnnouncementEditorDiv4: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column-reverse',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.5rem',
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-end',
+    },
+  },
+  renderAnnouncementEditorButton: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': 'auto',
+    },
+  },
+  renderAnnouncementListMotionDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '0.75rem',
+    paddingInline: '1.5rem',
+    paddingBlock: '3rem',
+    textAlign: 'center',
+  },
+  renderAnnouncementListSpan: {
+    display: 'flex',
+    width: '3rem',
+    height: '3rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  renderAnnouncementListMegaphone: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  renderAnnouncementListMotionDiv2: {
+    position: 'relative',
+    overflow: 'hidden',
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+  },
+  renderAnnouncementListMotionDivEnabled: {
+    opacity: '70%',
+  },
+  renderAnnouncementListDiv: {
+    paddingInline: '1.25rem',
+    paddingTop: '1rem',
+    paddingBottom: '0.75rem',
+  },
+  renderAnnouncementListDiv2: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  renderAnnouncementListSpan3: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderAnnouncementListDiv3: {
+    fontSize: '15px',
+    lineHeight: '1.5rem',
+    fontWeight: 700,
+    wordBreak: 'break-all',
+  },
+  renderAnnouncementListP: {
+    fontSize: '0.875rem',
+    lineHeight: 1.625,
+    overflowWrap: 'break-word',
+    whiteSpace: 'pre-wrap',
+    color: colors.mutedForeground,
+  },
+  renderAnnouncementListDiv4: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    paddingInline: '1.25rem',
+    paddingBottom: '0.75rem',
+  },
+  renderAnnouncementListSpan4: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderAnnouncementListDiv5: {
+    marginLeft: 'auto',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.25rem',
+  },
+  renderAnnouncementListButton: {
+    width: '2.25rem',
+    height: '2.25rem',
+  },
+  renderAnnouncementListButton2: {
+    width: '2.25rem',
+    height: '2.25rem',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+});
+
+const PRIORITY_ACCENT_STYLES = {
+  high: styles.priorityAccentHigh,
+  low: styles.priorityAccentLow,
+  normal: styles.priorityAccentNormal,
+};

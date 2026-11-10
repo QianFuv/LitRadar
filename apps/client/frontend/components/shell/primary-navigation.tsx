@@ -17,13 +17,14 @@ import { Link, useSearch } from '@tanstack/react-router';
 import type { ComponentProps } from 'react';
 
 import { preloadWorkspaceView } from '@/components/shell/lazy-workspaces';
-import { cn } from '@/lib/utils';
 import { WORKSPACE_ROUTE_ID } from '@/lib/search-params';
 import {
   DEFAULT_WORKSPACE_VIEW,
   getWorkspaceViewSearch,
   type WorkspaceView,
 } from '@/lib/workspace-view';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 type PrimaryNavigationItem = {
   icon: AppIcon;
@@ -114,8 +115,13 @@ export function RailNavigation() {
   const view = useCurrentWorkspaceView();
 
   return (
-    <nav aria-label="页面导航" className="flex flex-col items-center gap-1.5">
-      <Highlight controlledItems value={view} click={false} className="rounded-xl bg-rail-hover">
+    <nav aria-label="页面导航" {...stylex.props(styles.railNavigationNav)}>
+      <Highlight
+        controlledItems
+        value={view}
+        click={false}
+        {...stylex.props(styles.railNavigationHighlight)}
+      >
         {PRIMARY_NAVIGATION_ITEMS.map((item) => {
           const Icon = item.icon;
           const isCurrent = item.view === view;
@@ -129,19 +135,20 @@ export function RailNavigation() {
                 isCurrent={isCurrent}
                 onIntent={() => preloadWorkspaceView(item.view)}
                 title={item.label}
-                className={cn(
-                  'motion-control relative flex w-12 flex-col items-center gap-1 rounded-xl py-2 text-rail-foreground outline-none transition-[background-color,color] hover:bg-rail-hover hover:text-rail-active focus-visible:ring-2 focus-visible:ring-ring',
-                  isCurrent && 'text-rail-active',
+                {...stylex.props(
+                  styles.railNavigationNavigationItemLink,
+                  isCurrent && styles.railNavigationNavigationItemLinkCurrent,
                 )}
               >
                 {isCurrent && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute top-1/2 -left-2 h-6 w-[3px] -translate-y-1/2 rounded-r-full bg-primary"
-                  />
+                  <span aria-hidden="true" {...stylex.props(styles.railNavigationSpan)} />
                 )}
-                <Icon className="size-5" strokeWidth={isCurrent ? 2.1 : 1.7} aria-hidden="true" />
-                <span className="text-[10px] leading-none">{item.shortLabel}</span>
+                <Icon
+                  {...stylex.props(styles.railNavigationIcon)}
+                  strokeWidth={isCurrent ? 2.1 : 1.7}
+                  aria-hidden="true"
+                />
+                <span {...stylex.props(styles.railNavigationSpan2)}>{item.shortLabel}</span>
               </NavigationItemLink>
             </HighlightItem>
           );
@@ -160,12 +167,12 @@ export function TabNavigation() {
   const view = useCurrentWorkspaceView();
 
   return (
-    <nav aria-label="页面导航" className="col-span-5 grid grid-cols-5">
+    <nav aria-label="页面导航" {...stylex.props(styles.tabNavigationNav)}>
       <Highlight
         controlledItems
         value={view}
         click={false}
-        className="inset-x-2 inset-y-1.5 rounded-xl bg-accent"
+        {...stylex.props(styles.tabNavigationHighlight)}
       >
         {PRIMARY_NAVIGATION_ITEMS.map((item) => {
           const Icon = item.icon;
@@ -179,13 +186,22 @@ export function TabNavigation() {
                 aria-label={item.label}
                 isCurrent={isCurrent}
                 onIntent={() => preloadWorkspaceView(item.view)}
-                className={cn(
-                  'motion-control flex h-14 flex-col items-center justify-center gap-1 text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                  isCurrent && 'text-primary-text',
+                {...stylex.props(
+                  styles.tabNavigationNavigationItemLink,
+                  isCurrent && styles.tabNavigationNavigationItemLinkCurrent,
                 )}
               >
-                <Icon className="size-5" strokeWidth={isCurrent ? 2.1 : 1.7} aria-hidden="true" />
-                <span className={cn('text-[11px] leading-none', isCurrent && 'font-bold')}>
+                <Icon
+                  {...stylex.props(styles.railNavigationIcon)}
+                  strokeWidth={isCurrent ? 2.1 : 1.7}
+                  aria-hidden="true"
+                />
+                <span
+                  {...stylex.props(
+                    styles.tabNavigationSpan,
+                    isCurrent && styles.tabNavigationSpanCurrent,
+                  )}
+                >
                   {item.shortLabel}
                 </span>
               </NavigationItemLink>
@@ -196,3 +212,116 @@ export function TabNavigation() {
     </nav>
   );
 }
+
+const styles = stylex.create({
+  railNavigationNav: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '0.375rem',
+  },
+  railNavigationHighlight: {
+    borderRadius: '12px',
+    backgroundColor: colors.railHover,
+  },
+  railNavigationNavigationItemLink: {
+    position: 'relative',
+    display: 'flex',
+    width: '3rem',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '0.25rem',
+    borderRadius: '12px',
+    paddingBlock: '0.5rem',
+    color: {
+      default: colors.railForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.railActive,
+      },
+    },
+    transitionProperty: 'background-color, color',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.railHover,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  railNavigationNavigationItemLinkCurrent: {
+    color: {
+      default: colors.railActive,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.railActive,
+      },
+    },
+  },
+  railNavigationSpan: {
+    position: 'absolute',
+    top: 'calc(1 / 2 * 100%)',
+    left: '-0.5rem',
+    height: '1.5rem',
+    width: '3px',
+    translate: '0 calc(calc(1 / 2 * 100%) * -1)',
+    borderTopRightRadius: 'calc(infinity * 1px)',
+    borderBottomRightRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.primary,
+  },
+  railNavigationIcon: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  railNavigationSpan2: {
+    fontSize: '10px',
+    lineHeight: 1,
+  },
+  tabNavigationNav: {
+    gridColumnStart: 'span 5',
+    gridColumnEnd: 'span 5',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+  },
+  tabNavigationHighlight: {
+    insetInline: '0.5rem',
+    insetBlock: '0.375rem',
+    borderRadius: '12px',
+    backgroundColor: colors.accent,
+  },
+  tabNavigationNavigationItemLink: {
+    display: 'flex',
+    height: '3.5rem',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '0.25rem',
+    color: colors.mutedForeground,
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `inset 0 0 0 2px ${colors.ring}`,
+    },
+  },
+  tabNavigationNavigationItemLinkCurrent: {
+    color: colors.primaryText,
+  },
+  tabNavigationSpan: {
+    fontSize: '11px',
+    lineHeight: 1,
+  },
+  tabNavigationSpanCurrent: {
+    fontWeight: 700,
+  },
+});

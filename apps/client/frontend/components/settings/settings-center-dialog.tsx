@@ -34,6 +34,8 @@ import {
   withSettingsSection,
   type SettingsSectionId,
 } from '@/lib/settings-center';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type PendingTransition =
   | { kind: 'close'; restoreUrlOnCancel: boolean }
@@ -360,11 +362,11 @@ function SettingsCenterSession({
         activeSection={activeSection}
         centerIcon={Settings}
         sidebarFooter={
-          <div className="flex min-w-0 items-center gap-3">
+          <div {...stylex.props(styles.settingsCenterSessionDiv)}>
             <UserAvatar username={user.username} size="md" />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-bold">{user.username}</p>
-              <p className="text-xs text-muted-foreground">当前登录账号</p>
+            <div {...stylex.props(styles.settingsCenterSessionDiv2)}>
+              <p {...stylex.props(styles.settingsCenterSessionP)}>{user.username}</p>
+              <p {...stylex.props(styles.settingsCenterSessionP2)}>当前登录账号</p>
             </div>
           </div>
         }
@@ -502,3 +504,28 @@ export function SettingsCenterDialog() {
     />
   );
 }
+
+const styles = stylex.create({
+  settingsCenterSessionDiv: {
+    display: 'flex',
+    minWidth: '0px',
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  settingsCenterSessionDiv2: {
+    minWidth: '0px',
+  },
+  settingsCenterSessionP: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  settingsCenterSessionP2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+});

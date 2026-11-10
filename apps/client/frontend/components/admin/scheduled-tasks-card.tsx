@@ -44,9 +44,10 @@ import {
   SWAP_VARIANTS,
 } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
-import { cn } from '@/lib/utils';
 import { RevealItem } from '@/components/ui/reveal';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type TaskFormState = {
   coalesce: boolean;
@@ -304,13 +305,13 @@ export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } =
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Clock3 className="h-5 w-5" />
+        <CardTitle xstyle={styles.scheduledTasksCardCardTitle}>
+          <Clock3 {...stylex.props(styles.scheduledTasksCardClock3)} />
           定时任务
         </CardTitle>
         <CardDescription>管理后台自动执行的类型化任务</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent xstyle={styles.scheduledTasksCardCardContent}>
         {renderSchedulerStatus(state)}
 
         <AdminListHeader summary={`共 ${state.tasks.length} 个任务`}>
@@ -318,7 +319,7 @@ export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } =
         </AdminListHeader>
 
         {error instanceof Error && (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" {...stylex.props(styles.scheduledTasksCardP)}>
             {error.message}
           </p>
         )}
@@ -326,7 +327,7 @@ export function ScheduledTasksCard({ isActive = true }: { isActive?: boolean } =
         <RevealItem
           isReady={!isLoading}
           placeholder={
-            <p role="status" className="text-sm text-muted-foreground">
+            <p role="status" {...stylex.props(styles.scheduledTasksCardP2)}>
               <LoadingText text="加载中…" />
             </p>
           }
@@ -504,12 +505,17 @@ function renderSchedulerIndexFields(
       initial={false}
       animate={isIndexJobPreset ? 'visible' : 'hidden'}
       variants={DISCLOSURE_VARIANTS}
-      className="overflow-hidden"
-      style={{ pointerEvents: isIndexJobPreset ? 'auto' : 'none' }}
+      {...stylex.props(
+        styles.renderSchedulerIndexFieldsMotionDiv,
+        !isIndexJobPreset && styles.inert,
+      )}
     >
-      <div className="space-y-2">
-        <Label htmlFor="scheduled-task-metadata">元数据 CSV 文件名（可选）</Label>
+      <div>
+        <Label xstyle={styles.renderSchedulerIndexFieldsDivItem} htmlFor="scheduled-task-metadata">
+          元数据 CSV 文件名（可选）
+        </Label>
         <Input
+          xstyle={styles.renderSchedulerIndexFieldsDivItem}
           id="scheduled-task-metadata"
           name="scheduled_task_metadata_file"
           autoComplete="off"
@@ -521,7 +527,10 @@ function renderSchedulerIndexFields(
           placeholder="journals.csv"
         />
         {!isSafeBasename(form.metadataFile, '.csv') && (
-          <p role="alert" className="text-sm text-destructive">
+          <p
+            role="alert"
+            {...stylex.props(styles.renderSchedulerIndexFieldsDivItem, styles.scheduledTasksCardP)}
+          >
             请输入不含路径或特殊符号的 .csv 文件名。
           </p>
         )}
@@ -544,13 +553,21 @@ function renderSchedulerDeliveryFields(
       initial={false}
       animate={isIndexJobPreset ? 'hidden' : 'visible'}
       variants={DISCLOSURE_VARIANTS}
-      className="overflow-hidden"
-      style={{ pointerEvents: isIndexJobPreset ? 'none' : 'auto' }}
+      {...stylex.props(
+        styles.renderSchedulerIndexFieldsMotionDiv,
+        isIndexJobPreset && styles.inert,
+      )}
     >
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="scheduled-task-database">索引数据库（可选）</Label>
+      <div {...stylex.props(styles.renderSchedulerDeliveryFieldsDiv)}>
+        <div>
+          <Label
+            xstyle={styles.renderSchedulerIndexFieldsDivItem}
+            htmlFor="scheduled-task-database"
+          >
+            索引数据库（可选）
+          </Label>
           <Input
+            xstyle={styles.renderSchedulerIndexFieldsDivItem}
             id="scheduled-task-database"
             name="scheduled_task_database"
             autoComplete="off"
@@ -562,14 +579,26 @@ function renderSchedulerDeliveryFields(
             placeholder="journals.sqlite"
           />
           {!isSafeBasename(form.database, '.sqlite') && (
-            <p role="alert" className="text-sm text-destructive">
+            <p
+              role="alert"
+              {...stylex.props(
+                styles.renderSchedulerIndexFieldsDivItem,
+                styles.scheduledTasksCardP,
+              )}
+            >
               请输入不含路径或特殊符号的 .sqlite 文件名。
             </p>
           )}
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="scheduled-task-candidates">候选上限（可选）</Label>
+        <div>
+          <Label
+            xstyle={styles.renderSchedulerIndexFieldsDivItem}
+            htmlFor="scheduled-task-candidates"
+          >
+            候选上限（可选）
+          </Label>
           <Input
+            xstyle={styles.renderSchedulerIndexFieldsDivItem}
             id="scheduled-task-candidates"
             name="scheduled_task_max_candidates"
             type="number"
@@ -608,35 +637,53 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <DialogTrigger asChild>
         <Button size="sm" onClick={openCreateDialog}>
-          <Plus className="size-4" />
+          <Plus {...stylex.props(styles.renderScheduledTaskEditorPlus)} />
           新建任务
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent xstyle={styles.renderScheduledTaskEditorDialogContent}>
         <DialogHeader>
           <DialogTitle>{editingTask ? '编辑定时任务' : '新建定时任务'}</DialogTitle>
           <DialogDescription>
             使用五段 crontab 表达式和明确的 IANA 时区，例如 `0 8 * * *` 与 `Asia/Shanghai`。
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-2">
+        <div {...stylex.props(styles.renderScheduledTaskEditorDiv)}>
           {editingTask?.job === null && (
-            <div role="alert" className="space-y-2 rounded-md border border-warning-border p-3">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <AlertTriangle className="h-4 w-4 text-warning-foreground" />
+            <div role="alert" {...stylex.props(styles.renderScheduledTaskEditorDiv2)}>
+              <div
+                {...stylex.props(
+                  styles.renderSchedulerIndexFieldsDivItem,
+                  styles.renderScheduledTaskEditorDiv3,
+                )}
+              >
+                <AlertTriangle {...stylex.props(styles.renderScheduledTaskEditorAlertTriangle)} />
                 旧任务已自动停用
               </div>
-              <p className="text-sm text-muted-foreground">
+              <p
+                {...stylex.props(
+                  styles.renderSchedulerIndexFieldsDivItem,
+                  styles.scheduledTasksCardP2,
+                )}
+              >
                 保存后会用当前类型化配置替换旧命令，旧命令不会被执行。
               </p>
-              <div className="rounded bg-muted px-2 py-1 font-mono text-xs break-all">
+              <div
+                {...stylex.props(
+                  styles.renderSchedulerIndexFieldsDivItem,
+                  styles.renderScheduledTaskEditorDiv4,
+                )}
+              >
                 {editingTask.legacy_command}
               </div>
             </div>
           )}
-          <div className="space-y-2">
-            <Label htmlFor="scheduled-task-name">任务名称</Label>
+          <div>
+            <Label xstyle={styles.renderSchedulerIndexFieldsDivItem} htmlFor="scheduled-task-name">
+              任务名称
+            </Label>
             <Input
+              xstyle={styles.renderSchedulerIndexFieldsDivItem}
               id="scheduled-task-name"
               name="scheduled_task_name"
               autoComplete="off"
@@ -645,9 +692,12 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
               placeholder="任务名称"
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="scheduled-task-cron">Cron 表达式</Label>
+          <div>
+            <Label xstyle={styles.renderSchedulerIndexFieldsDivItem} htmlFor="scheduled-task-cron">
+              Cron 表达式
+            </Label>
             <Input
+              xstyle={styles.renderSchedulerIndexFieldsDivItem}
               id="scheduled-task-cron"
               name="scheduled_task_cron"
               autoComplete="off"
@@ -657,10 +707,16 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
               placeholder="Cron 表达式"
             />
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="scheduled-task-timezone">IANA 时区</Label>
+          <div {...stylex.props(styles.renderSchedulerDeliveryFieldsDiv)}>
+            <div>
+              <Label
+                xstyle={styles.renderSchedulerIndexFieldsDivItem}
+                htmlFor="scheduled-task-timezone"
+              >
+                IANA 时区
+              </Label>
               <Input
+                xstyle={styles.renderSchedulerIndexFieldsDivItem}
                 id="scheduled-task-timezone"
                 name="scheduled_task_timezone"
                 autoComplete="off"
@@ -672,14 +728,26 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
                 placeholder="Asia/Shanghai"
               />
               {!isValidTimeZone(form.timezone) && (
-                <p role="alert" className="text-sm text-destructive">
+                <p
+                  role="alert"
+                  {...stylex.props(
+                    styles.renderSchedulerIndexFieldsDivItem,
+                    styles.scheduledTasksCardP,
+                  )}
+                >
                   请输入有效的 IANA 时区，例如 Asia/Shanghai。
                 </p>
               )}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="scheduled-task-timeout">超时秒数</Label>
+            <div>
+              <Label
+                xstyle={styles.renderSchedulerIndexFieldsDivItem}
+                htmlFor="scheduled-task-timeout"
+              >
+                超时秒数
+              </Label>
               <Input
+                xstyle={styles.renderSchedulerIndexFieldsDivItem}
                 id="scheduled-task-timeout"
                 name="scheduled_task_timeout_seconds"
                 type="number"
@@ -692,16 +760,25 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
                 }
               />
               {!isValidTimeout(form.timeoutSeconds) && (
-                <p role="alert" className="text-sm text-destructive">
+                <p
+                  role="alert"
+                  {...stylex.props(
+                    styles.renderSchedulerIndexFieldsDivItem,
+                    styles.scheduledTasksCardP,
+                  )}
+                >
                   超时必须为 1 到 86400 秒的整数。
                 </p>
               )}
             </div>
           </div>
-          <div className="space-y-2">
+          <div {...stylex.props(styles.renderScheduledTaskEditorDiv5)}>
             <Label htmlFor="scheduled-task-preset">任务预设</Label>
             <Select value={jobPreset} onValueChange={(value: JobPresetId) => setJobPreset(value)}>
-              <SelectTrigger id="scheduled-task-preset" className="w-full">
+              <SelectTrigger
+                id="scheduled-task-preset"
+                xstyle={styles.renderScheduledTaskEditorSelectTrigger}
+              >
                 <SelectValue placeholder="选择任务预设" />
               </SelectTrigger>
               <SelectContent>
@@ -717,11 +794,11 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
             {renderSchedulerIndexFields(state)}
             {renderSchedulerDeliveryFields(state)}
           </div>
-          <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          <div {...stylex.props(styles.renderScheduledTaskEditorDiv6)}>
             将执行：{describeJob(buildScheduledJob(form, jobPreset))}
           </div>
-          <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
-            <Label htmlFor="scheduled-task-enabled" className="text-sm">
+          <div {...stylex.props(styles.renderScheduledTaskEditorDiv7)}>
+            <Label htmlFor="scheduled-task-enabled" xstyle={styles.renderScheduledTaskEditorLabel}>
               启用任务
             </Label>
             <Switch
@@ -732,12 +809,23 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
               }
             />
           </div>
-          <div className="flex items-start justify-between gap-3 rounded-md border px-3 py-2">
-            <div className="space-y-1">
-              <Label htmlFor="scheduled-task-coalesce" className="text-sm">
+          <div {...stylex.props(styles.renderScheduledTaskEditorDiv7)}>
+            <div>
+              <Label
+                htmlFor="scheduled-task-coalesce"
+                xstyle={[
+                  styles.renderScheduledTaskEditorDivItem,
+                  styles.renderScheduledTaskEditorLabel,
+                ]}
+              >
                 合并补跑
               </Label>
-              <p className="text-xs text-muted-foreground">
+              <p
+                {...stylex.props(
+                  styles.renderScheduledTaskEditorDivItem,
+                  styles.renderScheduledTaskEditorP,
+                )}
+              >
                 worker 离线后仅补跑最近一次错过的执行。
               </p>
             </div>
@@ -755,7 +843,7 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
                 key="scheduled-task-error"
                 data-motion-feedback="scheduled-task"
                 role="alert"
-                className="text-sm text-destructive"
+                {...stylex.props(styles.scheduledTasksCardP)}
                 initial="hidden"
                 animate="visible"
                 exit="exit"
@@ -765,16 +853,16 @@ function renderScheduledTaskEditor(state: SchedulerViewState) {
               </MotionParagraph>
             )}
           </MotionPresence>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <div {...stylex.props(styles.renderScheduledTaskEditorDiv8)}>
             <Button
               variant="outline"
-              className="w-full sm:w-auto"
+              xstyle={styles.renderScheduledTaskEditorButton}
               onClick={() => setDialogOpen(false)}
             >
               取消
             </Button>
             <Button
-              className="w-full sm:w-auto"
+              xstyle={styles.renderScheduledTaskEditorButton}
               disabled={!isFormValid || saveMutation.isPending}
               onClick={() => saveMutation.mutate()}
             >
@@ -798,7 +886,7 @@ function renderSchedulerStatus(state: SchedulerViewState) {
   } = state;
 
   return (
-    <div aria-label="调度器状态" className="overflow-hidden border-y py-4 text-sm">
+    <div aria-label="调度器状态" {...stylex.props(styles.renderSchedulerStatusDiv)}>
       <RevealItem
         isReady={!isSchedulerStatusLoading}
         placeholder={<LoadingText text="正在读取调度器状态…" />}
@@ -815,31 +903,33 @@ function renderSchedulerStatus(state: SchedulerViewState) {
             {isSchedulerStatusLoading ? (
               <LoadingText text="正在读取调度器状态…" />
             ) : schedulerStatusError instanceof Error ? (
-              <span role="alert" className="text-destructive">
+              <span role="alert" {...stylex.props(styles.renderSchedulerStatusSpan)}>
                 {schedulerStatusError.message}
               </span>
             ) : (
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <span aria-hidden="true" className="relative flex size-3">
+              <div {...stylex.props(styles.renderSchedulerStatusDiv2)}>
+                <div {...stylex.props(styles.renderSchedulerStatusDiv3)}>
+                  <span aria-hidden="true" {...stylex.props(styles.renderSchedulerStatusSpan2)}>
                     {healthyWorkerCount > 0 && (
-                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                      <span {...stylex.props(styles.renderSchedulerStatusSpan3)} />
                     )}
                     <span
-                      className={cn(
-                        'relative inline-flex size-3 rounded-full',
-                        healthyWorkerCount > 0 ? 'bg-emerald-400' : 'bg-red-400',
+                      {...stylex.props(
+                        styles.renderSchedulerStatusSpan4,
+                        healthyWorkerCount > 0
+                          ? styles.renderSchedulerStatusSpanHealthyWorkerCount
+                          : styles.renderSchedulerStatusSpanNotHealthyWorkerCount,
                       )}
                     />
                   </span>
                   <div>
-                    <p className="text-xs text-muted-foreground">调度器</p>
-                    <p className="font-bold tabular-nums">
+                    <p {...stylex.props(styles.renderScheduledTaskEditorP)}>调度器</p>
+                    <p {...stylex.props(styles.renderSchedulerStatusP)}>
                       健康 worker：{healthyWorkerCount}/{schedulerStatus?.workers.length ?? 0}
                     </p>
                   </div>
                 </div>
-                <span className="text-xs text-muted-foreground tabular-nums">
+                <span {...stylex.props(styles.renderSchedulerStatusSpan5)}>
                   最近检查：{formatDateTime(schedulerStatus?.last_checked_at ?? null)}
                 </span>
               </div>
@@ -860,7 +950,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
       {tasks.length === 0 ? (
         <MotionParagraph
           key="empty-scheduled-tasks"
-          className="px-5 py-10 text-center text-sm text-muted-foreground"
+          {...stylex.props(styles.renderScheduledTaskListMotionParagraph)}
           initial="hidden"
           animate="visible"
           exit="exit"
@@ -873,55 +963,80 @@ function renderScheduledTaskList(state: SchedulerViewState) {
           <MotionDiv
             key={task.id}
             data-motion-scheduled-task-key={task.id}
-            className="overflow-hidden px-4 py-4 sm:px-5"
+            {...stylex.props(styles.renderScheduledTaskListMotionDiv)}
             initial="hidden"
             animate="visible"
             exit="exit"
             variants={DISCLOSURE_VARIANTS}
           >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+            <div {...stylex.props(styles.renderScheduledTaskListDiv)}>
               <span
                 aria-hidden="true"
-                className={cn(
-                  'hidden size-10 shrink-0 items-center justify-center rounded-xl sm:flex',
-                  task.enabled ? 'bg-info text-primary' : 'bg-muted text-muted-foreground',
+                {...stylex.props(
+                  styles.renderScheduledTaskListSpan,
+                  task.enabled
+                    ? styles.renderScheduledTaskListSpanEnabled
+                    : styles.renderScheduledTaskListSpanNotEnabled,
                 )}
               >
-                <Clock3 className="size-5" />
+                <Clock3 {...stylex.props(styles.renderScheduledTaskListClock3)} />
               </span>
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-bold">{task.name}</span>
+              <div {...stylex.props(styles.renderScheduledTaskListDiv2)}>
+                <div
+                  {...stylex.props(
+                    styles.renderScheduledTaskListDivItem,
+                    styles.renderScheduledTaskListDiv3,
+                  )}
+                >
+                  <span {...stylex.props(styles.renderScheduledTaskListSpan2)}>{task.name}</span>
                   <StatusPill tone={getSchedulerStateTone(task.last_status)}>
                     {formatSchedulerState(task.last_status)}
                   </StatusPill>
                 </div>
-                <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                  <code className="rounded-md bg-foreground px-1.5 py-0.5 font-bold text-background">
-                    {task.cron}
-                  </code>
-                  <span className="text-muted-foreground">
+                <div
+                  {...stylex.props(
+                    styles.renderScheduledTaskListDivItem,
+                    styles.renderScheduledTaskListDiv4,
+                  )}
+                >
+                  <code {...stylex.props(styles.renderScheduledTaskListCode)}>{task.cron}</code>
+                  <span {...stylex.props(styles.renderScheduledTaskListSpan3)}>
                     {task.timezone} · 超时 {task.timeout_seconds} 秒 ·
                     {task.coalesce ? ' 合并补跑' : ' 逐次补跑'}
                   </span>
                 </div>
-                <div className="text-sm break-all text-muted-foreground">
+                <div
+                  {...stylex.props(
+                    styles.renderScheduledTaskListDivItem,
+                    styles.renderScheduledTaskListDiv5,
+                  )}
+                >
                   {describeJob(task.job)}
                 </div>
                 {task.legacy_command && (
-                  <div className="rounded-lg border border-warning-border bg-warning px-2.5 py-1.5 text-xs break-all text-warning-foreground">
+                  <div
+                    {...stylex.props(
+                      styles.renderScheduledTaskListDivItem,
+                      styles.renderScheduledTaskListDiv6,
+                    )}
+                  >
                     旧命令（只读）：{task.legacy_command}
                   </div>
                 )}
-                <div className="text-xs text-muted-foreground tabular-nums">
+                <div
+                  {...stylex.props(
+                    styles.renderScheduledTaskListDivItem,
+                    styles.renderSchedulerStatusSpan5,
+                  )}
+                >
                   最近执行: {formatDateTime(task.last_run_at)}
                 </div>
               </div>
-              <div className="flex items-center justify-end gap-1 border-t pt-3 sm:border-0 sm:pt-0">
+              <div {...stylex.props(styles.renderScheduledTaskListDiv7)}>
                 <Switch
                   checked={task.enabled}
                   disabled={task.job === null}
-                  className="mr-2"
+                  xstyle={styles.renderScheduledTaskListSwitch}
                   aria-label={
                     task.job
                       ? `${task.enabled ? '停用' : '启用'}定时任务 ${task.name}`
@@ -936,16 +1051,16 @@ function renderScheduledTaskList(state: SchedulerViewState) {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-9"
+                  xstyle={styles.renderScheduledTaskListButton}
                   aria-label={`编辑定时任务 ${task.name}`}
                   onClick={() => openEditDialog(task)}
                 >
-                  <Pencil className="size-4" />
+                  <Pencil {...stylex.props(styles.renderScheduledTaskEditorPlus)} />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  xstyle={styles.renderScheduledTaskListButton2}
                   aria-label={`删除定时任务 ${task.name}`}
                   disabled={deleteMutation.isPending}
                   onClick={() => {
@@ -953,7 +1068,7 @@ function renderScheduledTaskList(state: SchedulerViewState) {
                     setTaskToDelete(task);
                   }}
                 >
-                  <Trash2 className="size-4" />
+                  <Trash2 {...stylex.props(styles.renderScheduledTaskEditorPlus)} />
                 </Button>
               </div>
             </div>
@@ -973,26 +1088,55 @@ function renderRecentSchedulerRuns(
   return (
     <RevealItem isReady={!isSchedulerStatusLoading} placeholder={null}>
       {schedulerStatus && (
-        <section className="space-y-3 pt-7">
-          <h3 className="flex items-center gap-2 px-1 text-sm font-bold">
-            <Clock animateOnView className="size-3.5 shrink-0" aria-hidden="true" />
+        <section {...stylex.props(styles.renderRecentSchedulerRunsSection)}>
+          <h3
+            {...stylex.props(
+              styles.renderRecentSchedulerRunsSectionItem,
+              styles.renderRecentSchedulerRunsH3,
+            )}
+          >
+            <Clock
+              animateOnView
+              {...stylex.props(styles.renderRecentSchedulerRunsClock)}
+              aria-hidden="true"
+            />
             最近调度运行
           </h3>
           {schedulerStatus.recent_runs.length === 0 ? (
-            <p className="px-1 text-sm text-muted-foreground">暂无调度运行记录</p>
+            <p
+              {...stylex.props(
+                styles.renderRecentSchedulerRunsSectionItem,
+                styles.renderRecentSchedulerRunsP,
+              )}
+            >
+              暂无调度运行记录
+            </p>
           ) : (
-            <ol className="relative space-y-0 pl-4 before:absolute before:top-2 before:bottom-2 before:left-[5px] before:w-px before:bg-border">
+            <ol
+              {...stylex.props(
+                styles.renderRecentSchedulerRunsSectionItem,
+                styles.renderRecentSchedulerRunsOl,
+              )}
+            >
               {schedulerStatus.recent_runs.slice(0, 5).map((run) => (
-                <li key={run.id} className="relative flex items-center gap-3 py-2 pl-3 text-sm">
+                <li
+                  key={run.id}
+                  {...stylex.props(
+                    styles.renderRecentSchedulerRunsOlItem,
+                    styles.renderRecentSchedulerRunsLi,
+                  )}
+                >
                   <span
                     aria-hidden="true"
-                    className={cn(
-                      'absolute top-1/2 -left-4 size-[11px] -translate-y-1/2 rounded-full border-2 border-background',
-                      SCHEDULER_STATE_DOT_CLASSES[getSchedulerStateTone(run.status)],
+                    {...stylex.props(
+                      styles.schedulerStateDot,
+                      SCHEDULER_STATE_DOT_STYLES[getSchedulerStateTone(run.status)],
                     )}
                   />
-                  <span className="min-w-0 flex-1 truncate">{run.task_name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  <span {...stylex.props(styles.renderRecentSchedulerRunsSpan2)}>
+                    {run.task_name}
+                  </span>
+                  <span {...stylex.props(styles.renderRecentSchedulerRunsSpan3)}>
                     {formatSchedulerState(run.status)} · {formatDateTime(run.scheduled_for)}
                   </span>
                 </li>
@@ -1005,23 +1149,13 @@ function renderRecentSchedulerRuns(
   );
 }
 
-const SCHEDULER_STATE_DOT_CLASSES = {
-  danger: 'bg-destructive',
-  info: 'bg-primary',
-  neutral: 'bg-muted-foreground/50',
-  success: 'bg-success-foreground',
-  warning: 'bg-warning-foreground',
-} as const;
-
 /**
  * Map a scheduler run state to a status tone.
  *
  * @param status - Scheduler run state.
  * @returns Status pill tone.
  */
-function getSchedulerStateTone(
-  status: SchedulerRunState,
-): keyof typeof SCHEDULER_STATE_DOT_CLASSES {
+function getSchedulerStateTone(status: SchedulerRunState): keyof typeof SCHEDULER_STATE_DOT_STYLES {
   if (status === 'success') return 'success';
   if (status === 'failed' || status === 'timed_out' || status === 'error') return 'danger';
   if (status === 'pending' || status === 'claimed' || status === 'running') return 'info';
@@ -1113,3 +1247,506 @@ function getScheduledTaskForm(task: ScheduledTaskInfo): TaskFormState {
     timezone: task.timezone,
   };
 }
+
+const pingKeyframes = stylex.keyframes({ '75%, 100%': { transform: 'scale(2)', opacity: 0 } });
+
+const styles = stylex.create({
+  inert: {
+    pointerEvents: 'none',
+  },
+  schedulerStateDot: {
+    position: 'absolute',
+    top: 'calc(1 / 2 * 100%)',
+    left: '-1rem',
+    width: '11px',
+    height: '11px',
+    translate: '0 calc(calc(1 / 2 * 100%) * -1)',
+    borderRadius: 'calc(infinity * 1px)',
+    borderStyle: 'solid',
+    borderWidth: '2px',
+    borderColor: colors.background,
+  },
+  schedulerStateDotDanger: {
+    backgroundColor: colors.destructive,
+  },
+  schedulerStateDotInfo: {
+    backgroundColor: colors.primary,
+  },
+  schedulerStateDotNeutral: {
+    backgroundColor: `color-mix(in oklab, ${colors.mutedForeground} 50%, transparent)`,
+  },
+  schedulerStateDotSuccess: {
+    backgroundColor: colors.successForeground,
+  },
+  schedulerStateDotWarning: {
+    backgroundColor: colors.warningForeground,
+  },
+  scheduledTasksCardCardTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  scheduledTasksCardClock3: {
+    height: '1.25rem',
+    width: '1.25rem',
+  },
+  scheduledTasksCardCardContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.75rem',
+  },
+  scheduledTasksCardP: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  scheduledTasksCardP2: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderSchedulerIndexFieldsMotionDiv: {
+    overflow: 'hidden',
+  },
+  renderSchedulerIndexFieldsDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  renderSchedulerDeliveryFieldsDiv: {
+    display: 'grid',
+    gap: '1rem',
+    gridTemplateColumns: {
+      default: null,
+      '@media (min-width: 40rem)': 'repeat(2, minmax(0, 1fr))',
+    },
+  },
+  renderScheduledTaskEditorPlus: {
+    width: '1rem',
+    height: '1rem',
+  },
+  renderScheduledTaskEditorDialogContent: {
+    maxHeight: '90vh',
+    overflowY: 'auto',
+    maxWidth: {
+      default: 'none',
+      '@media (min-width: 40rem)': '42rem',
+      '@media (min-width: 48rem)': '36rem',
+    },
+  },
+  renderScheduledTaskEditorDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '1rem',
+    paddingBlock: '0.5rem',
+  },
+  renderScheduledTaskEditorDiv2: {
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: colors.warningBorder,
+    padding: '0.75rem',
+  },
+  renderScheduledTaskEditorDiv3: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 500,
+  },
+  renderScheduledTaskEditorAlertTriangle: {
+    height: '1rem',
+    width: '1rem',
+    color: colors.warningForeground,
+  },
+  renderScheduledTaskEditorDiv4: {
+    borderRadius: '0.25rem',
+    backgroundColor: colors.muted,
+    paddingInline: '0.5rem',
+    paddingBlock: '0.25rem',
+    fontFamily: "'JetBrainsLxgwNerdMono', monospace",
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    wordBreak: 'break-all',
+  },
+  renderScheduledTaskEditorDiv5: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.5rem',
+  },
+  renderScheduledTaskEditorSelectTrigger: {
+    width: '100%',
+  },
+  renderScheduledTaskEditorDiv6: {
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 40%, transparent)`,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderScheduledTaskEditorDiv7: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+  },
+  renderScheduledTaskEditorLabel: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderScheduledTaskEditorDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.25rem',
+    },
+  },
+  renderScheduledTaskEditorP: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderScheduledTaskEditorDiv8: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column-reverse',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.5rem',
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-end',
+    },
+  },
+  renderScheduledTaskEditorButton: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': 'auto',
+    },
+  },
+  renderSchedulerStatusDiv: {
+    overflow: 'hidden',
+    borderBlockStyle: 'solid',
+    borderBlockWidth: '1px',
+    paddingBlock: '1rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderSchedulerStatusSpan: {
+    color: colors.destructive,
+  },
+  renderSchedulerStatusDiv2: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.75rem',
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'center',
+    },
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'space-between',
+    },
+  },
+  renderSchedulerStatusDiv3: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  renderSchedulerStatusSpan2: {
+    position: 'relative',
+    display: 'flex',
+    width: '0.75rem',
+    height: '0.75rem',
+  },
+  renderSchedulerStatusSpan3: {
+    position: 'absolute',
+    display: 'inline-flex',
+    width: '100%',
+    height: '100%',
+    animationName: pingKeyframes,
+    animationDuration: '1s',
+    animationTimingFunction: 'cubic-bezier(0, 0, 0.2, 1)',
+    animationIterationCount: 'infinite',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: 'oklch(76.5% 0.177 163.223)',
+    opacity: '60%',
+  },
+  renderSchedulerStatusSpan4: {
+    position: 'relative',
+    display: 'inline-flex',
+    width: '0.75rem',
+    height: '0.75rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  renderSchedulerStatusSpanHealthyWorkerCount: {
+    backgroundColor: 'oklch(76.5% 0.177 163.223)',
+  },
+  renderSchedulerStatusSpanNotHealthyWorkerCount: {
+    backgroundColor: 'oklch(70.4% 0.191 22.216)',
+  },
+  renderSchedulerStatusP: {
+    fontWeight: 700,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderSchedulerStatusSpan5: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderScheduledTaskListMotionParagraph: {
+    paddingInline: '1.25rem',
+    paddingBlock: '2.5rem',
+    textAlign: 'center',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderScheduledTaskListMotionDiv: {
+    overflow: 'hidden',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '1rem',
+  },
+  renderScheduledTaskListDiv: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: {
+      default: '0.75rem',
+      '@media (min-width: 40rem)': '1rem',
+    },
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-start',
+    },
+  },
+  renderScheduledTaskListSpan: {
+    display: {
+      default: 'none',
+      '@media (min-width: 40rem)': 'flex',
+    },
+    width: '2.5rem',
+    height: '2.5rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '12px',
+  },
+  renderScheduledTaskListSpanEnabled: {
+    backgroundColor: colors.info,
+    color: colors.primary,
+  },
+  renderScheduledTaskListSpanNotEnabled: {
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  renderScheduledTaskListClock3: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  renderScheduledTaskListDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.375rem',
+    },
+  },
+  renderScheduledTaskListDiv2: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  renderScheduledTaskListDiv3: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  renderScheduledTaskListSpan2: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  renderScheduledTaskListDiv4: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.375rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+  },
+  renderScheduledTaskListCode: {
+    borderRadius: '6px',
+    backgroundColor: colors.foreground,
+    paddingInline: '0.375rem',
+    paddingBlock: '0.125rem',
+    fontWeight: 700,
+    color: colors.background,
+  },
+  renderScheduledTaskListSpan3: {
+    color: colors.mutedForeground,
+  },
+  renderScheduledTaskListDiv5: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    wordBreak: 'break-all',
+    color: colors.mutedForeground,
+  },
+  renderScheduledTaskListDiv6: {
+    borderRadius: '8px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: colors.warningBorder,
+    backgroundColor: colors.warning,
+    paddingInline: '0.625rem',
+    paddingBlock: '0.375rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    wordBreak: 'break-all',
+    color: colors.warningForeground,
+  },
+  renderScheduledTaskListDiv7: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '0.25rem',
+    borderTopStyle: 'solid',
+    borderTopWidth: {
+      default: '1px',
+      '@media (min-width: 40rem)': '0px',
+    },
+    paddingTop: {
+      default: '0.75rem',
+      '@media (min-width: 40rem)': '0px',
+    },
+  },
+  renderScheduledTaskListSwitch: {
+    marginRight: '0.5rem',
+  },
+  renderScheduledTaskListButton: {
+    width: '2.25rem',
+    height: '2.25rem',
+  },
+  renderScheduledTaskListButton2: {
+    width: '2.25rem',
+    height: '2.25rem',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+  renderRecentSchedulerRunsSectionItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  renderRecentSchedulerRunsSection: {
+    paddingTop: '1.75rem',
+  },
+  renderRecentSchedulerRunsH3: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    paddingInline: '0.25rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    fontWeight: 700,
+  },
+  renderRecentSchedulerRunsClock: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+  },
+  renderRecentSchedulerRunsP: {
+    paddingInline: '0.25rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderRecentSchedulerRunsOlItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0px',
+    },
+  },
+  renderRecentSchedulerRunsOl: {
+    position: 'relative',
+    paddingLeft: '1rem',
+    '::before': {
+      content: '""',
+      position: 'absolute',
+      top: '0.5rem',
+      bottom: '0.5rem',
+      left: '5px',
+      width: '1px',
+      backgroundColor: colors.border,
+    },
+  },
+  renderRecentSchedulerRunsLi: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+    paddingBlock: '0.5rem',
+    paddingLeft: '0.75rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderRecentSchedulerRunsSpan2: {
+    minWidth: '0px',
+    flex: '1',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  renderRecentSchedulerRunsSpan3: {
+    flexShrink: 0,
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+    fontVariantNumeric: 'tabular-nums',
+  },
+});
+
+const SCHEDULER_STATE_DOT_STYLES = {
+  danger: styles.schedulerStateDotDanger,
+  info: styles.schedulerStateDotInfo,
+  neutral: styles.schedulerStateDotNeutral,
+  success: styles.schedulerStateDotSuccess,
+  warning: styles.schedulerStateDotWarning,
+};

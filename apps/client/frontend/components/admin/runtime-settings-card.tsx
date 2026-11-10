@@ -40,6 +40,8 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type RuntimeSettingsForm = Record<string, string>;
 type RuntimeSecretPoolRemovals = Record<string, Set<string>>;
@@ -328,13 +330,13 @@ function RuntimePoolEditor({
   };
 
   return (
-    <div className="space-y-2">
+    <div {...stylex.props(styles.runtimePoolEditorDiv, styles.stackedControl)}>
       <MotionPresence>
         {editorState.rows.map((row, index) => (
           <MotionDiv
             key={`${field}-${row.id}`}
             data-motion-runtime-input-row={`${field}-${row.id}`}
-            className="flex items-center gap-2 overflow-hidden p-0.5"
+            {...stylex.props(styles.runtimePoolEditorMotionDiv)}
             initial="hidden"
             animate="visible"
             exit="exit"
@@ -356,12 +358,12 @@ function RuntimePoolEditor({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              xstyle={styles.runtimePoolEditorButton}
               disabled={disabled}
               aria-label={`删除${label}第 ${index + 1} 行`}
               onClick={() => deleteRow(index)}
             >
-              <Trash2 className="h-4 w-4" />
+              <Trash2 {...stylex.props(styles.runtimePoolEditorTrash2)} />
             </Button>
           </MotionDiv>
         ))}
@@ -370,11 +372,11 @@ function RuntimePoolEditor({
         type="button"
         variant="ghost"
         size="sm"
-        className="text-primary hover:text-primary"
+        xstyle={styles.runtimePoolEditorButton2}
         disabled={disabled}
         onClick={addRow}
       >
-        <Plus className="size-4" />
+        <Plus {...stylex.props(styles.runtimePoolEditorPlus)} />
         添加
       </Button>
     </div>
@@ -405,13 +407,13 @@ function RuntimeSecretPoolEditor({
   onToggleRemoval,
 }: RuntimeSecretPoolEditorProps) {
   return (
-    <div className="space-y-3">
-      <div className="space-y-2">
+    <div {...stylex.props(styles.stackedControl)}>
+      <div {...stylex.props(styles.runtimeSecretPoolEditorDivItem, styles.runtimePoolEditorDiv)}>
         <MotionPresence>
           {setting.secret_items.length === 0 ? (
             <MotionParagraph
               key="empty-secret-pool"
-              className="text-sm text-muted-foreground"
+              {...stylex.props(styles.runtimeSecretPoolEditorMotionParagraph)}
               initial="hidden"
               animate="visible"
               exit="exit"
@@ -426,29 +428,32 @@ function RuntimeSecretPoolEditor({
                 <MotionDiv
                   key={item.reference}
                   data-motion-runtime-secret-row={item.reference}
-                  className={`flex items-center justify-between gap-3 overflow-hidden rounded-lg bg-muted/60 px-3 py-2 ${
-                    isPendingRemoval ? 'text-muted-foreground' : ''
-                  }`}
+                  {...stylex.props(
+                    styles.runtimeSecretPoolEditorMotionDiv,
+                    isPendingRemoval ? styles.runtimeSecretPoolEditorMotionDivPendingRemoval : null,
+                  )}
                   initial="hidden"
                   animate="visible"
                   exit="exit"
                   variants={DISCLOSURE_VARIANTS}
                 >
                   <span
-                    className={
-                      isPendingRemoval ? 'font-mono text-sm line-through' : 'font-mono text-sm'
-                    }
+                    {...stylex.props(
+                      isPendingRemoval
+                        ? styles.runtimeSecretPoolEditorSpanPendingRemoval
+                        : styles.runtimeSecretPoolEditorSpanNotPendingRemoval,
+                    )}
                   >
                     {item.masked_value}
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div {...stylex.props(styles.runtimeSecretPoolEditorDiv)}>
                     {isPendingRemoval && <StatusPill tone="warning">保存后删除</StatusPill>}
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
                       disabled={isCleared}
-                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      xstyle={styles.runtimeSecretPoolEditorButton}
                       aria-label={
                         removedReferences.has(item.reference)
                           ? `撤销删除${setting.label}第 ${index + 1} 个密钥`
@@ -459,7 +464,7 @@ function RuntimeSecretPoolEditor({
                       {removedReferences.has(item.reference) ? (
                         '撤销删除'
                       ) : (
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 {...stylex.props(styles.runtimePoolEditorTrash2)} />
                       )}
                     </Button>
                   </div>
@@ -469,8 +474,8 @@ function RuntimeSecretPoolEditor({
           )}
         </MotionPresence>
       </div>
-      <div className="space-y-2">
-        <span className="text-xs text-muted-foreground">添加新密钥</span>
+      <div {...stylex.props(styles.runtimeSecretPoolEditorDivItem, styles.runtimePoolEditorDiv)}>
+        <span {...stylex.props(styles.runtimeSecretPoolEditorSpan)}>添加新密钥</span>
         <RuntimePoolEditor
           field={setting.field}
           id={`runtime-${setting.field}`}
@@ -497,8 +502,8 @@ export function RuntimeSettingsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <SlidersVertical className="h-5 w-5" />
+        <CardTitle xstyle={styles.runtimeSecretPoolEditorDiv}>
+          <SlidersVertical {...stylex.props(styles.runtimeSettingsCardSlidersVertical)} />
           运行配置
         </CardTitle>
         <CardDescription>管理后端共享运行配置</CardDescription>
@@ -507,13 +512,13 @@ export function RuntimeSettingsCard() {
         <RevealItem
           isReady={!isLoading}
           placeholder={
-            <div role="status" className="text-sm text-muted-foreground">
+            <div role="status" {...stylex.props(styles.runtimeSecretPoolEditorMotionParagraph)}>
               <LoadingText text="加载中…" />
             </div>
           }
         >
           <fieldset
-            className="m-0 min-w-0 space-y-10 border-0 p-0"
+            {...stylex.props(styles.runtimeSettingsCardFieldset)}
             disabled={saveMutation.isPending}
           >
             {renderRuntimeSettingGroups(state)}
@@ -521,8 +526,10 @@ export function RuntimeSettingsCard() {
             {renderRuntimeProviderSettings(state)}
           </fieldset>
         </RevealItem>
-        <div className="sticky bottom-0 z-10 mt-10 flex flex-col gap-3 border-t bg-background py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-h-5 flex-1">{renderRuntimeFeedback(state)}</div>
+        <div {...stylex.props(styles.runtimeSettingsCardDiv)}>
+          <div {...stylex.props(styles.runtimeSettingsCardDiv2)}>
+            {renderRuntimeFeedback(state)}
+          </div>
           {renderRuntimeSaveAction(state)}
         </div>
       </CardContent>
@@ -729,7 +736,7 @@ function renderRuntimeSettingControl(
   } = state;
   if (setting.control === 'boolean')
     return (
-      <div className="flex items-center justify-end gap-3">
+      <div {...stylex.props(styles.renderRuntimeSettingControlDiv)}>
         <Switch
           id={`runtime-${setting.field}`}
           name={`runtime_${setting.field}`}
@@ -768,7 +775,10 @@ function renderRuntimeSettingControl(
         value={value}
         onValueChange={(nextValue) => updateFormValue(setting.field, nextValue)}
       >
-        <SelectTrigger id={`runtime-${setting.field}`} className="w-full sm:w-72">
+        <SelectTrigger
+          id={`runtime-${setting.field}`}
+          xstyle={styles.renderRuntimeSettingControlSelectTrigger}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -793,7 +803,7 @@ function renderRuntimeSettingControl(
       value={value}
       onChange={(event) => updateFormValue(setting.field, event.target.value)}
       placeholder={setting.description}
-      className="w-full sm:w-72"
+      xstyle={styles.renderRuntimeSettingControlSelectTrigger}
     />
   );
 }
@@ -806,19 +816,29 @@ function renderRuntimeSettingDescription(
   const { clearedSecrets, toggleSecretClear } = state;
 
   return (
-    <span className="mt-0.5 block space-y-1.5">
-      <span className="block">
+    <span {...stylex.props(styles.renderRuntimeSettingDescriptionSpan)}>
+      <span
+        {...stylex.props(
+          styles.renderRuntimeSettingDescriptionSpanItem,
+          styles.renderRuntimeSettingDescriptionSpan2,
+        )}
+      >
         {setting.description}
         {setting.control !== 'boolean' && getRuntimeSecretDescription(state, setting)}
       </span>
-      <span className="flex flex-wrap items-center gap-1.5">
+      <span
+        {...stylex.props(
+          styles.renderRuntimeSettingDescriptionSpanItem,
+          styles.renderRuntimeSettingDescriptionSpan3,
+        )}
+      >
         {isSecretPoolSetting(setting) && (
           <StatusPill tone="info">{setting.secret_items.length} 个密钥</StatusPill>
         )}
-        <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+        <span {...stylex.props(styles.renderRuntimeSettingDescriptionSpan4)}>
           {getApplyModeLabel(setting.apply_mode)}
         </span>
-        <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+        <span {...stylex.props(styles.renderRuntimeSettingDescriptionSpan4)}>
           {getSourceLabel(setting.source)}
         </span>
         {setting.control !== 'boolean' && setting.is_secret && setting.has_value && (
@@ -826,7 +846,7 @@ function renderRuntimeSettingDescription(
             type="button"
             variant="ghost"
             size="sm"
-            className="h-6 px-1.5 text-[11px] text-destructive hover:bg-destructive/10 hover:text-destructive"
+            xstyle={styles.renderRuntimeSettingDescriptionButton}
             onClick={() => toggleSecretClear(setting.field)}
           >
             {clearedSecrets.has(setting.field) ? '保留全部密钥' : '清除全部密钥'}
@@ -842,7 +862,11 @@ function renderRuntimeSettingGroups(state: RuntimeViewState) {
   const { genericSettingGroups, form } = state;
 
   return genericSettingGroups.map(([group, groupSettings]) => (
-    <SettingsSection key={group} aria-labelledby={`runtime-group-${group}`}>
+    <SettingsSection
+      key={group}
+      aria-labelledby={`runtime-group-${group}`}
+      xstyle={styles.runtimeGroupSection}
+    >
       <SettingsSectionHeader>
         <SettingsSectionTitle id={`runtime-group-${group}`}>
           {RUNTIME_GROUP_LABELS[group]}
@@ -860,7 +884,7 @@ function renderRuntimeSettingGroups(state: RuntimeViewState) {
               htmlFor={`runtime-${setting.field}`}
               description={renderRuntimeSettingDescription(state, setting)}
               isStacked={isStacked}
-              className="sm:items-start"
+              xstyle={styles.renderRuntimeSettingGroupsSettingsRow}
             >
               {renderRuntimeSettingControl(state, setting, value)}
             </SettingsRow>
@@ -886,7 +910,7 @@ function renderRuntimeProviderSettings(
       <RevealItem
         isReady={!isProviderCatalogLoading}
         placeholder={
-          <div role="status" className="text-sm text-muted-foreground">
+          <div role="status" {...stylex.props(styles.runtimeSecretPoolEditorMotionParagraph)}>
             <LoadingText text="正在加载 Provider 能力目录…" />
           </div>
         }
@@ -915,7 +939,11 @@ function renderRuntimeFeedback(state: Pick<RuntimeViewState, 'saveFeedback' | 'm
           key="runtime-feedback"
           data-motion-feedback="runtime-settings"
           role={mutationError ? 'alert' : 'status'}
-          className={mutationError ? 'text-sm text-destructive' : 'text-sm text-foreground'}
+          {...stylex.props(
+            mutationError
+              ? styles.renderRuntimeFeedbackMotionParagraphMutationError
+              : styles.renderRuntimeFeedbackMotionParagraphNotMutationError,
+          )}
           initial="hidden"
           animate="visible"
           exit="exit"
@@ -940,9 +968,9 @@ function renderRuntimeSaveAction(state: RuntimeViewState) {
   } = state;
 
   return (
-    <div className="flex justify-end">
+    <div {...stylex.props(styles.renderRuntimeSaveActionDiv)}>
       <Button
-        className="w-full sm:w-auto"
+        xstyle={styles.renderRuntimeSaveActionButton}
         disabled={
           isLoading ||
           saveMutation.isPending ||
@@ -951,7 +979,7 @@ function renderRuntimeSaveAction(state: RuntimeViewState) {
         }
         onClick={() => saveMutation.mutate()}
       >
-        <Save className="size-4" />
+        <Save {...stylex.props(styles.runtimePoolEditorPlus)} />
         保存配置
       </Button>
     </div>
@@ -973,3 +1001,271 @@ function getRuntimeSecretDescription(
         : '（已安全保存）'
     : '';
 }
+
+const styles = stylex.create({
+  runtimeGroupSection: {
+    marginTop: 0,
+  },
+  stackedControl: {
+    width: '100%',
+  },
+  runtimePoolEditorDiv: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '0.5rem',
+  },
+  runtimePoolEditorMotionDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    overflow: 'hidden',
+    padding: '0.125rem',
+  },
+  runtimePoolEditorButton: {
+    flexShrink: 0,
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+  runtimePoolEditorTrash2: {
+    height: '1rem',
+    width: '1rem',
+  },
+  runtimePoolEditorButton2: {
+    color: {
+      default: colors.primary,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.primary,
+      },
+    },
+  },
+  runtimePoolEditorPlus: {
+    width: '1rem',
+    height: '1rem',
+  },
+  runtimeSecretPoolEditorDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  runtimeSecretPoolEditorMotionParagraph: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  runtimeSecretPoolEditorMotionDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    overflow: 'hidden',
+    borderRadius: '8px',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 60%, transparent)`,
+    paddingInline: '0.75rem',
+    paddingBlock: '0.5rem',
+  },
+  runtimeSecretPoolEditorMotionDivPendingRemoval: {
+    color: colors.mutedForeground,
+  },
+  runtimeSecretPoolEditorSpanPendingRemoval: {
+    fontFamily: "'JetBrainsLxgwNerdMono', monospace",
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    textDecorationLine: 'line-through',
+  },
+  runtimeSecretPoolEditorSpanNotPendingRemoval: {
+    fontFamily: "'JetBrainsLxgwNerdMono', monospace",
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  runtimeSecretPoolEditorDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  runtimeSecretPoolEditorButton: {
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+  },
+  runtimeSecretPoolEditorSpan: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  runtimeSettingsCardSlidersVertical: {
+    height: '1.25rem',
+    width: '1.25rem',
+  },
+  runtimeSettingsCardFieldset: {
+    margin: '0px',
+    display: 'flex',
+    minWidth: '0px',
+    flexDirection: 'column',
+    rowGap: '2.5rem',
+    borderStyle: 'solid',
+    borderWidth: '0px',
+    padding: '0px',
+  },
+  runtimeSettingsCardDiv: {
+    position: 'sticky',
+    bottom: '0px',
+    zIndex: 10,
+    marginTop: '2.5rem',
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 40rem)': 'row',
+    },
+    gap: '0.75rem',
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    backgroundColor: colors.background,
+    paddingBlock: '1rem',
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'center',
+    },
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'space-between',
+    },
+  },
+  runtimeSettingsCardDiv2: {
+    minHeight: '1.25rem',
+    flex: '1',
+  },
+  renderRuntimeSettingControlDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '0.75rem',
+  },
+  renderRuntimeSettingControlSelectTrigger: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': '18rem',
+    },
+  },
+  renderRuntimeSettingDescriptionSpanItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.375rem',
+    },
+  },
+  renderRuntimeSettingDescriptionSpan: {
+    marginTop: '0.125rem',
+    display: 'block',
+  },
+  renderRuntimeSettingDescriptionSpan2: {
+    display: 'block',
+  },
+  renderRuntimeSettingDescriptionSpan3: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.375rem',
+  },
+  renderRuntimeSettingDescriptionSpan4: {
+    borderRadius: '6px',
+    backgroundColor: colors.muted,
+    paddingInline: '0.375rem',
+    paddingBlock: '0.125rem',
+    fontSize: '11px',
+    color: colors.mutedForeground,
+  },
+  renderRuntimeSettingDescriptionButton: {
+    height: '1.5rem',
+    paddingInline: {
+      default: '0.375rem',
+      ':has( > svg)': '0.625rem',
+    },
+    fontSize: '11px',
+    color: {
+      default: colors.destructive,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.destructive,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.destructive} 10%, transparent)`,
+      },
+    },
+    lineHeight: 'inherit',
+  },
+  renderRuntimeSettingGroupsSettingsRow: {
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-start',
+    },
+  },
+  renderRuntimeFeedbackMotionParagraphMutationError: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderRuntimeFeedbackMotionParagraphNotMutationError: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.foreground,
+  },
+  renderRuntimeSaveActionDiv: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+  },
+  renderRuntimeSaveActionButton: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': 'auto',
+    },
+  },
+});

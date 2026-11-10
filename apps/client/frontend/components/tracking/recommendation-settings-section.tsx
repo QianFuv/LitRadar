@@ -2,8 +2,7 @@
  * Recommendation preferences, database scope, and AI configuration.
  */
 
-import { Bot, Layers, Plus, RefreshCw, X } from '@/components/ui/animated-icons';
-import type { ReactNode } from 'react';
+import { Bot, Layers, Plus, RefreshCw, X, type AnimatedIcon } from '@/components/ui/animated-icons';
 
 import {
   SettingsGroup,
@@ -32,9 +31,10 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { LoadingText } from '@/components/ui/loading-text';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const DEFAULT_AI_ENDPOINT_VALUE = '__default__';
-const FIELD_WIDTH_CLASS = 'w-full sm:w-72';
 
 type RecommendationSettingsSectionProps = {
   model: TrackingPageViewModel['recommendation'];
@@ -136,27 +136,27 @@ function PreferenceTagField({
   value,
 }: PreferenceTagFieldProps) {
   return (
-    <div className="flex min-h-11 w-full flex-wrap items-center gap-1.5 rounded-lg border bg-background p-1.5 motion-control transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+    <div {...stylex.props(styles.preferenceTagFieldDiv)}>
       <MotionPresence>
         {items.map((item) => (
           <MotionSpan
             key={item}
-            className="inline-flex"
+            {...stylex.props(styles.preferenceTagFieldMotionSpan)}
             data-motion-preference-chip={`${chipKeyPrefix}-${item}`}
             variants={CHIP_VARIANTS}
             initial="hidden"
             animate="visible"
             exit="exit"
           >
-            <span className="inline-flex h-7 items-center gap-1 rounded-md bg-info pr-0.5 pl-2.5 text-[13px] font-bold text-info-foreground">
+            <span {...stylex.props(styles.preferenceTagFieldSpan)}>
               {item}
               <button
                 type="button"
                 aria-label={`${removeLabelPrefix} ${item}`}
                 onClick={() => onRemove(item)}
-                className="motion-control flex size-6 items-center justify-center rounded transition-colors hover:bg-primary/15 focus-visible:ring-2 focus-visible:ring-ring"
+                {...stylex.props(styles.preferenceTagFieldButton)}
               >
-                <X className="size-3" />
+                <X {...stylex.props(styles.preferenceTagFieldX)} />
               </button>
             </span>
           </MotionSpan>
@@ -176,18 +176,18 @@ function PreferenceTagField({
           }
         }}
         placeholder={placeholder}
-        className="h-8 min-w-40 flex-1 bg-transparent px-1.5 !shadow-none hover:bg-transparent focus-visible:ring-0"
+        xstyle={styles.preferenceTagFieldInput}
       />
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        className="size-8 shrink-0"
+        xstyle={styles.preferenceTagFieldButton2}
         aria-label={addLabel}
         onClick={onAdd}
         disabled={!value.trim()}
       >
-        <Plus className="size-4" />
+        <Plus {...stylex.props(styles.preferenceTagFieldPlus)} />
       </Button>
     </div>
   );
@@ -290,8 +290,9 @@ function SecretField({
 }: SecretFieldProps) {
   const isPendingClear = value === null;
   return (
-    <div className={`${FIELD_WIDTH_CLASS} space-y-2`}>
+    <div {...stylex.props(styles.fieldWidth)}>
       <Input
+        xstyle={styles.secretFieldDivItem}
         id={inputId}
         name={inputName}
         type="password"
@@ -301,10 +302,10 @@ function SecretField({
         onChange={(event) => onChange(event.target.value)}
         placeholder="sk-…"
       />
-      <div className="flex items-center justify-between gap-2">
+      <div {...stylex.props(styles.secretFieldDivItem, styles.secretFieldDiv)}>
         <StatusPill
           tone={hasStoredSecret ? (isPendingClear ? 'warning' : 'success') : 'neutral'}
-          className="h-auto min-h-6 py-0.5 whitespace-normal"
+          xstyle={styles.secretFieldStatusPill}
         >
           {hasStoredSecret
             ? isPendingClear
@@ -317,7 +318,7 @@ function SecretField({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 px-2 text-xs"
+            xstyle={styles.secretFieldButton}
             onClick={onToggleClear}
           >
             {isPendingClear ? keepLabel : clearLabel}
@@ -355,7 +356,7 @@ function EndpointSelect({
       }
       disabled={endpoints.query.isPending || endpoints.query.isError}
     >
-      <SelectTrigger id={triggerId} className={FIELD_WIDTH_CLASS}>
+      <SelectTrigger id={triggerId} xstyle={styles.fieldWidth}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
@@ -380,22 +381,19 @@ function EndpointSelect({
  */
 function AiSectionHeader({
   description,
-  icon,
+  icon: Icon,
   title,
 }: {
   description: string;
-  icon: ReactNode;
+  icon: AnimatedIcon;
   title: string;
 }) {
   return (
-    <SettingsSectionHeader className="items-center justify-start gap-3">
-      <span
-        aria-hidden="true"
-        className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-foreground text-background [&_svg]:size-4"
-      >
-        {icon}
+    <SettingsSectionHeader xstyle={styles.aiSectionHeaderSettingsSectionHeader}>
+      <span aria-hidden="true" {...stylex.props(styles.aiSectionHeaderSpan)}>
+        <Icon {...stylex.props(styles.aiSectionHeaderIcon)} />
       </span>
-      <div className="min-w-0 flex-1">
+      <div {...stylex.props(styles.aiSectionHeaderDiv)}>
         <SettingsSectionTitle>{title}</SettingsSectionTitle>
         <SettingsSectionDescription>{description}</SettingsSectionDescription>
       </div>
@@ -415,7 +413,7 @@ function renderPrimaryAiEndpoint(
       htmlFor="ai-base-url"
       description={
         endpoints.query.isError ? (
-          <span role="alert" className="text-destructive">
+          <span role="alert" {...stylex.props(styles.renderPrimaryAiEndpointSpan)}>
             {endpoints.query.error instanceof Error
               ? endpoints.query.error.message
               : '加载 AI Endpoint 列表失败'}
@@ -452,7 +450,7 @@ function renderBackupAiSettings(
   return (
     <SettingsSection>
       <AiSectionHeader
-        icon={<RefreshCw />}
+        icon={RefreshCw}
         title="备用 AI 配置"
         description="当主配置连续失败后，系统会自动切换到这套备用配置重试。"
       />
@@ -485,10 +483,14 @@ function renderBackupAiSettings(
               }))
             }
             placeholder="gpt-4.1-mini"
-            className={FIELD_WIDTH_CLASS}
+            xstyle={styles.fieldWidth}
           />
         </SettingsRow>
-        <SettingsRow title="Backup API Key" htmlFor="ai-backup-api-key" className="sm:items-start">
+        <SettingsRow
+          title="Backup API Key"
+          htmlFor="ai-backup-api-key"
+          xstyle={styles.renderBackupAiSettingsSettingsRow}
+        >
           <SecretField
             inputId="ai-backup-api-key"
             inputName="ai_backup_api_key"
@@ -529,11 +531,11 @@ function renderBackupAiSettings(
               }))
             }
             placeholder="Optional backup prompt override."
-            className="min-h-28"
+            xstyle={styles.renderBackupAiSettingsTextarea}
           />
         </SettingsRow>
       </SettingsGroup>
-      <p className="px-1 text-xs text-muted-foreground">
+      <p {...stylex.props(styles.renderBackupAiSettingsP)}>
         未配置关键词或研究方向时不会推送；主备 AI 都不可用时同样会跳过推送。
       </p>
     </SettingsSection>
@@ -549,7 +551,7 @@ function renderPrimaryAiSettings(
   return (
     <SettingsSection>
       <AiSectionHeader
-        icon={<Bot />}
+        icon={Bot}
         title="主 AI 配置"
         description="优先使用这套配置进行筛选；留空字段会回退到服务端默认值。"
       />
@@ -569,10 +571,14 @@ function renderPrimaryAiSettings(
               }))
             }
             placeholder="gpt-4.1-mini"
-            className={FIELD_WIDTH_CLASS}
+            xstyle={styles.fieldWidth}
           />
         </SettingsRow>
-        <SettingsRow title="API Key" htmlFor="ai-api-key" className="sm:items-start">
+        <SettingsRow
+          title="API Key"
+          htmlFor="ai-api-key"
+          xstyle={styles.renderBackupAiSettingsSettingsRow}
+        >
           <SecretField
             inputId="ai-api-key"
             inputName="ai_api_key"
@@ -614,7 +620,7 @@ function renderPrimaryAiSettings(
                 ai_retry_attempts: Math.max(1, Math.min(10, Number(event.target.value) || 1)),
               }))
             }
-            className="w-24 text-right tabular-nums"
+            xstyle={styles.renderPrimaryAiSettingsInput}
           />
         </SettingsRow>
         <SettingsRow
@@ -636,7 +642,7 @@ function renderPrimaryAiSettings(
               }))
             }
             placeholder="Describe how the model should evaluate article relevance."
-            className="min-h-28"
+            xstyle={styles.renderBackupAiSettingsTextarea}
           />
         </SettingsRow>
       </SettingsGroup>
@@ -649,13 +655,19 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
   const { databaseSelection } = state;
   if (databaseSelection.query.isPending)
     return (
-      <SettingsGroupBody role="status" className="text-sm text-muted-foreground">
+      <SettingsGroupBody
+        role="status"
+        xstyle={styles.renderDatabaseSelectionStateSettingsGroupBody}
+      >
         <LoadingText text="正在加载数据库列表…" />
       </SettingsGroupBody>
     );
   if (databaseSelection.query.isError)
     return (
-      <SettingsGroupBody role="alert" className="text-sm text-destructive">
+      <SettingsGroupBody
+        role="alert"
+        xstyle={styles.renderDatabaseSelectionStateSettingsGroupBody2}
+      >
         {databaseSelection.query.error instanceof Error
           ? databaseSelection.query.error.message
           : '加载数据库列表失败'}
@@ -663,7 +675,7 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
     );
   if (databaseSelection.available.length === 0)
     return (
-      <SettingsGroupBody className="text-sm text-muted-foreground">
+      <SettingsGroupBody xstyle={styles.renderDatabaseSelectionStateSettingsGroupBody}>
         当前没有可用数据库。
       </SettingsGroupBody>
     );
@@ -677,7 +689,7 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
           type="button"
           variant={databaseSelection.allSelected ? 'default' : 'outline'}
           size="sm"
-          className="w-full sm:w-auto"
+          xstyle={styles.renderDatabaseSelectionStateButton}
           onClick={databaseSelection.selectAll}
         >
           设为全部数据库
@@ -688,12 +700,12 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
           databaseSelection.allSelected ||
           databaseSelection.effectiveSelected.includes(databaseName);
         return (
-          <label
-            key={databaseName}
-            className="motion-control content-visibility-row flex cursor-pointer items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-accent/60 focus-within:bg-accent/60 sm:px-5"
-          >
-            <Layers className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span className="min-w-0 flex-1 break-all">{databaseName}</span>
+          <label key={databaseName} {...stylex.props(styles.renderDatabaseSelectionStateLabel)}>
+            <Layers
+              {...stylex.props(styles.renderDatabaseSelectionStateLayers)}
+              aria-hidden="true"
+            />
+            <span {...stylex.props(styles.renderDatabaseSelectionStateSpan)}>{databaseName}</span>
             <Checkbox
               checked={isChecked}
               onCheckedChange={(checked: boolean | 'indeterminate') =>
@@ -703,7 +715,7 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
           </label>
         );
       })}
-      <div className="flex items-center justify-between gap-3 bg-muted/40 px-4 py-2.5 text-xs text-muted-foreground sm:px-5">
+      <div {...stylex.props(styles.renderDatabaseSelectionStateDiv)}>
         <span>
           当前范围:{' '}
           {databaseSelection.allSelected
@@ -712,7 +724,7 @@ function renderDatabaseSelectionState(state: Pick<RecommendationViewState, 'data
         </span>
         <Progress
           aria-hidden="true"
-          className="w-20"
+          xstyle={styles.renderDatabaseSelectionStateProgress}
           value={
             databaseSelection.allSelected
               ? 100
@@ -738,14 +750,23 @@ function renderRecommendationDatabases(state: Pick<RecommendationViewState, 'dat
           手动推送和自动推送都会按这里的数据库范围执行；不限制时表示全部数据库。
         </SettingsSectionDescription>
       </SettingsSectionHeader>
-      <SettingsSectionContent className="space-y-3">
-        <SettingsGroup>{renderDatabaseSelectionState(state)}</SettingsGroup>
+      <SettingsSectionContent>
+        <SettingsGroup xstyle={styles.renderRecommendationDatabasesSettingsSectionContentItem}>
+          {renderDatabaseSelectionState(state)}
+        </SettingsGroup>
         {databaseSelection.unavailable.length > 0 && (
-          <div className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm">
-            <p className="font-bold text-destructive">已失效的数据库选择</p>
+          <div
+            {...stylex.props(
+              styles.renderRecommendationDatabasesSettingsSectionContentItem,
+              styles.renderRecommendationDatabasesDiv,
+            )}
+          >
+            <p {...stylex.props(styles.secretFieldDivItem, styles.renderRecommendationDatabasesP)}>
+              已失效的数据库选择
+            </p>
             {databaseSelection.unavailable.map((dbName) => (
-              <div key={dbName} className="flex items-center justify-between gap-2">
-                <span className="break-all">{dbName}</span>
+              <div key={dbName} {...stylex.props(styles.secretFieldDivItem, styles.secretFieldDiv)}>
+                <span {...stylex.props(styles.renderRecommendationDatabasesSpan)}>{dbName}</span>
                 <Button
                   type="button"
                   variant="outline"
@@ -758,18 +779,29 @@ function renderRecommendationDatabases(state: Pick<RecommendationViewState, 'dat
                 </Button>
               </div>
             ))}
-            <p className="text-muted-foreground">
+            <p {...stylex.props(styles.secretFieldDivItem, styles.renderRecommendationDatabasesP2)}>
               请先选择可用数据库并移除失效项，或明确设为全部数据库。
             </p>
             {databaseSelection.available.length === 0 && (
-              <Button type="button" variant="outline" onClick={databaseSelection.selectAll}>
+              <Button
+                xstyle={styles.secretFieldDivItem}
+                type="button"
+                variant="outline"
+                onClick={databaseSelection.selectAll}
+              >
                 设为全部数据库
               </Button>
             )}
           </div>
         )}
         {databaseSelection.notice && (
-          <p role="status" className="px-1 text-sm text-muted-foreground">
+          <p
+            role="status"
+            {...stylex.props(
+              styles.renderRecommendationDatabasesSettingsSectionContentItem,
+              styles.renderRecommendationDatabasesP3,
+            )}
+          >
             {databaseSelection.notice}
           </p>
         )}
@@ -787,3 +819,283 @@ type RecommendationViewState = RecommendationSettingsSectionProps & {
   keywords: RecommendationSettingsSectionProps['model']['preferences']['keywords'];
   databaseSelection: RecommendationSettingsSectionProps['model']['databaseSelection'];
 };
+
+const styles = stylex.create({
+  aiSectionHeaderIcon: {
+    width: '1rem',
+    height: '1rem',
+  },
+  preferenceTagFieldDiv: {
+    display: 'flex',
+    minHeight: '2.75rem',
+    width: '100%',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.375rem',
+    borderRadius: '8px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    backgroundColor: colors.background,
+    padding: '0.375rem',
+    transitionProperty: 'border-color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    borderColor: {
+      default: null,
+      ':focus-within': colors.ring,
+    },
+    boxShadow: {
+      default: null,
+      ':focus-within': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+    },
+  },
+  preferenceTagFieldMotionSpan: {
+    display: 'inline-flex',
+  },
+  preferenceTagFieldSpan: {
+    display: 'inline-flex',
+    height: '1.75rem',
+    alignItems: 'center',
+    gap: '0.25rem',
+    borderRadius: '6px',
+    backgroundColor: colors.info,
+    paddingRight: '0.125rem',
+    paddingLeft: '0.625rem',
+    fontSize: '13px',
+    fontWeight: 700,
+    color: colors.infoForeground,
+  },
+  preferenceTagFieldButton: {
+    display: 'flex',
+    width: '1.5rem',
+    height: '1.5rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '0.25rem',
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    backgroundColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.primary} 15%, transparent)`,
+      },
+    },
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  preferenceTagFieldX: {
+    width: '0.75rem',
+    height: '0.75rem',
+  },
+  preferenceTagFieldInput: {
+    height: '2rem',
+    minWidth: '10rem',
+    flex: '1',
+    backgroundColor: {
+      default: 'transparent',
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': 'transparent',
+      },
+    },
+    paddingInline: '0.375rem',
+    boxShadow: {
+      default: 'none',
+      ':focus-visible': '0 0 0 0px currentcolor',
+    },
+  },
+  preferenceTagFieldButton2: {
+    width: '2rem',
+    height: '2rem',
+    flexShrink: 0,
+  },
+  preferenceTagFieldPlus: {
+    width: '1rem',
+    height: '1rem',
+  },
+  secretFieldDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  fieldWidth: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': '18rem',
+    },
+  },
+  secretFieldDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+  },
+  secretFieldStatusPill: {
+    height: 'auto',
+    minHeight: '1.5rem',
+    paddingBlock: '0.125rem',
+    whiteSpace: 'normal',
+  },
+  secretFieldButton: {
+    height: '1.75rem',
+    paddingInline: {
+      default: '0.5rem',
+      ':has( > svg)': '0.625rem',
+    },
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+  },
+  aiSectionHeaderSettingsSectionHeader: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: '0.75rem',
+  },
+  aiSectionHeaderSpan: {
+    display: 'flex',
+    width: '2rem',
+    height: '2rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+    backgroundColor: colors.foreground,
+    color: colors.background,
+  },
+  aiSectionHeaderDiv: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  renderPrimaryAiEndpointSpan: {
+    color: colors.destructive,
+  },
+  renderBackupAiSettingsSettingsRow: {
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-start',
+    },
+  },
+  renderBackupAiSettingsTextarea: {
+    minHeight: '7rem',
+  },
+  renderBackupAiSettingsP: {
+    paddingInline: '0.25rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderPrimaryAiSettingsInput: {
+    width: '6rem',
+    textAlign: 'right',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  renderDatabaseSelectionStateSettingsGroupBody: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  renderDatabaseSelectionStateSettingsGroupBody2: {
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderDatabaseSelectionStateButton: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': 'auto',
+    },
+  },
+  renderDatabaseSelectionStateLabel: {
+    display: 'flex',
+    cursor: 'pointer',
+    alignItems: 'center',
+    gap: '0.75rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.75rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    contentVisibility: 'auto',
+    containIntrinsicSize: '0 40px',
+    backgroundColor: {
+      default: null,
+      ':focus-within': `color-mix(in oklab, ${colors.accent} 60%, transparent)`,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.accent} 60%, transparent)`,
+      },
+    },
+  },
+  renderDatabaseSelectionStateLayers: {
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    color: colors.mutedForeground,
+  },
+  renderDatabaseSelectionStateSpan: {
+    minWidth: '0px',
+    flex: '1',
+    wordBreak: 'break-all',
+  },
+  renderDatabaseSelectionStateDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    backgroundColor: `color-mix(in oklab, ${colors.muted} 40%, transparent)`,
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+    },
+    paddingBlock: '0.625rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderDatabaseSelectionStateProgress: {
+    width: '5rem',
+  },
+  renderRecommendationDatabasesSettingsSectionContentItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.75rem',
+    },
+  },
+  renderRecommendationDatabasesDiv: {
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.destructive} 40%, transparent)`,
+    backgroundColor: `color-mix(in oklab, ${colors.destructive} 5%, transparent)`,
+    padding: '1rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+  },
+  renderRecommendationDatabasesP: {
+    fontWeight: 700,
+    color: colors.destructive,
+  },
+  renderRecommendationDatabasesSpan: {
+    wordBreak: 'break-all',
+  },
+  renderRecommendationDatabasesP2: {
+    color: colors.mutedForeground,
+  },
+  renderRecommendationDatabasesP3: {
+    paddingInline: '0.25rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+});

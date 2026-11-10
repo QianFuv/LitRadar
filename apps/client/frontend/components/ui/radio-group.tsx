@@ -7,7 +7,8 @@ import * as RadioGroupPrimitive from '@animate-ui/react/primitives/radix-ui/radi
 import { Check } from 'lucide-react';
 
 import { PresenceBoundary } from '@/components/ui/motion';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors } from '@/lib/theme.stylex';
 
 /**
  * Render the radio group root.
@@ -16,10 +17,12 @@ import { cn } from '@/lib/utils';
  * @returns Radio group root.
  */
 function RadioGroup({
-  className,
+  xstyle,
   ...props
-}: React.ComponentProps<typeof RadioGroupPrimitive.Root>) {
-  return <RadioGroupPrimitive.Root data-slot="radio-group" className={className} {...props} />;
+}: Omit<React.ComponentProps<typeof RadioGroupPrimitive.Root>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
+  return <RadioGroupPrimitive.Root data-slot="radio-group" {...stylex.props(xstyle)} {...props} />;
 }
 
 /**
@@ -29,23 +32,24 @@ function RadioGroup({
  * @returns Selectable choice.
  */
 function RadioGroupCard({
-  className,
+  xstyle,
   children,
   ...props
-}: React.ComponentProps<typeof RadioGroupPrimitive.Item>) {
+}: Omit<React.ComponentProps<typeof RadioGroupPrimitive.Item>, 'className'> & {
+  xstyle?: stylex.StyleXStyles;
+}) {
   return (
     <PresenceBoundary>
       <RadioGroupPrimitive.Item
         data-slot="radio-group-card"
-        className={cn(
-          'motion-control flex items-center justify-between gap-2 rounded-lg px-3 text-left text-[13px] shadow-[inset_0_0_0_1px_var(--border)] outline-none transition-[background-color,box-shadow] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=checked]:bg-info data-[state=checked]:font-bold data-[state=checked]:text-info-foreground data-[state=checked]:shadow-[inset_0_0_0_1px_var(--primary)] data-[state=checked]:hover:bg-info disabled:cursor-not-allowed disabled:opacity-50',
-          className,
-        )}
+        {...stylex.props(styles.radioGroupCard, xstyle)}
         {...props}
       >
         {children}
-        <RadioGroupPrimitive.Indicator className="flex size-3.5 shrink-0 items-center justify-center">
-          <Check className="size-3.5" aria-hidden="true" />
+        <RadioGroupPrimitive.Indicator
+          {...stylex.props(styles.radioGroupCardRadioGroupPrimitiveIndicator)}
+        >
+          <Check {...stylex.props(styles.radioGroupCardCheck)} aria-hidden="true" />
         </RadioGroupPrimitive.Indicator>
       </RadioGroupPrimitive.Item>
     </PresenceBoundary>
@@ -77,3 +81,68 @@ function RadioGroupIndicator(props: React.ComponentProps<typeof RadioGroupPrimit
 }
 
 export { RadioGroup, RadioGroupCard, RadioGroupIndicator, RadioGroupItem };
+
+const styles = stylex.create({
+  radioGroupCard: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+    borderRadius: '8px',
+    paddingInline: '0.75rem',
+    textAlign: 'left',
+    fontSize: '13px',
+    boxShadow: {
+      default: `inset 0 0 0 1px ${colors.border}`,
+      ':focus-visible': {
+        default: `0 0 0 2px ${colors.ring}, inset 0 0 0 1px ${colors.border}`,
+        ':is([data-state="checked"])': `0 0 0 2px ${colors.ring}, inset 0 0 0 1px ${colors.primary}`,
+      },
+      ':is([data-state="checked"])': `inset 0 0 0 1px ${colors.primary}`,
+    },
+    transitionProperty: 'background-color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    backgroundColor: {
+      default: null,
+      ':is([data-state="checked"])': colors.info,
+      ':hover': {
+        default: null,
+        ':is([data-state="checked"])': null,
+        '@media (hover: hover)': {
+          default: colors.accent,
+          ':is([data-state="checked"])': colors.info,
+        },
+      },
+    },
+    cursor: {
+      default: null,
+      ':disabled': 'not-allowed',
+    },
+    opacity: {
+      default: null,
+      ':disabled': '50%',
+    },
+    fontWeight: {
+      default: null,
+      ':is([data-state="checked"])': 700,
+    },
+    color: {
+      default: null,
+      ':is([data-state="checked"])': colors.infoForeground,
+    },
+  },
+  radioGroupCardRadioGroupPrimitiveIndicator: {
+    display: 'flex',
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioGroupCardCheck: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+});

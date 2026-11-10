@@ -15,6 +15,8 @@ import { Button } from '@/components/ui/button';
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
 import { RevealItem } from '@/components/ui/reveal';
 import { Skeleton } from '@/components/ui/skeleton';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 export type TrackingSettingsSectionId = 'tracking' | 'notifications';
 
@@ -73,9 +75,9 @@ export function TrackingSettingsContent({
 
   const state = { trackingPage, recommendation, isInitialLoading, isInitialError, section };
   return (
-    <div className="flex min-h-full flex-col">
+    <div {...stylex.props(styles.trackingSettingsContentDiv)}>
       <fieldset
-        className="m-0 min-w-0 flex-1 border-0 p-0"
+        {...stylex.props(styles.trackingSettingsContentFieldset)}
         disabled={recommendation.save.mutation.isPending}
       >
         <MotionPresence mode="wait">
@@ -101,14 +103,16 @@ export function TrackingSettingsContent({
 /**
  * Render the loading placeholder of one tracking block.
  *
- * @param heightClassName - Height of the block being loaded.
+ * @param heightStyle - Height of the block being loaded.
  * @returns Status placeholder with a skeleton of the block.
  */
-function renderTrackingBlockPlaceholder(heightClassName: string) {
+function renderTrackingBlockPlaceholder(heightStyle: stylex.StyleXStyles) {
   return (
-    <div role="status" className="py-4">
-      <span className="sr-only">正在加载已保存的推荐配置…</span>
-      <Skeleton className={`${heightClassName} w-full rounded-xl`} />
+    <div role="status" {...stylex.props(styles.renderTrackingBlockPlaceholderDiv)}>
+      <span {...stylex.props(styles.renderTrackingBlockPlaceholderSpan)}>
+        正在加载已保存的推荐配置…
+      </span>
+      <Skeleton xstyle={[styles.trackingBlockSkeleton, heightStyle]} />
     </div>
   );
 }
@@ -118,10 +122,7 @@ function renderTrackingCategory(state: TrackingSettingsViewState) {
   const { section, trackingPage, recommendation, isInitialLoading, isInitialError } = state;
   if (isInitialError)
     return (
-      <div
-        role="alert"
-        className="rounded-md border border-destructive/50 px-3 py-4 text-sm text-destructive"
-      >
+      <div role="alert" {...stylex.props(styles.renderTrackingCategoryDiv)}>
         {recommendation.notificationQuery.error instanceof Error
           ? recommendation.notificationQuery.error.message
           : '加载推荐配置失败'}
@@ -133,7 +134,7 @@ function renderTrackingCategory(state: TrackingSettingsViewState) {
         <TrackingHelpCard />
         <RevealItem
           isReady={!trackingPage.folder.isLoading && !trackingPage.isStatusLoading}
-          placeholder={renderTrackingBlockPlaceholder('h-32')}
+          placeholder={renderTrackingBlockPlaceholder(styles.blockHeightSmall)}
         >
           <TrackingFolderCard model={trackingPage.folder} />
         </RevealItem>
@@ -143,7 +144,7 @@ function renderTrackingCategory(state: TrackingSettingsViewState) {
             !recommendation.databaseSelection.query.isPending &&
             !recommendation.ai.endpoints.query.isPending
           }
-          placeholder={renderTrackingBlockPlaceholder('h-96')}
+          placeholder={renderTrackingBlockPlaceholder(styles.blockHeightLarge)}
         >
           <RecommendationSettingsSection model={recommendation} />
         </RevealItem>
@@ -151,12 +152,15 @@ function renderTrackingCategory(state: TrackingSettingsViewState) {
     );
   return (
     <>
-      <RevealItem isReady={!isInitialLoading} placeholder={renderTrackingBlockPlaceholder('h-64')}>
+      <RevealItem
+        isReady={!isInitialLoading}
+        placeholder={renderTrackingBlockPlaceholder(styles.blockHeightMedium)}
+      >
         <DeliverySettingsSection model={recommendation} />
       </RevealItem>
       <RevealItem
         isReady={!trackingPage.manualPush.isLoading && !trackingPage.isStatusLoading}
-        placeholder={renderTrackingBlockPlaceholder('h-32')}
+        placeholder={renderTrackingBlockPlaceholder(styles.blockHeightSmall)}
       >
         <ManualPushCard model={trackingPage.manualPush} />
       </RevealItem>
@@ -169,19 +173,19 @@ function renderTrackingSaveFeedback(state: TrackingSettingsViewState) {
   const { recommendation } = state;
 
   return (
-    <div className="col-span-2 flex-1 text-sm empty:hidden">
+    <div {...stylex.props(styles.renderTrackingSaveFeedbackDiv)}>
       {recommendation.databaseSelection.unavailable.length > 0 && (
-        <span role="alert" className="text-destructive">
+        <span role="alert" {...stylex.props(styles.renderTrackingSaveFeedbackSpan)}>
           推送数据库已不可用，请在“文献追踪”中重新选择或明确设为全部。
         </span>
       )}
       {recommendation.save.didSave && (
-        <span role="status" className="text-success-foreground">
+        <span role="status" {...stylex.props(styles.renderTrackingSaveFeedbackSpan2)}>
           已保存
         </span>
       )}
       {recommendation.save.mutation.isError && (
-        <span role="alert" className="text-destructive">
+        <span role="alert" {...stylex.props(styles.renderTrackingSaveFeedbackSpan)}>
           {recommendation.save.mutation.error instanceof Error
             ? recommendation.save.mutation.error.message
             : '保存失败'}
@@ -196,12 +200,12 @@ function renderTrackingSaveBar(state: TrackingSettingsViewState) {
   const { trackingPage, recommendation } = state;
 
   return (
-    <div className="sticky bottom-0 mt-10 grid grid-cols-2 gap-2 border-t bg-background py-3 sm:flex sm:items-center sm:justify-end sm:gap-3 sm:py-4">
+    <div {...stylex.props(styles.renderTrackingSaveBarDiv)}>
       {renderTrackingSaveFeedback(state)}
       <Button
         type="button"
         variant="outline"
-        className="w-full sm:w-auto"
+        xstyle={styles.renderTrackingSaveBarButton}
         disabled={!trackingPage.hasUnsavedSettings || recommendation.save.mutation.isPending}
         onClick={trackingPage.discardSettings}
       >
@@ -209,7 +213,7 @@ function renderTrackingSaveBar(state: TrackingSettingsViewState) {
       </Button>
       <Button
         type="button"
-        className="w-full sm:w-auto"
+        xstyle={styles.renderTrackingSaveBarButton}
         disabled={
           !trackingPage.hasUnsavedSettings ||
           recommendation.save.mutation.isPending ||
@@ -217,7 +221,7 @@ function renderTrackingSaveBar(state: TrackingSettingsViewState) {
         }
         onClick={() => recommendation.save.mutation.mutate()}
       >
-        <Save className="size-4" />
+        <Save {...stylex.props(styles.renderTrackingSaveBarSave)} />
         {recommendation.save.mutation.isPending ? '保存中…' : '保存更改'}
       </Button>
     </div>
@@ -231,3 +235,113 @@ type TrackingSettingsViewState = {
   isInitialError: boolean;
   section: TrackingSettingsSectionId;
 };
+
+const styles = stylex.create({
+  trackingBlockSkeleton: {
+    width: '100%',
+    borderRadius: '12px',
+  },
+  blockHeightSmall: {
+    height: '8rem',
+  },
+  blockHeightMedium: {
+    height: '16rem',
+  },
+  blockHeightLarge: {
+    height: '24rem',
+  },
+  trackingSettingsContentDiv: {
+    display: 'flex',
+    minHeight: '100%',
+    flexDirection: 'column',
+  },
+  trackingSettingsContentFieldset: {
+    margin: '0px',
+    minWidth: '0px',
+    flex: '1',
+    borderStyle: 'solid',
+    borderWidth: '0px',
+    padding: '0px',
+  },
+  renderTrackingBlockPlaceholderDiv: {
+    paddingBlock: '1rem',
+  },
+  renderTrackingBlockPlaceholderSpan: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  renderTrackingCategoryDiv: {
+    borderRadius: '6px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    borderColor: `color-mix(in oklab, ${colors.destructive} 50%, transparent)`,
+    paddingInline: '0.75rem',
+    paddingBlock: '1rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.destructive,
+  },
+  renderTrackingSaveFeedbackDiv: {
+    gridColumnStart: 'span 2',
+    gridColumnEnd: 'span 2',
+    flex: '1',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    display: {
+      default: null,
+      ':empty': 'none',
+    },
+  },
+  renderTrackingSaveFeedbackSpan: {
+    color: colors.destructive,
+  },
+  renderTrackingSaveFeedbackSpan2: {
+    color: colors.successForeground,
+  },
+  renderTrackingSaveBarDiv: {
+    position: 'sticky',
+    bottom: '0px',
+    marginTop: '2.5rem',
+    display: {
+      default: 'grid',
+      '@media (min-width: 40rem)': 'flex',
+    },
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: {
+      default: '0.5rem',
+      '@media (min-width: 40rem)': '0.75rem',
+    },
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    backgroundColor: colors.background,
+    paddingBlock: {
+      default: '0.75rem',
+      '@media (min-width: 40rem)': '1rem',
+    },
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'center',
+    },
+    justifyContent: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-end',
+    },
+  },
+  renderTrackingSaveBarButton: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': 'auto',
+    },
+  },
+  renderTrackingSaveBarSave: {
+    width: '1rem',
+    height: '1rem',
+  },
+});

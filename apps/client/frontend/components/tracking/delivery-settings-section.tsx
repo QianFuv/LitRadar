@@ -20,7 +20,8 @@ import { Input } from '@/components/ui/input';
 import { DISCLOSURE_VARIANTS, MotionDiv } from '@/components/ui/motion';
 import { Switch } from '@/components/ui/switch';
 import { RadioGroup, RadioGroupIndicator, RadioGroupItem } from '@/components/ui/radio-group';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 type DeliveryOption = {
   description: string;
@@ -67,10 +68,10 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
           选择自动推荐的投递位置，并在需要时配置 PushPlus 外部通知。
         </SettingsSectionDescription>
       </SettingsSectionHeader>
-      <SettingsSectionContent className="space-y-4">
+      <SettingsSectionContent xstyle={styles.deliverySettingsSectionSettingsSectionContent}>
         <RadioGroup
           aria-label="推送方式"
-          className="grid gap-3 sm:grid-cols-2"
+          xstyle={styles.deliverySettingsSectionRadioGroup}
           value={model.delivery.method}
           onValueChange={(method) =>
             model.updateSettings((current) => ({
@@ -87,38 +88,40 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
                 key={option.value}
                 value={option.value}
                 aria-label={option.label}
-                className={cn(
-                  'motion-control relative flex items-start gap-3 rounded-xl border bg-background p-4 text-left transition-[border-color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                {...stylex.props(
+                  styles.deliverySettingsSectionRadioGroupItem,
                   isSelected
-                    ? 'border-primary shadow-[0_0_0_1px_var(--primary)]'
-                    : 'hover:border-foreground/30',
+                    ? styles.deliverySettingsSectionRadioGroupItemSelected
+                    : styles.deliverySettingsSectionRadioGroupItemNotSelected,
                 )}
               >
                 <span
                   aria-hidden="true"
-                  className={cn(
-                    'flex size-10 shrink-0 items-center justify-center rounded-xl',
+                  {...stylex.props(
+                    styles.deliverySettingsSectionSpan,
                     isSelected
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground',
+                      ? styles.deliverySettingsSectionSpanSelected
+                      : styles.deliverySettingsSectionSpanNotSelected,
                   )}
                 >
-                  <Icon className="size-5" />
+                  <Icon {...stylex.props(styles.deliverySettingsSectionIcon)} />
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm leading-6 font-bold">{option.label}</span>
-                  <span className="block text-xs leading-relaxed text-muted-foreground">
+                <span {...stylex.props(styles.deliverySettingsSectionSpan2)}>
+                  <span {...stylex.props(styles.deliverySettingsSectionSpan3)}>{option.label}</span>
+                  <span {...stylex.props(styles.deliverySettingsSectionSpan4)}>
                     {option.description}
                   </span>
                 </span>
                 <span
                   aria-hidden="true"
-                  className={cn(
-                    'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
-                    isSelected && 'border-primary',
+                  {...stylex.props(
+                    styles.deliverySettingsSectionSpan5,
+                    isSelected && styles.deliverySettingsSectionSpanSelected2,
                   )}
                 >
-                  <RadioGroupIndicator className="size-2 rounded-full bg-primary" />
+                  <RadioGroupIndicator
+                    {...stylex.props(styles.deliverySettingsSectionRadioGroupIndicator)}
+                  />
                 </span>
               </RadioGroupItem>
             );
@@ -132,8 +135,7 @@ export function DeliverySettingsSection({ model }: DeliverySettingsSectionProps)
           initial={false}
           animate={isPushplus ? 'visible' : 'hidden'}
           variants={DISCLOSURE_VARIANTS}
-          className="overflow-hidden"
-          style={{ pointerEvents: isPushplus ? 'auto' : 'none' }}
+          {...stylex.props(styles.deliverySettingsSectionMotionDiv, !isPushplus && styles.inert)}
         >
           {renderPushplusSettings(state)}
         </MotionDiv>
@@ -148,9 +150,14 @@ function renderPushplusToken(state: DeliveryViewState) {
   const hasStoredToken = model.storedSettings?.has_pushplus_token;
 
   return (
-    <SettingsRow title="PushPlus 令牌" htmlFor="pp-token" className="sm:items-start">
-      <div className="w-full space-y-2 sm:w-72">
+    <SettingsRow
+      title="PushPlus 令牌"
+      htmlFor="pp-token"
+      xstyle={styles.renderPushplusTokenSettingsRow}
+    >
+      <div {...stylex.props(styles.renderPushplusTokenDiv)}>
         <Input
+          xstyle={styles.renderPushplusTokenDivItem}
           id="pp-token"
           name="pushplus_token"
           autoComplete="off"
@@ -165,10 +172,10 @@ function renderPushplusToken(state: DeliveryViewState) {
           }
           placeholder="输入你的 PushPlus 令牌"
         />
-        <div className="flex items-center justify-between gap-2">
+        <div {...stylex.props(styles.renderPushplusTokenDivItem, styles.renderPushplusTokenDiv2)}>
           <StatusPill
             tone={hasStoredToken ? (pushplus.token === null ? 'warning' : 'success') : 'neutral'}
-            className="h-auto min-h-6 py-0.5 whitespace-normal"
+            xstyle={styles.renderPushplusTokenStatusPill}
           >
             {hasStoredToken
               ? pushplus.token === null
@@ -181,7 +188,7 @@ function renderPushplusToken(state: DeliveryViewState) {
               type="button"
               variant="ghost"
               size="sm"
-              className="h-7 px-2 text-xs"
+              xstyle={styles.renderPushplusTokenButton}
               onClick={() =>
                 model.updateSettings((current) => ({
                   ...current,
@@ -219,7 +226,7 @@ function renderPushplusSettings(state: DeliveryViewState) {
             }))
           }
           placeholder="markdown"
-          className="w-full sm:w-72"
+          xstyle={styles.renderPushplusTokenDiv}
         />
       </SettingsRow>
       <SettingsRow title="主题" htmlFor="pp-topic">
@@ -236,7 +243,7 @@ function renderPushplusSettings(state: DeliveryViewState) {
             }))
           }
           placeholder="可选"
-          className="w-full sm:w-72"
+          xstyle={styles.renderPushplusTokenDiv}
         />
       </SettingsRow>
       <SettingsRow
@@ -257,7 +264,7 @@ function renderPushplusSettings(state: DeliveryViewState) {
             }))
           }
           placeholder="wechat"
-          className="w-full sm:w-72"
+          xstyle={styles.renderPushplusTokenDiv}
         />
       </SettingsRow>
       <SettingsRow
@@ -290,3 +297,158 @@ type DeliveryViewState = DeliverySettingsSectionProps & {
   pushplus: DeliverySettingsSectionProps['model']['delivery']['pushplus'];
   isPushplus: boolean;
 };
+
+const styles = stylex.create({
+  inert: {
+    pointerEvents: 'none',
+  },
+  deliverySettingsSectionSettingsSectionContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: '1rem',
+  },
+  deliverySettingsSectionRadioGroup: {
+    display: 'grid',
+    gap: '0.75rem',
+    gridTemplateColumns: {
+      default: null,
+      '@media (min-width: 40rem)': 'repeat(2, minmax(0, 1fr))',
+    },
+  },
+  deliverySettingsSectionRadioGroupItem: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '0.75rem',
+    borderRadius: '12px',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+    backgroundColor: colors.background,
+    padding: '1rem',
+    textAlign: 'left',
+    transitionProperty: 'border-color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent)`,
+    },
+  },
+  deliverySettingsSectionRadioGroupItemSelected: {
+    borderColor: colors.primary,
+    boxShadow: {
+      default: `0 0 0 1px ${colors.primary}`,
+      ':focus-visible': `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), 0 0 0 1px ${colors.primary}`,
+    },
+  },
+  deliverySettingsSectionRadioGroupItemNotSelected: {
+    borderColor: {
+      default: null,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.foreground} 30%, transparent)`,
+      },
+    },
+  },
+  deliverySettingsSectionSpan: {
+    display: 'flex',
+    width: '2.5rem',
+    height: '2.5rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '12px',
+  },
+  deliverySettingsSectionSpanSelected: {
+    backgroundColor: colors.primary,
+    color: colors.primaryForeground,
+  },
+  deliverySettingsSectionSpanNotSelected: {
+    backgroundColor: colors.muted,
+    color: colors.mutedForeground,
+  },
+  deliverySettingsSectionIcon: {
+    width: '1.25rem',
+    height: '1.25rem',
+  },
+  deliverySettingsSectionSpan2: {
+    minWidth: '0px',
+    flex: '1',
+  },
+  deliverySettingsSectionSpan3: {
+    display: 'block',
+    fontSize: '0.875rem',
+    lineHeight: '1.5rem',
+    fontWeight: 700,
+  },
+  deliverySettingsSectionSpan4: {
+    display: 'block',
+    fontSize: '0.75rem',
+    lineHeight: 1.625,
+    color: colors.mutedForeground,
+  },
+  deliverySettingsSectionSpan5: {
+    marginTop: '0.125rem',
+    display: 'flex',
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'calc(infinity * 1px)',
+    borderStyle: 'solid',
+    borderWidth: '1px',
+  },
+  deliverySettingsSectionSpanSelected2: {
+    borderColor: colors.primary,
+  },
+  deliverySettingsSectionRadioGroupIndicator: {
+    width: '0.5rem',
+    height: '0.5rem',
+    borderRadius: 'calc(infinity * 1px)',
+    backgroundColor: colors.primary,
+  },
+  deliverySettingsSectionMotionDiv: {
+    overflow: 'hidden',
+  },
+  renderPushplusTokenSettingsRow: {
+    alignItems: {
+      default: null,
+      '@media (min-width: 40rem)': 'flex-start',
+    },
+  },
+  renderPushplusTokenDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  renderPushplusTokenDiv: {
+    width: {
+      default: '100%',
+      '@media (min-width: 40rem)': '18rem',
+    },
+  },
+  renderPushplusTokenDiv2: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+  },
+  renderPushplusTokenStatusPill: {
+    height: 'auto',
+    minHeight: '1.5rem',
+    paddingBlock: '0.125rem',
+    whiteSpace: 'normal',
+  },
+  renderPushplusTokenButton: {
+    height: '1.75rem',
+    paddingInline: {
+      default: '0.5rem',
+      ':has( > svg)': '0.625rem',
+    },
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+  },
+});

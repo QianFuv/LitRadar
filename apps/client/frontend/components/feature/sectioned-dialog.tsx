@@ -28,8 +28,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { MotionDiv, MotionPresence, PANEL_VARIANTS } from '@/components/ui/motion';
-import { cn } from '@/lib/utils';
 import { attachHorizontalWheelScroll } from '@/lib/horizontal-wheel-scroll';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 /** One-shot marker used to return focus from a sectioned dialog to its persistent trigger. */
 export const SECTIONED_DIALOG_RETURN_FOCUS_ATTRIBUTE = 'data-sectioned-dialog-return-focus';
@@ -71,7 +72,7 @@ type SectionedDialogFrameProps<SectionId extends string> = {
 
 type SectionedDialogNavigationProps<SectionId extends string> = {
   activeSection: SectionId;
-  className?: string;
+  xstyle?: stylex.StyleXStyles;
   isDisabled: boolean;
   label: string;
   onSelect: (section: SectionId) => void;
@@ -135,12 +136,12 @@ function SectionNavigationButton({
  * Render section navigation as horizontal pills on phones and a vertical list on wider screens,
  * with Animate UI's highlight sliding between the active categories.
  *
- * @param props - Section definitions, active state, selection action, and layout class.
+ * @param props - Section definitions, active state, selection action, and layout styles.
  * @returns Accessible category navigation.
  */
 function SectionedDialogNavigation<SectionId extends string>({
   activeSection,
-  className,
+  xstyle,
   isDisabled,
   label,
   onSelect,
@@ -148,30 +149,37 @@ function SectionedDialogNavigation<SectionId extends string>({
 }: SectionedDialogNavigationProps<SectionId>) {
   return (
     <ScrollFade orientation="horizontal" shrink={0} asChild>
-      <nav ref={attachHorizontalWheelScroll} aria-label={label} className={className}>
+      <nav ref={attachHorizontalWheelScroll} aria-label={label} {...stylex.props(xstyle)}>
         <Highlight
           controlledItems
           value={activeSection}
           click={false}
-          className="rounded-full bg-foreground md:rounded-lg md:bg-accent"
+          {...stylex.props(styles.sectionedDialogNavigationHighlight)}
         >
           {sections.map((section) => {
             const Icon = section.icon;
             const isActive = section.id === activeSection;
             return (
-              <HighlightItem key={section.id} value={section.id} className="shrink-0 md:w-full">
+              <HighlightItem
+                key={section.id}
+                value={section.id}
+                {...stylex.props(styles.sectionedDialogNavigationHighlightItem)}
+              >
                 <SectionNavigationButton
                   isActive={isActive}
                   disabled={isDisabled}
-                  className={cn(
-                    'motion-control flex h-9 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] whitespace-nowrap outline-none transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:h-10 md:w-full md:gap-3 md:rounded-lg md:px-3 md:text-sm',
+                  {...stylex.props(
+                    styles.sectionedDialogNavigationSectionNavigationButton,
                     isActive
-                      ? 'font-bold text-background md:text-foreground'
-                      : 'text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent-pressed',
+                      ? styles.sectionedDialogNavigationSectionNavigationButtonActive
+                      : styles.sectionedDialogNavigationSectionNavigationButtonNotActive,
                   )}
                   onClick={() => onSelect(section.id)}
                 >
-                  <Icon className="size-4 shrink-0" aria-hidden="true" />
+                  <Icon
+                    {...stylex.props(styles.sectionedDialogNavigationIcon)}
+                    aria-hidden="true"
+                  />
                   <span>{section.label}</span>
                 </SectionNavigationButton>
               </HighlightItem>
@@ -222,7 +230,7 @@ export function SectionedDialogFrame<SectionId extends string>({
       <DialogContent
         placement="takeover"
         aria-busy={isBusy || undefined}
-        className="flex flex-col gap-0 overflow-hidden bg-background focus-visible:ring-0 md:flex-row"
+        xstyle={styles.sectionedDialogFrameDialogContent}
         ref={contentRef}
         onOpenAutoFocus={(event) => {
           if (!returnFocusRef.current) {
@@ -260,12 +268,14 @@ export function SectionedDialogFrame<SectionId extends string>({
           }
         }}
       >
-        <DialogTitle className="sr-only">{centerTitle}</DialogTitle>
-        <DialogDescription className="sr-only">{dialogDescription}</DialogDescription>
+        <DialogTitle xstyle={styles.sectionedDialogFrameDialogTitle}>{centerTitle}</DialogTitle>
+        <DialogDescription xstyle={styles.sectionedDialogFrameDialogTitle}>
+          {dialogDescription}
+        </DialogDescription>
 
         <aside
           data-slot="sectioned-dialog-sidebar"
-          className="relative shrink-0 border-b bg-background pt-3 pb-2 md:flex md:w-64 md:flex-col md:border-r md:border-b-0 md:pt-4 md:pb-0 lg:w-72"
+          {...stylex.props(styles.sectionedDialogSidebar)}
         >
           <DialogClose asChild>
             <Button
@@ -273,31 +283,29 @@ export function SectionedDialogFrame<SectionId extends string>({
               variant="ghost"
               static
               aria-label="关闭"
-              className="absolute top-1.5 right-2 size-11 p-0 text-muted-foreground hover:text-foreground md:static md:mx-3 md:h-10 md:w-auto md:justify-start md:gap-1.5 md:self-start md:px-2.5"
+              xstyle={styles.sectionedDialogFrameButton}
             >
-              <X className="size-5 md:hidden" aria-hidden="true" />
-              <ArrowLeft className="hidden size-4 md:block" aria-hidden="true" />
-              <span className="hidden text-[13px] md:inline">返回</span>
+              <X {...stylex.props(styles.sectionedDialogFrameX)} aria-hidden="true" />
+              <ArrowLeft
+                {...stylex.props(styles.sectionedDialogFrameArrowLeft)}
+                aria-hidden="true"
+              />
+              <span {...stylex.props(styles.sectionedDialogFrameSpan)}>返回</span>
             </Button>
           </DialogClose>
-          <div className="flex items-center gap-3 px-4 pr-14 md:px-6 md:pt-6 md:pr-6 md:pb-5">
-            <span
-              aria-hidden="true"
-              className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-foreground text-background md:hidden"
-            >
-              <CenterIcon className="size-4" />
+          <div {...stylex.props(styles.sectionedDialogFrameDiv)}>
+            <span aria-hidden="true" {...stylex.props(styles.sectionedDialogFrameSpan2)}>
+              <CenterIcon {...stylex.props(styles.sectionedDialogFrameCenterIcon)} />
             </span>
-            <div className="min-w-0">
-              <p className="truncate text-base leading-6 font-bold md:text-xl">{centerTitle}</p>
-              <p className="hidden text-xs leading-5 text-muted-foreground md:mt-1 md:block">
-                {centerSubtitle}
-              </p>
+            <div {...stylex.props(styles.sectionedDialogFrameDiv2)}>
+              <p {...stylex.props(styles.sectionedDialogFrameP)}>{centerTitle}</p>
+              <p {...stylex.props(styles.sectionedDialogFrameP2)}>{centerSubtitle}</p>
             </div>
           </div>
-          <div className="relative mt-3 md:mt-0" data-mobile-overflow-cue="true">
+          <div {...stylex.props(styles.sectionedDialogFrameDiv3)} data-mobile-overflow-cue="true">
             <SectionedDialogNavigation
               activeSection={activeSection}
-              className="scrollbar-none flex gap-1.5 overflow-x-auto px-4 md:flex-col md:gap-1 md:overflow-visible md:px-3 md:[mask-image:none]"
+              xstyle={styles.sectionedDialogFrameSectionedDialogNavigation}
               isDisabled={isNavigationDisabled}
               label={navigationLabel}
               onSelect={onSelectSection}
@@ -305,22 +313,23 @@ export function SectionedDialogFrame<SectionId extends string>({
             />
           </div>
           {sidebarFooter && (
-            <div className="mt-auto hidden border-t px-4 py-4 md:block">{sidebarFooter}</div>
+            <div {...stylex.props(styles.sectionedDialogFrameDiv4)}>{sidebarFooter}</div>
           )}
         </aside>
 
-        <div
-          data-slot="sectioned-dialog-scroll"
-          className="min-h-0 min-w-0 flex-1 scroll-pb-28 overflow-y-auto"
-        >
+        <div data-slot="sectioned-dialog-scroll" {...stylex.props(styles.sectionedDialogScroll)}>
           <div
-            className={cn(
-              'mx-auto w-full px-5 pt-6 pb-[calc(2rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] md:px-10 md:pt-12',
-              contentWidth === 'wide' ? 'max-w-5xl' : 'max-w-3xl',
+            {...stylex.props(
+              styles.sectionedDialogFrameDiv5,
+              contentWidth === 'wide'
+                ? styles.sectionedDialogFrameDivWide
+                : styles.sectionedDialogFrameDivNotWide,
             )}
           >
-            <div className="mb-6 border-b pb-6 md:mb-8">
-              <h2 className="sr-only">{activeDefinition.label}</h2>
+            <div {...stylex.props(styles.sectionedDialogFrameDiv6)}>
+              <h2 {...stylex.props(styles.sectionedDialogFrameDialogTitle)}>
+                {activeDefinition.label}
+              </h2>
               <MotionPresence mode="wait">
                 <MotionDiv
                   key={activeDefinition.id}
@@ -331,8 +340,10 @@ export function SectionedDialogFrame<SectionId extends string>({
                   animate="visible"
                   exit="exit"
                 >
-                  <div className="text-2xl font-bold tracking-tight">{activeDefinition.label}</div>
-                  <p className="mt-1.5 text-[13px] text-muted-foreground">
+                  <div {...stylex.props(styles.sectionedDialogFrameDiv7)}>
+                    {activeDefinition.label}
+                  </div>
+                  <p {...stylex.props(styles.sectionedDialogFrameP3)}>
                     {activeDefinition.description}
                   </p>
                 </MotionDiv>
@@ -351,3 +362,407 @@ export function SectionedDialogFrame<SectionId extends string>({
     </Dialog>
   );
 }
+
+const styles = stylex.create({
+  sectionedDialogNavigationHighlight: {
+    borderRadius: {
+      default: 'calc(infinity * 1px)',
+      '@media (min-width: 48rem)': '8px',
+    },
+    backgroundColor: {
+      default: colors.foreground,
+      '@media (min-width: 48rem)': colors.accent,
+    },
+  },
+  sectionedDialogNavigationHighlightItem: {
+    flexShrink: 0,
+    width: {
+      default: null,
+      '@media (min-width: 48rem)': '100%',
+    },
+  },
+  sectionedDialogNavigationSectionNavigationButton: {
+    display: 'flex',
+    height: {
+      default: '2.25rem',
+      '@media (min-width: 48rem)': '2.5rem',
+    },
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: {
+      default: '0.5rem',
+      '@media (min-width: 48rem)': '0.75rem',
+    },
+    borderRadius: {
+      default: 'calc(infinity * 1px)',
+      '@media (min-width: 48rem)': '8px',
+    },
+    paddingInline: {
+      default: '0.875rem',
+      '@media (min-width: 48rem)': '0.75rem',
+    },
+    fontSize: {
+      default: '13px',
+      '@media (min-width: 48rem)': '0.875rem',
+    },
+    whiteSpace: 'nowrap',
+    transitionProperty: 'background-color, color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+    pointerEvents: {
+      default: null,
+      ':disabled': 'none',
+    },
+    opacity: {
+      default: null,
+      ':disabled': '50%',
+    },
+    width: {
+      default: null,
+      '@media (min-width: 48rem)': '100%',
+    },
+    lineHeight: {
+      default: null,
+      '@media (min-width: 48rem)': lineHeights.textSm,
+    },
+  },
+  sectionedDialogNavigationSectionNavigationButtonActive: {
+    fontWeight: 700,
+    color: {
+      default: colors.background,
+      '@media (min-width: 48rem)': colors.foreground,
+    },
+  },
+  sectionedDialogNavigationSectionNavigationButtonNotActive: {
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    backgroundColor: {
+      default: null,
+      ':active': {
+        default: colors.accentPressed,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': colors.accentPressed,
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.accent,
+      },
+    },
+  },
+  sectionedDialogNavigationIcon: {
+    width: '1rem',
+    height: '1rem',
+    flexShrink: 0,
+  },
+  sectionedDialogFrameDialogContent: {
+    display: 'flex',
+    flexDirection: {
+      default: 'column',
+      '@media (min-width: 48rem)': 'row',
+    },
+    gap: '0px',
+    overflow: 'hidden',
+    backgroundColor: colors.background,
+    boxShadow: shadows.overlay,
+  },
+  sectionedDialogFrameDialogTitle: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clipPath: 'inset(50%)',
+    whiteSpace: 'nowrap',
+    borderWidth: 0,
+  },
+  sectionedDialogSidebar: {
+    position: 'relative',
+    flexShrink: 0,
+    borderBottomStyle: {
+      default: 'solid',
+      '@media (min-width: 48rem)': 'solid',
+    },
+    borderBottomWidth: {
+      default: '1px',
+      '@media (min-width: 48rem)': '0px',
+    },
+    backgroundColor: colors.background,
+    paddingTop: {
+      default: '0.75rem',
+      '@media (min-width: 48rem)': '1rem',
+    },
+    paddingBottom: {
+      default: '0.5rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+    display: {
+      default: null,
+      '@media (min-width: 48rem)': 'flex',
+    },
+    width: {
+      default: null,
+      '@media (min-width: 48rem)': '16rem',
+      '@media (min-width: 64rem)': '18rem',
+    },
+    flexDirection: {
+      default: null,
+      '@media (min-width: 48rem)': 'column',
+    },
+    borderRightStyle: {
+      default: null,
+      '@media (min-width: 48rem)': 'solid',
+    },
+    borderRightWidth: {
+      default: null,
+      '@media (min-width: 48rem)': '1px',
+    },
+  },
+  sectionedDialogFrameButton: {
+    position: {
+      default: 'absolute',
+      '@media (min-width: 48rem)': 'static',
+    },
+    top: '0.375rem',
+    right: '0.5rem',
+    width: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': 'auto',
+    },
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2.5rem',
+    },
+    padding: '0px',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    marginInline: {
+      default: null,
+      '@media (min-width: 48rem)': '0.75rem',
+    },
+    justifyContent: {
+      default: 'center',
+      '@media (min-width: 48rem)': 'flex-start',
+    },
+    gap: {
+      default: '0.5rem',
+      '@media (min-width: 48rem)': '0.375rem',
+    },
+    alignSelf: {
+      default: null,
+      '@media (min-width: 48rem)': 'flex-start',
+    },
+    paddingInline: {
+      default: null,
+      ':has( > svg)': '0.75rem',
+      '@media (min-width: 48rem)': {
+        default: '0.625rem',
+        ':has( > svg)': '0.75rem',
+      },
+    },
+  },
+  sectionedDialogFrameX: {
+    width: '1.25rem',
+    height: '1.25rem',
+    display: {
+      default: null,
+      '@media (min-width: 48rem)': 'none',
+    },
+  },
+  sectionedDialogFrameArrowLeft: {
+    display: {
+      default: 'none',
+      '@media (min-width: 48rem)': 'block',
+    },
+    width: '1rem',
+    height: '1rem',
+  },
+  sectionedDialogFrameSpan: {
+    display: {
+      default: 'none',
+      '@media (min-width: 48rem)': 'inline',
+    },
+    fontSize: '13px',
+  },
+  sectionedDialogFrameDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 48rem)': '1.5rem',
+    },
+    paddingRight: {
+      default: '3.5rem',
+      '@media (min-width: 48rem)': '1.5rem',
+    },
+    paddingTop: {
+      default: null,
+      '@media (min-width: 48rem)': '1.5rem',
+    },
+    paddingBottom: {
+      default: null,
+      '@media (min-width: 48rem)': '1.25rem',
+    },
+  },
+  sectionedDialogFrameSpan2: {
+    display: {
+      default: 'flex',
+      '@media (min-width: 48rem)': 'none',
+    },
+    width: '2rem',
+    height: '2rem',
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '8px',
+    backgroundColor: colors.foreground,
+    color: colors.background,
+  },
+  sectionedDialogFrameCenterIcon: {
+    width: '1rem',
+    height: '1rem',
+  },
+  sectionedDialogFrameDiv2: {
+    minWidth: '0px',
+  },
+  sectionedDialogFrameP: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: {
+      default: '1rem',
+      '@media (min-width: 48rem)': '1.25rem',
+    },
+    lineHeight: {
+      default: '1.5rem',
+      '@media (min-width: 48rem)': '1.5rem',
+    },
+    fontWeight: 700,
+  },
+  sectionedDialogFrameP2: {
+    display: {
+      default: 'none',
+      '@media (min-width: 48rem)': 'block',
+    },
+    fontSize: '0.75rem',
+    lineHeight: '1.25rem',
+    color: colors.mutedForeground,
+    marginTop: {
+      default: null,
+      '@media (min-width: 48rem)': '0.25rem',
+    },
+  },
+  sectionedDialogFrameDiv3: {
+    position: 'relative',
+    marginTop: {
+      default: '0.75rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+  },
+  sectionedDialogFrameSectionedDialogNavigation: {
+    display: 'flex',
+    gap: {
+      default: '0.375rem',
+      '@media (min-width: 48rem)': '0.25rem',
+    },
+    overflowX: {
+      default: 'auto',
+      '@media (min-width: 48rem)': 'visible',
+    },
+    overflowY: {
+      default: null,
+      '@media (min-width: 48rem)': 'visible',
+    },
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 48rem)': '0.75rem',
+    },
+    scrollbarWidth: 'none',
+    flexDirection: {
+      default: null,
+      '@media (min-width: 48rem)': 'column',
+    },
+    maskImage: {
+      default: null,
+      '@media (min-width: 48rem)': 'none',
+    },
+    '::-webkit-scrollbar': {
+      display: 'none',
+    },
+  },
+  sectionedDialogFrameDiv4: {
+    marginTop: 'auto',
+    display: {
+      default: 'none',
+      '@media (min-width: 48rem)': 'block',
+    },
+    borderTopStyle: 'solid',
+    borderTopWidth: '1px',
+    paddingInline: '1rem',
+    paddingBlock: '1rem',
+  },
+  sectionedDialogScroll: {
+    minHeight: '0px',
+    minWidth: '0px',
+    flex: '1',
+    scrollPaddingBottom: '7rem',
+    overflowY: 'auto',
+  },
+  sectionedDialogFrameDiv5: {
+    marginInline: 'auto',
+    width: '100%',
+    paddingInline: {
+      default: '1.25rem',
+      '@media (min-width: 48rem)': '2.5rem',
+    },
+    paddingTop: {
+      default: '1.5rem',
+      '@media (min-width: 48rem)': '3rem',
+    },
+    paddingBottom: 'calc(2rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom,0px)))',
+  },
+  sectionedDialogFrameDivWide: {
+    maxWidth: '64rem',
+  },
+  sectionedDialogFrameDivNotWide: {
+    maxWidth: '48rem',
+  },
+  sectionedDialogFrameDiv6: {
+    marginBottom: {
+      default: '1.5rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    borderBottomStyle: 'solid',
+    borderBottomWidth: '1px',
+    paddingBottom: '1.5rem',
+  },
+  sectionedDialogFrameDiv7: {
+    fontSize: '1.5rem',
+    lineHeight: lineHeights.text2xl,
+    fontWeight: 700,
+    letterSpacing: '-0.025em',
+  },
+  sectionedDialogFrameP3: {
+    marginTop: '0.375rem',
+    fontSize: '13px',
+    color: colors.mutedForeground,
+  },
+});

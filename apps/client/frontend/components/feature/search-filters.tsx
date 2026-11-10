@@ -12,7 +12,7 @@ import {
   FilterFacet,
   FilterPanelHeader,
   FilterPillLabel,
-  getFilterPillClassName,
+  filterPillStyles,
   getFilterPillText,
 } from '@/components/feature/filter-pill';
 import {
@@ -73,7 +73,8 @@ import {
   setSelectedDatabase,
   useSelectedDatabase,
 } from '@/lib/selected-database';
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights } from '@/lib/theme.stylex';
 
 const RECENT_YEAR_OPTIONS = [1, 3, 5] as const;
 
@@ -97,13 +98,13 @@ function DateSegmentSelect({ ariaLabel, value, options, onChange }: DateSegmentS
         aria-label={ariaLabel}
         title={`${ariaLabel}：${value}`}
         size="sm"
-        className="w-full justify-between px-2.5 tabular-nums"
+        xstyle={styles.dateSegmentSelectSelectTrigger}
       >
         <SelectValue />
       </SelectTrigger>
-      <SelectContent position="popper" className="max-h-64">
+      <SelectContent position="popper" xstyle={styles.dateSegmentSelectSelectContent}>
         {options.map((option) => (
-          <SelectItem key={option} value={option} className="tabular-nums">
+          <SelectItem key={option} value={option} xstyle={styles.dateSegmentSelectSelectItem}>
             {option}
           </SelectItem>
         ))}
@@ -115,10 +116,10 @@ function DateSegmentSelect({ ariaLabel, value, options, onChange }: DateSegmentS
 /**
  * Render database selection, publication time, ratings, journals, and areas as filter pills.
  *
- * @param props - Optional layout class names.
+ * @param props - Optional layout styles.
  * @returns Search filter bar.
  */
-export function SearchFilters({ className }: { className?: string }) {
+export function SearchFilters({ xstyle }: { xstyle?: stylex.StyleXStyles }) {
   const state = useSearchFilterState();
   const { appliedFilterCount, handleClearAll } = state;
 
@@ -128,13 +129,10 @@ export function SearchFilters({ className }: { className?: string }) {
         ref={attachHorizontalWheelScroll}
         role="group"
         aria-label="筛选条件"
-        className={cn(
-          'scrollbar-none -mx-4 -my-1 flex items-center gap-2 overflow-x-auto px-4 py-1 sm:-mx-5 sm:px-5 md:mx-0 md:px-0',
-          className,
-        )}
+        {...stylex.props(styles.searchFiltersDiv, xstyle)}
       >
         {renderDatabaseFacet(state)}
-        <span className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+        <span {...stylex.props(styles.searchFiltersSpan)} aria-hidden="true" />
         <TimeFacet state={state} />
         {renderRatingFacet(state)}
         <JournalFacet state={state} />
@@ -143,10 +141,10 @@ export function SearchFilters({ className }: { className?: string }) {
           <button
             type="button"
             title="清空全部筛选"
-            className="motion-control inline-flex h-11 shrink-0 items-center gap-1 rounded-full px-2.5 text-[13px] md:h-8 text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            {...stylex.props(styles.searchFiltersButton)}
             onClick={handleClearAll}
           >
-            <X className="size-3.5" aria-hidden="true" />
+            <X {...stylex.props(styles.searchFiltersX)} aria-hidden="true" />
             清除筛选
           </button>
         )}
@@ -342,8 +340,8 @@ function renderDatabaseFacet(state: SearchFilterState) {
   return (
     <RevealItem
       isReady={!loadingDatabases}
-      className="shrink-0"
-      placeholder={<Skeleton className="h-11 w-40 rounded-full md:h-8" />}
+      xstyle={styles.renderDatabaseFacetRevealItem}
+      placeholder={<Skeleton xstyle={styles.renderDatabaseFacetSkeleton} />}
     >
       <DatabasePill
         ariaLabel="检索数据库"
@@ -440,28 +438,32 @@ function TimeFacet({ state }: { state: SearchFilterState }) {
     >
       <RevealItem
         isReady={Boolean(user) && !loadingYears}
-        placeholder={<Skeleton className="m-2 h-24" />}
+        placeholder={<Skeleton xstyle={styles.timeFacetSkeleton} />}
       >
         {!yearBounds ? (
-          <p className="px-2.5 py-3 text-sm text-muted-foreground">暂无可用发表年份</p>
+          <p {...stylex.props(styles.timeFacetP)}>暂无可用发表年份</p>
         ) : (
-          <div className="space-y-2">
+          <div>
             <RadioGroup
               aria-label="发表时间"
               value={selectedChoice}
               onValueChange={handleChoice}
-              className="grid grid-cols-2 gap-1.5 p-1"
+              xstyle={[styles.timeFacetDivItem, styles.timeFacetRadioGroup]}
             >
               {choices.map((choice) => (
-                <RadioGroupCard key={choice.key} value={choice.key} className="h-10 md:h-9">
+                <RadioGroupCard
+                  key={choice.key}
+                  value={choice.key}
+                  xstyle={styles.timeFacetRadioGroupCard}
+                >
                   {choice.label}
                 </RadioGroupCard>
               ))}
             </RadioGroup>
             {isCustom && (
-              <div className="space-y-2 rounded-lg bg-muted p-3">
-                <p className="text-xs text-muted-foreground">起始</p>
-                <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-2">
+              <div {...stylex.props(styles.timeFacetDivItem, styles.timeFacetDiv)}>
+                <p {...stylex.props(styles.timeFacetDivItem, styles.timeFacetP2)}>起始</p>
+                <div {...stylex.props(styles.timeFacetDivItem, styles.timeFacetDiv2)}>
                   <DateSegmentSelect
                     ariaLabel="起始年份"
                     value={selectedStartYearValue}
@@ -482,8 +484,8 @@ function TimeFacet({ state }: { state: SearchFilterState }) {
                     }
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">结束</p>
-                <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-2">
+                <p {...stylex.props(styles.timeFacetDivItem, styles.timeFacetP2)}>结束</p>
+                <div {...stylex.props(styles.timeFacetDivItem, styles.timeFacetDiv2)}>
                   <DateSegmentSelect
                     ariaLabel="结束年份"
                     value={selectedEndYearValue}
@@ -546,14 +548,14 @@ function renderRatingFacet(state: SearchFilterState) {
         aria-label={accessibleName}
         title={accessibleName}
         data-active={isActive ? 'true' : 'false'}
-        className={getFilterPillClassName(isActive)}
+        {...stylex.props(filterPillStyles(isActive))}
       >
-        <span className="min-w-0 truncate">
+        <span {...stylex.props(styles.renderRatingFacetSpan)}>
           <MultiSelectValue>{() => visibleText}</MultiSelectValue>
         </span>
-        <ChevronDown className="size-3.5 shrink-0 opacity-70" aria-hidden="true" />
+        <ChevronDown {...stylex.props(styles.renderRatingFacetChevronDown)} aria-hidden="true" />
       </MultiSelectTrigger>
-      <MultiSelectContent aria-label="期刊评级" className="w-[22rem] max-w-[calc(100vw-2rem)]">
+      <MultiSelectContent aria-label="期刊评级" xstyle={styles.renderRatingFacetMultiSelectContent}>
         <FilterPanelHeader
           label="期刊评级"
           description="同一体系可多选，不同体系共同筛选。"
@@ -562,21 +564,18 @@ function renderRatingFacet(state: SearchFilterState) {
         />
         <RevealItem
           isReady={!isLoadingRatings}
-          className="flex min-h-0 flex-col"
-          placeholder={<Skeleton className="m-2 h-24" />}
+          xstyle={styles.renderRatingFacetRevealItem}
+          placeholder={<Skeleton xstyle={styles.timeFacetSkeleton} />}
         >
           {isRatingError ? (
-            <div
-              className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground"
-              role="status"
-            >
+            <div {...stylex.props(styles.renderRatingFacetDiv)} role="status">
               无法加载期刊评级
               <Button variant="ghost" size="sm" onClick={() => void refetchRatings()}>
                 重试
               </Button>
             </div>
           ) : hasRatings ? (
-            <MultiSelectList className="max-h-[min(60vh,26rem)]">
+            <MultiSelectList xstyle={styles.renderRatingFacetMultiSelectList}>
               {JOURNAL_RATING_SYSTEMS.map(({ key, label }) => {
                 const options = ratingOptions?.[key] ?? [];
                 return options.length > 0 ? (
@@ -597,7 +596,7 @@ function renderRatingFacet(state: SearchFilterState) {
               })}
             </MultiSelectList>
           ) : (
-            <p className="px-4 py-3 text-xs text-muted-foreground">当前数据库暂无期刊评级信息。</p>
+            <p {...stylex.props(styles.renderRatingFacetP)}>当前数据库暂无期刊评级信息。</p>
           )}
         </RevealItem>
       </MultiSelectContent>
@@ -660,11 +659,11 @@ function JournalFacet({ state }: { state: SearchFilterState }) {
         aria-label={accessibleName}
         title={accessibleName}
         data-active={isActive ? 'true' : 'false'}
-        className={getFilterPillClassName(isActive)}
+        {...stylex.props(filterPillStyles(isActive))}
       >
         <FilterPillLabel text={visibleText} />
       </ComboboxTrigger>
-      <ComboboxContent aria-label="期刊" className="w-[24rem] max-w-[calc(100vw-2rem)]">
+      <ComboboxContent aria-label="期刊" xstyle={styles.journalFacetComboboxContent}>
         <FilterPanelHeader
           label="期刊"
           description={`在 ${journalOptions?.length ?? 0} 本期刊中选择。`}
@@ -673,12 +672,12 @@ function JournalFacet({ state }: { state: SearchFilterState }) {
         />
         <RevealItem
           isReady={!loadingJournals}
-          className="flex min-h-0 flex-col"
-          placeholder={<Skeleton className="m-2 h-24" />}
+          xstyle={styles.renderRatingFacetRevealItem}
+          placeholder={<Skeleton xstyle={styles.timeFacetSkeleton} />}
         >
           <ComboboxInput aria-label="搜索期刊" name="journal_search" placeholder="搜索期刊" />
           <ComboboxEmpty>未找到期刊。</ComboboxEmpty>
-          <ComboboxList data-slot="journal-options" className="max-h-[min(50vh,18rem)]">
+          <ComboboxList data-slot="journal-options" xstyle={styles.journalOptions}>
             {(id: string) => (
               <ComboboxItem key={id} value={id} title={journalLabelMap.get(id) ?? id}>
                 {journalLabelMap.get(id) ?? id}
@@ -744,11 +743,11 @@ function AreaFacet({ state }: { state: SearchFilterState }) {
         aria-label={accessibleName}
         title={accessibleName}
         data-active={isActive ? 'true' : 'false'}
-        className={getFilterPillClassName(isActive)}
+        {...stylex.props(filterPillStyles(isActive))}
       >
         <FilterPillLabel text={visibleText} />
       </ComboboxTrigger>
-      <ComboboxContent aria-label="领域" className="w-[22rem] max-w-[calc(100vw-2rem)]">
+      <ComboboxContent aria-label="领域" xstyle={styles.renderRatingFacetMultiSelectContent}>
         <FilterPanelHeader
           label="领域"
           description="可多选，满足任一领域即显示。"
@@ -757,12 +756,12 @@ function AreaFacet({ state }: { state: SearchFilterState }) {
         />
         <RevealItem
           isReady={!loadingAreas}
-          className="flex min-h-0 flex-col"
-          placeholder={<Skeleton className="m-2 h-24" />}
+          xstyle={styles.renderRatingFacetRevealItem}
+          placeholder={<Skeleton xstyle={styles.timeFacetSkeleton} />}
         >
           {areaValues.length > 10 && <ComboboxInput aria-label="搜索领域" placeholder="搜索领域" />}
           <ComboboxEmpty>未找到领域。</ComboboxEmpty>
-          <ComboboxList data-slot="area-options" className="max-h-[min(55vh,22rem)]">
+          <ComboboxList data-slot="area-options" xstyle={styles.areaOptions}>
             {(area: string) => (
               <ComboboxItem key={area} value={area} title={area} detail={areaCounts.get(area)}>
                 {getAreaDisplayName(area)}
@@ -845,3 +844,185 @@ function getFilterMonthValues(
     selectedEndMonthValue: selectedEndMonth.slice(5, 7),
   };
 }
+
+const styles = stylex.create({
+  dateSegmentSelectSelectTrigger: {
+    width: '100%',
+    justifyContent: 'space-between',
+    paddingInline: '0.625rem',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  dateSegmentSelectSelectContent: {
+    maxHeight: '16rem',
+  },
+  dateSegmentSelectSelectItem: {
+    fontVariantNumeric: 'tabular-nums',
+  },
+  searchFiltersDiv: {
+    marginInline: {
+      default: '-1rem',
+      '@media (min-width: 40rem)': '-1.25rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+    marginBlock: '-0.25rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    overflowX: 'auto',
+    paddingInline: {
+      default: '1rem',
+      '@media (min-width: 40rem)': '1.25rem',
+      '@media (min-width: 48rem)': '0px',
+    },
+    paddingBlock: '0.25rem',
+    scrollbarWidth: 'none',
+    '::-webkit-scrollbar': {
+      display: 'none',
+    },
+  },
+  searchFiltersSpan: {
+    height: '1.25rem',
+    width: '1px',
+    flexShrink: 0,
+    backgroundColor: colors.border,
+  },
+  searchFiltersButton: {
+    display: 'inline-flex',
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    flexShrink: 0,
+    alignItems: 'center',
+    gap: '0.25rem',
+    borderRadius: 'calc(infinity * 1px)',
+    paddingInline: '0.625rem',
+    fontSize: '13px',
+    color: {
+      default: colors.mutedForeground,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': colors.foreground,
+      },
+    },
+    transitionProperty:
+      'color, background-color, border-color, outline-color, text-decoration-color, fill, stroke',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    boxShadow: {
+      default: null,
+      ':focus-visible': `0 0 0 2px ${colors.ring}`,
+    },
+  },
+  searchFiltersX: {
+    width: '0.875rem',
+    height: '0.875rem',
+  },
+  renderDatabaseFacetRevealItem: {
+    flexShrink: 0,
+  },
+  renderDatabaseFacetSkeleton: {
+    height: {
+      default: '2.75rem',
+      '@media (min-width: 48rem)': '2rem',
+    },
+    width: '10rem',
+    borderRadius: 'calc(infinity * 1px)',
+  },
+  timeFacetSkeleton: {
+    margin: '0.5rem',
+    height: '6rem',
+  },
+  timeFacetP: {
+    paddingInline: '0.625rem',
+    paddingBlock: '0.75rem',
+    fontSize: '0.875rem',
+    lineHeight: lineHeights.textSm,
+    color: colors.mutedForeground,
+  },
+  timeFacetDivItem: {
+    marginBottom: {
+      default: null,
+      ':not(:last-child)': '0.5rem',
+    },
+  },
+  timeFacetRadioGroup: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '0.375rem',
+    padding: '0.25rem',
+  },
+  timeFacetRadioGroupCard: {
+    height: {
+      default: '2.5rem',
+      '@media (min-width: 48rem)': '2.25rem',
+    },
+  },
+  timeFacetDiv: {
+    borderRadius: '8px',
+    backgroundColor: colors.muted,
+    padding: '0.75rem',
+  },
+  timeFacetP2: {
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  timeFacetDiv2: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr)',
+    gap: '0.5rem',
+  },
+  renderRatingFacetSpan: {
+    minWidth: '0px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  renderRatingFacetChevronDown: {
+    width: '0.875rem',
+    height: '0.875rem',
+    flexShrink: 0,
+    opacity: '70%',
+  },
+  renderRatingFacetMultiSelectContent: {
+    width: '22rem',
+    maxWidth: 'calc(100vw - 2rem)',
+  },
+  renderRatingFacetRevealItem: {
+    display: 'flex',
+    minHeight: '0px',
+    flexDirection: 'column',
+  },
+  renderRatingFacetDiv: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingInline: '1rem',
+    paddingBlock: '0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  renderRatingFacetMultiSelectList: {
+    maxHeight: 'min(60vh, 26rem)',
+  },
+  renderRatingFacetP: {
+    paddingInline: '1rem',
+    paddingBlock: '0.75rem',
+    fontSize: '0.75rem',
+    lineHeight: lineHeights.textXs,
+    color: colors.mutedForeground,
+  },
+  journalFacetComboboxContent: {
+    width: '24rem',
+    maxWidth: 'calc(100vw - 2rem)',
+  },
+  journalOptions: {
+    maxHeight: 'min(50vh, 18rem)',
+  },
+  areaOptions: {
+    maxHeight: 'min(55vh, 22rem)',
+  },
+});

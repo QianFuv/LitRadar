@@ -109,7 +109,6 @@ function AdminPanel({ children, isActive, label }: AdminPanelProps) {
       aria-label={label}
       data-admin-panel-state={isActive ? 'active' : 'inactive'}
       hidden={!isActive}
-      className="[&>[data-slot=card]]:gap-0 [&>[data-slot=card]]:rounded-none [&>[data-slot=card]]:bg-transparent [&>[data-slot=card]]:py-0 [&>[data-slot=card]]:!shadow-none [&>[data-slot=card]>[data-slot=card-content]]:px-0 [&>[data-slot=card]>[data-slot=card-header]]:sr-only"
       variants={PANEL_VARIANTS}
       initial={false}
       animate={isActive ? 'visible' : 'hidden'}

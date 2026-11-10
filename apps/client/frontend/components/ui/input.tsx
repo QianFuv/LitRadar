@@ -1,24 +1,98 @@
 /** Shared single-line input with theme-aware pointer and keyboard feedback. */
 
 import * as React from 'react';
-
-import { cn } from '@/lib/utils';
+import * as stylex from '@stylexjs/stylex';
+import { colors, lineHeights, shadows } from '@/lib/theme.stylex';
 
 /** Render an input while preserving native fields, sizing, and invalid states. */
-function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
-  return (
-    <input
-      type={type}
-      data-slot="input"
-      className={cn(
-        'file:text-foreground placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground hover:bg-accent/50 hover:shadow-[0_0_0_1px_var(--input-hover)] h-9 w-full min-w-0 rounded-lg shadow-vercel-ring bg-card px-3 py-1 text-base motion-control transition-[background-color,color,box-shadow] outline-none file:inline-flex file:h-7 file:border-0 file:bg-card file:text-sm file:font-medium disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',
-        'focus-visible:ring-ring/50 focus-visible:ring-[3px]',
-        'aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive',
-        className,
-      )}
-      {...props}
-    />
-  );
+function Input({
+  xstyle,
+  type,
+  ...props
+}: Omit<React.ComponentProps<'input'>, 'className'> & { xstyle?: stylex.StyleXStyles }) {
+  return <input type={type} data-slot="input" {...stylex.props(styles.input, xstyle)} {...props} />;
 }
 
 export { Input };
+
+const styles = stylex.create({
+  input: {
+    height: '2.25rem',
+    width: '100%',
+    minWidth: '0px',
+    borderRadius: '8px',
+    backgroundColor: {
+      default: colors.card,
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `color-mix(in oklab, ${colors.accent} 50%, transparent)`,
+      },
+    },
+    paddingInline: '0.75rem',
+    paddingBlock: '0.25rem',
+    fontSize: {
+      default: '1rem',
+      '@media (min-width: 48rem)': '0.875rem',
+    },
+    lineHeight: {
+      default: 1.5,
+      '@media (min-width: 48rem)': lineHeights.textSm,
+    },
+    boxShadow: {
+      default: shadows.vercelRing,
+      ':focus-visible': {
+        default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), ${shadows.vercelRing}`,
+        ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}, ${shadows.vercelRing}`,
+        ':hover': {
+          default: null,
+          '@media (hover: hover)': {
+            default: `0 0 0 3px color-mix(in oklab, ${colors.ring} 50%, transparent), 0 0 0 1px ${colors.inputHover}`,
+            ':is([aria-invalid="true"])': `0 0 0 3px ${colors.destructiveRing}, 0 0 0 1px ${colors.inputHover}`,
+          },
+        },
+      },
+      ':hover': {
+        default: null,
+        '@media (hover: hover)': `0 0 0 1px ${colors.inputHover}`,
+      },
+    },
+    transitionProperty: 'background-color, color, box-shadow',
+    transitionTimingFunction: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    transitionDuration: '200ms',
+    outlineStyle: 'none',
+    pointerEvents: {
+      default: null,
+      ':disabled': 'none',
+    },
+    cursor: {
+      default: null,
+      ':disabled': 'not-allowed',
+    },
+    opacity: {
+      default: null,
+      ':disabled': '50%',
+    },
+    borderColor: {
+      default: null,
+      ':is([aria-invalid="true"])': colors.destructive,
+    },
+    '::file-selector-button': {
+      display: 'inline-flex',
+      height: '1.75rem',
+      borderStyle: 'solid',
+      borderWidth: '0px',
+      backgroundColor: colors.card,
+      fontSize: '0.875rem',
+      lineHeight: lineHeights.textSm,
+      fontWeight: 500,
+      color: colors.foreground,
+    },
+    '::placeholder': {
+      color: colors.mutedForeground,
+    },
+    '::selection': {
+      backgroundColor: colors.primary,
+      color: colors.primaryForeground,
+    },
+  },
+});
