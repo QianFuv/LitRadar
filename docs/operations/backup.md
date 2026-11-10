@@ -8,12 +8,12 @@
 
 `auth.sqlite` 快照包含安全审计事件、保留 maintenance 标记，邀请码有效期/撤销/配额与逐次兑换历史，以及投递 checkpoint、run、item、dedupe 和 lease；不需要也不能通过额外 flag 排除。恢复认证库会把审计历史、用户、令牌、邀请码、安全变更和投递状态恢复到同一个时间点，避免恢复出跨时间线的注册配额、去重或任务状态。
 
-| 范围或选项             | 内容                                                                                                            |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
-| v2 固定范围            | `data/auth.sqlite` 和完整 `data/meta`                                                                           |
-| `--include-indexes`    | 创建时发现的全部 `data/index/*.sqlite`                                                                          |
-| `--include-push-state` | `data/push_state/` 和 `data/folder_push_state/`                                                                 |
-| 始终排除               | 整个 `data/index-control/`（batch ledger、catalog checkpoint 和 lease）及 `data/index-work/`（Crossref 工作集） |
+| 范围或选项             | 内容                                                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v2 固定范围            | `data/auth.sqlite` 和完整 `data/meta`                                                                                                                      |
+| `--include-indexes`    | 创建时发现的全部 `data/index/*.sqlite`                                                                                                                     |
+| `--include-push-state` | `data/push_state/` 和 `data/folder_push_state/`                                                                                                            |
+| 始终排除               | 整个 `data/index-control/`（batch ledger、catalog checkpoint 和 lease）、`data/index-work/`（Crossref 工作集）及可丢弃的负载遥测库 `data/telemetry.sqlite` |
 
 未选择的索引和状态组不会在恢复时修改。v2 Meta 和选择的可选组按精确快照恢复，包括“备份时为空”的情况。
 

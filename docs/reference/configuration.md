@@ -39,9 +39,9 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 
 ## 全局运行设置
 
-管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下 20 项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
+管理员通过 `GET/PUT /api/admin/runtime-settings` 或前端管理页维护以下各项。响应中的 group、control、apply mode、allowed values 和秘密标记是前端控件的权威元数据；管理页必须逐项呈现，不能用硬编码字段子集代替。
 
-这 20 项的字段名、默认值、parser/serializer、秘密标记和 UI 元数据由 storage 层同一 registry 定义。管理 API 写入、`serve` 启动、命令启动和 observability 初始化都调用该 registry；不存在“保存成功但下次启动才发现语法无效”的第二套校验。registry 的所有默认值和往返序列化均由穷举测试覆盖。
+这些字段的字段名、默认值、parser/serializer、秘密标记和 UI 元数据由 storage 层同一 registry 定义。管理 API 写入、`serve` 启动、命令启动和 observability 初始化都调用该 registry；不存在“保存成功但下次启动才发现语法无效”的第二套校验。registry 的所有默认值和往返序列化均由穷举测试覆盖。
 
 | 字段                               | 默认值                     | 秘密 | 前端控件                          | 生效时机 | 使用者                            |
 | ---------------------------------- | -------------------------- | ---: | --------------------------------- | -------- | --------------------------------- |
@@ -65,6 +65,8 @@ manifest 存在时，`serve` 和普通 `index` 会在认证库迁移后验证整
 | `article_fulltext_provider_orders` | 见下文                     |   否 | 默认顺序 + catalog 继承/排序/禁用 | 下一请求 | 在线全文 fallback                 |
 | `log_format`                       | `json`                     |   否 | `json` / `compact` 单选           | 重启进程 | 结构化日志格式                    |
 | `log_filter`                       | 见[日志设置](#日志设置)    |   否 | 文本                              | 重启进程 | tracing filter                    |
+| `telemetry_enabled`                | `true`                     |   否 | 布尔开关                          | 重启进程 | 匿名负载遥测采集                  |
+| `telemetry_retention_days`         | `90`                       |   否 | `1..=3650` 的整数                 | 重启进程 | 负载遥测按小时数据保留            |
 
 `cnki_captcha_token` 和 `provider_proxy_url` 都是 scalar secret，不是 secret pool。公开 GET/PUT 响应始终返回 `value=""` 和 `secret_items=[]`；已配置时只通过 `has_value=true`、`masked_value="••••"` 表示存在。管理页的空密码框表示保留，非空文本表示加密替换，显式“清除”提交 JSON `null`。数据库值为空时，只有 `cnki_captcha_token` 具有 `LITRADAR_CNKI_CAPTCHA_TOKEN` 单次索引探测回退；`serve` 不读取该环境变量，在线摘要 Provider 只使用数据库密文。代理 URL 没有环境变量或 CLI 回退。
 
@@ -319,6 +321,23 @@ warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litra
 
 `off` 完全关闭服务端事件。API 保存时和每个进程启动时都会严格验证；无效 filter、其他 format 值或认证库不可读会让进程在业务工作前失败。日志 bootstrap 只读这两个非秘密字段，不迁移数据库、不解密 key 池，也不读取 `RUST_LOG` 等通用日志环境变量。完整事件、级别、关联和丢失语义见[日志运维](../operations/logging.md)。
 
+## 负载遥测设置
+
+`telemetry_enabled` 和 `telemetry_retention_days` 属于 `observability` 分组，apply mode 为 `restart_required`，与其他受管设置一样以字符串值存入 `auth.sqlite`，通过同一个运行配置 API 更新：
+
+```http
+PUT /api/admin/runtime-settings
+Content-Type: application/json
+
+{"values":{"telemetry_enabled":"true","telemetry_retention_days":"90"}}
+```
+
+- `telemetry_enabled` 使用布尔解析，默认 `true`。设为 `false` 并重启后，服务既不打开或创建 `data/telemetry.sqlite`，也不再记录观测；已有文件和数据保持原样。管理面板「负载」分区此时显示未启用状态，`GET /api/admin/telemetry` 返回 `enabled=false`。
+- `telemetry_retention_days` 只接受 `1..=3650` 的整数，默认 `90`。新值在重启后生效，过期小时在下一次每分钟 flush 或关闭时的最终 flush 中删除。保留期短于所选统计时段时，更早的小时没有数据。
+- 文件位置固定为 `<project-root>/data/telemetry.sqlite`，`--auth-db` 不会改变它；没有新的环境变量或命令行参数。
+
+遥测只记录接口模板、MCP 工具名和检索形态，不记录用户身份、IP、令牌、原始路径或查询字符串、检索文本，也不做按用户聚合。项目不提供 Prometheus `/metrics` 端点或 CPU profile 采集端点。存储结构见[数据库参考](database.md#负载遥测库)。
+
 ## 路径默认值
 
 以 `project-root` 为根：
@@ -332,6 +351,7 @@ warn,litradar=info,litradar_api=info,litradar_cli=info,litradar_index=info,litra
 | `data/auth.sqlite`       | 认证和业务库                            |
 | `data/push_state`        | `.changes.json` 候选和只读旧状态导入源  |
 | `data/folder_push_state` | 只读旧 push 状态导入源                  |
+| `data/telemetry.sqlite`  | 可丢弃的匿名负载遥测，不进入备份        |
 
 检索分词在 Go 中完成，不注册 SQLite 分词扩展；不存在选择分词库的运行时路径或环境变量，规则见[数据库参考](database.md#article_search)。
 

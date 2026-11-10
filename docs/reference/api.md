@@ -263,6 +263,7 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 | `GET` / `POST`   | `/api/admin/invite-codes`                    | 列出或按策略创建邀请码             |
 | `DELETE`         | `/api/admin/invite-codes/{code_id}`          | 永久撤销邀请码并保留历史           |
 | `GET`            | `/api/admin/stats`                           | 管理面板统计                       |
+| `GET`            | `/api/admin/telemetry`                       | 匿名按小时负载与检索形态遥测       |
 | `GET` / `POST`   | `/api/admin/scheduled-tasks`                 | 列出或创建类型化计划任务           |
 | `PUT` / `DELETE` | `/api/admin/scheduled-tasks/{task_id}`       | 更新或删除计划任务                 |
 | `GET`            | `/api/admin/scheduler/status`                | 调度游标、内嵌调度心跳与近期运行   |
@@ -282,6 +283,29 @@ SQLite 保证每个用户最多一个 queued/active 手动任务；同一用户�
 `GET /api/admin/runtime-settings` 为每个字段返回 group、control、apply mode、allowed values、秘密状态和值来源；前端据此覆盖全部后端设置，而不是维护第二份字段清单。`GET /api/admin/provider-catalog` 按逻辑 Provider 名称聚合索引、摘要页和全文 capability，并列出从 `data/meta/*.csv` 与 `data/index/*.sqlite` 发现的安全 catalog stem/文件名。它不返回上游 URL、凭据或文件路径。
 
 `PUT /api/admin/runtime-settings` 会在管理员认证后原子校验全部变更，包括 CORS/MCP Origin、Provider capability、Provider 顺序、日志格式和 tracing filter。无效值返回 `400`，且同一请求的任何字段都不会保存。不同字段按响应中的 apply mode 在下一请求、下一命令或进程重启后生效；完整语法及旧配置恢复边界见[配置参考](configuration.md)。
+
+### 负载遥测
+
+`GET /api/admin/telemetry?period=7d&kind=search` 返回管理面板「负载」分区使用的匿名负载统计（operation ID `telemetry`，响应 schema `TelemetryResponse`，生成类型见 `apps/client/frontend/lib/generated/api-schema.tsx` 中的 `TelemetryResponse`、`TelemetrySeries`、`TelemetryHour` 和 `TelemetrySearchShape`）。认证与其他管理接口相同，接受 Bearer 令牌或会话 Cookie：未认证返回 `401`，已认证的非管理员返回 `403`。
+
+| 参数     | 取值                                  | 说明                                           |
+| -------- | ------------------------------------- | ---------------------------------------------- |
+| `period` | `24h`（默认）、`7d`、`30d`            | 分别对应恰好 24、168、720 个 UTC 小时桶        |
+| `kind`   | 省略（全部）、`http`、`mcp`、`search` | 同时过滤 `series`、`hourly` 和 `search_shapes` |
+
+其他取值返回 `400`。窗口按 UTC 整点对齐并包含当前未结束的小时：`from` 为闭区间起点，`to` 为下一个 UTC 整点（开区间）；不接受任意 `from`/`to` 参数。保留期短于所选时段时，更早的小时没有数据。
+
+响应字段：
+
+- `enabled`：采集器是否启用。`telemetry_enabled=false` 或遥测库初始化失败时为 `false`，同时返回所选窗口的 `from`/`to` 和三个空数组。
+- `series`：按「类型 + 维度」合并整个窗口后的序列，按 `calls` 降序排列（相同时按维度 JSON 稳定排序）。每项展开维度字段：`kind`、`name`（HTTP 路由模板或固定未匹配标签、MCP 工具名或检索入口）、`is_error`、`uses_prefix`、`uses_boolean`，以及按类型出现的 `method`、`status_class`、`mode`、`database`、`term_count`、`hits`、`hit_count_basis`；指标为 `calls`、`errors`、`error_rate`（`0..1` 的比例）和 `p50_ms`/`p95_ms`/`p99_ms`。HTTP 的 4xx 与 5xx 都计为错误，不同状态类是不同序列，各自有独立的错误率。
+- 百分位是先合并相关小时的直方图、再取最近秩所在 2 的幂微秒桶的上界，以毫秒表示，只有对数精度，不是精确观测值。
+- `hourly`：稀疏的「小时 + 类型」行，按小时、再按类型升序，只包含有观测的小时；客户端应根据 `from`/`to` 补零。
+- `search_shapes`：各检索特征的边际分布（不是交叉组合），每项为 `feature`、`value` 和按调用加权的 `calls`。特征为 `endpoint`、`mode`、`database`、`term_count`、`uses_prefix`、`uses_boolean`、`hits` 和 `hit_count_basis`；只请求 `http` 或 `mcp` 时为空数组。`hits` 桶的计数口径由 `hit_count_basis` 区分：`total` 为总命中数，`returned` 为无总数时的返回条数，`candidates` 为相关推荐去重前的候选数。不同口径代表不同总体，不能合并解读；需要按口径拆分时使用 `series` 中的 `hits` 与 `hit_count_basis` 组合。
+
+所有数组在为空时都以 `[]` 出现。读取遥测存储失败时返回 `503`，body 为 `{"detail":"Load telemetry temporarily unavailable","code":"service_unavailable","retryable":true}`，并带 `Retry-After: 5`。当前这次 `/api/admin/telemetry` 请求在自身响应快照之后才被记录，因此出现在下一次读取中；成功的健康检查同样会被计量，尽管请求日志不记录它们。数值为尽力而为的估计：锁竞争、序列上限或存储失败都可能导致少计，写入与保留语义见[数据库参考](database.md#负载遥测库)。
+
+隐私边界：采集器不接收、也不存储用户 ID、用户名、IP、授权令牌、request ID、原始路径、原始查询字符串或检索/标题文本；不提供按用户聚合或原始检索记录。项目也不提供 Prometheus `/metrics` 端点或 CPU profile 采集端点。开关和保留期见[配置参考](configuration.md#负载遥测设置)。
 
 ## 文章访问边界
 

@@ -13,17 +13,19 @@ LitRadar 把规范内容、可丢弃索引控制状态和用户业务数据放�
 | `data/auth.sqlite`                        |               一个 | 用户、收藏、会话、配置、任务、公告、审计、投递状态和受管 Meta 状态 |
 | `data/push_state/`                        |          多个 JSON | Provider-neutral 变更清单和保留的旧 notify 导入源                  |
 | `data/folder_push_state/`                 |          多个 JSON | 保留的旧 push 导入源                                               |
+| `data/telemetry.sqlite`                   |               一个 | 可丢弃的匿名按小时负载遥测，不进入备份                             |
 
 目录 stem 是内容边界：`data/meta/chinese_journals.csv`、内容库和控制库都使用 `chinese_journals`。Provider 名称不参与文件名。
 
 ## 连接和版本
 
-| 数据库             | `PRAGMA user_version` | 升级策略                                                          |
-| ------------------ | --------------------: | ----------------------------------------------------------------- |
-| 认证/业务库        |                    22 | 版本化 migration                                                  |
+| 数据库             | `PRAGMA user_version` | 升级策略                                                                |
+| ------------------ | --------------------: | ----------------------------------------------------------------------- |
+| 认证/业务库        |                    22 | 版本化 migration                                                        |
 | 内容索引库         |                    10 | 新建精确 v10；运行时读写精确 v6/v7/v8/v9/v10；精确 v4/v5 原子迁移到 v10 |
-| 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建             |
-| catalog 索引控制库 |                     5 | v0/v1/v2/v3/v4 安全事务迁移；可删除后按 v5 重建                   |
+| 项目 batch ledger  |                     2 | 新建/验证精确 v2；精确 v1 原位迁移到 v2；可删除后重建                   |
+| catalog 索引控制库 |                     5 | v0/v1/v2/v3/v4 安全事务迁移；可删除后按 v5 重建                         |
+| 负载遥测库         |                     1 | 新建精确 v1；更高版本在改动前拒绝并禁用遥测，不降级；可删除后重建       |
 
 上述内容、业务和控制库的可写连接使用 `foreign_keys=ON`、WAL、`synchronous=NORMAL` 和 30 秒 busy timeout。Crossref 私有工作集使用下面单独说明的连接策略，不改变这些正式 schema 版本。
 
@@ -396,6 +398,42 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 `managed_meta_catalogs` 记录官方 bundle 版本/hash 所有权，用于保护用户修改的目录。`announcements` 保存标题、消息、优先级、启用状态和时间。
 
+## 负载遥测库
+
+`data/telemetry.sqlite` 只保存匿名的接口负载与检索形态，供管理面板「负载」分区和 `GET /api/admin/telemetry` 读取（见 [API 参考](api.md#负载遥测)）。它与认证库、内容库和控制库相互独立：通过 `storage/sqlite.Open` 打开，使用与其他可写库相同的 WAL 连接策略，并独占一个单连接池。位置固定为 `<project-root>/data/telemetry.sqlite`，`--auth-db` 不会改变它；开关与保留期见[配置参考](configuration.md#负载遥测设置)。`telemetry_enabled=false` 时重启后不会创建或打开该文件，已有文件保持原样。打开或迁移失败只记录 `telemetry.open.failed` 并禁用遥测，不会阻止服务启动。
+
+唯一的表：
+
+```sql
+CREATE TABLE hourly_load (
+  hour INTEGER NOT NULL,
+  dimensions TEXT NOT NULL,
+  aggregate TEXT NOT NULL,
+  PRIMARY KEY (hour, dimensions)
+) WITHOUT ROWID;
+```
+
+| 列           | 内容                                                                                                                                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hour`       | UTC 整点起始的 Unix 秒                                                                                                                                                                                        |
+| `dimensions` | 带类型的规范 JSON：`kind`（`http`/`mcp`/`search`）、`name`、`is_error`、`uses_prefix`、`uses_boolean`，以及按类型出现的 `method`、`status_class`、`mode`、`database`、`term_count`、`hits`、`hit_count_basis` |
+| `aggregate`  | JSON `{"calls","errors","histogram"}`；`histogram` 是固定 32 个桶的 2 的幂微秒直方图，第 `i` 桶记录 `(2^(i-1), 2^i]` 微秒的观测（最小 1 微秒，最后一桶在 2^31 微秒约 35.8 分钟处饱和），可跨小时直接相加      |
+
+- HTTP 维度是匹配到的路由模板或固定的未匹配标签、规范化方法和 `2xx`/`3xx`/`4xx`/`5xx` 状态类；4xx 与 5xx 都计为错误。MCP 维度是声明的工具名和是否出错（协议错误或 `CallToolResult.IsError`）。检索维度是入口（`articles`/`weekly`/`related`）、简单/高级模式、服务端解析出的 catalog 文件名、词数桶（`0`/`1`/`2-4`/`5-9`/`10+`）、是否使用前缀或布尔/NEAR 运算、命中量级桶（`0`/`1-9`/`10-99`/`100-999`/`1000+`）以及命中计数口径。
+- 命中计数口径：`total` 为文章查询已产生的总数；`returned` 为无总数的文章查询或周报页实际返回条数；`candidates` 为相关推荐在最终标题去重前的 MATCH 候选数。不会为此额外执行 `COUNT` 查询，不同口径不能合并解读。
+- 词数是对输入的粗略词法计数（简单检索按空白分词；高级检索计未加引号的操作数和引号短语，不计列选择器、运算符和 NEAR 距离），不是 SQLite 分词器的 token 数。
+- 表中没有事件级历史，也没有身份表。
+
+写入与读取：
+
+- 请求路径只在进程内存中聚合，不做 I/O；锁竞争时直接丢弃这次观测，待写的「小时 + 维度」序列最多 8192 个，超出同样丢弃。丢弃计数在下一次 flush 时以 `telemetry.observations.dropped` 记录。
+- 运行时每分钟 flush 一次，并在 HTTP/MCP 与请求 worker 排空后做最后一次 flush；每次 flush 有 5 秒预算，在一个事务中把增量合并进已有行，并在同一流程中执行保留清理（即使没有新观测）。
+- flush 失败的批次只记录日志并丢弃，不重试，避免重复累加；进程被强制终止时尚未 flush 的观测会丢失。因此这是负载分析数据，不是精确计费。
+- 管理员读取与 flush 串行，并把已持久化数据与内存中待写快照合并，避免读取时重复或缺失一个批次。
+- 保留期由 `telemetry_retention_days`（默认 90 天）决定：删除早于 `UTC(now - retention_days)` 向下取整到整点的小时。该功能不会 `VACUUM` 或删除数据库文件。
+
+隐私边界：不向采集器传递、也不存储用户 ID、用户名、IP、授权令牌、request ID、原始路径、原始查询字符串或检索/标题文本；不做按用户聚合，不保存原始检索。数据库名来自服务端解析出的文件名，而不是未经校验的请求值。
+
 ## 数据库之外的状态
 
 <a id="变更与投递状态"></a>
@@ -408,7 +446,7 @@ run、item、checkpoint 和 lease 的变更都使用 owner/revision compare-and-
 
 ## 备份边界
 
-v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 包含创建时发现的全部 `data/index/*.sqlite` 文件，不按内容 schema 筛选；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v5 controls，`data/index-work` 的 Crossref 工作集也始终排除。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
+v2 备份固定包含 `auth.sqlite` 和完整 `data/meta`，因此持久投递状态总在认证库快照中。`--include-indexes` 包含创建时发现的全部 `data/index/*.sqlite` 文件，不按内容 schema 筛选；`data/index-control` 永远排除，包括 `index-batches.sqlite` 和全部 catalog v5 controls，`data/index-work` 的 Crossref 工作集也始终排除，可丢弃的 `data/telemetry.sqlite` 同样不进入备份。Provider-neutral `.changes.json` 和保留的旧导入源需要 `--include-push-state`。部署密钥始终单独保存。
 
 备份验证检查文件清单、大小、SHA-256、SQLite `quick_check`，以及 `user_version` 与清单的一致性和版本上限，因此也能保留通过这些检查的历史数据库。它不执行内容结构预检或迁移；恢复后能否服务仍取决于上文的精确内容 schema、迁移或重建要求。
 
