@@ -315,10 +315,10 @@ export default defineConfig(({ mode }) => ({
           include: ['./tests/browser-components/**/*.browser.test.tsx'],
           clearMocks: true,
           restoreMocks: true,
+          api: {
+            port: 46115,
+          },
           browser: {
-            api: {
-              port: 46115,
-            },
             enabled: true,
             headless: true,
             provider: playwright({
